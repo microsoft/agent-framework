@@ -417,10 +417,10 @@ _SEEN_FUNCTION_CALL_OUTPUT_IDS_OPTION = "__agent_framework_seen_function_call_ou
 def _pairable_function_call_output_call_id(item: ResponseFunctionToolCallOutputItem) -> str | None:
     """Return the ``call_id`` this item can be paired on, or ``None`` when it has no usable result.
 
-    ``.added`` can precede a populated ``output``, so an in-progress skeleton must not synthesize an
-    empty result. A blank ``call_id`` is rejected as well: these items are synthesized by the
-    hosting layer, and a result that cannot be paired to its call is dropped by transports and,
-    worse, re-sent as an unpairable ``function_call_output`` input item on the next turn.
+    Explicitly in-progress outputs must not claim the deduplication id, even when they carry empty
+    or partial output. Completed empty outputs remain valid. Blank ``call_id`` values are also rejected:
+    unpairable results are dropped by transports or re-sent as invalid ``function_call_output`` input
+    items on the next turn.
 
     Returning the id rather than a bool threads the validated value to the parse instead of making
     it re-derive one. ``call_id`` is ``Optional[str]`` on the SDK model, so re-reading it there
@@ -428,7 +428,7 @@ def _pairable_function_call_output_call_id(item: ResponseFunctionToolCallOutputI
     """
     # Typed as required on the SDK model, but an in-progress `.added` item can arrive without
     # it populated, so it is treated as optional at runtime.
-    if cast("object | None", item.output) is None:
+    if item.status == "in_progress" or cast("object | None", item.output) is None:
         return None
     call_id = item.call_id
     if not call_id:
@@ -441,7 +441,7 @@ def _claim_function_call_output(seen_item_ids: set[str] | None, item: Any) -> bo
     """Claim a ``function_call_output`` item for emission; return ``False`` if already claimed.
 
     The Responses stream can surface the same output item on both ``response.output_item.added``
-    and ``response.output_item.done``. Whichever event first carries a populated ``output`` emits
+    and ``response.output_item.done``. Whichever event first carries an eligible ``output`` emits
     the result, and this test-and-set keeps the other from producing a duplicate one. Keyed on the
     item id rather than ``call_id``, which is not guaranteed to be unique forever. When no set is
     supplied the item is always claimable, so a single event parsed on its own still yields output.
@@ -2469,10 +2469,10 @@ class RawOpenAIChatClient(
         """Map a ``function_call_output`` result to framework content.
 
         ``output`` is either a string or a list of input-content parts. Returning the parts as a
-        ``list[Content]`` is the shape `Content.from_function_result` documents as canonical, and it
-        is the difference between AG-UI exposing a returned image and receiving JSON inside a text
-        item. `from_function_result` still derives `result` from the text items, so string-shaped
-        output and existing consumers are unaffected.
+        ``list[Content]`` is the shape `Content.from_function_result` documents as canonical. This
+        preserves rich parts for framework consumers and OpenAI replay. The flat ``result`` still
+        contains only text; transports such as the ordinary AG-UI result emitter read that field,
+        not the rich items. String-shaped output remains unchanged.
 
         Parts are read field-by-field rather than through `isinstance`, because the field is typed
         as SDK models but transports and test doubles also deliver plain mappings, and the previous
@@ -3654,7 +3654,7 @@ class RawOpenAIChatClient(
                     case "web_search_call" | "file_search_call":
                         contents.append(self._parse_search_tool_call_content(event_item))
                     case _ if getattr(event_item, "type", None) == "function_call_output":
-                        # Emitted from whichever of `.added` / `.done` first carries a populated
+                        # Emitted from whichever of `.added` / `.done` first carries an eligible
                         # `output`; the item id is recorded so the other event cannot emit a second
                         # result for the same item (issue #8068).
                         output_item = cast(ResponseFunctionToolCallOutputItem, event_item)
@@ -3870,7 +3870,7 @@ class RawOpenAIChatClient(
                     )
                 elif getattr(done_item, "type", None) == "function_call_output":
                     # Counterpart to the `response.output_item.added` branch: whichever event first
-                    # carries a populated `output` emits the result, and the shared seen-id set
+                    # carries an eligible `output` emits the result, and the shared seen-id set
                     # keeps the other from duplicating it (issue #8068).
                     output_item = cast(ResponseFunctionToolCallOutputItem, done_item)
                     done_call_id = _pairable_function_call_output_call_id(output_item)
