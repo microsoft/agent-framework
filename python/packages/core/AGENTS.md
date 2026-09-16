@@ -112,6 +112,12 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
   filter execution, score thresholds (including provider-defined/default metrics), and paging. Use native backend
   execution where available, otherwise an explicit connector-local fallback or reject unsupported options
 - **`create_vector_search_tool`** - Creates an agent tool from any `SupportsVectorSearch` implementation
+- **`create_upsert_tool` / `create_get_tool` / `create_delete_tool`** - Create agent tools for collection CRUD;
+  upsert and delete require approval by default, while get does not
+- **`VectorStoreHistoryProvider`** - Stores full scoped conversation history in a provider-owned collection;
+  optional embeddings enable session-scoped history search, while optional compaction affects only loaded context
+- **`VectorCollectionContextProvider`** - Adds instructions and configurable CRUD/search tools for a caller-owned
+  collection, including independently configured additional search tools
 - **`InMemoryCollection` / `InMemoryStore`** - Dependency-free, process-local development and test implementation;
   cosine scoring scales finite inputs, all metrics reject non-finite scores, and unsupported distance functions
   fail before record scanning. Hamming scores/thresholds use the fraction of unequal dimensions, not a count.

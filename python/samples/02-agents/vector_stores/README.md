@@ -11,7 +11,8 @@ before calling the batch API.
 No database is needed for the in-memory examples. The model, format, and direct
 in-memory filter samples need no credentials. The search-tool sample loads the
 existing Azure AI Search hotel dataset and uses OpenAI for embeddings and the
-agent; set `OPENAI_API_KEY` before running it.
+agent; set `OPENAI_API_KEY` before running it. The context-provider examples
+also use an in-memory collection with OpenAI for embeddings and agent responses.
 
 | File | Demonstrates |
 |------|--------------|
@@ -19,6 +20,8 @@ agent; set `OPENAI_API_KEY` before running it.
 | [`optimized_data_formats.py`](optimized_data_formats.py) | Keeping NumPy vector fields and adapting pandas DataFrames to the batch record API. |
 | [`in_memory_filters.py`](in_memory_filters.py) | Direct vector search with `Filter` and `FilterGroup`. |
 | [`in_memory_search_tool.py`](in_memory_search_tool.py) | Model-set filter values with native typed `Param` declarations. |
+| [`vector_collection_context_provider.py`](vector_collection_context_provider.py) | Adding default upsert, get, delete, and search tools for a user-defined collection. |
+| [`vector_collection_context_provider_multiple_search_tools.py`](vector_collection_context_provider_multiple_search_tools.py) | Replacing default tools with multiple searches that expose different inputs and result detail. |
 | [`azure_ai_search.py`](azure_ai_search.py) | Native Azure vector/hybrid search with deterministic vectors and a disposable index. |
 | [`redis_store.py`](redis_store.py) | Native HASH and JSON storage, vector search, filtering, and lifecycle with a disposable Redis server. |
 
@@ -78,4 +81,6 @@ uv run samples/02-agents/vector_stores/vector_store_models.py
 uv run samples/02-agents/vector_stores/optimized_data_formats.py
 uv run samples/02-agents/vector_stores/in_memory_filters.py
 uv run samples/02-agents/vector_stores/in_memory_search_tool.py
+uv run samples/02-agents/vector_stores/vector_collection_context_provider.py
+uv run samples/02-agents/vector_stores/vector_collection_context_provider_multiple_search_tools.py
 ```
