@@ -52,7 +52,10 @@ Each invocation closes its tool/session on success, failure, or cancellation.
 Internally created fallback HTTP clients are also closed; caller-supplied HTTP
 clients remain caller-owned and are never closed by the handler. Calling
 `aclose()` rejects new invocations and waits for active provider-backed
-invocations to finish cleaning up.
+invocations to finish cleaning up. Calling it from an active invocation's
+context (including provider callbacks, inherited child tasks, and cleanup)
+raises `RuntimeError` before changing handler state, rather than waiting on
+itself. Close the handler outside that context or after the invocation completes.
 
 This intentionally incurs connection and initialization overhead and does not
 retain server session state between provider-backed invocations. Applications

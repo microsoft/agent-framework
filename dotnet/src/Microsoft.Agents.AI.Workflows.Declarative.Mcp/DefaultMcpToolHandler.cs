@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
@@ -28,6 +29,8 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.Mcp;
 /// Provider-backed invocations create and dispose a separate MCP session for every call, including
 /// <c>tools/list</c>, because provider authentication is not represented in the session cache key.
 /// Without a provider, sessions are cached by server URL, label, connection name, and explicit headers.
+/// Non-cancellation cleanup failures are reported through <see cref="Trace"/> warnings without replacing
+/// the invocation result or error.
 /// </remarks>
 public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
 {
@@ -46,6 +49,7 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
     private readonly Dictionary<(string Url, string Label, string Connection, string HeadersHash), ClientConnection> _clients = [];
     private readonly Dictionary<string, HttpClient> _ownedHttpClients = [];
     private readonly SemaphoreSlim _clientLock = new(1, 1);
+    private readonly AsyncLocal<ProviderInvocationContext?> _providerInvocationContext = new();
     private TaskCompletionSource<bool>? _providerInvocationsDrained;
     private int _activeProviderInvocations;
     private bool _disposing;
@@ -102,6 +106,7 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
 
         if (this._httpClientProvider is not null)
         {
+            TaskCompletionSource<bool> invocationCompleted = new(TaskCreationOptions.RunContinuationsAsynchronously);
             await this._clientLock.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
@@ -116,6 +121,8 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
                 this._clientLock.Release();
             }
 
+            ProviderInvocationContext? previousInvocation = this._providerInvocationContext.Value;
+            this._providerInvocationContext.Value = new(invocationCompleted.Task, previousInvocation);
             try
             {
                 ClientConnection invocationClient = await this.CreateClientAsync(
@@ -137,6 +144,8 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
                 }
                 finally
                 {
+                    invocationCompleted.SetResult(true);
+                    this._providerInvocationContext.Value = previousInvocation;
                     this._clientLock.Release();
                 }
             }
@@ -194,8 +203,20 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
     }
 
     /// <inheritdoc/>
+    /// <exception cref="InvalidOperationException">
+    /// Disposal is requested from an active provider-backed invocation, including a child execution context.
+    /// Dispose the handler from its owning scope instead.
+    /// </exception>
     public async ValueTask DisposeAsync()
     {
+        for (ProviderInvocationContext? context = this._providerInvocationContext.Value; context is not null; context = context.Parent)
+        {
+            if (!context.Completion.IsCompleted)
+            {
+                throw new InvalidOperationException("Cannot dispose the MCP handler from an active provider-backed invocation.");
+            }
+        }
+
         Task? providerInvocations;
         await this._clientLock.WaitAsync().ConfigureAwait(false);
         try
@@ -351,7 +372,7 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
         }
         catch
         {
-            await transport.DisposeAsync().ConfigureAwait(false);
+            await DisposeResourceAsync(transport, "transport").ConfigureAwait(false);
             throw;
         }
     }
@@ -365,7 +386,14 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
             CheckCertificateRevocationList = true
         };
 
-    private sealed class ClientConnection(McpClient client, HttpClientTransport transport) : IAsyncDisposable
+    private sealed class ProviderInvocationContext(Task completion, ProviderInvocationContext? parent)
+    {
+        public Task Completion { get; } = completion;
+
+        public ProviderInvocationContext? Parent { get; } = parent;
+    }
+
+    internal sealed class ClientConnection(McpClient client, IAsyncDisposable transport) : IAsyncDisposable
     {
         public McpClient Client { get; } = client;
 
@@ -373,13 +401,26 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
         {
             try
             {
-                await this.Client.DisposeAsync().ConfigureAwait(false);
+                await DisposeResourceAsync(this.Client, "session").ConfigureAwait(false);
             }
             finally
             {
                 // McpClient owns the connected session, not the reusable transport factory.
-                await transport.DisposeAsync().ConfigureAwait(false);
+                await DisposeResourceAsync(transport, "transport").ConfigureAwait(false);
             }
+        }
+    }
+
+    private static async ValueTask DisposeResourceAsync<T>(T resource, string resourceName)
+        where T : IAsyncDisposable
+    {
+        try
+        {
+            await resource.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            Trace.TraceWarning("Failed to dispose MCP {0}: {1}", resourceName, exception);
         }
     }
 

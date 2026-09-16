@@ -25,6 +25,12 @@ completing. This also applies when the provider returns the same `HttpClient` or
 returns `null` for the default transport. Caller-supplied HTTP clients remain
 caller-owned; handler-created fallback clients are disposed with the invocation.
 Handler disposal waits for active provider-backed invocations to finish cleanup.
+Disposal from within an active invocation (including a provider callback or its
+child tasks) throws `InvalidOperationException` without starting shutdown, rather
+than waiting on itself. Dispose the handler from its owning scope.
+Non-cancellation session and transport cleanup failures are reported through
+`System.Diagnostics.Trace` warnings and do not replace a tool result or its
+original error.
 
 Provider-backed calls therefore incur session setup per invocation and do not
 preserve server-side session state between calls. Applications requiring session
@@ -75,4 +81,3 @@ on the server address.
 |**EndWorkflow**|Ends the current workflow or sub-workflow within a broader conversation flow. This helps modularize complex interactions.
 |**Foreach**|Iterates through a collection of items, executing a set of actions for each. Ideal for processing lists or batch operations.
 |**GotoAction**|Jumps directly to a specified action within the workflow. Enables non-linear navigation in the logic flow.
-

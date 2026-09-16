@@ -9,7 +9,7 @@ connect via in-flight futures, header isolation across cache keys,
 string-result normalisation, ``load_prompts=False`` verification, and
 owned-vs-caller httpx close semantics, and provider-backed invocation lifetimes.
 
-One lifecycle regression uses the real MCP SDK with an inert HTTPX mock transport.
+Two lifecycle cases use the real MCP SDK with an inert HTTPX mock transport.
 """
 
 from __future__ import annotations
@@ -336,6 +336,160 @@ class TestProviderLifetimes:
                     assert not handler._active_invocations
             assert not client.is_closed
 
+    @pytest.mark.timeout(10)
+    @pytest.mark.parametrize("stage", ["provider", "connect", "search", "tools/list", "close"])
+    @pytest.mark.parametrize("in_child_task", [False, True])
+    async def test_reentrant_shutdown_is_rejected_without_closing_handler(
+        self, stage: str, in_child_task: bool
+    ) -> None:
+        original_connect = FakeTool.connect
+        original_close = FakeTool.close
+        original_call = FakeTool.call_tool
+        original_list = FakeMcpSession.list_tools
+        rejected = 0
+
+        async def check_shutdown(phase: str) -> None:
+            nonlocal rejected
+            if stage != phase:
+                return
+            with pytest.raises(RuntimeError, match="cannot be called from an active provider-backed invocation"):
+                if in_child_task:
+                    await asyncio.create_task(handler.aclose())
+                else:
+                    await handler.aclose()
+            rejected += 1
+            assert not handler._closed
+
+        async def provider(_invocation: MCPToolInvocation) -> None:
+            await check_shutdown("provider")
+
+        async def connect(tool: FakeTool) -> None:
+            await original_connect(tool)
+            await check_shutdown("connect")
+
+        async def close(tool: FakeTool) -> None:
+            await check_shutdown("close")
+            await original_close(tool)
+
+        async def call(tool: FakeTool, tool_name: str, **arguments: Any) -> Any:
+            await check_shutdown("search")
+            return await original_call(tool, tool_name, **arguments)
+
+        async def list_tools(session: FakeMcpSession, params: Any = None) -> FakeListToolsResult:
+            await check_shutdown("tools/list")
+            return await original_list(session, params)
+
+        with (
+            _patch_tool(),
+            patch.object(FakeTool, "connect", connect),
+            patch.object(FakeTool, "close", close),
+            patch.object(FakeTool, "call_tool", call),
+            patch.object(FakeMcpSession, "list_tools", list_tools),
+        ):
+            async with DefaultMCPToolHandler(client_provider=provider) as handler:
+                for _ in range(2):
+                    result = await handler.invoke_tool(
+                        _invocation(tool_name="tools/list" if stage == "tools/list" else "search")
+                    )
+                    assert not result.is_error
+                    assert handler._invocation_context.get() == ()
+                    assert not handler._active_invocations
+                    assert not handler._closed
+        assert rejected == 2
+        assert len(FakeTool.instances) == 2
+        assert all(tool.close_count == 1 for tool in FakeTool.instances)
+
+    @pytest.mark.timeout(10)
+    async def test_nested_invocations_restore_context_and_keep_active_ancestry(self) -> None:
+        release_child = asyncio.Event()
+        children: list[asyncio.Task[None]] = []
+
+        async def close_from_inherited_context() -> None:
+            await release_child.wait()
+            outer, inner = handler._invocation_context.get()
+            assert not outer.done()
+            assert inner.done()
+            with pytest.raises(RuntimeError, match="cannot be called from an active provider-backed invocation"):
+                await handler.aclose()
+            assert not handler._closed
+
+        async def provider(invocation: MCPToolInvocation) -> None:
+            if invocation.tool_name == "inner":
+                children.append(asyncio.create_task(close_from_inherited_context()))
+                return
+            outer_context = handler._invocation_context.get()
+            assert len(outer_context) == 1
+            nested_result = await handler.invoke_tool(_invocation(tool_name="inner"))
+            assert not nested_result.is_error
+            assert handler._invocation_context.get() is outer_context
+            release_child.set()
+            await children[-1]
+            with pytest.raises(RuntimeError, match="cannot be called from an active provider-backed invocation"):
+                await handler.aclose()
+
+        with _patch_tool():
+            async with DefaultMCPToolHandler(client_provider=provider) as handler:
+                try:
+                    result = await handler.invoke_tool(_invocation(tool_name="outer"))
+                    assert not result.is_error
+                    assert handler._invocation_context.get() == ()
+                    assert not handler._active_invocations
+                finally:
+                    release_child.set()
+                    await asyncio.gather(*children)
+        assert len(FakeTool.instances) == 2
+        assert all(tool.close_count == 1 for tool in FakeTool.instances)
+
+    @pytest.mark.timeout(10)
+    async def test_provider_can_invoke_and_close_another_handler(self) -> None:
+        async def provider(_invocation: MCPToolInvocation) -> None:
+            async with DefaultMCPToolHandler(client_provider=AsyncMock(return_value=None)) as other:
+                result = await other.invoke_tool(_invocation)
+                assert not result.is_error
+                assert other._invocation_context.get() == ()
+                assert handler._invocation_context.get()
+            assert other._closed
+            assert not handler._closed
+
+        with _patch_tool():
+            async with DefaultMCPToolHandler(client_provider=provider) as handler:
+                result = await handler.invoke_tool(_invocation())
+                assert not result.is_error
+                assert handler._invocation_context.get() == ()
+        assert len(FakeTool.instances) == 2
+        assert all(tool.close_count == 1 for tool in FakeTool.instances)
+
+    @pytest.mark.timeout(10)
+    async def test_inherited_context_can_close_after_invocation_completes(self) -> None:
+        release_child = asyncio.Event()
+        children: list[asyncio.Task[None]] = []
+
+        async def close_from_inherited_context() -> None:
+            await release_child.wait()
+            context = handler._invocation_context.get()
+            assert len(context) == 1
+            assert context[0].done()
+            await handler.aclose()
+
+        async def provider(_invocation: MCPToolInvocation) -> None:
+            children.append(asyncio.create_task(close_from_inherited_context()))
+
+        with _patch_tool():
+            handler = DefaultMCPToolHandler(client_provider=provider)
+            try:
+                result = await handler.invoke_tool(_invocation())
+                assert not result.is_error
+                assert handler._invocation_context.get() == ()
+                assert not handler._active_invocations
+                assert not handler._closed
+            finally:
+                release_child.set()
+                await asyncio.gather(*children)
+                await handler.aclose()
+        assert handler._closed
+        assert len(FakeTool.instances) == 1
+        assert FakeTool.instances[0].close_count == 1
+
     async def test_list_tools_paginates_within_each_invocation(self) -> None:
         original_connect = FakeTool.connect
 
@@ -412,6 +566,7 @@ class TestProviderLifetimes:
                         assert "operation stopped" in (result.error_message or "")
                         assert result.outputs[0].text is not None
                         assert result.outputs[0].text.startswith("Error:")
+                    assert handler._invocation_context.get() == ()
                     assert not handler._active_invocations
                     assert not handler._cache
                     assert not handler._inflight
@@ -485,6 +640,7 @@ class TestProviderLifetimes:
             # Python 3.10 may drop the message when a cancelled task's result is retrieved again.
             with pytest.raises(asyncio.CancelledError):
                 await handler.invoke_tool(_invocation(headers={"X-Test": "1"}))
+            assert handler._invocation_context.get() == ()
             assert not handler._active_invocations
             assert len(completions) == 1
             assert completions[0].done()
@@ -513,6 +669,14 @@ class TestProviderLifetimes:
             if stage == "connect":
                 await wait()
 
+        async def invoke_and_check_context() -> None:
+            try:
+                await handler.invoke_tool(
+                    _invocation(tool_name="tools/list" if stage == "tools/list" else "search", headers={"X-Test": "1"})
+                )
+            finally:
+                assert handler._invocation_context.get() == ()
+
         with (
             _patch_tool(),
             patch.object(FakeTool, "connect", connect),
@@ -520,13 +684,7 @@ class TestProviderLifetimes:
             patch.object(FakeMcpSession, "list_tools", new_callable=AsyncMock, side_effect=wait),
         ):
             async with DefaultMCPToolHandler(client_provider=provider) as handler:
-                task = asyncio.create_task(
-                    handler.invoke_tool(
-                        _invocation(
-                            tool_name="tools/list" if stage == "tools/list" else "search", headers={"X-Test": "1"}
-                        )
-                    )
-                )
+                task = asyncio.create_task(invoke_and_check_context())
                 await asyncio.wait_for(started.wait(), timeout=5)
                 task.cancel()
                 with pytest.raises(asyncio.CancelledError):

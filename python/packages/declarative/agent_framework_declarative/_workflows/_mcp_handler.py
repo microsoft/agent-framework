@@ -32,6 +32,7 @@ import json
 import logging
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
+from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast, runtime_checkable
 
@@ -237,6 +238,11 @@ class DefaultMCPToolHandler:
         self._inflight: dict[tuple[str, str, str, str], asyncio.Future[_CacheEntry]] = {}
         # Completion signals only: provider-backed calls never share entries.
         self._active_invocations: set[asyncio.Future[None]] = set()
+        # Keep ancestry so a completed nested call cannot hide an active parent
+        # in the context inherited by child tasks, including cleanup tasks.
+        self._invocation_context: ContextVar[tuple[asyncio.Future[None], ...]] = ContextVar(
+            f"default_mcp_tool_handler_invocations_{id(self)}", default=()
+        )
         # Set by ``aclose`` to prevent post-close cache insertions and to
         # reject new ``invoke_tool`` calls. Once set, never cleared.
         self._closed = False
@@ -264,6 +270,7 @@ class DefaultMCPToolHandler:
 
         entry: _CacheEntry | None = None
         completion: asyncio.Future[None] | None = None
+        context_token: Token[tuple[asyncio.Future[None], ...]] | None = None
         try:
             try:
                 if self._client_provider is None:
@@ -274,6 +281,7 @@ class DefaultMCPToolHandler:
                             raise RuntimeError("DefaultMCPToolHandler is closed")
                         completion = asyncio.get_running_loop().create_future()
                         self._active_invocations.add(completion)
+                    context_token = self._invocation_context.set((*self._invocation_context.get(), completion))
                     entry = await self._create_entry(invocation)
                     if self._closed:
                         raise RuntimeError("DefaultMCPToolHandler is closed")
@@ -300,6 +308,8 @@ class DefaultMCPToolHandler:
                     if entry is not None:
                         await self._close_invocation_entry(entry)
                 finally:
+                    if context_token is not None:
+                        self._invocation_context.reset(context_token)
                     self._active_invocations.discard(completion)
                     completion.set_result(None)
 
@@ -423,7 +433,16 @@ class DefaultMCPToolHandler:
         cleaned up; the in-flight tasks see ``self._closed`` in phase 3 of
         :meth:`_get_or_create_entry`, close their own entry, and resolve
         their future with ``RuntimeError("DefaultMCPToolHandler is closed")``.
+
+        Raises:
+            RuntimeError: If called from an active provider-backed invocation's
+                context, including inherited child tasks and cleanup. Rejected
+                before changing handler state to avoid waiting on itself.
         """
+        if any(not completion.done() for completion in self._invocation_context.get()):
+            raise RuntimeError(
+                "DefaultMCPToolHandler.aclose() cannot be called from an active provider-backed invocation"
+            )
         async with self._cache_lock:
             if self._closed and self._client_provider is None:
                 return

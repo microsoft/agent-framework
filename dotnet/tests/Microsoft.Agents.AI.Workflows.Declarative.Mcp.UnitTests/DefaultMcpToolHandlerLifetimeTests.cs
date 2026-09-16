@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.Net;
 using System.Net.Http;
@@ -10,6 +11,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
+using ModelContextProtocol.Client;
 using Moq;
 using Moq.Protected;
 
@@ -317,6 +319,243 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
         Assert.Equal(0, providerCalls);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Provider_ReentrantDisposal_ThrowsWithoutStartingShutdownAsync(bool fromChildTask)
+    {
+        // Arrange
+        ProtocolStub stub = new();
+        using HttpClient client = new(stub.CreateMessageHandler());
+        DefaultMcpToolHandler? handler = null;
+        int rejectedDisposals = 0;
+        handler = new(async (_, _) =>
+        {
+            async Task DisposeAsync() => await handler!.DisposeAsync();
+            InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => fromChildTask ? Task.Run(DisposeAsync) : DisposeAsync());
+            Assert.Contains("active provider-backed invocation", error.Message);
+            rejectedDisposals++;
+            return client;
+        });
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+
+        // Act
+        await InvokeAsync(handler, "ping", timeout.Token);
+        await InvokeAsync(handler, "ping", timeout.Token);
+        await handler.DisposeAsync();
+
+        // Assert
+        Assert.Equal(2, rejectedDisposals);
+        Assert.Equal(2, stub.Terminations);
+    }
+
+    [Fact]
+    public async Task Provider_CompletedInheritedContext_CanDisposeHandlerAsync()
+    {
+        // Arrange
+        ProtocolStub stub = new();
+        using HttpClient client = new(stub.CreateMessageHandler());
+        using SemaphoreSlim finished = new(0);
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+        Task? inheritedDisposal = null;
+        DefaultMcpToolHandler? handler = null;
+        handler = new((_, token) =>
+        {
+            inheritedDisposal = Task.Run(async () =>
+            {
+                await finished.WaitAsync(token);
+                await handler!.DisposeAsync();
+            }, token);
+            return Task.FromResult<HttpClient?>(client);
+        });
+
+        // Act
+        await InvokeAsync(handler, "ping", timeout.Token);
+        finished.Release();
+        await Assert.IsAssignableFrom<Task>(inheritedDisposal);
+
+        // Assert
+        Assert.Equal(1, stub.Terminations);
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => InvokeAsync(handler, "ping", timeout.Token));
+    }
+
+    [Fact]
+    public async Task Provider_NestedInvocation_RestoresOuterDisposalGuardAsync()
+    {
+        // Arrange
+        ProtocolStub stub = new();
+        using HttpClient client = new(stub.CreateMessageHandler());
+        bool nested = false;
+        DefaultMcpToolHandler? handler = null;
+        handler = new(async (_, token) =>
+        {
+            if (!nested)
+            {
+                nested = true;
+                await InvokeAsync(handler!, "ping", token);
+                await Assert.ThrowsAsync<InvalidOperationException>(() => handler!.DisposeAsync().AsTask());
+            }
+
+            return client;
+        });
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+
+        // Act
+        await InvokeAsync(handler, "ping", timeout.Token);
+        await handler.DisposeAsync();
+
+        // Assert
+        Assert.True(nested);
+        Assert.Equal(2, stub.Terminations);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Provider_TransportCleanupFailure_PreservesInvocationOutcomeAsync(bool failOperation)
+    {
+        // Arrange
+        ProtocolStub stub = new() { FailOperation = failOperation, FailTransportDisposal = true };
+        await using DefaultMcpToolHandler handler = new(
+            (_, _) => Task.FromResult<HttpClient?>(null), stub.CreateMessageHandler);
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+        using CleanupTraceListener listener = new();
+        Trace.Listeners.Add(listener);
+        try
+        {
+            // Act
+            if (failOperation)
+            {
+                await Assert.ThrowsAsync<HttpRequestException>(() => InvokeAsync(handler, "ping", timeout.Token));
+            }
+            else
+            {
+                McpServerToolResultContent result = await InvokeAsync(handler, "ping", timeout.Token);
+                Assert.Equal("ok", Assert.IsType<TextContent>(Assert.Single(result.Outputs!)).Text);
+            }
+
+            // Assert
+            Assert.Equal(1, stub.Terminations);
+            Assert.Contains("Failed to dispose MCP transport", listener.Output);
+            Assert.Contains("transport cleanup failed", listener.Output);
+            Assert.Single(stub.Handlers).Protected().Verify(
+                "Dispose", Times.AtLeastOnce(), ItExpr.Is<bool>(disposing => disposing));
+        }
+        finally
+        {
+            Trace.Listeners.Remove(listener);
+        }
+    }
+
+    [Fact]
+    public async Task Provider_CompletedNestedContext_StillGuardsActiveOuterInvocationAsync()
+    {
+        // Arrange
+        ProtocolStub stub = new();
+        using HttpClient client = new(stub.CreateMessageHandler());
+        using SemaphoreSlim nestedFinished = new(0);
+        Task? inheritedDisposal = null;
+        int providerCalls = 0;
+        DefaultMcpToolHandler? handler = null;
+        handler = new(async (_, token) =>
+        {
+            if (++providerCalls == 1)
+            {
+                await InvokeAsync(handler!, "ping", token);
+                nestedFinished.Release();
+                await Assert.IsAssignableFrom<Task>(inheritedDisposal);
+            }
+            else
+            {
+                inheritedDisposal = Task.Run(async () =>
+                {
+                    await nestedFinished.WaitAsync(token);
+                    await Assert.ThrowsAsync<InvalidOperationException>(() => handler!.DisposeAsync().AsTask());
+                }, token);
+            }
+
+            return client;
+        });
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+
+        // Act
+        await InvokeAsync(handler, "ping", timeout.Token);
+        await handler.DisposeAsync();
+
+        // Assert
+        Assert.Equal(2, providerCalls);
+        Assert.Equal(2, stub.Terminations);
+    }
+
+    [Fact]
+    public async Task Provider_InitializationAndCleanupFailure_PreservesInitializationErrorAsync()
+    {
+        // Arrange
+        ProtocolStub stub = new() { FailInitialization = true, FailTransportDisposal = true };
+        await using DefaultMcpToolHandler handler = new(
+            (_, _) => Task.FromResult<HttpClient?>(null), stub.CreateMessageHandler);
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+        using CleanupTraceListener listener = new();
+        Trace.Listeners.Add(listener);
+        try
+        {
+            // Act
+            await Assert.ThrowsAsync<HttpRequestException>(() => InvokeAsync(handler, "ping", timeout.Token));
+
+            // Assert
+            Assert.Contains("Failed to dispose MCP transport", listener.Output);
+            Assert.Single(stub.Handlers).Protected().Verify(
+                "Dispose", Times.AtLeastOnce(), ItExpr.Is<bool>(disposing => disposing));
+        }
+        finally
+        {
+            Trace.Listeners.Remove(listener);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ClientConnection_SessionCleanupFailure_StillCleansUpTransportAsync(bool cancelSessionCleanup)
+    {
+        // Arrange
+        Mock<McpClient> client = new();
+        Exception sessionError = cancelSessionCleanup
+            ? new OperationCanceledException("session cleanup cancelled")
+            : new InvalidOperationException("session cleanup failed");
+        client.Setup(c => c.DisposeAsync()).Returns(new ValueTask(Task.FromException(sessionError)));
+        Mock<IAsyncDisposable> transport = new();
+        transport.Setup(t => t.DisposeAsync()).Returns(new ValueTask(Task.FromException(
+            new InvalidOperationException("transport cleanup failed"))));
+        DefaultMcpToolHandler.ClientConnection connection = new(client.Object, transport.Object);
+        using CleanupTraceListener listener = new();
+        Trace.Listeners.Add(listener);
+        try
+        {
+            // Act
+            if (cancelSessionCleanup)
+            {
+                Assert.Same(sessionError, await Assert.ThrowsAsync<OperationCanceledException>(
+                    () => connection.DisposeAsync().AsTask()));
+            }
+            else
+            {
+                await connection.DisposeAsync();
+                Assert.Contains("Failed to dispose MCP session", listener.Output);
+            }
+
+            // Assert
+            Assert.Contains("Failed to dispose MCP transport", listener.Output);
+            client.Verify(c => c.DisposeAsync(), Times.Once);
+            transport.Verify(t => t.DisposeAsync(), Times.Once);
+        }
+        finally
+        {
+            Trace.Listeners.Remove(listener);
+        }
+    }
+
     private static Task<McpServerToolResultContent> InvokeAsync(
         DefaultMcpToolHandler handler, string toolName, CancellationToken cancellationToken) =>
         handler.InvokeToolAsync("https://mcp.example/api", null, toolName, null, null, null, cancellationToken);
@@ -332,6 +571,7 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
         public Func<CancellationToken, Task>? BeforeOperationAsync { get; set; }
         public bool FailInitialization { get; set; }
         public bool FailOperation { get; set; }
+        public bool FailTransportDisposal { get; set; }
 
         public HttpMessageHandler CreateMessageHandler()
         {
@@ -339,6 +579,12 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
             handler.Protected()
                 .Setup<Task<HttpResponseMessage>>("SendAsync", ItExpr.IsAny<HttpRequestMessage>(), ItExpr.IsAny<CancellationToken>())
                 .Returns<HttpRequestMessage, CancellationToken>(this.SendAsync);
+            if (this.FailTransportDisposal)
+            {
+                handler.Protected().Setup("Dispose", ItExpr.Is<bool>(disposing => disposing))
+                    .Throws(new InvalidOperationException("transport cleanup failed"));
+            }
+
             this.Handlers.Add(handler);
             return handler.Object;
         }
@@ -433,5 +679,16 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
                 RequestMessage = request,
                 Content = new ByteArrayContent([])
             };
+    }
+
+    private sealed class CleanupTraceListener : TraceListener
+    {
+        private readonly StringBuilder _output = new();
+
+        public string Output => this._output.ToString();
+
+        public override void Write(string? message) => this._output.Append(message);
+
+        public override void WriteLine(string? message) => this._output.AppendLine(message);
     }
 }
