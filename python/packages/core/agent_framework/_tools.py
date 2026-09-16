@@ -42,6 +42,7 @@ from typing import (
 )
 from uuid import uuid4
 
+from opentelemetry import trace
 from opentelemetry.metrics import Histogram, NoOpHistogram
 from pydantic import BaseModel, Field, ValidationError, create_model
 
@@ -1012,7 +1013,10 @@ class FunctionTool(SerializationMixin):
                     parsed = configured_parser(result)
                 except Exception as exception:
                     self.invocation_exception_count += 1
-                    logger.error(f"Function {self.name}: result parser failed. Error: {exception}")
+                    if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
+                        logger.error(f"Function {self.name}: result parser failed. Error: {exception}")
+                    else:
+                        logger.error(f"Function {self.name}: result parser failed.")
                     raise
             else:
                 try:
@@ -1095,8 +1099,13 @@ class FunctionTool(SerializationMixin):
                     except Exception as exception:
                         self.invocation_exception_count += 1
                         attributes[OtelAttr.ERROR_TYPE] = type(exception).__name__
-                        capture_exception(span=span, exception=exception, timestamp=time_ns())
-                        logger.error(f"Function {self.name}: result parser failed. Error: {exception}")
+                        if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
+                            capture_exception(span=span, exception=exception, timestamp=time_ns())
+                            logger.error(f"Function {self.name}: result parser failed. Error: {exception}")
+                        else:
+                            span.set_attribute(OtelAttr.ERROR_TYPE, type(exception).__name__)
+                            span.set_status(status=trace.StatusCode.ERROR)
+                            logger.error(f"Function {self.name}: result parser failed.")
                         raise
                 else:
                     try:

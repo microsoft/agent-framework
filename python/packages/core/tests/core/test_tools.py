@@ -1530,10 +1530,15 @@ async def test_invoke_sync_tool_can_stay_on_event_loop() -> None:
     assert tool_thread_ids == [event_loop_thread_id]
 
 
-@pytest.mark.parametrize("enable_instrumentation", [False, True], indirect=True)
+@pytest.mark.parametrize(
+    ("enable_instrumentation", "enable_sensitive_data"),
+    [(False, False), (True, False), (True, True)],
+    indirect=True,
+)
 async def test_invoke_result_parser_exception_propagates(
     span_exporter: InMemorySpanExporter,
     enable_instrumentation: bool,
+    enable_sensitive_data: bool,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     from agent_framework.exceptions import ToolException
@@ -1567,7 +1572,10 @@ async def test_invoke_result_parser_exception_propagates(
         and record.levelno == logging.ERROR
         and "result parser failed" in record.getMessage()
     ]
-    assert parser_errors == ["Function make_result: result parser failed. Error: Unsupported result"]
+    expected_parser_error = "Function make_result: result parser failed."
+    if enable_sensitive_data:
+        expected_parser_error += " Error: Unsupported result"
+    assert parser_errors == [expected_parser_error]
     assert "succeeded" not in caplog.text
     assert "unparsed-value" not in caplog.text
     spans = span_exporter.get_finished_spans()
@@ -1577,6 +1585,8 @@ async def test_invoke_result_parser_exception_propagates(
         assert spans[0].attributes is not None
         assert spans[0].attributes[OtelAttr.ERROR_TYPE] == "ValueError"
         assert OtelAttr.TOOL_RESULT not in spans[0].attributes
+        assert bool(spans[0].events) is enable_sensitive_data
+        assert ("Unsupported result" in (spans[0].status.description or "")) is enable_sensitive_data
         assert spans[1].attributes is not None
         assert spans[1].attributes[OtelAttr.ERROR_TYPE] == "ToolException"
         assert histogram.record.call_count == 2
