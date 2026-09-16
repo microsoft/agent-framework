@@ -118,6 +118,7 @@ def _has_authoritative_approval_session(invocation_session: AgentSession | None)
 _ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY: Final[str] = "already_approved_approval_request_groups"
 _PENDING_APPROVAL_REQUESTS_KEY: Final[str] = "pending_approval_requests"
 _PENDING_PAUSE_BATCH_KEY: Final[str] = "pending_pause_batch"
+_PENDING_PROVIDER_OUTBOX_KEY: Final[str] = "pending_provider_outbox"
 _APPROVAL_REQUEST_ID_KEY: Final[str] = "_approval_request_id"
 _FUNCTION_INVOCATION_BUDGET_STATE_KEY: Final[str] = "_function_invocation_budget_state"
 _FUNCTION_RESULT_CARRIER_CONTEXT_KEY: Final[str] = "_function_result_carrier"
@@ -2674,6 +2675,17 @@ def _content_from_state(value: Any) -> Content | None:
     return None
 
 
+def _message_from_state(value: Any) -> Message | None:
+    """Restore a Message item stored in session state."""
+    from ._types import Message
+
+    if isinstance(value, Message):
+        return Message.from_dict(value.to_dict())
+    if isinstance(value, Mapping):
+        return Message.from_dict(dict(cast(Mapping[str, Any], value)))
+    return None
+
+
 def _load_pending_approval_requests(invocation_session: AgentSession | None) -> dict[str, Content]:
     """Load immutable approval-request snapshots keyed by request ID."""
     state = _get_tool_approval_state(invocation_session, create=False)
@@ -2960,7 +2972,6 @@ def _stage_pending_pause_batch_responses(
         ordered_responses.append(response)
         if item.get("kind") == "host":
             host_result_ids.add(id(response))
-    state.pop(_PENDING_PAUSE_BATCH_KEY, None)
     messages.append(Message(role="user", contents=ordered_responses))
     return False, host_result_ids
 
@@ -3834,11 +3845,19 @@ def _response_invalidation_cleanup(
     def cleanup(error: ResponseInvalidatedException) -> None:
         if stream_error is not None:
             stream_error[:] = [error]
-        budget_state.clear()
         if invocation_session is None:
+            budget_state.clear()
             return
-        invocation_session.state.pop(_FUNCTION_INVOCATION_BUDGET_STATE_KEY, None)
         invocation_session.service_session_id = service_session_id
+        if _has_pending_provider_outbox(invocation_session):
+            # The local side effect and Host result are already committed. Keep the
+            # delivery outbox and its charged budget so the next run can replay the
+            # exact provider input without recovering approval authority or executing
+            # the tool again.
+            _persist_pending_provider_outbox_budget(invocation_session, budget_state)
+            return
+        budget_state.clear()
+        invocation_session.state.pop(_FUNCTION_INVOCATION_BUDGET_STATE_KEY, None)
 
     return cleanup
 
@@ -3934,6 +3953,115 @@ class _FunctionProcessingResult:
     function_call_count: int = 0
     response_messages: tuple[Message, ...] = ()
     streaming_updates: tuple[ChatResponseUpdate, ...] = ()
+
+
+def _restore_pending_provider_outbox(
+    prepared_messages: list[Message],
+    invocation_session: AgentSession | None,
+) -> _FunctionProcessingResult | None:
+    """Restore one completed mixed batch without re-authorizing or re-executing its local calls."""
+    state = _get_tool_approval_state(invocation_session, create=False)
+    if state is None:
+        return None
+    raw_outbox = state.get(_PENDING_PROVIDER_OUTBOX_KEY)
+    if not isinstance(raw_outbox, Mapping):
+        return None
+    outbox = cast(Mapping[str, Any], raw_outbox)
+    raw_provider_messages = outbox.get("provider_messages")
+    raw_response_messages = outbox.get("response_messages")
+    if not isinstance(raw_provider_messages, list) or not isinstance(raw_response_messages, list):
+        raise RuntimeError("The pending mixed-batch provider outbox is malformed.")
+
+    provider_messages: list[Message] = []
+    response_message_items: list[Message] = []
+    for raw_messages, restored_messages in (
+        (cast(list[Any], raw_provider_messages), provider_messages),
+        (cast(list[Any], raw_response_messages), response_message_items),
+    ):
+        for item in raw_messages:
+            message = _message_from_state(item)
+            if message is None:
+                raise RuntimeError("The pending mixed-batch provider outbox contains invalid messages.")
+            restored_messages.append(message)
+    response_messages = tuple(response_message_items)
+
+    prepared_messages[:] = provider_messages
+    terminal_contents = [content for message in response_messages for content in message.contents]
+    _, streaming_updates = _messages_and_updates_for_terminal_contents(terminal_contents)
+    action = outbox.get("action")
+    if action not in {"continue", "stop"}:
+        raise RuntimeError("The pending mixed-batch provider outbox contains an invalid action.")
+    return _FunctionProcessingResult(
+        errors_in_a_row=int(outbox.get("errors_in_a_row", 0) or 0),
+        action=cast("Literal['continue', 'stop']", action),
+        # This delivery was already charged when its local result was first produced.
+        function_call_count=0,
+        response_messages=response_messages,
+        streaming_updates=streaming_updates,
+    )
+
+
+def _store_pending_provider_outbox(
+    invocation_session: AgentSession | None,
+    *,
+    prepared_messages: Sequence[Message],
+    processing_result: _FunctionProcessingResult,
+) -> None:
+    """Persist the provider-delivery phase of a completed mixed pause batch."""
+    state = _get_tool_approval_state(invocation_session)
+    if state is None:
+        return
+    state[_PENDING_PROVIDER_OUTBOX_KEY] = {
+        "provider_messages": [message.to_dict() for message in prepared_messages],
+        "response_messages": [message.to_dict() for message in processing_result.response_messages],
+        "errors_in_a_row": processing_result.errors_in_a_row,
+        "action": processing_result.action,
+    }
+
+
+def _persist_pending_provider_outbox_budget(
+    invocation_session: AgentSession | None,
+    budget_state: dict[str, Any],
+) -> None:
+    """Commit the charged budget beside an outbox before attempting provider delivery."""
+    state = _get_tool_approval_state(invocation_session, create=False)
+    if state is None or _PENDING_PROVIDER_OUTBOX_KEY not in state or invocation_session is None:
+        return
+    state[_PENDING_PROVIDER_OUTBOX_KEY]["budget_state"] = copy.deepcopy(budget_state)
+    invocation_session.state[_FUNCTION_INVOCATION_BUDGET_STATE_KEY] = budget_state
+
+
+def _restore_pending_provider_outbox_budget(
+    invocation_session: AgentSession | None,
+    budget_state: dict[str, Any],
+) -> None:
+    """Restore a serialized outbox's already-charged budget into the current run."""
+    state = _get_tool_approval_state(invocation_session, create=False)
+    if state is None:
+        return
+    raw_outbox = state.get(_PENDING_PROVIDER_OUTBOX_KEY)
+    if not isinstance(raw_outbox, Mapping):
+        return
+    raw_budget = cast(Mapping[str, Any], raw_outbox).get("budget_state")
+    if isinstance(raw_budget, Mapping):
+        budget_state.clear()
+        budget_state.update(copy.deepcopy(cast(Mapping[str, Any], raw_budget)))
+
+
+def _complete_pending_provider_outbox(invocation_session: AgentSession | None) -> None:
+    """Clear mixed-batch authority and results only after provider delivery succeeds."""
+    state = _get_tool_approval_state(invocation_session, create=False)
+    if state is None or not isinstance(state.get(_PENDING_PROVIDER_OUTBOX_KEY), Mapping):
+        return
+    state.pop(_PENDING_PROVIDER_OUTBOX_KEY, None)
+    state.pop(_PENDING_PAUSE_BATCH_KEY, None)
+    state.pop(_PENDING_APPROVAL_REQUESTS_KEY, None)
+    state.pop(_ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY, None)
+
+
+def _has_pending_provider_outbox(invocation_session: AgentSession | None) -> bool:
+    state = _get_tool_approval_state(invocation_session, create=False)
+    return state is not None and isinstance(state.get(_PENDING_PROVIDER_OUTBOX_KEY), Mapping)
 
 
 _FunctionCallExecutor: TypeAlias = Callable[..., Awaitable[_FunctionExecutionBatch]]
@@ -4075,6 +4203,9 @@ async def _resolve_approval_responses(
     from ._middleware import MiddlewareFailure
     from ._types import Message
 
+    if outbox_replay := _restore_pending_provider_outbox(prepared_messages, invocation_session):
+        return outbox_replay
+
     stateless_host_result_ids: set[int] = set()
     if not _has_authoritative_approval_session(invocation_session):
         partial_mixed_batch, stateless_host_result_ids = _stateless_mixed_pause_batch_status(prepared_messages)
@@ -4085,6 +4216,7 @@ async def _resolve_approval_responses(
         prepared_messages,
         invocation_session,
     )
+    completed_persistent_pause_batch = bool(host_result_ids)
     host_result_ids.update(stateless_host_result_ids)
     if incomplete_pause_batch:
         return _FunctionProcessingResult(errors_in_a_row=errors_in_a_row, action="return")
@@ -4094,7 +4226,8 @@ async def _resolve_approval_responses(
         if _has_authoritative_approval_session(invocation_session)
         else None
     )
-    _bind_approval_responses_to_pending_requests(prepared_messages, invocation_session)
+    if not completed_persistent_pause_batch:
+        _bind_approval_responses_to_pending_requests(prepared_messages, invocation_session)
 
     # 1. Restore safe siblings hidden with a prior mixed approval batch when its visible decision arrives.
     explicit_approval_response_ids = {
@@ -4204,13 +4337,25 @@ async def _resolve_approval_responses(
         action = "return"
     elif reached_error_limit:
         action = "stop"
-    return _FunctionProcessingResult(
+    processing_result = _FunctionProcessingResult(
         errors_in_a_row=errors_in_a_row,
         action=action,
         function_call_count=executed_function_count,
         response_messages=response_messages,
         streaming_updates=streaming_updates,
     )
+    if completed_persistent_pause_batch and action in {"continue", "stop"}:
+        _store_pending_provider_outbox(
+            invocation_session,
+            prepared_messages=prepared_messages,
+            processing_result=processing_result,
+        )
+    elif completed_persistent_pause_batch:
+        state = _get_tool_approval_state(invocation_session, create=False)
+        if state is not None:
+            state.pop(_PENDING_PAUSE_BATCH_KEY, None)
+            state.pop(_PENDING_PROVIDER_OUTBOX_KEY, None)
+    return processing_result
 
 
 async def _process_model_function_calls(
@@ -4486,6 +4631,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             total_function_calls,
             approval_processing.function_call_count,
         )
+        _persist_pending_provider_outbox_budget(invocation_session, budget_state)
         if approval_processing.action == "return":
             response = ChatResponse(messages=list(function_call_messages))
             response.usage_details = aggregated_usage
@@ -4528,6 +4674,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 session=invocation_session,
                 options=options,
             )
+            _complete_pending_provider_outbox(invocation_session)
 
             try:
                 function_processing = await _process_model_function_calls(
@@ -4606,6 +4753,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             session=invocation_session,
             options=options,
         )
+        _complete_pending_provider_outbox(invocation_session)
         response.usage_details = aggregated_usage
         _prepend_function_call_messages(response, function_call_messages)
         _clear_budget_state_from_session(invocation_session)
@@ -4677,6 +4825,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             total_function_calls,
             approval_processing.function_call_count,
         )
+        _persist_pending_provider_outbox_budget(invocation_session, budget_state)
         for update in approval_processing.streaming_updates:
             yield update
         if approval_processing.action == "return":
@@ -4782,6 +4931,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 session=invocation_session,
                 options=options,
             )
+            _complete_pending_provider_outbox(invocation_session)
 
             if not any(
                 item.type == "function_approval_request" or _is_actionable_function_call(item)
@@ -4876,6 +5026,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             session=invocation_session,
             options=options,
         )
+        _complete_pending_provider_outbox(invocation_session)
         if fallback_added:
             yield _function_invocation_limit_fallback_update()
         _clear_budget_state_from_session(invocation_session)
@@ -4969,10 +5120,19 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         )
         if categorized_runtime_middleware["chat"]:
             request_kwargs["middleware"] = categorized_runtime_middleware["chat"]
+        from ._sessions import AgentSession as _AgentSession
+
+        raw_session = request_kwargs.get("session")
+        invocation_session = raw_session if isinstance(raw_session, _AgentSession) else None
+        if invocation_session is None and requires_session_state:
+            invocation_session = _AgentSession()
+            setattr(invocation_session, _RUN_LOCAL_MIDDLEWARE_SESSION_ATTR, True)
+
         raw_budget_state = request_kwargs.pop(_FUNCTION_INVOCATION_BUDGET_STATE_KEY, None)
         budget_state: dict[str, Any] = (
             cast(dict[str, Any], raw_budget_state) if isinstance(raw_budget_state, dict) else {}
         )
+        _restore_pending_provider_outbox_budget(invocation_session, budget_state)
         # Record the start time once for the full logical run (including approval round-trips).
         # setdefault preserves the original timestamp across approval re-entries so that
         # max_duration_seconds measures cumulative elapsed time, not just the current segment.
@@ -4992,13 +5152,6 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         )
         if options and (additional_opts := options.get("additional_function_arguments")):
             additional_function_arguments.update(cast(Mapping[str, Any], additional_opts))
-        from ._sessions import AgentSession as _AgentSession
-
-        raw_session = request_kwargs.get("session")
-        invocation_session = raw_session if isinstance(raw_session, _AgentSession) else None
-        if invocation_session is None and requires_session_state:
-            invocation_session = _AgentSession()
-            setattr(invocation_session, _RUN_LOCAL_MIDDLEWARE_SESSION_ATTR, True)
 
         # Bind one executor with the run's custom arguments, middleware, configuration, and session.
         execute_function_calls = partial(
