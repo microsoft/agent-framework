@@ -1709,8 +1709,9 @@ async def test_sequential_execution_isolates_contextvars() -> None:
     assert results[1][0].result == "None"
 
 async def test_resolve_approval_responses_hold_later_approval_calls_in_sequential_mode() -> None:
-    """ If a batch has [write(0), read(1), notify(2)] and `write` is pending approval
-    while `notify` is approved, `notify` must not execute until `write` is resolved.
+    """ if [write[0], read(1), notify(2)] is requested, and `write` is pending approval while
+    `notify` is approved, `notify` must be held back. when `write` is later approved, 
+    `notify` must be restored and executed.
     """
 
     from agent_framework._sessions import AgentSession
@@ -1764,5 +1765,27 @@ async def test_resolve_approval_responses_hold_later_approval_calls_in_sequentia
 
     assert len(executed_calls) == 0, "notify_user executed before write_file was approved"
     assert result.action == "return", "should return to wait for earlier approvals"
+
+    # now user approved write (retry)
+    write_response = Content.from_function_approval_response(
+        approved=True,
+        id="1",
+        function_call=write_call
+    )
+    write_response.additional_properties = {"original_index": 0, "batch_id": "batch_1", "_approval_request_id": "1"}
+
+    prepared_messages_retry = [Message(role="user", contents=[write_response])]
+    result_retry = await _resolve_approval_responses(
+        prepared_messages=prepared_messages_retry,
+        options={},
+        errors_in_a_row=0,
+        max_errors=3,
+        execute_function_calls=mock_execute,
+        invocation_session=session,
+        allow_concurrent_invocation=False
+    )
+    assert len(executed_calls) == 2, "write_file and notify_user should have executed on retry"
+    assert executed_calls[0].function_call.name == "write_file"
+    assert executed_calls[1].function_call.name == "notify_user"
 
 # endregion

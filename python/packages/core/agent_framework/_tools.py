@@ -1765,6 +1765,7 @@ def _function_execution_error_result(
         context=context,
     )
 
+
 def _is_server_managed_tool(tool: FunctionTool) -> bool:
     """Check if a tool is server-managed and should not be executed locally."""
     return bool(tool.additional_properties and tool.additional_properties.get("server_label"))
@@ -1824,6 +1825,7 @@ def _replacement_approval_request(
             "reason": "Function arguments changed after approval.",
         },
     )
+
 
 def _finalize_function_result(
     *,
@@ -3654,7 +3656,7 @@ async def _resolve_approval_responses(
     invocation_session: AgentSession | None = None,
     middleware_pipeline: FunctionMiddlewarePipeline | None = None,
     settle_dangling_calls: Callable[[Sequence[Content]], Awaitable[None]] | None = None,
-    allow_concurrent_invocation:bool = True,
+    allow_concurrent_invocation: bool = True,
 ) -> _FunctionProcessingResult:
     """Resolve inbound approval responses before the next model call.
 
@@ -3702,17 +3704,19 @@ async def _resolve_approval_responses(
         key=lambda c: c.additional_properties.get("original_index", 0) if c.additional_properties else 0
     )
 
-    # if there are pending approval with a lower original_index. 
+    # if there are pending approval with a lower original_index.
     # we must hold back the current approval calls until earlier ones are resolved.
     if not allow_concurrent_invocation:
         pending_unanswered = _load_pending_approval_requests(invocation_session)
         if pending_unanswered:
-            min_pending_index = min ((
-                req.additional_properties.get("original_index",0)
-                for req in pending_unanswered.values()
-                if req.additional_properties and req.additional_properties.get("batch_id") is not None
-            ),
-            default=None)
+            min_pending_index = min(
+                (
+                    req.additional_properties.get("original_index", 0)
+                    for req in pending_unanswered.values()
+                    if req.additional_properties and req.additional_properties.get("batch_id") is not None
+                ),
+                default=None,
+            )
 
             # if we have pending request filter out any approved response that come after the earliest pending request
 
@@ -3720,16 +3724,44 @@ async def _resolve_approval_responses(
                 executable_now: list[Content] = []
                 held_back: list[Content] = []
                 for res in responses_to_execute:
-                    res_index = res.additional_properties.get("original_index",0) if res.additional_properties else 0
+                    res_index = res.additional_properties.get("original_index", 0) if res.additional_properties else 0
                     if res_index > min_pending_index:
                         held_back.append(res)
                     else:
                         executable_now.append(res)
 
                 if held_back:
-                    return _FunctionProcessingResult(errors_in_a_row=errors_in_a_row, action="return")
-                responses_to_execute = executable_now
+                    # Convert held-back approval responses back to approval requests
+                    from ._types import Content
 
+                    held_back_request: list[Content] = []
+                    for res in held_back:
+                        if res.function_call is not None and res.id is not None:
+                            req_id = res.additional_properties.get(_APPROVAL_REQUEST_ID_KEY, res.id)
+                            held_back_request.append(
+                                Content.from_function_approval_request(
+                                    id=req_id,
+                                    function_call=res.function_call,
+                                    additional_properties=res.additional_properties,
+                                )
+                            )
+
+                    # Store them as already-approved requests keyed by the visible pending approvals
+                    # so they are restored and executed when earlier approvals are answered.
+                    visible_pending = list(pending_unanswered.values())
+                    _store_already_approved_approval_requests(invocation_session, visible_pending, held_back_request)
+
+                    # Remove held-back responses from current execution path and pending dict
+                    for res in held_back:
+                        if res.id in pending_approval_responses:
+                            del pending_approval_responses[res.id]
+
+                    responses_to_execute = executable_now
+
+                    # If nothing is executable now, return to wait for earlier approvals
+                    if not responses_to_execute:
+                        _remove_unanswered_approval_batches_from_model_input(prepared_messages)
+                        return _FunctionProcessingResult(errors_in_a_row=errors_in_a_row, action="return")
 
     responses_not_granted = [
         response for response in pending_approval_responses.values() if not _is_approval_granted(response.approved)
@@ -4083,7 +4115,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             invocation_session=invocation_session,
             middleware_pipeline=middleware_pipeline,
             settle_dangling_calls=settle_approval_replay_calls,
-            allow_concurrent_invocation= self.function_invocation_configuration.get("allow_concurrent_invocation", True),
+            allow_concurrent_invocation=self.function_invocation_configuration.get("allow_concurrent_invocation", True),
         )
         function_call_messages.extend(approval_processing.response_messages)
         errors_in_a_row = approval_processing.errors_in_a_row
@@ -4268,7 +4300,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             invocation_session=invocation_session,
             middleware_pipeline=middleware_pipeline,
             settle_dangling_calls=settle_approval_replay_calls,
-            allow_concurrent_invocation= self.function_invocation_configuration.get("allow_concurrent_invocation", True),
+            allow_concurrent_invocation=self.function_invocation_configuration.get("allow_concurrent_invocation", True),
         )
         errors_in_a_row = approval_processing.errors_in_a_row
         total_function_calls = _record_function_calls(
