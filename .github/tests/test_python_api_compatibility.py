@@ -74,7 +74,11 @@ class ApiCompatibilityTests(unittest.TestCase):
         return self.run_git("rev-parse", "HEAD")
 
     def run_checker(
-        self, base_sha: str, *, acknowledged: bool = False
+        self,
+        base_sha: str,
+        *,
+        acknowledged: bool = False,
+        current_source: Path | None = None,
     ) -> subprocess.CompletedProcess[str]:
         summary_path = self.repo / "summary.md"
         command = [
@@ -85,6 +89,8 @@ class ApiCompatibilityTests(unittest.TestCase):
             "--repo",
             str(self.repo),
         ]
+        if current_source is not None:
+            command.extend(["--current-source", str(current_source)])
         if acknowledged:
             command.append("--acknowledge-breaking-changes")
         env = {**os.environ, "GITHUB_STEP_SUMMARY": str(summary_path)}
@@ -237,6 +243,85 @@ class ApiCompatibilityTests(unittest.TestCase):
         self.assertIn(
             "- Published API breakages: 0", (self.repo / "summary.md").read_text()
         )
+
+    def test_external_current_source_reports_repository_relative_path(self) -> None:
+        self.write_status([("agent-framework-stable", "stable", "released")])
+        self.write_module(
+            "stable",
+            "stable_api",
+            {"__init__.py": "def public_function(value): pass\n"},
+        )
+        base_sha = self.commit()
+
+        with tempfile.TemporaryDirectory() as current_dir:
+            current_source = Path(current_dir)
+            shutil.copytree(self.repo / "python", current_source / "python")
+            (
+                current_source
+                / "python"
+                / "packages"
+                / "stable"
+                / "stable_api"
+                / "__init__.py"
+            ).write_text("def public_function(): pass\n")
+
+            result = self.run_checker(base_sha, current_source=current_source)
+
+        self.assertEqual(result.returncode, 1)
+        warning = next(
+            line for line in result.stdout.splitlines() if line.startswith("::warning ")
+        )
+        self.assertIn(
+            "file=python/packages/stable/stable_api/__init__.py",
+            warning,
+        )
+        self.assertNotIn(str(current_source), warning)
+
+    def test_ignores_instance_values_but_reports_other_attribute_values(self) -> None:
+        self.write_status([("agent-framework-stable", "stable", "released")])
+        self.write_module(
+            "stable",
+            "stable_api",
+            {
+                "__init__.py": (
+                    "from enum import Enum\n\n"
+                    'PUBLIC_VALUE = "old"\n\n'
+                    "class PublicClass:\n"
+                    "    class_value: int = 1\n\n"
+                    "    instance_value: str\n\n"
+                    "    def __init__(self):\n"
+                    '        self.instance_value = "old"\n\n'
+                    "class PublicEnum(Enum):\n"
+                    "    MEMBER = 1\n"
+                )
+            },
+        )
+        base_sha = self.commit()
+        (self.repo / "python/packages/stable/stable_api/__init__.py").write_text(
+            "from enum import Enum\n\n"
+            'PUBLIC_VALUE = "new"\n\n'
+            "class PublicClass:\n"
+            "    class_value: int = 2\n\n"
+            "    instance_value: str\n\n"
+            "    def __init__(self):\n"
+            '        self.instance_value = "new"\n\n'
+            "class PublicEnum(Enum):\n"
+            "    MEMBER = 2\n"
+        )
+
+        result = self.run_checker(base_sha)
+
+        self.assertEqual(result.returncode, 1)
+        warnings = [
+            line for line in result.stdout.splitlines() if line.startswith("::warning ")
+        ]
+        self.assertEqual(len(warnings), 3)
+        self.assertTrue(any("PUBLIC_VALUE" in warning for warning in warnings))
+        self.assertTrue(
+            any("PublicClass.class_value" in warning for warning in warnings)
+        )
+        self.assertTrue(any("PublicEnum.MEMBER" in warning for warning in warnings))
+        self.assertFalse(any("instance_value" in warning for warning in warnings))
 
 
 if __name__ == "__main__":

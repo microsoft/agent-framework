@@ -21,12 +21,13 @@ jobs:
     name: Public API Compatibility
     runs-on: ubuntu-latest
     continue-on-error: true
+    timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: refs/pull/${{ github.event.pull_request.number }}/merge
-          fetch-depth: 0
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 1
           persist-credentials: false
 
       - name: Set up uv
@@ -39,10 +40,34 @@ jobs:
         working-directory: ${{ runner.temp }}
         env:
           BREAKING_CHANGE_ACKNOWLEDGED: ${{ contains(github.event.pull_request.labels.*.name, 'breaking change') }}
+          EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           UV_NO_CONFIG: "1"
         shell: bash
         run: |
-          BASE_SHA="$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD^1)"
+          git -C "$GITHUB_WORKSPACE" fetch \
+            --no-tags \
+            --no-recurse-submodules \
+            --depth=2 \
+            "https://github.com/$GITHUB_REPOSITORY.git" \
+            "refs/pull/$PR_NUMBER/merge"
+          MERGE_SHA="$(git -C "$GITHUB_WORKSPACE" rev-parse --verify 'FETCH_HEAD^{commit}')"
+          BASE_SHA="$(git -C "$GITHUB_WORKSPACE" rev-parse "$MERGE_SHA^1")"
+          HEAD_SHA="$(git -C "$GITHUB_WORKSPACE" rev-parse "$MERGE_SHA^2")"
+          if [[ "$HEAD_SHA" != "$EXPECTED_HEAD_SHA" ]]; then
+            echo "Fetched merge ref head $HEAD_SHA does not match event head $EXPECTED_HEAD_SHA." >&2
+            exit 1
+          fi
+
+          PR_SOURCE="$RUNNER_TEMP/pr-source"
+          mkdir "$PR_SOURCE"
+          git -C "$GITHUB_WORKSPACE" archive "$MERGE_SHA" python |
+            tar -x -C "$PR_SOURCE"
+          if [[ -n "$(find "$PR_SOURCE/python" -type l -print -quit)" ]]; then
+            echo "Refusing to analyze pull request source containing symbolic links." >&2
+            exit 1
+          fi
+
           git -C "$GITHUB_WORKSPACE" show "$BASE_SHA:.github/scripts/check_python_api_compatibility.py" \
             > "$RUNNER_TEMP/check_python_api_compatibility.py"
           git -C "$GITHUB_WORKSPACE" show "$BASE_SHA:python/pyproject.toml" \
@@ -66,6 +91,7 @@ jobs:
 
           args=(
             --base-sha "$BASE_SHA"
+            --current-source "$PR_SOURCE"
             --repo "$GITHUB_WORKSPACE"
           )
           if [[ "$BREAKING_CHANGE_ACKNOWLEDGED" == "true" ]]; then
