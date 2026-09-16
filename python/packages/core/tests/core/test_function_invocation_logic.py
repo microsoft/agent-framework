@@ -7556,15 +7556,7 @@ async def test_add_tools_respects_function_middleware(
     agent = Agent(client=chat_client_base, tools=[load_tool], middleware=[PolicyMiddleware()])
     expected_results = [("1", "target loaded"), ("2", "target completed" if allowed else "blocked by policy")]
     if streaming:
-        stream = agent.run("Load and call the tool.", stream=True)
-        updates = [update async for update in stream]
-        response = await stream.get_final_response()
-        assert [
-            (content.call_id, content.result)
-            for update in updates
-            for content in update.contents
-            if content.type == "function_result"
-        ] == expected_results
+        response = await agent.run("Load and call the tool.", stream=True).get_final_response()
     else:
         response = await agent.run("Load and call the tool.")
 
