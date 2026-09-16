@@ -734,7 +734,8 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
         string approvalRequestId = GetApprovalRequest(emittedRequests[1]).RequestId;
 
         ExternalInputResponse crossModeResponse = CreateFunctionResultResponse(
-            requestId: approvalRequestId,
+            request: emittedRequests[1],
+            expectedRequestId: approvalRequestId,
             callId: nonApprovalCallId,
             result: CrossModeResult);
 
@@ -792,7 +793,8 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
         Assert.NotNull(GetApprovalRequest(emittedRequests[1]));
 
         ExternalInputResponse nonApprovalResponse = CreateFunctionResultResponse(
-            requestId: nonApprovalCallId,
+            request: emittedRequests[0],
+            expectedRequestId: nonApprovalCallId,
             callId: nonApprovalCallId,
             result: NonApprovalResult);
 
@@ -1773,11 +1775,21 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
             .Single();
     }
 
-    private static ExternalInputResponse CreateFunctionResultResponse(string requestId, string callId, string result)
+    private static ExternalInputResponse CreateFunctionResultResponse(
+        ExternalInputRequest request,
+        string expectedRequestId,
+        string callId,
+        string result)
     {
-        return new ExternalInputResponse(
-            [new ChatMessage(ChatRole.Tool, [new FunctionResultContent(callId, result)])],
-            requestId);
+        RequestPort port = RequestPort.Create<ExternalInputRequest, ExternalInputResponse>("test-port");
+        ExternalRequest externalRequest = ExternalRequest.Create(port, request);
+        ExternalInputResponse response = new([new ChatMessage(ChatRole.Tool, [new FunctionResultContent(callId, result)])]);
+        ExternalResponse externalResponse = externalRequest.CreateResponse(response);
+
+        Assert.True(externalResponse.TryGetDataAs(out ExternalInputResponse? correlatedResponse));
+        Assert.NotNull(correlatedResponse);
+        Assert.Equal(expectedRequestId, correlatedResponse.RequestId);
+        return correlatedResponse;
     }
 
     private static Mock<IWorkflowContext> CreateMockWorkflowContext(List<ExternalInputRequest>? emittedRequests = null)

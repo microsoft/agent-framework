@@ -16,7 +16,10 @@ public sealed class ExternalInputResponse : IExternalResponseEnvelope
     /// </summary>
     public IList<ChatMessage> Messages { get; }
 
-    internal string? RequestId { get; }
+    /// <summary>
+    /// Gets the request id that produced this response, if available.
+    /// </summary>
+    public string? RequestId { get; init; }
 
     internal bool HasMessages => this.Messages?.Count > 0;
 

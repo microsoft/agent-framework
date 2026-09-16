@@ -1,1 +1,3 @@
 ﻿#nullable enable
+Microsoft.Agents.AI.Workflows.IExternalResponseEnvelope
+Microsoft.Agents.AI.Workflows.IExternalResponseEnvelope.WithRequestId(string! requestId) -> object!
