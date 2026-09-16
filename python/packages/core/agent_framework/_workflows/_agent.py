@@ -424,8 +424,7 @@ class WorkflowAgent(BaseAgent):
 
         # Build the final response from collected updates so after_run providers
         # (e.g. InMemoryHistoryProvider) can persist the response messages.
-        if all_updates:
-            session_context._response = AgentResponse.from_updates(all_updates)  # type: ignore[assignment]
+        session_context._response = AgentResponse.from_updates(all_updates)  # type: ignore[assignment]
 
         await self._run_after_providers(session=provider_session, context=session_context)
 
