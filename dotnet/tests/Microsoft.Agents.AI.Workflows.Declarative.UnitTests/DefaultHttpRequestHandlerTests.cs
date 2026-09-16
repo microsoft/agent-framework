@@ -370,6 +370,37 @@ public sealed class DefaultHttpRequestHandlerTests
     }
 
     [Fact]
+    public async Task SendAsyncOwnedClientDoesNotPersistResponseCookiesAcrossRequestsAsync()
+    {
+        // Arrange
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        await using CookieCaptureServer server = new();
+        await using DefaultHttpRequestHandler handler = new();
+        HttpRequestInfo victimRequest = new()
+        {
+            Method = "GET",
+            Url = server.SetCookieUrl,
+        };
+
+        HttpRequestInfo attackerRequest = new()
+        {
+            Method = "GET",
+            Url = server.ReadCookieUrl,
+        };
+
+        // Act
+        HttpRequestResult victimResult = await handler.SendAsync(victimRequest, cancellationToken);
+        HttpRequestResult attackerResult = await handler.SendAsync(attackerRequest, cancellationToken);
+        IReadOnlyList<string> requests = await server.ReadRequestsAsync(TimeSpan.FromSeconds(5));
+
+        // Assert
+        Assert.Equal("victim", victimResult.Body);
+        Assert.Equal("no-cookie", attackerResult.Body);
+        Assert.Equal(2, requests.Count);
+        Assert.DoesNotContain("Cookie: backend-session=victim-session", requests[1], StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task SendAsyncReturnsFailureStatusWithoutThrowingAsync()
     {
         // Arrange
@@ -1166,6 +1197,112 @@ public sealed class DefaultHttpRequestHandlerTests
                 this.RequestBodies.Add(null);
             }
             return await this._responseFactory(request, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private sealed class CookieCaptureServer : IAsyncDisposable
+    {
+        private const int ExpectedRequestCount = 2;
+
+        private readonly TcpListener _listener;
+        private readonly Task<List<string>> _requestsTask;
+
+        public CookieCaptureServer()
+        {
+            this._listener = new TcpListener(IPAddress.Loopback, 0);
+            this._listener.Start();
+            int port = ((IPEndPoint)this._listener.LocalEndpoint).Port;
+            string baseUrl = $"http://127.0.0.1:{port}";
+            this.SetCookieUrl = $"{baseUrl}/set-cookie";
+            this.ReadCookieUrl = $"{baseUrl}/read-cookie";
+            this._requestsTask = Task.Run(this.AcceptRequests);
+        }
+
+        public string SetCookieUrl { get; }
+
+        public string ReadCookieUrl { get; }
+
+        public async Task<IReadOnlyList<string>> ReadRequestsAsync(TimeSpan timeout)
+        {
+            Task completedTask = await Task.WhenAny(this._requestsTask, Task.Delay(timeout)).ConfigureAwait(false);
+            return completedTask == this._requestsTask
+                ? await this._requestsTask.ConfigureAwait(false)
+                : [];
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+#if NET
+            this._listener.Dispose();
+#else
+            this._listener.Stop();
+#endif
+            await this._requestsTask.ConfigureAwait(false);
+        }
+
+        private List<string> AcceptRequests()
+        {
+            List<string> requests = [];
+            try
+            {
+                for (int i = 0; i < ExpectedRequestCount; i++)
+                {
+                    using TcpClient client = this._listener.AcceptTcpClient();
+                    client.ReceiveTimeout = 1000;
+                    using NetworkStream stream = client.GetStream();
+                    string request = ReadRawRequest(stream);
+                    requests.Add(request);
+
+                    string body = request.Contains("Cookie: backend-session=victim-session", StringComparison.OrdinalIgnoreCase)
+                        ? "cookie-present"
+                        : request.StartsWith("GET /set-cookie ", StringComparison.Ordinal)
+                            ? "victim"
+                            : "no-cookie";
+
+                    string setCookieHeader = request.StartsWith("GET /set-cookie ", StringComparison.Ordinal)
+                        ? "Set-Cookie: backend-session=victim-session; Path=/\r\n"
+                        : string.Empty;
+
+                    byte[] responseBytes = Encoding.ASCII.GetBytes(
+                        $"HTTP/1.1 200 OK\r\nContent-Length: {body.Length}\r\n{setCookieHeader}Connection: close\r\n\r\n{body}");
+                    stream.Write(responseBytes, 0, responseBytes.Length);
+                }
+            }
+            catch (SocketException)
+            {
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+            catch (IOException)
+            {
+            }
+
+            return requests;
+        }
+
+        private static string ReadRawRequest(NetworkStream stream)
+        {
+            using MemoryStream rawRequest = new();
+            byte[] buffer = new byte[1024];
+
+            while (true)
+            {
+                int bytesRead = stream.Read(buffer, 0, buffer.Length);
+                if (bytesRead == 0)
+                {
+                    break;
+                }
+
+                rawRequest.Write(buffer, 0, bytesRead);
+                string currentRequest = Encoding.ASCII.GetString(rawRequest.ToArray());
+                if (currentRequest.Contains("\r\n\r\n", StringComparison.Ordinal))
+                {
+                    return currentRequest;
+                }
+            }
+
+            return Encoding.ASCII.GetString(rawRequest.ToArray());
         }
     }
 
