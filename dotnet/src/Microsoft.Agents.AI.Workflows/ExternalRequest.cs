@@ -93,9 +93,9 @@ public record ExternalRequest(RequestPortInfo PortInfo, string RequestId, Portab
         return new ExternalResponse(this.PortInfo, this.RequestId, new PortableValue(responseData));
     }
 
-    internal ExternalResponse RewrapResponse(ExternalResponse response)
+    internal ExternalResponse RewrapResponse(ExternalResponse response, Type responseType)
     {
-        return new ExternalResponse(this.PortInfo, this.RequestId, this.CorrelateResponseEnvelope(response.Data));
+        return new ExternalResponse(this.PortInfo, this.RequestId, this.CorrelateResponseEnvelope(response.Data, responseType));
     }
 
     [JsonInclude]
@@ -119,14 +119,20 @@ public record ExternalRequest(RequestPortInfo PortInfo, string RequestId, Portab
         return responseEnvelope.WithRequestId(this.GetInnerRequestContentId() ?? this.RequestId);
     }
 
-    private PortableValue CorrelateResponseEnvelope(PortableValue data)
+    private PortableValue CorrelateResponseEnvelope(PortableValue data, Type responseType)
     {
-        if (!data.Is(out IExternalResponseEnvelope? responseEnvelope))
+        if (data.Value is IExternalResponseEnvelope responseEnvelope)
+        {
+            return new PortableValue(responseEnvelope.WithRequestId(this.GetInnerRequestContentId() ?? this.RequestId));
+        }
+
+        if (!typeof(IExternalResponseEnvelope).IsAssignableFrom(responseType)
+            || data.AsType(responseType) is not IExternalResponseEnvelope deserializedResponseEnvelope)
         {
             return data;
         }
 
-        return new PortableValue(responseEnvelope.WithRequestId(this.GetInnerRequestContentId() ?? this.RequestId));
+        return new PortableValue(deserializedResponseEnvelope.WithRequestId(this.GetInnerRequestContentId() ?? this.RequestId));
     }
 
     private string? GetInnerRequestContentId()
