@@ -184,14 +184,19 @@ def _message_content_identity(message: dict[str, Any]) -> tuple[Any, ...]:
 def _append_unique_snapshot_messages(
     existing: list[dict[str, Any]],
     incoming: list[dict[str, Any]],
+    *,
+    content_dedupe_against: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Append resume-derived turns that are not already present in the seed.
 
-    Prefer id equality; when IDs differ (resume synthesizes a new id), fall back to a
-    count-aware role/content match so client-replayed turns are not persisted twice.
+    Prefer id equality against ``existing``. Role/content fallback is limited to
+    ``content_dedupe_against`` (confirmed client-replay overlap). When that list is
+    empty or omitted, identical replies across separate HITL turns on ``messages: []``
+    resumes are kept rather than collapsed against full thread history.
     """
     seen_ids = {message.get("id") for message in existing if message.get("id")}
-    remaining_content = Counter(_message_content_identity(message) for message in existing)
+    content_source = content_dedupe_against if content_dedupe_against is not None else []
+    remaining_content = Counter(_message_content_identity(message) for message in content_source)
     merged = list(existing)
     for message in incoming:
         message_id = message.get("id")
@@ -677,6 +682,9 @@ class AgentFrameworkWorkflow:
         run_id = str(input_data.get("run_id") or input_data.get("runId") or uuid.uuid4())
         snapshot_scope = cast(str | None, input_data.get(_SNAPSHOT_SCOPE_INPUT_KEY))
         raw_messages = list(cast(list[dict[str, Any]], input_data.get("messages", []) or []))
+        # Preserve the client-supplied transcript for content-only dedupe of HITL
+        # resume turns. Stored history is not a confirmed client-replay overlap.
+        client_request_messages = list(raw_messages)
         resume_payload = _extract_resume_payload(input_data)
         snapshot_session = await ThreadSnapshotSession.open(
             store=self.snapshot_store,
@@ -793,6 +801,7 @@ class AgentFrameworkWorkflow:
                 builder_seed_messages = _append_unique_snapshot_messages(
                     builder_seed_messages,
                     hitl_messages,
+                    content_dedupe_against=client_request_messages,
                 )
         snapshot_builder = _WorkflowSnapshotBuilder(builder_seed_messages) if snapshot_session.enabled else None
         if snapshot_builder is not None and effective_state:
