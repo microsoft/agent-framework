@@ -284,21 +284,29 @@ class ApiCompatibilityTests(unittest.TestCase):
             "stable_api",
             {
                 "__init__.py": (
+                    "from enum import Enum\n\n"
                     'PUBLIC_VALUE = "old"\n\n'
                     "class PublicClass:\n"
+                    "    class_value: int = 1\n\n"
                     "    instance_value: str\n\n"
                     "    def __init__(self):\n"
-                    '        self.instance_value = "old"\n'
+                    '        self.instance_value = "old"\n\n'
+                    "class PublicEnum(Enum):\n"
+                    "    MEMBER = 1\n"
                 )
             },
         )
         base_sha = self.commit()
         (self.repo / "python/packages/stable/stable_api/__init__.py").write_text(
+            "from enum import Enum\n\n"
             'PUBLIC_VALUE = "new"\n\n'
             "class PublicClass:\n"
+            "    class_value: int = 2\n\n"
             "    instance_value: str\n\n"
             "    def __init__(self):\n"
-            '        self.instance_value = "new"\n'
+            '        self.instance_value = "new"\n\n'
+            "class PublicEnum(Enum):\n"
+            "    MEMBER = 2\n"
         )
 
         result = self.run_checker(base_sha)
@@ -307,9 +315,13 @@ class ApiCompatibilityTests(unittest.TestCase):
         warnings = [
             line for line in result.stdout.splitlines() if line.startswith("::warning ")
         ]
-        self.assertEqual(len(warnings), 1)
-        self.assertIn("PUBLIC_VALUE", warnings[0])
-        self.assertNotIn("instance_value", warnings[0])
+        self.assertEqual(len(warnings), 3)
+        self.assertTrue(any("PUBLIC_VALUE" in warning for warning in warnings))
+        self.assertTrue(
+            any("PublicClass.class_value" in warning for warning in warnings)
+        )
+        self.assertTrue(any("PublicEnum.MEMBER" in warning for warning in warnings))
+        self.assertFalse(any("instance_value" in warning for warning in warnings))
 
 
 if __name__ == "__main__":

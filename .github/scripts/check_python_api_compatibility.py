@@ -233,6 +233,7 @@ def main() -> int:
                 if (
                     isinstance(breakage, AttributeChangedValueBreakage)
                     and "instance-attribute" in breakage.obj.labels
+                    and "class-attribute" not in breakage.obj.labels
                 ):
                     continue
 
