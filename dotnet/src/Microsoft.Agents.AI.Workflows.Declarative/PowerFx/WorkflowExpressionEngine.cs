@@ -341,7 +341,7 @@ internal sealed class WorkflowExpressionEngine
     {
         if (expression.VariableReference is { VariableName: string variableName })
         {
-            return this._state.GetSensitivity(variableName, expression.VariableReference.NamespaceAlias);
+            return GetReferenceSensitivity(expression.VariableReference.NamespaceAlias, variableName);
         }
 
         string? expressionText = expression.ExpressionText;
@@ -356,10 +356,15 @@ internal sealed class WorkflowExpressionEngine
         SensitivityLevel sensitivity = SensitivityLevel.None;
         foreach ((string? ScopeName, string VariableName) reference in GetVariableReferences(checkResult.Parse.Root))
         {
-            sensitivity = MaxSensitivity(sensitivity, this._state.GetSensitivity(reference.VariableName, reference.ScopeName));
+            sensitivity = MaxSensitivity(sensitivity, GetReferenceSensitivity(reference.ScopeName, reference.VariableName));
         }
 
         return sensitivity;
+
+        SensitivityLevel GetReferenceSensitivity(string? scopeName, string variableName) =>
+            scopeName is null && VariableScopeNames.IsValidName(variableName)
+                ? this._state.GetScopeSensitivity(variableName)
+                : this._state.GetSensitivity(variableName, scopeName);
     }
 
     private static IEnumerable<(string? ScopeName, string VariableName)> GetVariableReferences(TexlNode node)

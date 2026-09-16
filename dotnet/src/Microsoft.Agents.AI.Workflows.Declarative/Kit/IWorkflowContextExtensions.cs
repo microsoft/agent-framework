@@ -265,6 +265,26 @@ public static class IWorkflowContextExtensions
     }
 
     /// <summary>
+    /// Convert the variable value to the specified target type while preserving sensitivity metadata.
+    /// </summary>
+    /// <param name="context">The workflow execution context used to restore persisted state prior to formatting.</param>
+    /// <param name="targetType">Describes the target type for the value conversion.</param>
+    /// <param name="key">The key of the state value.</param>
+    /// <param name="scopeName">An optional name that specifies the scope to read. If null, the default scope is used.</param>
+    /// <param name="cancellationToken">A token that propagates notification when operation should be canceled.</param>
+    /// <returns>The converted value and its sensitivity metadata.</returns>
+    public static async ValueTask<EvaluationResult<object?>> ConvertValueWithSensitivityAsync(
+        this IWorkflowContext context,
+        VariableType targetType,
+        string key,
+        string? scopeName = null,
+        CancellationToken cancellationToken = default)
+    {
+        EvaluationResult<object?> sourceValue = await context.ReadStateWithSensitivityAsync<object>(key, scopeName, cancellationToken).ConfigureAwait(false);
+        return new(sourceValue.Value.ConvertType(targetType), sourceValue.Sensitivity);
+    }
+
+    /// <summary>
     /// Evaluate an expression using the workflow's declarative state.
     /// </summary>
     /// <typeparam name="TElement">The type of the list element.</typeparam>

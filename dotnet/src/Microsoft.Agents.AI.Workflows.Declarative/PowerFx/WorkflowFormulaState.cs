@@ -82,6 +82,18 @@ internal sealed class WorkflowFormulaState
         return scope.Sensitivities.TryGetValue(variableName, out SensitivityLevel sensitivity) ? sensitivity : SensitivityLevel.None;
     }
 
+    public SensitivityLevel GetScopeSensitivity(string scopeName)
+    {
+        if (!VariableScopeNames.IsValidName(scopeName))
+        {
+            return SensitivityLevel.None;
+        }
+
+        return this.GetScope(scopeName).Sensitivities.Values.Any(static sensitivity => sensitivity == SensitivityLevel.Sensitive)
+            ? SensitivityLevel.Sensitive
+            : SensitivityLevel.None;
+    }
+
     public void SetSensitivity(string variableName, string? scopeName, SensitivityLevel sensitivity) =>
         this.GetScope(scopeName ?? DefaultScopeName).Sensitivities[variableName] = sensitivity;
 

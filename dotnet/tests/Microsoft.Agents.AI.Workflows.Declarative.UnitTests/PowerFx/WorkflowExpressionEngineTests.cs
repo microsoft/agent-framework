@@ -152,6 +152,22 @@ public class WorkflowExpressionEngineTests : RecalcEngineTest
     }
 
     [Fact]
+    public void ValueExpressionGetValueForEnvironmentScopeIsSensitive()
+    {
+        // Arrange
+        this.State.Set("SOME_SECRET", FormulaValue.New("secret-value"), VariableScopeNames.Environment, SensitivityLevel.Sensitive);
+        this.State.Set("PUBLIC_VALUE", FormulaValue.New("public-value"), VariableScopeNames.Environment);
+        this.State.Bind();
+
+        // Act
+        EvaluationResult<DataValue> result = this.State.Evaluator.GetValue(ValueExpression.Expression("Env"));
+
+        // Assert
+        Assert.Equal(SensitivityLevel.Sensitive, result.Sensitivity);
+        Assert.NotNull(result.Value.ToObject());
+    }
+
+    [Fact]
     public void StringExpressionGetValueForComputedDottedAccessIsSensitive()
     {
         // Arrange

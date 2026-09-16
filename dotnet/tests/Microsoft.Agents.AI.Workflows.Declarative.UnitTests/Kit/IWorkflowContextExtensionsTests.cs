@@ -160,4 +160,24 @@ public sealed class IWorkflowContextExtensionsTests
         // Assert
         context.VerifyAll();
     }
+
+    [Fact]
+    public async Task ConvertValueWithSensitivityAsync_WithPlainContext_PreservesSensitivitySidecarAsync()
+    {
+        // Arrange
+        Mock<IWorkflowContext> context = new(MockBehavior.Loose);
+        context
+            .Setup(c => c.ReadStateAsync<object>("TestValue", VariableScopeNames.Local, default))
+            .Returns(new ValueTask<object?>("42"));
+        context
+            .Setup(c => c.ReadStateAsync<SensitivityLevel>("TestValue", WorkflowFormulaState.GetSensitivityScopeName(VariableScopeNames.Local), default))
+            .Returns(new ValueTask<SensitivityLevel>(SensitivityLevel.Sensitive));
+
+        // Act
+        EvaluationResult<object?> result = await context.Object.ConvertValueWithSensitivityAsync(typeof(decimal), "TestValue", VariableScopeNames.Local);
+
+        // Assert
+        Assert.Equal(42M, result.Value);
+        Assert.Equal(SensitivityLevel.Sensitive, result.Sensitivity);
+    }
 }
