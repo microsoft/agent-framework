@@ -52,7 +52,7 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
         }
 
         var originalFactory = aco.ChatClientFactory;
-        aco.ChatClientFactory = chatClient => new FunctionMiddlewarePreservingChatClient(chatClient, this).Build(originalFactory);
+        aco.ChatClientFactory = chatClient => FunctionMiddlewarePreservingChatClient.Build(chatClient, originalFactory, this);
 
         return aco;
     }
@@ -60,69 +60,66 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
     /// <summary>
     /// Preserves the function middleware chain when tools are added or replaced during a run.
     /// </summary>
-    private sealed class FunctionMiddlewarePreservingChatClient(IChatClient innerClient, FunctionInvocationDelegatingAgent middleware) : DelegatingChatClient(innerClient)
+    private sealed class FunctionMiddlewarePreservingChatClient(
+        IChatClient innerClient, FunctionInvocationDelegatingAgent[] middlewareChain) : DelegatingChatClient(innerClient)
     {
-        private static readonly AsyncLocal<MiddlewareScope?> s_currentScope = new();
-        private readonly FunctionInvocationDelegatingAgent _middleware = middleware;
+        private static readonly AsyncLocal<PipelineBuildScope?> s_buildScope = new();
+        private readonly FunctionInvocationDelegatingAgent[] _middlewareChain = middlewareChain;
 
-        internal IChatClient Build(Func<IChatClient, IChatClient>? originalFactory)
+        internal static FunctionMiddlewarePreservingChatClient Build(
+            IChatClient chatClient, Func<IChatClient, IChatClient>? originalFactory, FunctionInvocationDelegatingAgent middleware)
         {
-            var builder = this.AsBuilder();
-
-            if (originalFactory is not null)
+            var previous = s_buildScope.Value;
+            var scope = previous is not null && ReferenceEquals(previous.RunContext, CurrentRunContext)
+                ? previous
+                : new PipelineBuildScope(CurrentRunContext);
+            scope.Middleware.Insert(0, middleware);
+            s_buildScope.Value = scope;
+            try
             {
-                builder.Use(originalFactory);
-            }
+                var builder = chatClient.AsBuilder();
+                if (originalFactory is not null)
+                {
+                    builder.Use(originalFactory);
+                }
 
-            return builder.Build();
+                return new FunctionMiddlewarePreservingChatClient(builder.Build(), [.. scope.Middleware]);
+            }
+            finally
+            {
+                // Factory composition is synchronous; restore its construction scope before returning.
+                s_buildScope.Value = previous;
+            }
         }
 
         public override async Task<ChatResponse> GetResponseAsync(
             IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
-        {
-            var scope = this.CreateScope(s_currentScope.Value);
-            s_currentScope.Value = scope;
-            return await this.InnerClient.GetResponseAsync(messages, ConfigureOptions(options, scope), cancellationToken).ConfigureAwait(false);
-        }
+            => await this.InnerClient.GetResponseAsync(messages, this.ConfigureOptions(options), cancellationToken).ConfigureAwait(false);
 
         public override async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
             IEnumerable<ChatMessage> messages, ChatOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
-            var scope = this.CreateScope(s_currentScope.Value);
-            s_currentScope.Value = scope;
-            await foreach (var update in this.InnerClient.GetStreamingResponseAsync(messages, ConfigureOptions(options, scope), cancellationToken).ConfigureAwait(false))
+            await foreach (var update in this.InnerClient.GetStreamingResponseAsync(messages, this.ConfigureOptions(options), cancellationToken).ConfigureAwait(false))
             {
                 yield return update;
-
-                // Resume this request's scope after the consumer's execution context.
-                s_currentScope.Value = scope;
             }
         }
 
-        private MiddlewareScope CreateScope(MiddlewareScope? previous)
-        {
-            var runContext = CurrentRunContext;
-            // A nested agent run must not inherit the calling agent's callbacks.
-            return new(runContext, previous is not null && ReferenceEquals(previous.RunContext, runContext)
-                ? [.. previous.Middleware, this._middleware]
-                : [this._middleware]);
-        }
-
-        private static ChatOptions ConfigureOptions(ChatOptions? options, MiddlewareScope scope)
+        private ChatOptions ConfigureOptions(ChatOptions? options)
         {
             options = options?.Clone() ?? new();
             if (options.Tools is { } tools)
             {
-                options.Tools = new MiddlewareEnabledTools(tools, scope.Middleware);
+                options.Tools = new MiddlewareEnabledTools(tools, this._middlewareChain);
             }
 
             return options;
         }
 
-        private sealed class MiddlewareScope(AgentRunContext? runContext, FunctionInvocationDelegatingAgent[] middleware)
+        private sealed class PipelineBuildScope(AgentRunContext? runContext)
         {
             internal AgentRunContext? RunContext { get; } = runContext;
-            internal FunctionInvocationDelegatingAgent[] Middleware { get; } = middleware;
+            internal List<FunctionInvocationDelegatingAgent> Middleware { get; } = [];
         }
     }
 
@@ -173,6 +170,7 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
         FunctionInvocationDelegatingAgent middleware,
         FunctionInvocationDelegatingAgent[] middlewareChain) : DelegatingAIFunction(innerFunction)
     {
+        private static readonly AsyncLocal<InvocationScope?> s_invocationScope = new();
         private readonly FunctionInvocationDelegatingAgent _middleware = middleware;
         private readonly FunctionInvocationDelegatingAgent[] _middlewareChain = middlewareChain;
 
@@ -201,6 +199,18 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
                     CallContent = new(string.Empty, this.InnerFunction.Name, new Dictionary<string, object?>(arguments)),
                 };
 
+            var previous = s_invocationScope.Value;
+            for (var active = previous; active is not null; active = active.Parent)
+            {
+                if (ReferenceEquals(active.Context, context) && ReferenceEquals(active.Middleware, this._middleware))
+                {
+                    return await CoreLogicAsync(context, cancellationToken).ConfigureAwait(false);
+                }
+            }
+
+            // An opaque decorator can reach an already active callback for the same invocation.
+            s_invocationScope.Value = new(context, this._middleware, previous);
+
             // Function wrappers survive ChatOptions.Clone even when the middleware-aware collection does not.
             var middlewareChain = (context.Options?.Tools as MiddlewareEnabledTools)?.MiddlewareChain ?? this._middlewareChain;
             try
@@ -218,6 +228,14 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
 
             ValueTask<object?> CoreLogicAsync(FunctionInvocationContext ctx, CancellationToken cancellationToken)
                 => base.InvokeCoreAsync(ctx.Arguments, cancellationToken);
+        }
+
+        private sealed class InvocationScope(
+            FunctionInvocationContext context, FunctionInvocationDelegatingAgent middleware, InvocationScope? parent)
+        {
+            internal FunctionInvocationContext Context { get; } = context;
+            internal FunctionInvocationDelegatingAgent Middleware { get; } = middleware;
+            internal InvocationScope? Parent { get; } = parent;
         }
     }
 }

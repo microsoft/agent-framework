@@ -956,6 +956,235 @@ public sealed class FunctionInvocationDelegatingAgentTests
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RunAsync_ReplacingChatClientFactory_PreservesMiddlewareAsync(bool streaming)
+    {
+        // Arrange
+        var invocations = new List<string>();
+        var functionExecuted = false;
+        var function = AIFunctionFactory.Create(() =>
+        {
+            functionExecuted = true;
+            return "Function result";
+        }, "DynamicFunction");
+        var loader = AIFunctionFactory.Create(() =>
+        {
+            FunctionInvokingChatClient.CurrentContext!.Options!.Tools!.Add(function);
+            return "Function added";
+        }, "LoadFunction");
+        var responses = new Queue<ChatResponse>(
+        [
+            new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("load", loader.Name)])),
+            new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("invoke", function.Name)])),
+            new(new ChatMessage(ChatRole.Assistant, "Complete")),
+        ]);
+        using var replacement = new FunctionInvokingChatClient(CreateMockChatClient(responses).Object);
+        var originalClient = new Mock<IChatClient>();
+        var first = new ChatClientAgent(originalClient.Object, tools: [loader]).AsBuilder()
+            .Use((agent, context, next, cancellationToken) =>
+            {
+                invocations.Add($"First-{context.Function.Name}");
+                return next(context, cancellationToken);
+            }).Build();
+        var agent = first.AsBuilder().Use((agent, context, next, cancellationToken) =>
+        {
+            invocations.Add($"Second-{context.Function.Name}");
+            return context.Function.Name == function.Name
+                ? new ValueTask<object?>("Handled by middleware")
+                : next(context, cancellationToken);
+        }).Build();
+        var options = new ChatClientAgentRunOptions { ChatClientFactory = _ => replacement };
+
+        // Act
+        var response = streaming
+            ? await agent.RunStreamingAsync("Run", options: options).ToAgentResponseAsync()
+            : await agent.RunAsync("Run", options: options);
+
+        // Assert
+        Assert.Equal(["First-LoadFunction", "Second-LoadFunction", "First-DynamicFunction", "Second-DynamicFunction"], invocations);
+        Assert.False(functionExecuted);
+        Assert.Equal("Handled by middleware", response.Messages.SelectMany(m => m.Contents)
+            .OfType<FunctionResultContent>().Single(r => r.CallId == "invoke").Result);
+        Assert.Empty(responses);
+        originalClient.Verify(c => c.GetResponseAsync(
+            It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()), Times.Never);
+        originalClient.Verify(c => c.GetStreamingResponseAsync(
+            It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task RunAsync_IndependentCapturedClient_DoesNotInheritMiddlewareAsync(bool streaming, bool nestedStreaming)
+    {
+        // Arrange
+        var innerInvocations = new List<string>();
+        var captured = await CaptureClientAsync(innerInvocations);
+        using var innerClient = captured.Client;
+        var innerFunction = AIFunctionFactory.Create(() => "Inner result", "InnerFunction");
+        captured.Responses.Enqueue(new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("inner", innerFunction.Name)])));
+        captured.Responses.Enqueue(new(new ChatMessage(ChatRole.Assistant, "Complete")));
+        var outerFunction = AIFunctionFactory.Create(async () =>
+        {
+            var options = new ChatOptions { Tools = [innerFunction] };
+            if (nestedStreaming)
+            {
+                await foreach (var _ in innerClient.GetStreamingResponseAsync([new(ChatRole.User, "Inner")], options))
+                {
+                }
+            }
+            else
+            {
+                await innerClient.GetResponseAsync([new(ChatRole.User, "Inner")], options);
+            }
+
+            return "Outer result";
+        }, "OuterFunction");
+        var outerInvocations = new List<string>();
+        var responses = new Queue<ChatResponse>(
+        [
+            new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("outer", outerFunction.Name)])),
+            new(new ChatMessage(ChatRole.Assistant, "Complete")),
+        ]);
+        var agent = new ChatClientAgent(CreateMockChatClient(responses).Object, tools: [outerFunction]).AsBuilder()
+            .Use((agent, context, next, cancellationToken) =>
+            {
+                outerInvocations.Add(context.Function.Name);
+                return next(context, cancellationToken);
+            }).Build();
+
+        // Act
+        if (streaming)
+        {
+            await agent.RunStreamingAsync("Run").ToAgentResponseAsync();
+        }
+        else
+        {
+            await agent.RunAsync("Run");
+        }
+
+        // Assert
+        Assert.Equal([outerFunction.Name], outerInvocations);
+        Assert.Equal([innerFunction.Name], innerInvocations);
+        Assert.Empty(responses);
+        Assert.Empty(captured.Responses);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task RunAsync_OpaqueFunctionDecorator_DoesNotDuplicateMiddlewareAsync(bool streaming, bool invokeTwice)
+    {
+        // Arrange
+        var invocations = new List<string>();
+        var invocationCount = 0;
+        var replaced = false;
+        var function = AIFunctionFactory.Create(() => ++invocationCount, "TestFunction");
+        var responses = new Queue<ChatResponse>(
+        [
+            new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("first", function.Name)])),
+            new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("second", function.Name)])),
+            new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("third", function.Name)])),
+            new(new ChatMessage(ChatRole.Assistant, "Complete")),
+        ]);
+        var first = new ChatClientAgent(CreateMockChatClient(responses).Object, tools: [function]).AsBuilder()
+            .Use(async (agent, context, next, cancellationToken) =>
+            {
+                invocations.Add("First");
+                if (!replaced)
+                {
+                    replaced = true;
+                    context.Options!.Tools = [new OpaqueFunction(context.Function)];
+                }
+
+                var result = await next(context, cancellationToken);
+                return invokeTwice ? await next(context, cancellationToken) : result;
+            }).Build();
+        var agent = first.AsBuilder().Use((agent, context, next, cancellationToken) =>
+        {
+            invocations.Add("Second");
+            return next(context, cancellationToken);
+        }).Build();
+
+        // Act
+        if (streaming)
+        {
+            await agent.RunStreamingAsync("Run").ToAgentResponseAsync();
+        }
+        else
+        {
+            await agent.RunAsync("Run");
+        }
+
+        // Assert
+        string[] expectedPerInvocation = invokeTwice ? ["First", "Second", "Second"] : ["First", "Second"];
+        Assert.Equal(Enumerable.Range(0, 3).SelectMany(_ => expectedPerInvocation), invocations);
+        Assert.Equal(invokeTwice ? 6 : 3, invocationCount);
+        Assert.Empty(responses);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ChatClient_FailedFactory_DoesNotLeakMiddlewareAsync(bool returnsNull)
+    {
+        // Arrange
+        var invocations = new List<string>();
+        var function = AIFunctionFactory.Create(() => "Function result", "TestFunction");
+        var responses = new Queue<ChatResponse>(
+        [
+            new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("invoke", function.Name)])),
+            new(new ChatMessage(ChatRole.Assistant, "Complete")),
+        ]);
+        using var client = new FunctionInvokingChatClient(CreateMockChatClient(responses).Object);
+        var expectedFailure = new InvalidOperationException("Factory failed");
+        var failingFactory = await CaptureFactoryAsync("Failed", _ => returnsNull ? null! : throw expectedFailure);
+        var successfulFactory = await CaptureFactoryAsync("Successful", null);
+
+        // Act
+        if (returnsNull)
+        {
+            Assert.Throws<InvalidOperationException>(() => failingFactory(client));
+        }
+        else
+        {
+            Assert.Same(expectedFailure, Assert.Throws<InvalidOperationException>(() => failingFactory(client)));
+        }
+
+        using var pipeline = successfulFactory(client);
+        await pipeline.GetResponseAsync([new(ChatRole.User, "Run")], new ChatOptions { Tools = [function] });
+
+        // Assert
+        Assert.Equal(["Successful"], invocations);
+        Assert.Empty(responses);
+
+        async Task<Func<IChatClient, IChatClient>> CaptureFactoryAsync(string name, Func<IChatClient, IChatClient>? factory)
+        {
+            Func<IChatClient, IChatClient>? capturedFactory = null;
+            var capturingAgent = new AnonymousDelegatingAIAgent(
+                new ChatClientAgent(client),
+                (messages, session, options, agent, cancellationToken) =>
+                {
+                    capturedFactory = Assert.IsType<ChatClientAgentRunOptions>(options).ChatClientFactory;
+                    return Task.FromResult(new AgentResponse(new ChatMessage(ChatRole.Assistant, "Captured")));
+                },
+                runStreamingFunc: null);
+            var agent = capturingAgent.AsBuilder().Use((agent, context, next, cancellationToken) =>
+            {
+                invocations.Add(name);
+                return next(context, cancellationToken);
+            }).Build();
+            await agent.RunAsync("Capture", options: new ChatClientAgentRunOptions { ChatClientFactory = factory });
+            return Assert.IsType<Func<IChatClient, IChatClient>>(capturedFactory);
+        }
+    }
+
+    [Theory]
     [InlineData(false, "Completed")]
     [InlineData(false, "Faulted")]
     [InlineData(false, "Canceled")]
@@ -1060,24 +1289,6 @@ public sealed class FunctionInvocationDelegatingAgentTests
             Assert.Equal(++secondRequestCount, secondInvocations.Count);
             Assert.All(secondInvocations, name => Assert.Equal(secondFunction.Name, name));
             Assert.Same(callerContext, AIAgent.CurrentRunContext);
-        }
-
-        static async Task<(IChatClient Client, Mock<IChatClient> Mock, Queue<ChatResponse> Responses)> CaptureClientAsync(List<string> invocations)
-        {
-            var responses = new Queue<ChatResponse>([new(new ChatMessage(ChatRole.Assistant, "Initialized"))]);
-            var mock = CreateMockChatClient(responses);
-            IChatClient? capturedClient = null;
-            var agent = new ChatClientAgent(mock.Object).AsBuilder()
-                .Use((agent, context, next, cancellationToken) =>
-                {
-                    invocations.Add(context.Function.Name);
-                    return next(context, cancellationToken);
-                }).Build();
-            await agent.RunAsync("Initialize", options: new ChatClientAgentRunOptions
-            {
-                ChatClientFactory = client => capturedClient = client,
-            });
-            return (Assert.IsAssignableFrom<IChatClient>(capturedClient), mock, responses);
         }
 
         static async IAsyncEnumerable<ChatResponseUpdate> FailingResponseAsync(Exception exception)
@@ -1851,6 +2062,37 @@ public sealed class FunctionInvocationDelegatingAgentTests
     }
 
     #endregion
+
+    private static async Task<(IChatClient Client, Mock<IChatClient> Mock, Queue<ChatResponse> Responses)> CaptureClientAsync(List<string> invocations)
+    {
+        var responses = new Queue<ChatResponse>([new(new ChatMessage(ChatRole.Assistant, "Initialized"))]);
+        var mock = CreateMockChatClient(responses);
+        IChatClient? capturedClient = null;
+        var capturingAgent = new AnonymousDelegatingAIAgent(
+            new ChatClientAgent(mock.Object),
+            (messages, session, options, innerAgent, cancellationToken) =>
+            {
+                var runOptions = Assert.IsType<ChatClientAgentRunOptions>(options?.Clone());
+                var factory = Assert.IsType<Func<IChatClient, IChatClient>>(runOptions.ChatClientFactory);
+                runOptions.ChatClientFactory = client => capturedClient = factory(client);
+                return innerAgent.RunAsync(messages, session, runOptions, cancellationToken);
+            },
+            runStreamingFunc: null);
+        var agent = capturingAgent.AsBuilder()
+            .Use((agent, context, next, cancellationToken) =>
+            {
+                invocations.Add(context.Function.Name);
+                return next(context, cancellationToken);
+            }).Build();
+        await agent.RunAsync("Initialize");
+        return (Assert.IsAssignableFrom<IChatClient>(capturedClient), mock, responses);
+    }
+
+    private sealed class OpaqueFunction(AIFunction innerFunction) : DelegatingAIFunction(innerFunction)
+    {
+        public override object? GetService(Type serviceType, object? serviceKey = null)
+            => serviceKey is null && serviceType.IsInstanceOfType(this) ? this : null;
+    }
 
     private static Mock<IChatClient> CreateMockChatClient(Queue<ChatResponse> responses)
     {
