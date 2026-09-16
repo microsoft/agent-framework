@@ -135,7 +135,7 @@ public static class IWorkflowContextExtensions
         }
 
         string plainScopeName = scopeName ?? WorkflowFormulaState.DefaultScopeName;
-        TValue? value = await context.ReadStateAsync<TValue>(key, scopeName, cancellationToken).ConfigureAwait(false);
+        TValue? value = await context.ReadStateAsync<TValue>(key, plainScopeName, cancellationToken).ConfigureAwait(false);
         SensitivityLevel sensitivity = ShouldPersistSensitivity(plainScopeName)
             ? await context.ReadStateAsync<SensitivityLevel>(key, WorkflowFormulaState.GetSensitivityScopeName(plainScopeName), cancellationToken).ConfigureAwait(false)
             : SensitivityLevel.None;
