@@ -44,13 +44,13 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
     }
 
     /// <summary>
-    /// Existing scalar representations and outputs, for both LF and CRLF skill files.
+    /// Existing scalar representations with metadata before or after them, with and without duplicate metadata.
     /// </summary>
-    public static TheoryData<string, string, string> ExistingScalarFormats
+    public static TheoryData<string, string, string, bool, bool> ExistingScalarFormats
     {
         get
         {
-            var data = new TheoryData<string, string, string>();
+            var data = new TheoryData<string, string, string, bool, bool>();
             // Pin the existing lightweight parser's output, not full YAML conformance.
             (string Value, string Expected)[] cases =
             [
@@ -75,6 +75,57 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
                 ("|-\n  Read\n\n  files", "Read\n\nfiles"),
                 ("|-\n  Read\n    indented\n  files", "Read\n  indented\nfiles"),
                 ("|-\n  description: text\n  Description: text", "description: text\nDescription: text"),
+            ];
+            foreach (var (value, expected) in cases)
+            {
+                foreach (string newline in new[] { "\n", "\r\n" })
+                {
+                    foreach (bool metadataFirst in new[] { false, true })
+                    {
+                        data.Add(value, expected, newline, metadataFirst, false);
+                        data.Add(value, expected, newline, metadataFirst, true);
+                    }
+                }
+            }
+
+            return data;
+        }
+    }
+
+    /// <summary>
+    /// Existing metadata scalar outputs, including the lightweight parser's incomplete YAML normalization.
+    /// </summary>
+    public static TheoryData<string, string, string> ExistingMetadataScalarFormats
+    {
+        get
+        {
+            var data = new TheoryData<string, string, string>();
+            (string Value, string Expected)[] cases =
+            [
+                ("First", "First"),
+                ("'First'", "First"),
+                ("\"First\"", "First"),
+                ("\"  First  \"", "  First  "),
+                ("\"Use #tags: safely\"", "Use #tags: safely"),
+                ("\"Use 'quotes' safely\"", "Use 'quotes' safely"),
+                ("'Use \"quotes\" safely'", "Use \"quotes\" safely"),
+                ("''", "''"),
+                ("\"\"", "\"\""),
+                ("\"\\n\"", "\\n"),
+                ("'It''s fine'", "It''s fine"),
+                ("\n    First", "First"),
+                ("\n    'First'", "First"),
+                ("\n    \"First\"", "First"),
+                ("First\n    Second", "First"),
+                ("\"First\n    Second\"", "\"First"),
+                ("'First\n    Second'", "'First"),
+                ("|\n    First\n    Second", "|"),
+                ("|-\n    First\n    Second", "|-"),
+                ("|+\n    First\n    Second", "|+"),
+                (">\n    First\n    Second", ">"),
+                (">-\n    First\n    Second", ">-"),
+                (">+\n    First\n    Second", ">+"),
+                ("\n    |-\n      First\n      Second", "|-"),
             ];
             foreach (var (value, expected) in cases)
             {
@@ -112,15 +163,62 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         }
     }
 
+    /// <summary>
+    /// Duplicate metadata values and case-insensitive key collisions, with LF and CRLF.
+    /// </summary>
+    public static TheoryData<string, string, string, string, string, string> DuplicateMetadataEntries
+    {
+        get
+        {
+            var data = new TheoryData<string, string, string, string, string, string>();
+            (string Key, string DuplicateKey, string Value, string DuplicateValue, string Expected)[] cases =
+            [
+                ("author", "author", "First", "Second", "First"),
+                ("Author", "Author", "'First'", "\"Second\"", "First"),
+                ("author", "author", "\"First\"", "'Second'", "First"),
+                ("author", "author", "Same", "Same", "Same"),
+                ("author", "author", "''", "Second", "''"),
+                ("author", "author", "\"\"", "Second", "\"\""),
+                ("author", "author", "\"  First  \"", "Second", "  First  "),
+                ("author", "author", "0", "Second", "0"),
+                ("description", "description", "First", "Second", "First"),
+                ("metadata", "metadata", "First", "Second", "First"),
+                ("vendor-key", "vendor-key", "First", "Second", "First"),
+                ("vendor_key", "vendor_key", "First", "Second", "First"),
+                ("author", "Author", "First", "Second", "First"),
+                ("Author", "author", "First", "Second", "First"),
+                ("author", "AUTHOR", "First", "Second", "First"),
+                ("description", "Description", "First", "Second", "First"),
+                ("metadata", "Metadata", "First", "Second", "First"),
+                ("vendor-key", "Vendor-Key", "First", "Second", "First"),
+                ("author", "author", "\n    'First'", "Second", "First"),
+                ("author", "Author", "First", "\n    \"Second\"", "First"),
+                ("author", "author", "\"author: First\"", "Second", "author: First"),
+                ("author", "author", "First\n  # author: Not a field", "Second", "First"),
+                ("author", "author", "|-\n    First\n    paragraph", "Second", "|-"),
+                ("author", "Author", "First", ">-\n    Second\n    paragraph", "First"),
+                ("author", "author", ">\n    First\n    paragraph", "|\n    Second\n    paragraph", ">"),
+            ];
+            foreach (var (key, duplicateKey, value, duplicateValue, expected) in cases)
+            {
+                data.Add(key, duplicateKey, value, duplicateValue, expected, "\n");
+                data.Add(key, duplicateKey, value, duplicateValue, expected, "\r\n");
+            }
+
+            return data;
+        }
+    }
+
     [Theory]
     [MemberData(nameof(ExistingScalarFormats))]
-    public async Task GetSkillsAsync_ExistingScalarFormats_PreservedAsync(string value, string expected, string newline)
+    public async Task GetSkillsAsync_ExistingScalarFormats_PreservedAsync(
+        string value, string expected, string newline, bool metadataFirst, bool duplicateMetadata)
     {
         // Arrange
-        string content =
-            $"---\nname: test-skill\ndescription: {value}\n" +
-            "license: 'MIT'\ncompatibility: Any runtime\nallowed-tools: read\n" +
-            "metadata:\n  author: test\n---\nBody.";
+        string fields = $"name: test-skill\ndescription: {value}\n" +
+            "license: 'MIT'\ncompatibility: Any runtime\nallowed-tools: read\n";
+        string metadata = "metadata:\n  author: test\n" + (duplicateMetadata ? "  author: Ignored\n" : "");
+        string content = "---\n" + (metadataFirst ? metadata + fields : fields + metadata) + "---\nBody.";
         _ = this.CreateSkillDirectoryWithRawContent("test-skill", content.Replace("\n", newline));
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
@@ -135,6 +233,43 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         Assert.Equal("read", frontmatter.AllowedTools);
         Assert.NotNull(frontmatter.Metadata);
         Assert.Equal("test", frontmatter.Metadata["author"]);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExistingMetadataScalarFormats))]
+    public async Task GetSkillsAsync_ExistingMetadataScalarFormats_PreservedAsync(string value, string expected, string newline)
+    {
+        // Arrange
+        string content =
+            "---\nname: test-skill\ndescription: Read files\n" +
+            $"metadata:\n  author: {value}\n  version: '1.0'\nlicense: MIT\n---\nBody.";
+        _ = this.CreateSkillDirectoryWithRawContent("test-skill", content.Replace("\n", newline));
+        var logger = new Mock<ILogger>();
+        logger.Setup(l => l.IsEnabled(It.IsAny<LogLevel>())).Returns(true);
+        var loggerFactory = new Mock<ILoggerFactory>();
+        loggerFactory.Setup(f => f.CreateLogger(It.IsAny<string>())).Returns(logger.Object);
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor, loggerFactory: loggerFactory.Object);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert - preserve existing scalar parsing rather than expanding YAML support.
+        var skill = Assert.Single(skills);
+        Assert.Equal("Read files", skill.Frontmatter.Description);
+        Assert.Equal("MIT", skill.Frontmatter.License);
+        Assert.NotNull(skill.Frontmatter.Metadata);
+        Assert.Equal(2, skill.Frontmatter.Metadata.Count);
+        Assert.Equal(expected, skill.Frontmatter.Metadata["author"]);
+        Assert.Equal("1.0", skill.Frontmatter.Metadata["version"]);
+        Assert.Contains("Body.", await skill.GetContentAsync());
+        logger.Verify(
+            l => l.Log(
+                It.Is<LogLevel>(level => level >= LogLevel.Warning),
+                It.IsAny<EventId>(),
+                It.IsAny<It.IsAnyType>(),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Never);
     }
 
     [Theory]
@@ -172,7 +307,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
     }
 
     [Fact]
-    public async Task GetSkillsAsync_NestedMetadataAndUnknownFields_KeepExistingBehaviorAsync()
+    public async Task GetSkillsAsync_NestedMetadataAndUnknownFields_KeepsFirstMetadataValueAsync()
     {
         // Arrange
         const string Content =
@@ -191,8 +326,59 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         Assert.Equal("Read files", frontmatter.Description);
         Assert.NotNull(frontmatter.Metadata);
         Assert.Equal(2, frontmatter.Metadata.Count);
-        Assert.Equal("Second", frontmatter.Metadata["author"]);
+        Assert.Equal("First", frontmatter.Metadata["author"]);
         Assert.Equal("Nested text", frontmatter.Metadata["Description"]);
+    }
+
+    [Theory]
+    [MemberData(nameof(DuplicateMetadataEntries))]
+    public async Task GetSkillsAsync_DuplicateMetadata_KeepsFirstValueAndLogsWarningAsync(
+        string key,
+        string duplicateKey,
+        string value,
+        string duplicateValue,
+        string expected,
+        string newline)
+    {
+        // Arrange
+        string content =
+            "---\nname: test-skill\ndescription: Read files\nmetadata:\n" +
+            $"  {key}: {value}\n  other: Preserved\n  {duplicateKey}: {duplicateValue}\n" +
+            $"  {duplicateKey}: Third\n  tail: Retained\nlicense: MIT\n---\nBody.";
+        _ = this.CreateSkillDirectoryWithRawContent("test-skill", content.Replace("\n", newline));
+        var logger = new Mock<ILogger>();
+        logger.Setup(l => l.IsEnabled(It.IsAny<LogLevel>())).Returns(true);
+        var loggerFactory = new Mock<ILoggerFactory>();
+        loggerFactory.Setup(f => f.CreateLogger(It.IsAny<string>())).Returns(logger.Object);
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor, loggerFactory: loggerFactory.Object);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        var skill = Assert.Single(skills);
+        var frontmatter = skill.Frontmatter;
+        Assert.Equal("Read files", frontmatter.Description);
+        Assert.Equal("MIT", frontmatter.License);
+        Assert.Contains("Body.", await skill.GetContentAsync());
+        Assert.NotNull(frontmatter.Metadata);
+        Assert.Equal(3, frontmatter.Metadata.Count);
+        Assert.Equal(expected, frontmatter.Metadata[key]);
+        Assert.Equal(expected, frontmatter.Metadata[duplicateKey]);
+        Assert.Equal("Preserved", frontmatter.Metadata["other"]);
+        Assert.Equal("Retained", frontmatter.Metadata["tail"]);
+        Assert.Equal(key, Assert.Single(frontmatter.Metadata.Keys, k => string.Equals(k, key, StringComparison.OrdinalIgnoreCase)));
+        string diagnostic = $"duplicate metadata key '{duplicateKey}'; keeping the first value";
+        logger.Verify(
+            l => l.Log(
+                LogLevel.Warning,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((state, _) =>
+                    state.ToString()!.IndexOf("SKILL.md", StringComparison.Ordinal) >= 0 &&
+                    state.ToString()!.IndexOf(diagnostic, StringComparison.Ordinal) >= 0),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Exactly(2));
     }
 
     [Theory]

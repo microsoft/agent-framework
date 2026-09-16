@@ -23,6 +23,8 @@ namespace Microsoft.Agents.AI;
 /// Searches directories recursively (up to 2 levels deep) for SKILL.md files.
 /// Symbolic links and reparse points below configured roots are not followed during skill discovery.
 /// Recognized top-level frontmatter fields must use lowercase names and must not be repeated.
+/// Within the optional metadata mapping, keys are compared case-insensitively. The first
+/// value is retained for duplicate keys, and subsequent entries produce warnings without rejecting the skill.
 /// Resource and script files are discovered by scanning the skill
 /// directory for files with matching extensions. Invalid resources are skipped with logged warnings.
 /// Resource and script paths are checked against path traversal and symlink escape attacks.
@@ -307,7 +309,14 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
             metadata = [];
             foreach (Match kvMatch in s_yamlIndentedKeyValueRegex.Matches(metadataMatch.Groups[1].Value))
             {
-                metadata[kvMatch.Groups[1].Value] = kvMatch.Groups[2].Success ? kvMatch.Groups[2].Value : kvMatch.Groups[3].Value;
+                string key = kvMatch.Groups[1].Value;
+                string value = kvMatch.Groups[2].Success ? kvMatch.Groups[2].Value : kvMatch.Groups[3].Value;
+
+                // Keep the first value and key spelling using the dictionary's case-insensitive comparison.
+                if (!metadata.TryAdd(key, value))
+                {
+                    LogDuplicateMetadataKey(this._logger, skillFilePath, key);
+                }
             }
         }
 
@@ -759,6 +768,9 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
 
     [LoggerMessage(LogLevel.Error, "SKILL.md at '{SkillFilePath}' contains duplicate frontmatter field '{FieldName}'")]
     private static partial void LogDuplicateFrontmatterField(ILogger logger, string skillFilePath, string fieldName);
+
+    [LoggerMessage(LogLevel.Warning, "SKILL.md at '{SkillFilePath}' contains duplicate metadata key '{Key}'; keeping the first value")]
+    private static partial void LogDuplicateMetadataKey(ILogger logger, string skillFilePath, string key);
 
     [LoggerMessage(LogLevel.Error, "SKILL.md at '{SkillFilePath}' uses incorrectly cased frontmatter field '{FieldName}'; expected '{ExpectedFieldName}'")]
     private static partial void LogIncorrectlyCasedFrontmatterField(ILogger logger, string skillFilePath, string fieldName, string expectedFieldName);

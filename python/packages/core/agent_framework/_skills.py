@@ -701,7 +701,9 @@ class SkillFrontmatter:
         compatibility: Optional compatibility information (≤500 characters).
         allowed_tools: Optional space-delimited pre-approved tool names.
         metadata: Optional arbitrary key-value pairs (shallow-copied on
-            construction to avoid caller-owned dict aliasing).
+            construction to avoid caller-owned dict aliasing). Keys are case-sensitive.
+            When parsed from a SKILL.md file, exact duplicate keys retain the first
+            value and produce warnings without rejecting the skill.
     """
 
     def __init__(
@@ -3621,7 +3623,9 @@ class FileSkillsSource(SkillsSource):
         `agentskills.io specification <https://agentskills.io/specification>`_
         fields: ``name``, ``description``, ``license``, ``compatibility``,
         ``allowed-tools``, and ``metadata``. Recognized top-level fields must
-        use lowercase names and must not be repeated.
+        use lowercase names and must not be repeated. Within the optional
+        metadata mapping, keys are case-sensitive; exact duplicates retain
+        the first value and produce warnings without rejecting the skill.
 
         Args:
             content: Raw text content of the SKILL.md file.
@@ -3687,6 +3691,14 @@ class FileSkillsSource(SkillsSource):
             metadata = {}
             for kv_match in YAML_INDENTED_KV_RE.finditer(metadata_match.group(1)):
                 mk = kv_match.group(1)
+                # Keep the first value for an exact key match; differently cased keys remain distinct.
+                if mk in metadata:
+                    logger.warning(
+                        "SKILL.md at '%s' contains duplicate metadata key '%s'; keeping the first value",
+                        skill_file_path,
+                        mk,
+                    )
+                    continue
                 mv = kv_match.group(2) if kv_match.group(2) is not None else kv_match.group(3)
                 metadata[mk] = mv
 

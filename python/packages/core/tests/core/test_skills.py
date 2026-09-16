@@ -627,7 +627,84 @@ class TestTryParseSkillDocument:
         )
         assert diagnostic in caplog.text
 
-    def test_nested_metadata_and_unknown_fields_keep_existing_behavior(self) -> None:
+    @pytest.mark.parametrize("newline", ("\n", "\r\n"))
+    @pytest.mark.parametrize(
+        ("key", "first_value", "second_value", "expected"),
+        (
+            ("author", "First", "Second", "First"),
+            ("Author", "'First'", '"Second"', "First"),
+            ("author", '"First"', "'Second'", "First"),
+            ("author", "Same", "Same", "Same"),
+            ("author", "''", "Second", "''"),
+            ("author", '""', "Second", '""'),
+            ("author", '"  First  "', "Second", "  First  "),
+            ("author", "0", "Second", "0"),
+            ("description", "First", "Second", "First"),
+            ("metadata", "First", "Second", "First"),
+            ("vendor-key", "First", "Second", "First"),
+            ("vendor_key", "First", "Second", "First"),
+            ("author", "\n    'First'", "Second", "First"),
+            ("author", "First", '\n    "Second"', "First"),
+            ("author", '"author: First"', "Second", "author: First"),
+            ("author", "First\n  # author: Not a field", "Second", "First"),
+            ("author", "|-\n    First\n    paragraph", "Second", "|-"),
+            ("author", "First", ">-\n    Second\n    paragraph", "First"),
+            ("author", ">\n    First\n    paragraph", "|\n    Second\n    paragraph", ">"),
+        ),
+    )
+    def test_duplicate_metadata_keeps_first_value_and_warns(
+        self,
+        newline: str,
+        key: str,
+        first_value: str,
+        second_value: str,
+        expected: str,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        content = (
+            "---\nname: test-skill\ndescription: Read files\nmetadata:\n"
+            f"  {key}: {first_value}\n  other: Preserved\n  {key}: {second_value}\n"
+            f"  {key}: Third\n  tail: Retained\nlicense: MIT\n---\nBody."
+        ).replace("\n", newline)
+
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+
+        assert result is not None
+        assert result.description == "Read files"
+        assert result.license == "MIT"
+        assert result.metadata == {key: expected, "other": "Preserved", "tail": "Retained"}
+        assert [(record.levelname, record.getMessage()) for record in caplog.records] == [
+            ("WARNING", f"SKILL.md at 'test.md' contains duplicate metadata key '{key}'; keeping the first value")
+        ] * 2
+
+    @pytest.mark.parametrize("newline", ("\n", "\r\n"))
+    @pytest.mark.parametrize(
+        ("first_key", "second_key"),
+        (
+            ("author", "Author"),
+            ("Author", "author"),
+            ("author", "AUTHOR"),
+            ("description", "Description"),
+            ("metadata", "Metadata"),
+            ("vendor-key", "Vendor-Key"),
+        ),
+    )
+    def test_metadata_keys_are_case_sensitive(
+        self, newline: str, first_key: str, second_key: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        content = (
+            "---\nname: test-skill\ndescription: Read files\nmetadata:\n"
+            f"  {first_key}: First\n  {second_key}: Second\n---\nBody."
+        ).replace("\n", newline)
+
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+
+        assert result is not None
+        assert result.description == "Read files"
+        assert result.metadata == {first_key: "First", second_key: "Second"}
+        assert not caplog.records
+
+    def test_nested_metadata_keeps_first_value_and_unknown_fields_are_ignored(self) -> None:
         content = (
             "---\nname: test-skill\ndescription: Read files\n"
             "# description: Not a field\n"
@@ -639,7 +716,7 @@ class TestTryParseSkillDocument:
 
         assert result is not None
         assert result.description == "Read files"
-        assert result.metadata == {"author": "Second", "Description": "Nested text"}
+        assert result.metadata == {"author": "First", "Description": "Nested text"}
 
     @pytest.mark.parametrize("value", ("''", '""'))
     def test_empty_quoted_optional_values_keep_existing_representation(self, value: str) -> None:
@@ -673,6 +750,8 @@ class TestTryParseSkillDocument:
 class TestDiscoverAndLoadSkills:
     """Tests for file skill discovery via FileSkillsSource.get_skills()."""
 
+    @pytest.mark.parametrize("metadata_first", (False, True))
+    @pytest.mark.parametrize("duplicate_metadata", (False, True))
     @pytest.mark.parametrize("newline", ("\n", "\r\n"))
     @pytest.mark.parametrize(
         ("value", "expected"),
@@ -701,14 +780,14 @@ class TestDiscoverAndLoadSkills:
         ),
     )
     async def test_existing_scalar_formats_preserved(
-        self, tmp_path: Path, newline: str, value: str, expected: str
+        self, tmp_path: Path, newline: str, value: str, expected: str, metadata_first: bool, duplicate_metadata: bool
     ) -> None:
         # Pin the existing lightweight parser's output, not full YAML conformance.
-        content = (
-            f"---\nname: test-skill\ndescription: {value}\n"
-            "license: 'MIT'\ncompatibility: Any runtime\nallowed-tools: read\n"
-            "metadata:\n  author: test\n---\nBody."
+        fields = (
+            f"name: test-skill\ndescription: {value}\nlicense: 'MIT'\ncompatibility: Any runtime\nallowed-tools: read\n"
         )
+        metadata = "metadata:\n  author: test\n" + ("  author: Ignored\n" if duplicate_metadata else "")
+        content = "---\n" + (metadata + fields if metadata_first else fields + metadata) + "---\nBody."
         skill_dir = tmp_path / "test-skill"
         skill_dir.mkdir()
         (skill_dir / "SKILL.md").write_bytes(content.replace("\n", newline).encode())
@@ -723,11 +802,85 @@ class TestDiscoverAndLoadSkills:
         assert frontmatter.allowed_tools == "read"
         assert frontmatter.metadata == {"author": "test"}
 
+    @pytest.mark.parametrize("newline", ("\n", "\r\n"))
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        (
+            ("First", "First"),
+            ("'First'", "First"),
+            ('"First"', "First"),
+            ('"  First  "', "  First  "),
+            ('"Use #tags: safely"', "Use #tags: safely"),
+            ("\"Use 'quotes' safely\"", "Use 'quotes' safely"),
+            ("'Use \"quotes\" safely'", 'Use "quotes" safely'),
+            ("''", "''"),
+            ('""', '""'),
+            ('"\\n"', "\\n"),
+            ("'It''s fine'", "It''s fine"),
+            ("\n    First", "First"),
+            ("\n    'First'", "First"),
+            ('\n    "First"', "First"),
+            ("First\n    Second", "First"),
+            ('"First\n    Second"', '"First'),
+            ("'First\n    Second'", "'First"),
+            ("|\n    First\n    Second", "|"),
+            ("|-\n    First\n    Second", "|-"),
+            ("|+\n    First\n    Second", "|+"),
+            (">\n    First\n    Second", ">"),
+            (">-\n    First\n    Second", ">-"),
+            (">+\n    First\n    Second", ">+"),
+            ("\n    |-\n      First\n      Second", "|-"),
+        ),
+    )
+    async def test_existing_metadata_scalar_formats_preserved(
+        self, tmp_path: Path, newline: str, value: str, expected: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        content = (
+            "---\nname: test-skill\ndescription: Read files\n"
+            f"metadata:\n  author: {value}\n  version: '1.0'\nlicense: MIT\n---\nBody."
+        )
+        skill_dir = tmp_path / "test-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_bytes(content.replace("\n", newline).encode())
+
+        skills = await _discover_file_skills_for_test([str(tmp_path)])
+
+        # Preserve existing scalar parsing rather than expanding YAML support.
+        assert len(skills) == 1
+        skill = skills["test-skill"]
+        assert skill.frontmatter.description == "Read files"
+        assert skill.frontmatter.license == "MIT"
+        assert skill.frontmatter.metadata == {"author": expected, "version": "1.0"}
+        assert "Body." in await skill.get_content()
+        assert not caplog.records
+
     async def test_discovers_valid_skill(self, tmp_path: Path) -> None:
         _write_skill(tmp_path, "my-skill")
         skills = await _discover_file_skills_for_test([str(tmp_path)])
         assert "my-skill" in skills
         assert skills["my-skill"].frontmatter.name == "my-skill"
+
+    @pytest.mark.parametrize("newline", ("\n", "\r\n"))
+    async def test_duplicate_metadata_does_not_prevent_discovery(
+        self, tmp_path: Path, newline: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        content = (
+            "---\nname: test-skill\ndescription: Read files\nmetadata:\n"
+            "  author: First\n  Author: Separate\n  author: Ignored\n  version: '1.0'\n---\nBody."
+        )
+        skill_dir = tmp_path / "test-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_bytes(content.replace("\n", newline).encode())
+
+        skills = await _discover_file_skills_for_test([str(tmp_path)])
+
+        assert len(skills) == 1
+        skill = skills["test-skill"]
+        assert skill.frontmatter.metadata == {"author": "First", "Author": "Separate", "version": "1.0"}
+        assert "Body." in await skill.get_content()
+        assert len(caplog.records) == 1
+        assert caplog.records[0].levelname == "WARNING"
+        assert "duplicate metadata key 'author'; keeping the first value" in caplog.text
 
     async def test_discovers_nested_skills(self, tmp_path: Path) -> None:
         skills_dir = tmp_path / "skills"
