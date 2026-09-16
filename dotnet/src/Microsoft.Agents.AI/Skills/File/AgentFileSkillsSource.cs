@@ -55,15 +55,15 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
     // The \uFEFF? prefix allows an optional UTF-8 BOM that some editors prepend.
     private static readonly Regex s_frontmatterRegex = new(@"\A\uFEFF?^---\s*$(.+?)^---\s*$", RegexOptions.Multiline | RegexOptions.Singleline | RegexOptions.Compiled, TimeSpan.FromSeconds(5));
 
-    // Matches top-level YAML "key: value" lines. Group 1 = key (supports hyphens for keys like allowed-tools),
+    // Matches top-level YAML "key: value" lines. Group 1 = key (including quotes),
     // Group 2 = quoted value, Group 3 = unquoted value (possibly empty for keys such as "metadata:").
     // A value may start on a later indented line, but cannot consume another top-level field.
     // Retain trailing whitespace matching so block-scalar parsing handles leading blank lines as before.
-    private static readonly Regex s_yamlKeyValueRegex = new(@"^([\w-]+)[ \t]*:[ \t]*(?:\r?\n(?:[ \t]*\r?\n)*[ \t]+)?(?:[""']([^\r\n]+?)[""']|([^\r\n]*?))\s*$", RegexOptions.Multiline | RegexOptions.Compiled, TimeSpan.FromSeconds(5));
+    private static readonly Regex s_yamlKeyValueRegex = new(@"^([\w-]+|""[\w-]+""|'[\w-]+')[ \t]*:[ \t]*(?:\r?\n(?:[ \t]*\r?\n)*[ \t]+)?(?:[""']([^\r\n]+?)[""']|([^\r\n]*?))\s*$", RegexOptions.Multiline | RegexOptions.Compiled, TimeSpan.FromSeconds(5));
 
-    // Matches a "metadata:" line followed by indented sub-key/value pairs.
+    // Matches a metadata block, allowing quotes around the root key.
     // Group 1 captures the entire indented block beneath the metadata key.
-    private static readonly Regex s_yamlMetadataBlockRegex = new(@"^metadata\s*:\s*$\n((?:[ \t]+\S.*\n?)+)", RegexOptions.Multiline | RegexOptions.Compiled, TimeSpan.FromSeconds(5));
+    private static readonly Regex s_yamlMetadataBlockRegex = new(@"^(?:metadata|""metadata""|'metadata')\s*:\s*$\n((?:[ \t]+\S.*\n?)+)", RegexOptions.Multiline | RegexOptions.Compiled, TimeSpan.FromSeconds(5));
 
     // Matches indented YAML "key: value" lines within a metadata block.
     // Group 1 = key (supports hyphens), Group 2 = quoted value, Group 3 = unquoted value.
@@ -250,12 +250,13 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
         string? compatibility = null;
         string? allowedTools = null;
 
-        // Spec-defined fields use exact lowercase names. Reject casing variants and
+        // Recognized fields use exact lowercase names, with optional quotes. Reject casing variants and
         // duplicates rather than silently changing which value the skill exposes.
         var seenFields = new HashSet<string>(StringComparer.Ordinal);
         foreach (Match kvMatch in s_yamlKeyValueRegex.Matches(yamlContent))
         {
             string key = kvMatch.Groups[1].Value;
+            key = key[0] is '"' or '\'' ? key.Substring(1, key.Length - 2) : key;
 
             // Unknown fields are intentionally excluded from this validation for forward compatibility.
             if (!s_frontmatterFieldNames.TryGetValue(key, out string? canonicalKey))

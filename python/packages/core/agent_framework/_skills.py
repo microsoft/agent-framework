@@ -1755,13 +1755,14 @@ FRONTMATTER_RE = re.compile(
     re.MULTILINE | re.DOTALL,
 )
 
-# Matches top-level YAML "key: value" lines (unindented). Group 1 = key,
+# Matches top-level YAML "key: value" lines (unindented). Group 1 = key (including quotes),
 # Group 2 = quoted value, Group 3 = unquoted value (possibly empty for
 # keys such as "metadata:"). A value may start on a later indented line, but
 # cannot consume another top-level field. Retain trailing whitespace matching
 # so block-scalar parsing handles leading blank lines as before.
 YAML_KV_RE = re.compile(
-    r"^([\w-]+)[ \t]*:[ \t]*(?:\r?\n(?:[ \t]*\r?\n)*[ \t]+)?(?:[\"']([^\r\n]+?)[\"']|([^\r\n]*?))\s*$",
+    r"^([\w-]+|\"[\w-]+\"|'[\w-]+')[ \t]*:[ \t]*(?:\r?\n(?:[ \t]*\r?\n)*[ \t]+)?"
+    r"(?:[\"']([^\r\n]+?)[\"']|([^\r\n]*?))\s*$",
     re.MULTILINE,
 )
 
@@ -1774,9 +1775,9 @@ FRONTMATTER_FIELD_NAMES = {
     "allowed-tools": "allowed-tools",
 }
 
-# Matches a YAML "metadata:" block followed by indented key-value pairs.
+# Matches a YAML metadata block, allowing quotes around the root key.
 YAML_METADATA_BLOCK_RE = re.compile(
-    r"^metadata\s*:\s*$\n((?:[ \t]+\S.*\n?)+)",
+    r"^(?:metadata|\"metadata\"|'metadata')\s*:\s*$\n((?:[ \t]+\S.*\n?)+)",
     re.MULTILINE,
 )
 
@@ -1795,7 +1796,7 @@ _BLOCK_SCALAR_INDICATORS = ("|", ">")
 
 
 def _parse_yaml_scalar_value(yaml_content: str, kv_match: re.Match[str]) -> str:
-    """Resolve the scalar value for an unquoted YAML key-value match.
+    """Resolve an unquoted YAML scalar value.
 
     If the captured value starts with a YAML block scalar indicator (``|`` or
     ``>``), the function reads subsequent indented continuation lines, strips
@@ -3623,7 +3624,7 @@ class FileSkillsSource(SkillsSource):
         `agentskills.io specification <https://agentskills.io/specification>`_
         fields: ``name``, ``description``, ``license``, ``compatibility``,
         ``allowed-tools``, and ``metadata``. Recognized top-level fields must
-        use lowercase names and must not be repeated. Within the optional
+        use lowercase names (optionally quoted) and must not be repeated. Within the optional
         metadata mapping, keys are case-sensitive; exact duplicates retain
         the first value and produce warnings without rejecting the skill.
 
@@ -3647,11 +3648,12 @@ class FileSkillsSource(SkillsSource):
         compatibility: str | None = None
         allowed_tools: str | None = None
 
-        # Spec-defined fields use exact lowercase names. Reject casing variants and
+        # Recognized fields use exact lowercase names, with optional quotes. Reject casing variants and
         # duplicates rather than silently changing which value the skill exposes.
         seen_fields: set[str] = set()
         for kv_match in YAML_KV_RE.finditer(yaml_content):
             key = kv_match.group(1)
+            key = key[1:-1] if key[0] in "\"'" else key
             canonical_key = FRONTMATTER_FIELD_NAMES.get(key.lower())
             # Unknown fields are intentionally excluded from this validation for forward compatibility.
             if canonical_key is None:

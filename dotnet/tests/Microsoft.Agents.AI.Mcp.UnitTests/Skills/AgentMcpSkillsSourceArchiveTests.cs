@@ -63,14 +63,26 @@ public sealed class AgentMcpSkillsSourceArchiveTests : IDisposable
     private const int ManyFileArchiveFileCount = 60;
 
     [Theory]
-    [InlineData("description: First\ndescription: >-\n  Second")]
-    [InlineData("description: |-\n  First\nDescription: Second")]
-    [InlineData("description: Valid\nmetadata:\n  author: First\nmetadata:\n  author: Second")]
-    [InlineData("description: Valid\nAllowed-Tools: read")]
-    public async Task GetSkillsAsync_AmbiguousArchiveFrontmatter_SkipsSkillAsync(string fields)
+    [InlineData("description: First\ndescription: >-\n  Second", "\n")]
+    [InlineData("description: |-\n  First\nDescription: Second", "\n")]
+    [InlineData("description: Valid\nmetadata:\n  author: First\nmetadata:\n  author: Second", "\n")]
+    [InlineData("description: Valid\nAllowed-Tools: read", "\n")]
+    [InlineData("description: Valid\nallowed-tools: read\n\"allowed-tools\": other", "\n")]
+    [InlineData("description: Valid\nallowed-tools: read\n\"allowed-tools\": other", "\r\n")]
+    [InlineData("description: Valid\n'allowed-tools': other\nallowed-tools: read", "\n")]
+    [InlineData("description: Valid\n'allowed-tools': other\nallowed-tools: read", "\r\n")]
+    [InlineData("description: Valid\n\"description\": Other text", "\n")]
+    [InlineData("'description': Other text\ndescription: Valid", "\r\n")]
+    [InlineData("description: Valid\n\"Allowed-Tools\": other", "\n")]
+    [InlineData("description: Valid\nmetadata:\n  author: First\n\"metadata\":\n  author: Second", "\r\n")]
+    [InlineData("description: Valid\nlicense: MIT\n'license':", "\n")]
+    [InlineData("description: Valid\ncompatibility: Any runtime\n\"compatibility\": Other runtime", "\r\n")]
+    [InlineData("description: Valid\n\"name\": archived-skill", "\n")]
+    public async Task GetSkillsAsync_AmbiguousArchiveFrontmatter_SkipsSkillAsync(string fields, string newline)
     {
         // Arrange
-        byte[] archive = BuildZip(("SKILL.md", $"---\nname: archived-skill\n{fields}\n---\nBody."));
+        string content = $"---\nname: archived-skill\n{fields}\n---\nBody.";
+        byte[] archive = BuildZip(("SKILL.md", content.Replace("\n", newline)));
         await using var server = CreateArchiveServer(
             ArchiveIndex("archived-skill", "skill://archives/archived-skill.zip"),
             new Dictionary<string, byte[]> { ["archived-skill"] = archive });
@@ -137,17 +149,27 @@ public sealed class AgentMcpSkillsSourceArchiveTests : IDisposable
     }
 
     [Theory]
-    [InlineData("author", "\n")]
-    [InlineData("author", "\r\n")]
-    [InlineData("Author", "\n")]
-    [InlineData("Author", "\r\n")]
-    public async Task GetSkillsAsync_ArchiveDuplicateMetadata_KeepsFirstValueAndLogsWarningAsync(string secondKey, string newline)
+    [InlineData("author", "\n", "")]
+    [InlineData("author", "\r\n", "")]
+    [InlineData("Author", "\n", "")]
+    [InlineData("Author", "\r\n", "")]
+    [InlineData("author", "\n", "'")]
+    [InlineData("author", "\r\n", "'")]
+    [InlineData("Author", "\n", "'")]
+    [InlineData("Author", "\r\n", "'")]
+    [InlineData("author", "\n", "\"")]
+    [InlineData("author", "\r\n", "\"")]
+    [InlineData("Author", "\n", "\"")]
+    [InlineData("Author", "\r\n", "\"")]
+    public async Task GetSkillsAsync_ArchiveDuplicateMetadata_KeepsFirstValueAndLogsWarningAsync(
+        string secondKey, string newline, string quote)
     {
         // Arrange
         string content =
-            "---\nname: archived-skill\ndescription: >-\n  Read\n  files\nmetadata:\n" +
+            $"---\n{quote}name{quote}: archived-skill\n{quote}description{quote}: >-\n  Read\n  files\n" +
+            $"{quote}compatibility{quote}:\n  Any runtime\n{quote}allowed-tools{quote}: 'read'\n{quote}metadata{quote}:\n" +
             $"  author:\n    'First'\n  {secondKey}: Second\n  author: Third\n  version: '1.0'\n" +
-            "license: |-\n  MIT\n  License\n---\nBody.";
+            $"{quote}license{quote}: |-\n  MIT\n  License\n---\nBody.";
         byte[] archive = BuildZip(("SKILL.md", content.Replace("\n", newline)));
         await using var server = CreateArchiveServer(
             ArchiveIndex("archived-skill", "skill://archives/archived-skill.zip"),
@@ -172,6 +194,8 @@ public sealed class AgentMcpSkillsSourceArchiveTests : IDisposable
         Assert.Equal("1.0", skill.Frontmatter.Metadata["version"]);
         Assert.Equal("Read files", skill.Frontmatter.Description);
         Assert.Equal("MIT\nLicense", skill.Frontmatter.License);
+        Assert.Equal("Any runtime", skill.Frontmatter.Compatibility);
+        Assert.Equal("read", skill.Frontmatter.AllowedTools);
         Assert.Contains("Body.", await skill.GetContentAsync());
         logger.Verify(
             l => l.Log(

@@ -46,11 +46,11 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
     /// <summary>
     /// Existing scalar representations with metadata before or after them, with and without duplicate metadata.
     /// </summary>
-    public static TheoryData<string, string, string, bool, bool> ExistingScalarFormats
+    public static TheoryData<string, string, string, bool, bool, string> ExistingScalarFormats
     {
         get
         {
-            var data = new TheoryData<string, string, string, bool, bool>();
+            var data = new TheoryData<string, string, string, bool, bool, string>();
             // Pin the existing lightweight parser's output, not full YAML conformance.
             (string Value, string Expected)[] cases =
             [
@@ -75,6 +75,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
                 ("|-\n  Read\n\n  files", "Read\n\nfiles"),
                 ("|-\n  Read\n    indented\n  files", "Read\n  indented\nfiles"),
                 ("|-\n  description: text\n  Description: text", "description: text\nDescription: text"),
+                ("|-\n  \"description\": text\n  'allowed-tools': text", "\"description\": text\n'allowed-tools': text"),
             ];
             foreach (var (value, expected) in cases)
             {
@@ -82,8 +83,64 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
                 {
                     foreach (bool metadataFirst in new[] { false, true })
                     {
-                        data.Add(value, expected, newline, metadataFirst, false);
-                        data.Add(value, expected, newline, metadataFirst, true);
+                        foreach (string quote in new[] { "", "'", "\"" })
+                        {
+                            data.Add(value, expected, newline, metadataFirst, false, quote);
+                            data.Add(value, expected, newline, metadataFirst, true, quote);
+                        }
+                    }
+                }
+            }
+
+            return data;
+        }
+    }
+
+    /// <summary>
+    /// Duplicate and incorrectly cased root properties with quoted names.
+    /// </summary>
+    public static TheoryData<string, string> ConflictingQuotedFields
+    {
+        get
+        {
+            var data = new TheoryData<string, string>();
+            (string Key, string Value)[] fields =
+            [
+                ("name", "test-skill"),
+                ("description", "Read files"),
+                ("license", "MIT"),
+                ("compatibility", "Any runtime"),
+                ("metadata", "\n  author: First"),
+                ("allowed-tools", "read"),
+            ];
+            foreach (var (key, value) in fields)
+            {
+                string otherFields = string.Join("\n", fields.Where(f => f.Key != key).Select(f => $"{f.Key}: {f.Value}"));
+                foreach (char quote in new[] { '\'', '"' })
+                {
+                    string quotedKey = $"{quote}{key}{quote}";
+                    string quotedField = $"{quotedKey}: {value}";
+                    string bareField = $"{key}: {value}";
+                    char otherQuote = quote == '\'' ? '"' : '\'';
+                    foreach (string newline in new[] { "\n", "\r\n" })
+                    {
+                        string incorrectlyCasedField = $"{quote}{key.ToUpperInvariant()}{quote}: {value}";
+                        string content = $"---\n{otherFields}\n{incorrectlyCasedField}\n---\nBody.";
+                        string diagnostic = $"incorrectly cased frontmatter field '{key.ToUpperInvariant()}'; expected '{key}'";
+                        data.Add(content.Replace("\n", newline), diagnostic);
+                        foreach (string declaration in new[]
+                        {
+                            $"{quotedField}\n{bareField}",
+                            $"{bareField}\n{quotedField}",
+                            $"{quotedField}\n{quotedField}",
+                            $"{quotedField}\n{otherQuote}{key}{otherQuote}: {value}",
+                            $"{quotedKey}:\n{bareField}",
+                            $"{bareField}\n{quotedKey}:",
+                        })
+                        {
+                            content = $"---\n{otherFields}\n{declaration}\n---\nBody.";
+                            data.Add(content.Replace("\n", newline), $"duplicate frontmatter field '{key}'");
+                        }
                     }
                 }
             }
@@ -212,12 +269,12 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
     [Theory]
     [MemberData(nameof(ExistingScalarFormats))]
     public async Task GetSkillsAsync_ExistingScalarFormats_PreservedAsync(
-        string value, string expected, string newline, bool metadataFirst, bool duplicateMetadata)
+        string value, string expected, string newline, bool metadataFirst, bool duplicateMetadata, string quote)
     {
         // Arrange
-        string fields = $"name: test-skill\ndescription: {value}\n" +
-            "license: 'MIT'\ncompatibility: Any runtime\nallowed-tools: read\n";
-        string metadata = "metadata:\n  author: test\n" + (duplicateMetadata ? "  author: Ignored\n" : "");
+        string fields = $"{quote}name{quote}: test-skill\n{quote}description{quote}: {value}\n" +
+            $"{quote}license{quote}: 'MIT'\n{quote}compatibility{quote}: Any runtime\n{quote}allowed-tools{quote}: read\n";
+        string metadata = $"{quote}metadata{quote}:\n  author: test\n" + (duplicateMetadata ? "  author: Ignored\n" : "");
         string content = "---\n" + (metadataFirst ? metadata + fields : fields + metadata) + "---\nBody.";
         _ = this.CreateSkillDirectoryWithRawContent("test-skill", content.Replace("\n", newline));
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
@@ -314,7 +371,9 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
             "---\nname: test-skill\ndescription: Read files\n" +
             "# description: Not a field\n" +
             "metadata:\n  author: First\n  author: Second\n  Description: Nested text\n" +
-            "vendor-option: First\nvendor-option: Second\n---\nDescription: Body text";
+            "  \"description\": Ignored\n  'metadata': Ignored\n" +
+            "vendor-option: First\nvendor-option: Second\n" +
+            "'vendor-option': Third\n\"VENDOR-OPTION\": Fourth\n---\n\"description\": Body text";
         _ = this.CreateSkillDirectoryWithRawContent("test-skill", Content);
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
@@ -633,6 +692,63 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
 
         // Assert
         Assert.Empty(skills);
+    }
+
+    [Theory]
+    [MemberData(nameof(ConflictingQuotedFields))]
+    public async Task GetSkillsAsync_ConflictingQuotedFields_ExcludesSkillAndLogsErrorAsync(
+        string content,
+        string diagnostic)
+    {
+        // Arrange
+        _ = this.CreateSkillDirectoryWithRawContent("test-skill", content);
+        var logger = new Mock<ILogger>();
+        logger.Setup(l => l.IsEnabled(It.IsAny<LogLevel>())).Returns(true);
+        var loggerFactory = new Mock<ILoggerFactory>();
+        loggerFactory.Setup(f => f.CreateLogger(It.IsAny<string>())).Returns(logger.Object);
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor, loggerFactory: loggerFactory.Object);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        Assert.Empty(skills);
+        logger.Verify(
+            l => l.Log(
+                LogLevel.Error,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((state, _) => state.ToString()!.IndexOf(diagnostic, StringComparison.Ordinal) >= 0),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once);
+    }
+
+    [Theory]
+    [InlineData("'", "\n")]
+    [InlineData("'", "\r\n")]
+    [InlineData("\"", "\n")]
+    [InlineData("\"", "\r\n")]
+    public async Task GetSkillsAsync_QuotedEmptyOptionalFields_RemainUnsetAsync(string quote, string newline)
+    {
+        // Arrange
+        string content =
+            $"---\n{quote}metadata{quote}:\n{quote}name{quote}: test-skill\n" +
+            $"{quote}description{quote}: Read files\n{quote}license{quote}:\n" +
+            $"{quote}compatibility{quote}:\n{quote}allowed-tools{quote}:\n---\nBody.";
+        _ = this.CreateSkillDirectoryWithRawContent("test-skill", content.Replace("\n", newline));
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        var frontmatter = Assert.Single(skills).Frontmatter;
+        Assert.Equal("test-skill", frontmatter.Name);
+        Assert.Equal("Read files", frontmatter.Description);
+        Assert.Null(frontmatter.Metadata);
+        Assert.Null(frontmatter.License);
+        Assert.Null(frontmatter.Compatibility);
+        Assert.Null(frontmatter.AllowedTools);
     }
 
     [Theory]
