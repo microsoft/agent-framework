@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import warnings
 from collections.abc import AsyncIterable, Callable, Iterator, Mapping, Sequence
 from copy import deepcopy
@@ -33,6 +34,7 @@ from agent_framework import (
     FilterGroup,
     GeneratedEmbeddings,
     IndexKind,
+    InMemoryCollection,
     InMemoryStore,
     Message,
     Param,
@@ -2590,6 +2592,7 @@ def test_vector_collection_context_provider_configures_tools_and_approvals() -> 
     collection = MockCollection(embedding_generator=MockEmbeddingClient())
     provider = VectorCollectionContextProvider(
         collection,
+        scope_filter=None,
         approval_mode={"upsert": "never_require"},
     )
 
@@ -2602,7 +2605,7 @@ def test_vector_collection_context_provider_configures_tools_and_approvals() -> 
     }
     assert any("get when record keys are known" in instruction for instruction in provider.instructions)
 
-    require_all = VectorCollectionContextProvider(collection, approval_mode="always_require")
+    require_all = VectorCollectionContextProvider(collection, scope_filter=None, approval_mode="always_require")
     assert all(tool.approval_mode == "always_require" for tool in require_all.tools)
 
 
@@ -2611,6 +2614,7 @@ async def test_vector_collection_context_provider_adds_attributed_context() -> N
     details_tool = create_vector_search_tool(collection, name="search_details")
     provider = VectorCollectionContextProvider(
         collection,
+        scope_filter=None,
         include_upsert_tool=False,
         include_get_tool=False,
         include_delete_tool=False,
@@ -2635,23 +2639,64 @@ def test_vector_collection_context_provider_validates_configuration() -> None:
     collection = MockCollection(embedding_generator=MockEmbeddingClient())
 
     with pytest.raises(ValueError, match="Unknown approval_mode"):
-        VectorCollectionContextProvider(collection, approval_mode=cast(Any, {"unknown": "never_require"}))
+        VectorCollectionContextProvider(
+            collection,
+            scope_filter=None,
+            approval_mode=cast(Any, {"unknown": "never_require"}),
+        )
     with pytest.raises(ValueError, match="Invalid approval mode"):
-        VectorCollectionContextProvider(collection, approval_mode=cast(Any, {"get": "sometimes"}))
+        VectorCollectionContextProvider(
+            collection,
+            scope_filter=None,
+            approval_mode=cast(Any, {"get": "sometimes"}),
+        )
     with pytest.raises(ValueError, match="tool names must be unique"):
         VectorCollectionContextProvider(
             collection,
+            scope_filter=None,
             additional_search_tools=[create_vector_search_tool(collection)],
         )
     with pytest.raises(TypeError, match="FunctionTool"):
         VectorCollectionContextProvider(
             collection,
+            scope_filter=None,
             include_search_tool=False,
             additional_search_tools=cast(Any, [object()]),
         )
 
 
-async def test_vector_store_history_provider_round_trips_and_deduplicates_messages() -> None:
+async def test_vector_collection_context_provider_enforces_scope_filter_on_read_tools() -> None:
+    collection: InMemoryCollection[str, Record] = InMemoryCollection(
+        Record,
+        embedding_generator=MockEmbeddingClient(),
+    )
+    await collection.ensure_collection_exists()
+    await collection.upsert(
+        [
+            Record("one", "visible", [1.0, 0.0]),
+            Record("two", "secret", [0.0, 1.0]),
+        ],
+        generate_vectors=False,
+    )
+    provider = VectorCollectionContextProvider(
+        collection,
+        scope_filter=Filter("id", "eq", "one"),
+    )
+    tools = {tool.name: tool for tool in provider.tools}
+
+    fetched = await tools["get"].invoke(arguments={"keys": ["one", "two"]}, skip_parsing=True)
+    assert fetched == {"records": [{"id": "one", "text": "visible"}]}
+
+    searched = await tools["search"].invoke(arguments={"query": "visible"}, skip_parsing=True)
+    assert len(searched) == 1
+    assert msgspec.json.decode(searched[0].text)["record"]["id"] == "one"
+
+    deleted = await tools["delete"].invoke(arguments={"keys": ["one", "two"]}, skip_parsing=True)
+    assert deleted == {"processed_keys": ["one"]}
+    assert [record.id for record in await collection.get(["one", "two"])] == ["two"]
+
+
+async def test_vector_store_history_provider_round_trips_and_idempotently_replays_messages() -> None:
     generator = MockEmbeddingClient()
     embedding_options: dict[str, Any] = {"model": "embedding-model", "dimensions": 2}
     provider = VectorStoreHistoryProvider(
@@ -2698,6 +2743,28 @@ async def test_vector_store_history_provider_round_trips_and_deduplicates_messag
 
     await provider.clear("session")
     assert await provider.get_messages("session") == []
+
+
+async def test_vector_store_history_provider_preserves_repeated_turns_and_concurrent_replays() -> None:
+    store = InMemoryStore()
+    provider = VectorStoreHistoryProvider(store, application_id="app")
+    replica = VectorStoreHistoryProvider(store, application_id="app")
+    first = Message(role="user", contents=["yes"])
+    second = Message(role="user", contents=["yes"])
+
+    await provider.save_messages("session", [first])
+    await provider.save_messages("session", [second])
+
+    assert first.message_id is not None
+    assert second.message_id is not None
+    assert first.message_id != second.message_id
+    assert [message.text for message in await provider.get_messages("session")] == ["yes", "yes"]
+
+    await asyncio.gather(
+        provider.save_messages("session", [first, second]),
+        replica.save_messages("session", [first, second]),
+    )
+    assert [message.text for message in await provider.get_messages("session")] == ["yes", "yes"]
 
 
 async def test_vector_store_history_provider_isolates_every_scope_dimension() -> None:
@@ -2769,6 +2836,30 @@ async def test_vector_store_history_provider_works_without_embeddings() -> None:
     assert [message.text for message in await provider.get_messages("session")] == ["plain history"]
 
 
+def test_vector_store_history_provider_derives_default_collection_name_from_schema() -> None:
+    store = InMemoryStore()
+    json_provider = VectorStoreHistoryProvider(store, application_id="app")
+    msgpack_provider = VectorStoreHistoryProvider(store, application_id="app", contents_format="msgpack")
+    embedded_provider = VectorStoreHistoryProvider(
+        store,
+        application_id="app",
+        embedding_generator=MockEmbeddingClient(),
+        embedding_options={"dimensions": 2},
+    )
+
+    assert (
+        len({
+            json_provider.collection_name,
+            msgpack_provider.collection_name,
+            embedded_provider.collection_name,
+        })
+        == 3
+    )
+    contents_field = json_provider._collection.definition.try_get_field("contents")
+    assert contents_field is not None
+    assert not contents_field.is_full_text_indexed
+
+
 async def test_vector_store_history_provider_supports_msgpack_contents() -> None:
     provider = VectorStoreHistoryProvider(
         InMemoryStore(),
@@ -2791,6 +2882,25 @@ async def test_vector_store_history_provider_supports_msgpack_contents() -> None
     assert contents_field.type_ == "bytes"
     assert msgspec.msgpack.decode(records[0]["contents"]) == [content.to_dict() for content in message.contents]
     assert [stored.to_dict() for stored in await provider.get_messages("session")] == [message.to_dict()]
+
+
+async def test_vector_store_history_provider_applies_message_retention() -> None:
+    provider = VectorStoreHistoryProvider(
+        InMemoryStore(),
+        application_id="app",
+        max_messages=2,
+    )
+
+    await provider.save_messages(
+        "session",
+        [
+            Message(role="user", contents=["one"]),
+            Message(role="assistant", contents=["two"]),
+            Message(role="user", contents=["three"]),
+        ],
+    )
+
+    assert [message.text for message in await provider.get_messages("session")] == ["two", "three"]
 
 
 async def test_vector_store_history_provider_compacts_loaded_context_but_searches_full_history() -> None:
@@ -2865,6 +2975,8 @@ async def test_vector_store_history_provider_compacts_loaded_context_but_searche
             "must be positive",
         ),
         ({"application_id": "app", "contents_format": "yaml"}, ValueError, "contents_format"),
+        ({"application_id": "app", "max_messages": -1}, ValueError, "max_messages"),
+        ({"application_id": "app", "collection_name": ""}, ValueError, "collection_name"),
     ],
 )
 def test_vector_store_history_provider_validates_configuration(

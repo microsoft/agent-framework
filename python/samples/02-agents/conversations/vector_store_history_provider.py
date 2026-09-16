@@ -30,6 +30,7 @@ async def main() -> None:
         tenant_id="contoso",
         agent_id="release-assistant",
         contents_format="json",
+        max_messages=1000,
         embedding_generator=OpenAIEmbeddingClient(
             model="text-embedding-3-small",
         ),

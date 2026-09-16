@@ -117,6 +117,8 @@ async def main() -> None:
     # 3. Disable every generated tool and provide only the two tailored searches.
     collection_context = VectorCollectionContextProvider(
         collection,
+        # This process-local collection contains records for only this sample.
+        scope_filter=None,
         include_upsert_tool=False,
         include_get_tool=False,
         include_delete_tool=False,

@@ -62,6 +62,8 @@ async def main() -> None:
     # delete still requires approval, while get and search remain read-only.
     collection_context = VectorCollectionContextProvider(
         collection,
+        # This process-local collection contains records for only this sample.
+        scope_filter=None,
         approval_mode={"upsert": "never_require"},
     )
 

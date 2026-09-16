@@ -42,7 +42,7 @@ from typing_extensions import Self, TypedDict, TypeVar
 from ._clients import SupportsGetEmbeddings
 from ._compaction import CompactionStrategy, TokenizerProtocol, apply_compaction
 from ._feature_stage import ExperimentalFeature, experimental
-from ._sessions import AgentSession, ContextProvider, HistoryProvider, SessionContext, filter_new_messages
+from ._sessions import AgentSession, ContextProvider, HistoryProvider, SessionContext
 from ._telemetry import FeatureIndex, mark_feature_used
 from ._tools import ApprovalMode, FunctionTool
 from ._types import Content, EmbeddingGenerationOptions, Message
@@ -103,6 +103,7 @@ _DEFAULT_DELETE_TOOL_NAME: Final[str] = "delete"
 _DEFAULT_DELETE_TOOL_DESCRIPTION: Final[str] = "Delete vector collection records by their keys."
 _VECTOR_HISTORY_PAGE_SIZE: Final[int] = 1000
 _VECTOR_HISTORY_SEARCH_TOP: Final[int] = 5
+_VECTOR_HISTORY_TIMESTAMP_KEY: Final[str] = "_vector_history_timestamp_ns"
 _VectorCollectionOperation: TypeAlias = Literal["get", "delete", "upsert", "search"]
 _DEFAULT_VECTOR_COLLECTION_APPROVAL_MODES: Final[Mapping[_VectorCollectionOperation, ApprovalMode]] = MappingProxyType({
     "get": "never_require",
@@ -1912,6 +1913,30 @@ def _vector_tool_key_schema(collection: BaseVectorCollection[Any, Any]) -> dict[
     return _vector_tool_field_schema(collection.definition.key_field)
 
 
+def _prepare_vector_tool_filter(
+    collection: BaseVectorCollection[Any, Any],
+    filter: FilterExpression | None,
+) -> FilterExpression | None:
+    configured_filter = snapshot_filter(filter) if filter is not None else None
+    if configured_filter is not None:
+        validate_filter(configured_filter, field_names=collection.definition.names)
+    return configured_filter
+
+
+def _vector_tool_key_filter(
+    collection: BaseVectorCollection[Any, Any],
+    configured_filter: FilterExpression,
+    keys: Sequence[Any],
+) -> FilterGroup:
+    return FilterGroup(
+        "and",
+        (
+            configured_filter,
+            Filter(collection.definition.key_name, "in", list(keys)),
+        ),
+    )
+
+
 def _validate_vector_tool_sequence(value: Any, *, name: str) -> list[Any]:
     if not _is_non_string_sequence(value):
         raise TypeError(f"{name} must be a sequence.")
@@ -2028,6 +2053,7 @@ def create_get_tool(
     description: str = _DEFAULT_GET_TOOL_DESCRIPTION,
     approval_mode: Literal["always_require", "never_require"] = "never_require",
     include_vectors: bool = False,
+    filter: FilterExpression | None = None,
     result_mapper: Callable[[ModelT], str | Content | Sequence[Content]] | None = None,
 ) -> FunctionTool:
     """Create an agent-usable tool that gets vector collection records by key.
@@ -2038,15 +2064,25 @@ def create_get_tool(
         description: The tool description shown to the model.
         approval_mode: Whether the tool requires approval before invocation.
         include_vectors: Whether returned records include vector fields.
+        filter: Optional fixed filter applied together with the requested keys.
         result_mapper: Optional model-specific projection for each retrieved record.
 
     Returns:
         A function tool accepting a non-empty ``keys`` array.
     """
+    configured_filter = _prepare_vector_tool_filter(collection, filter)
 
     async def get_tool(keys: Any) -> dict[str, Any] | list[Content]:
         validated_keys = cast(list[KeyT], _validate_vector_tool_sequence(keys, name="keys"))
-        records = await collection.get(validated_keys, include_vectors=include_vectors)
+        records = (
+            await collection.get(validated_keys, include_vectors=include_vectors)
+            if configured_filter is None
+            else await collection.get(
+                filter=_vector_tool_key_filter(collection, configured_filter, validated_keys),
+                top=len(validated_keys),
+                include_vectors=include_vectors,
+            )
+        )
         if result_mapper is not None:
             mapped_results: list[Content] = []
             for record in records:
@@ -2086,11 +2122,12 @@ def create_get_tool(
 
 @experimental(feature_id=ExperimentalFeature.VECTOR_STORES)
 def create_delete_tool(
-    collection: BaseVectorCollection[KeyT, Any],
+    collection: BaseVectorCollection[KeyT, ModelT],
     *,
     name: str = _DEFAULT_DELETE_TOOL_NAME,
     description: str = _DEFAULT_DELETE_TOOL_DESCRIPTION,
     approval_mode: Literal["always_require", "never_require"] = "always_require",
+    filter: FilterExpression | None = None,
 ) -> FunctionTool:
     """Create an agent-usable tool that deletes vector collection records by key.
 
@@ -2099,15 +2136,33 @@ def create_delete_tool(
         name: The tool name.
         description: The tool description shown to the model.
         approval_mode: Whether the tool requires approval before invocation.
+        filter: Optional fixed filter used to restrict which requested keys may be deleted.
 
     Returns:
         A function tool accepting a non-empty ``keys`` array.
     """
+    configured_filter = _prepare_vector_tool_filter(collection, filter)
 
     async def delete_tool(keys: Any) -> dict[str, Any]:
         validated_keys = cast(list[KeyT], _validate_vector_tool_sequence(keys, name="keys"))
-        await collection.delete(validated_keys)
-        return {"processed_keys": validated_keys}
+        keys_to_delete = validated_keys
+        if configured_filter is not None:
+            records = await collection.get(
+                filter=_vector_tool_key_filter(collection, configured_filter, validated_keys),
+                top=len(validated_keys),
+            )
+            keys_to_delete = [
+                cast(
+                    KeyT,
+                    _encode_vector_tool_record(collection, record, include_vectors=False)[
+                        collection.definition.key_name
+                    ],
+                )
+                for record in records
+            ]
+        if keys_to_delete:
+            await collection.delete(keys_to_delete)
+        return {"processed_keys": keys_to_delete}
 
     return FunctionTool(
         name=name,
@@ -2370,7 +2425,6 @@ def _vector_history_definition(
             "data",
             name="contents",
             type_="str" if contents_format == "json" else "bytes",
-            is_full_text_indexed=contents_format == "json",
         ),
     ]
     if dimensions is not None:
@@ -2384,6 +2438,15 @@ def _vector_history_definition(
             )
         )
     return VectorStoreCollectionDefinition(fields)
+
+
+def _default_vector_history_collection_name(
+    *,
+    contents_format: Literal["json", "msgpack"],
+    dimensions: int | None,
+) -> str:
+    vector_suffix = str(dimensions) if dimensions is not None else "no_vectors"
+    return f"agent_framework_history_v1_{contents_format}_{vector_suffix}"
 
 
 @experimental(feature_id=ExperimentalFeature.VECTOR_STORES)
@@ -2409,10 +2472,16 @@ class VectorStoreHistoryProvider(HistoryProvider):
     ``get_messages`` returns the full scoped transcript. When a compaction strategy
     is configured, only the projection produced after loading is added to model
     context. The optional search tool always searches the full scoped transcript.
+    Messages without IDs receive one before persistence; scoped record keys are
+    derived from those IDs so retries are idempotent without collapsing separate
+    messages that happen to have identical content.
+
+    Large-history completeness depends on the backing collection's paging
+    consistency. Likewise, ``clear`` follows the collection's delete and
+    concurrency guarantees; this provider does not add cross-process transactions.
     """
 
     DEFAULT_SOURCE_ID: ClassVar[str] = "vector_store_history"
-    DEFAULT_COLLECTION_NAME: ClassVar[str] = "agent_framework_history"
     SEARCH_TOOL_NAME: ClassVar[str] = "search_history"
     SEARCH_TOOL_DESCRIPTION: ClassVar[str] = (
         "Search the full conversation history for information that may not be present in the loaded context."
@@ -2426,10 +2495,11 @@ class VectorStoreHistoryProvider(HistoryProvider):
         application_id: str,
         tenant_id: str | None = None,
         agent_id: str | None = None,
-        collection_name: str = DEFAULT_COLLECTION_NAME,
+        collection_name: str | None = None,
         contents_format: Literal["json", "msgpack"] = "json",
         embedding_generator: EmbeddingClient | None = None,
         embedding_options: Mapping[str, Any] | None = None,
+        max_messages: int | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         compaction_tokenizer: TokenizerProtocol | None = None,
         include_search_tool: bool = False,
@@ -2453,13 +2523,18 @@ class VectorStoreHistoryProvider(HistoryProvider):
             application_id: Required application isolation identifier.
             tenant_id: Optional tenant isolation identifier.
             agent_id: Optional agent isolation identifier.
-            collection_name: Name of the provider-owned history collection.
+            collection_name: Name of the provider-owned history collection. When
+                omitted, a name is derived from the schema version, content
+                format, and embedding dimensions.
             contents_format: Encoding used for the stored content array. JSON
                 stores text; MessagePack uses msgspec and stores bytes.
             embedding_generator: Optional client used to embed each message's serialized contents.
             embedding_options: Options passed to every embedding request. When an
                 embedding generator is supplied, this mapping must include positive
                 integer ``dimensions`` for the collection definition.
+            max_messages: Maximum retained messages per isolated scope. ``None``
+                leaves retention to the backing store. ``0`` disables new writes
+                without deleting existing records.
             compaction_strategy: Optional strategy applied after loading history and
                 before adding it to model context.
             compaction_tokenizer: Optional tokenizer used by compaction.
@@ -2483,15 +2558,15 @@ class VectorStoreHistoryProvider(HistoryProvider):
             store_context_from=store_context_from,
             store_outputs=store_outputs,
         )
-        for name, value in (
-            ("source_id", source_id),
-            ("application_id", application_id),
-            ("collection_name", collection_name),
-        ):
+        for name, value in (("source_id", source_id), ("application_id", application_id)):
             if not isinstance(value, str):
                 raise TypeError(f"{name} must be a string.")
             if not value:
                 raise ValueError(f"{name} must be a non-empty string.")
+        if collection_name is not None and not isinstance(collection_name, str):
+            raise TypeError("collection_name must be a string when supplied.")
+        if collection_name == "":
+            raise ValueError("collection_name must be non-empty when supplied.")
         for name, value in (("tenant_id", tenant_id), ("agent_id", agent_id)):
             if value is not None and not isinstance(value, str):
                 raise TypeError(f"{name} must be a string when supplied.")
@@ -2501,6 +2576,10 @@ class VectorStoreHistoryProvider(HistoryProvider):
             raise TypeError("include_search_tool must be a boolean.")
         if contents_format not in ("json", "msgpack"):
             raise ValueError("contents_format must be 'json' or 'msgpack'.")
+        if max_messages is not None and (not isinstance(max_messages, int) or isinstance(max_messages, bool)):
+            raise TypeError("max_messages must be an integer when supplied.")
+        if max_messages is not None and max_messages < 0:
+            raise ValueError("max_messages must not be negative.")
         if embedding_generator is None and embedding_options is not None:
             raise ValueError("embedding_options requires embedding_generator.")
         if embedding_generator is not None and embedding_options is None:
@@ -2523,14 +2602,19 @@ class VectorStoreHistoryProvider(HistoryProvider):
                 raise ValueError("embedding_options['dimensions'] must be positive.")
             dimensions = dimensions_value
 
+        resolved_collection_name = collection_name or _default_vector_history_collection_name(
+            contents_format=contents_format,
+            dimensions=dimensions,
+        )
         self.vector_store = vector_store
         self.application_id = application_id
         self.tenant_id = tenant_id
         self.agent_id = agent_id
-        self.collection_name = collection_name
+        self.collection_name = resolved_collection_name
         self.contents_format = contents_format
         self.embedding_generator = embedding_generator
         self.embedding_options = resolved_embedding_options
+        self.max_messages = max_messages
         self.compaction_strategy = compaction_strategy
         self.compaction_tokenizer = compaction_tokenizer
         self.include_search_tool = include_search_tool
@@ -2541,7 +2625,7 @@ class VectorStoreHistoryProvider(HistoryProvider):
                 dimensions=dimensions,
                 contents_format=contents_format,
             ),
-            collection_name=collection_name,
+            collection_name=resolved_collection_name,
             embedding_generator=embedding_generator,
         )
         if include_search_tool and not isinstance(self._collection, SupportsVectorSearch):
@@ -2549,9 +2633,14 @@ class VectorStoreHistoryProvider(HistoryProvider):
         self._collection_ready = False
         self._collection_lock = asyncio.Lock()
 
-    def _scope_filter(self, session_id: str | None) -> FilterGroup:
+    @staticmethod
+    def _validate_session_id(session_id: str | None) -> str:
         if not isinstance(session_id, str) or not session_id:
             raise ValueError("session_id must be a non-empty string.")
+        return session_id
+
+    def _scope_filter(self, session_id: str | None) -> FilterGroup:
+        validated_session_id = self._validate_session_id(session_id)
         return FilterGroup(
             "and",
             (
@@ -2559,9 +2648,20 @@ class VectorStoreHistoryProvider(HistoryProvider):
                 Filter("tenant_id", "eq", self.tenant_id or ""),
                 Filter("agent_id", "eq", self.agent_id or ""),
                 Filter("source_id", "eq", self.source_id),
-                Filter("session_id", "eq", session_id),
+                Filter("session_id", "eq", validated_session_id),
             ),
         )
+
+    def _record_id(self, session_id: str, message_id: str) -> str:
+        identity = msgspec.json.encode([
+            self.application_id,
+            self.tenant_id or "",
+            self.agent_id or "",
+            self.source_id,
+            session_id,
+            message_id,
+        ]).decode()
+        return str(uuid.uuid5(uuid.NAMESPACE_URL, identity))
 
     async def _ensure_collection(self) -> None:
         if self._collection_ready:
@@ -2676,36 +2776,50 @@ class VectorStoreHistoryProvider(HistoryProvider):
         del state, kwargs
         if not messages:
             return
-        existing = self._messages_from_records(await self._get_records(session_id))
-        new_messages = filter_new_messages(existing, messages)
-        if not new_messages:
+        validated_session_id = self._validate_session_id(session_id)
+        await self._ensure_collection()
+        if self.max_messages == 0:
             return
 
         base_timestamp = time.time_ns()
-        records: list[dict[str, Any]] = [
-            {
-                "id": str(uuid.uuid4()),
+        records: list[dict[str, Any]] = []
+        for index, message in enumerate(messages):
+            if message.message_id is None:
+                message.message_id = str(uuid.uuid4())
+            timestamp = message.additional_properties.get(_VECTOR_HISTORY_TIMESTAMP_KEY)
+            if not isinstance(timestamp, int) or isinstance(timestamp, bool):
+                timestamp = base_timestamp + index
+                message.additional_properties[_VECTOR_HISTORY_TIMESTAMP_KEY] = timestamp
+            records.append({
+                "id": self._record_id(validated_session_id, message.message_id),
                 "application_id": self.application_id,
                 "tenant_id": self.tenant_id or "",
                 "agent_id": self.agent_id or "",
                 "source_id": self.source_id,
-                "session_id": cast(str, session_id),
-                "timestamp": base_timestamp + index,
+                "session_id": validated_session_id,
+                "timestamp": timestamp,
                 "message": message.to_json(),
                 "contents": self._serialize_contents(message),
-            }
-            for index, message in enumerate(new_messages)
-        ]
+            })
         if self.embedding_generator is not None:
             vectors = await self._generate_embeddings([
-                self._serialize_contents_for_embedding(message) for message in new_messages
+                self._serialize_contents_for_embedding(message) for message in messages
             ])
             for record, vector in zip(records, vectors, strict=True):
                 record["embedding"] = vector
         await self._collection.upsert(records, generate_vectors=False)
+        if self.max_messages is not None:
+            retained_records = await self._get_records(validated_session_id)
+            excess_count = len(retained_records) - self.max_messages
+            if excess_count > 0:
+                await self._collection.delete([record["id"] for record in retained_records[:excess_count]])
 
     async def clear(self, session_id: str | None) -> None:
-        """Delete all messages for one isolated history scope."""
+        """Delete currently discoverable messages for one isolated history scope.
+
+        Completeness and atomicity relative to concurrent writes follow the
+        backing collection's paging and delete guarantees.
+        """
         mark_feature_used(FeatureIndex.CORE_VECTOR_STORE_HISTORY_PROVIDER)
         records = await self._get_records(session_id)
         if records:
@@ -2774,6 +2888,10 @@ class VectorCollectionContextProvider(ContextProvider, Generic[KeyT, ModelT]):
     conversation. That provider owns a chat-history schema and automatically
     loads and stores :class:`Message` objects through the
     :class:`HistoryProvider` lifecycle.
+
+    ``scope_filter`` is enforced by generated read and delete tools. Additional
+    caller-created search tools retain their own filters, so callers must scope
+    those tools when the collection is shared.
     """
 
     DEFAULT_SOURCE_ID: ClassVar[str] = "vector_collection"
@@ -2783,6 +2901,7 @@ class VectorCollectionContextProvider(ContextProvider, Generic[KeyT, ModelT]):
         collection: BaseVectorCollection[KeyT, ModelT],
         source_id: str = DEFAULT_SOURCE_ID,
         *,
+        scope_filter: FilterExpression | None,
         instructions: str | Sequence[str] | None = None,
         include_upsert_tool: bool = True,
         include_get_tool: bool = True,
@@ -2806,6 +2925,9 @@ class VectorCollectionContextProvider(ContextProvider, Generic[KeyT, ModelT]):
         Args:
             collection: Caller-owned vector collection exposed through tools.
             source_id: Provider identifier used for instruction and tool attribution.
+            scope_filter: Fixed authorization-scope filter for generated get,
+                delete, and search tools. Pass ``None`` explicitly only when the
+                collection client itself exposes exclusively authorized records.
             instructions: Instructions added before each run. ``None`` uses generated defaults.
             include_upsert_tool: Whether to add the default upsert tool.
             include_get_tool: Whether to add the default get-by-key tool.
@@ -2814,6 +2936,8 @@ class VectorCollectionContextProvider(ContextProvider, Generic[KeyT, ModelT]):
             approval_mode: One mode for every generated tool, or per-tool overrides
                 merged over the safe defaults.
             additional_search_tools: Additional caller-configured search tools.
+                These retain their own filters and are not modified with
+                ``scope_filter``.
 
         Raises:
             TypeError: If a flag, instruction, approval setting, or additional tool is invalid.
@@ -2829,14 +2953,27 @@ class VectorCollectionContextProvider(ContextProvider, Generic[KeyT, ModelT]):
             if not isinstance(value, bool):
                 raise TypeError(f"{name} must be a boolean.")
 
+        configured_scope_filter = _prepare_vector_tool_filter(collection, scope_filter)
         approval_modes = self._resolve_approval_modes(approval_mode)
         tools: list[FunctionTool] = []
         if include_upsert_tool:
             tools.append(create_upsert_tool(collection, approval_mode=approval_modes["upsert"]))
         if include_get_tool:
-            tools.append(create_get_tool(collection, approval_mode=approval_modes["get"]))
+            tools.append(
+                create_get_tool(
+                    collection,
+                    approval_mode=approval_modes["get"],
+                    filter=configured_scope_filter,
+                )
+            )
         if include_delete_tool:
-            tools.append(create_delete_tool(collection, approval_mode=approval_modes["delete"]))
+            tools.append(
+                create_delete_tool(
+                    collection,
+                    approval_mode=approval_modes["delete"],
+                    filter=configured_scope_filter,
+                )
+            )
         if include_search_tool:
             if not isinstance(collection, SupportsVectorSearch):
                 raise ValueError("The vector collection does not support search.")
@@ -2844,6 +2981,7 @@ class VectorCollectionContextProvider(ContextProvider, Generic[KeyT, ModelT]):
                 create_vector_search_tool(
                     cast(SupportsVectorSearch[ModelT], collection),
                     approval_mode=approval_modes["search"],
+                    filter=configured_scope_filter,
                 )
             )
 
@@ -2858,6 +2996,7 @@ class VectorCollectionContextProvider(ContextProvider, Generic[KeyT, ModelT]):
             tool.additional_properties = dict(tool.additional_properties or {})
 
         self.collection = collection
+        self.scope_filter = configured_scope_filter
         self.tools = tuple(tools)
         self.instructions = self._resolve_instructions(instructions)
 
