@@ -9,7 +9,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/microsoft/agent-framework?style=social)](https://github.com/microsoft/agent-framework)
 
 
-Microsoft Agent Framework (MAF) is an open, multi-language framework for building **production-grade AI agents and multi-agent workflows** in **.NET and Python**.
+Microsoft Agent Framework (MAF) is an open, multi-language framework for building **production-grade AI agents and multi-agent workflows** in **.NET and Python**, with an initial **TypeScript preview**.
 
 Microsoft Agent Framework is built for teams taking agents from prototype to production. It provides a consistent foundation for building, orchestrating, and operating agent systems across Python, .NET and Go, while keeping architecture choices open as requirements evolve, and supports a broad ecosystem including Microsoft Foundry, Azure OpenAI, OpenAI, and the GitHub Copilot SDK, with samples and hosting patterns for both local development and cloud deployment.
 
@@ -41,7 +41,7 @@ MAF is a strong fit if you:
 Explore new MAF capabilities and real implementation patterns on the [official blog](https://devblogs.microsoft.com/agent-framework/).
 
 - **Python and C#/.NET Support**: Full framework support for both Python and C#/.NET implementations with consistent APIs
-  - [Python packages](./python/packages/) | [.NET source](./dotnet/src/)
+  - [Python packages](./python/packages/) | [.NET source](./dotnet/src/) | [TypeScript preview](./typescript/)
 - **Go Support**: For the Go SDK, including its documentation, samples, contribution guidance, and issue tracker, visit [microsoft/agent-framework-go](https://github.com/microsoft/agent-framework-go/).
 - **Multiple Agent Provider Support**: Support for various LLM providers with more being added continuously
   - [Python examples](./python/samples/02-agents/providers/) | [.NET examples](./dotnet/samples/02-agents/AgentProviders/)
@@ -70,6 +70,7 @@ Explore new MAF capabilities and real implementation patterns on the [official b
   - [Quickstart](#quickstart)
     - [Basic Agent - Python](#basic-agent---python)
     - [Basic Agent - .NET](#basic-agent---net)
+    - [Basic Agent - TypeScript](#basic-agent---typescript)
 - [More Examples & Samples](#more-examples--samples)
 - [Community & Feedback](#community--feedback)
 - [Troubleshooting](#troubleshooting)
@@ -93,6 +94,13 @@ dotnet add package Microsoft.Agents.AI
 dotnet add package Microsoft.Agents.AI.Foundry
 dotnet add package Azure.AI.Projects
 dotnet add package Azure.Identity
+```
+
+TypeScript source preview
+
+```bash
+cd typescript
+npm install
 ```
 
 ### Learning Resources
@@ -161,6 +169,18 @@ AIAgent agent =
 Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Framework."));
 ```
 
+#### Basic Agent - TypeScript
+
+The TypeScript SDK is currently a source preview. After installing the workspace dependencies, set `OPENAI_API_KEY` and `OPENAI_CHAT_MODEL`, then run:
+
+```bash
+cd typescript
+npm run build
+npm run sample
+```
+
+See the [TypeScript getting-started sample](./typescript/samples/getting-started.ts) for the complete agent and tool definition.
+
 ## More Examples & Samples
 
 ### Python
@@ -179,6 +199,11 @@ Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Fram
 - [Workflows](./dotnet/samples/03-workflows): advanced multi-agent patterns and workflow orchestration
 - [Hosting](./dotnet/samples/04-hosting): A2A and Foundry hosted agents. Durable agent and workflow samples are in the [Durable Agent Framework extension](https://github.com/microsoft/agent-framework-durable-extension/tree/main/dotnet/samples).
 - [End-to-End](./dotnet/samples/05-end-to-end): full applications and demos
+
+### TypeScript
+
+- [Getting Started](./typescript/samples/getting-started.ts): OpenAI chat agent with a JSON Schema-validated function tool
+- [Package overview](./typescript/README.md): supported preview surface, development commands, and current limitations
 
 ## Community & Feedback
 
@@ -205,6 +230,7 @@ For environment variable configuration specific to each sample, refer to the REA
 - [Contributing Guide](./CONTRIBUTING.md)
 - [Code of Conduct](./CODE_OF_CONDUCT.md)
 - [Python Development Guide](./python/DEV_SETUP.md)
+- [TypeScript Development Guide](./typescript/README.md)
 - [Design Documents](./docs/design)
 - [Architectural Decision Records](./docs/decisions)
 

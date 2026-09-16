@@ -186,6 +186,11 @@ Each language has its own dev setup guide, coding standards, and build scripts:
     - Unit tests: `dotnet test --filter-query "/*UnitTests*/*/*/*"`
     - Integration tests: `dotnet test --filter-query "/*IntegrationTests*/*/*/*"` (requires API keys/endpoints)
     - Linting (auto-fix): `dotnet format`
+- **TypeScript**: [README](./typescript/README.md) · [Agent Instructions](./typescript/AGENTS.md)
+  - From the `./typescript` directory:
+    - Install: `npm ci`
+    - Build, format check, unit tests, and sample type checking: `npm run check`
+    - Format: `npm run format`
 
 #### Microsoft Internal Feed Proxy for GitHub Copilot SDK (.NET)
 

@@ -1,0 +1,33 @@
+{
+  "name": "@microsoft/agent-framework-openai",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OpenAI chat client for Microsoft Agent Framework in TypeScript.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck:test": "tsc -p tsconfig.test.json",
+    "test": "vitest run",
+    "check": "npm run build && npm run typecheck:test && npm test"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "dependencies": {
+    "@microsoft/agent-framework-core": "0.1.0",
+    "openai": "^7.12.1"
+  },
+  "license": "MIT"
+}
