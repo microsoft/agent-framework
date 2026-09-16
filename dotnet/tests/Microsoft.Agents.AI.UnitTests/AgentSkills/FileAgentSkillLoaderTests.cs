@@ -12,6 +12,8 @@ using System.Runtime.Versioning;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
+using Moq;
 
 namespace Microsoft.Agents.AI.UnitTests.AgentSkills;
 
@@ -39,6 +41,201 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         {
             Directory.Delete(this._testRoot, recursive: true);
         }
+    }
+
+    /// <summary>
+    /// Existing scalar representations and outputs, for both LF and CRLF skill files.
+    /// </summary>
+    public static TheoryData<string, string, string> ExistingScalarFormats
+    {
+        get
+        {
+            var data = new TheoryData<string, string, string>();
+            // Pin the existing lightweight parser's output, not full YAML conformance.
+            (string Value, string Expected)[] cases =
+            [
+                ("Read files", "Read files"),
+                ("'Read files'", "Read files"),
+                ("\"Read files\"", "Read files"),
+                ("\"  Read files  \"", "  Read files  "),
+                ("\"Use #tags: safely\"", "Use #tags: safely"),
+                ("\"Use 'quotes' safely\"", "Use 'quotes' safely"),
+                ("'Use \"quotes\" safely'", "Use \"quotes\" safely"),
+                ("\"| not a block\"", "| not a block"),
+                ("\n  Read files", "Read files"),
+                ("\n\n  'Read files'", "Read files"),
+                ("\n  >-\n    Read\n    files", "Read files"),
+                ("|\n  Read\n  files", "Read\nfiles"),
+                ("|-\n  Read\n  files", "Read\nfiles"),
+                ("|+\n  Read\n  files", "Read\nfiles\n"),
+                (">\n  Read\n  files", "Read files"),
+                (">-\n  Read\n  files", "Read files"),
+                (">+\n  Read\n  files", "Read files\n"),
+                ("|-\n\n  Read\n  files", "Read\nfiles"),
+                ("|-\n  Read\n\n  files", "Read\n\nfiles"),
+                ("|-\n  Read\n    indented\n  files", "Read\n  indented\nfiles"),
+                ("|-\n  description: text\n  Description: text", "description: text\nDescription: text"),
+            ];
+            foreach (var (value, expected) in cases)
+            {
+                data.Add(value, expected, "\n");
+                data.Add(value, expected, "\r\n");
+            }
+
+            return data;
+        }
+    }
+
+    /// <summary>
+    /// Duplicate and incorrectly cased fields before and after inline or block values.
+    /// </summary>
+    public static TheoryData<string, string, string> ConflictingScalarFormats
+    {
+        get
+        {
+            var data = new TheoryData<string, string, string>();
+            string[] firstValues = ["First", "'First'", "\"First\"", "|-\n  First", ">-\n  First"];
+            string[] secondValues = ["Second", "'Second'", "\"Second\"", "|-\n  Second", ">-\n  Second"];
+            string[] secondKeys = ["description", "Description", "DESCRIPTION"];
+            foreach (string firstValue in firstValues)
+            {
+                foreach (string secondValue in secondValues)
+                {
+                    foreach (string secondKey in secondKeys)
+                    {
+                        data.Add(firstValue, secondValue, secondKey);
+                    }
+                }
+            }
+
+            return data;
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(ExistingScalarFormats))]
+    public async Task GetSkillsAsync_ExistingScalarFormats_PreservedAsync(string value, string expected, string newline)
+    {
+        // Arrange
+        string content =
+            $"---\nname: test-skill\ndescription: {value}\n" +
+            "license: 'MIT'\ncompatibility: Any runtime\nallowed-tools: read\n" +
+            "metadata:\n  author: test\n---\nBody.";
+        _ = this.CreateSkillDirectoryWithRawContent("test-skill", content.Replace("\n", newline));
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        var frontmatter = Assert.Single(skills).Frontmatter;
+        Assert.Equal(expected, frontmatter.Description);
+        Assert.Equal("MIT", frontmatter.License);
+        Assert.Equal("Any runtime", frontmatter.Compatibility);
+        Assert.Equal("read", frontmatter.AllowedTools);
+        Assert.NotNull(frontmatter.Metadata);
+        Assert.Equal("test", frontmatter.Metadata["author"]);
+    }
+
+    [Theory]
+    [MemberData(nameof(ConflictingScalarFormats))]
+    public async Task GetSkillsAsync_ConflictingScalarFormats_ExcludesSkillAndLogsErrorAsync(
+        string firstValue,
+        string secondValue,
+        string secondKey)
+    {
+        // Arrange
+        string content = $"---\nname: test-skill\ndescription: {firstValue}\n{secondKey}: {secondValue}\nlicense: MIT\n---\nBody.";
+        _ = this.CreateSkillDirectoryWithRawContent("test-skill", content);
+        var logger = new Mock<ILogger>();
+        logger.Setup(l => l.IsEnabled(It.IsAny<LogLevel>())).Returns(true);
+        var loggerFactory = new Mock<ILoggerFactory>();
+        loggerFactory.Setup(f => f.CreateLogger(It.IsAny<string>())).Returns(logger.Object);
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor, loggerFactory: loggerFactory.Object);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        Assert.Empty(skills);
+        string diagnostic = secondKey == "description"
+            ? "duplicate frontmatter field 'description'"
+            : $"incorrectly cased frontmatter field '{secondKey}'; expected 'description'";
+        logger.Verify(
+            l => l.Log(
+                LogLevel.Error,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((state, _) => state.ToString()!.IndexOf(diagnostic, StringComparison.Ordinal) >= 0),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_NestedMetadataAndUnknownFields_KeepExistingBehaviorAsync()
+    {
+        // Arrange
+        const string Content =
+            "---\nname: test-skill\ndescription: Read files\n" +
+            "# description: Not a field\n" +
+            "metadata:\n  author: First\n  author: Second\n  Description: Nested text\n" +
+            "vendor-option: First\nvendor-option: Second\n---\nDescription: Body text";
+        _ = this.CreateSkillDirectoryWithRawContent("test-skill", Content);
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        var frontmatter = Assert.Single(skills).Frontmatter;
+        Assert.Equal("Read files", frontmatter.Description);
+        Assert.NotNull(frontmatter.Metadata);
+        Assert.Equal(2, frontmatter.Metadata.Count);
+        Assert.Equal("Second", frontmatter.Metadata["author"]);
+        Assert.Equal("Nested text", frontmatter.Metadata["Description"]);
+    }
+
+    [Theory]
+    [InlineData("''")]
+    [InlineData("\"\"")]
+    public async Task GetSkillsAsync_EmptyQuotedOptionalValues_KeepExistingRepresentationAsync(string value)
+    {
+        // Arrange
+        string content =
+            "---\nname: test-skill\ndescription: Read files\n" +
+            $"license: {value}\ncompatibility: {value}\nallowed-tools: {value}\n---\nBody.";
+        _ = this.CreateSkillDirectoryWithRawContent("test-skill", content);
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert - empty-quote normalization belongs to the separate YAML conformance work.
+        var frontmatter = Assert.Single(skills).Frontmatter;
+        Assert.Equal(value, frontmatter.License);
+        Assert.Equal(value, frontmatter.Compatibility);
+        Assert.Equal(value, frontmatter.AllowedTools);
+    }
+
+    [Theory]
+    [InlineData("|")]
+    [InlineData("|-")]
+    [InlineData("|+")]
+    [InlineData(">")]
+    [InlineData(">-")]
+    [InlineData(">+")]
+    public async Task GetSkillsAsync_EmptyBlockBeforeAnotherField_ExcludesSkillAsync(string value)
+    {
+        // Arrange
+        _ = this.CreateSkillDirectoryWithRawContent(
+            "test-skill", $"---\nname: test-skill\ndescription: {value}\n\nlicense: MIT\n---\nBody.");
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        Assert.Empty(skills);
     }
 
     [Fact]
@@ -183,6 +380,116 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         File.WriteAllText(
             Path.Combine(skillDir, "SKILL.md"),
             "---\nname: no-desc\n---\nBody.");
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        Assert.Empty(skills);
+    }
+
+    [Theory]
+    [InlineData("name")]
+    [InlineData("description")]
+    [InlineData("license")]
+    [InlineData("compatibility")]
+    [InlineData("metadata")]
+    [InlineData("allowed-tools")]
+    public async Task GetSkillsAsync_DuplicateRecognizedFrontmatterField_ExcludesSkillAsync(string field)
+    {
+        // Arrange
+        string fields = field switch
+        {
+            "name" => "name: ambiguous-skill\nname: ambiguous-skill\ndescription: A skill",
+            "description" => "name: ambiguous-skill\ndescription: A skill\ndescription: A second description",
+            "metadata" => "name: ambiguous-skill\ndescription: A skill\nmetadata:\n  author: first\nmetadata:\n  version: 1.0",
+            _ => $"name: ambiguous-skill\ndescription: A skill\n{field}: first\n{field}: second",
+        };
+        _ = this.CreateSkillDirectoryWithRawContent(
+            "ambiguous-skill",
+            $"---\n{fields}\n---\nBody.");
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        Assert.Empty(skills);
+    }
+
+    [Theory]
+    [InlineData("name", "Name")]
+    [InlineData("description", "Description")]
+    [InlineData("license", "License")]
+    [InlineData("compatibility", "Compatibility")]
+    [InlineData("metadata", "Metadata")]
+    [InlineData("allowed-tools", "Allowed-Tools")]
+    public async Task GetSkillsAsync_IncorrectlyCasedRecognizedFrontmatterField_ExcludesSkillAsync(
+        string field,
+        string incorrectlyCasedField)
+    {
+        // Arrange
+        string fields = field switch
+        {
+            "name" => $"{incorrectlyCasedField}: ambiguous-skill\ndescription: A skill",
+            "description" => $"name: ambiguous-skill\n{incorrectlyCasedField}: A skill",
+            "metadata" => $"name: ambiguous-skill\ndescription: A skill\n{incorrectlyCasedField}:\n  author: test",
+            _ => $"name: ambiguous-skill\ndescription: A skill\n{incorrectlyCasedField}: value",
+        };
+        _ = this.CreateSkillDirectoryWithRawContent(
+            "ambiguous-skill",
+            $"---\n{fields}\n---\nBody.");
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        Assert.Empty(skills);
+    }
+
+    [Theory]
+    [InlineData("metadata", "\n")]
+    [InlineData("metadata", "\r\n")]
+    [InlineData("license", "\n")]
+    [InlineData("license", "\r\n")]
+    [InlineData("vendor-option", "\n")]
+    [InlineData("vendor-option", "\r\n")]
+    public async Task GetSkillsAsync_EmptyInlineValue_DoesNotConsumeNextFieldAsync(string field, string newline)
+    {
+        // Arrange
+        string content = $"---\n{field}: \t\nname: test-skill\ndescription: A test skill.\n---\nBody.";
+        _ = this.CreateSkillDirectoryWithRawContent("test-skill", content.Replace("\n", newline));
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        var skill = Assert.Single(skills);
+        Assert.Equal("test-skill", skill.Frontmatter.Name);
+        Assert.Equal("A test skill.", skill.Frontmatter.Description);
+    }
+
+    [Theory]
+    [InlineData("name:", "\n")]
+    [InlineData("name:", "\r\n")]
+    [InlineData("description:", "\n")]
+    [InlineData("description:", "\r\n")]
+    [InlineData("metadata:\nmetadata:", "\n")]
+    [InlineData("metadata:\nmetadata:", "\r\n")]
+    [InlineData("license:\nlicense: MIT", "\n")]
+    [InlineData("license:\nlicense: MIT", "\r\n")]
+    [InlineData("Metadata:", "\n")]
+    [InlineData("Metadata:", "\r\n")]
+    [InlineData("allowed-tools: read\nALLOWED-TOOLS:", "\n")]
+    [InlineData("allowed-tools: read\nALLOWED-TOOLS:", "\r\n")]
+    public async Task GetSkillsAsync_EmptyInlineValue_DoesNotBypassKeyValidationAsync(string fields, string newline)
+    {
+        // Arrange
+        string content = $"---\n{fields}\nname: test-skill\ndescription: A test skill.\n---\nBody.";
+        _ = this.CreateSkillDirectoryWithRawContent("test-skill", content.Replace("\n", newline));
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act

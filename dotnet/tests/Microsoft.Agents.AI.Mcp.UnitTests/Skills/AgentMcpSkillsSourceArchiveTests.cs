@@ -62,6 +62,51 @@ public sealed class AgentMcpSkillsSourceArchiveTests : IDisposable
 
     private const int ManyFileArchiveFileCount = 60;
 
+    [Theory]
+    [InlineData("description: First\ndescription: >-\n  Second")]
+    [InlineData("description: |-\n  First\nDescription: Second")]
+    [InlineData("description: Valid\nmetadata:\n  author: First\nmetadata:\n  author: Second")]
+    [InlineData("description: Valid\nAllowed-Tools: read")]
+    public async Task GetSkillsAsync_AmbiguousArchiveFrontmatter_SkipsSkillAsync(string fields)
+    {
+        // Arrange
+        byte[] archive = BuildZip(("SKILL.md", $"---\nname: archived-skill\n{fields}\n---\nBody."));
+        await using var server = CreateArchiveServer(
+            ArchiveIndex("archived-skill", "skill://archives/archived-skill.zip"),
+            new Dictionary<string, byte[]> { ["archived-skill"] = archive });
+        await using var client = await server.CreateClientAsync();
+        var source = new AgentMcpSkillsSource(client, new() { ArchiveSkillsDirectory = this._extractionRoot });
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        Assert.Empty(skills);
+    }
+
+    [Theory]
+    [InlineData("\n")]
+    [InlineData("\r\n")]
+    public async Task GetSkillsAsync_ArchiveValueOnIndentedNextLine_PreservedAsync(string newline)
+    {
+        // Arrange
+        const string Content = "---\nname: archived-skill\ndescription:\n  'Read files'\nlicense: MIT\n---\nBody.";
+        byte[] archive = BuildZip(("SKILL.md", Content.Replace("\n", newline)));
+        await using var server = CreateArchiveServer(
+            ArchiveIndex("archived-skill", "skill://archives/archived-skill.zip"),
+            new Dictionary<string, byte[]> { ["archived-skill"] = archive });
+        await using var client = await server.CreateClientAsync();
+        var source = new AgentMcpSkillsSource(client, new() { ArchiveSkillsDirectory = this._extractionRoot });
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        var frontmatter = Assert.Single(skills).Frontmatter;
+        Assert.Equal("Read files", frontmatter.Description);
+        Assert.Equal("MIT", frontmatter.License);
+    }
+
     /// <summary>
     /// Malformed, unsupported, and mismatched archive digests that must be rejected.
     /// </summary>

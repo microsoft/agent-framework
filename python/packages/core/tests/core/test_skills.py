@@ -525,6 +525,145 @@ class TestTryParseSkillDocument:
         assert result is not None
         assert result.name == "test-skill"
 
+    @pytest.mark.parametrize(
+        "field",
+        ("name", "description", "license", "compatibility", "metadata", "allowed-tools"),
+    )
+    def test_duplicate_recognized_field_rejected(self, field: str) -> None:
+        if field == "name":
+            fields = "name: test-skill\nname: test-skill\ndescription: A test skill."
+        elif field == "description":
+            fields = "name: test-skill\ndescription: A test skill.\ndescription: A second description."
+        elif field == "metadata":
+            fields = (
+                "name: test-skill\ndescription: A test skill.\nmetadata:\n  author: first\nmetadata:\n  version: 1.0"
+            )
+        else:
+            fields = f"name: test-skill\ndescription: A test skill.\n{field}: first\n{field}: second"
+
+        result = FileSkillsSource._extract_frontmatter(f"---\n{fields}\n---\nBody.", "test.md")
+
+        assert result is None
+
+    @pytest.mark.parametrize(
+        ("field", "incorrect_casing"),
+        (
+            ("name", "Name"),
+            ("description", "Description"),
+            ("license", "License"),
+            ("compatibility", "Compatibility"),
+            ("metadata", "Metadata"),
+            ("allowed-tools", "Allowed-Tools"),
+        ),
+    )
+    def test_incorrectly_cased_recognized_field_rejected(self, field: str, incorrect_casing: str) -> None:
+        if field == "name":
+            fields = f"{incorrect_casing}: test-skill\ndescription: A test skill."
+        elif field == "description":
+            fields = f"name: test-skill\n{incorrect_casing}: A test skill."
+        elif field == "metadata":
+            fields = f"name: test-skill\ndescription: A test skill.\n{incorrect_casing}:\n  author: test"
+        else:
+            fields = f"name: test-skill\ndescription: A test skill.\n{incorrect_casing}: value"
+
+        result = FileSkillsSource._extract_frontmatter(f"---\n{fields}\n---\nBody.", "test.md")
+
+        assert result is None
+
+    @pytest.mark.parametrize("newline", ("\n", "\r\n"))
+    @pytest.mark.parametrize("field", ("metadata", "license", "vendor-option"))
+    def test_empty_inline_value_does_not_consume_next_field(self, field: str, newline: str) -> None:
+        content = newline.join((
+            "---",
+            f"{field}: \t",
+            "name: test-skill",
+            "description: A test skill.",
+            "---",
+            "Body.",
+        ))
+
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+
+        assert result is not None
+        assert result.name == "test-skill"
+        assert result.description == "A test skill."
+
+    @pytest.mark.parametrize("newline", ("\n", "\r\n"))
+    @pytest.mark.parametrize(
+        "fields",
+        (
+            "name:",
+            "description:",
+            "metadata:\nmetadata:",
+            "license:\nlicense: MIT",
+            "Metadata:",
+            "allowed-tools: read\nALLOWED-TOOLS:",
+        ),
+    )
+    def test_empty_inline_value_does_not_bypass_key_validation(self, fields: str, newline: str) -> None:
+        content = f"---\n{fields}\nname: test-skill\ndescription: A test skill.\n---\nBody.".replace("\n", newline)
+
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+
+        assert result is None
+
+    @pytest.mark.parametrize("first_value", ("First", "'First'", '"First"', "|-\n  First", ">-\n  First"))
+    @pytest.mark.parametrize("second_value", ("Second", "'Second'", '"Second"', "|-\n  Second", ">-\n  Second"))
+    @pytest.mark.parametrize("second_key", ("description", "Description", "DESCRIPTION"))
+    def test_duplicate_and_cased_fields_across_scalar_formats(
+        self, first_value: str, second_value: str, second_key: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        content = (
+            f"---\nname: test-skill\ndescription: {first_value}\n{second_key}: {second_value}\nlicense: MIT\n---\nBody."
+        )
+
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+
+        assert result is None
+        diagnostic = (
+            "duplicate frontmatter field 'description'"
+            if second_key == "description"
+            else f"incorrectly cased frontmatter field '{second_key}'; expected 'description'"
+        )
+        assert diagnostic in caplog.text
+
+    def test_nested_metadata_and_unknown_fields_keep_existing_behavior(self) -> None:
+        content = (
+            "---\nname: test-skill\ndescription: Read files\n"
+            "# description: Not a field\n"
+            "metadata:\n  author: First\n  author: Second\n  Description: Nested text\n"
+            "vendor-option: First\nvendor-option: Second\n---\nDescription: Body text"
+        )
+
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+
+        assert result is not None
+        assert result.description == "Read files"
+        assert result.metadata == {"author": "Second", "Description": "Nested text"}
+
+    @pytest.mark.parametrize("value", ("''", '""'))
+    def test_empty_quoted_optional_values_keep_existing_representation(self, value: str) -> None:
+        content = (
+            f"---\nname: test-skill\ndescription: Read files\n"
+            f"license: {value}\ncompatibility: {value}\nallowed-tools: {value}\n---\nBody."
+        )
+
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+
+        assert result is not None
+        # Empty-quote normalization belongs to the separate YAML conformance work.
+        assert result.license == value
+        assert result.compatibility == value
+        assert result.allowed_tools == value
+
+    @pytest.mark.parametrize("value", ("|", "|-", "|+", ">", ">-", ">+"))
+    def test_empty_block_before_another_field_rejected(self, value: str) -> None:
+        content = f"---\nname: test-skill\ndescription: {value}\n\nlicense: MIT\n---\nBody."
+
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+
+        assert result is None
+
 
 # ---------------------------------------------------------------------------
 # Tests: skill discovery and loading
@@ -533,6 +672,56 @@ class TestTryParseSkillDocument:
 
 class TestDiscoverAndLoadSkills:
     """Tests for file skill discovery via FileSkillsSource.get_skills()."""
+
+    @pytest.mark.parametrize("newline", ("\n", "\r\n"))
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        (
+            ("Read files", "Read files"),
+            ("'Read files'", "Read files"),
+            ('"Read files"', "Read files"),
+            ('"  Read files  "', "  Read files  "),
+            ('"Use #tags: safely"', "Use #tags: safely"),
+            ("\"Use 'quotes' safely\"", "Use 'quotes' safely"),
+            ("'Use \"quotes\" safely'", 'Use "quotes" safely'),
+            ('"| not a block"', "| not a block"),
+            ("\n  Read files", "Read files"),
+            ("\n\n  'Read files'", "Read files"),
+            ("\n  >-\n    Read\n    files", "Read files"),
+            ("|\n  Read\n  files", "Read\nfiles\n"),
+            ("|-\n  Read\n  files", "Read\nfiles"),
+            ("|+\n  Read\n  files", "Read\nfiles\n"),
+            (">\n  Read\n  files", "Read files"),
+            (">-\n  Read\n  files", "Read files"),
+            (">+\n  Read\n  files", "Read files\n"),
+            ("|-\n\n  Read\n  files", "Read\nfiles"),
+            ("|-\n  Read\n\n  files", "Read\n\nfiles"),
+            ("|-\n  Read\n    indented\n  files", "Read\n  indented\nfiles"),
+            ("|-\n  description: text\n  Description: text", "description: text\nDescription: text"),
+        ),
+    )
+    async def test_existing_scalar_formats_preserved(
+        self, tmp_path: Path, newline: str, value: str, expected: str
+    ) -> None:
+        # Pin the existing lightweight parser's output, not full YAML conformance.
+        content = (
+            f"---\nname: test-skill\ndescription: {value}\n"
+            "license: 'MIT'\ncompatibility: Any runtime\nallowed-tools: read\n"
+            "metadata:\n  author: test\n---\nBody."
+        )
+        skill_dir = tmp_path / "test-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_bytes(content.replace("\n", newline).encode())
+
+        skills = await _discover_file_skills_for_test([str(tmp_path)])
+
+        assert len(skills) == 1
+        frontmatter = skills["test-skill"].frontmatter
+        assert frontmatter.description == expected
+        assert frontmatter.license == "MIT"
+        assert frontmatter.compatibility == "Any runtime"
+        assert frontmatter.allowed_tools == "read"
+        assert frontmatter.metadata == {"author": "test"}
 
     async def test_discovers_valid_skill(self, tmp_path: Path) -> None:
         _write_skill(tmp_path, "my-skill")

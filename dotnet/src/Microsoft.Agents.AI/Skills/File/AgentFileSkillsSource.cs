@@ -22,7 +22,8 @@ namespace Microsoft.Agents.AI;
 /// <remarks>
 /// Searches directories recursively (up to 2 levels deep) for SKILL.md files.
 /// Symbolic links and reparse points below configured roots are not followed during skill discovery.
-/// Each file is validated for YAML frontmatter. Resource and script files are discovered by scanning the skill
+/// Recognized top-level frontmatter fields must use lowercase names and must not be repeated.
+/// Resource and script files are discovered by scanning the skill
 /// directory for files with matching extensions. Invalid resources are skipped with logged warnings.
 /// Resource and script paths are checked against path traversal and symlink escape attacks.
 /// Discovered files are revalidated against their trusted skill directory immediately before use.
@@ -36,15 +37,27 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
     private static readonly string[] s_defaultScriptExtensions = [".py", ".js", ".sh", ".ps1", ".cs", ".csx"];
     private static readonly string[] s_defaultResourceExtensions = [".md", ".json", ".yaml", ".yml", ".csv", ".xml", ".txt"];
 
+    // Case-insensitive lookup identifies known fields; values preserve the required spelling for validation.
+    private static readonly Dictionary<string, string> s_frontmatterFieldNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["name"] = "name",
+        ["description"] = "description",
+        ["license"] = "license",
+        ["compatibility"] = "compatibility",
+        ["metadata"] = "metadata",
+        ["allowed-tools"] = "allowed-tools",
+    };
+
     // Matches YAML frontmatter delimited by "---" lines. Group 1 = content between delimiters.
     // Multiline makes ^/$ match line boundaries; Singleline makes . match newlines across the block.
     // The \uFEFF? prefix allows an optional UTF-8 BOM that some editors prepend.
     private static readonly Regex s_frontmatterRegex = new(@"\A\uFEFF?^---\s*$(.+?)^---\s*$", RegexOptions.Multiline | RegexOptions.Singleline | RegexOptions.Compiled, TimeSpan.FromSeconds(5));
 
     // Matches top-level YAML "key: value" lines. Group 1 = key (supports hyphens for keys like allowed-tools),
-    // Group 2 = quoted value, Group 3 = unquoted value.
-    // Accepts single or double quotes; the lazy quantifier trims trailing whitespace on unquoted values.
-    private static readonly Regex s_yamlKeyValueRegex = new(@"^([\w-]+)\s*:\s*(?:[""'](.+?)[""']|(.+?))\s*$", RegexOptions.Multiline | RegexOptions.Compiled, TimeSpan.FromSeconds(5));
+    // Group 2 = quoted value, Group 3 = unquoted value (possibly empty for keys such as "metadata:").
+    // A value may start on a later indented line, but cannot consume another top-level field.
+    // Retain trailing whitespace matching so block-scalar parsing handles leading blank lines as before.
+    private static readonly Regex s_yamlKeyValueRegex = new(@"^([\w-]+)[ \t]*:[ \t]*(?:\r?\n(?:[ \t]*\r?\n)*[ \t]+)?(?:[""']([^\r\n]+?)[""']|([^\r\n]*?))\s*$", RegexOptions.Multiline | RegexOptions.Compiled, TimeSpan.FromSeconds(5));
 
     // Matches a "metadata:" line followed by indented sub-key/value pairs.
     // Group 1 captures the entire indented block beneath the metadata key.
@@ -235,30 +248,52 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
         string? compatibility = null;
         string? allowedTools = null;
 
+        // Spec-defined fields use exact lowercase names. Reject casing variants and
+        // duplicates rather than silently changing which value the skill exposes.
+        var seenFields = new HashSet<string>(StringComparer.Ordinal);
         foreach (Match kvMatch in s_yamlKeyValueRegex.Matches(yamlContent))
         {
             string key = kvMatch.Groups[1].Value;
+
+            // Unknown fields are intentionally excluded from this validation for forward compatibility.
+            if (!s_frontmatterFieldNames.TryGetValue(key, out string? canonicalKey))
+            {
+                continue;
+            }
+
+            if (!string.Equals(key, canonicalKey, StringComparison.Ordinal))
+            {
+                LogIncorrectlyCasedFrontmatterField(this._logger, skillFilePath, key, canonicalKey);
+                return false;
+            }
+
+            if (!seenFields.Add(key))
+            {
+                LogDuplicateFrontmatterField(this._logger, skillFilePath, key);
+                return false;
+            }
+
             string value = kvMatch.Groups[2].Success
                 ? kvMatch.Groups[2].Value
                 : ParseYamlScalarValue(yamlContent, kvMatch);
 
-            if (string.Equals(key, "name", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(key, "name", StringComparison.Ordinal))
             {
                 name = value;
             }
-            else if (string.Equals(key, "description", StringComparison.OrdinalIgnoreCase))
+            else if (string.Equals(key, "description", StringComparison.Ordinal))
             {
                 description = value;
             }
-            else if (string.Equals(key, "license", StringComparison.OrdinalIgnoreCase))
+            else if (string.Equals(key, "license", StringComparison.Ordinal))
             {
                 license = value;
             }
-            else if (string.Equals(key, "compatibility", StringComparison.OrdinalIgnoreCase))
+            else if (string.Equals(key, "compatibility", StringComparison.Ordinal))
             {
                 compatibility = value;
             }
-            else if (string.Equals(key, "allowed-tools", StringComparison.OrdinalIgnoreCase))
+            else if (string.Equals(key, "allowed-tools", StringComparison.Ordinal))
             {
                 allowedTools = value;
             }
@@ -721,6 +756,12 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
 
     [LoggerMessage(LogLevel.Error, "SKILL.md at '{SkillFilePath}' has an invalid '{FieldName}' value: {Reason}")]
     private static partial void LogInvalidFieldValue(ILogger logger, string skillFilePath, string fieldName, string reason);
+
+    [LoggerMessage(LogLevel.Error, "SKILL.md at '{SkillFilePath}' contains duplicate frontmatter field '{FieldName}'")]
+    private static partial void LogDuplicateFrontmatterField(ILogger logger, string skillFilePath, string fieldName);
+
+    [LoggerMessage(LogLevel.Error, "SKILL.md at '{SkillFilePath}' uses incorrectly cased frontmatter field '{FieldName}'; expected '{ExpectedFieldName}'")]
+    private static partial void LogIncorrectlyCasedFrontmatterField(ILogger logger, string skillFilePath, string fieldName, string expectedFieldName);
 
     [LoggerMessage(LogLevel.Error, "SKILL.md at '{SkillFilePath}': skill name '{SkillName}' does not match parent directory name '{DirectoryName}'")]
     private static partial void LogNameDirectoryMismatch(ILogger logger, string skillFilePath, string skillName, string directoryName);

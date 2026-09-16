@@ -757,6 +757,40 @@ def _archive_client(index_json: str, archive_url: str, archive_bytes: bytes, mim
 class TestMCPSkillsSourceArchive:
     """Tests for archive-type skill discovery via MCPSkillsSource (in-memory)."""
 
+    @pytest.mark.parametrize(
+        "fields",
+        (
+            "description: First\ndescription: >-\n  Second",
+            "description: |-\n  First\nDescription: Second",
+            "description: Valid\nmetadata:\n  author: First\nmetadata:\n  author: Second",
+            "description: Valid\nAllowed-Tools: read",
+        ),
+    )
+    async def test_ambiguous_archive_frontmatter_is_skipped(self, fields: str) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        index = _make_archive_index("packaged-skill", url)
+        content = f"---\nname: packaged-skill\n{fields}\n---\nBody."
+        archive = _make_zip({"SKILL.md": content.encode()})
+        client = _archive_client(index, url, archive, "application/zip")
+
+        skills = await MCPSkillsSource(client=client).get_skills(_SOURCE_CTX)
+
+        assert skills == []
+
+    @pytest.mark.parametrize("newline", ("\n", "\r\n"))
+    async def test_archive_value_on_indented_next_line_is_preserved(self, newline: str) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        index = _make_archive_index("packaged-skill", url)
+        content = "---\nname: packaged-skill\ndescription:\n  'Read files'\nlicense: MIT\n---\nBody."
+        archive = _make_zip({"SKILL.md": content.replace("\n", newline).encode()})
+        client = _archive_client(index, url, archive, "application/zip")
+
+        skills = await MCPSkillsSource(client=client).get_skills(_SOURCE_CTX)
+
+        assert len(skills) == 1
+        assert skills[0].frontmatter.description == "Read files"
+        assert skills[0].frontmatter.license == "MIT"
+
     async def test_zip_archive_discovered_as_file_skill(self) -> None:
         from agent_framework import FileSkill
 
