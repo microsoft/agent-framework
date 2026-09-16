@@ -161,14 +161,21 @@ subset of the destination set.
 |----------|--------|-----------|
 | **Tier 1** | Per-item embedded labels (`additional_properties.security_label`) | Restrict the locally established fallback |
 | **Tier 2** | Tool's `source_integrity` declaration | No embedded labels, but tool declares `source_integrity` |
-| **Tier 3** (Lowest) | Join of input argument labels (`combine_labels`) | No embedded labels AND no `source_integrity` declared |
-| **Default** | `UNTRUSTED` | No labels from any tier |
+| **Tier 3** (Lowest) | Owned-reference integrity or configured default, restricted by argument labels | No `source_integrity` declared |
+| **Default** | `default_integrity` (`UNTRUSTED` by default) | No source declaration or resolved, owned variable references |
 
 **Tiered Label Propagation:**
 - **Tier 1: Embedded labels** are restriction-only by default: they can downgrade integrity or raise confidentiality, but cannot upgrade a fallback or supply principal authority
 - **Tier 2: `source_integrity`** is the locally trusted fallback for the tool's output; use `"trusted"` only after the local connector enforces its trust policy
-- **Tier 3: Input labels join** — `combine_labels(*input_labels)` from arguments (VariableReferenceContent, labeled data)
-- **Default**: `UNTRUSTED` when no labels exist from any tier
+- **Tier 3: Owned input baseline** — inherit integrity from labels retrieved while resolving variable references owned by the current security scope. If there are no such references, use `default_integrity`. Labels supplied in arguments may make that baseline less trusted, but cannot make it more trusted.
+- **Default**: `UNTRUSTED` unless the application configures another `default_integrity`
+
+A `security_label` or legacy `label` dictionary in tool arguments is application data,
+not an authoritative trust declaration, even inside a validated model or nested dictionary.
+Its integrity claim cannot promote the result above the owned-reference/default baseline.
+Argument confidentiality restrictions still propagate, while principal authority comes from
+owned labels or local configuration. An explicit `source_integrity` declaration retains
+precedence over argument integrity claims.
 
 Framework-owned parsers and wrappers may stamp a complete label after enforcing
 local policy. Application and remote metadata remains restriction-only.
@@ -194,9 +201,9 @@ If items don't have embedded labels, the tool can declare a fallback via `source
 When declared, `source_integrity` establishes the local integrity fallback. Embedded labels can make the result less trusted, but cannot make it more trusted:
 - `source_integrity="trusted"`: Tool produces trusted data (internal computations)
 - `source_integrity="untrusted"`: Tool fetches untrusted data
-- (not set): Falls back to tier 3 (join of input labels) or **UNTRUSTED** default
+- (not set): Falls back to tier 3 (owned-reference integrity or the configured default, restricted by argument labels)
 
-**Note:** For action tools (sinks like `send_email`), `source_integrity` doesn't apply since they don't produce data. Their result inherits labels from inputs (tier 3).
+**Note:** Action tools (sinks like `send_email`) can omit `source_integrity`. Their result follows tier 3: owned-reference inheritance or the configured default, with argument restrictions.
 
 **Context Label Tracking:**
 - Context label starts as **TRUSTED + PUBLIC** on first call
@@ -337,7 +344,7 @@ async def fetch_emails(count: int = 5) -> list[Content]:
 
 If an item doesn't have an embedded label, the fallback is determined by:
 1. **Tool-level `source_integrity`** in `additional_properties` (if declared)
-2. **UNTRUSTED** (default - secure by default)
+2. **Owned-reference integrity** or the configured **`default_integrity`** (`UNTRUSTED` by default), restricted by argument labels
 
 ```python
 # Tool with fallback for items without embedded labels
@@ -1089,7 +1096,7 @@ sink. Argument labels do not rewrite result labels.
 
 1. **Use SecureAgentConfig as a context provider**: Add `context_providers=[config]` for automatic security setup — no manual middleware, tools, or instruction wiring
 2. **Use `list[Content]` with `Content.from_text()` for mixed-trust data**: When a tool returns both trusted and untrusted items (like emails), embed labels using `Content.from_text(text, additional_properties={"security_label": {...}})`
-3. **Don't use source_integrity for action tools**: Tools like `send_email` or `delete_file` are sinks, not data sources - their results inherit labels from inputs
+3. **Action tools can omit source_integrity**: Tools like `send_email` or `delete_file` are sinks; their results use the owned-reference/default baseline, restricted by argument labels
 4. **Always use middleware stack**: Enable both label tracking and policy enforcement
 5. **Enable automatic hiding**: Keep `auto_hide_untrusted=True` (default) for automatic protection
 6. **Do not manually wire security tools/instructions when using context providers**: `SecureAgentConfig` injects them for you

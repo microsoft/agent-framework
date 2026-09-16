@@ -27,7 +27,8 @@ jobs:
           # "Cleanup artifacts", "Agent", "Prepare", and "Upload results" are check runs
           # created by an org-level GitHub App (MSDO), not by any workflow in this repo.
           # They are outside our control and their transient failures should not block merges.
-          IGNORED_NAMES: "CodeQL,CodeQL analysis (csharp),Cleanup artifacts,Agent,Prepare,Upload results,review"
+          # "Public API Compatibility" is advisory and reports potential breaking changes.
+          IGNORED_NAMES: "CodeQL,CodeQL analysis (csharp),Cleanup artifacts,Agent,Prepare,Upload results,review,Public API Compatibility"
         with:
           script: |
             const timeoutSeconds = Number(process.env.TIMEOUT_SECONDS);
