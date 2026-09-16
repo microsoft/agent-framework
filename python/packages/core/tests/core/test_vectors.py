@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import warnings
 from collections.abc import AsyncIterable, Callable, Iterator, Mapping, Sequence
 from copy import deepcopy
@@ -2559,6 +2560,7 @@ async def test_vector_crud_tools_round_trip_records() -> None:
     record_schema = upsert_tool.parameters()["properties"]["records"]["items"]
     assert record_schema["required"] == ["id", "text"]
     assert set(record_schema["properties"]) == {"id", "text", "vector"}
+    assert upsert_tool.parameters()["properties"]["records"]["maxItems"] == 100
 
     upserted = await upsert_tool.invoke(
         arguments={"records": [{"id": "one", "text": "first", "vector": [1.0, 0.0]}]},
@@ -2586,6 +2588,25 @@ async def test_vector_crud_tools_reject_empty_batches(factory: Callable[..., Any
 
     with pytest.raises(ValueError, match="must not be empty"):
         await tool.invoke(arguments={argument_name: []}, skip_parsing=True)
+
+
+async def test_vector_crud_tools_enforce_configured_batch_limits() -> None:
+    collection = MockCollection()
+    upsert_tool = create_upsert_tool(collection, generate_vectors=False, max_batch_size=1)
+    get_tool = create_get_tool(collection, max_batch_size=1)
+    delete_tool = create_delete_tool(collection, max_batch_size=1)
+
+    for tool in (upsert_tool, get_tool, delete_tool):
+        property_schema = next(iter(tool.parameters()["properties"].values()))
+        assert property_schema["maxItems"] == 1
+
+    with pytest.raises(ValueError, match="more than 1"):
+        await upsert_tool.invoke(arguments={"records": [{}, {}]}, skip_parsing=True)
+    for tool in (get_tool, delete_tool):
+        with pytest.raises(ValueError, match="more than 1"):
+            await tool.invoke(arguments={"keys": ["one", "two"]}, skip_parsing=True)
+    with pytest.raises(ValueError, match="greater than zero"):
+        create_get_tool(collection, max_batch_size=0)
 
 
 def test_vector_collection_context_provider_configures_tools_and_approvals() -> None:
@@ -2663,12 +2684,15 @@ def test_vector_collection_context_provider_validates_configuration() -> None:
             include_search_tool=False,
             additional_search_tools=cast(Any, [object()]),
         )
+    with pytest.raises(ValueError, match="greater than zero"):
+        VectorCollectionContextProvider(collection, scope_filter=None, max_tool_batch_size=0)
 
 
 async def test_vector_collection_context_provider_enforces_scope_filter_on_read_tools() -> None:
+    generator = MockEmbeddingClient()
     collection: InMemoryCollection[str, Record] = InMemoryCollection(
         Record,
-        embedding_generator=MockEmbeddingClient(),
+        embedding_generator=generator,
     )
     await collection.ensure_collection_exists()
     await collection.upsert(
@@ -2683,6 +2707,29 @@ async def test_vector_collection_context_provider_enforces_scope_filter_on_read_
         scope_filter=Filter("id", "eq", "one"),
     )
     tools = {tool.name: tool for tool in provider.tools}
+
+    with pytest.raises(ValueError, match="indexes 1"):
+        await tools["upsert"].invoke(
+            arguments={
+                "records": [
+                    {"id": "one", "text": "changed", "vector": [1.0, 0.0]},
+                    {"id": "three", "text": "outside scope", "vector": [1.0, 0.0]},
+                ]
+            },
+            skip_parsing=True,
+        )
+    assert [(record.id, record.text) for record in await collection.get(["one", "three"])] == [("one", "visible")]
+    assert generator.values == []
+
+    unsupported_scope_tool = create_upsert_tool(
+        collection,
+        filter=Filter("id", "provider.native", "one"),
+    )
+    with pytest.raises(NotImplementedError, match="cannot be evaluated"):
+        await unsupported_scope_tool.invoke(
+            arguments={"records": [{"id": "one", "text": "changed", "vector": [1.0, 0.0]}]},
+            skip_parsing=True,
+        )
 
     fetched = await tools["get"].invoke(arguments={"keys": ["one", "two"]}, skip_parsing=True)
     assert fetched == {"records": [{"id": "one", "text": "visible"}]}
@@ -2704,6 +2751,7 @@ async def test_vector_store_history_provider_round_trips_and_idempotently_replay
         application_id="app",
         tenant_id="tenant",
         agent_id="agent",
+        collection_name="history_embeddings",
         embedding_generator=generator,
         embedding_options=embedding_options,
     )
@@ -2767,6 +2815,27 @@ async def test_vector_store_history_provider_preserves_repeated_turns_and_concur
     assert [message.text for message in await provider.get_messages("session")] == ["yes", "yes"]
 
 
+async def test_vector_store_history_provider_preserves_created_at_on_reconstructed_retry() -> None:
+    provider = VectorStoreHistoryProvider(InMemoryStore(), application_id="app")
+    first = Message(role="user", contents=["first"], message_id="first-id")
+    second = Message(role="assistant", contents=["second"], message_id="second-id")
+
+    with patch("agent_framework._vectors.time.time_ns", side_effect=[100, 200, 300]):
+        await provider.save_messages("session", [first])
+        await provider.save_messages("session", [second])
+        await provider.save_messages(
+            "session",
+            [Message(role="user", contents=["first retry"], message_id="first-id")],
+        )
+
+    records = await provider._collection.get(filter=provider._scope_filter("session"))
+    by_message_id = {Message.from_json(record["message"]).message_id: record for record in records}
+    assert by_message_id["first-id"]["created_at"] == 100
+    assert by_message_id["first-id"]["modified_at"] == 300
+    assert by_message_id["second-id"]["created_at"] == 200
+    assert [message.message_id for message in await provider.get_messages("session")] == ["first-id", "second-id"]
+
+
 async def test_vector_store_history_provider_isolates_every_scope_dimension() -> None:
     store = InMemoryStore()
     provider = VectorStoreHistoryProvider(
@@ -2775,6 +2844,7 @@ async def test_vector_store_history_provider_isolates_every_scope_dimension() ->
         application_id="app",
         tenant_id="tenant",
         agent_id="agent",
+        collection_name="shared_history_embeddings",
         embedding_generator=MockEmbeddingClient(),
         embedding_options={"dimensions": 2},
     )
@@ -2787,6 +2857,7 @@ async def test_vector_store_history_provider_isolates_every_scope_dimension() ->
             application_id="app",
             tenant_id="tenant",
             agent_id="agent",
+            collection_name="shared_history_embeddings",
             embedding_generator=MockEmbeddingClient(),
             embedding_options={"dimensions": 2},
         ),
@@ -2796,6 +2867,7 @@ async def test_vector_store_history_provider_isolates_every_scope_dimension() ->
             application_id="other-app",
             tenant_id="tenant",
             agent_id="agent",
+            collection_name="shared_history_embeddings",
             embedding_generator=MockEmbeddingClient(),
             embedding_options={"dimensions": 2},
         ),
@@ -2805,6 +2877,7 @@ async def test_vector_store_history_provider_isolates_every_scope_dimension() ->
             application_id="app",
             tenant_id="other-tenant",
             agent_id="agent",
+            collection_name="shared_history_embeddings",
             embedding_generator=MockEmbeddingClient(),
             embedding_options={"dimensions": 2},
         ),
@@ -2814,6 +2887,7 @@ async def test_vector_store_history_provider_isolates_every_scope_dimension() ->
             application_id="app",
             tenant_id="tenant",
             agent_id="other-agent",
+            collection_name="shared_history_embeddings",
             embedding_generator=MockEmbeddingClient(),
             embedding_options={"dimensions": 2},
         ),
@@ -2843,6 +2917,7 @@ def test_vector_store_history_provider_derives_default_collection_name_from_sche
     embedded_provider = VectorStoreHistoryProvider(
         store,
         application_id="app",
+        collection_name="embedded_history",
         embedding_generator=MockEmbeddingClient(),
         embedding_options={"dimensions": 2},
     )
@@ -2879,28 +2954,11 @@ async def test_vector_store_history_provider_supports_msgpack_contents() -> None
     records = await provider._collection.get(filter=provider._scope_filter("session"))
     contents_field = provider._collection.definition.try_get_field("contents")
     assert contents_field is not None
-    assert contents_field.type_ == "bytes"
-    assert msgspec.msgpack.decode(records[0]["contents"]) == [content.to_dict() for content in message.contents]
+    assert contents_field.type_ == "str"
+    assert msgspec.msgpack.decode(base64.b64decode(records[0]["contents"])) == [
+        content.to_dict() for content in message.contents
+    ]
     assert [stored.to_dict() for stored in await provider.get_messages("session")] == [message.to_dict()]
-
-
-async def test_vector_store_history_provider_applies_message_retention() -> None:
-    provider = VectorStoreHistoryProvider(
-        InMemoryStore(),
-        application_id="app",
-        max_messages=2,
-    )
-
-    await provider.save_messages(
-        "session",
-        [
-            Message(role="user", contents=["one"]),
-            Message(role="assistant", contents=["two"]),
-            Message(role="user", contents=["three"]),
-        ],
-    )
-
-    assert [message.text for message in await provider.get_messages("session")] == ["two", "three"]
 
 
 async def test_vector_store_history_provider_compacts_loaded_context_but_searches_full_history() -> None:
@@ -2913,6 +2971,7 @@ async def test_vector_store_history_provider_compacts_loaded_context_but_searche
         store,
         source_id="history",
         application_id="app",
+        collection_name="searchable_history",
         embedding_generator=MockEmbeddingClient(),
         embedding_options={"dimensions": 2},
         compaction_strategy=keep_last_message,
@@ -2922,6 +2981,7 @@ async def test_vector_store_history_provider_compacts_loaded_context_but_searche
         store,
         source_id="other-history",
         application_id="app",
+        collection_name="searchable_history",
         embedding_generator=MockEmbeddingClient(),
         embedding_options={"dimensions": 2},
     )
@@ -2975,7 +3035,15 @@ async def test_vector_store_history_provider_compacts_loaded_context_but_searche
             "must be positive",
         ),
         ({"application_id": "app", "contents_format": "yaml"}, ValueError, "contents_format"),
-        ({"application_id": "app", "max_messages": -1}, ValueError, "max_messages"),
+        (
+            {
+                "application_id": "app",
+                "embedding_generator": MockEmbeddingClient(),
+                "embedding_options": {"dimensions": 2},
+            },
+            ValueError,
+            "collection_name",
+        ),
         ({"application_id": "app", "collection_name": ""}, ValueError, "collection_name"),
     ],
 )

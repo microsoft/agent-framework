@@ -29,8 +29,8 @@ async def main() -> None:
         application_id="release-planning",
         tenant_id="contoso",
         agent_id="release-assistant",
+        collection_name="release_planning_history_text_embedding_3_small",
         contents_format="json",
-        max_messages=1000,
         embedding_generator=OpenAIEmbeddingClient(
             model="text-embedding-3-small",
         ),

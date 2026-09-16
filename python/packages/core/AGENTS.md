@@ -115,12 +115,12 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
 - **`create_upsert_tool` / `create_get_tool` / `create_delete_tool`** - Create agent tools for collection CRUD;
   upsert and delete require approval by default, while get does not
 - **`VectorStoreHistoryProvider`** - Stores full scoped conversation history in a provider-owned collection;
-  optional embeddings enable session-scoped history search, optional compaction affects only loaded context, and
-  retention can be bounded with `max_messages`. Large-history paging and concurrent clear semantics remain
-  backing-store guarantees.
+  optional embeddings enable session-scoped history search and optional compaction affects only loaded context.
+  Embedding-enabled history requires an explicit collection name; physical retention, large-history paging, and
+  concurrent clear semantics remain backing-store guarantees.
 - **`VectorCollectionContextProvider`** - Adds instructions and configurable CRUD/search tools for a caller-owned
-  collection. Callers explicitly provide a generated-tool scope filter (or `None` for an already isolated
-  collection); independently configured additional search tools retain their own filters.
+  collection. Callers explicitly provide a best-effort logical scope filter (or `None`); it is not a security
+  boundary. Independently configured additional search tools retain their own filters.
 - **`InMemoryCollection` / `InMemoryStore`** - Dependency-free, process-local development and test implementation;
   cosine scoring scales finite inputs, all metrics reject non-finite scores, and unsupported distance functions
   fail before record scanning. Hamming scores/thresholds use the fraction of unequal dimensions, not a count.

@@ -516,14 +516,14 @@ Each connector follows the AF package structure:
     - `VectorStoreHistoryProvider` takes a store because it owns the history model and collection. Every operation
       is filtered by application, optional tenant/agent, provider source, and session. Compaction changes only the
       messages loaded into model context; optional search still queries the full scoped transcript. Content arrays
-      can be stored as JSON text or msgspec-encoded MessagePack bytes to match the backing store. Default collection
-      names are schema-derived, retention can be bounded with `max_messages`, and paging/clear consistency follows
-      the backing collection for large or concurrently modified histories.
+      can be stored as JSON text or base64-wrapped msgspec MessagePack. Non-vector default collection names are
+      schema-derived; embedding-enabled history requires an explicit name so callers version the embedding space.
+      Physical retention and paging/clear consistency follow the backing collection.
     - `VectorCollectionContextProvider` takes a caller-owned collection and adds generated instructions plus
-      configurable CRUD/search tools. A required `scope_filter` argument makes callers explicitly choose a fixed
-      generated-tool scope or attest that the collection client is already isolated by passing `None`. Additional
-      `create_vector_search_tool` instances can expose different filters and result mappings and retain their own
-      scope configuration.
+      configurable CRUD/search tools. A required `scope_filter` argument defines best-effort logical record grouping,
+      not a security boundary; scoped upserts are validated locally before writing and scoped deletes use a
+      read/check/delete cycle whose atomicity remains backend-defined. Additional `create_vector_search_tool`
+      instances can expose different filters and result mappings and retain their own scope configuration.
 
 11. **Score threshold filtering**: Scoring, filter execution, score thresholds, and paging belong to the connector
     and backing store (ref: [SK .NET PR #13501](https://github.com/microsoft/semantic-kernel/pull/13501)). Core passes
