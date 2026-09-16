@@ -16,6 +16,7 @@ from agent_framework import (
     Content,
     Message,
     WorkflowEvent,
+    WorkflowInvocationKwargs,
     WorkflowRunState,
 )
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
@@ -253,6 +254,23 @@ async def test_group_chat_builder_basic_flow() -> None:
     assert updates[0].author_name == "manager"
 
 
+def test_group_chat_builder_uses_stable_default_and_custom_name() -> None:
+    participant = StubAgent("agent", "response")
+
+    default_workflow = GroupChatBuilder(
+        participants=[participant],
+        selection_func=make_sequence_selector(),
+    ).build()
+    custom_workflow = GroupChatBuilder(
+        name="custom-group-chat",
+        participants=[participant],
+        selection_func=make_sequence_selector(),
+    ).build()
+
+    assert default_workflow.name == "GroupChat"
+    assert custom_workflow.name == "custom-group-chat"
+
+
 async def test_group_chat_as_agent_accepts_conversation() -> None:
     selector = make_sequence_selector()
     alpha = StubAgent("alpha", "ack from alpha")
@@ -273,6 +291,103 @@ async def test_group_chat_as_agent_accepts_conversation() -> None:
     response = await agent.run(conversation)
 
     assert response.messages, "Expected agent conversation output"
+
+
+class KwargsRecordingManagerAgent(StubManagerAgent):
+    """Manager agent that records the run kwargs it was invoked with."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.seen_kwargs: list[dict[str, Any]] = []
+
+    async def run(  # type: ignore[override]  # ty: ignore[invalid-method-override]
+        self,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
+        *,
+        session: AgentSession | None = None,
+        **kwargs: Any,
+    ) -> AgentResponse[Any]:
+        self.seen_kwargs.append(dict(kwargs))
+        return await super().run(messages, session=session, **kwargs)
+
+
+async def test_agent_manager_receives_workflow_run_kwargs() -> None:
+    """The orchestrator agent gets the same run kwargs the participants already get.
+
+    ``workflow.run(function_invocation_kwargs=...)`` is stored in workflow state and
+    ``AgentExecutor`` forwards it to every participant agent. The orchestrator agent runs
+    outside ``AgentExecutor``, so it has to resolve the same state itself or hosts that put
+    request-scoped values there (a user id for tool ACL, say) silently get them on the
+    participants and not on the orchestrator.
+    """
+    manager = KwargsRecordingManagerAgent()
+    worker = StubAgent("agent", "worker response")
+
+    workflow = GroupChatBuilder(
+        participants=[worker],
+        orchestrator_agent=manager,
+    ).build()
+
+    async for _ in workflow.run(
+        "coordinate task",
+        stream=True,
+        function_invocation_kwargs={"user_id": "user-123"},
+        client_kwargs={"trace_id": "trace-abc"},
+    ):
+        pass
+
+    assert manager.seen_kwargs, "Expected the orchestrator agent to be invoked"
+    for call in manager.seen_kwargs:
+        assert call.get("function_invocation_kwargs") == {"user_id": "user-123"}
+        assert call.get("client_kwargs") == {"trace_id": "trace-abc"}
+
+
+async def test_agent_manager_receives_resolved_global_and_specific_run_kwargs() -> None:
+    """The #8312 GroupChat path consumes collision-free state through the shared resolver."""
+    manager = KwargsRecordingManagerAgent()
+    worker = StubAgent("agent", "worker response")
+    workflow = GroupChatBuilder(participants=[worker], orchestrator_agent=manager).build()
+    invocation_kwargs = WorkflowInvocationKwargs(
+        global_kwargs={"shared": "G", "overridden": "global"},
+        executor_kwargs={"manager_agent": {"specific": "M", "overridden": "specific"}},
+    )
+
+    async for _ in workflow.run(
+        "coordinate task",
+        stream=True,
+        function_invocation_kwargs=invocation_kwargs,
+        client_kwargs=invocation_kwargs,
+    ):
+        pass
+
+    expected = {"shared": "G", "specific": "M", "overridden": "specific"}
+    assert manager.seen_kwargs
+    for call in manager.seen_kwargs:
+        assert call.get("function_invocation_kwargs") == expected
+        assert call.get("client_kwargs") == expected
+
+
+async def test_agent_manager_receives_no_run_kwargs_when_none_supplied() -> None:
+    """With nothing declared on the run, the orchestrator is invoked with both kwargs as None.
+
+    This pins the shape rather than just the happy path: the resolution has to return None,
+    not an empty dict, so a client that distinguishes the two is not handed a stray {}.
+    """
+    manager = KwargsRecordingManagerAgent()
+    worker = StubAgent("agent", "worker response")
+
+    workflow = GroupChatBuilder(
+        participants=[worker],
+        orchestrator_agent=manager,
+    ).build()
+
+    async for _ in workflow.run("coordinate task", stream=True):
+        pass
+
+    assert manager.seen_kwargs, "Expected the orchestrator agent to be invoked"
+    for call in manager.seen_kwargs:
+        assert call.get("function_invocation_kwargs") is None
+        assert call.get("client_kwargs") is None
 
 
 async def test_agent_manager_handles_concatenated_json_output() -> None:
@@ -397,6 +512,7 @@ class TestGroupChatWorkflow:
             selection_func=selector,
         ).build()
 
+        assert workflow.name == "GroupChat"
         updates: list[AgentResponseUpdate] = []
         async for event in workflow.run("test task", stream=True):
             if event.type == "output" and isinstance(event.data, AgentResponseUpdate):
@@ -562,6 +678,7 @@ class TestCheckpointing:
             checkpoint_storage=storage,
             selection_func=selector,
         ).build()
+        assert workflow.name == "GroupChat"
 
         updates: list[AgentResponseUpdate] = []
         async for event in workflow.run("test task", stream=True):

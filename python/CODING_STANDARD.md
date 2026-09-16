@@ -31,7 +31,7 @@ We use typing as a helper, it is not a goal in and of itself, so be pragmatic ab
 In general, the public interfaces of our classes, are important to get right, internally it is okay to have loosely typed code, as long as tests cover the code itself.
 This includes making a conscious choice when to program defensively, you can always do `getattr(item, 'attribute')` but that might end up causing you issues down the road
 because the type of `item` in this case, should have that attribute and if it doesn't it points to a larger issue, so if the type is expected to have that attribute, you should
-use `item.attribute` to ensure it fails at that point, rather then somewhere downstream where a value is expected but none was found.
+use `item.attribute` to ensure it fails at that point, rather than somewhere downstream where a value is expected but none was found.
 
 ### Future Annotations
 
@@ -240,6 +240,7 @@ AgentFrameworkException                          # Base for all AF exceptions
 │   └── AgentContentFilterException              # Agent content filter triggered
 │
 ├── ChatClientException                          # Chat client lifecycle and communication failures
+│   ├── ResponseInvalidatedException             # Provider invalidated partial response output
 │   ├── ChatClientInvalidAuthException           # Chat client auth failures
 │   ├── ChatClientInvalidRequestException        # Invalid request to chat client
 │   ├── ChatClientInvalidResponseException       # Invalid/unexpected response from chat client
@@ -284,6 +285,7 @@ AgentFrameworkException                          # Base for all AF exceptions
 | Object in wrong state (e.g., client not initialized) | `RuntimeError` |
 | External service returns 401/403 | `IntegrationInvalidAuthException` (or `ChatClient`/`Agent` variant) |
 | External service returns unexpected response | `IntegrationInvalidResponseException` (or variant) |
+| Chat provider invalidates partial response output containing local function calls | `ResponseInvalidatedException` |
 | Content filter blocks a request | `IntegrationContentFilterException` (or variant) |
 | Request validation fails before sending to service | `IntegrationInvalidRequestException` (or variant) |
 | Agent not found in registry | `AgentInvalidRequestException` |

@@ -201,6 +201,24 @@ def test_magentic_builder_marks_feature_with_custom_manager() -> None:
     assert int(token.split(".", 1)[1], 16) & (1 << FeatureIndex.ORCHESTRATION_MAGENTIC)
 
 
+def test_magentic_builder_uses_stable_default_and_custom_name() -> None:
+    default_manager = FakeManager()
+    custom_manager = FakeManager()
+
+    default_workflow = MagenticBuilder(
+        participants=[DummyExec(name=default_manager.next_speaker_name)],
+        manager=default_manager,
+    ).build()
+    custom_workflow = MagenticBuilder(
+        name="custom-magentic",
+        participants=[DummyExec(name=custom_manager.next_speaker_name)],
+        manager=custom_manager,
+    ).build()
+
+    assert default_workflow.name == "Magentic"
+    assert custom_workflow.name == "custom-magentic"
+
+
 async def test_magentic_builder_returns_workflow_and_runs() -> None:
     manager = FakeManager()
     agent = StubAgent(manager.next_speaker_name, "first draft")
@@ -429,6 +447,7 @@ async def test_magentic_checkpoint_resume_round_trip():
         manager=manager1,
     ).build()
 
+    assert wf.name == "Magentic"
     task_text = "checkpoint task"
     req_event: WorkflowEvent | None = None
     async for ev in wf.run(task_text, stream=True):

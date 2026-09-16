@@ -788,9 +788,19 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
             _validate_conversation_history(messages_for_agent, agent_name)
 
         # Retrieve kwargs passed to workflow.run() so they propagate to agent tools
-        from agent_framework._workflows._const import WORKFLOW_RUN_KWARGS_KEY
+        from agent_framework._workflows import _agent_utils as workflow_agent_utils
+        from agent_framework._workflows import _const as workflow_const
 
-        run_kwargs: dict[str, Any] = ctx.get_state(WORKFLOW_RUN_KWARGS_KEY, {})
+        run_kwargs: dict[str, Any] = ctx.get_state(workflow_const.WORKFLOW_RUN_KWARGS_KEY, {})
+        prepare_run_kwargs = getattr(workflow_agent_utils, "prepare_executor_run_kwargs", None)
+        resolved_state_key = getattr(workflow_const, "RESOLVED_WORKFLOW_RUN_KWARGS_KEY", None)
+        if callable(prepare_run_kwargs) and isinstance(resolved_state_key, str):
+            missing_resolved_state = object()
+            resolved_run_kwargs: Any = ctx.get_state(resolved_state_key, missing_resolved_state)
+            if resolved_run_kwargs is not missing_resolved_state:
+                if not isinstance(resolved_run_kwargs, dict):
+                    raise TypeError("Resolved workflow run kwargs state must be a dict.")
+                run_kwargs = cast(Any, prepare_run_kwargs)(self.id, run_kwargs, resolved_run_kwargs)
         options: dict[str, Any] | None = None
         if run_kwargs:
             # Merge caller-provided options to avoid duplicate keyword argument

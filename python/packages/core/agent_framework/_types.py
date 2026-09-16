@@ -9,7 +9,6 @@ import logging
 import re
 import sys
 import warnings
-from asyncio import iscoroutine
 from collections.abc import (
     AsyncGenerator,
     AsyncIterable,
@@ -39,6 +38,8 @@ else:
     from typing_extensions import TypeVar  # pragma: no cover
 
 logger = logging.getLogger("agent_framework")
+
+_SERIALIZED_EXCEPTION_MARKER: Final[str] = "FunctionInvocationError"
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -272,16 +273,24 @@ def _validate_uri(uri: str, media_type: str | None) -> dict[str, Any]:
     raise ContentError("URI must contain a scheme (e.g., http://, data:, file://)")
 
 
-def _serialize_value(value: Any, exclude_none: bool) -> Any:
+def _serialize_value(value: Any, exclude_none: bool, *, redact_exception: bool = True) -> Any:
     """Recursively serialize a value for to_dict."""
     if value is None:
         return None
     if isinstance(value, Content):
-        return value.to_dict(exclude_none=exclude_none)
+        return value._to_dict(  # pyright: ignore[reportPrivateUsage]
+            exclude_none=exclude_none, redact_exception=redact_exception
+        )
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-        return [_serialize_value(item, exclude_none) for item in cast(Iterable[Any], value)]
+        return [
+            _serialize_value(item, exclude_none, redact_exception=redact_exception)
+            for item in cast(Iterable[Any], value)
+        ]
     if isinstance(value, Mapping):
-        return {k: _serialize_value(v, exclude_none) for k, v in value.items()}  # type: ignore[reportUnknownVariableType]
+        return {
+            k: _serialize_value(v, exclude_none, redact_exception=redact_exception)
+            for k, v in cast(Mapping[Any, Any], value).items()
+        }
     if hasattr(value, "to_dict"):
         return value.to_dict()  # type: ignore[call-arg]
     return value
@@ -480,6 +489,10 @@ class Content:
     This class provides a single unified type that handles all content variants.
     Use the class methods like `Content.from_text()`, `Content.from_data()`,
     `Content.from_uri()`, etc. to create instances.
+
+    The ``exception`` field is host-internal diagnostic state. Its value may originate from a tool, middleware,
+    provider, or caller and must always be treated as potentially sensitive. Dictionary serialization replaces it
+    with a fixed marker that preserves failure state; channel-visible error information belongs in the public result.
     """
 
     _SHALLOW_COPY_FIELDS: ClassVar[set[str]] = {"raw_representation"}
@@ -857,8 +870,8 @@ class Content:
         Keyword Args:
             arguments: The arguments for the requested function call. May be a JSON string, a mapping that can be
                 serialized as arguments, or None when no arguments were provided.
-            exception: Error information associated with the function call, if the provider returned the call in an
-                error state.
+            exception: Host-internal diagnostic information when the provider returned the call in an error state.
+                Treat it as potentially sensitive regardless of its source; serialization replaces it with a marker.
             informational_only: Whether the function call is present only for transcript fidelity and should not be
                 executed by Agent Framework function invocation.
             id: Stable Agent Framework identity for this occurrence. When omitted, the function invocation layer
@@ -907,7 +920,9 @@ class Content:
             result: The tool output.  Accepts a ``list[Content]`` (the canonical
                 form produced by :meth:`~FunctionTool.parse_result`), a plain
                 ``str``, or any other value (which is stringified).
-            exception: The exception message if the function call failed.
+            exception: Host-internal diagnostic information when the function call failed. Treat it as potentially
+                sensitive regardless of whether it came from a tool, middleware, provider, or caller. Serialization
+                replaces it with a fixed failure marker; use ``result`` for channel-visible error text.
             annotations: Optional annotations for the content.
             additional_properties: Optional additional properties.
             raw_representation: Optional raw representation from the provider.
@@ -1408,7 +1423,21 @@ class Content:
         )
 
     def to_dict(self, *, exclude_none: bool = True, exclude: set[str] | None = None) -> dict[str, Any]:
-        """Serialize the content to a dictionary."""
+        """Serialize content without host-internal exception diagnostics.
+
+        Exception diagnostics are replaced with a fixed marker regardless of their source because they may contain
+        sensitive information. The marker preserves failure status across persistence round-trips.
+        """
+        return self._to_dict(exclude_none=exclude_none, exclude=exclude, redact_exception=True)
+
+    def _to_dict(
+        self,
+        *,
+        exclude_none: bool,
+        exclude: set[str] | None = None,
+        redact_exception: bool,
+    ) -> dict[str, Any]:
+        """Serialize content with explicit control over internal exception redaction."""
         fields_to_capture = (
             "text",
             "protected_data",
@@ -1456,11 +1485,13 @@ class Content:
             value = getattr(self, field, None)
             if field in exclude:
                 continue
+            if field == "exception" and value is not None and redact_exception:
+                value = _SERIALIZED_EXCEPTION_MARKER
             if field == "informational_only" and (self.type != "function_call" or not value):
                 continue
             if exclude_none and value is None:
                 continue
-            result[field] = _serialize_value(value, exclude_none)
+            result[field] = _serialize_value(value, exclude_none, redact_exception=redact_exception)
 
         if "annotations" not in exclude and self.annotations is not None:
             result["annotations"] = [dict(annotation) for annotation in self.annotations]
@@ -1471,7 +1502,10 @@ class Content:
         """Check if two Content instances are equal by comparing their dict representations."""
         if not isinstance(other, Content):
             return False
-        return self.to_dict(exclude_none=False) == other.to_dict(exclude_none=False)
+        return self._to_dict(exclude_none=False, redact_exception=False) == other._to_dict(
+            exclude_none=False,
+            redact_exception=False,
+        )
 
     def __str__(self) -> str:
         """Return a string representation of the Content."""
@@ -1975,20 +2009,27 @@ def prepend_instructions_to_messages(
     if isinstance(instructions, str):
         instructions = [instructions]
 
-    # Skip instructions that are already present as leading messages with the
+    # Skip instructions that are already present as the leading messages with the
     # same role and text.  This prevents duplicate system messages when
     # instructions are injected by multiple layers (e.g. Agent + chat client).
-    deduplicated: list[str] = []
+    # Only a *prefix* of instructions can be deduplicated: once an instruction
+    # does not match, any remaining instructions must keep their relative order.
+    # Prepending the non-matching remainder in front of the matched messages
+    # would invert the instruction order (e.g. ["First", "Second"] with a
+    # leading "First" message becoming ["Second", "First", ...]), so the
+    # remainder is inserted right after the matched prefix instead.
+    matched_count = 0
     for idx, instr in enumerate(instructions):
         if idx < len(messages) and messages[idx].role == role and messages[idx].text == instr:
-            continue
-        deduplicated.append(instr)
+            matched_count += 1
+        else:
+            break
 
-    if not deduplicated:
+    if matched_count == len(instructions):
         return messages
 
-    instruction_messages = [Message(role, [instr]) for instr in deduplicated]
-    return [*instruction_messages, *messages]
+    instruction_messages = [Message(role, [instr]) for instr in instructions[matched_count:]]
+    return [*messages[:matched_count], *instruction_messages, *messages[matched_count:]]
 
 
 # region ChatResponse
@@ -2032,12 +2073,8 @@ def _process_update(response: ChatResponse | AgentResponse, update: ChatResponse
                 logger.warning(f"Skipping unknown content type or invalid content: {exc}")
                 continue
         match content_type:
-            # mypy doesn't narrow type based on match/case, but we know these are FunctionCallContents
-            case "function_call" if message.contents and message.contents[-1].type == "function_call":
-                try:
-                    message.contents[-1] += content
-                except (AdditionItemMismatch, ContentError):
-                    message.contents.append(content)
+            case "function_call":
+                _merge_function_call_content(message, content)
             case "usage":
                 if response.usage_details is None:
                     response.usage_details = UsageDetails()
@@ -2073,6 +2110,47 @@ def _process_update(response: ChatResponse | AgentResponse, update: ChatResponse
     ):
         response.finish_reason = update.finish_reason
     response.continuation_token = update.continuation_token
+
+
+def _merge_function_call_content(message: Message, content: Content) -> None:
+    """Merge a streamed function_call chunk into the in-progress call it belongs to.
+
+    Providers can stream multiple tool calls in parallel, so the next function_call
+    chunk is not necessarily a continuation of the most recently appended one; a chunk
+    with a call_id is matched against existing contents by that id first. Chunks with
+    no call_id (continuation deltas some providers only stamp on the first chunk) fall
+    back to merging with the trailing function_call item, preserving prior behavior.
+    """
+    call_id = getattr(content, "call_id", None)
+    content_id = getattr(content, "id", None)
+    if call_id:
+        for index in range(len(message.contents) - 1, -1, -1):
+            existing = message.contents[index]
+            if existing.type != "function_call" or getattr(existing, "call_id", None) != call_id:
+                continue
+            if existing.id is not None and content_id is None:
+                # existing already has a stable occurrence id from its client (e.g. the
+                # Chat Completions client stamps one on every chunk); an untagged chunk
+                # that merely happens to share its call_id isn't proof it's a continuation
+                # of that specific occurrence - a provider could reuse a call_id for a
+                # later, unrelated call. Keep scanning rather than merge on a hunch.
+                continue
+            try:
+                message.contents[index] = existing + content
+            except (AdditionItemMismatch, ContentError):
+                break
+            return
+        # A tagged chunk that matches no in-progress call is a new call, not a
+        # continuation - an untagged trailing item would silently absorb it otherwise.
+        message.contents.append(content)
+        return
+    if message.contents and message.contents[-1].type == "function_call":
+        try:
+            message.contents[-1] += content
+            return
+        except (AdditionItemMismatch, ContentError):
+            pass
+    message.contents.append(content)
 
 
 def _coalesce_text_content(contents: list[Content], type_str: Literal["text", "text_reasoning"]) -> None:
@@ -3379,8 +3457,8 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
             if hasattr(self._stream_source, "__aiter__"):
                 self._stream = self._stream_source  # type: ignore[assignment]
             else:
-                if not iscoroutine(self._stream_source):
-                    self._stream = self._stream_source  # type: ignore[assignment]
+                if not isawaitable(self._stream_source):
+                    self._stream = self._stream_source
                 else:
                     self._stream = await self._stream_source
             if isinstance(self._stream, ResponseStream) and self._wrap_inner:
