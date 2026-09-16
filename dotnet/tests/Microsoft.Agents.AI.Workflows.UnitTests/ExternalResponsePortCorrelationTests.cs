@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Execution;
 using Microsoft.Agents.AI.Workflows.InProc;
+using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
@@ -118,5 +119,32 @@ public class ExternalResponsePortCorrelationTests
         async Task<StepContext> actAsync() => await runner.RunContext.AdvanceAsync(CancellationToken.None);
         var exception = await Assert.ThrowsAsync<System.InvalidOperationException>((System.Func<Task<StepContext>>)actAsync);
         Assert.Contains("No pending request with ID no-such-request", exception.Message);
+    }
+
+    [Fact]
+    public void ExternalRequest_RewrapResponse_OverwritesCallerControlledEnvelopeRequestId()
+    {
+        const string OuterRequestId = "outer-request";
+        const string InnerRequestId = "inner-request";
+        const string ForgedRequestId = "forged-request";
+
+        RequestPort port = RequestPort.Create<TestExternalRequestEnvelope, TestExternalResponseEnvelope>("EnvelopePort");
+        ExternalRequest pending = ExternalRequest.Create(
+            port,
+            new TestExternalRequestEnvelope(new FunctionCallContent(InnerRequestId, "test_function")),
+            OuterRequestId);
+        ExternalResponse forged = new(
+            port.ToPortInfo(),
+            OuterRequestId,
+            new PortableValue(new TestExternalResponseEnvelope(
+                [new ChatMessage(ChatRole.Tool, [new FunctionResultContent(InnerRequestId, "ok")])],
+                ForgedRequestId)));
+
+        ExternalResponse rewrapped = pending.RewrapResponse(forged);
+
+        Assert.Equal(OuterRequestId, rewrapped.RequestId);
+        Assert.True(rewrapped.TryGetDataAs(out TestExternalResponseEnvelope? envelope));
+        Assert.NotNull(envelope);
+        Assert.Equal(InnerRequestId, envelope.RequestId);
     }
 }

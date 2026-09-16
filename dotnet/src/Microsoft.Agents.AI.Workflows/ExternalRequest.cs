@@ -2,6 +2,7 @@
 
 using System;
 using System.Diagnostics.CodeAnalysis;
+using System.Text.Json.Serialization;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
@@ -57,7 +58,10 @@ public record ExternalRequest(RequestPortInfo PortInfo, string RequestId, Portab
 
         requestId ??= Guid.NewGuid().ToString("N");
 
-        return new ExternalRequest(port.ToPortInfo(), requestId, new PortableValue(data));
+        return new ExternalRequest(port.ToPortInfo(), requestId, new PortableValue(data))
+        {
+            InnerRequestContentId = GetInnerRequestContentId(data),
+        };
     }
 
     /// <summary>
@@ -91,8 +95,11 @@ public record ExternalRequest(RequestPortInfo PortInfo, string RequestId, Portab
 
     internal ExternalResponse RewrapResponse(ExternalResponse response)
     {
-        return new ExternalResponse(this.PortInfo, this.RequestId, response.Data);
+        return new ExternalResponse(this.PortInfo, this.RequestId, this.CorrelateResponseEnvelope(response.Data));
     }
+
+    [JsonInclude]
+    internal string? InnerRequestContentId { get; init; }
 
     /// <summary>
     /// Creates a new <see cref="ExternalResponse"/> corresponding to the request, with the speicified data payload.
@@ -112,13 +119,38 @@ public record ExternalRequest(RequestPortInfo PortInfo, string RequestId, Portab
         return responseEnvelope.WithRequestId(this.GetInnerRequestContentId() ?? this.RequestId);
     }
 
+    private PortableValue CorrelateResponseEnvelope(PortableValue data)
+    {
+        if (!data.Is(out IExternalResponseEnvelope? responseEnvelope))
+        {
+            return data;
+        }
+
+        return new PortableValue(responseEnvelope.WithRequestId(this.GetInnerRequestContentId() ?? this.RequestId));
+    }
+
     private string? GetInnerRequestContentId()
     {
+        if (this.InnerRequestContentId is not null)
+        {
+            return this.InnerRequestContentId;
+        }
+
         if (!this.Data.Is(out IExternalRequestEnvelope? requestEnvelope))
         {
             return null;
         }
 
+        return GetInnerRequestContentId(requestEnvelope);
+    }
+
+    private static string? GetInnerRequestContentId(object data) =>
+        data is IExternalRequestEnvelope requestEnvelope
+            ? GetInnerRequestContentId(requestEnvelope)
+            : null;
+
+    private static string? GetInnerRequestContentId(IExternalRequestEnvelope requestEnvelope)
+    {
         return requestEnvelope.GetInnerRequestContent() switch
         {
             FunctionCallContent functionCall => functionCall.CallId,

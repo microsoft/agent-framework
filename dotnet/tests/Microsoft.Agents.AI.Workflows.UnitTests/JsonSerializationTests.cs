@@ -374,6 +374,30 @@ public class JsonSerializationTests
         ValidateExternalRequest(result, TestExternalRequest);
     }
 
+    [Fact]
+    public void Test_ExternalRequest_CreateResponse_JsonRestoredEnvelopeUsesInnerRequestId()
+    {
+        const string OuterRequestId = "outer-request";
+        const string InnerRequestId = "inner-request";
+
+        RequestPort port = RequestPort.Create<TestExternalRequestEnvelope, TestExternalResponseEnvelope>("EnvelopePort");
+        ExternalRequest source = ExternalRequest.Create(
+            port,
+            new TestExternalRequestEnvelope(new FunctionCallContent(InnerRequestId, "test_function")),
+            OuterRequestId);
+        ExternalRequest restored = RunJsonRoundtrip(source, TestCustomSerializedJsonOptions);
+
+        ExternalResponse response = restored.CreateResponse(
+            new TestExternalResponseEnvelope(
+                [new ChatMessage(ChatRole.Tool, [new FunctionResultContent(InnerRequestId, "ok")])],
+                requestId: null));
+
+        Assert.Equal(OuterRequestId, response.RequestId);
+        Assert.True(response.TryGetDataAs(out TestExternalResponseEnvelope? envelope));
+        Assert.NotNull(envelope);
+        Assert.Equal(InnerRequestId, envelope.RequestId);
+    }
+
     private static ExternalResponse TestExternalResponse => TestExternalRequest.CreateResponse(123);
 
     [Fact]
