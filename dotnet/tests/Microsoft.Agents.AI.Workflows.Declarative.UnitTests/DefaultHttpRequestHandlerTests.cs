@@ -370,6 +370,31 @@ public sealed class DefaultHttpRequestHandlerTests
     }
 
     [Fact]
+    public async Task SendAsyncOwnedClientDoesNotForwardResponseCookiesToRedirectAsync()
+    {
+        // Arrange
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        await using CookieCaptureServer server = new();
+        await using DefaultHttpRequestHandler handler = new();
+        HttpRequestInfo request = new()
+        {
+            Method = "GET",
+            Url = server.SetCookieRedirectUrl,
+        };
+
+        // Act
+        HttpRequestResult result = await handler.SendAsync(request, cancellationToken);
+        IReadOnlyList<string> requests = await server.ReadRequestsAsync(TimeSpan.FromSeconds(5));
+
+        // Assert
+        Assert.Equal("no-cookie", result.Body);
+        Assert.Equal(2, requests.Count);
+        Assert.Contains("GET /set-cookie-redirect ", requests[0], StringComparison.Ordinal);
+        Assert.Contains("GET /read-cookie ", requests[1], StringComparison.Ordinal);
+        Assert.DoesNotContain("Cookie: backend-session=victim-session", requests[1], StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task SendAsyncOwnedClientDoesNotPersistResponseCookiesAcrossRequestsAsync()
     {
         // Arrange
@@ -1214,11 +1239,14 @@ public sealed class DefaultHttpRequestHandlerTests
             int port = ((IPEndPoint)this._listener.LocalEndpoint).Port;
             string baseUrl = $"http://127.0.0.1:{port}";
             this.SetCookieUrl = $"{baseUrl}/set-cookie";
+            this.SetCookieRedirectUrl = $"{baseUrl}/set-cookie-redirect";
             this.ReadCookieUrl = $"{baseUrl}/read-cookie";
             this._requestsTask = Task.Run(this.AcceptRequests);
         }
 
         public string SetCookieUrl { get; }
+
+        public string SetCookieRedirectUrl { get; }
 
         public string ReadCookieUrl { get; }
 
@@ -1253,6 +1281,12 @@ public sealed class DefaultHttpRequestHandlerTests
                     string request = ReadRawRequest(stream);
                     requests.Add(request);
 
+                    if (request.StartsWith("GET /set-cookie-redirect ", StringComparison.Ordinal))
+                    {
+                        WriteRedirectResponse(stream);
+                        continue;
+                    }
+
                     string body = request.Contains("Cookie: backend-session=victim-session", StringComparison.OrdinalIgnoreCase)
                         ? "cookie-present"
                         : request.StartsWith("GET /set-cookie ", StringComparison.Ordinal)
@@ -1279,6 +1313,13 @@ public sealed class DefaultHttpRequestHandlerTests
             }
 
             return requests;
+        }
+
+        private static void WriteRedirectResponse(NetworkStream stream)
+        {
+            byte[] responseBytes = Encoding.ASCII.GetBytes(
+                "HTTP/1.1 307 Temporary Redirect\r\nLocation: /read-cookie\r\nSet-Cookie: backend-session=victim-session; Path=/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+            stream.Write(responseBytes, 0, responseBytes.Length);
         }
 
         private static string ReadRawRequest(NetworkStream stream)
