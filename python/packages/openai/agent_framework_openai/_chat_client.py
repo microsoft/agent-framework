@@ -2209,6 +2209,36 @@ class RawOpenAIChatClient(
             }
         ]
 
+    def _image_generation_item_to_contents(self, item: Any) -> list[Content]:
+        """Convert a completed ``image_generation_call`` output item into framework ``Content`` objects.
+
+        Used by both the non-streaming parser and the streaming
+        ``response.output_item.done`` handler. With the default ``partial_images=0``
+        no ``response.image_generation_call.partial_image`` events are emitted, so the
+        completed item is the only place the final base64 image is delivered.
+        """
+        image_output: Content | None = None
+        image_result = getattr(item, "result", None)
+        if image_result is not None:
+            # item.result contains raw base64 string
+            # so we call detect_media_type_from_base64 to get the media type and fallback to image/png
+            image_output = Content.from_uri(
+                uri=f"data:{detect_media_type_from_base64(data_str=image_result) or 'image/png'};base64,{image_result}",
+                raw_representation=image_result,
+            )
+        image_id = getattr(item, "id", None)
+        return [
+            Content.from_image_generation_tool_call(
+                image_id=image_id,
+                raw_representation=item,
+            ),
+            Content.from_image_generation_tool_result(
+                image_id=image_id,
+                outputs=image_output,
+                raw_representation=item,
+            ),
+        ]
+
     def _shell_item_to_contents(self, item: Any, local_shell_tool_name: str | None) -> list[Content]:
         """Convert a shell output item into framework ``Content`` objects.
 
@@ -2983,29 +3013,7 @@ class RawOpenAIChatClient(
                             )
                         )
                 case "image_generation_call":  # ResponseOutputImageGenerationCall
-                    image_output: Content | None = None
-                    if item.result is not None:
-                        # item.result contains raw base64 string
-                        # so we call detect_media_type_from_base64 to get the media type and fallback to image/png
-                        image_output = Content.from_uri(
-                            uri=f"data:{detect_media_type_from_base64(data_str=item.result) or 'image/png'}"
-                            f";base64,{item.result}",
-                            raw_representation=item.result,
-                        )
-                    image_id = item.id
-                    contents.append(
-                        Content.from_image_generation_tool_call(
-                            image_id=image_id,
-                            raw_representation=item,
-                        )
-                    )
-                    contents.append(
-                        Content.from_image_generation_tool_result(
-                            image_id=image_id,
-                            outputs=image_output,
-                            raw_representation=item,
-                        )
-                    )
+                    contents.extend(self._image_generation_item_to_contents(item))
                 case "shell_call" | "local_shell_call" | "shell_call_output":
                     contents.extend(self._shell_item_to_contents(item, local_shell_tool_name))
                 case _:
@@ -3597,6 +3605,10 @@ class RawOpenAIChatClient(
                     # Shell items are parsed here (not on `response.output_item.added`) because the
                     # command/output is only populated on the completed item.
                     contents.extend(self._shell_item_to_contents(done_item, local_shell_tool_name))
+                elif getattr(done_item, "type", None) == "image_generation_call":
+                    # The final image is only delivered on the completed item; with the default
+                    # `partial_images=0` there are no `partial_image` events at all.
+                    contents.extend(self._image_generation_item_to_contents(done_item))
                 elif getattr(done_item, "type", None) == "custom_tool_call":
                     custom_tool_call = cast(ResponseCustomToolCall, done_item)
                     contents.append(

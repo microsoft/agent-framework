@@ -3480,6 +3480,114 @@ def test_parse_chunk_from_openai_with_file_search_call_done() -> None:
     assert content.result == {"results": [{"file_id": "file_1", "text": "Seattle was cloudy."}]}
 
 
+def test_parse_chunk_from_openai_image_generation_call_done_emits_final_image() -> None:
+    """Test that response.output_item.done for image_generation_call emits the final image.
+
+    With the default ``partial_images=0`` there are no ``partial_image`` events; the completed
+    item on ``response.output_item.done`` is the only place the base64 result is delivered.
+    """
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    chat_options: dict[str, Any] = {}
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    png_signature = b"\x89PNG\r\n\x1a\n"
+    image_base64 = base64.b64encode(png_signature + b"fake_png_data_here").decode()
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.done"
+
+    mock_item = MagicMock()
+    mock_item.type = "image_generation_call"
+    mock_item.id = "ig_123"
+    mock_item.status = "completed"
+    mock_item.result = image_base64
+    mock_event.item = mock_item
+
+    update = client._parse_chunk_from_openai(mock_event, options=chat_options, function_call_ids=function_call_ids)
+
+    assert len(update.contents) == 2
+    call_content, result_content = update.contents
+    assert call_content.type == "image_generation_tool_call"
+    assert call_content.image_id == "ig_123"
+    assert call_content.raw_representation is mock_item
+    assert result_content.type == "image_generation_tool_result"
+    assert result_content.image_id == "ig_123"
+    assert result_content.raw_representation is mock_item
+    data_out = result_content.outputs
+    assert isinstance(data_out, Content)
+    assert data_out.type == "data"
+    assert data_out.media_type == "image/png"
+    assert data_out.uri == f"data:image/png;base64,{image_base64}"
+
+
+def test_parse_chunk_from_openai_image_generation_call_done_without_result() -> None:
+    """Test that a completed image_generation_call without a result still emits call + empty result.
+
+    Mirrors the non-streaming parser, which emits both contents with ``outputs=None``.
+    """
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    chat_options: dict[str, Any] = {}
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.done"
+
+    mock_item = MagicMock()
+    mock_item.type = "image_generation_call"
+    mock_item.id = "ig_456"
+    mock_item.status = "failed"
+    mock_item.result = None
+    mock_event.item = mock_item
+
+    update = client._parse_chunk_from_openai(mock_event, options=chat_options, function_call_ids=function_call_ids)
+
+    assert len(update.contents) == 2
+    call_content, result_content = update.contents
+    assert call_content.type == "image_generation_tool_call"
+    assert call_content.image_id == "ig_456"
+    assert result_content.type == "image_generation_tool_result"
+    assert result_content.image_id == "ig_456"
+    assert result_content.outputs is None
+
+
+def test_parse_chunk_from_openai_image_generation_call_done_matches_non_streaming() -> None:
+    """Test that streaming and non-streaming parsers produce the same contents for a completed image item."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    jpeg_signature = b"\xff\xd8\xff"
+    image_base64 = base64.b64encode(jpeg_signature + b"fake_jpeg_data").decode()
+
+    mock_item = MagicMock()
+    mock_item.type = "image_generation_call"
+    mock_item.id = "ig_789"
+    mock_item.status = "completed"
+    mock_item.result = image_base64
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.done"
+    mock_event.item = mock_item
+
+    update = client._parse_chunk_from_openai(mock_event, options={}, function_call_ids={})
+
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "test-response-id"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1234567890
+    mock_response.output = [mock_item]
+
+    with patch.object(client, "_get_metadata_from_response", return_value={}):
+        response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
+
+    streamed = [c.to_dict() for c in update.contents]
+    non_streamed = [c.to_dict() for c in response.messages[0].contents]
+    assert streamed == non_streamed
+    assert [c["type"] for c in streamed] == ["image_generation_tool_call", "image_generation_tool_result"]
+    assert streamed[1]["outputs"]["uri"] == f"data:image/jpeg;base64,{image_base64}"
+
+
 def test_parse_chunk_from_openai_shell_call_added_defers_command() -> None:
     """An in-progress shell_call on output_item.added has no command yet, so it must emit nothing.
 
