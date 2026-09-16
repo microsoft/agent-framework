@@ -1407,6 +1407,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         active_session = session
         if active_session is None and self.context_providers:
             active_session = AgentSession()
+            from ._tools import _RUN_LOCAL_MIDDLEWARE_SESSION_ATTR  # pyright: ignore[reportPrivateUsage]
+
+            setattr(active_session, _RUN_LOCAL_MIDDLEWARE_SESSION_ATTR, True)
 
         per_service_call_history_providers = self._resolve_per_service_call_history_providers(
             session=active_session,

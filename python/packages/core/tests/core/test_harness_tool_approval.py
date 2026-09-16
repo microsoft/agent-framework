@@ -24,6 +24,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    ContextProvider,
     FileHistoryProvider,
     FunctionInvocationContext,
     FunctionMiddleware,
@@ -130,6 +131,57 @@ async def test_manual_fides_no_session_preserves_standard_tool_approval(
     assert calls == ["approved", "safe"]
     assert [(message.role, [content.type for content in message.contents]) for message in resumed.messages] == [
         ("tool", ["function_result", "function_result"]),
+        ("assistant", ["text"]),
+    ]
+
+
+async def test_sessionless_approval_resume_with_context_provider_uses_message_authority(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    """A framework-created context-provider session must not become approval authority."""
+    calls: list[str] = []
+
+    class NoOpContextProvider(ContextProvider):
+        pass
+
+    @tool(name="approved_tool", approval_mode="always_require")
+    def approved_tool() -> str:
+        calls.append("approved")
+        return "approved"
+
+    agent = Agent(
+        client=chat_client_base,
+        tools=[approved_tool],
+        context_providers=[NoOpContextProvider("context")],
+    )
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="approved-call",
+                        name="approved_tool",
+                        arguments="{}",
+                        id="approved-occurrence",
+                    )
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+
+    first = await agent.run("request approval")
+    approval_request = first.user_input_requests[0]
+    resumed = await agent.run([
+        Message(role="user", contents=["request approval"]),
+        *first.messages,
+        Message(role="user", contents=[approval_request.to_function_approval_response(True)]),
+    ])
+
+    assert calls == ["approved"]
+    assert [(message.role, [content.type for content in message.contents]) for message in resumed.messages] == [
+        ("tool", ["function_result"]),
         ("assistant", ["text"]),
     ]
 

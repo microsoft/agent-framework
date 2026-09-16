@@ -8,7 +8,7 @@ import json
 from typing import Any
 
 from ag_ui.core import ToolCallResultEvent
-from agent_framework import AgentResponseUpdate, Content, FunctionTool
+from agent_framework import AgentResponseUpdate, Content, FunctionInvocationContext, FunctionTool
 from agent_framework.exceptions import UserInputRequiredException
 from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
 
@@ -88,7 +88,11 @@ async def _run_resume(
     return events
 
 
-async def _run_custom_approval(tool: FunctionTool) -> tuple[list[Any], StubAgent]:
+async def _run_custom_approval(
+    tool: FunctionTool,
+    *,
+    function_invocation_kwargs: dict[str, Any] | None = None,
+) -> tuple[list[Any], StubAgent]:
     agent = StubAgent(
         updates=[AgentResponseUpdate(contents=[Content.from_text(text="Done.")], role="assistant")],
         default_options={"tools": [tool]},
@@ -114,6 +118,7 @@ async def _run_custom_approval(tool: FunctionTool) -> tuple[list[Any], StubAgent
             agent,
             AgentConfig(),
             approval_state_store=store,
+            function_invocation_kwargs=function_invocation_kwargs,
         )
     ]
     return events, agent
@@ -132,6 +137,25 @@ async def test_approved_call_emits_one_live_result_under_original_identity() -> 
     results = [event for event in events if isinstance(event, ToolCallResultEvent)]
     assert executions == ["Seattle"]
     assert [(event.tool_call_id, event.content) for event in results] == [("call-weather", "Sunny in Seattle")]
+
+
+async def test_approved_call_receives_only_function_invocation_kwargs() -> None:
+    """Static approval execution forwards only the documented tool-runtime kwargs."""
+    observed_kwargs: list[dict[str, Any]] = []
+
+    def inspect_context(context: FunctionInvocationContext) -> str:
+        observed_kwargs.append(dict(context.kwargs))
+        return "inspected"
+
+    events, _ = await _run_custom_approval(
+        FunctionTool(name="inspect_context", description="Inspect context", func=inspect_context),
+        function_invocation_kwargs={"user_id": "user-123"},
+    )
+
+    results = [event for event in events if isinstance(event, ToolCallResultEvent)]
+    assert observed_kwargs[0]["user_id"] == "user-123"
+    assert set(observed_kwargs[0]) == {"session", "user_id"}
+    assert [(event.tool_call_id, event.content) for event in results] == [("call-custom", "inspected")]
 
 
 async def test_rejected_call_does_not_execute_or_emit_live_result() -> None:
