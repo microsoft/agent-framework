@@ -3887,8 +3887,8 @@ async def test_mixed_approval_host_batch_stages_partial_responses_in_original_or
 @pytest.mark.parametrize("streaming", [False, True], ids=["non_streaming", "streaming"])
 @pytest.mark.parametrize(
     ("cancel_host", "approved"),
-    [(False, True), (True, True), (True, False)],
-    ids=["host-answered-approved", "host-cancelled-approved", "host-cancelled-rejected"],
+    [(False, True), (False, False), (True, True), (True, False)],
+    ids=["host-answered-approved", "host-answered-rejected", "host-cancelled-approved", "host-cancelled-rejected"],
 )
 async def test_completed_mixed_batch_replays_persisted_outbox_after_provider_invalidation(
     chat_client_base: SupportsChatGetResponse,
@@ -3911,6 +3911,7 @@ async def test_completed_mixed_batch_replays_persisted_outbox_after_provider_inv
     provider_calls = 0
     provider_inputs: list[list[Message]] = []
     provider_options: list[dict[str, Any]] = []
+    published_terminal_results: list[tuple[str | None, Any]] = []
     invalidated = ResponseInvalidatedException("provider invalidated result delivery")
 
     @tool(name="approval_func", approval_mode="always_require")
@@ -3964,7 +3965,7 @@ async def test_completed_mixed_batch_replays_persisted_outbox_after_provider_inv
                         finish_reason="tool_calls",
                         conversation_id="mixed-continuation",
                     )
-                elif call_number == 2:
+                elif call_number in {2, 3}:
                     raise invalidated
                     yield  # pragma: no cover
                 else:
@@ -3994,7 +3995,7 @@ async def test_completed_mixed_batch_replays_persisted_outbox_after_provider_inv
                     finish_reason="tool_calls",
                     conversation_id="mixed-continuation",
                 )
-            if call_number == 2:
+            if call_number in {2, 3}:
                 raise invalidated
             return ChatResponse(
                 messages=Message(role="assistant", contents=["done"]),
@@ -4026,7 +4027,18 @@ async def test_completed_mixed_batch_replays_persisted_outbox_after_provider_inv
             options=options,
             client_kwargs={"session": session},
         )
-        updates = [update async for update in response_stream]
+        updates: list[ChatResponseUpdate] = []
+        async for update in response_stream:
+            updates.append(update)
+            if any(content.type == "function_result" for content in update.contents):
+                tool_state = session.state[_TOOL_APPROVAL_STATE_KEY]
+                assert isinstance(tool_state, dict)
+                outbox = tool_state[_PENDING_PROVIDER_OUTBOX_KEY]
+                assert isinstance(outbox, dict)
+                assert outbox["streaming_updates_published"] is True
+            published_terminal_results.extend(
+                (content.call_id, content.result) for content in update.contents if content.type == "function_result"
+            )
         response = await response_stream.get_final_response()
         return response if response.messages or not updates else ChatResponse.from_updates(updates)
 
@@ -4050,6 +4062,11 @@ async def test_completed_mixed_batch_replays_persisted_outbox_after_provider_inv
         _cancel_pending_pause_batch_request(session, host_request.id)
     approval_response = approval_request.to_function_approval_response(approved=approved)
     resumed_contents = [approval_response] if cancel_host else [approval_response, host_result]
+    approval_result = "approved result" if approved else "Error: Tool call invocation was rejected by user."
+    expected_results = [("approval-call", approval_result)]
+    if not cancel_host:
+        expected_results.insert(0, ("host-call", "host result"))
+    expected_published_results = [("approval-call", approval_result)]
 
     with pytest.raises(ResponseInvalidatedException) as exc_info:
         await run(resumed_contents)
@@ -4061,23 +4078,42 @@ async def test_completed_mixed_batch_replays_persisted_outbox_after_provider_inv
     assert _PENDING_PAUSE_BATCH_KEY in tool_state
     assert _PENDING_APPROVAL_REQUESTS_KEY in tool_state
     assert _PENDING_PROVIDER_OUTBOX_KEY in tool_state
+    outbox = tool_state[_PENDING_PROVIDER_OUTBOX_KEY]
+    assert isinstance(outbox, dict)
+    assert outbox["streaming_updates_published"] is streaming
     budget_state = session.state[_FUNCTION_INVOCATION_BUDGET_STATE_KEY]
     assert isinstance(budget_state, dict)
     assert budget_state["total_function_calls"] == int(approved)
+    assert published_terminal_results == (expected_published_results if streaming else [])
 
-    # Exercise the durable boundary: retry from a JSON-restored session without
-    # resubmitting the approval decision or Host result.
+    # Exercise consecutive retries across the durable boundary without
+    # resubmitting the approval decision or Host result. Streaming terminal
+    # updates were already caller-visible before the first invalidation.
+    session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+    with pytest.raises(ResponseInvalidatedException) as second_exc_info:
+        await run([Content.from_text("retry once")])
+    assert second_exc_info.value is invalidated
+    assert approved_calls == int(approved)
+    assert provider_calls == 3
+    assert published_terminal_results == (expected_published_results if streaming else [])
+    retry_budget_state = session.state[_FUNCTION_INVOCATION_BUDGET_STATE_KEY]
+    assert isinstance(retry_budget_state, dict)
+    assert retry_budget_state["total_function_calls"] == int(approved)
+    assert session.service_session_id == "mixed-continuation"
+
     session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
     final_response = await run([Content.from_text("retry")])
 
     assert final_response.text == "done"
     assert approved_calls == int(approved)
-    assert provider_calls == 3
+    assert provider_calls == 4
     assert provider_options[1]["conversation_id"] == "mixed-continuation"
     assert provider_options[2]["conversation_id"] == "mixed-continuation"
+    assert provider_options[3]["conversation_id"] == "mixed-continuation"
     expected_tool_choice = "none" if approved else "auto"
     assert provider_options[1]["tool_choice"] == expected_tool_choice
     assert provider_options[2]["tool_choice"] == expected_tool_choice
+    assert provider_options[3]["tool_choice"] == expected_tool_choice
     delivered_results = [
         [
             (content.call_id, content.result)
@@ -4087,11 +4123,8 @@ async def test_completed_mixed_batch_replays_persisted_outbox_after_provider_inv
         ]
         for request_messages in provider_inputs[1:]
     ]
-    approval_result = "approved result" if approved else "Error: Tool call invocation was rejected by user."
-    expected_results = [("approval-call", approval_result)]
-    if not cancel_host:
-        expected_results.insert(0, ("host-call", "host result"))
-    assert delivered_results == [expected_results, expected_results]
+    assert delivered_results == [expected_results, expected_results, expected_results]
+    assert published_terminal_results == (expected_published_results if streaming else [])
     final_tool_state = session.state[_TOOL_APPROVAL_STATE_KEY]
     assert isinstance(final_tool_state, dict)
     assert _PENDING_PAUSE_BATCH_KEY not in final_tool_state

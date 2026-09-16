@@ -3853,8 +3853,10 @@ def _response_invalidation_cleanup(
             # The local side effect and Host result are already committed. Keep the
             # delivery outbox and its charged budget so the next run can replay the
             # exact provider input without recovering approval authority or executing
-            # the tool again.
-            _persist_pending_provider_outbox_budget(invocation_session, budget_state)
+            # the tool again. Restore the pre-delivery snapshot so an invalidated
+            # provider attempt does not consume another iteration.
+            _restore_pending_provider_outbox_budget(invocation_session, budget_state)
+            invocation_session.state[_FUNCTION_INVOCATION_BUDGET_STATE_KEY] = budget_state
             return
         budget_state.clear()
         invocation_session.state.pop(_FUNCTION_INVOCATION_BUDGET_STATE_KEY, None)
@@ -3987,7 +3989,12 @@ def _restore_pending_provider_outbox(
 
     prepared_messages[:] = provider_messages
     terminal_contents = [content for message in response_messages for content in message.contents]
-    _, streaming_updates = _messages_and_updates_for_terminal_contents(terminal_contents)
+    streaming_updates_published = outbox.get("streaming_updates_published", False)
+    if not isinstance(streaming_updates_published, bool):
+        raise RuntimeError("The pending mixed-batch provider outbox has an invalid streaming publication marker.")
+    streaming_updates: tuple[ChatResponseUpdate, ...] = ()
+    if not streaming_updates_published:
+        _, streaming_updates = _messages_and_updates_for_terminal_contents(terminal_contents)
     action = outbox.get("action")
     if action not in {"continue", "stop"}:
         raise RuntimeError("The pending mixed-batch provider outbox contains an invalid action.")
@@ -4016,7 +4023,21 @@ def _store_pending_provider_outbox(
         "response_messages": [message.to_dict() for message in processing_result.response_messages],
         "errors_in_a_row": processing_result.errors_in_a_row,
         "action": processing_result.action,
+        "streaming_updates_published": False,
     }
+
+
+def _mark_pending_provider_outbox_streaming_updates_published(
+    invocation_session: AgentSession | None,
+) -> None:
+    """Commit caller publication before yielding a completed mixed batch's first terminal update."""
+    state = _get_tool_approval_state(invocation_session, create=False)
+    if state is None:
+        return
+    raw_outbox = state.get(_PENDING_PROVIDER_OUTBOX_KEY)
+    if not isinstance(raw_outbox, dict):
+        return
+    raw_outbox["streaming_updates_published"] = True
 
 
 def _persist_pending_provider_outbox_budget(
@@ -4825,6 +4846,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             approval_processing.function_call_count,
         )
         _persist_pending_provider_outbox_budget(invocation_session, budget_state)
+        if approval_processing.streaming_updates:
+            _mark_pending_provider_outbox_streaming_updates_published(invocation_session)
         for update in approval_processing.streaming_updates:
             yield update
         if approval_processing.action == "return":
