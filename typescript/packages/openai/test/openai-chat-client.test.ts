@@ -1,4 +1,4 @@
-import { defineTool } from "@microsoft/agent-framework-core";
+import { AgentInvalidResponseError, defineTool } from "@microsoft/agent-framework-core";
 import OpenAI from "openai";
 import type {
   ChatCompletion,
@@ -154,6 +154,55 @@ describe("OpenAIChatCompletionClient", () => {
     expect(response.text).toBe("Rainy");
   });
 
+  it.each([
+    { name: "empty stream", chunks: [] },
+    { name: "choice-less chunks", chunks: [{ ...chunk("response-1", {}), choices: [] }] },
+    {
+      name: "usage-only stream",
+      chunks: [
+        {
+          ...chunk("response-1", {}),
+          choices: [],
+          usage: { prompt_tokens: 2, completion_tokens: 3, total_tokens: 5 },
+        },
+      ],
+    },
+  ])("rejects a malformed $name without any completion choice", async ({ chunks }) => {
+    const { client, create } = mockOpenAI([chunks]);
+    const chatClient = new OpenAIChatCompletionClient({ client, model: "gpt-test" });
+    const stream = chatClient.getResponse("request", { stream: true });
+    const consume = async () => {
+      for await (const _update of stream) {
+        // Even if usage metadata is emitted, the response must not finalize successfully.
+      }
+    };
+
+    await expect(consume()).rejects.toThrow(AgentInvalidResponseError);
+    await expect(stream.getFinalResponse()).rejects.toThrow("OpenAI returned no completion choices.");
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves a valid response followed by a usage-only chunk", async () => {
+    const { client } = mockOpenAI([
+      [
+        chunk("response-1", { role: "assistant", content: "hello" }, "stop"),
+        {
+          ...chunk("response-1", {}),
+          choices: [],
+          usage: { prompt_tokens: 2, completion_tokens: 3, total_tokens: 5 },
+        },
+      ],
+    ]);
+    const chatClient = new OpenAIChatCompletionClient({ client, model: "gpt-test" });
+    const response = await chatClient.getResponse("request", { stream: true }).getFinalResponse();
+
+    expect(response.text).toBe("hello");
+    expect(response.messages).toHaveLength(1);
+    expect(response.responseId).toBe("response-1");
+    expect(response.finishReason).toBe("stop");
+    expect(response.usageDetails).toEqual({ inputTokenCount: 2, outputTokenCount: 3, totalTokenCount: 5 });
+  });
+
   it("preserves non-streaming and streaming refusals", async () => {
     const nonStreamingRefusal = completion("response-1", null);
     nonStreamingRefusal.choices[0]!.message.refusal = "I cannot help with that.";
@@ -230,6 +279,52 @@ describe("OpenAIChatCompletionClient", () => {
     expect(create).toHaveBeenCalledTimes(3);
     expect(calls).toHaveLength(1);
     expect(calls[0]?.id).toBe("openai:response-replayed:choice:0:tool:0");
+    expect(response.text).toBe("done");
+  });
+
+  it("does not add an empty OpenAI assistant message when a streaming tool turn is replayed", async () => {
+    const replayed = [
+      chunk("response-replayed", {
+        role: "assistant",
+        tool_calls: [{ index: 0, id: "call-1", type: "function", function: { name: "side_", arguments: "{" } }],
+      }),
+      chunk(
+        "response-replayed",
+        { tool_calls: [{ index: 0, function: { name: "effect", arguments: "}" } }] },
+        "tool_calls",
+      ),
+    ];
+    const { client, create } = mockOpenAI([
+      replayed,
+      replayed,
+      [chunk("response-final", { role: "assistant", content: "done" }, "stop")],
+    ]);
+    const execute = vi.fn(() => "complete");
+    const sideEffect = defineTool({
+      name: "side_effect",
+      parameters: { type: "object", additionalProperties: false },
+      execute,
+    });
+    const chatClient = new OpenAIChatCompletionClient({ client, model: "gpt-test" });
+    const response = await chatClient
+      .getResponse("request", { stream: true, options: { tools: [sideEffect] } })
+      .getFinalResponse();
+    const finalRequest = create.mock.calls[2]?.[0] as ChatCompletionCreateParams;
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(create).toHaveBeenCalledTimes(3);
+    expect(finalRequest.tool_choice).toBe("none");
+    expect(finalRequest.messages).toEqual(create.mock.calls[1]?.[0].messages);
+    expect(finalRequest.messages).toEqual([
+      { role: "user", content: "request" },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [{ id: "call-1", type: "function", function: { name: "side_effect", arguments: "{}" } }],
+      },
+      { role: "tool", tool_call_id: "call-1", content: "complete" },
+    ]);
+    expect(response.messages.map((message) => message.role)).toEqual(["assistant", "tool", "assistant"]);
     expect(response.text).toBe("done");
   });
 });

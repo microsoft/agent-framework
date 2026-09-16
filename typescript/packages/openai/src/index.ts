@@ -268,8 +268,10 @@ export class OpenAIChatCompletionClient extends BaseChatClient<OpenAIChatComplet
 
   async *#mapStream(chunks: AsyncIterable<ChatCompletionChunk>): AsyncGenerator<ChatResponseUpdate> {
     const pendingCalls = new Map<number, PendingToolCall>();
+    let hasChoice = false;
     for await (const chunk of chunks) {
       const choice = chunk.choices[0];
+      hasChoice ||= choice !== undefined;
       const contents: Content[] = [];
       if (choice?.delta.content !== undefined && choice.delta.content !== null) {
         contents.push({ type: "text", text: choice.delta.content });
@@ -321,6 +323,10 @@ export class OpenAIChatCompletionClient extends BaseChatClient<OpenAIChatComplet
           additionalProperties: { model: chunk.model, createdAt: chunk.created },
         });
       }
+    }
+
+    if (!hasChoice) {
+      throw new AgentInvalidResponseError("OpenAI returned no completion choices.");
     }
 
     const unresolved = [...pendingCalls.values()].find(

@@ -47,6 +47,27 @@ describe("core response types", () => {
     await expect(responseStream.getFinalResponse()).resolves.toBe(response);
   });
 
+  it.each([false, true])("preserves metadata without creating empty messages (with text: %s)", (withText) => {
+    const response = ChatResponse.fromUpdates([
+      ...(withText ? [new ChatResponseUpdate({ role: "assistant", messageId: "message-1", contents: "hello" })] : []),
+      new ChatResponseUpdate({
+        role: "assistant",
+        messageId: "metadata-only",
+        responseId: "response-1",
+        finishReason: "stop",
+        usageDetails: { outputTokenCount: 3 },
+        additionalProperties: { model: "test-model" },
+      }),
+    ]);
+
+    expect(response.messages).toHaveLength(withText ? 1 : 0);
+    expect(response.text).toBe(withText ? "hello" : "");
+    expect(response.responseId).toBe("response-1");
+    expect(response.finishReason).toBe("stop");
+    expect(response.usageDetails).toEqual({ outputTokenCount: 3 });
+    expect(response.additionalProperties).toEqual({ model: "test-model" });
+  });
+
   it("keeps stream failures sticky during finalization", async () => {
     const failure = new Error("stream failed");
     const responseStream = new ResponseStream(

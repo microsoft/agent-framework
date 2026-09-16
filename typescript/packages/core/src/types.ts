@@ -261,7 +261,8 @@ export class ChatResponse {
     }
 
     return new ChatResponse({
-      messages: [...messages.values()],
+      // Metadata-only updates must not create empty turns in the conversation transcript.
+      messages: [...messages.values()].filter((message) => message.contents.length > 0),
       ...(responseId === undefined ? {} : { responseId }),
       ...(finishReason === undefined ? {} : { finishReason }),
       ...(usageDetails === undefined ? {} : { usageDetails }),

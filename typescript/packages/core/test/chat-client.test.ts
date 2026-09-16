@@ -113,6 +113,62 @@ describe("BaseChatClient function invocation", () => {
     expect(response.messages.map((message) => message.role)).toEqual(["assistant", "tool", "assistant"]);
   });
 
+  it("omits suppressed replay turns from streaming responses and follow-up history", async () => {
+    const client = new TestChatClient();
+    let executions = 0;
+    const tool = defineTool({
+      name: "process",
+      parameters,
+      execute: ({ value }) => {
+        executions += 1;
+        return value;
+      },
+    });
+    const call = { ...functionCall("call-1", "process", { value: "one" }), id: "stable-occurrence" };
+    client.streamingResponses.push(
+      [new ChatResponseUpdate({ role: "assistant", messageId: "original-turn", contents: call })],
+      [
+        new ChatResponseUpdate({ role: "assistant", messageId: "replayed-turn", contents: call }),
+        new ChatResponseUpdate({
+          responseId: "replayed-response",
+          messageId: "replayed-metadata",
+          finishReason: "tool_calls",
+          usageDetails: { outputTokenCount: 3 },
+        }),
+      ],
+      [
+        new ChatResponseUpdate({
+          role: "assistant",
+          messageId: "final-turn",
+          responseId: "final-response",
+          contents: "done",
+          finishReason: "stop",
+          usageDetails: { outputTokenCount: 2 },
+        }),
+      ],
+    );
+
+    const stream = client.getResponse("hello", { stream: true, options: { tools: [tool] } });
+    const updates = [];
+    for await (const update of stream) updates.push(update);
+    const response = await stream.getFinalResponse();
+
+    expect(executions).toBe(1);
+    expect(client.requests).toHaveLength(3);
+    expect(client.requests[2]?.options.toolChoice).toBe("none");
+    expect(client.requests[2]?.messages).toEqual(client.requests[1]?.messages);
+    expect(client.requests[2]?.messages.map((message) => message.role)).toEqual(["user", "assistant", "tool"]);
+    expect(response.messages.map((message) => message.role)).toEqual(["assistant", "tool", "assistant"]);
+    expect(response.messages.every((message) => message.contents.length > 0)).toBe(true);
+    expect(response.text).toBe("done");
+    expect(response.responseId).toBe("final-response");
+    expect(response.finishReason).toBe("stop");
+    expect(response.usageDetails).toEqual({ outputTokenCount: 5 });
+    expect(updates.some((update) => update.contents.length === 0 && update.usageDetails?.outputTokenCount === 3)).toBe(
+      true,
+    );
+  });
+
   it("executes parallel calls while preserving model result order", async () => {
     const client = new TestChatClient();
     const completed: string[] = [];
