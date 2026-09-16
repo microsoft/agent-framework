@@ -50,6 +50,17 @@ from agent_framework_ag_ui._utils import (
 )
 
 
+def _open_tool_call(flow: FlowState, call_id: str, name: str = "tool") -> None:
+    """Register a tool call as started in this run so TOOL_CALL_END is eligible."""
+    entry = {
+        "id": call_id,
+        "type": "function",
+        "function": {"name": name, "arguments": "{}"},
+    }
+    flow.pending_tool_calls.append(entry)
+    flow.tool_calls_by_id[call_id] = entry
+
+
 class TestNormalizeResumeInterrupts:
     """Tests for _normalize_resume_interrupts edge cases."""
 
@@ -244,6 +255,7 @@ class TestEmitToolResult:
         """Tool result closes any open text message (issue #3568 fix)."""
         content = Content.from_function_result(call_id="call_1", result="done")
         flow = FlowState(message_id="msg_1", accumulated_text="Hello")
+        _open_tool_call(flow, "call_1")
         events = _emit_tool_result(content, flow)
 
         event_types = [e.type for e in events]
@@ -252,6 +264,30 @@ class TestEmitToolResult:
         assert "TEXT_MESSAGE_END" in event_types
         assert flow.message_id is None
         assert flow.accumulated_text == ""
+
+    def test_tool_result_skips_end_when_never_opened_in_this_run(self):
+        """Resume/orphan results must not emit unmatched TOOL_CALL_END."""
+        content = Content.from_function_result(call_id="call_1", result="done")
+        flow = FlowState()
+        events = _emit_tool_result(content, flow)
+
+        event_types = [e.type for e in events]
+        assert "TOOL_CALL_END" not in event_types
+        assert "TOOL_CALL_RESULT" in event_types
+        assert "call_1" in flow.tool_calls_ended
+
+    def test_tool_result_skips_duplicate_end_after_synthetic_close(self):
+        """A real result after synthetic protocol closure emits RESULT only once-ended."""
+        content = Content.from_function_result(call_id="call_1", result="Sunny")
+        flow = FlowState()
+        _open_tool_call(flow, "call_1", name="get_weather")
+        flow.tool_calls_ended.add("call_1")  # synthetic close before interrupt
+
+        events = _emit_tool_result(content, flow)
+
+        event_types = [e.type for e in events]
+        assert event_types.count(EventType.TOOL_CALL_END) == 0
+        assert EventType.TOOL_CALL_RESULT in event_types
 
     def test_tool_result_does_not_emit_internal_exception(self):
         """AG-UI events and snapshots contain only the channel-visible result."""
@@ -382,6 +418,7 @@ class TestEmitToolResultWithState:
         )
         content = Content.from_function_result(call_id="call_1", result=[tool_return])
         flow = FlowState()
+        _open_tool_call(flow, "call_1")
 
         events = _emit_tool_result(content, flow)
         event_types = [e.type for e in events]
@@ -906,6 +943,7 @@ class TestEmitMcpToolResultWithState:
             additional_properties={TOOL_RESULT_STATE_KEY: {"mcp_ok": True}},
         )
         flow = FlowState()
+        _open_tool_call(flow, "mcp_1", name="mcp_tool")
 
         events = _emit_mcp_tool_result(content, flow)
         event_types = [e.type for e in events]

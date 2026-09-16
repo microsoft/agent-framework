@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import inspect
 import io
 import json
@@ -55,7 +56,7 @@ import re
 import time
 import zipfile
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import timedelta
 from enum import Enum
@@ -75,6 +76,7 @@ if TYPE_CHECKING:
     from pydantic import AnyUrl
 
     from ._agents import SupportsAgentRun
+    from ._middleware import FunctionInvocationContext
     from ._sessions import AgentSession, SessionContext
     from ._types import Content
 
@@ -2549,13 +2551,52 @@ class SkillsProvider(ContextProvider):
         async def _load(skill_name: str) -> str:
             return await self._load_skill(skills, skill_name)
 
-        async def _read_resource(skill_name: str, resource_name: str, **kwargs: Any) -> Any:
-            return await self._read_skill_resource(skills, skill_name, resource_name, **kwargs)
+        # The runtime kwargs these handlers forward come from the host's
+        # ``agent.run(function_invocation_kwargs=...)``, never from the model. Two
+        # things keep the channels apart at this seam, and both are required.
+        #
+        # First, declaring ``ctx`` opts the handler into FunctionInvocationContext
+        # injection; without it the function-invocation layer has nowhere to put the
+        # host values and silently drops them. Second, the handlers take no ``**kwargs``
+        # and the outer schemas below set ``additionalProperties: False``, so an
+        # undeclared top-level argument returned by the model is rejected during
+        # validation instead of binding into the runtime namespace.
+        #
+        # ``ctx`` is injected by name and is absent from the advertised schema, so it is
+        # never something the model can supply or override.
+        #
+        # This guarantee covers ``ctx.kwargs``, not everything a skill callback ends up
+        # seeing. ``args`` stays deliberately free-form because scripts declare their own
+        # parameters, and :meth:`InlineSkillScript.run` expands it alongside these runtime
+        # kwargs, so a script's ``**kwargs`` can also hold model-supplied entries that are
+        # not declared parameters. Resources take no model arguments, so a resource's
+        # ``**kwargs`` is runtime-only. Do not treat a name appearing in a script's
+        # ``**kwargs`` as proof the host supplied it.
+        async def _read_resource(
+            ctx: FunctionInvocationContext,
+            skill_name: str,
+            resource_name: str,
+        ) -> Any:
+            return await self._read_skill_resource(
+                skills,
+                skill_name,
+                resource_name,
+                runtime_kwargs=ctx.kwargs,
+            )
 
         async def _run_script(
-            skill_name: str, script_name: str, args: dict[str, Any] | list[str] | None = None, **kwargs: Any
+            ctx: FunctionInvocationContext,
+            skill_name: str,
+            script_name: str,
+            args: dict[str, Any] | list[str] | None = None,
         ) -> Any:
-            return await self._run_skill_script(skills, skill_name, script_name, args, **kwargs)
+            return await self._run_skill_script(
+                skills,
+                skill_name,
+                script_name,
+                args,
+                runtime_kwargs=ctx.kwargs,
+            )
 
         return [
             FunctionTool(
@@ -2569,6 +2610,7 @@ class SkillsProvider(ContextProvider):
                         "skill_name": {"type": "string", "description": "The name of the skill to load."},
                     },
                     "required": ["skill_name"],
+                    "additionalProperties": False,
                 },
             ),
             FunctionTool(
@@ -2586,6 +2628,7 @@ class SkillsProvider(ContextProvider):
                         },
                     },
                     "required": ["skill_name", "resource_name"],
+                    "additionalProperties": False,
                 },
             ),
             FunctionTool(
@@ -2637,6 +2680,9 @@ class SkillsProvider(ContextProvider):
                         },
                     },
                     "required": ["skill_name", "script_name"],
+                    # Scripts declare their own parameters, so the nested ``args`` object
+                    # above stays free-form; only the outer envelope is closed.
+                    "additionalProperties": False,
                 },
             ),
         ]
@@ -2678,7 +2724,8 @@ class SkillsProvider(ContextProvider):
         skill_name: str,
         script_name: str,
         args: dict[str, Any] | list[str] | None = None,
-        **kwargs: Any,
+        *,
+        runtime_kwargs: Mapping[str, Any] | None = None,
     ) -> Any:
         """Run a named script from a skill.
 
@@ -2691,9 +2738,19 @@ class SkillsProvider(ContextProvider):
             script_name: The script name to look up (case-insensitive).
             args: Optional arguments for the script, provided by the
                 agent/LLM.
-            **kwargs: Runtime keyword arguments forwarded only to script
-                functions that accept ``**kwargs`` (e.g. arguments passed via
-                ``agent.run(user_id="123")``).
+            runtime_kwargs: Runtime keyword arguments forwarded only to script
+                functions that accept ``**kwargs``. This parameter carries host
+                request context supplied via
+                ``agent.run(..., function_invocation_kwargs={"user_id": "123"})``
+                and delivered through :class:`FunctionInvocationContext`; it is
+                never sourced from model-supplied tool arguments. Note that the
+                receiving script's own ``**kwargs`` is not runtime-only: these
+                values are expanded alongside any undeclared entries in *args*,
+                which the model supplies. Taking these as one mapping keeps this
+                helper's own parameter names (``skills``, ``skill_name``,
+                ``script_name``, ``args``) usable as runtime kwarg names; the
+                public :meth:`SkillScript.run` signature still expands them, so
+                ``skill`` and ``args`` remain reserved at that boundary.
 
         Returns:
             The script result. Returns a user-facing error string for
@@ -2719,13 +2776,18 @@ class SkillsProvider(ContextProvider):
             return f"Error: Script '{script_name}' not found in skill '{skill_name}'."
 
         try:
-            return await script.run(skill, args, **kwargs)
+            return await script.run(skill, args, **(runtime_kwargs or {}))
         except Exception:
             logger.exception("Error running script '%s' in skill '%s'", script_name, skill_name)
             raise
 
     async def _read_skill_resource(
-        self, skills: Sequence[Skill], skill_name: str, resource_name: str, **kwargs: Any
+        self,
+        skills: Sequence[Skill],
+        skill_name: str,
+        resource_name: str,
+        *,
+        runtime_kwargs: Mapping[str, Any] | None = None,
     ) -> Any:
         """Read a named resource from a skill.
 
@@ -2737,9 +2799,12 @@ class SkillsProvider(ContextProvider):
             skills: The skills to look up the skill from.
             skill_name: The name of the owning skill.
             resource_name: The resource name to look up (case-insensitive).
-            **kwargs: Runtime keyword arguments forwarded to resource functions
-                that accept ``**kwargs`` (e.g. arguments passed via
-                ``agent.run(user_id="123")``).
+            runtime_kwargs: Runtime keyword arguments forwarded to resource functions
+                that accept ``**kwargs``. These carry host request context
+                supplied via
+                ``agent.run(..., function_invocation_kwargs={"user_id": "123"})``
+                and delivered through :class:`FunctionInvocationContext`; they are
+                never sourced from model-supplied tool arguments.
 
         Returns:
             The resource content (any type). Returns a user-facing error
@@ -2768,7 +2833,7 @@ class SkillsProvider(ContextProvider):
             return f"Error: Resource '{resource_name}' not found in skill '{skill_name}'."
 
         try:
-            return await resource.read(**kwargs)
+            return await resource.read(**(runtime_kwargs or {}))
         except Exception:
             logger.exception("Failed to read resource '%s' from skill '%s'", resource_name, skill_name)
             raise
@@ -4682,6 +4747,8 @@ class _ArchiveEntryLoader:
 
     Extraction is hardened against path-traversal ("zip-slip") member names,
     oversized downloads, excessive file counts, and decompression bombs.
+    Supplied SHA-256 digests are verified before extraction; archives without
+    a digest remain supported.
     """
 
     def __init__(
@@ -4758,7 +4825,8 @@ class _ArchiveEntryLoader:
 
         Returns:
             A ``(data, mime_type)`` tuple, or ``None`` when the resource is not found,
-            contains no binary content, is empty, or exceeds the configured size limit.
+            contains no binary content, is empty, exceeds the configured size limit,
+            or has an invalid or mismatched digest.
 
         Raises:
             Exception: Any error other than a "resource not found" MCP error raised
@@ -4791,7 +4859,27 @@ class _ArchiveEntryLoader:
             )
             return None
 
+        if entry.digest is not None and not self._verify_digest(entry, data):
+            return None
+
         return data, mime_type
+
+    @staticmethod
+    def _verify_digest(entry: _McpSkillIndexEntry, data: bytes) -> bool:
+        """Verify a supplied digest against decoded archive bytes, before extraction."""
+        digest = entry.digest
+        if not isinstance(digest, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None:
+            logger.warning(
+                "Skipping skill '%s': archive digest must be 'sha256:' followed by 64 lowercase hexadecimal characters",
+                entry.name,
+            )
+            return False
+
+        if hashlib.sha256(data).hexdigest() != digest[7:]:
+            logger.warning("Skipping skill '%s': archive digest does not match downloaded content", entry.name)
+            return False
+
+        return True
 
     def _build_skill(self, entry: _McpSkillIndexEntry, data: bytes, mime_type: str | None) -> FileSkill | None:
         """Detect the format of and unpack one archive entry into an in-memory :class:`FileSkill`.
@@ -4944,6 +5032,16 @@ class MCPSkillsSource(SkillsSource):
     already provides refresh/caching for any source, this source does not offer
     a separate refresh interval; wrap it in :class:`CachingSkillsSource` to cache.
 
+    Archive digests:
+        An archive entry's non-null ``digest`` must be ``sha256:`` followed by
+        64 lowercase hexadecimal characters. It is verified against the decoded
+        archive bytes before extraction. Invalid, unsupported, or mismatched
+        digests cause a warning and the archive is skipped; other entries remain
+        available. A cache refresh therefore replaces its list without rejected
+        archives. Omitted or null digests remain allowed. This verification
+        applies only to ``archive`` entries, not lazily fetched ``skill-md``
+        entries or their supporting resources.
+
     Security considerations:
         Discovering skills over MCP means an *external* MCP server controls
         what skill content (including instructions and, for script-capable
@@ -4957,7 +5055,9 @@ class MCPSkillsSource(SkillsSource):
         servers you have vetted and trust, and treat their responses as
         untrusted input. Archive extraction is hardened against path-traversal
         ("zip-slip") and decompression bombs, but the skill *content* is still
-        untrusted.
+        untrusted. A matching digest proves consistency with the index, not
+        trustworthiness: a server controlling both the index and archive can
+        replace both, or omit the digest.
 
     Examples:
         .. code-block:: python

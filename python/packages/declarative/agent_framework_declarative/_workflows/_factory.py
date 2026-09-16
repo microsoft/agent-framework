@@ -241,7 +241,7 @@ class WorkflowFactory:
         if not yaml_path.exists():
             raise FileNotFoundError(f"Workflow YAML file not found: {yaml_path}")
 
-        with open(yaml_path) as f:
+        with open(yaml_path, encoding="utf-8") as f:
             yaml_content = f.read()
 
         return self.create_workflow_from_yaml(yaml_content, base_path=yaml_path.parent)

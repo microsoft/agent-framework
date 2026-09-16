@@ -71,6 +71,7 @@ else:
 
 
 logger = logging.getLogger(__name__)
+DEFAULT_WORKFLOW_NAME = "Handoff"
 
 
 # region Handoff events
@@ -614,7 +615,7 @@ class HandoffBuilder:
 
         Args:
             name: Optional workflow identifier used in logging and debugging.
-                  If not provided, a default name will be generated.
+                Defaults to ``"Handoff"``.
             participants: Optional list of ``Agent`` instances that will participate in the handoff workflow.
                           You can also call `.participants([...])` later. Each participant must have a
                           unique identifier (`.name` is preferred if set, otherwise `.id` is used).
@@ -630,7 +631,7 @@ class HandoffBuilder:
                 surface as workflow ``intermediate`` events. Pass ``"all_other"`` to select every participant
                 not selected by ``output_from``. Unlisted participant outputs are hidden.
         """
-        self._name = name
+        self._name = name or DEFAULT_WORKFLOW_NAME
         self._description = description
 
         # Participant related members
