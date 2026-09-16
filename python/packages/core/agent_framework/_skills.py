@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import inspect
 import io
 import json
@@ -4746,6 +4747,8 @@ class _ArchiveEntryLoader:
 
     Extraction is hardened against path-traversal ("zip-slip") member names,
     oversized downloads, excessive file counts, and decompression bombs.
+    Supplied SHA-256 digests are verified before extraction; archives without
+    a digest remain supported.
     """
 
     def __init__(
@@ -4822,7 +4825,8 @@ class _ArchiveEntryLoader:
 
         Returns:
             A ``(data, mime_type)`` tuple, or ``None`` when the resource is not found,
-            contains no binary content, is empty, or exceeds the configured size limit.
+            contains no binary content, is empty, exceeds the configured size limit,
+            or has an invalid or mismatched digest.
 
         Raises:
             Exception: Any error other than a "resource not found" MCP error raised
@@ -4855,7 +4859,27 @@ class _ArchiveEntryLoader:
             )
             return None
 
+        if entry.digest is not None and not self._verify_digest(entry, data):
+            return None
+
         return data, mime_type
+
+    @staticmethod
+    def _verify_digest(entry: _McpSkillIndexEntry, data: bytes) -> bool:
+        """Verify a supplied digest against decoded archive bytes, before extraction."""
+        digest = entry.digest
+        if not isinstance(digest, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None:
+            logger.warning(
+                "Skipping skill '%s': archive digest must be 'sha256:' followed by 64 lowercase hexadecimal characters",
+                entry.name,
+            )
+            return False
+
+        if hashlib.sha256(data).hexdigest() != digest[7:]:
+            logger.warning("Skipping skill '%s': archive digest does not match downloaded content", entry.name)
+            return False
+
+        return True
 
     def _build_skill(self, entry: _McpSkillIndexEntry, data: bytes, mime_type: str | None) -> FileSkill | None:
         """Detect the format of and unpack one archive entry into an in-memory :class:`FileSkill`.
@@ -5008,6 +5032,16 @@ class MCPSkillsSource(SkillsSource):
     already provides refresh/caching for any source, this source does not offer
     a separate refresh interval; wrap it in :class:`CachingSkillsSource` to cache.
 
+    Archive digests:
+        An archive entry's non-null ``digest`` must be ``sha256:`` followed by
+        64 lowercase hexadecimal characters. It is verified against the decoded
+        archive bytes before extraction. Invalid, unsupported, or mismatched
+        digests cause a warning and the archive is skipped; other entries remain
+        available. A cache refresh therefore replaces its list without rejected
+        archives. Omitted or null digests remain allowed. This verification
+        applies only to ``archive`` entries, not lazily fetched ``skill-md``
+        entries or their supporting resources.
+
     Security considerations:
         Discovering skills over MCP means an *external* MCP server controls
         what skill content (including instructions and, for script-capable
@@ -5021,7 +5055,9 @@ class MCPSkillsSource(SkillsSource):
         servers you have vetted and trust, and treat their responses as
         untrusted input. Archive extraction is hardened against path-traversal
         ("zip-slip") and decompression bombs, but the skill *content* is still
-        untrusted.
+        untrusted. A matching digest proves consistency with the index, not
+        trustworthiness: a server controlling both the index and archive can
+        replace both, or omit the digest.
 
     Examples:
         .. code-block:: python

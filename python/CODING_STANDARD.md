@@ -240,6 +240,7 @@ AgentFrameworkException                          # Base for all AF exceptions
 │   └── AgentContentFilterException              # Agent content filter triggered
 │
 ├── ChatClientException                          # Chat client lifecycle and communication failures
+│   ├── ResponseInvalidatedException             # Provider invalidated partial response output
 │   ├── ChatClientInvalidAuthException           # Chat client auth failures
 │   ├── ChatClientInvalidRequestException        # Invalid request to chat client
 │   ├── ChatClientInvalidResponseException       # Invalid/unexpected response from chat client
@@ -284,6 +285,7 @@ AgentFrameworkException                          # Base for all AF exceptions
 | Object in wrong state (e.g., client not initialized) | `RuntimeError` |
 | External service returns 401/403 | `IntegrationInvalidAuthException` (or `ChatClient`/`Agent` variant) |
 | External service returns unexpected response | `IntegrationInvalidResponseException` (or variant) |
+| Chat provider invalidates partial response output containing local function calls | `ResponseInvalidatedException` |
 | Content filter blocks a request | `IntegrationContentFilterException` (or variant) |
 | Request validation fails before sending to service | `IntegrationInvalidRequestException` (or variant) |
 | Agent not found in registry | `AgentInvalidRequestException` |
