@@ -18,6 +18,7 @@ from pathlib import Path
 from griffe import (
     Alias,
     AliasResolutionError,
+    AttributeChangedValueBreakage,
     ExplanationStyle,
     Object,
     find_breaking_changes,
@@ -184,12 +185,20 @@ def main() -> int:
         "--base-sha", required=True, help="Trusted pull request base commit"
     )
     parser.add_argument(
-        "--repo", type=Path, default=Path.cwd(), help="Pull request checkout"
+        "--repo", type=Path, default=Path.cwd(), help="Trusted repository checkout"
+    )
+    parser.add_argument(
+        "--current-source",
+        type=Path,
+        help="Extracted pull request source; defaults to the repository checkout",
     )
     parser.add_argument("--acknowledge-breaking-changes", action="store_true")
     args = parser.parse_args()
 
     repo = args.repo.resolve()
+    current_source = (
+        args.current_source.resolve() if args.current_source is not None else repo
+    )
     os.chdir(repo)
     package_states = _package_states(repo, args.base_sha)
     specs = _module_specs(repo, args.base_sha, package_states)
@@ -207,7 +216,7 @@ def main() -> int:
             try:
                 new_package = load(
                     spec.module,
-                    search_paths=[spec.search_path],
+                    search_paths=[current_source / spec.search_path],
                     allow_inspection=False,
                     resolve_aliases=True,
                 )
@@ -221,6 +230,13 @@ def main() -> int:
                 continue
 
             for breakage in find_breaking_changes(old_package, new_package):
+                if (
+                    isinstance(breakage, AttributeChangedValueBreakage)
+                    and "instance-attribute" in breakage.obj.labels
+                    and "class-attribute" not in breakage.obj.labels
+                ):
+                    continue
+
                 try:
                     old_breakage_obj = old_package.modules_collection.get_member(
                         breakage.obj.path
@@ -231,7 +247,9 @@ def main() -> int:
 
                 if unreleased_owner is None:
                     breakage_count += 1
-                    print(breakage.explain(style=ExplanationStyle.GITHUB))
+                    explanation = breakage.explain(style=ExplanationStyle.GITHUB)
+                    source_prefix = f"file={current_source.as_posix()}/"
+                    print(explanation.replace(source_prefix, "file=", 1))
 
             print("::endgroup::")
 

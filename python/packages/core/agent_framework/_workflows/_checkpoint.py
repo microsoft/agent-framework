@@ -288,7 +288,12 @@ class InMemoryCheckpointStorage:
 # the underlying filesystem for the file not to be seen half-written; which write
 # survives is undefined.
 _destination_queues: dict[Path, _DestinationQueue] = {}
-_destination_queues_guard = threading.Lock()
+# A completed predecessor invokes callbacks synchronously. If cancellation lands while
+# a save is entering the queue, its deferred release can therefore run re-entrantly on
+# the same thread before the enqueue frame has left this guard. A plain Lock deadlocks
+# that release (and permanently wedges every later save), while an RLock still excludes
+# all other threads and lets the owning thread finish the hand-off.
+_destination_queues_guard = threading.RLock()
 
 
 @dataclass

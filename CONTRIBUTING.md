@@ -80,9 +80,10 @@ Python pull requests run a non-blocking [Griffe](https://mkdocstrings.github.io/
 check that compares the pull request's public API with its base commit. The workflow only
 runs when Python files change, and reports potential breaking changes as annotations and
 in the job summary. The experimental `agent-framework-lab` package is excluded. The
-workflow runs from the trusted base branch, checks out GitHub's synthetic merge commit
-with read-only permissions, and statically parses source without importing it. This keeps
-the comparison current when a pull request branch is behind `main`.
+workflow checks out only trusted base-branch code, fetches GitHub's synthetic merge commit
+without checking it out, and statically parses its Python source from a temporary directory
+without importing it. This supports fork pull requests while keeping the comparison current
+when a pull request branch is behind `main`.
 
 Only APIs from packages marked `released` in `python/PACKAGE_STATUS.md` are checked.
 Prerelease packages and APIs marked with `@experimental` or `@release_candidate`—including
@@ -90,7 +91,9 @@ members of a staged class—are excluded. Package state and feature-stage marker
 from the base commit, so changing either in the same pull request cannot suppress a
 compatibility finding. The Griffe version is pinned with the other Python development
 dependencies in `python/pyproject.toml`; the workflow reads that pin from the trusted base
-commit.
+commit. Instance-attribute initializer values are excluded because Griffe derives them from
+constructor control flow and can report implementation-only assignment changes; other
+Griffe-detected attribute value changes remain checked.
 
 If a breaking change is intentional, add the `breaking change` label to the pull request
 or add `[BREAKING]` to its title. Existing title/label automation keeps those signals
