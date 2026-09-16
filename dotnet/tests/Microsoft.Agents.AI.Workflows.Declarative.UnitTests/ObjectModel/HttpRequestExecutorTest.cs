@@ -20,6 +20,11 @@ public sealed class HttpRequestExecutorTest(ITestOutputHelper output) : Workflow
 {
     private const string TestUrl = "https://api.example.com/data";
 
+    /// <summary>
+    /// Link-local metadata service address commonly used to test SSRF protections because it may expose cloud instance metadata.
+    /// </summary>
+    private const string LinkLocalMetadataUrl = "http://169.254.169.254/metadata/instance";
+
     private readonly Mock<ResponseAgentProvider> _agentProvider = new(MockBehavior.Loose);
 
     [Fact]
@@ -73,6 +78,30 @@ public sealed class HttpRequestExecutorTest(ITestOutputHelper output) : Workflow
         VerifyModel(model, action);
         Assert.IsType<RecordValue>(this.State.Get(ResponseVar), exactMatch: false);
         handler.VerifySent(info => info.Method == "GET" && info.Url == TestUrl);
+    }
+
+    [Fact]
+    public async Task HttpRequestForwardsConversationInputControlledUrlToHandlerAsync()
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        this.State.Set(SystemScope.Names.LastMessageText, FormulaValue.New(LinkLocalMetadataUrl), VariableScopeNames.System);
+        this.State.Bind();
+
+        HttpRequestAction model = this.CreateModelWithVariableUrl(
+            displayName: nameof(HttpRequestForwardsConversationInputControlledUrlToHandlerAsync),
+            variablePath: "System.LastMessageText",
+            method: HttpMethodType.Get);
+
+        MockHttpRequestHandler handler = new(HttpRequestResult("{}"));
+        HttpRequestExecutor action = new(model, handler.Object, this._agentProvider.Object, this.State);
+
+        // Act
+        await this.ExecuteAsync(action);
+
+        // Assert
+        VerifyModel(model, action);
+        handler.VerifySent(info => info.Method == "GET" && info.Url == LinkLocalMetadataUrl);
     }
 
     [Fact]
@@ -728,6 +757,20 @@ public sealed class HttpRequestExecutorTest(ITestOutputHelper output) : Workflow
             }
             builder.ErrorHandling = continueBuilder;
         }
+
+        return AssignParent<HttpRequestAction>(builder);
+    }
+
+    private HttpRequestAction CreateModelWithVariableUrl(string displayName, string variablePath, HttpMethodType method)
+    {
+        HttpRequestAction.Builder builder = new()
+        {
+            Id = this.CreateActionId(),
+            DisplayName = this.FormatDisplayName(displayName),
+            Url = new StringExpression.Builder(StringExpression.Variable(PropertyPath.Create(variablePath))),
+            Method = new EnumExpression<HttpMethodTypeWrapper>.Builder(
+                EnumExpression<HttpMethodTypeWrapper>.Literal(HttpMethodTypeWrapper.Get(method))),
+        };
 
         return AssignParent<HttpRequestAction>(builder);
     }
