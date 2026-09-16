@@ -3351,17 +3351,23 @@ async def test_function_invocation_config_additional_tools(chat_client_base: Sup
     assert len(function_calls) >= 1
 
 
-@pytest.mark.parametrize("enable_instrumentation", [False, True], indirect=True)
+@pytest.mark.parametrize(
+    ("enable_instrumentation", "enable_sensitive_data"),
+    [(False, False), (True, False), (True, True)],
+    indirect=True,
+)
 @pytest.mark.usefixtures("span_exporter")
 @pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.parametrize("include_detailed_errors", [False, True])
 async def test_function_invocation_result_parser_failure(
     chat_client_base: SupportsChatGetResponse,
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
     stream: bool,
     include_detailed_errors: bool,
+    enable_sensitive_data: bool,
 ) -> None:
-    parser = Mock(side_effect=ValueError("Unsupported result"))
+    parser = Mock(side_effect=ValueError(f"Unsupported result: {_PRIVATE_ERROR_DETAIL}"))
 
     @tool(result_parser=parser)
     def make_result() -> dict[str, str]:
@@ -3409,8 +3415,10 @@ async def test_function_invocation_result_parser_failure(
     assert "Unsupported result" in results[0].exception
     expected_result = "Error: Function failed."
     if include_detailed_errors:
-        expected_result += " Exception: Unsupported result"
+        expected_result += f" Exception: Unsupported result: {_PRIVATE_ERROR_DETAIL}"
     assert results[0].result == expected_result
+    serialized_response = json.dumps(response.to_dict())
+    assert (_PRIVATE_ERROR_DETAIL in serialized_response) is include_detailed_errors
     assert "unparsed-value" not in json.dumps(response.to_dict())
     assert response.messages[-1].text == "done"
     assert provider.call_count == 2
@@ -3423,6 +3431,15 @@ async def test_function_invocation_result_parser_failure(
     assert "unparsed-value" not in json.dumps([msg.to_dict() for msg in provider_messages])
     parser.assert_called_once_with({"value": "unparsed-value"})
     assert make_result.invocation_count == 1
+    execution_warnings = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "agent_framework"
+        and record.levelno == logging.WARNING
+        and "raised an exception; returning an error result" in record.getMessage()
+    ]
+    assert len(execution_warnings) == 1
+    assert (_PRIVATE_ERROR_DETAIL in execution_warnings[0]) is enable_sensitive_data
 
 
 async def test_function_invocation_config_include_detailed_errors_false(chat_client_base: SupportsChatGetResponse):

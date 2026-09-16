@@ -1769,12 +1769,21 @@ def _function_execution_error_result(
     config: FunctionInvocationConfiguration,
     context: FunctionInvocationContext | None = None,
 ) -> Content:
-    logger.warning(
-        "Function '%s' raised an exception; returning an error result to the model. "
-        "Set include_detailed_errors=True for the full detail. Exception: %r",
-        tool_name,
-        exception,
-    )
+    from .observability import OBSERVABILITY_SETTINGS
+
+    if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
+        logger.warning(
+            "Function '%s' raised an exception; returning an error result to the model. "
+            "Set include_detailed_errors=True for the full detail. Exception: %r",
+            tool_name,
+            exception,
+        )
+    else:
+        logger.warning(
+            "Function '%s' raised an exception; returning an error result to the model. "
+            "Set include_detailed_errors=True for the full detail.",
+            tool_name,
+        )
     message = "Error: Function failed."
     if config.get("include_detailed_errors", False):
         message = f"{message} Exception: {exception}"
