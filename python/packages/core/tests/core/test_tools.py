@@ -1536,11 +1536,13 @@ async def test_invoke_result_parser_exception_propagates(
     enable_instrumentation: bool,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    from agent_framework.exceptions import ToolException
+
     error = ValueError("Unsupported result")
     parser = Mock(side_effect=error)
     raw_result = {"value": "unparsed-value"}
 
-    @tool(result_parser=parser)
+    @tool(result_parser=parser, max_invocation_exceptions=1)
     def make_result() -> dict[str, str]:
         return raw_result
 
@@ -1552,24 +1554,33 @@ async def test_invoke_result_parser_exception_propagates(
     assert exc_info.value is error
     parser.assert_called_once_with(raw_result)
     assert make_result.invocation_count == 1
-    assert make_result.invocation_exception_count == 0
+    assert make_result.invocation_exception_count == 1
+    with pytest.raises(ToolException, match="maximum exception limit"):
+        await make_result.invoke()
+    parser.assert_called_once_with(raw_result)
+    assert make_result.invocation_count == 1
+    assert make_result.invocation_exception_count == 1
     parser_errors = [
         record.getMessage()
         for record in caplog.records
-        if record.name == "agent_framework" and record.levelno == logging.ERROR
+        if record.name == "agent_framework"
+        and record.levelno == logging.ERROR
+        and "result parser failed" in record.getMessage()
     ]
     assert parser_errors == ["Function make_result: result parser failed. Error: Unsupported result"]
     assert "succeeded" not in caplog.text
     assert "unparsed-value" not in caplog.text
     spans = span_exporter.get_finished_spans()
     if enable_instrumentation:
-        assert len(spans) == 1
+        assert len(spans) == 2
         assert spans[0].status.status_code == trace.StatusCode.ERROR
         assert spans[0].attributes is not None
         assert spans[0].attributes[OtelAttr.ERROR_TYPE] == "ValueError"
         assert OtelAttr.TOOL_RESULT not in spans[0].attributes
-        histogram.record.assert_called_once()
-        assert histogram.record.call_args.kwargs["attributes"][OtelAttr.ERROR_TYPE] == "ValueError"
+        assert spans[1].attributes is not None
+        assert spans[1].attributes[OtelAttr.ERROR_TYPE] == "ToolException"
+        assert histogram.record.call_count == 2
+        assert histogram.record.call_args_list[0].kwargs["attributes"][OtelAttr.ERROR_TYPE] == "ValueError"
     else:
         assert not spans
         histogram.record.assert_not_called()

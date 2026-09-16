@@ -1011,6 +1011,7 @@ class FunctionTool(SerializationMixin):
                 try:
                     parsed = configured_parser(result)
                 except Exception as exception:
+                    self.invocation_exception_count += 1
                     logger.error(f"Function {self.name}: result parser failed. Error: {exception}")
                     raise
             else:
@@ -1092,7 +1093,7 @@ class FunctionTool(SerializationMixin):
                     try:
                         parsed = configured_parser(result)
                     except Exception as exception:
-                        end_time_stamp = perf_counter()
+                        self.invocation_exception_count += 1
                         attributes[OtelAttr.ERROR_TYPE] = type(exception).__name__
                         capture_exception(span=span, exception=exception, timestamp=time_ns())
                         logger.error(f"Function {self.name}: result parser failed. Error: {exception}")
