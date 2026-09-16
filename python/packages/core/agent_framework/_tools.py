@@ -2830,26 +2830,26 @@ def _cancel_pending_pause_batch_request(  # pyright: ignore[reportUnusedFunction
 def _stage_pending_pause_batch_responses(
     messages: list[Message],
     invocation_session: AgentSession | None,
-) -> tuple[bool, set[int]]:
+) -> tuple[bool, bool, set[int]]:
     """Stage mixed-batch responses until every ordered pause occurrence is answered."""
     from ._types import Message
 
     state = _get_tool_approval_state(invocation_session, create=False)
     if state is None:
-        return False, set()
+        return False, False, set()
     raw_batch = state.get(_PENDING_PAUSE_BATCH_KEY)
     if not isinstance(raw_batch, Mapping):
-        return False, set()
+        return False, False, set()
     batch = cast(Mapping[str, Any], raw_batch)
     raw_items = batch.get("items")
     if not isinstance(raw_items, list):
         state.pop(_PENDING_PAUSE_BATCH_KEY, None)
-        return False, set()
+        return False, False, set()
 
     items = [copy.deepcopy(cast(dict[str, Any], item)) for item in cast(list[Any], raw_items) if isinstance(item, dict)]
     if not items:
         state.pop(_PENDING_PAUSE_BATCH_KEY, None)
-        return False, set()
+        return False, False, set()
 
     preexisting_response_slot_ids = {id(item) for item in items if item.get("response") is not None}
     matched_content_ids: set[int] = set()
@@ -2961,19 +2961,19 @@ def _stage_pending_pause_batch_responses(
     state[_PENDING_PAUSE_BATCH_KEY] = {"items": items}
 
     if any(item.get("response") is None for item in items):
-        return True, set()
+        return True, False, set()
 
     ordered_responses: list[Content] = []
     host_result_ids: set[int] = set()
     for item in items:
         response = _content_from_state(item.get("response"))
         if response is None:
-            return True, set()
+            return True, False, set()
         ordered_responses.append(response)
         if item.get("kind") == "host":
             host_result_ids.add(id(response))
     messages.append(Message(role="user", contents=ordered_responses))
-    return False, host_result_ids
+    return False, True, host_result_ids
 
 
 def _same_pause_response_payload(left: Mapping[str, Any], right: Mapping[str, Any]) -> bool:
@@ -4212,11 +4212,10 @@ async def _resolve_approval_responses(
         if partial_mixed_batch:
             raise RuntimeError("A caller-owned AgentSession is required to resume a mixed pause batch partially.")
 
-    incomplete_pause_batch, host_result_ids = _stage_pending_pause_batch_responses(
+    incomplete_pause_batch, completed_persistent_pause_batch, host_result_ids = _stage_pending_pause_batch_responses(
         prepared_messages,
         invocation_session,
     )
-    completed_persistent_pause_batch = bool(host_result_ids)
     host_result_ids.update(stateless_host_result_ids)
     if incomplete_pause_batch:
         return _FunctionProcessingResult(errors_in_a_row=errors_in_a_row, action="return")

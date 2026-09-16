@@ -3885,11 +3885,18 @@ async def test_mixed_approval_host_batch_stages_partial_responses_in_original_or
 
 
 @pytest.mark.parametrize("streaming", [False, True], ids=["non_streaming", "streaming"])
+@pytest.mark.parametrize(
+    ("cancel_host", "approved"),
+    [(False, True), (True, True), (True, False)],
+    ids=["host-answered-approved", "host-cancelled-approved", "host-cancelled-rejected"],
+)
 async def test_completed_mixed_batch_replays_persisted_outbox_after_provider_invalidation(
     chat_client_base: SupportsChatGetResponse,
     streaming: bool,
+    cancel_host: bool,
+    approved: bool,
 ) -> None:
-    """An invalidated delivery replays persisted results without re-executing the approved side effect."""
+    """An invalidated delivery replays persisted results without repeating side effects or budget."""
     from agent_framework import FunctionTool
     from agent_framework._tools import (
         _FUNCTION_INVOCATION_BUDGET_STATE_KEY,
@@ -3897,6 +3904,7 @@ async def test_completed_mixed_batch_replays_persisted_outbox_after_provider_inv
         _PENDING_PAUSE_BATCH_KEY,
         _PENDING_PROVIDER_OUTBOX_KEY,
         _TOOL_APPROVAL_STATE_KEY,
+        _cancel_pending_pause_batch_request,
     )
 
     approved_calls = 0
@@ -4037,11 +4045,16 @@ async def test_completed_mixed_batch_replays_persisted_outbox_after_provider_inv
     )
     host_result = Content.from_function_result(call_id="host-call", result="host result")
     host_result.id = host_request.id
+    if cancel_host:
+        assert host_request.id is not None
+        _cancel_pending_pause_batch_request(session, host_request.id)
+    approval_response = approval_request.to_function_approval_response(approved=approved)
+    resumed_contents = [approval_response] if cancel_host else [approval_response, host_result]
 
     with pytest.raises(ResponseInvalidatedException) as exc_info:
-        await run([approval_request.to_function_approval_response(approved=True), host_result])
+        await run(resumed_contents)
     assert exc_info.value is invalidated
-    assert approved_calls == 1
+    assert approved_calls == int(approved)
     assert session.service_session_id == "mixed-continuation"
     tool_state = session.state[_TOOL_APPROVAL_STATE_KEY]
     assert isinstance(tool_state, dict)
@@ -4050,7 +4063,7 @@ async def test_completed_mixed_batch_replays_persisted_outbox_after_provider_inv
     assert _PENDING_PROVIDER_OUTBOX_KEY in tool_state
     budget_state = session.state[_FUNCTION_INVOCATION_BUDGET_STATE_KEY]
     assert isinstance(budget_state, dict)
-    assert budget_state["total_function_calls"] == 1
+    assert budget_state["total_function_calls"] == int(approved)
 
     # Exercise the durable boundary: retry from a JSON-restored session without
     # resubmitting the approval decision or Host result.
@@ -4058,12 +4071,13 @@ async def test_completed_mixed_batch_replays_persisted_outbox_after_provider_inv
     final_response = await run([Content.from_text("retry")])
 
     assert final_response.text == "done"
-    assert approved_calls == 1
+    assert approved_calls == int(approved)
     assert provider_calls == 3
     assert provider_options[1]["conversation_id"] == "mixed-continuation"
     assert provider_options[2]["conversation_id"] == "mixed-continuation"
-    assert provider_options[1]["tool_choice"] == "none"
-    assert provider_options[2]["tool_choice"] == "none"
+    expected_tool_choice = "none" if approved else "auto"
+    assert provider_options[1]["tool_choice"] == expected_tool_choice
+    assert provider_options[2]["tool_choice"] == expected_tool_choice
     delivered_results = [
         [
             (content.call_id, content.result)
@@ -4073,10 +4087,11 @@ async def test_completed_mixed_batch_replays_persisted_outbox_after_provider_inv
         ]
         for request_messages in provider_inputs[1:]
     ]
-    assert delivered_results == [
-        [("host-call", "host result"), ("approval-call", "approved result")],
-        [("host-call", "host result"), ("approval-call", "approved result")],
-    ]
+    approval_result = "approved result" if approved else "Error: Tool call invocation was rejected by user."
+    expected_results = [("approval-call", approval_result)]
+    if not cancel_host:
+        expected_results.insert(0, ("host-call", "host result"))
+    assert delivered_results == [expected_results, expected_results]
     final_tool_state = session.state[_TOOL_APPROVAL_STATE_KEY]
     assert isinstance(final_tool_state, dict)
     assert _PENDING_PAUSE_BATCH_KEY not in final_tool_state
@@ -4584,20 +4599,22 @@ def test_idless_duplicate_call_id_replay_does_not_fill_another_pause_occurrence(
     _store_pending_pause_batch(session, [[first_request], [approval_request], [second_request]])
 
     first_result = Content.from_function_result(call_id="duplicate", result="first")
-    incomplete, _ = _stage_pending_pause_batch_responses(
+    incomplete, completed, _ = _stage_pending_pause_batch_responses(
         [Message(role="tool", contents=[first_result])],
         session,
     )
     assert incomplete is True
+    assert completed is False
 
     replay_one = Content.from_function_result(call_id="duplicate", result="first")
     replay_two = Content.from_function_result(call_id="duplicate", result="first")
-    incomplete, _ = _stage_pending_pause_batch_responses(
+    incomplete, completed, _ = _stage_pending_pause_batch_responses(
         [Message(role="tool", contents=[replay_one, replay_two])],
         session,
     )
 
     assert incomplete is True
+    assert completed is False
     tool_state = session.state[_TOOL_APPROVAL_STATE_KEY]
     assert isinstance(tool_state, dict)
     batch = tool_state[_PENDING_PAUSE_BATCH_KEY]
@@ -4636,14 +4653,16 @@ def test_same_host_response_occurrence_replay_is_idempotent_across_optional_id(i
     initial = Content.from_function_result(call_id="host-call", result={"value": 1})
     if initial_has_id:
         initial.id = "host-occurrence"
-    incomplete, _ = _stage_pending_pause_batch_responses([Message(role="tool", contents=[initial])], session)
+    incomplete, completed, _ = _stage_pending_pause_batch_responses([Message(role="tool", contents=[initial])], session)
     assert incomplete is True
+    assert completed is False
 
     replay = Content.from_function_result(call_id="host-call", result={"value": 1})
     if not initial_has_id:
         replay.id = "host-occurrence"
-    incomplete, _ = _stage_pending_pause_batch_responses([Message(role="tool", contents=[replay])], session)
+    incomplete, completed, _ = _stage_pending_pause_batch_responses([Message(role="tool", contents=[replay])], session)
     assert incomplete is True
+    assert completed is False
 
 
 async def test_same_staged_approval_response_replay_is_idempotent_and_executes_once() -> None:
@@ -4879,8 +4898,9 @@ def test_conflicting_host_response_for_same_occurrence_fails_closed(initial_has_
     initial = Content.from_function_result(call_id="reused-call", result={"value": 1})
     if initial_has_id:
         initial.id = "host-occurrence-1"
-    incomplete, _ = _stage_pending_pause_batch_responses([Message(role="tool", contents=[initial])], session)
+    incomplete, completed, _ = _stage_pending_pause_batch_responses([Message(role="tool", contents=[initial])], session)
     assert incomplete is True
+    assert completed is False
 
     conflicting = Content.from_function_result(call_id="reused-call", result={"value": 999})
     if not initial_has_id:
