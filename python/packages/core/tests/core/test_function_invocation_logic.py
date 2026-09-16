@@ -15,12 +15,14 @@ from pydantic import BaseModel, field_validator
 from agent_framework import (
     Agent,
     AgentSession,
+    ChatContext,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Content,
     FunctionInvocationContext,
     FunctionMiddleware,
+    FunctionTool,
     Message,
     ResponseStream,
     SupportsChatGetResponse,
@@ -7268,6 +7270,21 @@ def _pte_text_response(text: str = "done") -> ChatResponse:
     return ChatResponse(messages=Message(role="assistant", contents=[text]))
 
 
+def _pte_set_responses(client: SupportsChatGetResponse, responses: list[ChatResponse], *, streaming: bool) -> None:
+    if streaming:
+        client.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [
+                ChatResponseUpdate(
+                    role="assistant", contents=message.contents, conversation_id=response.conversation_id
+                )
+                for message in response.messages
+            ]
+            for response in responses
+        ]
+    else:
+        client.run_responses = responses  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+
 @tool(name="factorial", approval_mode="never_require")
 def _pte_factorial(n: int) -> int:
     """Compute the factorial of n."""
@@ -7560,6 +7577,320 @@ async def test_add_tools_respects_function_middleware(
         if content.type == "function_result"
     ] == expected_results
     assert response.messages[-1].text == "done"
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])
+@pytest.mark.parametrize("transition", ["none", "required", "conversation"])
+@pytest.mark.parametrize("replace_tools", [False, True], ids=["append", "replace"])
+@pytest.mark.parametrize("outcome", ["blocked", "allowed", "loader-failed"])
+@pytest.mark.parametrize("max_iterations", [5], indirect=True)
+async def test_second_generation_tools_preserve_middleware_across_iterations(
+    chat_client_base: SupportsChatGetResponse,
+    streaming: bool,
+    transition: str,
+    replace_tools: bool,
+    outcome: str,
+) -> None:
+    """Tool-list updates and continuation changes preserve agent and run-level callbacks."""
+    invocations: list[str] = []
+    target_calls: list[str] = []
+    model_options: list[tuple[Any, Any, list[str]]] = []
+    streamed_results: list[tuple[str | None, Any]] | None = None
+    loader_failure = RuntimeError("loader failed after updating tools")
+
+    class AgentLevelFunctionMiddleware(FunctionMiddleware):
+        async def process(self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            invocations.append(f"agent-before-{context.function.name}")
+            await call_next()
+            invocations.append(f"agent-after-{context.function.name}")
+
+    class RunLevelFunctionMiddleware(FunctionMiddleware):
+        async def process(self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            invocations.append(f"run-before-{context.function.name}")
+            if context.function.name == "late_tool" and outcome != "allowed":
+                context.result = "blocked by policy"
+            else:
+                await call_next()
+            invocations.append(f"run-after-{context.function.name}")
+
+    @chat_middleware
+    async def observe_options(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+        assert context.options is not None
+        model_options.append((
+            context.options.get("tool_choice"),
+            context.options.get("conversation_id"),
+            [item.name for item in context.options.get("tools", []) if isinstance(item, FunctionTool)],
+        ))
+        await call_next()
+
+    @tool(name="late_tool", approval_mode="never_require")
+    def late_tool() -> str:
+        target_calls.append("invoked")
+        return "target completed"
+
+    @tool(name="second_loader", approval_mode="never_require")
+    def second_loader(context: FunctionInvocationContext) -> str:
+        assert context.tools is not None
+        if replace_tools:
+            context.tools[:] = [late_tool]
+        else:
+            context.add_tools(late_tool)
+        if outcome == "loader-failed":
+            raise loader_failure
+        return "target loaded"
+
+    @tool(name="first_loader", approval_mode="never_require")
+    def first_loader(context: FunctionInvocationContext) -> str:
+        context.add_tools(second_loader)
+        return "second loader loaded"
+
+    responses = [
+        _pte_function_call_response("1", "first_loader"),
+        _pte_function_call_response("2", "second_loader"),
+        _pte_function_call_response("3", "late_tool"),
+        _pte_function_call_response("4", "late_tool"),
+        _pte_text_response(),
+    ]
+    if transition == "conversation":
+        for index, chat_response in enumerate(responses, start=1):
+            chat_response.conversation_id = f"conversation-{index}"
+    _pte_set_responses(chat_client_base, responses, streaming=streaming)
+    caller_tools = [first_loader]
+    caller_options: ChatOptions = {"tool_choice": "required" if transition == "required" else "auto"}
+    agent = Agent(
+        client=chat_client_base, tools=caller_tools, middleware=[AgentLevelFunctionMiddleware(), observe_options]
+    )
+    run_middleware = [RunLevelFunctionMiddleware()]
+    session = AgentSession()
+    if streaming:
+        stream = agent.run(
+            "Load and call tools.", stream=True, session=session, options=caller_options, middleware=run_middleware
+        )
+        updates = [update async for update in stream]
+        response = await stream.get_final_response()
+        streamed_results = [
+            (content.call_id, content.result)
+            for update in updates
+            for content in update.contents
+            if content.type == "function_result"
+        ]
+    else:
+        response = await agent.run(
+            "Load and call tools.", session=session, options=caller_options, middleware=run_middleware
+        )
+
+    expected_invocations: list[str] = []
+    for name in ["first_loader", "second_loader", "late_tool", "late_tool"]:
+        expected_invocations.extend([f"agent-before-{name}", f"run-before-{name}"])
+        if name != "second_loader" or outcome != "loader-failed":
+            expected_invocations.extend([f"run-after-{name}", f"agent-after-{name}"])
+    assert invocations == expected_invocations
+    assert target_calls == (["invoked", "invoked"] if outcome == "allowed" else [])
+    results = [
+        content for message in response.messages for content in message.contents if content.type == "function_result"
+    ]
+    assert [content.call_id for content in results] == ["1", "2", "3", "4"]
+    assert results[0].result == "second loader loaded"
+    if outcome == "loader-failed":
+        assert results[1].exception == str(loader_failure)
+        assert results[1].result == "Error: Function failed."
+    else:
+        assert results[1].result == "target loaded"
+    expected_target_result = "target completed" if outcome == "allowed" else "blocked by policy"
+    assert [content.result for content in results[2:]] == [expected_target_result, expected_target_result]
+    if streaming:
+        assert streamed_results == [(content.call_id, content.result) for content in results]
+    assert response.messages[-1].text == "done"
+    assert [item[0] for item in model_options] == (
+        ["required", None, None, None, None] if transition == "required" else ["auto"] * 5
+    )
+    assert [item[1] for item in model_options] == (
+        [None, "conversation-1", "conversation-2", "conversation-3", "conversation-4"]
+        if transition == "conversation"
+        else [None] * 5
+    )
+    final_tools = ["late_tool"] if replace_tools else ["first_loader", "second_loader", "late_tool"]
+    assert [item[2] for item in model_options] == [
+        ["first_loader"],
+        ["first_loader", "second_loader"],
+        final_tools,
+        final_tools,
+        final_tools,
+    ]
+    assert caller_tools == [first_loader]
+    assert caller_options == {"tool_choice": "required" if transition == "required" else "auto"}
+    assert session.service_session_id == ("conversation-5" if transition == "conversation" else None)
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])
+@pytest.mark.parametrize("approved", [False, True], ids=["rejected", "approved"])
+@pytest.mark.parametrize("max_iterations", [4], indirect=True)
+async def test_second_generation_tools_preserve_middleware_on_approval_resume(
+    chat_client_base: SupportsChatGetResponse, streaming: bool, approved: bool
+) -> None:
+    """A second-generation tool requires approval, then retains middleware on resume."""
+    invocations: list[str] = []
+    target_calls: list[str] = []
+
+    class RecordingMiddleware(FunctionMiddleware):
+        async def process(self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            invocations.append(context.function.name)
+            await call_next()
+
+    @tool(name="guarded_tool", approval_mode="always_require")
+    def guarded_tool() -> str:
+        target_calls.append("invoked")
+        return "target completed"
+
+    @tool(name="second_loader", approval_mode="never_require")
+    def second_loader(context: FunctionInvocationContext) -> str:
+        context.add_tools(guarded_tool)
+        return "target loaded"
+
+    @tool(name="first_loader", approval_mode="never_require")
+    def first_loader(context: FunctionInvocationContext) -> str:
+        context.add_tools(second_loader)
+        return "second loader loaded"
+
+    _pte_set_responses(
+        chat_client_base,
+        [
+            _pte_function_call_response("1", "first_loader"),
+            _pte_function_call_response("2", "second_loader"),
+            _pte_function_call_response("3", "guarded_tool"),
+        ],
+        streaming=streaming,
+    )
+    session = AgentSession()
+    agent = Agent(client=chat_client_base, tools=[first_loader], middleware=[RecordingMiddleware()])
+    if streaming:
+        first_stream = agent.run(
+            "Load guarded tool.", stream=True, session=session, options={"tool_choice": "required"}
+        )
+        first_updates = [update async for update in first_stream]
+        first_response = await first_stream.get_final_response()
+        assert not any(
+            content.type == "function_result" and content.call_id == "3"
+            for update in first_updates
+            for content in update.contents
+        )
+    else:
+        first_response = await agent.run("Load guarded tool.", session=session, options={"tool_choice": "required"})
+
+    requests = [
+        content
+        for message in first_response.messages
+        for content in message.contents
+        if content.type == "function_approval_request"
+    ]
+    assert len(requests) == 1
+    assert invocations == ["first_loader", "second_loader"]
+    assert target_calls == []
+
+    _pte_set_responses(chat_client_base, [_pte_text_response()], streaming=streaming)
+    approval = Message(role="user", contents=[requests[0].to_function_approval_response(approved=approved)])
+    expected_result = "target completed" if approved else "Error: Tool call invocation was rejected by user."
+    if streaming:
+        resumed_stream = agent.run(approval, stream=True, session=session, tools=[guarded_tool])
+        resumed_updates = [update async for update in resumed_stream]
+        resumed_response = await resumed_stream.get_final_response()
+        assert [
+            (content.call_id, content.result)
+            for update in resumed_updates
+            for content in update.contents
+            if content.type == "function_result"
+        ] == [("3", expected_result)]
+    else:
+        resumed_response = await agent.run(approval, session=session, tools=[guarded_tool])
+
+    assert invocations == ["first_loader", "second_loader"] + (["guarded_tool"] if approved else [])
+    assert target_calls == (["invoked"] if approved else [])
+    assert [
+        (content.call_id, content.result)
+        for message in resumed_response.messages
+        for content in message.contents
+        if content.type == "function_result"
+    ] == [("3", expected_result)]
+    assert resumed_response.messages[-1].text == "done"
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])
+@pytest.mark.parametrize("max_iterations", [4], indirect=True)
+async def test_second_generation_tools_keep_shared_options_and_middleware_isolated(
+    chat_client_base: SupportsChatGetResponse, streaming: bool
+) -> None:
+    """Shared clients/options do not transfer dynamic tools or run middleware between agents."""
+    target_calls: list[str] = []
+    invocations: list[tuple[str, str]] = []
+
+    class RunPolicy(FunctionMiddleware):
+        def __init__(self, label: str, *, allowed: bool) -> None:
+            self.label = label
+            self.allowed = allowed
+
+        async def process(self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            invocations.append((self.label, context.function.name))
+            if context.function.name == "late_tool" and not self.allowed:
+                context.result = "blocked by policy"
+                return
+            await call_next()
+
+    @tool(name="late_tool", approval_mode="never_require")
+    def late_tool() -> str:
+        target_calls.append("invoked")
+        return "target completed"
+
+    @tool(name="second_loader", approval_mode="never_require")
+    def second_loader(context: FunctionInvocationContext) -> str:
+        context.add_tools(late_tool)
+        return "target loaded"
+
+    @tool(name="first_loader", approval_mode="never_require")
+    def first_loader(context: FunctionInvocationContext) -> str:
+        assert context.tools == [first_loader]
+        context.add_tools(second_loader)
+        return "second loader loaded"
+
+    caller_tools = [first_loader]
+    options: ChatOptions = {"tools": caller_tools, "tool_choice": "required"}
+    first_agent = Agent(client=chat_client_base)
+    second_agent = Agent(client=chat_client_base)
+    middleware: list[RunPolicy]
+    for agent, run_options, middleware, expected_result in [
+        (first_agent, options, [RunPolicy("first", allowed=False)], "blocked by policy"),
+        (second_agent, options, [RunPolicy("second", allowed=True)], "target completed"),
+        (first_agent, options.copy(), [], "target completed"),
+    ]:
+        _pte_set_responses(
+            chat_client_base,
+            [
+                _pte_function_call_response("1", "first_loader"),
+                _pte_function_call_response("2", "second_loader"),
+                _pte_function_call_response("3", "late_tool"),
+                _pte_text_response(),
+            ],
+            streaming=streaming,
+        )
+        if streaming:
+            stream = agent.run("Load and call.", stream=True, options=run_options, middleware=middleware)
+            async for _ in stream:
+                pass
+            response = await stream.get_final_response()
+        else:
+            response = await agent.run("Load and call.", options=run_options, middleware=middleware)
+        assert [
+            content.result
+            for message in response.messages
+            for content in message.contents
+            if content.type == "function_result" and content.call_id == "3"
+        ] == [expected_result]
+        assert options == {"tools": [first_loader], "tool_choice": "required"}
+        assert options["tools"] is caller_tools
+
+    assert target_calls == ["invoked", "invoked"]
+    assert invocations == [
+        (label, name) for label in ["first", "second"] for name in ["first_loader", "second_loader", "late_tool"]
+    ]
 
 
 async def test_add_tools_with_approval_required_tool(chat_client_base: SupportsChatGetResponse):
