@@ -261,6 +261,28 @@ async def test_handoff():
     assert request.source_executor_id == escalation.name
 
 
+def test_handoff_builder_uses_stable_default_and_custom_name() -> None:
+    participant = MockHandoffAgent(name="agent")
+
+    default_workflow = (
+        HandoffBuilder(participants=[participant], termination_condition=lambda _: True)
+        .with_start_agent(participant)
+        .build()
+    )
+    custom_workflow = (
+        HandoffBuilder(
+            name="custom-handoff",
+            participants=[participant],
+            termination_condition=lambda _: True,
+        )
+        .with_start_agent(participant)
+        .build()
+    )
+
+    assert default_workflow.name == "Handoff"
+    assert custom_workflow.name == "custom-handoff"
+
+
 def _latest_request_info_event(events: list[WorkflowEvent]) -> WorkflowEvent[Any]:
     request_events = [event for event in events if event.type == "request_info"]
     assert request_events

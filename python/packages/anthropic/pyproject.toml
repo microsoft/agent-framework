@@ -23,7 +23,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core>=1.15.0,<2",
+    "agent-framework-core>=1.19.0,<2",
     "anthropic>=0.80.0,<0.117.0",
 ]
 

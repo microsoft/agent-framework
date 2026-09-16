@@ -82,6 +82,12 @@ class ChatClientException(AgentFrameworkException):
     pass
 
 
+class ResponseInvalidatedException(ChatClientException):
+    """A provider invalidated partial response output, so its local function calls must not execute."""
+
+    pass
+
+
 class ChatClientInvalidAuthException(ChatClientException):
     """An authentication error occurred in a chat client."""
 
