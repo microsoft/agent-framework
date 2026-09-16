@@ -383,85 +383,6 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
     }
 
     /// <summary>
-    /// Extracts <see cref="ToolApprovalResponseContent"/> instances from the caller's messages
-    /// and collects the ones bound to a request the harness surfaced into
-    /// <see cref="ToolApprovalState.CollectedApprovalResponses"/>.
-    /// Collected responses are removed from the messages in-place, since the caller's messages are not forwarded
-    /// to the inner agent during a queue cycle. A matched response has its tool call rebound to the surfaced
-    /// request's tool call so an approved call matches exactly what was surfaced for approval.
-    /// </summary>
-    /// <remarks>
-    /// A response with no matching surfaced request is left in the message untouched. Binding plain approval
-    /// responses is the responsibility of the approval binding chat client further down the pipeline, so this
-    /// harness neither honors nor discards them.
-    /// </remarks>
-    private static void CollectApprovalResponsesFromMessages(
-        List<ChatMessage> messages,
-        ToolApprovalState state)
-    {
-        var surfaced = state.SurfacedApprovalRequests;
-
-        // Walk messages in reverse so we can safely remove by index.
-        for (int i = messages.Count - 1; i >= 0; i--)
-        {
-            var message = messages[i];
-
-            // Quick check: does this message contain any approval responses bound to a surfaced request?
-            bool hasBoundResponse = false;
-            foreach (var content in message.Contents)
-            {
-                if (content is ToolApprovalResponseContent response && surfaced.ContainsKey(response.RequestId))
-                {
-                    hasBoundResponse = true;
-                    break;
-                }
-            }
-
-            if (!hasBoundResponse)
-            {
-                continue;
-            }
-
-            // Separate bound approval responses (→ state) from other content (→ keep in message).
-            var remaining = new List<AIContent>(message.Contents.Count);
-            foreach (var content in message.Contents)
-            {
-                // Remove on match so a matched request is consumed and a duplicate response for the
-                // same request in this pass is honored only once.
-                if (content is ToolApprovalResponseContent response &&
-                    surfaced.TryGetValue(response.RequestId, out var surfacedRequest))
-                {
-                    surfaced.Remove(response.RequestId);
-
-                    // Rebind to the surfaced request's tool call and record for injection.
-                    state.CollectedApprovalResponses.Add(
-                        new ToolApprovalResponseContent(response.RequestId, response.Approved, surfacedRequest.ToolCall)
-                        {
-                            Reason = response.Reason,
-                        });
-
-                    continue;
-                }
-
-                remaining.Add(content);
-            }
-
-            // Remove the message entirely if it only contained bound approval responses,
-            // otherwise replace it with a clone that has those responses stripped.
-            if (remaining.Count == 0)
-            {
-                messages.RemoveAt(i);
-            }
-            else
-            {
-                var cloned = message.Clone();
-                cloned.Contents = remaining;
-                messages[i] = cloned;
-            }
-        }
-    }
-
-    /// <summary>
     /// Records every <see cref="ToolApprovalRequestContent"/> found in the given messages as surfaced to the caller.
     /// </summary>
     /// <remarks>
@@ -501,6 +422,12 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
     /// <remarks>
     /// A new batch from the inner agent supersedes any previous one, so stale entries from an abandoned
     /// approval cycle cannot later authorize a standing rule.
+    /// <para>
+    /// Request ids are unique by construction, so keying by id loses nothing: they derive from tool call ids, and
+    /// inference services correlate a tool call to its result by that id alone. A duplicate id would already have
+    /// broken that correlation upstream. Nothing a caller sends reaches this dictionary — every entry originates
+    /// from the inner agent's own response — so a caller cannot manufacture a collision here.
+    /// </para>
     /// </remarks>
     private static void ResetSurfacedApprovalRequests(ToolApprovalState state, IReadOnlyList<ToolApprovalRequestContent> requests)
     {
@@ -589,19 +516,15 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
         // response must be collected into state instead of being left in the messages.
         bool queueCycleActive = state.QueuedApprovalRequests.Count > 0;
 
-        // 1. Bind any AlwaysApprove wrappers in the caller's messages to a surfaced approval request.
-        //    This extracts standing approval rules into state and replaces wrappers with plain responses.
-        //    An unbound wrapper creates no rule and is downgraded to an ordinary approval response.
-        var callerMessages = BindAlwaysApproveResponses(messages, state, this._jsonSerializerOptions, queueCycleActive);
+        // 1. Bind any approval responses in the caller's messages to a surfaced approval request.
+        //    This consumes the matching request, extracts standing approval rules into state, and replaces
+        //    wrappers with plain responses. An unbound response creates no rule and is forwarded as-is.
+        var callerMessages = BindApprovalResponses(messages, state, this._jsonSerializerOptions, queueCycleActive);
 
         // 2. If there are queued approval requests from a previous batch, handle them
         //    before calling the inner agent.
         if (queueCycleActive)
         {
-            // Collect the caller's approval/denial responses for the previously dequeued item
-            // and store them in state for the next downstream call.
-            CollectApprovalResponsesFromMessages(callerMessages, state);
-
             // Re-evaluate remaining queued items — the caller may have added new rules
             // (e.g., "always approve this tool") that resolve additional items.
             await this.DrainAutoApprovableFromQueueAsync(state, session, options, messages).ConfigureAwait(false);
@@ -850,25 +773,32 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
     }
 
     /// <summary>
-    /// Scans input messages for <see cref="AlwaysApproveToolApprovalResponseContent"/> instances and binds each
-    /// one to an approval request the harness actually surfaced, before any standing rule is recorded.
+    /// Scans input messages for tool approval responses — plain <see cref="ToolApprovalResponseContent"/> and
+    /// <see cref="AlwaysApproveToolApprovalResponseContent"/> wrappers alike — and binds each one to an approval
+    /// request the harness actually surfaced, before any standing rule is recorded.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// A wrapper is honored only when its request id matches a request recorded in
+    /// A response is bound only when its request id matches a request recorded in
     /// <see cref="ToolApprovalState.SurfacedApprovalRequests"/>. The matched request is consumed, and both the
     /// forwarded response and any standing rule are derived from the <b>recorded</b> tool call rather than from the
     /// caller-supplied one, so a caller cannot widen an approval by substituting a different tool name or arguments.
     /// </para>
     /// <para>
-    /// A wrapper that cannot be bound creates no standing rule and is downgraded to the plain approval response it
-    /// carries, which is then forwarded for the approval binding chat client to validate. This is deliberate: an
-    /// unbound wrapper is produced both by a forged response and by legitimate cases such as replaying a transcript
-    /// into a new session, so the two are treated identically and safely rather than one of them failing the run.
+    /// This is the single place a surfaced request is consumed, and it runs on every inbound pass. Plain responses
+    /// must consume their request too: otherwise a request answered once would stay eligible for binding, letting a
+    /// caller replay the same id as a wrapper to promote a one-time approval into a standing rule, or to overturn a
+    /// denial with an approval.
     /// </para>
     /// <para>
-    /// Plain <see cref="ToolApprovalResponseContent"/> is intentionally left untouched here. Binding plain responses
-    /// is the responsibility of the approval binding chat client further down the pipeline.
+    /// A response that cannot be bound creates no standing rule. A wrapper is downgraded to the plain approval
+    /// response it carries, and a plain response is forwarded unchanged, for the approval binding chat client to
+    /// validate against its own record. This is deliberate: an unbound response is produced both by a forgery and by
+    /// legitimate cases such as replaying a transcript into a new session, so the two are treated identically and
+    /// safely rather than one of them failing the run. Unbound responses are never dropped here.
+    /// </para>
+    /// <para>
+    /// Only a wrapper can create a standing rule, and only when it carries an approval.
     /// </para>
     /// </remarks>
     /// <param name="messages">The caller's inbound messages.</param>
@@ -879,7 +809,7 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
     /// for injection once the queue resolves, instead of being left in the messages. Used during a queue cycle, where
     /// the caller's messages are not forwarded to the inner agent on this turn.
     /// </param>
-    private static List<ChatMessage> BindAlwaysApproveResponses(
+    private static List<ChatMessage> BindApprovalResponses(
         IEnumerable<ChatMessage> messages,
         ToolApprovalState state,
         JsonSerializerOptions jsonSerializerOptions,
@@ -891,45 +821,50 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
 
         foreach (var message in messageList)
         {
-            // Quick check: does this message contain any AlwaysApprove wrappers?
-            bool hasAlwaysApprove = false;
+            // Quick check: does this message contain any approval response at all, wrapped or plain?
+            bool hasApprovalResponse = false;
             foreach (var content in message.Contents)
             {
-                if (content is AlwaysApproveToolApprovalResponseContent)
+                if (content is ToolApprovalResponseContent or AlwaysApproveToolApprovalResponseContent)
                 {
-                    hasAlwaysApprove = true;
+                    hasApprovalResponse = true;
                     break;
                 }
             }
 
-            if (!hasAlwaysApprove)
+            if (!hasApprovalResponse)
             {
                 result.Add(message);
                 continue;
             }
 
-            // Walk content items, binding each AlwaysApprove wrapper to a surfaced request before
+            // Walk content items, binding each approval response to a surfaced request before
             // recording any standing rule.
             var newContents = new List<AIContent>(message.Contents.Count);
             foreach (var content in message.Contents)
             {
-                if (content is not AlwaysApproveToolApprovalResponseContent alwaysApprove)
+                // Unwrap so plain and wrapped responses share one binding decision. Only a wrapper can
+                // carry a standing rule, so the wrapper itself is kept to consult its flags after binding.
+                var alwaysApprove = content as AlwaysApproveToolApprovalResponseContent;
+                var innerResponse = alwaysApprove?.InnerResponse ?? content as ToolApprovalResponseContent;
+
+                if (innerResponse is null)
                 {
                     newContents.Add(content);
                     continue;
                 }
 
-                var innerResponse = alwaysApprove.InnerResponse;
-
-                // Security boundary: a standing rule may only be derived from a request this agent surfaced and is
-                // still awaiting a response for. Remove on match so a surfaced request authorizes at most one wrapper.
+                // Security boundary: an approval may only be honored against a request this agent surfaced and is
+                // still awaiting a response for. Remove on match so a surfaced request authorizes at most one
+                // response; without this a one-time approval could be replayed as a wrapper and silently promoted
+                // to a standing rule, and a denied request could be re-answered with an approval.
                 //
-                // An unmatched wrapper is NOT an error. It legitimately occurs when a transcript is replayed to
+                // An unmatched response is NOT an error. It legitimately occurs when a transcript is replayed to
                 // re-seed a new session, when a stateless caller resends history, or when no session store is
-                // configured. It is also what a forged wrapper looks like. The two are indistinguishable from here,
-                // so both are handled the same safe way: no standing rule is created, and the wrapper is downgraded
+                // configured. It is also what a forged response looks like. The two are indistinguishable from here,
+                // so both are handled the same safe way: no standing rule is created, and a wrapper is downgraded
                 // to the plain approval response it carries. That response is not honored here either; it is
-                // forwarded for ApprovalResponseBindingChatClient to validate against its own recorded state.
+                // forwarded unchanged for ApprovalResponseBindingChatClient to validate against its own record.
                 if (!state.SurfacedApprovalRequests.TryGetValue(innerResponse.RequestId, out var surfacedRequest))
                 {
                     newContents.Add(innerResponse);
@@ -947,8 +882,9 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
                     Reason = innerResponse.Reason,
                 };
 
-                // Only an approval creates a standing rule; a denial is a legitimate answer that records nothing.
-                if (innerResponse.Approved && surfacedRequest.ToolCall is FunctionCallContent recordedCall)
+                // Only an approval carried by a wrapper creates a standing rule. A denial, or a plain response
+                // answering only this one request, is a legitimate answer that records nothing.
+                if (alwaysApprove is not null && innerResponse.Approved && surfacedRequest.ToolCall is FunctionCallContent recordedCall)
                 {
                     if (alwaysApprove.AlwaysApproveTool)
                     {
@@ -971,7 +907,7 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
                 }
                 else
                 {
-                    // Replace the wrapper with the bound response, preserving position.
+                    // Replace the response with the bound one, preserving position.
                     newContents.Add(boundResponse);
                 }
             }
