@@ -9,6 +9,7 @@ the real runtime live in ``test_monty_codeact_integration.py``.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 import types
@@ -21,6 +22,7 @@ from unittest.mock import MagicMock
 import pytest
 from agent_framework import Content, FunctionTool, Message, tool
 from agent_framework._sessions import SessionContext
+from agent_framework.exceptions import ToolException
 
 from agent_framework_monty import MontyCodeActProvider, MontyExecuteCodeTool
 from agent_framework_monty import _execute_code_tool as execute_code_module
@@ -851,3 +853,114 @@ async def test_invoke_tool_awaits_partial_wrapped_async_method() -> None:
     cid, payload = await bridge._invoke_tool(7, "adder", {"a": 6, "b": 7})
     assert cid == 7
     assert payload == {"return_value": 13}, payload
+
+
+async def test_tool_callbacks_share_registered_invocation_limit() -> None:
+    @tool(max_invocations=1)
+    def limited() -> int:
+        return 42
+
+    first = execute_code_module._make_tool_callback(limited)
+    second = execute_code_module._make_tool_callback(limited)
+    assert await first() == 42
+    assert limited.invocation_count == 1
+    for callback in (first, second, execute_code_module._make_tool_callback(limited)):
+        with pytest.raises(ToolException, match="maximum invocation limit"):
+            await callback()
+    assert limited.invocation_count == 1
+
+    limited.invocation_count = 0
+    assert await second() == 42
+    assert limited.invocation_count == 1
+
+
+@pytest.mark.parametrize("is_async", [False, True])
+async def test_tool_callbacks_share_registered_exception_limit(is_async: bool) -> None:
+    def fail() -> int:
+        raise ValueError("expected failure")
+
+    async def async_fail() -> int:
+        await asyncio.sleep(0)
+        return fail()
+
+    failing = FunctionTool(name="failing", func=async_fail if is_async else fail, max_invocation_exceptions=1)
+    with pytest.raises(ValueError, match="expected failure"):
+        await execute_code_module._make_tool_callback(failing)()
+    with pytest.raises(ToolException, match="maximum exception limit"):
+        await execute_code_module._make_tool_callback(failing)()
+    assert failing.invocation_count == 1
+    assert failing.invocation_exception_count == 1
+
+
+async def test_concurrent_tool_callbacks_share_registered_invocation_limit() -> None:
+    @tool(max_invocations=1)
+    async def limited() -> int:
+        await asyncio.sleep(0)
+        return 42
+
+    bridges = [
+        bridge_module.InlineCodeBridge({"limited": execute_code_module._make_tool_callback(limited)}) for _ in range(8)
+    ]
+    results = await asyncio.gather(*(bridge._invoke_tool(index, "limited", {}) for index, bridge in enumerate(bridges)))
+
+    assert sum(payload == {"return_value": 42} for _, payload in results) == 1
+    assert sum(payload.get("exc_type") == "ToolException" for _, payload in results) == 7
+    assert limited.invocation_count == 1
+
+
+async def test_tool_callback_preserves_bound_instance_and_result_parser() -> None:
+    parser = MagicMock(return_value=[Content.from_text("parsed")])
+
+    class Counter:
+        def __init__(self) -> None:
+            self.value = 0
+
+        @tool(max_invocations=1, result_parser=parser)
+        def increment(self) -> int:
+            self.value += 1
+            return self.value
+
+    first_owner = Counter()
+    second_owner = Counter()
+    first_tool = first_owner.increment
+    second_tool = second_owner.increment
+
+    assert await execute_code_module._make_tool_callback(first_tool)() == 1
+    with pytest.raises(ToolException, match="maximum invocation limit"):
+        await execute_code_module._make_tool_callback(first_tool)()
+    assert await execute_code_module._make_tool_callback(second_tool)() == 1
+    assert first_owner.value == second_owner.value == 1
+    assert first_tool.invocation_count == second_tool.invocation_count == 1
+    assert first_tool.result_parser is parser
+    parser.assert_not_called()
+
+    first_tool.invocation_count = 0
+    assert await first_tool.invoke() == [Content.from_text("parsed")]
+    parser.assert_called_once_with(2)
+
+
+async def test_provider_runs_share_registered_tool_invocation_limit() -> None:
+    @tool(max_invocations=1)
+    def limited() -> int:
+        return 42
+
+    provider = MontyCodeActProvider(tools=[limited])
+    for run_index in range(2):
+        context = SessionContext(input_messages=[])
+        await provider.before_run(agent=MagicMock(), session=None, context=context, state={})
+        run_tool = context.tools[0]
+        assert isinstance(run_tool, MontyExecuteCodeTool)
+        assert run_tool.get_tools()[0] is limited
+        script = _set_script(
+            _FakeFunctionSnapshot(function_name="limited", call_id=1),
+            _FakeFutureSnapshot(pending_call_ids=[1]),
+            _FakeMontyComplete(),
+        )
+        await run_tool._run_code(code="await limited()")
+        payload = script.resume_log[-1][2][1]
+        if run_index == 0:
+            assert payload == {"return_value": 42}
+        else:
+            assert payload["exc_type"] == "ToolException"
+            assert "maximum invocation limit" in payload["message"]
+        assert limited.invocation_count == 1

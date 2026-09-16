@@ -18,10 +18,11 @@ from agent_framework.exceptions import (
 )
 from mistralai.client import Mistral
 from mistralai.client.models import AssistantMessage, ThinkChunk
+from mistralai.client.utils.retries import BackoffStrategy, RetryConfig
 from pydantic import BaseModel
 
 import agent_framework_mistral._chat_client as chat_client_module
-from agent_framework_mistral import MistralChatClient, MistralChatOptions
+from agent_framework_mistral import MistralChatClient, MistralChatOptions, RawMistralChatClient
 from agent_framework_mistral._chat_client import _sanitize_tool_call_id  # pyright: ignore[reportPrivateUsage]
 from agent_framework_mistral._http_client import (  # pyright: ignore[reportPrivateUsage]
     AsyncClientUsingConfiguredTimeout,
@@ -431,17 +432,218 @@ async def test_get_response_instructions_prepended_as_system_message() -> None:
     assert "instructions" not in server.last_request
 
 
-@pytest.mark.parametrize("argument", ["http_headers", "retries", "server_url", "timeout_ms"])
-async def test_get_response_rejects_per_call_transport_arguments(argument: str) -> None:
+@pytest.mark.parametrize("client_type", [RawMistralChatClient, MistralChatClient])
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("source", ["options", "client_kwargs"])
+@pytest.mark.parametrize("use_none", [False, True])
+@pytest.mark.parametrize(
+    ("argument", "value"),
+    [
+        ("http_headers", {"X-Test-Override": "value"}),
+        ("retries", RetryConfig("backoff", BackoffStrategy(1, 10, 2, 100), False)),
+        ("server_url", "https://override.example"),
+        ("timeout_ms", 1000),
+    ],
+)
+async def test_get_response_rejects_per_call_transport_arguments(
+    client_type: type[RawMistralChatClient],
+    stream: bool,
+    source: str,
+    use_none: bool,
+    argument: str,
+    value: Any,
+) -> None:
+    server = MockMistral([])
+    async with httpx.AsyncClient(transport=httpx.MockTransport(server.handler)) as http_client:
+        client = client_type(model="mistral-small-latest", api_key="test-key", http_client=http_client)
+        overrides = {argument: None if use_none else value}
+        options = cast("MistralChatOptions", overrides if source == "options" else {})
+        client_kwargs = overrides if source == "client_kwargs" else {}
+        try:
+            with pytest.raises(ValueError, match="cannot be supplied per call") as exc:
+                if stream:
+                    await client.get_response(
+                        [Message("user", ["hi"])], stream=True, options=options, client_kwargs=client_kwargs
+                    ).get_final_response()
+                else:
+                    await client.get_response([Message("user", ["hi"])], options=options, client_kwargs=client_kwargs)
+            assert str(exc.value) == (
+                f"Mistral transport arguments cannot be supplied per call: {argument}. Configure the client instead."
+            )
+            assert overrides == {argument: None if use_none else value}
+            assert server.http_requests == []
+        finally:
+            await client.close()
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_get_response_rejects_transport_arguments_split_across_options_and_kwargs(stream: bool) -> None:
     client, server = make_client()
+    options = cast("MistralChatOptions", {"server_url": "https://override.example", "http_headers": {}})
+    client_kwargs = {"server_url": "https://another.example", "timeout_ms": 1000, "retries": None}
+    try:
+        with pytest.raises(ValueError, match="http_headers, retries, server_url, timeout_ms"):
+            if stream:
+                await client.get_response(
+                    [Message("user", ["hi"])], stream=True, options=options, client_kwargs=client_kwargs
+                ).get_final_response()
+            else:
+                await client.get_response([Message("user", ["hi"])], options=options, client_kwargs=client_kwargs)
+        assert server.http_requests == []
+    finally:
+        await client.close()
 
-    with pytest.raises(ValueError, match="cannot be supplied per call"):
-        await client.get_response(
-            [Message("user", ["hi"])],
-            client_kwargs={argument: "override"},
+
+@pytest.mark.parametrize("client_type", [RawMistralChatClient, MistralChatClient])
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("configuration", ["server_url", "http_client", "sdk"])
+async def test_get_response_preserves_configured_transport_and_generation_options(
+    client_type: type[RawMistralChatClient],
+    stream: bool,
+    configuration: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("MISTRAL_SERVER_URL", raising=False)
+    endpoint = "https://configured.example"
+    server = MockMistral(
+        [
+            stream_response(make_chunk_payload(content="ok", finish_reason="stop"))
+            if stream
+            else json_response(make_response_payload(content="ok"))
+        ]
+    )
+    async with httpx.AsyncClient(
+        base_url=endpoint if configuration == "http_client" else "https://unused.example",
+        transport=httpx.MockTransport(server.handler),
+    ) as http_client:
+        sdk_client = None
+        if configuration == "sdk":
+            sdk_client = Mistral(api_key="test-key", server_url=endpoint, async_client=http_client)
+            client = client_type(model="mistral-small-latest", client=sdk_client)
+        else:
+            client = client_type(
+                model="mistral-small-latest",
+                api_key="test-key",
+                server_url=endpoint if configuration == "server_url" else None,
+                http_client=http_client,
+            )
+        options: MistralChatOptions = {
+            "temperature": 0.5,
+            "max_tokens": 32,
+            "seed": 42,
+            "safe_prompt": True,
+            "allow_multiple_tool_calls": False,
+        }
+        try:
+            if stream:
+                response = await client.get_response(
+                    [Message("user", ["hi"])], stream=True, options=options, client_kwargs={"n": 1}
+                ).get_final_response()
+            else:
+                response = await client.get_response([Message("user", ["hi"])], options=options, client_kwargs={"n": 1})
+            assert response.text == "ok"
+            assert len(server.http_requests) == 1
+            assert server.http_requests[0].url.copy_with(fragment=None) == httpx.URL(f"{endpoint}/v1/chat/completions")
+            assert server.http_requests[0].headers["Authorization"] == "Bearer test-key"
+            assert server.last_request["messages"] == [{"role": "user", "content": "hi"}]
+            assert server.last_request["temperature"] == 0.5
+            assert server.last_request["max_tokens"] == 32
+            assert server.last_request["random_seed"] == 42
+            assert server.last_request["safe_prompt"] is True
+            assert server.last_request["parallel_tool_calls"] is False
+            assert server.last_request["n"] == 1
+            assert "seed" not in server.last_request
+            assert "allow_multiple_tool_calls" not in server.last_request
+        finally:
+            await client.close()
+            if sdk_client is not None:
+                await sdk_client.__aexit__(None, None, None)
+                sdk_client.__exit__(None, None, None)
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize(
+    ("argument", "value"),
+    [
+        ("server_url", "https://override.example"),
+        ("http_headers", {"X-Test-Override": "value"}),
+        ("retries", {}),
+        ("timeout_ms", 1000),
+    ],
+)
+async def test_responses_agent_rejects_per_call_transport_arguments(stream: bool, argument: str, value: Any) -> None:
+    responses = pytest.importorskip(
+        "agent_framework_hosting_responses", reason="Requires the Responses hosting package"
+    )
+    run = responses.responses_to_run({"input": "hi", "stream": stream, argument: value})
+    assert run["options"][argument] == value
+    client, server = make_client()
+    agent = Agent(client=client)
+    try:
+        with pytest.raises(ValueError, match=f"cannot be supplied per call: {argument}"):
+            if stream:
+                await agent.run(run["messages"], options=run["options"], stream=True).get_final_response()
+            else:
+                await agent.run(run["messages"], options=run["options"])
+        assert server.http_requests == []
+    finally:
+        await client.close()
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("include_nulls", [False, True])
+async def test_responses_agent_preserves_normal_options_and_configured_endpoint(
+    stream: bool, include_nulls: bool
+) -> None:
+    responses = pytest.importorskip(
+        "agent_framework_hosting_responses", reason="Requires the Responses hosting package"
+    )
+    body: dict[str, Any] = {
+        "input": "hi",
+        "stream": stream,
+        "max_output_tokens": 32,
+        "temperature": 0.5,
+        "safe_prompt": True,
+    }
+    if include_nulls:
+        body.update(dict.fromkeys(["http_headers", "retries", "server_url", "timeout_ms"]))
+    run = responses.responses_to_run(body)
+    assert run["options"] == {"max_tokens": 32, "temperature": 0.5, "safe_prompt": True}
+    server = MockMistral(
+        [
+            stream_response(make_chunk_payload(content="ok", finish_reason="stop"))
+            if stream
+            else json_response(make_response_payload(content="ok"))
+        ]
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(server.handler)) as http_client:
+        client = MistralChatClient(
+            model="mistral-small-latest",
+            api_key="test-key",
+            server_url="https://configured.example",
+            http_client=http_client,
         )
-
-    assert server.requests == []
+        agent = Agent(client=client, instructions="Be brief.")
+        try:
+            if stream:
+                result = await agent.run(run["messages"], options=run["options"], stream=True).get_final_response()
+            else:
+                result = await agent.run(run["messages"], options=run["options"])
+            assert result.text == "ok"
+            assert len(server.http_requests) == 1
+            assert server.http_requests[0].url.copy_with(fragment=None) == httpx.URL(
+                "https://configured.example/v1/chat/completions"
+            )
+            assert server.http_requests[0].headers["Authorization"] == "Bearer test-key"
+            assert server.last_request["messages"] == [
+                {"role": "system", "content": "Be brief."},
+                {"role": "user", "content": "hi"},
+            ]
+            assert server.last_request["max_tokens"] == 32
+            assert server.last_request["temperature"] == 0.5
+            assert server.last_request["safe_prompt"] is True
+        finally:
+            await client.close()
 
 
 async def test_get_response_model_override() -> None:

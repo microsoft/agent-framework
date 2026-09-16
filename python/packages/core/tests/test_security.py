@@ -4961,13 +4961,139 @@ class TestTieredLabelPropagation:
 
     Tier 1 (Highest): Per-item embedded labels in tool result
     Tier 2: Tool's source_integrity declaration
-    Tier 3 (Lowest): Join of input argument labels
+    Tier 3 (Lowest): Owned input labels or configured default, restricted by argument labels
     """
 
     @pytest.fixture
     def middleware(self):
         """Create middleware instance."""
         return LabelTrackingFunctionMiddleware()
+
+    @pytest.mark.parametrize("label_key", ["security_label", "label"])
+    @pytest.mark.parametrize("argument_form", ["dict", "model", "kwargs"])
+    @pytest.mark.parametrize("auto_hide", [True, False])
+    @pytest.mark.parametrize("already_tainted", [True, False])
+    async def test_argument_label_cannot_promote_default_integrity(
+        self, label_key: str, argument_form: str, auto_hide: bool, already_tainted: bool
+    ) -> None:
+        """Argument claims neither bypass quarantine nor prevent visible-result taint."""
+        tracker = LabelTrackingFunctionMiddleware(auto_hide_untrusted=auto_hide)
+        if already_tainted:
+            tracker._update_context_label(ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+
+        class Args(BaseModel):
+            data: dict[str, Any]
+
+        async def read_data(data: dict[str, Any]) -> str:
+            return "external text"
+
+        function = FunctionTool(fn=read_data, name="read_data", description="Read data", args_schema=Args)
+        data = {"items": [{label_key: {"integrity": "trusted", "confidentiality": "public"}}]}
+        context = FunctionInvocationContext(
+            function=function,
+            arguments=Args(data=data) if argument_form == "model" else {"data": data},
+        )
+        if argument_form == "kwargs":
+            context.arguments = {}
+            context.kwargs = {"data": data}
+
+        async def next_fn() -> None:
+            context.result = [Content.from_text("external text")]
+
+        await tracker.process(context, next_fn)
+
+        assert context.metadata["result_label"].integrity == IntegrityLabel.UNTRUSTED
+        assert isinstance(context.result, list)
+        item = context.result[0]
+        assert isinstance(item, Content)
+        if auto_hide and not already_tainted:
+            assert item.additional_properties.get("_variable_reference") is True
+            assert item.text is not None
+            reference = json.loads(item.text)
+            assert reference["type"] == "variable_reference"
+            _, stored_label = tracker.get_variable_store().retrieve(reference["variable_id"])
+            assert stored_label.integrity == IntegrityLabel.UNTRUSTED
+            assert tracker.get_context_label().integrity == IntegrityLabel.TRUSTED
+        else:
+            assert item.text == "external text"
+            assert tracker.get_context_label().integrity == IntegrityLabel.UNTRUSTED
+            policy = PolicyEnforcementFunctionMiddleware(block_on_violation=True)
+            sink = FunctionInvocationContext(function=function, arguments={"data": {}})
+            with pytest.raises(MiddlewareTermination):
+                await FunctionMiddlewarePipeline(tracker, policy).execute(
+                    sink, lambda _context: pytest.fail("Protected tool must not execute in untrusted context")
+                )
+            assert policy.get_audit_log()[-1]["type"] == "untrusted_context"
+
+    @pytest.mark.parametrize("default_integrity", list(IntegrityLabel))
+    @pytest.mark.parametrize("stored_integrity", [None, *IntegrityLabel])
+    @pytest.mark.parametrize("source_integrity", [None, *IntegrityLabel])
+    @pytest.mark.parametrize("claimed_integrity", [None, *IntegrityLabel])
+    async def test_argument_integrity_only_restricts_authoritative_fallback(
+        self,
+        default_integrity: IntegrityLabel,
+        stored_integrity: IntegrityLabel | None,
+        source_integrity: IntegrityLabel | None,
+        claimed_integrity: IntegrityLabel | None,
+    ) -> None:
+        """Preserve source precedence, owned-reference inheritance, and confidentiality."""
+        tracker = LabelTrackingFunctionMiddleware(default_integrity=default_integrity)
+
+        class Args(BaseModel):
+            data: dict[str, Any]
+
+        async def transform(data: dict[str, Any]) -> str:
+            return "transformed"
+
+        function = FunctionTool(
+            fn=transform,
+            name="transform",
+            description="Transform data",
+            args_schema=Args,
+            additional_properties={"source_integrity": source_integrity.value} if source_integrity is not None else {},
+        )
+        data: dict[str, Any] = {"value": "input"}
+        if claimed_integrity is not None:
+            data["security_label"] = {
+                "integrity": claimed_integrity.value,
+                "confidentiality": "private",
+                "metadata": _principal_metadata("unowned-user"),
+            }
+        if stored_integrity is not None:
+            variable_id = tracker.get_variable_store().store(
+                "input",
+                ContentLabel(
+                    integrity=stored_integrity,
+                    confidentiality=ConfidentialityLabel.USER_IDENTITY,
+                    metadata=_principal_metadata("user-a"),
+                ),
+            )
+            data["value"] = f"[{variable_id}]"
+        context = FunctionInvocationContext(function=function, arguments=Args(data=data))
+
+        async def next_fn() -> None:
+            assert isinstance(context.arguments, dict)
+            assert context.arguments["data"]["value"] == "input"
+            context.result = [Content.from_text("transformed")]
+
+        await tracker.process(context, next_fn)
+
+        expected_integrity = stored_integrity if stored_integrity is not None else default_integrity
+        if claimed_integrity == IntegrityLabel.UNTRUSTED:
+            expected_integrity = IntegrityLabel.UNTRUSTED
+        if source_integrity is not None:
+            expected_integrity = source_integrity
+        label = context.metadata["result_label"]
+        assert label.integrity == expected_integrity
+        if stored_integrity is not None:
+            assert label.confidentiality == ConfidentialityLabel.USER_IDENTITY
+            assert label.metadata[_PRINCIPALS_KEY] == _principal_metadata("user-a")[_PRINCIPALS_KEY]
+        else:
+            assert label.confidentiality == (
+                ConfidentialityLabel.PRIVATE if claimed_integrity is not None else ConfidentialityLabel.PUBLIC
+            )
+            assert _PRINCIPALS_KEY not in label.metadata
+        assert tracker.get_context_label().confidentiality == label.confidentiality
 
     @pytest.mark.asyncio
     async def test_source_integrity_overrides_input_labels(self, middleware):
@@ -5131,10 +5257,10 @@ class TestTieredLabelPropagation:
 
     @pytest.mark.asyncio
     async def test_no_source_integrity_falls_back_to_input_labels(self, middleware):
-        """Test that without source_integrity, input labels (tier 3) determine the result.
+        """Test that without source_integrity, untrusted input labels restrict the result.
 
         When a tool has no source_integrity declaration and the result has no
-        embedded labels, the join of input argument labels is used.
+        embedded labels, input argument labels restrict the tier-3 baseline.
         """
 
         class Args(BaseModel):
@@ -5162,7 +5288,7 @@ class TestTieredLabelPropagation:
 
         await middleware.process(context, next_fn)
 
-        # No source_integrity (tier 2 absent), so tier 3: join of input labels
+        # No source_integrity (tier 2 absent), so tier 3: restricted input baseline
         # Input has untrusted label → result is untrusted
         # Result should be hidden since it's untrusted
         assert isinstance(context.result, list)

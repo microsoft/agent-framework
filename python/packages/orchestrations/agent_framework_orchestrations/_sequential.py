@@ -44,6 +44,7 @@ from ._participant_output_config import (
 from ._workflow_builder import OrchestrationWorkflowBuilder as WorkflowBuilder
 
 logger = logging.getLogger(__name__)
+DEFAULT_WORKFLOW_NAME = "Sequential"
 
 
 class _InputToConversation(Executor):
@@ -98,6 +99,7 @@ class SequentialBuilder:
     def __init__(
         self,
         *,
+        name: str | None = None,
         participants: Sequence[SupportsAgentRun | Executor],
         checkpoint_storage: CheckpointStorage | None = None,
         chain_only_agent_responses: bool = False,
@@ -107,6 +109,7 @@ class SequentialBuilder:
         """Initialize the SequentialBuilder.
 
         Args:
+            name: Optional workflow identifier. Defaults to ``"Sequential"``.
             participants: Sequence of agent or executor instances to run sequentially.
             checkpoint_storage: Optional checkpoint storage for enabling workflow state persistence.
             chain_only_agent_responses: If True, only agent responses are chained between agents.
@@ -118,6 +121,7 @@ class SequentialBuilder:
                 surface as workflow ``intermediate`` events. Pass ``"all_other"`` to select every participant
                 not selected by ``output_from``. Unlisted participant outputs are hidden.
         """
+        self._name = name or DEFAULT_WORKFLOW_NAME
         self._participants: list[SupportsAgentRun | Executor] = []
         self._checkpoint_storage: CheckpointStorage | None = checkpoint_storage
         self._chain_only_agent_responses: bool = chain_only_agent_responses
@@ -258,6 +262,7 @@ class SequentialBuilder:
             default_output_from=[participants[-1]],
         )
         builder = WorkflowBuilder(
+            name=self._name,
             start_executor=input_conv,
             checkpoint_storage=self._checkpoint_storage,
             output_from=designated,
