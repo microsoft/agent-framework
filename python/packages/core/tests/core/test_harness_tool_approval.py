@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import warnings
 from collections.abc import Awaitable, Callable, MutableSequence
@@ -29,6 +30,7 @@ from agent_framework import (
     FunctionTool,
     InMemoryHistoryProvider,
     Message,
+    ResponseStream,
     ToolApprovalMiddleware,
     ToolApprovalState,
     create_always_approve_tool_response,
@@ -2148,6 +2150,85 @@ async def test_tool_approval_middleware_policy_approval_reclassifies_host_tool(
     assert [(content.type, content.name) for content in response.user_input_requests] == [
         ("function_call", "guarded_host")
     ]
+
+
+async def test_tool_approval_middleware_streams_standalone_user_input_immediately(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    """A standalone user-input request must not wait for the inner stream to finish."""
+    from agent_framework._middleware import AgentContext
+
+    release_stream = asyncio.Event()
+    request = Content.from_oauth_consent_request(consent_link="https://example.com/consent")
+    context = AgentContext(
+        agent=Agent(client=chat_client_base),
+        messages=[],
+        session=AgentSession(),
+        stream=True,
+    )
+    middleware = ToolApprovalMiddleware()
+
+    async def inner_stream():
+        yield AgentResponseUpdate(role="assistant", contents=[request])
+        await release_stream.wait()
+
+    async def call_next() -> None:
+        context.result = ResponseStream(inner_stream(), finalizer=AgentResponse.from_updates)
+
+    response_stream = middleware._process_stream(  # pyright: ignore[reportPrivateUsage]
+        context,
+        call_next,
+        ToolApprovalState(),
+    )
+    iterator = response_stream.__aiter__()
+    first_update = await asyncio.wait_for(anext(iterator), timeout=1)
+
+    assert first_update.user_input_requests == [request]
+    release_stream.set()
+    assert [update async for update in iterator] == []
+
+
+async def test_tool_approval_middleware_emits_mixed_update_metadata_once(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    """Approval filtering must not duplicate terminal or provider metadata."""
+    from agent_framework._middleware import AgentContext
+
+    function_call = Content.from_function_call(call_id="guarded", name="guarded", arguments={})
+    approval_request = Content.from_function_approval_request(id="guarded", function_call=function_call)
+    raw_marker = object()
+    context = AgentContext(
+        agent=Agent(client=chat_client_base),
+        messages=[],
+        session=AgentSession(),
+        stream=True,
+    )
+    middleware = ToolApprovalMiddleware()
+
+    async def inner_stream():
+        yield AgentResponseUpdate(
+            role="assistant",
+            contents=[Content.from_text("note"), approval_request],
+            finish_reason="tool_calls",
+            continuation_token={},
+            raw_representation=raw_marker,
+        )
+
+    async def call_next() -> None:
+        context.result = ResponseStream(inner_stream(), finalizer=AgentResponse.from_updates)
+
+    response_stream = middleware._process_stream(  # pyright: ignore[reportPrivateUsage]
+        context,
+        call_next,
+        ToolApprovalState(),
+    )
+    updates = [update async for update in response_stream]
+
+    assert len(updates) == 1
+    assert [content.type for content in updates[0].contents] == ["text", "function_approval_request"]
+    assert updates[0].finish_reason == "tool_calls"
+    assert updates[0].continuation_token == {}
+    assert updates[0].raw_representation is raw_marker
 
 
 async def test_tool_approval_middleware_auto_approved_loops_share_function_call_budget(

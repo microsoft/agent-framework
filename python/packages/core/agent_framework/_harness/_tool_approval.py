@@ -457,40 +457,26 @@ class ToolApprovalMiddleware(AgentMiddleware):
                     raise ValueError("Streaming ToolApprovalMiddleware requires a ResponseStream result.")
 
                 approval_requests: list[Content] = []
-                buffered_pause_updates: list[AgentResponseUpdate] = []
+                buffered_approval_updates: list[AgentResponseUpdate] = []
                 async for update in context.result:
-                    pause_contents = [
-                        content
-                        for content in update.contents
-                        if content.type == "function_approval_request" or content.user_input_request
+                    update_approval_requests = [
+                        content for content in update.contents if content.type == "function_approval_request"
                     ]
-                    if not pause_contents:
+                    if not update_approval_requests:
                         yield update
                         continue
-                    approval_requests.extend(
-                        content for content in pause_contents if content.type == "function_approval_request"
-                    )
+                    approval_requests.extend(update_approval_requests)
                     buffered_update = copy.copy(update)
-                    buffered_update.contents = pause_contents
-                    buffered_pause_updates.append(buffered_update)
-                    pause_content_ids = {id(content) for content in pause_contents}
-                    remaining_contents = [
-                        content for content in update.contents if id(content) not in pause_content_ids
-                    ]
-                    if remaining_contents:
-                        remaining_update = copy.copy(update)
-                        remaining_update.contents = remaining_contents
-                        yield remaining_update
+                    buffered_update.contents = list(update.contents)
+                    buffered_approval_updates.append(buffered_update)
                 await context.result.get_final_response()
                 if not approval_requests:
-                    for update in buffered_pause_updates:
-                        yield update
                     return
 
                 response_messages = [
                     Message(
                         role="assistant",
-                        contents=[content for update in buffered_pause_updates for content in update.contents],
+                        contents=[content for update in buffered_approval_updates for content in update.contents],
                     )
                 ]
                 has_other_user_input = self._has_non_approval_user_input(response_messages)
@@ -501,7 +487,7 @@ class ToolApprovalMiddleware(AgentMiddleware):
                 )
                 _save_state(context.session, state, source_id=self.source_id)
                 remaining_ids = {id(content) for message in response_messages for content in message.contents}
-                for update in buffered_pause_updates:
+                for update in buffered_approval_updates:
                     remaining_contents = [content for content in update.contents if id(content) in remaining_ids]
                     if remaining_contents:
                         remaining_update = copy.copy(update)
