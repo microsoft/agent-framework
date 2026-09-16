@@ -1332,13 +1332,16 @@ class Workflow(DictConvertible):
                 )
                 await executor._cancel_pending_request(request_id, context)  # pyright: ignore[reportPrivateUsage]
 
+        # Acquire the hold first, but keep setup inside try/finally so a failure in
+        # normalize_tools / checkpoint restore cannot leave the workflow permanently locked.
         self._exclusive_run_hold = True
-        if checkpoint_storage is not None:
-            self._runner.context.set_runtime_checkpoint_storage(checkpoint_storage)
-        runtime_tools = normalize_tools(tools) if tools is not None else None
-        self._runner.context.set_runtime_tools(runtime_tools)
         events: list[WorkflowEvent[Any]] = []
+        runtime_tools = None
         try:
+            if checkpoint_storage is not None:
+                self._runner.context.set_runtime_checkpoint_storage(checkpoint_storage)
+            runtime_tools = normalize_tools(tools) if tools is not None else None
+            self._runner.context.set_runtime_tools(runtime_tools)
             if checkpoint_id is not None:
                 await self._runner.restore_from_checkpoint(checkpoint_id, checkpoint_storage)
             async for event in self._run_workflow_with_tracing(

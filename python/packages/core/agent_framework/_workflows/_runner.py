@@ -182,10 +182,12 @@ class RunnerImpl:
 
                 # Commit pending state changes at superstep boundary
                 self._state.commit()
-                committed = True
 
-                # Create checkpoint after each superstep iteration
+                # Create checkpoint after each superstep iteration. Keep
+                # ``committed`` false until this returns so residual pending
+                # staged during checkpoint prep is discarded on cancel/failure.
                 await self.create_checkpoint_if_enabled()
+                committed = True
 
                 yield WorkflowEvent.superstep_completed(iteration=self._iteration)
 
@@ -271,10 +273,18 @@ class RunnerImpl:
 
         This is used by checkpoint capture paths that need a complete, restorable
         state payload without necessarily writing to a checkpoint storage backend.
+
+        If staging executor/edge state fails or is cancelled before ``commit()``,
+        discard residual pending writes so a later run cannot commit a partial
+        checkpoint payload (#7859).
         """
-        await self._save_executor_states()
-        self._save_edge_runner_states()
-        self._state.commit()
+        try:
+            await self._save_executor_states()
+            self._save_edge_runner_states()
+            self._state.commit()
+        except BaseException:
+            self._state.discard()
+            raise
 
     async def create_checkpoint_if_enabled(self) -> None:
         """Create a checkpoint and save the checkpoint to the configured storage if one is configured.
@@ -285,9 +295,11 @@ class RunnerImpl:
         if not self._ctx.has_checkpointing():
             return
 
+        prepared = False
         try:
             # Save executor states into committed state before creating the checkpoint.
             await self._prepare_checkpoint_state()
+            prepared = True
 
             checkpoint_id = await self._ctx.create_checkpoint(
                 self._workflow_name,
@@ -305,6 +317,10 @@ class RunnerImpl:
             )
             self._previous_checkpoint_id = checkpoint_id
         except Exception as e:
+            # ``_prepare_checkpoint_state`` discards on its own failure; if we
+            # never reached that commit, clear any residual pending here too.
+            if not prepared:
+                self._state.discard()
             logger.warning(
                 "Failed to create checkpoint at iteration %d: %s. "
                 "Note that this does not fail the workflow run. "
