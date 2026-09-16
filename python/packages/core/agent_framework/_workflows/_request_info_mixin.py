@@ -11,7 +11,14 @@ from collections.abc import Awaitable, Callable
 from types import UnionType
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
-from ._typing_utils import is_instance_of, is_type_compatible, normalize_type_to_list, resolve_type_annotation
+from ._typing_utils import (
+    _resolve_function_annotations,  # pyright: ignore[reportPrivateUsage]
+    contains_typevar,
+    is_instance_of,
+    is_type_compatible,
+    normalize_type_to_list,
+    resolve_type_annotation,
+)
 from ._workflow_context import WorkflowContext, validate_workflow_context_annotation
 
 if sys.version_info >= (3, 11):
@@ -241,6 +248,19 @@ def response_handler(
                     f"Response handler {func.__name__} with explicit type parameters must specify 'response' type"
                 )
 
+            for param_name, param_type in [
+                ("request", resolved_request_type),
+                ("response", resolved_response_type),
+            ]:
+                if contains_typevar(param_type):
+                    raise ValueError(
+                        f"Response handler {func.__name__} has an unresolved TypeVar '{param_type}' "
+                        f"as its {param_name} type. "
+                        "Generic TypeVar annotations are not supported for workflow type validation. "
+                        "Use @response_handler(request=<concrete_type>, response=<concrete_type>) "
+                        "to specify explicit types."
+                    )
+
             final_request_type = resolved_request_type
             final_response_type = resolved_response_type
             final_output_types = normalize_type_to_list(resolved_output_type) if resolved_output_type else []
@@ -348,20 +368,39 @@ def _validate_response_handler_signature(
     if not skip_annotations and response_param.annotation == inspect.Parameter.empty:
         raise ValueError(f"Response handler {func.__name__} must have a type annotation for the response parameter")
 
+    type_hints = _resolve_function_annotations(func, params)
+
     # Validate ctx parameter is WorkflowContext and extract type args (if annotated)
     ctx_param = params[3]
+    ctx_annotation = type_hints.get(ctx_param.name, ctx_param.annotation)
     if ctx_param.annotation != inspect.Parameter.empty:
         output_types, workflow_output_types = validate_workflow_context_annotation(
-            ctx_param.annotation, f"parameter '{ctx_param.name}'", "Response handler"
+            ctx_annotation, f"parameter '{ctx_param.name}'", "Response handler"
         )
     else:
         output_types, workflow_output_types = [], []
 
-    request_type = (
-        original_request_param.annotation if original_request_param.annotation != inspect.Parameter.empty else None
-    )
-    response_type = response_param.annotation if response_param.annotation != inspect.Parameter.empty else None
-    ctx_annotation = ctx_param.annotation if ctx_param.annotation != inspect.Parameter.empty else None
+    request_type = type_hints.get(original_request_param.name, original_request_param.annotation)
+    if request_type == inspect.Parameter.empty:
+        request_type = None
+    response_type = type_hints.get(response_param.name, response_param.annotation)
+    if response_type == inspect.Parameter.empty:
+        response_type = None
+    if ctx_annotation == inspect.Parameter.empty:
+        ctx_annotation = None
+
+    for param_name, param_type in [
+        ("original_request", request_type),
+        ("response", response_type),
+    ]:
+        if param_type is not None and contains_typevar(param_type):
+            raise ValueError(
+                f"Response handler {func.__name__} has an unresolved TypeVar '{param_type}' "
+                f"as its {param_name} type annotation. "
+                "Generic TypeVar annotations are not supported for workflow type validation. "
+                "Use @response_handler(request=<concrete_type>, response=<concrete_type>) "
+                "to specify explicit types."
+            )
 
     return request_type, response_type, ctx_annotation, output_types, workflow_output_types
 

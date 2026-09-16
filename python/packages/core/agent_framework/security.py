@@ -1268,14 +1268,15 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
     +----------+------------------------------------------+----------------------------+
     | Tier 2   | Tool's source_integrity declaration       | No embedded labels         |
     +----------+------------------------------------------+----------------------------+
-    | Tier 3   | Join (combine_labels) of input arg labels| No embedded labels AND     |
-    |          |                                          | no source_integrity        |
+    | Tier 3   | Owned input labels or configured default | No embedded labels AND     |
+    |          | restricted by argument labels            | no source_integrity        |
     +----------+------------------------------------------+----------------------------+
 
     Tools can declare their source_integrity in additional_properties:
     - source_integrity="trusted": Tool produces trusted data (e.g., internal computation)
     - source_integrity="untrusted": Tool fetches external/untrusted data
-    - (not set): Falls back to tier 3 (input label join), or UNTRUSTED if no inputs
+    - (not set): Inherits integrity from resolved, owned variable references, or uses
+      default_integrity (UNTRUSTED by default). Argument labels may only restrict this baseline.
 
     This middleware:
     1. Extracts labels from tool input arguments (tier 3 input)
@@ -1604,8 +1605,9 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         Recursively inspects the arguments passed to a tool to find any
         VariableReferenceContent objects or labeled data, and collects their labels.
 
-        These labels are used as the tier-3 fallback (lowest priority) when
-        neither embedded labels nor a source_integrity declaration are present.
+        These labels propagate confidentiality and restrict the tier-3 integrity
+        baseline when no source_integrity declaration is present. They cannot
+        establish trust; that baseline comes from owned references or the configured default.
 
         Args:
             context: The function invocation context containing arguments.
@@ -1800,7 +1802,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
 
             # Step 3: Build tiered fallback_label
             # This label is used for result items that have NO embedded labels.
-            # Priority: source_integrity declaration (tier 2) > input labels join (tier 3)
+            # Priority: source_integrity declaration (tier 2) > owned input baseline (tier 3)
             if declared_source_integrity is not None:
                 fallback_label = ContentLabel(
                     integrity=declared_source_integrity,
@@ -1808,7 +1810,13 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
                     metadata={**fallback_metadata, "source": "source_integrity"},
                 )
             elif argument_labels:
-                combined = combine_labels(*argument_labels)
+                # Argument-supplied labels can restrict, but never establish, integrity.
+                baseline = (
+                    combine_labels(*resolved_labels)
+                    if resolved_labels
+                    else ContentLabel(integrity=self.default_integrity)
+                )
+                combined = combine_labels(baseline, *input_labels)
                 fallback_label = ContentLabel(
                     integrity=combined.integrity,
                     confidentiality=result_confidentiality,
@@ -1970,8 +1978,8 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         only restrict the invocation fallback. A framework-owned producer can
         identity-stamp a complete authoritative label after applying local policy.
         Items without embedded labels use ``fallback_label``, which is either the
-        tool's ``source_integrity`` declaration (tier 2) or the join of input
-        argument labels (tier 3).
+        tool's ``source_integrity`` declaration (tier 2) or the owned-reference/default
+        integrity baseline restricted by argument labels (tier 3).
 
         Each item's own label is attached to its ``additional_properties``
         during processing, preserving per-item granularity.
@@ -4077,7 +4085,10 @@ async def apply_mcp_security_labels(
         annotation_overrides: Optional per-tool-name overrides.  Keys are
             *remote* MCP tool names (as the server exposes them).  Values are
             ``(IntegrityLabel, ConfidentialityLabel | None)`` tuples that
-            replace the annotation-derived labels entirely.
+            replace the annotation-derived labels entirely. Overrides apply
+            only to the supplied ``mcp_tool``; the mapping itself is not bound
+            to a server identity. Reuse it for another connection only after
+            independently authorizing that policy for the other server's tools.
         mark_write_tools_as_sinks: When ``True`` (default), apply the
             annotation-derived ``max_allowed_confidentiality=PUBLIC`` cap.
         trust_server_ifc: Whether complete, valid server ``_meta.ifc`` labels
@@ -4348,7 +4359,9 @@ class SecureMCPToolProxy:
         description: Tool description for the internal tool.
         default_integrity: Default integrity for tools without annotations.
         annotation_overrides: Per-tool-name label overrides (keyed by remote
-            MCP tool name).
+            MCP tool name), applied only to this proxy's MCP connection.
+            The mapping is not bound to a server identity; reuse it for another
+            connection only after independently authorizing that policy there.
         mark_write_tools_as_sinks: Whether to apply the annotation-derived
             PUBLIC confidentiality cap.
         trust_server_ifc: Whether complete, valid server ``_meta.ifc`` labels
@@ -4387,7 +4400,10 @@ class SecureMCPToolProxy:
             description: Tool description for the internal tool.
             default_integrity: Default integrity for tools without annotations.
                 Defaults to ``IntegrityLabel.UNTRUSTED``.
-            annotation_overrides: Per-tool-name label overrides keyed by remote MCP tool name.
+            annotation_overrides: Per-tool-name label overrides keyed by remote MCP tool name,
+                applied only to this proxy's MCP connection. The mapping is not bound to a
+                server identity; reuse it for another connection only after independently
+                authorizing that policy there.
             mark_write_tools_as_sinks: Whether to apply the annotation-derived
                 PUBLIC confidentiality cap. Defaults to ``True``.
             trust_server_ifc: Whether complete, valid server ``_meta.ifc``

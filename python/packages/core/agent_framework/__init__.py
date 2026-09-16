@@ -33,6 +33,7 @@ from ._telemetry import (
 from .exceptions import (
     AgentFrameworkException,
     MiddlewareException,
+    ResponseInvalidatedException,
     UserInputRequiredException,
     WorkflowCheckpointException,
     WorkflowConvergenceException,
@@ -573,6 +574,7 @@ __all__ = [
     "Param",
     "RawAgent",
     "ReleaseCandidateFeature",
+    "ResponseInvalidatedException",
     "ResponseStream",
     "Role",
     "RoleLiteral",

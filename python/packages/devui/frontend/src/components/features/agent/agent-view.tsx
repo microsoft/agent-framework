@@ -356,6 +356,50 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
   const accumulatedTextRef = useRef<string>("");
   const accumulatedPartsRef = useRef<StreamingTextPart[]>([]);
   const lastAssistantTextRenderAt = useRef(0);
+  const tracePollControllersRef = useRef(new Set<AbortController>());
+
+  const abortTracePolls = useCallback(() => {
+    for (const controller of tracePollControllersRef.current) {
+      controller.abort();
+    }
+    tracePollControllersRef.current.clear();
+  }, []);
+
+  const startTracePolling = useCallback((responseId: string) => {
+    const traceController = new AbortController();
+    tracePollControllersRef.current.add(traceController);
+    void apiClient.getTraceEvents(
+      responseId,
+      useDevUIStore.getState().serverCapabilities.trace_retrieval,
+      traceController.signal
+    )
+      .then((traceEvents) => {
+        if (traceController.signal.aborted) {
+          return;
+        }
+
+        for (const traceEvent of traceEvents) {
+          onDebugEvent(traceEvent);
+        }
+      })
+      .catch((error) => {
+        if (!isAbortError(error)) {
+          console.debug("Failed to retrieve response traces", error);
+        }
+      })
+      .finally(() => {
+        tracePollControllersRef.current.delete(traceController);
+      });
+  }, [onDebugEvent]);
+
+  const clearDebugEvents = useCallback(() => {
+    abortTracePolls();
+    onDebugEvent("clear");
+  }, [abortTracePolls, onDebugEvent]);
+
+  useEffect(() => {
+    return abortTracePolls;
+  }, [selectedAgent?.id, abortTracePolls]);
 
   const renderAssistantStreamingText = useCallback(
     (
@@ -707,7 +751,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
               // Restore stored traces as debug events for context inspection
               if (storedTraces.length > 0) {
                 // Clear any previous debug events first
-                onDebugEvent("clear");
+                clearDebugEvents();
                 for (const trace of storedTraces) {
                   // Convert stored trace back to ResponseTraceComplete event format
                   const traceEvent: ExtendedResponseStreamEvent = {
@@ -835,8 +879,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
 
     loadConversations();
     // currentConversation is intentionally excluded - this effect should only run when agent changes
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedAgent, onDebugEvent, renderAssistantStreamingText, setChatItems, setIsStreaming, setLoadingConversations, setAvailableConversations, setCurrentConversation, setPendingApprovals, updateConversationUsage]);
+  }, [selectedAgent, onDebugEvent, clearDebugEvents, renderAssistantStreamingText, setChatItems, setIsStreaming, setLoadingConversations, setAvailableConversations, setCurrentConversation, setPendingApprovals, updateConversationUsage]);
 
   // Removed old input handling functions - now handled by ChatMessageInput component
 
@@ -859,7 +902,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
       accumulatedPartsRef.current = [];
 
       // Clear debug panel for fresh conversation
-      onDebugEvent("clear");
+      clearDebugEvents();
 
       // Update localStorage cache with new conversation
       const cachedKey = `devui_convs_${selectedAgent.id}`;
@@ -873,7 +916,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
         type: "conversation_creation_error",
       });
     }
-  }, [selectedAgent, onDebugEvent, setCurrentConversation, setAvailableConversations, setChatItems, setIsStreaming]);
+  }, [selectedAgent, availableConversations, clearDebugEvents, setCurrentConversation, setAvailableConversations, setChatItems, setIsStreaming]);
 
   // Handle conversation deletion
   const handleDeleteConversation = useCallback(
@@ -918,13 +961,13 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
           }
 
           // Clear debug panel
-          onDebugEvent("clear");
+          clearDebugEvents();
         }
       } catch {
         alert("Failed to delete conversation. Please try again.");
       }
     },
-    [availableConversations, currentConversation, onDebugEvent, setAvailableConversations, setCurrentConversation, setChatItems, setIsStreaming]
+    [availableConversations, currentConversation, clearDebugEvents, setAvailableConversations, setCurrentConversation, setChatItems, setIsStreaming]
   );
 
   // Handle entity reload (hot reload)
@@ -974,7 +1017,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
       setCurrentConversation(conversation);
 
       // Clear debug panel when switching conversations
-      onDebugEvent("clear");
+      clearDebugEvents();
 
       try {
         // Load conversation history from backend with pagination
@@ -1064,7 +1107,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
       accumulatedTextRef.current = "";
       accumulatedPartsRef.current = [];
     },
-    [availableConversations, onDebugEvent, setCurrentConversation, setChatItems, setIsStreaming]
+    [availableConversations, onDebugEvent, clearDebugEvents, setCurrentConversation, setChatItems, setIsStreaming]
   );
 
   // Handle function approval responses
@@ -1198,6 +1241,9 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
 
       setChatItems([...useDevUIStore.getState().chatItems, assistantMessage]);
 
+      let traceResponseId: string | undefined;
+      let responseSignal: AbortSignal | undefined;
+
       try {
         // If no conversation selected, create one automatically
         let conversationToUse = currentConversation;
@@ -1238,18 +1284,27 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
         lastAssistantTextRenderAt.current = 0;
 
         // Create new AbortController for this request
-        const signal = createAbortSignal();
+        responseSignal = createAbortSignal();
 
         // Use OpenAI-compatible API streaming - direct event handling
         const streamGenerator = apiClient.streamAgentExecutionOpenAI(
           selectedAgent.id,
           apiRequest,
-          signal
+          responseSignal
         );
-
         for await (const openAIEvent of streamGenerator) {
           // Pass all events to debug panel
           onDebugEvent(openAIEvent);
+
+          if (
+            "response" in openAIEvent &&
+            openAIEvent.response &&
+            typeof openAIEvent.response === "object" &&
+            "id" in openAIEvent.response &&
+            typeof openAIEvent.response.id === "string"
+          ) {
+            traceResponseId = openAIEvent.response.id;
+          }
 
           // Handle response.completed event (OpenAI standard)
           if (openAIEvent.type === "response.completed") {
@@ -1569,9 +1624,13 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
         }
         setIsStreaming(false);
         resetCancelling();
+      } finally {
+        if (traceResponseId && !responseSignal?.aborted) {
+          startTracePolling(traceResponseId);
+        }
       }
     },
-    [selectedAgent, currentConversation, onDebugEvent, renderAssistantStreamingText, setChatItems, setIsStreaming, setCurrentConversation, setAvailableConversations, setPendingApprovals, updateConversationUsage, createAbortSignal, resetCancelling]
+    [selectedAgent, currentConversation, onDebugEvent, renderAssistantStreamingText, setChatItems, setIsStreaming, setIsSubmitting, setCurrentConversation, setAvailableConversations, setPendingApprovals, updateConversationUsage, createAbortSignal, resetCancelling, startTracePolling]
   );
 
   // Handle non-streaming message sending
@@ -1758,6 +1817,10 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
           sequence_number: 0,
         } as ExtendedResponseStreamEvent);
 
+        if (typeof response.id === "string") {
+          startTracePolling(response.id);
+        }
+
       } catch (error) {
         // Show error message
         const errorMessage = error instanceof Error ? error.message : "Failed to get response";
@@ -1779,7 +1842,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
         setIsSubmitting(false);
       }
     },
-    [selectedAgent, currentConversation, onDebugEvent, setChatItems, setCurrentConversation, setAvailableConversations, updateConversationUsage, setIsSubmitting]
+    [selectedAgent, currentConversation, onDebugEvent, setChatItems, setCurrentConversation, setAvailableConversations, updateConversationUsage, setIsSubmitting, startTracePolling]
   );
 
 
