@@ -12,6 +12,16 @@ YAML/JSON-based declarative agent and workflow definitions.
 - **`MCPToolHandler`** / **`DefaultMCPToolHandler`** - Pluggable MCP transport for the `InvokeMcpTool` declarative action (configured via `WorkflowFactory(mcp_tool_handler=...)`)
 - **`DeclarativeLoaderError`** / **`ProviderLookupError`** / **`DeclarativeWorkflowError`** / **`DeclarativeActionError`** - Error types
 
+## MCP Handler Lifetimes
+
+`DefaultMCPToolHandler` caches/coalesces sessions only without a `client_provider`.
+With a provider, every invocation (including `tools/list`) gets a fresh tool/session,
+even if the provider returns `None` or a shared HTTP client. Invocation cleanup closes
+the session and any internally owned fallback client, never caller-owned HTTP clients.
+Shutdown waits for active provider-backed invocations to clean up. This intentionally
+adds connection overhead and loses server session continuity between invocations;
+shared session ownership requires an explicitly scoped custom `MCPToolHandler`.
+
 ## External Input Handling
 
 - **`ExternalInputRequest`** / **`ExternalInputResponse`** - Human-in-the-loop support
