@@ -126,12 +126,13 @@ internal sealed class InvokeFunctionToolExecutor(
         bool autoSend = this.GetAutoSendValue();
         bool requireApproval = this.GetRequireApproval();
         string? conversationId = this.GetConversationId();
-        HashSet<string> rejectedApprovalResultCallIds = response.Messages
-            .SelectMany(m => m.Contents)
-            .OfType<FunctionResultContent>()
-            .Where(r => this._approvalSnapshots.ContainsKey(r.CallId))
-            .Select(r => r.CallId)
-            .ToHashSet(StringComparer.Ordinal);
+        HashSet<string> rejectedApprovalResultCallIds = new(
+            response.Messages
+                .SelectMany(m => m.Contents)
+                .OfType<FunctionResultContent>()
+                .Where(r => this._approvalSnapshots.ContainsKey(r.CallId))
+                .Select(r => r.CallId),
+            StringComparer.Ordinal);
 
         // Match the inbound result by its per-invocation call id.
         FunctionResultContent? matchingResult = response.Messages
