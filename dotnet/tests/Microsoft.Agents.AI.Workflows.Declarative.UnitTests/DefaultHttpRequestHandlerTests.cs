@@ -939,6 +939,48 @@ public sealed class DefaultHttpRequestHandlerTests
     }
 
     [Fact]
+    public async Task SendAsyncInvokesProviderWithCanonicalMetadataRequestUriAsync()
+    {
+        // Arrange
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        List<string> providerUrls = [];
+        List<string> requestUrls = [];
+        using HttpResponseMessage okResponse = new(HttpStatusCode.OK)
+        {
+            Content = new StringContent("ok", Encoding.UTF8, "text/plain"),
+        };
+#pragma warning disable CA2025
+        TestHttpMessageHandler messageHandler = new((req, _) =>
+        {
+            requestUrls.Add(req.RequestUri!.ToString());
+            return Task.FromResult(okResponse);
+        });
+#pragma warning restore CA2025
+        using HttpClient providerClient = new(messageHandler);
+#pragma warning disable CA2025
+        await using DefaultHttpRequestHandler handler = new((info, _) =>
+        {
+            providerUrls.Add(info.Url);
+            return Task.FromResult<HttpClient?>(providerClient);
+        });
+#pragma warning restore CA2025
+
+        HttpRequestInfo request = new()
+        {
+            Method = "GET",
+            Url = "http://169.254.169.254/metadata/../latest/meta-data",
+        };
+
+        // Act
+        HttpRequestResult result = await handler.SendAsync(request, cancellationToken);
+
+        // Assert
+        Assert.Equal("ok", result.Body);
+        Assert.Equal(["http://169.254.169.254/latest/meta-data"], requestUrls);
+        Assert.Equal(requestUrls, providerUrls);
+    }
+
+    [Fact]
     public async Task SendAsyncSuppliedClientReturnsRedirectResponseAsync()
     {
         // Arrange
