@@ -1,10 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import contextlib
 import inspect
 import json
 import logging
-from collections.abc import AsyncIterable, Awaitable, Callable, MutableSequence, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableSequence, Sequence
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -1917,6 +1918,97 @@ async def test_chat_agent_as_mcp_server_basic(client: SupportsChatGetResponse) -
     assert server is not None
     assert hasattr(server, "name")
     assert hasattr(server, "version")
+
+
+async def test_agent_prepares_mcp_run_before_copying_functions(chat_client_base: Any) -> None:
+    captured_options: list[dict[str, Any]] = []
+    original_inner = chat_client_base._inner_get_response
+
+    async def capturing_inner(
+        *, messages: MutableSequence[Message], options: dict[str, Any], **kwargs: Any
+    ) -> ChatResponse:
+        captured_options.append(dict(options))
+        return await original_inner(messages=messages, options=options, **kwargs)
+
+    class RunPreparingMCPTool(_ConnectedMCPTool):
+        async def _prepare_for_run(self, kwargs: Mapping[str, Any]) -> None:
+            assert kwargs == {"credential": "token-b"}
+            replacement = _ConnectedMCPTool(name=self.name, function_names=["token-b-only"])
+            self._functions = list(replacement.functions)
+
+    chat_client_base._inner_get_response = capturing_inner
+    mcp_tool = RunPreparingMCPTool(name="principal-mcp", function_names=["token-a-only"])
+    agent = Agent(client=chat_client_base, tools=[mcp_tool])
+
+    await agent.run("hello", function_invocation_kwargs={"credential": "token-b"})
+
+    assert len(captured_options) >= 1
+    assert [tool.name for tool in captured_options[0]["tools"]] == ["token-b-only"]
+
+
+async def test_concurrent_agent_runs_reprepare_mcp_after_lazy_connect(chat_client_base: Any) -> None:
+    captured_tool_names: list[list[str]] = []
+    original_inner = chat_client_base._inner_get_response
+
+    async def capturing_inner(
+        *, messages: MutableSequence[Message], options: dict[str, Any], **kwargs: Any
+    ) -> ChatResponse:
+        captured_tool_names.append([tool.name for tool in options["tools"]])
+        return await original_inner(messages=messages, options=options, **kwargs)
+
+    class ConcurrentRunMCPTool(_ConnectedMCPTool):
+        def __init__(self) -> None:
+            super().__init__(name="principal-mcp", function_names=["unbound-only"])
+            self.is_connected = False
+            self._connect_lock = asyncio.Lock()
+            self.connect_started = asyncio.Event()
+            self.both_runs_prepared = asyncio.Event()
+            self.allow_connect = asyncio.Event()
+            self.disconnected_preparations: list[str] = []
+
+        async def _prepare_for_run(self, kwargs: Mapping[str, Any]) -> None:
+            credential = cast(str, kwargs["credential"])
+            if not self.is_connected:
+                self.disconnected_preparations.append(credential)
+                if len(self.disconnected_preparations) == 2:
+                    self.both_runs_prepared.set()
+                return
+            replacement = _ConnectedMCPTool(name=self.name, function_names=[f"{credential}-only"])
+            self._functions = list(replacement.functions)
+
+        async def connect(self, *, reset: bool = False) -> None:
+            async with self._connect_lock:
+                if self.is_connected:
+                    return
+                self.connect_started.set()
+                await self.allow_connect.wait()
+                self.is_connected = True
+
+        async def close(self) -> None:
+            self.is_connected = False
+
+    chat_client_base._inner_get_response = capturing_inner
+    mcp_tool = ConcurrentRunMCPTool()
+    first_agent = Agent(client=chat_client_base, tools=[mcp_tool])
+    second_agent = Agent(client=chat_client_base, tools=[mcp_tool])
+
+    async def run_with_credential(agent: Agent, prompt: str, credential: str) -> None:
+        await agent.run(prompt, function_invocation_kwargs={"credential": credential})
+
+    first_run = asyncio.create_task(run_with_credential(first_agent, "first", "token-a"))
+    await asyncio.wait_for(mcp_tool.connect_started.wait(), timeout=5)
+    second_run = asyncio.create_task(run_with_credential(second_agent, "second", "token-b"))
+    try:
+        await asyncio.wait_for(mcp_tool.both_runs_prepared.wait(), timeout=5)
+        mcp_tool.allow_connect.set()
+        await asyncio.gather(first_run, second_run)
+    finally:
+        mcp_tool.allow_connect.set()
+        await first_agent.__aexit__(None, None, None)
+        await second_agent.__aexit__(None, None, None)
+
+    assert mcp_tool.disconnected_preparations == ["token-a", "token-b"]
+    assert captured_tool_names == [["token-a-only"], ["token-b-only"]]
 
 
 async def test_chat_agent_run_with_mcp_tools(client: SupportsChatGetResponse) -> None:

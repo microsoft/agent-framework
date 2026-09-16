@@ -235,6 +235,31 @@ def test_safe_claim_release_restarts_pending_retention_window() -> None:
     assert lifecycle.pending_occurrence(thread_id="thread-1", interrupt_id="approval-1") is occurrence
 
 
+def test_claim_release_can_preserve_original_pending_retention_window() -> None:
+    """A blocked executor does not extend the caller's original approval authority."""
+    now = 100.0
+    lifecycle = ApprovalLifecycle(max_entries=1, pending_retention_seconds=20, clock=lambda: now)
+    occurrence = lifecycle.register(
+        owner=ApprovalExecutionOwner.LOCAL,
+        thread_id="thread-1",
+        interrupt_id="approval-1",
+        call_id="call-1",
+        name="write_record",
+        arguments="{}",
+    )
+    intent = lifecycle.claim(
+        thread_id="thread-1",
+        decision=ResumeDecision(interrupt_id="approval-1", accepted=True, arguments="{}"),
+    )
+
+    now = 119.0
+    lifecycle.release_claim(intent, policy=ClaimRecoveryPolicy.PRESERVE_PENDING_RETENTION)
+    now = 121.0
+
+    assert lifecycle.pending_occurrence(thread_id="thread-1", interrupt_id="approval-1") is None
+    assert occurrence.status is ApprovalStatus.EXPIRED
+
+
 def test_capacity_is_enforced_per_trusted_scope() -> None:
     """One trusted application scope cannot exhaust another scope's approval quota."""
     lifecycle = ApprovalLifecycle(max_entries=1)

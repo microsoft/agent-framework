@@ -20,6 +20,7 @@ Status is grouped into these buckets:
 | `agent-framework-anthropic` | `python/packages/anthropic` | `beta` |
 | `agent-framework-azure-contentunderstanding` | `python/packages/azure-contentunderstanding` | `beta` |
 | `agent-framework-azure-ai-search` | `python/packages/azure-ai-search` | `beta` |
+| `agent-framework-azure-documentdb` | `python/packages/azure-documentdb` | `alpha` |
 | `agent-framework-azure-cosmos` | `python/packages/azure-cosmos` | `beta` |
 | `agent-framework-azure-cosmos-memory` | `python/packages/azure-cosmos-memory` | `alpha` |
 | `agent-framework-bedrock` | `python/packages/bedrock` | `beta` |
@@ -43,6 +44,7 @@ Status is grouped into these buckets:
 | `agent-framework-lab` | `python/packages/lab` | `beta` |
 | `agent-framework-mem0` | `python/packages/mem0` | `beta` |
 | `agent-framework-mistral` | `python/packages/mistral` | `beta` |
+| `agent-framework-mongodb` | `python/packages/mongodb` | `alpha` |
 | `agent-framework-monty` | `python/packages/monty` | `beta` |
 | `agent-framework-ollama` | `python/packages/ollama` | `beta` |
 | `agent-framework-openai` | `python/packages/openai` | `released` |

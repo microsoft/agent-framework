@@ -24,6 +24,15 @@ Use `OpenAIChatClient` for new work unless you specifically need the Chat Comple
 
 The previous deprecated Responses alias has been removed. Use `OpenAIChatClient` directly.
 
+## Hosted function results
+
+`OpenAIChatClient` parses hosted `function_call_output` items in both streaming and non-streaming responses.
+Each result retains its `call_id` for correlation with the corresponding function call.
+
+Rich output parts are available through the function result's `items`; the backward-compatible `result`
+field contains only their text. Image and file parts retain their explicit provider type when replayed,
+including hosted file references, extensionless image URLs, and files whose names have image extensions.
+
 ## Environment variables
 
 ### OpenAI

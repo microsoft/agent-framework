@@ -105,6 +105,14 @@ agent = Agent(
 )
 ```
 
+### Host tool lifetime
+
+Registered `FunctionTool` instances retain their invocation and exception counters
+across `execute_code` calls and provider runs. Their `max_invocations` and
+`max_invocation_exceptions` limits use the same counters as direct invocations of
+those instances. A provider's run-scoped snapshot captures tool membership; it
+does not reset host tool counters.
+
 ### File mounts and resource limits
 
 Mount host directories into the sandbox and cap execution resources:
@@ -145,8 +153,8 @@ codeact = MontyCodeActProvider(
   nothing is captured). `read-only` mounts reject writes.
 - **`resource_limits`** is forwarded straight to Monty's
   [`ResourceLimits`](https://github.com/pydantic/monty) TypedDict
-  (`max_allocations`, `max_duration_secs`, `max_memory`, `gc_interval`,
-  `max_recursion_depth`).
+  (`max_duration_secs`, `max_memory`, `gc_interval`, `max_recursion_depth`,
+  `max_suspensions`).
 
 ## DSL inside `execute_code`
 

@@ -370,11 +370,29 @@ class FunctionInvocationContext:
 
     Attributes:
         function: The function being invoked.
-        arguments: The validated arguments for the function.
+        arguments: The function arguments. In the automatic function-calling loop,
+                schema-compatible provider arguments retain the existing normalized
+                mapping contract. If provisional normalization rejects provider
+                arguments, middleware instead receives the raw JSON-parsed mapping and
+                may repair it before calling ``call_next()``. The innermost handler
+                validates changed or previously invalid arguments immediately before
+                execution, then stores the normalized mapping back on this attribute.
+                Middleware that short-circuits without calling ``call_next()`` skips
+                final validation and function execution.
         session: The agent session for this invocation, if any.
         metadata: Metadata dictionary for sharing data between function middleware.
-        result: Function execution result. Can be observed after calling ``call_next()``
-                to see the actual execution result or can be set to override the execution result.
+        result: Function execution result. This attribute carries no guaranteed type.
+                The pipeline assigns :meth:`FunctionTool.invoke`'s output — a
+                ``list[Content]``, or the wrapped function's raw return value when the
+                tool is configured with ``result_parser=SKIP_PARSING`` — at the innermost
+                link of the chain, so only the innermost middleware observes it directly.
+                Every middleware above observes whatever the ones below it left behind,
+                and any middleware may overwrite it with a value of any type. On the way
+                out, only ``list[Content]`` and ``str`` survive intact: every other value,
+                a bare ``Content`` included, is stringified into a single text item, so
+                rebuild the list rather than assigning one item back. The exception is a
+                bare ``Content`` of type ``function_approval_request``, which the
+                invocation layer passes through untouched to drive the approval flow.
         kwargs: Additional runtime keyword arguments forwarded to the function invocation.
         tools: The live, mutable list of tools available to the model for the current
                 agent run, or ``None`` when the function is invoked outside of a
@@ -428,10 +446,13 @@ class FunctionInvocationContext:
 
         Args:
             function: The function being invoked.
-            arguments: The validated arguments for the function.
+            arguments: The function arguments. Automatic invocation supplies a normalized
+                mapping when provisional validation succeeds, otherwise the raw JSON-parsed
+                mapping so middleware can repair it before final validation.
             session: The agent session for this invocation, if any.
             metadata: Metadata dictionary for sharing data between function middleware.
-            result: Function execution result.
+            result: Function execution result. Observed and overridden values do not
+                share a type; see the class docstring before type-checking it.
             kwargs: Additional runtime keyword arguments forwarded to the function invocation.
             tools: The live, mutable list of tools for the current agent run. When provided,
                 this is the same list object the model sees on the next iteration, so
@@ -703,8 +724,16 @@ class FunctionMiddleware(ABC):
     """Abstract base class for function middleware that can intercept function invocations.
 
     Function middleware allows you to intercept and modify function/tool invocations before
-    and after execution. You can validate arguments, cache results, log invocations, or
-    override function execution.
+    and after execution. On entry, schema-compatible calls retain normalized arguments.
+    When provisional normalization rejects provider arguments, middleware receives the raw
+    JSON-parsed mapping so it can repair provider-specific deviations before calling
+    ``call_next()``. The innermost handler validates changed or previously invalid arguments
+    immediately before execution and updates ``context.arguments`` with normalized values.
+    You can also cache results, log invocations, or override function execution.
+
+    Argument-repair middleware must run before security or policy middleware so those
+    layers inspect the effective invocation. Changing arguments after security middleware
+    has processed them fails closed with :class:`MiddlewareFailure`.
 
     Note:
         FunctionMiddleware is an abstract base class. You must subclass it and implement
@@ -757,8 +786,13 @@ class FunctionMiddleware(ABC):
 
         Args:
             context: Function invocation context containing function, arguments, and metadata.
-                    MiddlewareTypes can set context.result to override execution, or observe
-                    the actual execution result after calling call_next().
+                    Before ``call_next()``, automatic invocation exposes normalized
+                    arguments for schema-compatible calls and raw JSON-parsed arguments
+                    when provisional validation failed. Middleware may inspect or replace
+                    either mapping. After ``call_next()`` reaches the function, arguments
+                    contain their validated, normalized values. MiddlewareTypes can set
+                    context.result to override execution, or observe the actual execution
+                    result after calling call_next().
             call_next: Function to call the next middleware or final function execution.
                   Does not return anything - all data flows through the context.
 
@@ -766,6 +800,13 @@ class FunctionMiddleware(ABC):
             MiddlewareTypes should not return anything. All data manipulation should happen
             within the context object. Set context.result to override execution,
             or observe context.result after calling call_next() for actual results.
+            The observed value has no guaranteed type: the innermost middleware sees
+            :meth:`FunctionTool.invoke`'s output — ``list[Content]``, or the raw return
+            value under ``SKIP_PARSING`` — while an outer one sees whatever the inner
+            middleware left. Overriding with anything but ``list[Content]`` or ``str``
+            collapses the result into a single stringified text item, except a bare
+            ``Content`` of type ``function_approval_request``, which passes through
+            untouched to drive the approval flow.
         """
         ...
 

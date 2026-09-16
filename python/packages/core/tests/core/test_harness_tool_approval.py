@@ -35,6 +35,8 @@ from agent_framework import (
 )
 from agent_framework._feature_stage import ExperimentalWarning
 from agent_framework.security import (
+    PRINCIPAL_METADATA_KEY,
+    ConfidentialityLabel,
     ContentLabel,
     IntegrityLabel,
     LabelTrackingFunctionMiddleware,
@@ -492,6 +494,116 @@ async def test_changed_hidden_snapshot_requires_visible_second_approval(
     assert [content.type for content in model_contents].count("function_call") == 1
     assert [content.type for content in model_contents].count("function_result") == 1
     assert not any(content.type.startswith("function_approval_") for content in model_contents)
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])
+async def test_principal_change_requires_visible_second_approval(
+    chat_client_base: MockBaseChatClient,
+    streaming: bool,
+) -> None:
+    """A principal change persists one replacement request before execution."""
+    received: list[str] = []
+
+    def principals(user_id: str) -> list[dict[str, str]]:
+        return [{"tenant_id": "tenant-a", "user_id": user_id}]
+
+    @tool(
+        name="identity_sink",
+        additional_properties={
+            "max_allowed_confidentiality": "user_identity",
+            PRINCIPAL_METADATA_KEY: principals("user-c"),
+        },
+    )
+    def identity_sink(value: str) -> str:
+        received.append(value)
+        return "sent"
+
+    tracker = LabelTrackingFunctionMiddleware()
+    policy = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+    session = AgentSession(session_id=f"principal-change-{streaming}")
+    tracker._scope_for_session(session).context_label = ContentLabel(
+        confidentiality=ConfidentialityLabel.USER_IDENTITY,
+        metadata={PRINCIPAL_METADATA_KEY: principals("user-a")},
+    )
+    agent = Agent(
+        client=chat_client_base,
+        tools=[identity_sink],
+        middleware=[tracker, policy],
+        context_providers=[InMemoryHistoryProvider()],
+    )
+    function_call = Content.from_function_call(
+        call_id="principal-call",
+        name="identity_sink",
+        arguments={"value": "payload"},
+        id="principal-occurrence",
+    )
+
+    if streaming:
+        chat_client_base.streaming_responses = [
+            [ChatResponseUpdate(role="assistant", contents=[function_call])],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")])],
+        ]
+        first_stream = agent.run("send identity data", stream=True, session=session)
+        _ = [update async for update in first_stream]
+        first = await first_stream.get_final_response()
+    else:
+        chat_client_base.run_responses = [
+            ChatResponse(messages=Message(role="assistant", contents=[function_call])),
+            ChatResponse(messages=Message(role="assistant", contents=["done"])),
+        ]
+        first = await agent.run("send identity data", session=session)
+
+    original_request = first.user_input_requests[0]
+    tracker._scope_for_session(session).context_label = ContentLabel(
+        confidentiality=ConfidentialityLabel.USER_IDENTITY,
+        metadata={PRINCIPAL_METADATA_KEY: principals("user-b")},
+    )
+
+    if streaming:
+        stale_stream = agent.run(
+            original_request.to_function_approval_response(True),
+            stream=True,
+            session=session,
+        )
+        stale_updates = [update async for update in stale_stream]
+        stale = await stale_stream.get_final_response()
+        assert [(update.role, [content.type for content in update.contents]) for update in stale_updates] == [
+            ("assistant", ["function_approval_request"]),
+        ]
+    else:
+        stale = await agent.run(original_request.to_function_approval_response(True), session=session)
+
+    assert received == []
+    assert chat_client_base.call_count == 1
+    replacement = stale.user_input_requests[0]
+    assert replacement.id != original_request.id
+    assert replacement.function_call is not None
+    assert original_request.function_call is not None
+    assert replacement.function_call.id == original_request.function_call.id
+    pending = session.state["tool_approval"]["pending_approval_requests"]
+    assert [snapshot["id"] for snapshot in pending] == [replacement.id]
+
+    if streaming:
+        approved_stream = agent.run(
+            replacement.to_function_approval_response(True),
+            stream=True,
+            session=session,
+        )
+        approved_updates = [update async for update in approved_stream]
+        approved = await approved_stream.get_final_response()
+        assert [(update.role, [content.type for content in update.contents]) for update in approved_updates] == [
+            ("tool", ["function_result"]),
+            ("assistant", ["text"]),
+        ]
+    else:
+        approved = await agent.run(replacement.to_function_approval_response(True), session=session)
+
+    assert received == ["payload"]
+    assert chat_client_base.call_count == 2
+    assert [(message.role, [content.type for content in message.contents]) for message in approved.messages] == [
+        ("tool", ["function_result"]),
+        ("assistant", ["text"]),
+    ]
 
 
 async def test_replacement_approval_preserves_unanswered_reused_call_id_sibling(

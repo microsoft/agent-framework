@@ -74,6 +74,32 @@ Contributions must maintain API signature and behavioral compatibility. Contribu
 that include breaking changes will be rejected. Please file an issue to discuss
 your idea or change if you believe that a breaking change is warranted.
 
+#### Python Public API Compatibility
+
+Python pull requests run a non-blocking [Griffe](https://mkdocstrings.github.io/griffe/)
+check that compares the pull request's public API with its base commit. The workflow only
+runs when Python files change, and reports potential breaking changes as annotations and
+in the job summary. The experimental `agent-framework-lab` package is excluded. The
+workflow runs from the trusted base branch, checks out GitHub's synthetic merge commit
+with read-only permissions, and statically parses source without importing it. This keeps
+the comparison current when a pull request branch is behind `main`.
+
+Only APIs from packages marked `released` in `python/PACKAGE_STATUS.md` are checked.
+Prerelease packages and APIs marked with `@experimental` or `@release_candidate`—including
+members of a staged class—are excluded. Package state and feature-stage markers are read
+from the base commit, so changing either in the same pull request cannot suppress a
+compatibility finding. The Griffe version is pinned with the other Python development
+dependencies in `python/pyproject.toml`; the workflow reads that pin from the trusted base
+commit.
+
+If a breaking change is intentional, add the `breaking change` label to the pull request
+or add `[BREAKING]` to its title. Existing title/label automation keeps those signals
+synchronized. The label declares that the detected break is intentional; normal repository
+review and merge policies determine whether the change is approved. The compatibility
+workflow still reports acknowledged changes but succeeds. Without the label, the comparison
+step fails; the job is configured as non-blocking so it cannot prevent a merge while the
+workflow is being evaluated.
+
 #### Automated API Compatibility Validation
 
 The .NET projects use [Package Validation](https://learn.microsoft.com/dotnet/fundamentals/package-validation/overview)
