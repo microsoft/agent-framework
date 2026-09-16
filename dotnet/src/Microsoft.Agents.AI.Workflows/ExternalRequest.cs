@@ -3,6 +3,7 @@
 using System;
 using System.Diagnostics.CodeAnalysis;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
+using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows;
@@ -77,13 +78,15 @@ public record ExternalRequest(RequestPortInfo PortInfo, string RequestId, Portab
     /// <exception cref="InvalidOperationException">Thrown when the input data object does not match the expected response type.</exception>
     public ExternalResponse CreateResponse(object data)
     {
-        if (!Throw.IfNull(this.PortInfo).ResponseType.IsMatchPolymorphic(Throw.IfNull(data).GetType()))
+        object responseData = this.CorrelateResponseEnvelope(Throw.IfNull(data));
+
+        if (!Throw.IfNull(this.PortInfo).ResponseType.IsMatchPolymorphic(responseData.GetType()))
         {
             throw new InvalidOperationException(
-                $"Message type {data.GetType().Name} does not match expected response type {this.PortInfo.ResponseType.TypeName} of input port {this.PortInfo.PortId}.");
+                $"Message type {responseData.GetType().Name} does not match expected response type {this.PortInfo.ResponseType.TypeName} of input port {this.PortInfo.PortId}.");
         }
 
-        return new ExternalResponse(this.PortInfo, this.RequestId, new PortableValue(data));
+        return new ExternalResponse(this.PortInfo, this.RequestId, new PortableValue(responseData));
     }
 
     internal ExternalResponse RewrapResponse(ExternalResponse response)
@@ -98,4 +101,29 @@ public record ExternalRequest(RequestPortInfo PortInfo, string RequestId, Portab
     /// <param name="data">The data contained in the response.</param>
     /// <returns>An <see cref="ExternalResponse"/> instance corresponding to this request with the specified data.</returns>
     public ExternalResponse CreateResponse<T>(T data) => this.CreateResponse((object)Throw.IfNull(data));
+
+    private object CorrelateResponseEnvelope(object data)
+    {
+        if (data is not IExternalResponseEnvelope responseEnvelope)
+        {
+            return data;
+        }
+
+        return responseEnvelope.WithRequestId(this.GetInnerRequestContentId() ?? this.RequestId);
+    }
+
+    private string? GetInnerRequestContentId()
+    {
+        if (!this.Data.Is(out IExternalRequestEnvelope? requestEnvelope))
+        {
+            return null;
+        }
+
+        return requestEnvelope.GetInnerRequestContent() switch
+        {
+            FunctionCallContent functionCall => functionCall.CallId,
+            ToolApprovalRequestContent toolApprovalRequest => toolApprovalRequest.RequestId,
+            _ => null,
+        };
+    }
 }

@@ -9,12 +9,14 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.Events;
 /// <summary>
 /// Represents the response to a <see cref="ExternalInputRequest"/>.
 /// </summary>
-public sealed class ExternalInputResponse
+public sealed class ExternalInputResponse : IExternalResponseEnvelope
 {
     /// <summary>
     /// The message being provided as external input to the workflow.
     /// </summary>
     public IList<ChatMessage> Messages { get; }
+
+    internal string? RequestId { get; }
 
     internal bool HasMessages => this.Messages?.Count > 0;
 
@@ -23,8 +25,8 @@ public sealed class ExternalInputResponse
     /// </summary>
     /// <param name="message">The external input message being provided to the workflow.</param>
     public ExternalInputResponse(ChatMessage message)
+        : this([message], requestId: null)
     {
-        this.Messages = [message];
     }
 
     /// <summary>
@@ -33,7 +35,15 @@ public sealed class ExternalInputResponse
     /// <param name="messages">The external input messages being provided to the workflow.</param>
     [JsonConstructor]
     public ExternalInputResponse(IList<ChatMessage> messages)
+        : this(messages, requestId: null)
+    {
+    }
+
+    internal ExternalInputResponse(IList<ChatMessage> messages, string? requestId)
     {
         this.Messages = messages;
+        this.RequestId = requestId;
     }
+
+    object IExternalResponseEnvelope.WithRequestId(string requestId) => new ExternalInputResponse(this.Messages, requestId);
 }
