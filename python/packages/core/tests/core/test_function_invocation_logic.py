@@ -3886,15 +3886,27 @@ async def test_mixed_approval_host_batch_stages_partial_responses_in_original_or
 
 @pytest.mark.parametrize("streaming", [False, True], ids=["non_streaming", "streaming"])
 @pytest.mark.parametrize(
-    ("cancel_host", "approved"),
-    [(False, True), (False, False), (True, True), (True, False)],
-    ids=["host-answered-approved", "host-answered-rejected", "host-cancelled-approved", "host-cancelled-rejected"],
+    ("cancel_request", "approved"),
+    [
+        (None, True),
+        (None, False),
+        ("host", True),
+        ("host", False),
+        ("approval", None),
+    ],
+    ids=[
+        "all-answered-approved",
+        "all-answered-rejected",
+        "host-cancelled-approved",
+        "host-cancelled-rejected",
+        "approval-cancelled-host-answered",
+    ],
 )
 async def test_completed_mixed_batch_replays_persisted_outbox_after_provider_invalidation(
     chat_client_base: SupportsChatGetResponse,
     streaming: bool,
-    cancel_host: bool,
-    approved: bool,
+    cancel_request: str | None,
+    approved: bool | None,
 ) -> None:
     """An invalidated delivery replays persisted results without repeating side effects or budget."""
     from agent_framework import FunctionTool
@@ -4057,33 +4069,43 @@ async def test_completed_mixed_batch_replays_persisted_outbox_after_provider_inv
     )
     host_result = Content.from_function_result(call_id="host-call", result="host result")
     host_result.id = host_request.id
-    if cancel_host:
+    if cancel_request == "host":
         assert host_request.id is not None
         _cancel_pending_pause_batch_request(session, host_request.id)
-    approval_response = approval_request.to_function_approval_response(approved=approved)
-    resumed_contents = [approval_response] if cancel_host else [approval_response, host_result]
-    approval_result = "approved result" if approved else "Error: Tool call invocation was rejected by user."
-    expected_results = [("approval-call", approval_result)]
-    if not cancel_host:
+    elif cancel_request == "approval":
+        assert approval_request.id is not None
+        _cancel_pending_pause_batch_request(session, approval_request.id)
+    resumed_contents: list[Content] = []
+    expected_results: list[tuple[str, Any]] = []
+    expected_published_results: list[tuple[str, Any]] = []
+    if cancel_request != "approval":
+        assert approved is not None
+        approval_response = approval_request.to_function_approval_response(approved=approved)
+        resumed_contents.append(approval_response)
+        approval_result = "approved result" if approved else "Error: Tool call invocation was rejected by user."
+        expected_results.append(("approval-call", approval_result))
+        expected_published_results.append(("approval-call", approval_result))
+    if cancel_request != "host":
+        resumed_contents.append(host_result)
         expected_results.insert(0, ("host-call", "host result"))
-    expected_published_results = [("approval-call", approval_result)]
+    expected_approved_calls = int(approved is True and cancel_request != "approval")
 
     with pytest.raises(ResponseInvalidatedException) as exc_info:
         await run(resumed_contents)
     assert exc_info.value is invalidated
-    assert approved_calls == int(approved)
+    assert approved_calls == expected_approved_calls
     assert session.service_session_id == "mixed-continuation"
     tool_state = session.state[_TOOL_APPROVAL_STATE_KEY]
     assert isinstance(tool_state, dict)
     assert _PENDING_PAUSE_BATCH_KEY in tool_state
-    assert _PENDING_APPROVAL_REQUESTS_KEY in tool_state
+    assert (_PENDING_APPROVAL_REQUESTS_KEY in tool_state) is (cancel_request != "approval")
     assert _PENDING_PROVIDER_OUTBOX_KEY in tool_state
     outbox = tool_state[_PENDING_PROVIDER_OUTBOX_KEY]
     assert isinstance(outbox, dict)
-    assert outbox["streaming_updates_published"] is streaming
+    assert outbox["streaming_updates_published"] is (streaming and bool(expected_published_results))
     budget_state = session.state[_FUNCTION_INVOCATION_BUDGET_STATE_KEY]
     assert isinstance(budget_state, dict)
-    assert budget_state["total_function_calls"] == int(approved)
+    assert budget_state["total_function_calls"] == expected_approved_calls
     assert published_terminal_results == (expected_published_results if streaming else [])
 
     # Exercise consecutive retries across the durable boundary without
@@ -4093,24 +4115,24 @@ async def test_completed_mixed_batch_replays_persisted_outbox_after_provider_inv
     with pytest.raises(ResponseInvalidatedException) as second_exc_info:
         await run([Content.from_text("retry once")])
     assert second_exc_info.value is invalidated
-    assert approved_calls == int(approved)
+    assert approved_calls == expected_approved_calls
     assert provider_calls == 3
     assert published_terminal_results == (expected_published_results if streaming else [])
     retry_budget_state = session.state[_FUNCTION_INVOCATION_BUDGET_STATE_KEY]
     assert isinstance(retry_budget_state, dict)
-    assert retry_budget_state["total_function_calls"] == int(approved)
+    assert retry_budget_state["total_function_calls"] == expected_approved_calls
     assert session.service_session_id == "mixed-continuation"
 
     session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
     final_response = await run([Content.from_text("retry")])
 
     assert final_response.text == "done"
-    assert approved_calls == int(approved)
+    assert approved_calls == expected_approved_calls
     assert provider_calls == 4
     assert provider_options[1]["conversation_id"] == "mixed-continuation"
     assert provider_options[2]["conversation_id"] == "mixed-continuation"
     assert provider_options[3]["conversation_id"] == "mixed-continuation"
-    expected_tool_choice = "none" if approved else "auto"
+    expected_tool_choice = "none" if approved is True and cancel_request != "approval" else "auto"
     assert provider_options[1]["tool_choice"] == expected_tool_choice
     assert provider_options[2]["tool_choice"] == expected_tool_choice
     assert provider_options[3]["tool_choice"] == expected_tool_choice
@@ -4132,6 +4154,62 @@ async def test_completed_mixed_batch_replays_persisted_outbox_after_provider_inv
     assert _PENDING_PROVIDER_OUTBOX_KEY not in final_tool_state
     assert _FUNCTION_INVOCATION_BUDGET_STATE_KEY not in session.state
     assert session.service_session_id == "completed-continuation"
+
+
+def test_provider_outbox_completion_preserves_a_newer_incomplete_barrier() -> None:
+    """A successful replay clears only the barrier snapshot that produced its outbox."""
+    from agent_framework._tools import (
+        _PENDING_APPROVAL_REQUESTS_KEY,
+        _PENDING_PAUSE_BATCH_KEY,
+        _PENDING_PROVIDER_OUTBOX_KEY,
+        _TOOL_APPROVAL_STATE_KEY,
+        _complete_pending_provider_outbox,
+        _FunctionProcessingResult,
+        _store_pending_provider_outbox,
+    )
+
+    old_request = Content.from_function_call(
+        call_id="old-host",
+        name="host_func",
+        arguments={},
+        id="old-host-occurrence",
+    )
+    old_request.user_input_request = True
+    new_call = Content.from_function_call(
+        call_id="new-approval",
+        name="approval_func",
+        arguments={},
+        id="new-approval-occurrence",
+    )
+    new_request = Content.from_function_approval_request(
+        id="new-approval-occurrence",
+        function_call=new_call,
+    )
+    session = AgentSession()
+    tool_state = {
+        _PENDING_PAUSE_BATCH_KEY: {
+            "items": [{"kind": "host", "request": old_request.to_dict(), "response": {"type": "function_result"}}]
+        }
+    }
+    session.state[_TOOL_APPROVAL_STATE_KEY] = tool_state
+    _store_pending_provider_outbox(
+        session,
+        prepared_messages=[
+            Message(role="tool", contents=[Content.from_function_result(call_id="old-host", result="done")])
+        ],
+        processing_result=_FunctionProcessingResult(errors_in_a_row=0),
+    )
+
+    new_barrier = {"items": [{"kind": "approval", "request": new_request.to_dict()}]}
+    new_pending = [new_request.to_dict()]
+    tool_state[_PENDING_PAUSE_BATCH_KEY] = new_barrier
+    tool_state[_PENDING_APPROVAL_REQUESTS_KEY] = new_pending
+
+    _complete_pending_provider_outbox(session)
+
+    assert _PENDING_PROVIDER_OUTBOX_KEY not in tool_state
+    assert tool_state[_PENDING_PAUSE_BATCH_KEY] == new_barrier
+    assert tool_state[_PENDING_APPROVAL_REQUESTS_KEY] == new_pending
 
 
 @pytest.mark.parametrize("identified_first", [True, False], ids=["identified-first", "idless-first"])

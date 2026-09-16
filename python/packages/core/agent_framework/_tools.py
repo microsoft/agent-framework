@@ -4018,12 +4018,22 @@ def _store_pending_provider_outbox(
     state = _get_tool_approval_state(invocation_session)
     if state is None:
         return
+    barrier_state = {
+        key: copy.deepcopy(state[key])
+        for key in (
+            _PENDING_PAUSE_BATCH_KEY,
+            _PENDING_APPROVAL_REQUESTS_KEY,
+            _ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY,
+        )
+        if key in state
+    }
     state[_PENDING_PROVIDER_OUTBOX_KEY] = {
         "provider_messages": [message.to_dict() for message in prepared_messages],
         "response_messages": [message.to_dict() for message in processing_result.response_messages],
         "errors_in_a_row": processing_result.errors_in_a_row,
         "action": processing_result.action,
         "streaming_updates_published": False,
+        "barrier_state": barrier_state,
     }
 
 
@@ -4072,12 +4082,26 @@ def _restore_pending_provider_outbox_budget(
 def _complete_pending_provider_outbox(invocation_session: AgentSession | None) -> None:
     """Clear mixed-batch authority and results only after provider delivery succeeds."""
     state = _get_tool_approval_state(invocation_session, create=False)
-    if state is None or not isinstance(state.get(_PENDING_PROVIDER_OUTBOX_KEY), Mapping):
+    if state is None:
         return
+    raw_outbox = state.get(_PENDING_PROVIDER_OUTBOX_KEY)
+    if not isinstance(raw_outbox, Mapping):
+        return
+    barrier_state = cast(Mapping[str, Any], raw_outbox).get("barrier_state")
     state.pop(_PENDING_PROVIDER_OUTBOX_KEY, None)
-    state.pop(_PENDING_PAUSE_BATCH_KEY, None)
-    state.pop(_PENDING_APPROVAL_REQUESTS_KEY, None)
-    state.pop(_ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY, None)
+    barrier_keys = (
+        _PENDING_PAUSE_BATCH_KEY,
+        _PENDING_APPROVAL_REQUESTS_KEY,
+        _ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY,
+    )
+    if not isinstance(barrier_state, Mapping):
+        # Compatibility with outboxes serialized before barrier ownership was recorded.
+        for key in barrier_keys:
+            state.pop(key, None)
+        return
+    for key in barrier_keys:
+        if key in barrier_state and state.get(key) == barrier_state[key]:
+            state.pop(key, None)
 
 
 def _has_pending_provider_outbox(invocation_session: AgentSession | None) -> bool:
@@ -4263,15 +4287,16 @@ async def _resolve_approval_responses(
     ):
         prepared_messages.append(Message(role="user", contents=already_approved_responses))
 
-    # 2. With no new decision, hide any still-pending batch from model input while keeping it resumable in history.
-    if not (
-        pending_approval_responses := _collect_approval_responses(
-            prepared_messages,
-            non_approval_result_ids=host_result_ids,
-        )
-    ):
+    # 2. With no approval decision, hide a still-pending batch from model input. A persistent batch can nevertheless
+    # be complete when its approval request was cancelled and only its Host response remained.
+    pending_approval_responses = _collect_approval_responses(
+        prepared_messages,
+        non_approval_result_ids=host_result_ids,
+    )
+    if not pending_approval_responses:
         _remove_unanswered_approval_batches_from_model_input(prepared_messages)
-        return _FunctionProcessingResult(errors_in_a_row=errors_in_a_row)
+        if not completed_persistent_pause_batch:
+            return _FunctionProcessingResult(errors_in_a_row=errors_in_a_row)
 
     # 3. Execute approved decisions once. Rejected decisions are converted to results during normalization below.
     responses_to_execute = [
