@@ -8,6 +8,7 @@ import threading
 import warnings
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from typing import Any, Literal
+from unittest.mock import Mock
 
 import pytest
 from pydantic import BaseModel, field_validator
@@ -3348,6 +3349,97 @@ async def test_function_invocation_config_additional_tools(chat_client_base: Sup
         if content.type == "function_call" and content.name == "hidden_function"
     ]
     assert len(function_calls) >= 1
+
+
+@pytest.mark.parametrize(
+    ("enable_instrumentation", "enable_sensitive_data"),
+    [(False, False), (True, False), (True, True)],
+    indirect=True,
+)
+@pytest.mark.usefixtures("span_exporter")
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("include_detailed_errors", [False, True])
+async def test_function_invocation_result_parser_failure(
+    chat_client_base: SupportsChatGetResponse,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    stream: bool,
+    include_detailed_errors: bool,
+    enable_sensitive_data: bool,
+) -> None:
+    parser = Mock(side_effect=ValueError(f"Unsupported result: {_PRIVATE_ERROR_DETAIL}"))
+
+    @tool(result_parser=parser)
+    def make_result() -> dict[str, str]:
+        return {"value": "unparsed-value"}
+
+    call = Content.from_function_call(call_id="1", name="make_result", arguments="{}")
+    monkeypatch.setattr(
+        chat_client_base,
+        "run_responses",
+        [
+            ChatResponse(messages=Message(role="assistant", contents=[call])),
+            ChatResponse(messages=Message(role="assistant", contents=["done"])),
+        ],
+    )
+    monkeypatch.setattr(
+        chat_client_base,
+        "streaming_responses",
+        [
+            [ChatResponseUpdate(role="assistant", contents=[call])],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")])],
+        ],
+    )
+    monkeypatch.setitem(
+        chat_client_base.function_invocation_configuration,  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        "include_detailed_errors",
+        include_detailed_errors,
+    )
+    provider = Mock(wraps=chat_client_base._inner_get_response)  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    monkeypatch.setattr(chat_client_base, "_inner_get_response", provider)
+    messages = [Message(role="user", contents=["hello"])]
+    options: ChatOptions = {"tools": [make_result]}
+
+    if stream:
+        response_stream = chat_client_base.get_response(messages, options=options, stream=True)
+        updates = [update async for update in response_stream]
+        assert "unparsed-value" not in json.dumps([update.to_dict() for update in updates])
+        response = await response_stream.get_final_response()
+    else:
+        response = await chat_client_base.get_response(messages, options=options)
+
+    results = [content for msg in response.messages for content in msg.contents if content.type == "function_result"]
+    assert len(results) == 1
+    assert results[0].call_id == "1"
+    assert results[0].exception is not None
+    assert "Unsupported result" in results[0].exception
+    expected_result = "Error: Function failed."
+    if include_detailed_errors:
+        expected_result += f" Exception: Unsupported result: {_PRIVATE_ERROR_DETAIL}"
+    assert results[0].result == expected_result
+    serialized_response = json.dumps(response.to_dict())
+    assert (_PRIVATE_ERROR_DETAIL in serialized_response) is include_detailed_errors
+    assert "unparsed-value" not in json.dumps(response.to_dict())
+    assert response.messages[-1].text == "done"
+    assert provider.call_count == 2
+    provider_messages = provider.call_args.kwargs["messages"]
+    provider_results = [
+        content for msg in provider_messages for content in msg.contents if content.type == "function_result"
+    ]
+    assert len(provider_results) == 1
+    assert provider_results[0].result == results[0].result
+    assert "unparsed-value" not in json.dumps([msg.to_dict() for msg in provider_messages])
+    parser.assert_called_once_with({"value": "unparsed-value"})
+    assert make_result.invocation_count == 1
+    execution_warnings = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "agent_framework"
+        and record.levelno == logging.WARNING
+        and "raised an exception; returning an error result" in record.getMessage()
+    ]
+    assert len(execution_warnings) == 1
+    assert (_PRIVATE_ERROR_DETAIL in execution_warnings[0]) is enable_sensitive_data
 
 
 async def test_function_invocation_config_include_detailed_errors_false(chat_client_base: SupportsChatGetResponse):
