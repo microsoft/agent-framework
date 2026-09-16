@@ -179,6 +179,12 @@ to the current user and conversation or response chain. A `previous_response_id`
 fails; a conversation with prior history but no workflow checkpoint also fails rather than silently starting over.
 A new conversation with no history can start without a checkpoint.
 
+Both hosts use the configured checkpoint storage directly and retain the workflow runtime's checkpoint-error policy.
+The graph runtime logs checkpoint creation failures and may complete without saving its latest state. Hosting does
+not intercept runner methods or turn those logged failures into invocation failures. A completed invocation is not
+proof of a successful checkpoint save: a later continuation may restore an older checkpoint, or fail if none exists.
+Exceptions propagated by the runtime, including functional workflow checkpoint errors, still fail the invocation.
+
 For resilient background Responses using a graph workflow, recovery uses the checkpoint associated with the persisted response output.
 If no response checkpoint was recorded, it can use the latest workflow checkpoint. If execution stopped before any
 workflow checkpoint was saved, recovery replays the original input using a fresh factory-created workflow.
@@ -226,7 +232,8 @@ Both graph and functional workflows reject continuation when the previous invoca
 A saved checkpoint alone does not authorize resuming incomplete work: the host requires its persisted completion
 record before restoring a graph checkpoint or accepting a new message. Rejection preserves the existing stored state.
 After clean completion, graph workflows restore their state and functional workflows start the new message without
-replaying the previous input. The completion record describes host execution, not acknowledgment of HTTP delivery.
+replaying the previous input. The completion record describes host execution, not checkpoint durability or
+acknowledgment of HTTP delivery.
 
 Requests updating the same factory scope are serialized within one host; independent scopes can execute concurrently.
 This is not a distributed lock across multiple host processes. Invocations does not automatically recover an

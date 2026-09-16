@@ -98,7 +98,6 @@ from ._state_store import (
     FunctionApprovalStore,
     FunctionApprovalStoreProvider,
     StoreProvider,
-    _CheckpointStorageWithErrors,  # pyright: ignore[reportPrivateUsage]
 )
 
 logger = logging.getLogger(__name__)
@@ -1074,8 +1073,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             marker is None or marker.get("name") != workflow.name or marker.get("kind") != kind
         ):
             raise RuntimeError("The stored Responses workflow name or kind does not match the factory result.")
-        if marker is not None and marker.get("checkpoint_failed"):
-            raise RuntimeError("The previous Responses workflow run has incomplete checkpoint persistence.")
         had_session = session is not None
         if session is None:
             session = AgentSession()
@@ -1117,7 +1114,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     agent,
                     session if agent.context_providers else None,
                     had_session,
-                    state_marker,
                     run_workflow,
                 )
             async with aclosing(inner):
@@ -1155,7 +1151,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         agent: WorkflowAgent,
         session: AgentSession | None,
         had_session: bool,
-        state_marker: dict[str, Any],
         run_workflow: _WorkflowRun,
     ) -> AsyncGenerator[ResponseStreamEvent | ResponseCheckpointEvent]:
         """Handle the creation of a response for a workflow agent."""
@@ -1178,14 +1173,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             # workflow from the last checkpoint.
             checkpoint_save_id = context.conversation_id or context.response_id
             _validate_checkpoint_context_id(checkpoint_save_id)
-            checkpoint_storage = _CheckpointStorageWithErrors(
-                self._checkpoint_storage_provider.get_store(
-                    config=self.config,
-                    context_id=checkpoint_save_id,
-                    platform_context=request_context,
-                )
+            checkpoint_storage = self._checkpoint_storage_provider.get_store(
+                config=self.config,
+                context_id=checkpoint_save_id,
+                platform_context=request_context,
             )
-            checkpoint_storage.observe_workflow(agent)
 
             if context.is_recovery:
                 if not self._resilient_background:
@@ -1263,12 +1255,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 if checkpoint_load_id is not None:
                     _validate_checkpoint_context_id(checkpoint_load_id)
                     if checkpoint_load_id != checkpoint_save_id:
-                        restore_checkpoint_storage = _CheckpointStorageWithErrors(
-                            self._checkpoint_storage_provider.get_store(
-                                config=self.config,
-                                context_id=checkpoint_load_id,
-                                platform_context=request_context,
-                            )
+                        restore_checkpoint_storage = self._checkpoint_storage_provider.get_store(
+                            config=self.config,
+                            context_id=checkpoint_load_id,
+                            platform_context=request_context,
                         )
                 latest_checkpoint = await restore_checkpoint_storage.get_latest(workflow_name=agent.workflow.name)
 
@@ -1314,12 +1304,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     async with aclosing(restore_iter):
                         async for _ in restore_iter:
                             pass
-                    if restore_checkpoint_storage.save_error is not None:
-                        state_marker["checkpoint_failed"] = True
-                        raise restore_checkpoint_storage.save_error
-                    if checkpoint_storage.save_error is not None:
-                        state_marker["checkpoint_failed"] = True
-                        raise checkpoint_storage.save_error
                     if restore_iter.signalled:
                         if context.shutdown.is_set():
                             await context.exit_for_recovery()
@@ -1343,9 +1327,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             main_iter = _SignalledIterator(run_stream, context.shutdown, cancellation_signal)
             async with aclosing(main_iter):
                 async for update in main_iter:
-                    if checkpoint_storage.save_error is not None:
-                        state_marker["checkpoint_failed"] = True
-                        raise checkpoint_storage.save_error
                     if self._resilient_background:
                         latest_checkpoint = await checkpoint_storage.get_latest(workflow_name=agent.workflow.name)
                         if (
@@ -1374,9 +1355,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                             content, message_id=update.message_id, approval_storage=approval_storage
                         ):
                             yield event
-            if checkpoint_storage.save_error is not None:
-                state_marker["checkpoint_failed"] = True
-                raise checkpoint_storage.save_error
             # Cancellation needs no extra action here (the loop above already stopped); shutdown
             # does, but only if it's what actually stopped the loop, not a natural completion.
             if main_iter.signalled and context.shutdown.is_set():

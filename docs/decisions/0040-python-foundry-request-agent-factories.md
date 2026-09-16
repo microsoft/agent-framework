@@ -50,7 +50,12 @@ from completed steps, so a hosting adapter cannot restore that output without re
 work. Invocations retains its text-only exchange and rejects pending or interrupted continuations
 for both graph and functional workflows, before executing checkpointed work or a new message.
 A new message after clean completion is supported. The persisted completion record tracks host
-execution, not acknowledgment of HTTP delivery.
+execution, not checkpoint durability or acknowledgment of HTTP delivery.
+
+The hosts pass checkpoint storage to the workflow without changing its error policy. Graph workflows
+can log checkpoint creation failures and continue; propagated runtime errors still fail the invocation.
+The factory feature does not add a stricter persistence guarantee or intercept internal runner methods.
+Continuation can therefore use an older saved checkpoint, or fail when the required checkpoint is missing.
 
 The host manages an agent's exposed async context manager. It does not recursively discover resources
 inside executors or closures. Applications must construct fresh mutable runtime objects and give

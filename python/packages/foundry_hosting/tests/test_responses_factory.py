@@ -105,6 +105,26 @@ async def _collect(
         ]
 
 
+async def _post_http_response(
+    client: httpx.AsyncClient, items: Any, *, user: str, stream: bool, previous: str | None = None
+) -> dict[str, Any]:
+    payload = {"model": "test-model", "input": items, "stream": stream}
+    if previous is not None:
+        payload["previous_response_id"] = previous
+    response = await client.post(
+        "/responses",
+        json=payload,
+        headers={"x-agent-user-id": user, "x-agent-foundry-call-id": f"call-{user}"},
+    )
+    assert response.status_code == 200, response.text
+    if not stream:
+        return response.json()
+    events = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: {")]
+    terminal = [event for event in events if event["type"] in ("response.completed", "response.failed")]
+    assert len(terminal) == 1, events
+    return terminal[0]["response"]
+
+
 def _types(events: list[Any]) -> list[str]:
     return [event["type"] for event in events if isinstance(event, Mapping)]
 
@@ -805,6 +825,47 @@ class _TranscriptClient(BaseChatClient):
         return ResponseStream(updates(), finalizer=ChatResponse.from_updates)
 
 
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("use_agent_executor", [False, True])
+async def test_fresh_http_requests_use_independent_workflow_state(stream: bool, use_agent_executor: bool) -> None:
+    stores = _Stores()
+    transcripts: list[list[str]] = []
+    factory_users: list[str | None] = []
+
+    class Remember(Executor):
+        @handler
+        async def remember(self, messages: list[Message], ctx: WorkflowContext[Never, str]) -> None:  # type: ignore[valid-type]
+            previous = ctx.get_state("previous")
+            ctx.set_state("previous", messages[0].text)
+            await ctx.yield_output(json.dumps(previous))
+
+    def factory() -> WorkflowAgent:
+        factory_users.append(get_request_context().user_id)
+        executor = (
+            AgentExecutor(Agent(client=_TranscriptClient(transcripts), name="inner"), id="inner")
+            if use_agent_executor
+            else Remember(id="remember")
+        )
+        return WorkflowBuilder(name="http-state", start_executor=executor).build().as_agent()
+
+    server = stores.server(factory, store=InMemoryResponseProvider())
+    server.config.is_hosted = True
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as client:
+        for user, text in (("user-a", "first"), ("user-b", "second"), ("user-a", "independent")):
+            body = await _post_http_response(client, text, user=user, stream=stream)
+            assert body["status"] == "completed", body
+            assert [
+                part["text"]
+                for item in body["output"]
+                if item["type"] == "message"
+                for part in item["content"]
+                if part["type"] == "output_text"
+            ] == ["recorded" if use_agent_executor else "null"]
+            if use_agent_executor:
+                assert transcripts[-1] == [text]
+    assert factory_users == ["user-a", "user-b", "user-a"]
+
+
 @pytest.mark.parametrize("chain", [False, True])
 async def test_agent_executor_transcript_isolates_users_scopes_and_continues_across_hosts(chain: bool) -> None:
     stores = _Stores()
@@ -1361,11 +1422,12 @@ async def test_anyio_cancellation_finishes_blocked_iterator_cleanup_before_owner
     assert events == ["enter", "run", "cleanup started", "cleanup finished", "exit"]
 
 
-async def test_checkpoint_preparation_failure_rejects_older_checkpoint_and_fresh_host_retry() -> None:
+async def test_checkpoint_preparation_failure_preserves_graph_runtime_behavior(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     stores = _Stores()
     calls: list[str] = []
     snapshots: list[int] = []
-    agents: list[WorkflowAgent] = []
 
     class FailingCheckpoint(_Counter):
         @handler
@@ -1384,12 +1446,13 @@ async def test_checkpoint_preparation_failure_rejects_older_checkpoint_and_fresh
             return await super().on_checkpoint_save()
 
     def factory() -> WorkflowAgent:
-        agent = WorkflowBuilder(name="checkpoint-preparation", start_executor=FailingCheckpoint()).build().as_agent()
-        agents.append(agent)
-        return agent
+        return WorkflowBuilder(name="checkpoint-preparation", start_executor=FailingCheckpoint()).build().as_agent()
 
-    first = stores.server(factory)
-    assert "Executor counter on_checkpoint_save failed" in _failure(await _collect(first))
+    server = stores.server(factory)
+    result = await _collect(server)
+    assert _types(result)[-1] == "response.completed"
+    assert _text(result) == "1:hello"
+    assert "does not fail the workflow run" in caplog.text
     storage = stores.checkpoints[("alice", "conversation")]
     checkpoint = await storage.get_latest(workflow_name="checkpoint-preparation")
     assert checkpoint is not None
@@ -1397,23 +1460,15 @@ async def test_checkpoint_preparation_failure_rejects_older_checkpoint_and_fresh
     assert 0 in snapshots and 1 in snapshots
     session = await stores.sessions["alice"].get("conversation")
     assert session is not None
-    assert session.state["_foundry_responses_workflow"]["checkpoint_failed"] is True
-
-    second = stores.server(factory)
-    assert "incomplete checkpoint persistence" in _failure(
-        await _collect(second, _context("must-not-run", response="two"))
-    )
+    assert session.state["_foundry_responses_workflow"]["completed"] is True
+    assert "checkpoint_failed" not in session.state["_foundry_responses_workflow"]
     assert calls == ["hello"]
-    assert len(agents) == 2
-    assert agents[0] is not agents[1]
-    assert agents[0].workflow is not agents[1].workflow
-    assert not first._scope_locks._entries
-    assert not second._scope_locks._entries
+    assert not server._scope_locks._entries
 
 
 @pytest.mark.parametrize("functional", [False, True])
-async def test_checkpoint_save_failure_does_not_report_success_and_closes_owner(
-    functional: bool, monkeypatch: pytest.MonkeyPatch
+async def test_checkpoint_save_failure_preserves_runtime_behavior_and_closes_owner(
+    functional: bool, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     events: list[str] = []
     storage = InMemoryCheckpointStorage()
@@ -1445,7 +1500,13 @@ async def test_checkpoint_save_failure_does_not_report_success_and_closes_owner(
     assert events == ["enter", "exit"]
     assert save.await_count > 0
     assert not server._scope_locks._entries
-    assert "checkpoint save failed" in _failure(result)
+    if functional:
+        assert "checkpoint save failed" in _failure(result)
+    else:
+        assert _types(result)[-1] == "response.completed"
+        assert _text(result) == "1:hello"
+        assert "does not fail the workflow run" in caplog.text
+    assert await storage.get_latest(workflow_name="functional" if functional else "counter") is None
 
 
 async def test_interrupted_functional_step_does_not_restart_with_new_input() -> None:
@@ -1470,6 +1531,53 @@ async def test_interrupted_functional_step_does_not_restart_with_new_input() -> 
         await _collect(stores.server(factory), _context("next", response="two"))
     )
     assert calls == ["hello"]
+
+
+@pytest.mark.parametrize("functional", [False, True])
+@pytest.mark.parametrize("stream", [False, True])
+async def test_fresh_http_request_preserves_another_users_pending_request(functional: bool, stream: bool) -> None:
+    stores = _Stores()
+    completions: list[tuple[str | None, str]] = []
+
+    class Pending(Executor):
+        @handler
+        async def ask(self, messages: list[Message], ctx: WorkflowContext[Never, str]) -> None:  # type: ignore[valid-type]
+            await ctx.request_info(messages[0].text, response_type=str, request_id="answer")
+
+        @response_handler
+        async def answer(self, original_request: str, response: str, ctx: WorkflowContext[Never, str]) -> None:  # type: ignore[valid-type]
+            completions.append((get_request_context().user_id, original_request))
+            await ctx.yield_output(f"{original_request}:{response}")
+
+    @workflow(name="http-pending")
+    async def pending(messages: list[Message], ctx: RunContext) -> str:
+        answer = await ctx.request_info("answer?", response_type=str, request_id="answer")
+        completions.append((get_request_context().user_id, messages[0].text))
+        return f"{messages[0].text}:{answer}"
+
+    def factory() -> WorkflowAgent | FunctionalWorkflowAgent:
+        if functional:
+            return pending.build().as_agent()
+        return WorkflowBuilder(name="http-pending", start_executor=Pending(id="pending")).build().as_agent()
+
+    server = stores.server(factory, store=InMemoryResponseProvider())
+    server.config.is_hosted = True
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as client:
+        first = await _post_http_response(client, "first", user="user-a", stream=stream)
+        assert first["status"] == "completed", first
+        result = [{"type": "function_call_output", "call_id": "answer", "output": "accepted"}]
+        await _post_http_response(client, result, user="user-b", stream=stream)
+        assert completions == []
+        resumed = await _post_http_response(client, result, user="user-a", stream=stream, previous=first["id"])
+        assert resumed["status"] == "completed", resumed
+        assert [
+            part["text"]
+            for item in resumed["output"]
+            if item["type"] == "message"
+            for part in item["content"]
+            if part["type"] == "output_text"
+        ] == ["first:accepted"]
+    assert completions == [("user-a", "first")]
 
 
 @pytest.mark.parametrize("functional", [False, True])

@@ -39,7 +39,6 @@ from ._feature_usage import FeatureIndex
 from ._state_store import (
     ContextScopedStoreProvider,
     StoreProvider,
-    _CheckpointStorageWithErrors,  # pyright: ignore[reportPrivateUsage]
     _InvocationsAgentSessionStoreProvider,  # pyright: ignore[reportPrivateUsage]
     _InvocationsCheckpointStoreProvider,  # pyright: ignore[reportPrivateUsage]
 )
@@ -175,16 +174,12 @@ class InvocationsHostServer(InvocationAgentServerHost):
         self, agent: WorkflowAgent | FunctionalWorkflowAgent, storage_id: str
     ) -> AsyncGenerator[tuple[AgentSession, CheckpointStorage]]:
         context = get_request_context()
-        storage = _CheckpointStorageWithErrors(
-            self._checkpoint_storage_provider.get_store(
-                config=self.config, context_id=storage_id, platform_context=context
-            )
+        storage = self._checkpoint_storage_provider.get_store(
+            config=self.config, context_id=storage_id, platform_context=context
         )
         sessions = self._agent_session_storage_provider.get_store(config=self.config, platform_context=context)
         workflow = agent.workflow if isinstance(agent, WorkflowAgent) else agent._workflow  # pyright: ignore[reportPrivateUsage]
         kind = "graph" if isinstance(agent, WorkflowAgent) else "functional"
-        if isinstance(agent, WorkflowAgent):
-            storage.observe_workflow(agent)
         session = await sessions.get(storage_id)
         saved_marker = session.state.get(_WORKFLOW_STATE_KEY) if session is not None else None
         marker = cast(dict[str, Any], saved_marker) if isinstance(saved_marker, dict) else None
@@ -199,16 +194,12 @@ class InvocationsHostServer(InvocationAgentServerHost):
             raise RuntimeError("The existing Invocations workflow session is missing its required checkpoint.")
         if checkpoint is not None and session is None:
             raise RuntimeError("The existing Invocations workflow checkpoint is missing its required agent session.")
-        if marker is not None and marker.get("checkpoint_failed"):
-            raise RuntimeError("The previous Invocations workflow run has incomplete checkpoint persistence.")
         if isinstance(agent, WorkflowAgent) and checkpoint is not None and checkpoint.pending_request_info_events:
             raise RuntimeError(_PENDING_REQUEST_ERROR)
         if marker is not None and marker.get("completed") is not True:
             raise RuntimeError(f"Invocations cannot continue a pending or interrupted {kind} workflow.")
         if isinstance(agent, WorkflowAgent) and checkpoint is not None:
             await agent.workflow.run(checkpoint_id=checkpoint.checkpoint_id, checkpoint_storage=storage)
-            if storage.save_error is not None:
-                raise storage.save_error
             if agent.workflow.status == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS:
                 raise RuntimeError(_PENDING_REQUEST_ERROR)
         if session is None:
@@ -219,8 +210,6 @@ class InvocationsHostServer(InvocationAgentServerHost):
         await sessions.set(storage_id, session)
         try:
             yield session, storage
-            if storage.save_error is not None:
-                raise storage.save_error
             pending = (
                 agent.workflow.status == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
                 if isinstance(agent, WorkflowAgent)
@@ -228,12 +217,8 @@ class InvocationsHostServer(InvocationAgentServerHost):
             )
             if pending:
                 raise RuntimeError(_PENDING_REQUEST_ERROR)
-            if await storage.get_latest(workflow_name=workflow.name) is None:
-                raise RuntimeError("The Invocations workflow did not persist a required checkpoint.")
             marker["completed"] = True
         finally:
-            if storage.save_error is not None:
-                marker["checkpoint_failed"] = True
             with CancelScope(shield=True):
                 await sessions.set(storage_id, session)
 

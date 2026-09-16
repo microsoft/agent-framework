@@ -1,13 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from __future__ import annotations
-
 from abc import ABC, abstractmethod
-from collections.abc import Callable
 from datetime import datetime
-from functools import wraps
-from types import CoroutineType
-from typing import Any, Generic, ParamSpec, Protocol, TypeVar
+from typing import Generic, Protocol, TypeVar
 
 from agent_framework import (
     AgentSession,
@@ -15,7 +10,6 @@ from agent_framework import (
     CheckpointStorage,
     Content,
     SessionStore,
-    WorkflowAgent,
     WorkflowCheckpoint,
     WorkflowCheckpointException,
 )
@@ -23,49 +17,6 @@ from azure.ai.agentserver.core import AgentConfig, FoundryAgentRequestContext
 from azure.ai.agentserver.core.storage import FoundryStateStore, FoundryStorageConflictError
 
 StoreT = TypeVar("StoreT")
-ResultT = TypeVar("ResultT")
-ParametersT = ParamSpec("ParametersT")
-
-
-class _CheckpointStorageWithErrors:  # pyright: ignore[reportUnusedClass]
-    """Remember checkpoint write errors even when graph execution logs and ignores them."""
-
-    def __init__(self, storage: CheckpointStorage) -> None:
-        self._storage = storage
-        self.save_error: Exception | None = None
-        self.load = storage.load
-        self.list_checkpoints = storage.list_checkpoints
-        self.delete = storage.delete
-        self.get_latest = storage.get_latest
-        self.list_checkpoint_ids = storage.list_checkpoint_ids
-
-    async def save(self, checkpoint: WorkflowCheckpoint) -> CheckpointID:
-        try:
-            return await self._storage.save(checkpoint)
-        except Exception as exc:
-            self.save_error = exc
-            raise
-
-    def observe_workflow(self, agent: WorkflowAgent) -> None:
-        """Observe both stages the graph runner suppresses before and during checkpoint writes."""
-        runner = agent.workflow._runner  # pyright: ignore[reportPrivateUsage]
-        runner._prepare_checkpoint_state = self._observe(  # pyright: ignore[reportPrivateUsage]
-            runner._prepare_checkpoint_state  # pyright: ignore[reportPrivateUsage]
-        )
-        runner.context.create_checkpoint = self._observe(runner.context.create_checkpoint)
-
-    def _observe(
-        self, operation: Callable[ParametersT, CoroutineType[Any, Any, ResultT]]
-    ) -> Callable[ParametersT, CoroutineType[Any, Any, ResultT]]:
-        @wraps(operation)
-        async def observed(*args: ParametersT.args, **kwargs: ParametersT.kwargs) -> ResultT:
-            try:
-                return await operation(*args, **kwargs)
-            except Exception as exc:
-                self.save_error = exc
-                raise
-
-        return observed
 
 
 class StoreProvider(ABC, Generic[StoreT]):

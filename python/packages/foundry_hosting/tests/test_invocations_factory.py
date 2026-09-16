@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
 from agent_framework import (
     Agent,
@@ -29,7 +30,6 @@ from agent_framework import (
     SessionStore,
     WorkflowAgent,
     WorkflowBuilder,
-    WorkflowCheckpointException,
     WorkflowContext,
     WorkflowEvent,
     handler,
@@ -607,6 +607,48 @@ class _TranscriptClient(BaseChatClient):
         return ResponseStream(updates(), finalizer=ChatResponse.from_updates) if stream else response()
 
 
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("use_agent_executor", [False, True])
+async def test_http_sessions_use_independent_workflow_state(stream: bool, use_agent_executor: bool) -> None:
+    stores = _Stores()
+    transcripts: list[list[str]] = []
+    factory_scopes: list[tuple[str | None, str | None]] = []
+
+    class Remember(Executor):
+        @handler
+        async def remember(self, messages: list[Message], ctx: WorkflowContext[Never, str]) -> None:  # type: ignore[valid-type]
+            previous = ctx.get_state("previous")
+            ctx.set_state("previous", messages[0].text)
+            await ctx.yield_output(json.dumps(previous))
+
+    def factory() -> WorkflowAgent:
+        context = get_request_context()
+        factory_scopes.append((context.user_id, context.session_id))
+        executor = (
+            AgentExecutor(Agent(client=_TranscriptClient(transcripts), name="inner"), id="inner")
+            if use_agent_executor
+            else Remember(id="remember")
+        )
+        return WorkflowBuilder(name="http-state", start_executor=executor).build().as_agent()
+
+    server = stores.server(factory)
+    server.config.is_hosted = True
+    scopes = [("user-a", "session-a"), ("user-b", "session-b"), ("user-a", "session-c")]
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as client:
+        for (user, session), text in zip(scopes, ("first", "second", "independent"), strict=True):
+            response = await client.post(
+                "/invocations",
+                json={"message": text, "stream": stream},
+                params={"agent_session_id": session},
+                headers={"x-agent-user-id": user, "x-agent-foundry-call-id": f"call-{session}"},
+            )
+            assert response.status_code == 200, response.text
+            assert response.text == ("recorded" if use_agent_executor else "null")
+            if use_agent_executor:
+                assert transcripts[-1] == [text]
+    assert factory_scopes == scopes
+
+
 class _SnapshotSessions(SessionStore):
     def __init__(self) -> None:
         self.snapshots: dict[str, str] = {}
@@ -1095,10 +1137,22 @@ async def test_invalid_request_does_not_construct_agent(monkeypatch: pytest.Monk
     factory.assert_not_called()
 
 
-async def test_checkpoint_failure_closes_workflow_owner_and_preserves_attempt(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("functional", [False, True])
+@pytest.mark.parametrize("stream", [False, True])
+async def test_checkpoint_save_failure_preserves_runtime_behavior_and_closes_owner(
+    functional: bool, stream: bool, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
     events: list[str] = []
 
     class OwnedWorkflow(WorkflowAgent):
+        async def __aenter__(self) -> Self:
+            events.append("enter")
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            events.append("exit")
+
+    class OwnedFunctional(FunctionalWorkflowAgent):
         async def __aenter__(self) -> Self:
             events.append("enter")
             return self
@@ -1111,21 +1165,28 @@ async def test_checkpoint_failure_closes_workflow_owner_and_preserves_attempt(mo
     monkeypatch.setattr(storage, "save", AsyncMock(side_effect=RuntimeError("checkpoint failed")))
     stores.checkpoint_provider.get_store.side_effect = None
     stores.checkpoint_provider.get_store.return_value = storage
-    server = stores.server(lambda: OwnedWorkflow(_graph().workflow))
-    with pytest.raises(RuntimeError, match="checkpoint failed"):
-        await _invoke(server)
+    server = stores.server(
+        lambda: OwnedFunctional(_functional.build()) if functional else OwnedWorkflow(_graph().workflow)
+    )
+    if functional:
+        with pytest.raises(RuntimeError, match="checkpoint failed"):
+            await _invoke(server, stream=stream)
+    else:
+        assert await _invoke(server, stream=stream) == "1:hello"
+        assert "does not fail the workflow run" in caplog.text
     with pytest.raises(RuntimeError, match="missing its required checkpoint"):
-        await _invoke(server)
+        await _invoke(server, stream=stream)
     assert events == ["enter", "exit", "enter", "exit"]
     assert not server._scope_locks._entries
 
 
 @pytest.mark.parametrize("stream", [False, True])
-async def test_checkpoint_preparation_failure_rejects_older_checkpoint_and_fresh_host_retry(stream: bool) -> None:
+async def test_checkpoint_preparation_failure_preserves_graph_runtime_behavior(
+    stream: bool, caplog: pytest.LogCaptureFixture
+) -> None:
     stores = _Stores()
     calls: list[str] = []
     snapshots: list[int] = []
-    agents: list[WorkflowAgent] = []
 
     class FailingCheckpoint(_Counter):
         @handler
@@ -1144,13 +1205,11 @@ async def test_checkpoint_preparation_failure_rejects_older_checkpoint_and_fresh
             return await super().on_checkpoint_save()
 
     def factory() -> WorkflowAgent:
-        agent = WorkflowBuilder(name="checkpoint-preparation", start_executor=FailingCheckpoint()).build().as_agent()
-        agents.append(agent)
-        return agent
+        return WorkflowBuilder(name="checkpoint-preparation", start_executor=FailingCheckpoint()).build().as_agent()
 
-    first = stores.server(factory)
-    with pytest.raises(WorkflowCheckpointException, match="Executor counter on_checkpoint_save failed"):
-        await _invoke(first, stream=stream)
+    server = stores.server(factory)
+    assert await _invoke(server, stream=stream) == "1:hello"
+    assert "does not fail the workflow run" in caplog.text
     storage_id, storage = next(iter(stores.checkpoints.items()))
     checkpoint = await storage.get_latest(workflow_name="checkpoint-preparation")
     assert checkpoint is not None
@@ -1158,14 +1217,7 @@ async def test_checkpoint_preparation_failure_rejects_older_checkpoint_and_fresh
     assert 0 in snapshots and 1 in snapshots
     session = await stores.sessions.get(storage_id)
     assert session is not None
-    assert session.state["_foundry_invocations_workflow"]["checkpoint_failed"] is True
-
-    second = stores.server(factory)
-    with pytest.raises(RuntimeError, match="incomplete checkpoint persistence"):
-        await _invoke(second, "must-not-run", stream=stream)
+    assert session.state["_foundry_invocations_workflow"]["completed"] is True
+    assert "checkpoint_failed" not in session.state["_foundry_invocations_workflow"]
     assert calls == ["hello"]
-    assert len(agents) == 2
-    assert agents[0] is not agents[1]
-    assert agents[0].workflow is not agents[1].workflow
-    assert not first._scope_locks._entries
-    assert not second._scope_locks._entries
+    assert not server._scope_locks._entries
