@@ -365,6 +365,221 @@ public sealed class FunctionInvocationDelegatingAgentTests
     }
 
     [Theory]
+    [InlineData(false, "None", false)]
+    [InlineData(true, "None", false)]
+    [InlineData(false, "None", true)]
+    [InlineData(true, "None", true)]
+    [InlineData(false, "RequiredTool", false)]
+    [InlineData(true, "RequiredTool", false)]
+    [InlineData(false, "RequiredTool", true)]
+    [InlineData(true, "RequiredTool", true)]
+    [InlineData(false, "ConversationId", false)]
+    [InlineData(true, "ConversationId", false)]
+    [InlineData(false, "ConversationId", true)]
+    [InlineData(true, "ConversationId", true)]
+    public async Task RunAsync_InterIterationOptionsClone_PreservesDynamicFunctionMiddlewareAsync(
+        bool streaming, string cloneTrigger, bool replaceTools)
+        => await VerifyInterIterationOptionsCloneAsync(streaming, cloneTrigger, replaceTools);
+
+    [Theory]
+    [InlineData(false, "RequiredTool")]
+    [InlineData(true, "RequiredTool")]
+    [InlineData(false, "ConversationId")]
+    [InlineData(true, "ConversationId")]
+    public async Task RunAsync_InterIterationOptionsClone_AllowedFunctionExecutesAsync(bool streaming, string cloneTrigger)
+        => await VerifyInterIterationOptionsCloneAsync(streaming, cloneTrigger, replaceTools: true, allowExecution: true);
+
+    [Theory]
+    [InlineData(false, "RequiredTool")]
+    [InlineData(true, "RequiredTool")]
+    [InlineData(false, "ConversationId")]
+    [InlineData(true, "ConversationId")]
+    public async Task RunAsync_InterIterationOptionsClone_LoaderFailurePreservesMiddlewareAsync(bool streaming, string cloneTrigger)
+        => await VerifyInterIterationOptionsCloneAsync(streaming, cloneTrigger, replaceTools: true, loaderThrows: true);
+
+    private static async Task VerifyInterIterationOptionsCloneAsync(
+        bool streaming, string cloneTrigger, bool replaceTools, bool allowExecution = false, bool loaderThrows = false)
+    {
+        // Arrange
+        var invocations = new List<string>();
+        var invocationCount = 0;
+        var loaderFailure = new InvalidOperationException("Loader failed after updating tools");
+        ChatOptions? initialOptions = null;
+        var function = AIFunctionFactory.Create(() =>
+        {
+            invocationCount++;
+            return "Function result";
+        }, "DynamicFunction");
+        var secondLoader = AIFunctionFactory.Create(() =>
+        {
+            var options = FunctionInvokingChatClient.CurrentContext!.Options!;
+            if (cloneTrigger == "None")
+            {
+                Assert.Same(initialOptions, options);
+            }
+            else
+            {
+                Assert.NotSame(initialOptions, options);
+            }
+
+            if (replaceTools)
+            {
+                options.Tools = [function];
+            }
+            else
+            {
+                options.Tools!.Add(function);
+            }
+
+            if (loaderThrows)
+            {
+                throw loaderFailure;
+            }
+
+            return "Function added";
+        }, "SecondLoader");
+        var firstLoader = AIFunctionFactory.Create(() =>
+        {
+            initialOptions = FunctionInvokingChatClient.CurrentContext!.Options!;
+            initialOptions.Tools!.Add(secondLoader);
+            return "Second loader added";
+        }, "FirstLoader");
+        var conversationId = cloneTrigger == "ConversationId" ? "conversation" : null;
+        var responses = new Queue<ChatResponse>(
+        [
+            new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("first", firstLoader.Name)])) { ConversationId = conversationId },
+            new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("second", secondLoader.Name)])) { ConversationId = conversationId },
+            new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("invoke", function.Name)])) { ConversationId = conversationId },
+            new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("invoke-again", function.Name)])) { ConversationId = conversationId },
+            new(new ChatMessage(ChatRole.Assistant, "Complete")) { ConversationId = conversationId },
+        ]);
+        using var client = new FunctionInvokingChatClient(CreateMockChatClient(responses).Object)
+        {
+            MaximumConsecutiveErrorsPerRequest = 1,
+        };
+        var innerAgent = new ChatClientAgent(client, tools: [firstLoader]);
+        var first = innerAgent.AsBuilder().Use(async (agent, context, next, cancellationToken) =>
+        {
+            invocations.Add($"First-Pre-{context.Function.Name}");
+            var result = await next(context, cancellationToken);
+            invocations.Add($"First-Post-{context.Function.Name}");
+            return result;
+        }).Build();
+        var decorated = first.AsBuilder().Use(async (agent, context, next, cancellationToken) =>
+        {
+            invocations.Add($"Second-Pre-{context.Function.Name}");
+            var result = context.Function.Name == function.Name && !allowExecution
+                ? "Handled by middleware"
+                : await next(context, cancellationToken);
+            invocations.Add($"Second-Post-{context.Function.Name}");
+            return result;
+        }).Build();
+        var options = new ChatClientAgentRunOptions(new ChatOptions
+        {
+            ToolMode = cloneTrigger == "RequiredTool" ? ChatToolMode.RequireAny : null,
+        });
+
+        // Act
+        var response = streaming
+            ? await decorated.RunStreamingAsync("Run the functions", options: options).ToAgentResponseAsync()
+            : await decorated.RunAsync("Run the functions", options: options);
+
+        // Assert
+        Assert.Equal(new[] { firstLoader.Name, secondLoader.Name, function.Name, function.Name }.SelectMany(name =>
+            loaderThrows && name == secondLoader.Name
+                ? new[] { $"First-Pre-{name}", $"Second-Pre-{name}" }
+                : new[] { $"First-Pre-{name}", $"Second-Pre-{name}", $"Second-Post-{name}", $"First-Post-{name}" }), invocations);
+        Assert.Equal(allowExecution ? 2 : 0, invocationCount);
+        var results = response.Messages.SelectMany(m => m.Contents).OfType<FunctionResultContent>().ToArray();
+        foreach (var callId in new[] { "invoke", "invoke-again" })
+        {
+            var result = Assert.Single(results, result => result.CallId == callId).Result;
+            if (allowExecution)
+            {
+                Assert.Equal("Function result", Assert.IsType<JsonElement>(result).GetString());
+            }
+            else
+            {
+                Assert.Equal("Handled by middleware", result);
+            }
+        }
+
+        Assert.Same(loaderThrows ? loaderFailure : null, Assert.Single(results, result => result.CallId == "second").Exception);
+        Assert.Empty(responses);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task RunAsync_InterIterationOptionsClone_PreservesApprovalAsync(bool streaming, bool approved)
+    {
+        // Arrange
+        var invocationCount = 0;
+        var middlewareInvocations = new List<string>();
+        ChatOptions? initialOptions = null;
+        var function = new ApprovalRequiredAIFunction(AIFunctionFactory.Create(() =>
+        {
+            invocationCount++;
+            return "Function result";
+        }, "DynamicFunction"));
+        var secondLoader = AIFunctionFactory.Create(() =>
+        {
+            var options = FunctionInvokingChatClient.CurrentContext!.Options!;
+            Assert.NotSame(initialOptions, options);
+            options.Tools!.Add(function);
+            return "Function added";
+        }, "SecondLoader");
+        var firstLoader = AIFunctionFactory.Create(() =>
+        {
+            initialOptions = FunctionInvokingChatClient.CurrentContext!.Options!;
+            initialOptions.Tools!.Add(secondLoader);
+            return "Second loader added";
+        }, "FirstLoader");
+        var responses = new Queue<ChatResponse>(
+        [
+            new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("first", firstLoader.Name)])),
+            new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("second", secondLoader.Name)])),
+            new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("invoke", function.Name)])),
+        ]);
+        var agent = new ChatClientAgent(CreateMockChatClient(responses).Object, tools: [firstLoader]).AsBuilder()
+            .Use((agent, context, next, cancellationToken) =>
+            {
+                middlewareInvocations.Add(context.Function.Name);
+                return next(context, cancellationToken);
+            }).Build();
+        var session = await agent.CreateSessionAsync();
+        var runOptions = new ChatClientAgentRunOptions(new ChatOptions { ToolMode = ChatToolMode.RequireAny });
+
+        // Act
+        var response = streaming
+            ? await agent.RunStreamingAsync("Run the functions", session, runOptions).ToAgentResponseAsync()
+            : await agent.RunAsync("Run the functions", session, runOptions);
+
+        // Assert
+        var request = Assert.Single(response.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>());
+        Assert.Equal(0, invocationCount);
+        Assert.Equal([firstLoader.Name, secondLoader.Name], middlewareInvocations);
+        Assert.Empty(responses);
+
+        // Act
+        responses.Enqueue(new(new ChatMessage(ChatRole.Assistant, "Complete")));
+        var approval = new ChatMessage(ChatRole.User, [request.CreateResponse(approved)]);
+        var resumedOptions = new ChatClientAgentRunOptions(new ChatOptions { Tools = [function] });
+        var resumedResponse = streaming
+            ? await agent.RunStreamingAsync(approval, session, resumedOptions).ToAgentResponseAsync()
+            : await agent.RunAsync(approval, session, resumedOptions);
+
+        // Assert
+        Assert.Equal(approved ? 1 : 0, invocationCount);
+        Assert.Equal(approved ? [firstLoader.Name, secondLoader.Name, function.Name] : new[] { firstLoader.Name, secondLoader.Name }, middlewareInvocations);
+        Assert.Single(resumedResponse.Messages.SelectMany(m => m.Contents)
+            .OfType<FunctionResultContent>(), result => result.CallId == "invoke");
+        Assert.Empty(responses);
+    }
+
+    [Theory]
     [InlineData(false, false)]
     [InlineData(true, false)]
     [InlineData(false, true)]

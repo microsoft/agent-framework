@@ -128,23 +128,23 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
 
     private sealed class MiddlewareEnabledTools : Collection<AITool>
     {
-        private readonly FunctionInvocationDelegatingAgent[] _middleware;
-
         internal MiddlewareEnabledTools(IList<AITool> tools, FunctionInvocationDelegatingAgent[] middleware)
         {
-            this._middleware = middleware;
+            this.MiddlewareChain = middleware;
             foreach (var tool in tools)
             {
                 this.Add(tool);
             }
         }
 
-        internal void ApplyTo(ChatOptions options)
+        internal FunctionInvocationDelegatingAgent[] MiddlewareChain { get; }
+
+        internal static void ApplyTo(ChatOptions options, FunctionInvocationDelegatingAgent[] middleware)
         {
             if (options.Tools is { } tools &&
-                (tools is not MiddlewareEnabledTools existing || !ReferenceEquals(existing._middleware, this._middleware)))
+                (tools is not MiddlewareEnabledTools existing || !ReferenceEquals(existing.MiddlewareChain, middleware)))
             {
-                options.Tools = new MiddlewareEnabledTools(tools, this._middleware);
+                options.Tools = new MiddlewareEnabledTools(tools, middleware);
             }
         }
 
@@ -156,9 +156,9 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
         {
             if (tool is AIFunction function)
             {
-                foreach (var middleware in this._middleware)
+                foreach (var middleware in this.MiddlewareChain)
                 {
-                    function = MiddlewareEnabledFunction.Wrap(function, middleware);
+                    function = MiddlewareEnabledFunction.Wrap(function, middleware, this.MiddlewareChain);
                 }
 
                 return function;
@@ -168,11 +168,15 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
         }
     }
 
-    private sealed class MiddlewareEnabledFunction(AIFunction innerFunction, FunctionInvocationDelegatingAgent middleware) : DelegatingAIFunction(innerFunction)
+    private sealed class MiddlewareEnabledFunction(
+        AIFunction innerFunction,
+        FunctionInvocationDelegatingAgent middleware,
+        FunctionInvocationDelegatingAgent[] middlewareChain) : DelegatingAIFunction(innerFunction)
     {
         private readonly FunctionInvocationDelegatingAgent _middleware = middleware;
+        private readonly FunctionInvocationDelegatingAgent[] _middlewareChain = middlewareChain;
 
-        internal static AIFunction Wrap(AIFunction function, FunctionInvocationDelegatingAgent middleware)
+        internal static AIFunction Wrap(AIFunction function, FunctionInvocationDelegatingAgent middleware, FunctionInvocationDelegatingAgent[] middlewareChain)
         {
             for (var existing = function.GetService<MiddlewareEnabledFunction>();
                  existing is not null;
@@ -184,7 +188,7 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
                 }
             }
 
-            return new MiddlewareEnabledFunction(function, middleware);
+            return new MiddlewareEnabledFunction(function, middleware, middlewareChain);
         }
 
         protected override async ValueTask<object?> InvokeCoreAsync(AIFunctionArguments arguments, CancellationToken cancellationToken)
@@ -197,7 +201,8 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
                     CallContent = new(string.Empty, this.InnerFunction.Name, new Dictionary<string, object?>(arguments)),
                 };
 
-            var tools = context.Options?.Tools as MiddlewareEnabledTools;
+            // Function wrappers survive ChatOptions.Clone even when the middleware-aware collection does not.
+            var middlewareChain = (context.Options?.Tools as MiddlewareEnabledTools)?.MiddlewareChain ?? this._middlewareChain;
             try
             {
                 return await this._middleware._delegateFunc(this._middleware.InnerAgent, context, CoreLogicAsync, cancellationToken).ConfigureAwait(false);
@@ -205,9 +210,9 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
             finally
             {
                 // A function or middleware can replace the entire collection during invocation.
-                if (tools is not null && context.Options is { } options)
+                if (context.Options is { } options)
                 {
-                    tools.ApplyTo(options);
+                    MiddlewareEnabledTools.ApplyTo(options, middlewareChain);
                 }
             }
 
