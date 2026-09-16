@@ -1,4 +1,9 @@
-import { AgentInvalidResponseError, defineTool } from "@microsoft/agent-framework-core";
+import {
+  AgentInvalidRequestError,
+  AgentInvalidResponseError,
+  Message,
+  defineTool,
+} from "@microsoft/agent-framework-core";
 import OpenAI from "openai";
 import type {
   ChatCompletion,
@@ -68,6 +73,38 @@ function mockOpenAI(responses: Array<ChatCompletion | ChatCompletionChunk[]>): {
 }
 
 describe("OpenAIChatCompletionClient", () => {
+  describe.each([false, true])("reasoning input (stream: %s)", (stream) => {
+    it.each([
+      { role: "user", mixed: false },
+      { role: "user", mixed: true },
+      { role: "assistant", mixed: false },
+      { role: "assistant", mixed: true },
+    ] as const)("rejects $role reasoning input before sending a request (mixed: $mixed)", async ({ role, mixed }) => {
+      const { client, create } = mockOpenAI([
+        stream
+          ? [chunk("response-1", { role: "assistant", content: "done" }, "stop")]
+          : completion("response-1", "done"),
+      ]);
+      const chatClient = new OpenAIChatCompletionClient({ client, model: "gpt-test" });
+      const message = new Message({
+        role,
+        contents: [
+          { type: "text_reasoning", text: "Reasoning that must not be silently removed." },
+          ...(mixed ? ["Visible text"] : []),
+        ],
+      });
+      const originalContents = structuredClone(message.contents);
+      const response = stream
+        ? chatClient.getResponse(message, { stream: true }).getFinalResponse()
+        : chatClient.getResponse(message);
+
+      await expect(response).rejects.toThrow(AgentInvalidRequestError);
+      await expect(response).rejects.toThrow("text_reasoning");
+      expect(create).not.toHaveBeenCalled();
+      expect(message.contents).toEqual(originalContents);
+    });
+  });
+
   it("maps tool calls and sends correlated results on the next turn", async () => {
     const { client, create } = mockOpenAI([
       completion("response-1", null, [
@@ -152,6 +189,91 @@ describe("OpenAIChatCompletionClient", () => {
     expect(updates[0]?.contents[0]?.id).toBe("openai:response-1:choice:0:tool:0");
     expect(response.messages.map((message) => message.role)).toEqual(["assistant", "tool", "assistant"]);
     expect(response.text).toBe("Rainy");
+  });
+
+  it.each([
+    { name: "absent fragments", fragments: undefined },
+    { name: "empty fragments", fragments: { name: "", arguments: "" } },
+    { name: "only a name", fragments: { name: "side_effect" } },
+    { name: "only arguments", fragments: { arguments: "{}" } },
+  ])("rejects an ID-less streamed tool entry with $name", async ({ fragments }) => {
+    const { client, create } = mockOpenAI([
+      [
+        chunk(
+          "response-1",
+          {
+            role: "assistant",
+            tool_calls: [
+              {
+                index: 0,
+                type: "function",
+                ...(fragments === undefined ? {} : { function: fragments }),
+              },
+              { index: 1, type: "function", id: "valid-call", function: { name: "side_effect", arguments: "{}" } },
+            ],
+          },
+          "tool_calls",
+        ),
+      ],
+      [chunk("response-2", { role: "assistant", content: "done" }, "stop")],
+    ]);
+    const execute = vi.fn(() => "complete");
+    const sideEffect = defineTool({
+      name: "side_effect",
+      parameters: { type: "object", additionalProperties: false },
+      execute,
+    });
+    const chatClient = new OpenAIChatCompletionClient({ client, model: "gpt-test" });
+    const stream = chatClient.getResponse("request", { stream: true, options: { tools: [sideEffect] } });
+    const consume = async () => {
+      for await (const _update of stream) {
+        // Partial updates must not authorize execution if any call is malformed.
+      }
+    };
+
+    await expect(consume()).rejects.toThrow(AgentInvalidResponseError);
+    await expect(stream.getFinalResponse()).rejects.toThrow("OpenAI streamed a tool call without an id.");
+    expect(execute).not.toHaveBeenCalled();
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts an initially empty tool entry when its ID arrives in a later chunk", async () => {
+    const { client, create } = mockOpenAI([
+      [
+        chunk("response-1", { role: "assistant", tool_calls: [{ index: 0, type: "function" }] }),
+        chunk("response-1", { tool_calls: [{ index: 0, function: { name: "side_", arguments: "{" } }] }),
+        chunk(
+          "response-1",
+          { tool_calls: [{ index: 0, id: "call-1", function: { name: "effect", arguments: "}" } }] },
+          "tool_calls",
+        ),
+      ],
+      [chunk("response-2", { role: "assistant", content: "done" }, "stop")],
+    ]);
+    const execute = vi.fn(() => "complete");
+    const sideEffect = defineTool({
+      name: "side_effect",
+      parameters: { type: "object", additionalProperties: false },
+      execute,
+    });
+    const chatClient = new OpenAIChatCompletionClient({ client, model: "gpt-test" });
+    const response = await chatClient
+      .getResponse("request", { stream: true, options: { tools: [sideEffect] } })
+      .getFinalResponse();
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(response.messages[0]?.contents).toEqual([
+      {
+        type: "function_call",
+        id: "openai:response-1:choice:0:tool:0",
+        callId: "call-1",
+        name: "side_effect",
+        arguments: "{}",
+      },
+    ]);
+    expect(response.messages.map((message) => message.role)).toEqual(["assistant", "tool", "assistant"]);
+    expect(response.text).toBe("done");
   });
 
   it.each([

@@ -84,6 +84,10 @@ function serializeCall(call: FunctionCallContent) {
 }
 
 function serializeMessage(message: Message): ChatCompletionMessageParam[] {
+  if (message.contents.some((content) => content.type === "text_reasoning")) {
+    throw new AgentInvalidRequestError("This OpenAI Chat Completions adapter does not support text_reasoning input.");
+  }
+
   const calls = message.contents.filter((content): content is FunctionCallContent => content.type === "function_call");
   const results = message.contents.filter(
     (content): content is FunctionResultContent => content.type === "function_result",
@@ -329,9 +333,7 @@ export class OpenAIChatCompletionClient extends BaseChatClient<OpenAIChatComplet
       throw new AgentInvalidResponseError("OpenAI returned no completion choices.");
     }
 
-    const unresolved = [...pendingCalls.values()].find(
-      (pending) => pending.id === undefined && (pending.name.length > 0 || pending.argumentsValue.length > 0),
-    );
+    const unresolved = [...pendingCalls.values()].find((pending) => pending.id === undefined);
     if (unresolved !== undefined) {
       throw new AgentInvalidResponseError("OpenAI streamed a tool call without an id.");
     }
