@@ -3300,6 +3300,171 @@ async def test_function_invocation_config_terminate_on_unknown_calls_true(chat_c
     assert exec_counter == 0
 
 
+@pytest.mark.parametrize("unknown_first", [True, False], ids=["unknown-first", "unknown-last"])
+async def test_mixed_batch_fatal_unknown_precedes_every_pause(
+    chat_client_base: SupportsChatGetResponse,
+    unknown_first: bool,
+) -> None:
+    """A fatal unknown call must abort the complete batch before approval or execution."""
+    from agent_framework import FunctionTool
+
+    approval_calls = 0
+    safe_calls = 0
+
+    @tool(name="approval_func", approval_mode="always_require")
+    def approval_func() -> str:
+        nonlocal approval_calls
+        approval_calls += 1
+        return "approved"
+
+    @tool(name="safe_func", approval_mode="never_require")
+    def safe_func() -> str:
+        nonlocal safe_calls
+        safe_calls += 1
+        return "safe"
+
+    host_func = FunctionTool(name="host_func", func=None, description="Handled by the caller")
+    unknown_call = Content.from_function_call(call_id="unknown", name="unknown_func", arguments={})
+    known_calls = [
+        Content.from_function_call(call_id="host", name="host_func", arguments={}),
+        Content.from_function_call(call_id="approval", name="approval_func", arguments={}),
+        Content.from_function_call(call_id="safe", name="safe_func", arguments={}),
+    ]
+    contents = [unknown_call, *known_calls] if unknown_first else [*known_calls, unknown_call]
+    chat_client_base.function_invocation_configuration["terminate_on_unknown_calls"] = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=contents)),
+    ]
+
+    with pytest.raises(KeyError, match='Requested function "unknown_func" not found'):
+        await chat_client_base.get_response(
+            [Message(role="user", contents=["hello"])],
+            options={"tool_choice": "auto", "tools": [host_func, approval_func, safe_func]},
+        )
+
+    assert approval_calls == safe_calls == 0
+
+
+@pytest.mark.parametrize("approval_first", [True, False], ids=["approval-first", "host-first"])
+async def test_mixed_batch_returns_approval_and_host_pause_in_model_order(approval_first: bool) -> None:
+    """Approval and Host-owned calls should pause together without executing."""
+    from agent_framework import FunctionTool
+    from agent_framework._tools import _try_execute_function_call_groups
+
+    approval_calls = 0
+
+    @tool(name="approval_func", approval_mode="always_require")
+    def approval_func() -> str:
+        nonlocal approval_calls
+        approval_calls += 1
+        return "approved"
+
+    host_func = FunctionTool(name="host_func", func=None, description="Handled by the caller")
+    approval_call = Content.from_function_call(
+        call_id="approval",
+        name="approval_func",
+        arguments={},
+        id="approval-occurrence",
+    )
+    host_call = Content.from_function_call(
+        call_id="host",
+        name="host_func",
+        arguments={},
+        id="host-occurrence",
+    )
+    calls = [approval_call, host_call] if approval_first else [host_call, approval_call]
+
+    result_groups, should_terminate = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=calls,
+        tools=[approval_func, host_func],
+        config={},
+        invocation_session=AgentSession(),
+    )
+
+    results = [content for group in result_groups for content in group]
+    expected_types = (
+        ["function_approval_request", "function_call"]
+        if approval_first
+        else ["function_call", "function_approval_request"]
+    )
+    assert [content.type for content in results] == expected_types
+    assert next(content for content in results if content.type == "function_call").user_input_request is True
+    assert approval_calls == 0
+    assert should_terminate is False
+
+
+async def test_mixed_batch_requires_complete_responses_before_execution(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """A partial mixed response must fail closed; a complete response executes once."""
+    from agent_framework import FunctionTool
+
+    approval_arguments: list[str] = []
+
+    @tool(name="approval_func", approval_mode="always_require")
+    def approval_func(value: str) -> str:
+        approval_arguments.append(value)
+        return f"approved {value}"
+
+    host_func = FunctionTool(name="host_func", func=None, description="Handled by the caller")
+    agent = Agent(client=chat_client_base, tools=[approval_func, host_func])
+    session = AgentSession()
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="host", name="host_func", arguments={}),
+                    Content.from_function_call(
+                        call_id="approval",
+                        name="approval_func",
+                        arguments={"value": "expected"},
+                    ),
+                ],
+            )
+        ),
+    ]
+
+    first_response = await agent.run("run both", session=session)
+    approval_request = next(
+        content
+        for message in first_response.messages
+        for content in message.contents
+        if content.type == "function_approval_request"
+    )
+    host_request = next(
+        content
+        for message in first_response.messages
+        for content in message.contents
+        if content.type == "function_call" and content.user_input_request
+    )
+
+    with pytest.raises(RuntimeError, match="requires responses for every approval and Host-owned request"):
+        await agent.run(approval_request.to_function_approval_response(approved=True), session=session)
+    assert approval_arguments == []
+
+    assert host_request.call_id is not None
+    host_result = Content.from_function_result(call_id=host_request.call_id, result="host result")
+    host_result.id = host_request.id
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+    final_response = await agent.run(
+        Message(
+            role="user",
+            contents=[
+                approval_request.to_function_approval_response(approved=True),
+                host_result,
+            ],
+        ),
+        session=session,
+    )
+
+    assert final_response.text == "done"
+    assert approval_arguments == ["expected"]
+
+
 async def test_function_invocation_config_additional_tools(chat_client_base: SupportsChatGetResponse):
     """Test that additional_tools are available but treated as declaration_only."""
     exec_counter_visible = 0

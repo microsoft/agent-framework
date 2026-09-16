@@ -2172,6 +2172,15 @@ def _underlying_function_call(content: Content) -> Content:
     return content
 
 
+def _as_user_input_pause(function_call: Content) -> Content:
+    """Copy a Host-owned call and mark it as requiring caller input."""
+    user_input_call = copy.copy(function_call)
+    user_input_call.user_input_request = True
+    if user_input_call.id is None:
+        user_input_call.id = user_input_call.call_id
+    return user_input_call
+
+
 async def _execute_single_function_call(
     function_call: Content,
     *,
@@ -2186,6 +2195,12 @@ async def _execute_single_function_call(
     from ._middleware import MiddlewareTermination
     from ._sessions import _suspend_run_persistence_gate  # pyright: ignore[reportPrivateUsage]
     from ._types import Content
+
+    source_function_call = _underlying_function_call(function_call)
+    source_tool = tool_map.get(source_function_call.name) if source_function_call.name is not None else None
+    additional_tool_names = {tool.name for tool in config.get("additional_tools") or []}
+    if (source_tool is not None and source_tool.declaration_only) or source_function_call.name in additional_tool_names:
+        return [_as_user_input_pause(source_function_call)], False
 
     try:
         # A run-persistence gate defers only the gated run's own persistence; nested
@@ -2275,22 +2290,27 @@ async def _try_execute_function_call_groups(
     # The live tools list (when tools is the run-local list) is exposed on the
     # FunctionInvocationContext so tools can add/remove tools during the run.
     live_tools: list[ToolTypes] | None = cast("list[ToolTypes]", tools) if isinstance(tools, list) else None
-    approval_tool_names = {tool_name for tool_name, tool in tool_map.items() if tool.approval_mode == "always_require"}
+    additional_tools = tuple(config.get("additional_tools") or ())
+    approval_tool_names = {
+        tool_name for tool_name, tool in tool_map.items() if tool.approval_mode == "always_require"
+    } | {tool.name for tool in additional_tools if tool.approval_mode == "always_require"}
     logger.debug(
         "_try_execute_function_calls: tool_map keys=%s, approval_tools=%s",
         list(tool_map.keys()),
         approval_tool_names,
     )
     declaration_only_tool_names = {tool_name for tool_name, tool in tool_map.items() if tool.declaration_only}
-    additional_tool_names = {tool.name for tool in config.get("additional_tools") or []}
+    additional_tool_names = {tool.name for tool in additional_tools}
     actionable_calls = [
         function_call for function_call in function_calls if _is_actionable_function_call(function_call)
     ]
 
-    # Classify the entire batch first: any required user interaction pauses the batch before execution.
+    # Classify the complete batch before choosing a control-flow path. Fatal
+    # validation wins over every pause so no sibling can hide an invalid call.
     requires_approval = False
     has_declaration_only_call = False
-    # A user-input pause takes precedence over unknown-call termination in mixed batches.
+    unknown_call_found = False
+    unknown_call_name: str | None = None
     for function_call in actionable_calls:
         function_name = function_call.name
         logger.debug(
@@ -2302,40 +2322,49 @@ async def _try_execute_function_call_groups(
         if function_name in approval_tool_names:
             logger.debug("Approval needed for function: %s", function_name)
             requires_approval = True
-            break
+            continue
         if function_name in declaration_only_tool_names or function_name in additional_tool_names:
             has_declaration_only_call = True
-            break
-        if config.get("terminate_on_unknown_calls", False) and function_name not in tool_map:
-            raise KeyError(f'Error: Requested function "{function_name}" not found.')
+            continue
+        if not unknown_call_found and config.get("terminate_on_unknown_calls", False) and function_name not in tool_map:
+            unknown_call_found = True
+            unknown_call_name = function_name
+    if unknown_call_found:
+        raise KeyError(f'Error: Requested function "{unknown_call_name}" not found.')
     if requires_approval:
-        # Surface only the approvals the host must decide; session-backed safe siblings wait for that resume.
-        # approval can only be needed for Function Call Content, not Approval Responses.
+        # Surface approval and Host-owned pauses in model order. Session-backed
+        # executable siblings remain hidden until the approval batch resumes.
         logger.debug("Returning visible function_approval_request contents and storing already-approved requests")
         visible_requests: list[Content] = []
         already_approved_requests: list[Content] = []
+        pause_groups: list[list[Content]] = []
         for function_call in function_calls:
             if function_call.type != "function_call":
+                continue
+            tool_name = function_call.name
+            if (
+                tool_name is not None
+                and tool_name not in approval_tool_names
+                and (tool_name in declaration_only_tool_names or tool_name in additional_tool_names)
+            ):
+                pause_groups.append([_as_user_input_pause(function_call)])
                 continue
             approval_request = Content.from_function_approval_request(
                 id=function_call.id or function_call.call_id,  # type: ignore[arg-type]
                 function_call=function_call,
             )
-            tool_name = function_call.name
             if tool_name is None:
                 visible_requests.append(approval_request)
+                pause_groups.append([approval_request])
                 continue
             tool = tool_map.get(tool_name)
-            if (
-                tool_name in approval_tool_names
-                or tool is None
-                or tool_name in declaration_only_tool_names
-                or tool_name in additional_tool_names
-            ):
+            if tool_name in approval_tool_names or tool is None:
                 visible_requests.append(approval_request)
+                pause_groups.append([approval_request])
                 continue
             if not _has_authoritative_approval_session(invocation_session):
                 visible_requests.append(approval_request)
+                pause_groups.append([approval_request])
                 continue
             already_approved_requests.append(approval_request)
         _store_already_approved_approval_requests(
@@ -2344,7 +2373,7 @@ async def _try_execute_function_call_groups(
             already_approved_requests,
         )
         _store_pending_approval_requests(invocation_session, visible_requests)
-        return [[request] for request in visible_requests], False
+        return pause_groups, False
     if has_declaration_only_call:
         # Declaration-only calls are returned as user input rather than executed locally.
         # return the declaration only tools to the user, since we cannot execute them.
@@ -2352,10 +2381,7 @@ async def _try_execute_function_call_groups(
         declaration_only_calls: list[Content] = []
         for function_call in function_calls:
             if function_call.type == "function_call":
-                function_call.user_input_request = True
-                if function_call.id is None:
-                    function_call.id = function_call.call_id
-                declaration_only_calls.append(function_call)
+                declaration_only_calls.append(_as_user_input_pause(function_call))
         return [[function_call] for function_call in declaration_only_calls], False
 
     # Only a fully executable batch reaches this point; run calls concurrently but retain per-call result groups.
@@ -2902,8 +2928,167 @@ def _pop_already_approved_approval_responses(
     return responses
 
 
+def _mixed_pause_batch_status(
+    messages: list[Message],
+    invocation_session: AgentSession | None,
+) -> tuple[bool, set[int]]:
+    """Validate a mixed approval/Host batch and order its complete responses."""
+    from ._types import Message
+
+    approval_requests: list[Content] = []
+    host_requests: list[Content] = []
+    approval_responses: list[Content] = []
+    host_responses: list[Content] = []
+    pause_order_contents: list[Content] = []
+    for message in messages:
+        for content in message.contents:
+            if content.type == "function_call":
+                pause_order_contents.append(content)
+                if content.user_input_request:
+                    host_requests.append(content)
+            elif content.type == "function_approval_request":
+                pause_order_contents.append(content)
+                approval_requests.append(content)
+            elif content.type == "function_approval_response":
+                approval_responses.append(content)
+            elif content.type == "function_result":
+                host_responses.append(content)
+
+    response_ids = {response.id for response in approval_responses if response.id is not None}
+    if host_requests and response_ids:
+        known_request_ids = {
+            identity
+            for request in approval_requests
+            for identity in (
+                request.id,
+                request.function_call.id if request.function_call is not None else None,
+            )
+            if identity is not None
+        }
+        for request in _load_pending_approval_requests(invocation_session).values():
+            request_ids = {
+                identity
+                for identity in (
+                    request.id,
+                    request.function_call.id if request.function_call is not None else None,
+                )
+                if identity is not None
+            }
+            if request_ids & response_ids and request_ids.isdisjoint(known_request_ids):
+                approval_requests.append(request)
+                known_request_ids.update(request_ids)
+
+    if not approval_requests or not host_requests or not (approval_responses or host_responses):
+        return False, set()
+
+    approval_request_identities: list[set[str]] = []
+    identity_owners: dict[str, int] = {}
+    for index, request in enumerate(approval_requests):
+        identities = {
+            identity
+            for identity in (
+                request.id,
+                request.function_call.id if request.function_call is not None else None,
+            )
+            if identity is not None
+        }
+        for identity in identities:
+            if identity in identity_owners and identity_owners[identity] != index:
+                return True, set()
+            identity_owners[identity] = index
+        approval_request_identities.append(identities)
+
+    unmatched_approval_requests = set(range(len(approval_requests)))
+    matched_approval_responses: dict[int, Content] = {}
+    matched_approval_response_ids: set[int] = set()
+    for response in approval_responses:
+        if response.id is None:
+            continue
+        matching_indexes = [
+            index for index, identities in enumerate(approval_request_identities) if response.id in identities
+        ]
+        if len(matching_indexes) != 1:
+            continue
+        matching_index = matching_indexes[0]
+        previous_response = matched_approval_responses.get(matching_index)
+        if previous_response is not None and previous_response.to_dict() != response.to_dict():
+            function_call = approval_requests[matching_index].function_call
+            occurrence_id = function_call.id if function_call is not None else approval_requests[matching_index].id
+            raise RuntimeError(f"Conflicting approval response for occurrence {occurrence_id!r}.")
+        matched_approval_responses[matching_index] = response
+        unmatched_approval_requests.discard(matching_index)
+        matched_approval_response_ids.add(id(response))
+
+    unmatched_host_requests = list(host_requests)
+    matched_host_responses: dict[int, Content] = {}
+    matched_host_result_ids: set[int] = set()
+    for response in (candidate for candidate in host_responses if candidate.id is not None):
+        matching_index = next(
+            (
+                index
+                for index, request in enumerate(unmatched_host_requests)
+                if request.id == response.id and request.call_id == response.call_id
+            ),
+            None,
+        )
+        if matching_index is not None:
+            request = unmatched_host_requests.pop(matching_index)
+            matched_host_responses[id(request)] = response
+            matched_host_result_ids.add(id(response))
+
+    for response in (candidate for candidate in host_responses if candidate.id is None):
+        matching_indexes = [
+            index for index, request in enumerate(unmatched_host_requests) if request.call_id == response.call_id
+        ]
+        if len(matching_indexes) == 1:
+            request = unmatched_host_requests.pop(matching_indexes[0])
+            matched_host_responses[id(request)] = response
+            matched_host_result_ids.add(id(response))
+
+    if unmatched_approval_requests or unmatched_host_requests:
+        return True, matched_host_result_ids
+
+    approval_indexes_by_occurrence_id = {
+        request.function_call.id: index
+        for index, request in enumerate(approval_requests)
+        if request.function_call is not None and request.function_call.id is not None
+    }
+    approval_indexes_by_request_object = {id(request): index for index, request in enumerate(approval_requests)}
+    ordered_responses: list[Content] = []
+    ordered_approval_indexes: set[int] = set()
+    for content in pause_order_contents:
+        host_response = matched_host_responses.get(id(content))
+        if host_response is not None:
+            ordered_responses.append(host_response)
+            continue
+        approval_index = approval_indexes_by_request_object.get(id(content))
+        if approval_index is None and content.type == "function_call" and content.id is not None:
+            approval_index = approval_indexes_by_occurrence_id.get(content.id)
+        if approval_index is not None and approval_index not in ordered_approval_indexes:
+            ordered_responses.append(matched_approval_responses[approval_index])
+            ordered_approval_indexes.add(approval_index)
+
+    ordered_responses.extend(
+        matched_approval_responses[index]
+        for index in range(len(approval_requests))
+        if index not in ordered_approval_indexes
+    )
+
+    matched_response_ids = {id(response) for response in ordered_responses} | matched_approval_response_ids
+    filtered_messages: list[Message] = []
+    for message in messages:
+        message.contents = [content for content in message.contents if id(content) not in matched_response_ids]
+        if message.contents:
+            filtered_messages.append(message)
+    filtered_messages.append(Message(role="user", contents=ordered_responses))
+    messages[:] = filtered_messages
+    return False, matched_host_result_ids
+
+
 def _collect_approval_responses(
     messages: list[Message],
+    *,
+    non_approval_result_ids: set[int] | None = None,
 ) -> dict[str, Content]:
     """Collect approval responses (both approved and rejected) from messages.
 
@@ -2930,6 +3115,8 @@ def _collect_approval_responses(
                 pending_by_call_id.setdefault(function_call.call_id, deque()).append(content)
                 continue
             if content.call_id is None:
+                continue
+            if non_approval_result_ids is not None and id(content) in non_approval_result_ids:
                 continue
             is_terminal_result = content.type == "function_result" and not _is_approval_placeholder_result(content)
             is_follow_up_request = content.user_input_request and content.type not in {
@@ -3121,6 +3308,8 @@ def _replace_approval_contents_with_results(
     messages: list[Message],
     pending_approval_responses: dict[str, Content],
     approved_function_result_groups: list[list[Content]],
+    *,
+    non_approval_result_ids: set[int] | None = None,
 ) -> list[Content]:
     """Replace approval request/response contents with function call/result contents in-place.
 
@@ -3266,6 +3455,8 @@ def _replace_approval_contents_with_results(
                 resolved_contents.extend(replacements)
             elif content.type == "function_result":
                 if content.call_id is None:
+                    continue
+                if non_approval_result_ids is not None and id(content) in non_approval_result_ids:
                     continue
                 occurrence = find_open_occurrence(content.call_id)
                 if occurrence is None:
@@ -3582,9 +3773,53 @@ def _handle_function_call_results(
         result.type in {"function_approval_request", "function_call"} or result.user_input_request
         for result in execution_results
     ):
+        user_input_calls = [result for result in execution_results if result.type == "function_call"]
+        user_input_by_occurrence = {result.id: result for result in user_input_calls if result.id is not None}
+        user_input_by_call = {(result.call_id, result.name): result for result in user_input_calls if result.id is None}
+        approval_requests = (
+            [result for result in execution_results if result.type == "function_approval_request"]
+            if user_input_calls
+            else []
+        )
+        approval_by_occurrence = {
+            result.function_call.id: result
+            for result in approval_requests
+            if result.function_call is not None and result.function_call.id is not None
+        }
+        approval_by_call = {
+            (result.function_call.call_id, result.function_call.name): result
+            for result in approval_requests
+            if result.function_call is not None and result.function_call.id is None
+        }
+        inserted_approval_requests: set[int] = set()
+        for message in response.messages:
+            updated_contents: list[Content] = []
+            for content in message.contents:
+                if content.type != "function_call":
+                    updated_contents.append(content)
+                    continue
+                replacement = (
+                    user_input_by_occurrence.get(content.id)
+                    if content.id is not None
+                    else user_input_by_call.get((content.call_id, content.name))
+                )
+                updated_contents.append(replacement if replacement is not None else content)
+                approval_request = (
+                    approval_by_occurrence.get(content.id)
+                    if content.id is not None
+                    else approval_by_call.get((content.call_id, content.name))
+                )
+                if approval_request is not None:
+                    updated_contents.append(approval_request)
+                    inserted_approval_requests.add(id(approval_request))
+            message.contents = updated_contents
         # Only add items that aren't already in the message (e.g. function_approval_request wrappers).
         # Declaration-only function_call items are already present from the LLM response.
-        new_items = [result for result in execution_results if result.type != "function_call"]
+        new_items = [
+            result
+            for result in execution_results
+            if result.type != "function_call" and id(result) not in inserted_approval_requests
+        ]
         response_messages, _ = _messages_and_updates_for_terminal_contents(new_items)
         if (
             response_messages
@@ -3650,6 +3885,10 @@ async def _resolve_approval_responses(
     from ._middleware import MiddlewareFailure
     from ._types import Message
 
+    partial_mixed_batch, host_result_ids = _mixed_pause_batch_status(prepared_messages, invocation_session)
+    if partial_mixed_batch:
+        raise RuntimeError("A mixed function-call batch requires responses for every approval and Host-owned request.")
+
     active_pending_ids = (
         set(_load_pending_approval_requests(invocation_session))
         if _has_authoritative_approval_session(invocation_session)
@@ -3672,7 +3911,12 @@ async def _resolve_approval_responses(
         prepared_messages.append(Message(role="user", contents=already_approved_responses))
 
     # 2. With no new decision, hide any still-pending batch from model input while keeping it resumable in history.
-    if not (pending_approval_responses := _collect_approval_responses(prepared_messages)):
+    if not (
+        pending_approval_responses := _collect_approval_responses(
+            prepared_messages,
+            non_approval_result_ids=host_result_ids,
+        )
+    ):
         _remove_unanswered_approval_batches_from_model_input(prepared_messages)
         return _FunctionProcessingResult(errors_in_a_row=errors_in_a_row)
 
@@ -3732,6 +3976,7 @@ async def _resolve_approval_responses(
         prepared_messages,
         pending_approval_responses,
         execution_result_groups,
+        non_approval_result_ids=host_result_ids,
     )
     pending_by_id = {
         request.id: request
