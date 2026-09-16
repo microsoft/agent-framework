@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Net.Http;
@@ -1271,9 +1272,9 @@ public sealed class DefaultHttpRequestHandlerTests
         private List<string> AcceptRequests()
         {
             List<string> requests = [];
-            try
+            for (int i = 0; i < ExpectedRequestCount; i++)
             {
-                for (int i = 0; i < ExpectedRequestCount; i++)
+                try
                 {
                     using TcpClient client = this._listener.AcceptTcpClient();
                     client.ReceiveTimeout = 1000;
@@ -1301,15 +1302,21 @@ public sealed class DefaultHttpRequestHandlerTests
                         $"HTTP/1.1 200 OK\r\nContent-Length: {body.Length}\r\n{setCookieHeader}Connection: close\r\n\r\n{body}");
                     stream.Write(responseBytes, 0, responseBytes.Length);
                 }
-            }
-            catch (SocketException)
-            {
-            }
-            catch (ObjectDisposedException)
-            {
-            }
-            catch (IOException)
-            {
+                catch (SocketException exception)
+                {
+                    Trace.WriteLine($"Cookie capture server stopped accepting requests: {exception.Message}");
+                    break;
+                }
+                catch (ObjectDisposedException exception)
+                {
+                    Trace.WriteLine($"Cookie capture server listener was disposed: {exception.Message}");
+                    break;
+                }
+                catch (IOException exception)
+                {
+                    Trace.WriteLine($"Cookie capture server stream ended while handling a request: {exception.Message}");
+                    break;
+                }
             }
 
             return requests;
