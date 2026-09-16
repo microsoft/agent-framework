@@ -190,9 +190,10 @@ original caller input and earlier response remain unchanged.
 Before acting on a model function-call batch, the loop classifies every actionable call. A configured fatal unknown
 call aborts the complete batch before approval state changes or execution. Otherwise approval-required and Host-owned
 calls are returned together in model order, while session-backed executable siblings remain deferred. An incomplete
-mixed approval/Host response is rejected before any deferred call executes. `ToolApprovalMiddleware` may resolve
-approval requests through standing or automatic policies, but it preserves non-approval user-input requests and does
-not split manual approvals away from their Host-owned siblings.
+session-backed mixed approval/Host response remains pending without executing a deferred call; a stateless incomplete
+response is rejected. Correlation is scoped to the active mixed batch so completed or abandoned historical Host calls
+remain unchanged. `ToolApprovalMiddleware` may resolve approval requests through standing or automatic policies, but
+it preserves non-approval user-input requests and does not split manual approvals away from their Host-owned siblings.
 
 ### Reasoning-bound function-call groups
 
@@ -606,7 +607,7 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Scenario | Required invariant | Primary regression test |
 |---|---|---|
 | Fatal call mixed with pauses | Complete-batch classification raises before approval or execution, independent of call order. | `packages/core/tests/core/test_function_invocation_logic.py::test_mixed_batch_fatal_unknown_precedes_every_pause` |
-| Approval and Host-owned calls | Both pause types are returned in model order; an incomplete response executes nothing; a complete response executes the exact approved arguments once. | `test_mixed_batch_returns_approval_and_host_pause_in_model_order`, `test_mixed_batch_requires_complete_responses_before_execution` |
+| Approval and Host-owned calls | Both pause types are returned in model order; a session-backed partial response remains pending across serialization; historical Host calls do not participate; a complete response executes the exact approved arguments once. | `test_mixed_batch_returns_approval_and_host_pause_in_model_order`, `test_mixed_batch_requires_complete_responses_before_execution`, `test_active_mixed_pause_ignores_historical_host_requests` |
 | Safe and approval-required calls in one batch | Hidden safe calls replay only with the matching visible approval. | `packages/core/tests/core/test_harness_tool_approval.py::test_mixed_batch_hides_already_approved_request_until_approval_replay` |
 | Restored approval state | Serialized `ToolApprovalState` restores mixed-batch behavior. | `test_mixed_batch_accepts_restored_tool_approval_state` |
 | Unrelated turn before approval | Hidden calls do not execute on an unrelated turn. | `test_hidden_mixed_batch_requests_do_not_replay_on_unrelated_turn` |

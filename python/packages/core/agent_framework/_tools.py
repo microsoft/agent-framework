@@ -118,6 +118,7 @@ def _has_authoritative_approval_session(invocation_session: AgentSession | None)
 
 _ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY: Final[str] = "already_approved_approval_request_groups"
 _PENDING_APPROVAL_REQUESTS_KEY: Final[str] = "pending_approval_requests"
+_PENDING_MIXED_PAUSE_BATCH_KEY: Final[str] = "pending_mixed_pause_batch"
 _APPROVAL_REQUEST_ID_KEY: Final[str] = "_approval_request_id"
 _FUNCTION_INVOCATION_BUDGET_STATE_KEY: Final[str] = "_function_invocation_budget_state"
 _FUNCTION_RESULT_CARRIER_CONTEXT_KEY: Final[str] = "_function_result_carrier"
@@ -2373,6 +2374,7 @@ async def _try_execute_function_call_groups(
             already_approved_requests,
         )
         _store_pending_approval_requests(invocation_session, visible_requests)
+        _store_pending_mixed_pause_batch(invocation_session, pause_groups)
         return pause_groups, False
     if has_declaration_only_call:
         # Declaration-only calls are returned as user input rather than executed locally.
@@ -2928,11 +2930,167 @@ def _pop_already_approved_approval_responses(
     return responses
 
 
-def _mixed_pause_batch_status(
+def _store_pending_mixed_pause_batch(
+    invocation_session: AgentSession | None,
+    pause_groups: Sequence[Sequence[Content]],
+) -> None:
+    """Persist the active ordered approval and Host-owned pause batch."""
+    state = _get_tool_approval_state(invocation_session)
+    if state is None:
+        return
+
+    items: list[dict[str, Any]] = []
+    kinds: set[str] = set()
+    for group in pause_groups:
+        for content in group:
+            if content.type == "function_approval_request":
+                kind = "approval"
+            elif content.type == "function_call" and content.user_input_request:
+                kind = "host"
+            else:
+                continue
+            kinds.add(kind)
+            items.append({"kind": kind, "request": content.to_dict()})
+
+    if kinds == {"approval", "host"}:
+        state[_PENDING_MIXED_PAUSE_BATCH_KEY] = {"items": items}
+    else:
+        state.pop(_PENDING_MIXED_PAUSE_BATCH_KEY, None)
+
+
+def _same_mixed_pause_response(left: Mapping[str, Any], right: Mapping[str, Any]) -> bool:
+    left_payload = dict(left)
+    right_payload = dict(right)
+    left_payload.pop("id", None)
+    right_payload.pop("id", None)
+    return left_payload == right_payload
+
+
+def _stage_pending_mixed_pause_responses(
     messages: list[Message],
     invocation_session: AgentSession | None,
+) -> tuple[bool, bool, set[int]]:
+    """Stage responses for only the active session-backed mixed pause batch."""
+    from ._types import Message
+
+    state = _get_tool_approval_state(invocation_session, create=False)
+    if state is None:
+        return False, False, set()
+    raw_batch = state.get(_PENDING_MIXED_PAUSE_BATCH_KEY)
+    if not isinstance(raw_batch, Mapping):
+        return False, False, set()
+    raw_items = cast(Mapping[str, Any], raw_batch).get("items")
+    if not isinstance(raw_items, list):
+        state.pop(_PENDING_MIXED_PAUSE_BATCH_KEY, None)
+        return False, False, set()
+
+    items = [copy.deepcopy(cast(dict[str, Any], item)) for item in cast(list[Any], raw_items) if isinstance(item, dict)]
+    if not items:
+        state.pop(_PENDING_MIXED_PAUSE_BATCH_KEY, None)
+        return False, False, set()
+
+    approval_items: dict[str, dict[str, Any]] = {}
+    host_items_by_occurrence: dict[str, dict[str, Any]] = {}
+    host_items_by_call: dict[str, list[dict[str, Any]]] = {}
+    for item in items:
+        request = _content_from_state(item.get("request"))
+        if request is None:
+            continue
+        if item.get("kind") == "approval":
+            for identity in (
+                request.id,
+                request.function_call.id if request.function_call is not None else None,
+            ):
+                if identity is not None:
+                    approval_items[identity] = item
+        elif item.get("kind") == "host" and request.call_id is not None:
+            host_items_by_call.setdefault(request.call_id, []).append(item)
+            if request.id is not None:
+                host_items_by_occurrence[request.id] = item
+
+    matched_content_ids: set[int] = set()
+    for message in messages:
+        for content in message.contents:
+            item: dict[str, Any] | None = None
+            if content.type == "function_approval_response":
+                rebound = _bind_approval_response_to_pending_request(
+                    content,
+                    invocation_session,
+                    consume=False,
+                )
+                if rebound is None:
+                    continue
+                request_id = rebound.additional_properties.get(_APPROVAL_REQUEST_ID_KEY)
+                item = approval_items.get(str(request_id)) if request_id is not None else None
+                if item is None and rebound.id is not None:
+                    item = approval_items.get(rebound.id)
+                candidate = rebound
+            elif content.type == "function_result" and content.call_id in host_items_by_call:
+                candidate = content
+                if content.id is not None:
+                    item = host_items_by_occurrence.get(content.id)
+                    request = _content_from_state(item.get("request")) if item is not None else None
+                    if request is None or request.call_id != content.call_id:
+                        item = None
+                else:
+                    matching_items = [
+                        pending_item
+                        for pending_item in host_items_by_call[content.call_id]
+                        if pending_item.get("response") is None
+                        or (
+                            isinstance(pending_item.get("response"), Mapping)
+                            and _same_mixed_pause_response(
+                                cast(Mapping[str, Any], pending_item["response"]),
+                                content.to_dict(),
+                            )
+                        )
+                    ]
+                    if len(matching_items) == 1:
+                        item = matching_items[0]
+            else:
+                continue
+
+            if item is None:
+                continue
+            candidate_state = candidate.to_dict()
+            stored_response = item.get("response")
+            if stored_response is not None and (
+                not isinstance(stored_response, Mapping)
+                or not _same_mixed_pause_response(cast(Mapping[str, Any], stored_response), candidate_state)
+            ):
+                raise RuntimeError(f"Conflicting response for mixed pause occurrence {candidate.id!r}.")
+            item["response"] = candidate_state
+            matched_content_ids.add(id(content))
+
+    if matched_content_ids:
+        filtered_messages: list[Message] = []
+        for message in messages:
+            message.contents = [content for content in message.contents if id(content) not in matched_content_ids]
+            if message.contents:
+                filtered_messages.append(message)
+        messages[:] = filtered_messages
+    state[_PENDING_MIXED_PAUSE_BATCH_KEY] = {"items": items}
+
+    if any(item.get("response") is None for item in items):
+        return True, False, set()
+
+    ordered_responses: list[Content] = []
+    host_result_ids: set[int] = set()
+    for item in items:
+        response = _content_from_state(item.get("response"))
+        if response is None:
+            return True, False, set()
+        ordered_responses.append(response)
+        if item.get("kind") == "host":
+            host_result_ids.add(id(response))
+    messages.append(Message(role="user", contents=ordered_responses))
+    return False, True, host_result_ids
+
+
+def _stateless_mixed_pause_batch_status(
+    messages: list[Message],
 ) -> tuple[bool, set[int]]:
-    """Validate a mixed approval/Host batch and order its complete responses."""
+    """Validate only the latest stateless mixed batch and order its responses."""
     from ._types import Message
 
     approval_requests: list[Content] = []
@@ -2940,43 +3098,31 @@ def _mixed_pause_batch_status(
     approval_responses: list[Content] = []
     host_responses: list[Content] = []
     pause_order_contents: list[Content] = []
-    for message in messages:
+    batch_index: int | None = None
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if any(content.type == "function_approval_request" for content in message.contents) and any(
+            content.type == "function_call" and content.user_input_request for content in message.contents
+        ):
+            batch_index = index
+            break
+    if batch_index is None:
+        return False, set()
+
+    for content in messages[batch_index].contents:
+        if content.type == "function_call":
+            pause_order_contents.append(content)
+            if content.user_input_request:
+                host_requests.append(content)
+        elif content.type == "function_approval_request":
+            pause_order_contents.append(content)
+            approval_requests.append(content)
+    for message in messages[batch_index + 1 :]:
         for content in message.contents:
-            if content.type == "function_call":
-                pause_order_contents.append(content)
-                if content.user_input_request:
-                    host_requests.append(content)
-            elif content.type == "function_approval_request":
-                pause_order_contents.append(content)
-                approval_requests.append(content)
-            elif content.type == "function_approval_response":
+            if content.type == "function_approval_response":
                 approval_responses.append(content)
             elif content.type == "function_result":
                 host_responses.append(content)
-
-    response_ids = {response.id for response in approval_responses if response.id is not None}
-    if host_requests and response_ids:
-        known_request_ids = {
-            identity
-            for request in approval_requests
-            for identity in (
-                request.id,
-                request.function_call.id if request.function_call is not None else None,
-            )
-            if identity is not None
-        }
-        for request in _load_pending_approval_requests(invocation_session).values():
-            request_ids = {
-                identity
-                for identity in (
-                    request.id,
-                    request.function_call.id if request.function_call is not None else None,
-                )
-                if identity is not None
-            }
-            if request_ids & response_ids and request_ids.isdisjoint(known_request_ids):
-                approval_requests.append(request)
-                known_request_ids.update(request_ids)
 
     if not approval_requests or not host_requests or not (approval_responses or host_responses):
         return False, set()
@@ -3885,9 +4031,20 @@ async def _resolve_approval_responses(
     from ._middleware import MiddlewareFailure
     from ._types import Message
 
-    partial_mixed_batch, host_result_ids = _mixed_pause_batch_status(prepared_messages, invocation_session)
-    if partial_mixed_batch:
-        raise RuntimeError("A mixed function-call batch requires responses for every approval and Host-owned request.")
+    completed_mixed_batch = False
+    if _has_authoritative_approval_session(invocation_session):
+        incomplete_mixed_batch, completed_mixed_batch, host_result_ids = _stage_pending_mixed_pause_responses(
+            prepared_messages,
+            invocation_session,
+        )
+        if incomplete_mixed_batch:
+            return _FunctionProcessingResult(errors_in_a_row=errors_in_a_row, action="return")
+    else:
+        partial_mixed_batch, host_result_ids = _stateless_mixed_pause_batch_status(prepared_messages)
+        if partial_mixed_batch:
+            raise RuntimeError(
+                "A mixed function-call batch requires responses for every approval and Host-owned request."
+            )
 
     active_pending_ids = (
         set(_load_pending_approval_requests(invocation_session))
@@ -3895,6 +4052,10 @@ async def _resolve_approval_responses(
         else None
     )
     _bind_approval_responses_to_pending_requests(prepared_messages, invocation_session)
+    if completed_mixed_batch:
+        state = _get_tool_approval_state(invocation_session, create=False)
+        if state is not None:
+            state.pop(_PENDING_MIXED_PAUSE_BATCH_KEY, None)
 
     # 1. Restore safe siblings hidden with a prior mixed approval batch when its visible decision arrives.
     explicit_approval_response_ids = {

@@ -3440,10 +3440,14 @@ async def test_mixed_batch_requires_complete_responses_before_execution(
         if content.type == "function_call" and content.user_input_request
     )
 
-    with pytest.raises(RuntimeError, match="requires responses for every approval and Host-owned request"):
-        await agent.run(approval_request.to_function_approval_response(approved=True), session=session)
+    partial_response = await agent.run(
+        approval_request.to_function_approval_response(approved=True),
+        session=session,
+    )
+    assert partial_response.messages == []
     assert approval_arguments == []
 
+    session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
     assert host_request.call_id is not None
     host_result = Content.from_function_result(call_id=host_request.call_id, result="host result")
     host_result.id = host_request.id
@@ -3451,6 +3455,64 @@ async def test_mixed_batch_requires_complete_responses_before_execution(
         ChatResponse(messages=Message(role="assistant", contents=["done"])),
     ]
     final_response = await agent.run(
+        host_result,
+        session=session,
+    )
+
+    assert final_response.text == "done"
+    assert approval_arguments == ["expected"]
+
+
+def test_active_mixed_pause_ignores_historical_host_requests() -> None:
+    """Only the session-recorded mixed batch participates in response correlation."""
+    from agent_framework._tools import (
+        _stage_pending_mixed_pause_responses,
+        _store_pending_approval_requests,
+        _store_pending_mixed_pause_batch,
+    )
+
+    session = AgentSession()
+    approval_call = Content.from_function_call(
+        call_id="current-approval",
+        name="guarded",
+        arguments={},
+        id="current-approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="current-approval-occurrence",
+        function_call=approval_call,
+    )
+    host_request = Content.from_function_call(
+        call_id="current-host",
+        name="host",
+        arguments={},
+        id="current-host-occurrence",
+    )
+    host_request.user_input_request = True
+    _store_pending_approval_requests(session, [approval_request])
+    _store_pending_mixed_pause_batch(session, [[approval_request], [host_request]])
+
+    completed_old_host = Content.from_function_call(
+        call_id="old-completed",
+        name="old_host",
+        arguments={},
+        id="old-completed-occurrence",
+    )
+    completed_old_host.user_input_request = True
+    completed_old_result = Content.from_function_result(call_id="old-completed", result="old result")
+    completed_old_result.id = "old-completed-occurrence"
+    abandoned_old_host = Content.from_function_call(
+        call_id="old-abandoned",
+        name="old_host",
+        arguments={},
+        id="old-abandoned-occurrence",
+    )
+    abandoned_old_host.user_input_request = True
+    host_result = Content.from_function_result(call_id="current-host", result="current result")
+    host_result.id = "current-host-occurrence"
+    messages = [
+        Message(role="assistant", contents=[completed_old_host, abandoned_old_host]),
+        Message(role="tool", contents=[completed_old_result]),
         Message(
             role="user",
             contents=[
@@ -3458,11 +3520,19 @@ async def test_mixed_batch_requires_complete_responses_before_execution(
                 host_result,
             ],
         ),
-        session=session,
-    )
+    ]
 
-    assert final_response.text == "done"
-    assert approval_arguments == ["expected"]
+    incomplete, completed, host_result_ids = _stage_pending_mixed_pause_responses(messages, session)
+
+    assert incomplete is False
+    assert completed is True
+    assert messages[0].contents == [completed_old_host, abandoned_old_host]
+    assert messages[1].contents == [completed_old_result]
+    assert [(content.type, content.id) for content in messages[-1].contents] == [
+        ("function_approval_response", "current-approval-occurrence"),
+        ("function_result", "current-host-occurrence"),
+    ]
+    assert host_result_ids == {id(messages[-1].contents[-1])}
 
 
 async def test_function_invocation_config_additional_tools(chat_client_base: SupportsChatGetResponse):

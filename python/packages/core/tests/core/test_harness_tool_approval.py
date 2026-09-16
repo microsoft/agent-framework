@@ -1989,6 +1989,10 @@ async def test_tool_approval_middleware_auto_approves_with_host_pause_and_cached
     )
     assert safe_calls == approval_calls == 0
 
+    unrelated_response = await run("unrelated turn")
+    assert unrelated_response.messages == []
+    assert safe_calls == approval_calls == 0
+
     assert host_request.call_id is not None
     host_result = Content.from_function_result(call_id=host_request.call_id, result="host result")
     host_result.id = host_request.id
