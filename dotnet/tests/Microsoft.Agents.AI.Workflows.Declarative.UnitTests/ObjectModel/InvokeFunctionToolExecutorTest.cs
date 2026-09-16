@@ -1313,6 +1313,166 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
     }
 
     /// <summary>
+    /// After an approval-required invocation consumes its snapshot, a replayed legacy
+    /// result using the executor id must not be assigned to <c>Output.Messages</c> or
+    /// persisted to conversation history.
+    /// </summary>
+    [Fact]
+    public async Task InvokeFunctionToolPostApprovalLegacyReplayDoesNotAssignOutputMessagesOrCreateConversationMessageAsync()
+    {
+        // Arrange
+        const string FunctionName = "any_function";
+        const string ConversationId = "TestConversationId";
+        const string MessagesVariable = "Messages";
+        const string ReplayedResult = "replayed-result";
+
+        this.State.InitializeSystem();
+        this.State.Bind();
+        InvokeFunctionTool model = this.CreateModel(
+            displayName: nameof(InvokeFunctionToolPostApprovalLegacyReplayDoesNotAssignOutputMessagesOrCreateConversationMessageAsync),
+            functionName: FunctionName,
+            requireApproval: true,
+            conversationId: ConversationId,
+            outputMessagesVariable: MessagesVariable);
+
+        MockAgentProvider mockAgentProvider = new();
+        InvokeFunctionToolExecutor action = new(model, mockAgentProvider.Object, this.State);
+
+        List<ExternalInputRequest> emittedRequests = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext(emittedRequests);
+        await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
+
+        ExternalInputResponse approvalResponse = CreateApprovalResponseFor(emittedRequests, approved: true);
+        FunctionResultContent replayedLegacyResult = new(action.Id, ReplayedResult);
+        ExternalInputResponse replayResponse = new(new ChatMessage(ChatRole.Tool, [replayedLegacyResult]));
+
+        // Act
+        await action.CaptureResponseAsync(mockContext.Object, approvalResponse, CancellationToken.None);
+        mockContext.Invocations.Clear();
+        mockAgentProvider.TestMessages.Clear();
+        await action.CaptureResponseAsync(mockContext.Object, replayResponse, CancellationToken.None);
+
+        // Assert
+        TableValue assignedMessages = mockContext.Invocations
+            .Where(i => i.Method.Name == nameof(IWorkflowContext.QueueStateUpdateAsync)
+                && i.Arguments.Count >= 2)
+            .Select(i => i.Arguments[1])
+            .OfType<TableValue>()
+            .Single();
+        Assert.Empty(assignedMessages.Rows);
+        Assert.Empty(mockAgentProvider.TestMessages);
+    }
+
+    /// <summary>
+    /// After an approval-required invocation is rejected and consumes its snapshot, a replayed
+    /// result using the approval request id must not be assigned to <c>Output.Messages</c> or
+    /// persisted to conversation history.
+    /// </summary>
+    [Fact]
+    public async Task InvokeFunctionToolPostRejectionReplayDoesNotAssignOutputMessagesOrCreateConversationMessageAsync()
+    {
+        // Arrange
+        const string FunctionName = "any_function";
+        const string ConversationId = "TestConversationId";
+        const string MessagesVariable = "Messages";
+        const string ReplayedResult = "replayed-result";
+
+        this.State.InitializeSystem();
+        this.State.Bind();
+        InvokeFunctionTool model = this.CreateModel(
+            displayName: nameof(InvokeFunctionToolPostRejectionReplayDoesNotAssignOutputMessagesOrCreateConversationMessageAsync),
+            functionName: FunctionName,
+            requireApproval: true,
+            conversationId: ConversationId,
+            outputMessagesVariable: MessagesVariable);
+
+        MockAgentProvider mockAgentProvider = new();
+        InvokeFunctionToolExecutor action = new(model, mockAgentProvider.Object, this.State);
+
+        List<ExternalInputRequest> emittedRequests = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext(emittedRequests);
+        await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
+
+        ToolApprovalRequestContent approvalRequest = GetApprovalRequest(emittedRequests);
+        ExternalInputResponse rejectionResponse = CreateApprovalResponseFor(emittedRequests, approved: false);
+        FunctionResultContent replayedApprovalResult = new(approvalRequest.RequestId, ReplayedResult);
+        ExternalInputResponse replayResponse = new(new ChatMessage(ChatRole.Tool, [replayedApprovalResult]));
+
+        // Act
+        await action.CaptureResponseAsync(mockContext.Object, rejectionResponse, CancellationToken.None);
+        mockContext.Invocations.Clear();
+        mockAgentProvider.TestMessages.Clear();
+        await action.CaptureResponseAsync(mockContext.Object, replayResponse, CancellationToken.None);
+
+        // Assert
+        TableValue assignedMessages = mockContext.Invocations
+            .Where(i => i.Method.Name == nameof(IWorkflowContext.QueueStateUpdateAsync)
+                && i.Arguments.Count >= 2)
+            .Select(i => i.Arguments[1])
+            .OfType<TableValue>()
+            .Single();
+        Assert.Empty(assignedMessages.Rows);
+        Assert.Empty(mockAgentProvider.TestMessages);
+    }
+
+    /// <summary>
+    /// The approval mode captured at emit time must gate legacy replay matching even if
+    /// the mutable <c>RequireApproval</c> expression evaluates to false after approval.
+    /// </summary>
+    [Fact]
+    public async Task InvokeFunctionToolPostApprovalLegacyReplayUsesEmittedApprovalModeAsync()
+    {
+        // Arrange
+        const string FunctionName = "any_function";
+        const string RequireApprovalVariable = "NeedsApproval";
+        const string ResultVariable = "Result";
+        const string RegisteredResult = "registered-result";
+        const string ReplayedResult = "replayed-result";
+
+        this.State.Set(RequireApprovalVariable, FormulaValue.New(true));
+        this.State.InitializeSystem();
+        this.State.Bind();
+        InvokeFunctionTool model = this.CreateModelWithVariableRequireApproval(
+            displayName: nameof(InvokeFunctionToolPostApprovalLegacyReplayUsesEmittedApprovalModeAsync),
+            functionName: FunctionName,
+            requireApprovalVariableName: RequireApprovalVariable,
+            outputResultVariable: ResultVariable);
+
+        int invocationCount = 0;
+        TestFunctionAgentProvider testAgentProvider = new(
+            [AIFunctionFactory.Create(() => { Interlocked.Increment(ref invocationCount); return RegisteredResult; }, name: FunctionName)]);
+        InvokeFunctionToolExecutor action = new(model, testAgentProvider, this.State);
+
+        List<ExternalInputRequest> emittedRequests = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext(emittedRequests);
+        await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
+
+        this.State.Set(RequireApprovalVariable, FormulaValue.New(false));
+        this.State.Bind();
+
+        ExternalInputResponse approvalResponse = CreateApprovalResponseFor(emittedRequests, approved: true);
+        FunctionResultContent replayedLegacyResult = new(action.Id, ReplayedResult);
+        ExternalInputResponse replayResponse = new(new ChatMessage(ChatRole.Tool, [replayedLegacyResult]));
+
+        // Act
+        await action.CaptureResponseAsync(mockContext.Object, approvalResponse, CancellationToken.None);
+        await action.CaptureResponseAsync(mockContext.Object, replayResponse, CancellationToken.None);
+
+        // Assert
+        Assert.Equal(1, invocationCount);
+        Assert.Contains(mockContext.Invocations, i =>
+            i.Method.Name == nameof(IWorkflowContext.QueueStateUpdateAsync)
+            && i.Arguments.Count >= 2
+            && i.Arguments[1] is StringValue sv
+            && sv.Value == RegisteredResult);
+        Assert.DoesNotContain(mockContext.Invocations, i =>
+            i.Method.Name == nameof(IWorkflowContext.QueueStateUpdateAsync)
+            && i.Arguments.Count >= 2
+            && i.Arguments[1] is StringValue sv
+            && sv.Value == ReplayedResult);
+    }
+
+    /// <summary>
     /// A non-approval <c>FunctionResultContent</c> whose CallId equals <c>this.Id</c> is
     /// consumed and assigned to <c>Output.Result</c> when no pendings are tracked.
     /// </summary>
@@ -1422,6 +1582,15 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
     {
         ExternalInputRequest emitted = Assert.Single(emittedRequests);
         return CreateApprovalResponseForRequest(emitted, approved);
+    }
+
+    private static ToolApprovalRequestContent GetApprovalRequest(IReadOnlyList<ExternalInputRequest> emittedRequests)
+    {
+        return Assert.Single(emittedRequests)
+            .AgentResponse.Messages
+            .SelectMany(m => m.Contents)
+            .OfType<ToolApprovalRequestContent>()
+            .Single();
     }
 
     private static Mock<IWorkflowContext> CreateMockWorkflowContext(List<ExternalInputRequest>? emittedRequests = null)
@@ -1667,6 +1836,24 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
         };
         builder.Arguments.Add(argumentKey,
             ValueExpression.Variable(PropertyPath.TopicVariable(variableName)));
+        return AssignParent<InvokeFunctionTool>(builder);
+    }
+
+    private InvokeFunctionTool CreateModelWithVariableRequireApproval(
+        string displayName, string functionName, string requireApprovalVariableName, string outputResultVariable)
+    {
+        InvokeFunctionTool.Builder builder = new()
+        {
+            Id = this.CreateActionId(),
+            DisplayName = this.FormatDisplayName(displayName),
+            FunctionName = new StringExpression.Builder(StringExpression.Literal(functionName)),
+            RequireApproval = new BoolExpression.Builder(
+                BoolExpression.Variable(PropertyPath.TopicVariable(requireApprovalVariableName))),
+            Output = new InvokeToolOutput.Builder
+            {
+                Result = new InitializablePropertyPath(PropertyPath.TopicVariable(outputResultVariable), isInitializer: false),
+            },
+        };
         return AssignParent<InvokeFunctionTool>(builder);
     }
 
