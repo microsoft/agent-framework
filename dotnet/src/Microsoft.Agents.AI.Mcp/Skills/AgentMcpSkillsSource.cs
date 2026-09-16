@@ -40,6 +40,14 @@ namespace Microsoft.Agents.AI;
 /// empty list.
 /// </para>
 /// <para>
+/// Archive entries may supply a <c>digest</c> in the form <c>sha256:</c> followed by 64 lowercase
+/// hexadecimal characters. It is verified against the decoded archive bytes before extraction.
+/// Malformed, unsupported, or mismatched digest strings are logged as warnings and the affected archives
+/// are skipped; omitted or null digests remain supported. Discovery returns the remaining skills,
+/// so a successful cache refresh replaces its list without rejected archives. This verification
+/// does not apply to lazily fetched <c>skill-md</c> entries or their supporting resources.
+/// </para>
+/// <para>
 /// <b>Thread safety and archive reconciliation.</b> For <c>archive</c>-type skills, every call to
 /// <see cref="GetSkillsAsync"/> reconciles a shared on-disk directory: it extracts newly advertised
 /// skills, re-extracts existing ones, and prunes those the server no longer advertises. Because that
@@ -70,7 +78,9 @@ namespace Microsoft.Agents.AI;
 /// adversarial skill content designed to manipulate the agent through indirect prompt injection, or
 /// instructions/scripts designed to exfiltrate data once loaded and, for script-capable skills,
 /// executed. Only connect this source to MCP servers you trust, and review archive extraction limits (<see cref="AgentMcpSkillsSourceOptions"/>)
-/// to bound the impact of a malicious server.
+/// to bound the impact of a malicious server. A matching digest proves consistency with the index,
+/// not trustworthiness: a server controlling both the index and archive can replace both or omit
+/// the digest.
 /// </para>
 /// </remarks>
 internal sealed partial class AgentMcpSkillsSource : AgentSkillsSource

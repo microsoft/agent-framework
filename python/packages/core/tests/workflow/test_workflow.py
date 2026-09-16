@@ -111,6 +111,24 @@ class MockExecutorRequestApproval(Executor):
             await ctx.send_message(NumberMessage(data=data))
 
 
+def test_coerce_request_info_response_converts_content() -> None:
+    """Request responses should use the shared Content conversion path."""
+    from agent_framework._workflows._workflow import _coerce_request_info_response
+
+    response = _coerce_request_info_response("hello", Content, "content")
+
+    assert isinstance(response, Content)
+    assert response.text == "hello"
+
+
+def test_coerce_request_info_response_rejects_mismatched_type() -> None:
+    """Request responses that cannot be validated should report their request ID."""
+    from agent_framework._workflows._workflow import _coerce_request_info_response
+
+    with pytest.raises(ValueError, match="Response type mismatch for request ID typed"):
+        _coerce_request_info_response("not-an-int", int, "typed")
+
+
 async def test_fresh_message_while_pending_advances_state_without_abandoning_requests(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -994,6 +1012,49 @@ async def test_workflow_unconsumed_stream_releases_run_lock() -> None:
     # The runner should be back to IDLE; a fresh run must succeed.
     result = await workflow.run(NumberMessage(data=0))
     assert result.get_final_state() == WorkflowRunState.IDLE
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [False], indirect=True)
+async def test_workflow_abandoned_stream_finalizes_without_context_errors(
+    caplog: pytest.LogCaptureFixture, span_exporter: Any
+) -> None:
+    """Abandoning a partially consumed graph stream must clean up without context errors."""
+    executor = IncrementExecutor(id="abandoned_stream_exec", limit=3, increment=1)
+    workflow = WorkflowBuilder(start_executor=executor).build()
+    loop = asyncio.get_running_loop()
+    loop_errors: list[BaseException] = []
+    original_handler = loop.get_exception_handler()
+
+    def capture_loop_exception(_loop: asyncio.AbstractEventLoop, context: dict[str, Any]) -> None:
+        exc = context.get("exception")
+        if isinstance(exc, BaseException):
+            loop_errors.append(exc)
+        if original_handler is not None:
+            original_handler(_loop, context)
+
+    loop.set_exception_handler(capture_loop_exception)
+    try:
+        with caplog.at_level(logging.ERROR, logger="opentelemetry"):
+            stream = workflow.run(NumberMessage(data=0), stream=True)
+            async for event in stream:
+                assert event.type == "started"
+                break
+
+            del stream
+            gc.collect()
+            for _ in range(5):
+                await asyncio.sleep(0)
+    finally:
+        loop.set_exception_handler(original_handler)
+
+    assert loop_errors == [], f"Abandoned stream leaked loop exceptions: {loop_errors!r}"
+    otel_errors = [
+        rec.getMessage()
+        for rec in caplog.records
+        if "Failed to detach context" in rec.getMessage() or "was created in a different Context" in rec.getMessage()
+    ]
+    assert otel_errors == [], f"Abandoned stream leaked OpenTelemetry errors: {otel_errors!r}"
+    assert any(span.name == "workflow.run" for span in span_exporter.get_finished_spans())
 
 
 async def test_workflow_unawaited_run_coroutine_releases_run_lock() -> None:

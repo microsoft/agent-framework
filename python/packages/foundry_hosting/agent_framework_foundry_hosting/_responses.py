@@ -707,6 +707,50 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             for event in self._emit_failure(response_event_stream, tracker, ex):
                 yield event
 
+    async def _load_request_messages(
+        self,
+        context: ResponseContext,
+        *,
+        approval_storage: FunctionApprovalStore | None,
+    ) -> list[Message]:
+        """Load the request's input and prior history concurrently, assembled for the run.
+
+        The caller's input items and the conversation history are independent
+        storage round-trips with no data dependency, so they are fetched in
+        parallel to remove serial latency from the request critical path. The
+        history read is only issued when AgentServer is the history source; in
+        stateless single-turn requests it short-circuits without a round-trip.
+
+        Returns the messages already ordered as model input (history precedes
+        input), so the message-ordering rule lives only here and callers do not
+        need to know the storage-result ordering. If either read fails, the
+        sibling task is cancelled and drained so no storage read is orphaned.
+        """
+
+        async def _load_input() -> list[Message]:
+            input_items = await context.get_input_items()
+            return await _items_to_messages(input_items, approval_storage=approval_storage)
+
+        async def _load_history() -> list[Message]:
+            if not self._uses_agent_server_history:
+                return []
+            history = await context.get_history()
+            return await _output_items_to_messages(history, approval_storage=approval_storage)
+
+        input_task = asyncio.ensure_future(_load_input())
+        history_task = asyncio.ensure_future(_load_history())
+        try:
+            input_messages, history_messages = await asyncio.gather(input_task, history_task)
+        except BaseException:
+            # gather surfaces the first failure without cancelling the sibling, and a
+            # cancellation of this coroutine must not leave either read running. Cancel
+            # both and await them so no storage operation is orphaned after we unwind.
+            input_task.cancel()
+            history_task.cancel()
+            await asyncio.gather(input_task, history_task, return_exceptions=True)
+            raise
+        return [*history_messages, *input_messages]
+
     async def _handle_inner_agent(
         self,
         request: CreateResponse,
@@ -728,6 +772,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 "The agent will restart from the original input."
             )
 
+        request_messages_task: asyncio.Task[list[Message]] | None = None
         try:
             request_context = get_request_context()
             approval_storage = self._function_approval_storage_provider.get_store(
@@ -735,6 +780,13 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             )
             session_storage = self._session_storage_provider.get_store(
                 config=self.config, platform_context=request_context
+            )
+
+            # Load the caller's input items and prior conversation history concurrently with the
+            # session load below. These are independent storage round-trips with no data dependency
+            # between them, so overlapping them removes serial latency from the request critical path.
+            request_messages_task = asyncio.ensure_future(
+                self._load_request_messages(context, approval_storage=approval_storage)
             )
 
             previous_response_id = request.get("previous_response_id")
@@ -747,8 +799,16 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     )
                 session = self._agent.create_session()
             session_save_id = context.conversation_id or context.response_id
-        except Exception as ex:
-            logger.error("Failed to prepare state storage: %s", ex, exc_info=(type(ex), ex, ex.__traceback__))
+        except BaseException as ex:
+            # Session preparation failed (or the request was cancelled / the stream closed —
+            # neither of which is an Exception). Cancel and drain the in-flight message-loading
+            # task so it is not orphaned, and log only ordinary failures.
+            if request_messages_task is not None:
+                request_messages_task.cancel()
+                with suppress(BaseException):
+                    await request_messages_task
+            if isinstance(ex, Exception):
+                logger.error("Failed to prepare state storage: %s", ex, exc_info=(type(ex), ex, ex.__traceback__))
             raise
 
         request_failure: Exception | None = None
@@ -763,15 +823,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 # prior turn, so AgentServer-history mode always starts the model call statelessly.
                 session.service_session_id = None
 
-            input_items = await context.get_input_items()
-            input_messages = await _items_to_messages(input_items, approval_storage=approval_storage)
-
-            history_messages: list[Message] = []
-            if self._uses_agent_server_history:
-                history = await context.get_history()
-                history_messages = await _output_items_to_messages(history, approval_storage=approval_storage)
+            messages = await request_messages_task
             run_kwargs: dict[str, Any] = {
-                "messages": [*history_messages, *input_messages],
+                "messages": messages,
                 "session": session,
             }
             chat_options, are_options_set = _to_chat_options(request)

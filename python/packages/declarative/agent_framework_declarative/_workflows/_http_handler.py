@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
+from http.cookiejar import CookieJar, DefaultCookiePolicy
 from typing import Any, Protocol, runtime_checkable
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
@@ -122,12 +123,18 @@ class DefaultHttpRequestHandler:
     Construction modes:
 
     1. ``DefaultHttpRequestHandler()`` — owns an internal client created lazily
-       on first ``send()``. Closed by :meth:`aclose`.
+       on first ``send()`` without response-cookie persistence. Closed by :meth:`aclose`.
     2. ``DefaultHttpRequestHandler(client=existing)`` — caller-owned client.
-       Not closed by :meth:`aclose`.
+       Retains its cookie behavior and is not closed by :meth:`aclose`.
     3. ``DefaultHttpRequestHandler(client_provider=cb)`` — per-request client
        lookup (parity with .NET's ``httpClientProvider`` callback). The
-       provider may return ``None`` to fall back to the owned/default client.
+       provider's clients retain their cookie behavior and are not closed by :meth:`aclose`.
+       Returning ``None`` falls back to ``client``, if supplied, then to the owned client.
+
+    Applications requiring persistent cookies must supply a client through ``client``
+    or ``client_provider`` scoped to one authenticated principal and manage its lifetime.
+    Explicit outbound ``Cookie`` headers and response ``Set-Cookie`` headers are preserved;
+    the owned-client policy only prevents automatic cookie persistence.
 
     .. warning::
 
@@ -262,7 +269,9 @@ class DefaultHttpRequestHandler:
             # one of them.
             async with self._owned_client_lock:
                 if self._owned_client is None:
-                    self._owned_client = httpx.AsyncClient()
+                    self._owned_client = httpx.AsyncClient(
+                        cookies=CookieJar(policy=DefaultCookiePolicy(allowed_domains=[])),
+                    )
         return self._owned_client
 
     async def __aenter__(self) -> DefaultHttpRequestHandler:

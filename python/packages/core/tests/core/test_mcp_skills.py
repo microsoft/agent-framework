@@ -5,10 +5,12 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
 import json
 import zipfile
-from unittest.mock import AsyncMock
+from datetime import timedelta
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from mcp.shared.exceptions import McpError
@@ -20,7 +22,7 @@ from mcp.types import (
 )
 from pydantic import AnyUrl
 
-from agent_framework import MCPSkill, MCPSkillResource, MCPSkillsSource, SkillsSourceContext
+from agent_framework import CachingSkillsSource, MCPSkill, MCPSkillResource, MCPSkillsSource, SkillsSourceContext
 from agent_framework._skills import _parse_mcp_skill_index
 
 from .conftest import MockAgent
@@ -723,7 +725,7 @@ Instructions from an archive.
 """
 
 
-def _make_archive_index(name: str, url: str, entry_type: str = "archive") -> str:
+def _make_archive_index(name: str, url: str, entry_type: str = "archive", *, digest: object = None) -> str:
     """Build a skill index JSON document with a single archive entry."""
     return json.dumps({
         "$schema": "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
@@ -733,6 +735,7 @@ def _make_archive_index(name: str, url: str, entry_type: str = "archive") -> str
                 "type": entry_type,
                 "description": "A skill delivered as an archive.",
                 "url": url,
+                **({"digest": digest} if digest is not None else {}),
             }
         ],
     })
@@ -1004,6 +1007,234 @@ class TestMCPSkillsSourceArchive:
         source = MCPSkillsSource(client=client)
         skills = await source.get_skills(_SOURCE_CTX)
         assert skills == []
+
+
+class TestMCPSkillsSourceArchiveDigest:
+    """Tests for archive digest verification through the MCP discovery pipeline."""
+
+    @pytest.mark.parametrize("digest_mode", ["omitted", "null", "matching"])
+    async def test_valid_archive_loads(self, digest_mode: str) -> None:
+        from agent_framework._skills import _ArchiveEntryLoader
+
+        url = "skill://archives/packaged-skill.zip"
+        archive = _make_zip({
+            "SKILL.md": ARCHIVE_SKILL_MD.encode(),
+            "references/guide.md": b"Verified resource.",
+        })
+        index_data = json.loads(_make_archive_index("packaged-skill", url))
+        if digest_mode == "null":
+            index_data["skills"][0]["digest"] = None
+        elif digest_mode == "matching":
+            index_data["skills"][0]["digest"] = f"sha256:{hashlib.sha256(archive).hexdigest()}"
+        client = _archive_client(json.dumps(index_data), url, archive, "application/zip")
+
+        with patch.object(
+            _ArchiveEntryLoader, "_verify_digest", wraps=_ArchiveEntryLoader._verify_digest
+        ) as verify_digest:
+            skills = await MCPSkillsSource(client=client).get_skills(_SOURCE_CTX)
+
+        assert len(skills) == 1
+        if digest_mode == "matching":
+            verify_digest.assert_called_once()
+        else:
+            verify_digest.assert_not_called()
+        assert "Instructions from an archive." in await skills[0].get_content()
+        resource = await skills[0].get_resource("references/guide.md")
+        assert resource is not None
+        assert await resource.read() == "Verified resource."
+
+    @pytest.mark.parametrize(
+        "digest",
+        [
+            "",
+            " ",
+            "0" * 64,
+            "sha256:" + "a" * 63,
+            "sha256:" + "a" * 65,
+            "sha256:" + "g" * 64,
+            "sha256:" + "A" * 64,
+            "SHA256:" + "a" * 64,
+            " sha256:" + "a" * 64,
+            "sha256:" + "a" * 64 + "\n",
+            "sha512:" + "a" * 128,
+            123,
+            False,
+            [],
+            {"value": "untrusted"},
+        ],
+    )
+    async def test_invalid_digest_skips_before_extraction(
+        self, digest: object, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        archive = _make_zip({"SKILL.md": ARCHIVE_SKILL_MD.encode()})
+        index = _make_archive_index("packaged-skill", url, digest=digest)
+        client = _archive_client(index, url, archive, "application/zip")
+
+        with patch("agent_framework._skills._ArchiveEntryLoader._build_skill") as build_skill:
+            skills = await MCPSkillsSource(client=client).get_skills(_SOURCE_CTX)
+
+        assert skills == []
+        build_skill.assert_not_called()
+        assert "Skipping skill 'packaged-skill': archive digest must be" in caplog.text
+        assert url not in caplog.text
+        assert ARCHIVE_SKILL_MD not in caplog.text
+
+    @pytest.mark.parametrize("digest_source", ["wrong", "original", "base64", "skill-md"])
+    async def test_mismatched_digest_skips_before_extraction(
+        self, digest_source: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        original = _make_zip({"SKILL.md": ARCHIVE_SKILL_MD.encode()})
+        tampered_content = ARCHIVE_SKILL_MD.replace("Instructions from an archive.", "Substituted instructions.")
+        archive = _make_zip({"SKILL.md": tampered_content.encode()})
+        digest_inputs = {
+            "original": original,
+            "base64": base64.b64encode(archive),
+            "skill-md": tampered_content.encode(),
+        }
+        expected = "0" * 64 if digest_source == "wrong" else hashlib.sha256(digest_inputs[digest_source]).hexdigest()
+        index = _make_archive_index("packaged-skill", url, digest=f"sha256:{expected}")
+        client = _archive_client(index, url, archive, "application/zip")
+
+        with patch("agent_framework._skills._ArchiveEntryLoader._build_skill") as build_skill:
+            skills = await MCPSkillsSource(client=client).get_skills(_SOURCE_CTX)
+
+        assert skills == []
+        build_skill.assert_not_called()
+        assert "Skipping skill 'packaged-skill': archive digest does not match downloaded content" in caplog.text
+        assert expected not in caplog.text
+        assert "Substituted instructions." not in caplog.text
+        assert url not in caplog.text
+        assert client.read_resource.await_count == 2
+
+    @pytest.mark.parametrize("digest", ["sha256:" + "0" * 64, "", 123])
+    async def test_rejected_entry_does_not_hide_valid_archive(self, digest: object) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        rejected_url = "skill://archives/rejected-skill.zip"
+        archive = _make_zip({"SKILL.md": ARCHIVE_SKILL_MD.encode()})
+        rejected_archive = _make_zip({
+            "SKILL.md": ARCHIVE_SKILL_MD.replace("name: packaged-skill", "name: rejected-skill").encode()
+        })
+        index_data = json.loads(_make_archive_index("rejected-skill", rejected_url, digest=digest))
+        index_data["skills"].extend(
+            json.loads(
+                _make_archive_index("packaged-skill", url, digest=f"sha256:{hashlib.sha256(archive).hexdigest()}")
+            )["skills"]
+        )
+        client = _make_client(**{
+            "skill://index.json": _make_text_result(json.dumps(index_data)),
+            url: _make_blob_result(archive, uri=url, mime_type="application/zip"),
+            rejected_url: _make_blob_result(rejected_archive, uri=rejected_url, mime_type="application/zip"),
+        })
+
+        skills = await MCPSkillsSource(client=client).get_skills(_SOURCE_CTX)
+
+        assert len(skills) == 1
+        assert skills[0].frontmatter.name == "packaged-skill"
+
+    async def test_size_guard_runs_before_hashing(self) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        archive = _make_zip({"SKILL.md": ARCHIVE_SKILL_MD.encode()})
+        index = _make_archive_index("packaged-skill", url, digest=f"sha256:{hashlib.sha256(archive).hexdigest()}")
+        client = _archive_client(index, url, archive, "application/zip")
+        source = MCPSkillsSource(client=client, archive_max_size_bytes=len(archive) - 1)
+
+        with patch("agent_framework._skills.hashlib.sha256") as sha256:
+            skills = await source.get_skills(_SOURCE_CTX)
+
+        assert skills == []
+        sha256.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "failure", ["invalid-zip", "gzip", "traversal", "file-count", "uncompressed-size", "name-mismatch"]
+    )
+    async def test_matching_digest_does_not_bypass_archive_guards(self, failure: str) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        files = {"SKILL.md": ARCHIVE_SKILL_MD.encode()}
+        if failure == "traversal":
+            files["../escape.md"] = b"Outside skill."
+        elif failure == "file-count":
+            files["extra.md"] = b"Extra resource."
+        elif failure == "name-mismatch":
+            files["SKILL.md"] = ARCHIVE_SKILL_MD.replace("name: packaged-skill", "name: another-skill").encode()
+        archive = _make_zip(files)
+        if failure == "invalid-zip":
+            archive = b"PK\x03\x04invalid"
+        elif failure == "gzip":
+            archive = b"\x1f\x8b"
+        index = _make_archive_index("packaged-skill", url, digest=f"sha256:{hashlib.sha256(archive).hexdigest()}")
+        client = _archive_client(index, url, archive, "application/zip")
+        source = MCPSkillsSource(
+            client=client,
+            archive_max_file_count=1 if failure == "file-count" else 20,
+            archive_max_uncompressed_size_bytes=1 if failure == "uncompressed-size" else 1_000_000,
+        )
+
+        assert await source.get_skills(_SOURCE_CTX) == []
+
+    @pytest.mark.parametrize("entry_type", ["archive", "ARCHIVE", " Archive "])
+    async def test_verification_applies_to_all_archive_type_spellings(self, entry_type: str) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        archive = _make_zip({"SKILL.md": ARCHIVE_SKILL_MD.encode()})
+        index = _make_archive_index("packaged-skill", url, entry_type, digest="sha256:" + "0" * 64)
+        client = _archive_client(index, url, archive, "application/zip")
+
+        assert await MCPSkillsSource(client=client).get_skills(_SOURCE_CTX) == []
+
+    @pytest.mark.parametrize("digest", ["sha256:" + "0" * 64, 123])
+    async def test_skill_md_digest_does_not_change_lazy_discovery(self, digest: object) -> None:
+        index_data = json.loads(SAMPLE_SKILL_INDEX)
+        index_data["skills"][0]["digest"] = digest
+        client = _make_client(**{"skill://index.json": _make_text_result(json.dumps(index_data))})
+
+        skills = await MCPSkillsSource(client=client).get_skills(_SOURCE_CTX)
+
+        assert len(skills) == 1
+        assert isinstance(skills[0], MCPSkill)
+        client.read_resource.assert_awaited_once_with(AnyUrl("skill://index.json"))
+
+    @pytest.mark.parametrize("refresh_failure", ["digest", "transport"])
+    async def test_cache_refresh_handles_verification_and_transport_failures(
+        self, refresh_failure: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        clock = {"now": 1000.0}
+        monkeypatch.setattr("time.monotonic", lambda: clock["now"])
+        url = "skill://archives/packaged-skill.zip"
+        archive = _make_zip({"SKILL.md": ARCHIVE_SKILL_MD.encode()})
+        index = _make_archive_index("packaged-skill", url, digest=f"sha256:{hashlib.sha256(archive).hexdigest()}")
+        client = _archive_client(index, url, archive, "application/zip")
+        source = CachingSkillsSource(MCPSkillsSource(client=client), refresh_interval=timedelta(seconds=60))
+
+        first = await source.get_skills(_SOURCE_CTX)
+        assert len(first) == 1
+        assert await source.get_skills(_SOURCE_CTX) is first
+        client.read_resource.assert_any_await(AnyUrl(url))
+        assert client.read_resource.await_count == 2
+
+        tampered = _make_zip({
+            "SKILL.md": ARCHIVE_SKILL_MD.replace("Instructions", "Substituted instructions").encode()
+        })
+        client.read_resource.side_effect = [
+            _make_text_result(index),
+            ConnectionError("connection lost")
+            if refresh_failure == "transport"
+            else _make_blob_result(tampered, uri=url, mime_type="application/zip"),
+        ]
+        clock["now"] += 60
+        if refresh_failure == "transport":
+            with pytest.raises(ConnectionError, match="connection lost"):
+                await source.get_skills(_SOURCE_CTX)
+            assert list(source._cached_skills.values()) == [first]
+            client.read_resource.side_effect = [_make_text_result(index), _make_blob_result(archive, uri=url)]
+            recovered = await source.get_skills(_SOURCE_CTX)
+            assert len(recovered) == 1
+            assert recovered is not first
+        else:
+            refreshed = await source.get_skills(_SOURCE_CTX)
+            assert refreshed == []
+            assert await source.get_skills(_SOURCE_CTX) is refreshed
+            assert client.read_resource.await_count == 4
 
 
 # ---------------------------------------------------------------------------

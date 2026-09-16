@@ -19,7 +19,12 @@ from .._sessions import ContextProvider
 from .._tools import ToolTypes, normalize_tools
 from .._types import Content, ResponseStream
 from ..exceptions import WorkflowException
-from ..observability import OtelAttr, capture_exception, create_workflow_span
+from ..observability import (
+    OtelAttr,
+    _activate_span,  # pyright: ignore[reportPrivateUsage]
+    capture_exception,
+    start_workflow_span,
+)
 from ._checkpoint import CheckpointStorage
 from ._const import (
     DEFAULT_MAX_ITERATIONS,
@@ -56,6 +61,18 @@ logger = logging.getLogger(__name__)
 
 
 _MISSING: Any = object()
+
+
+def _coerce_request_info_response(value: Any, response_type: type, request_id: str) -> Any:
+    """Convert and validate a response supplied for a pending request."""
+    if response_type is Content and isinstance(value, str):
+        value = Content.from_text(text=value)
+    value = try_coerce_to_type(value, response_type)
+    if not is_instance_of(value, response_type):
+        raise ValueError(
+            f"Response type mismatch for request ID {request_id}: expected {response_type}, got {type(value)}"
+        )
+    return value
 
 
 def _coalesce_renamed_kwarg(old_name: str, old_value: Any, new_name: str, new_value: Any) -> Any:
@@ -542,10 +559,8 @@ class Workflow(DictConvertible):
         if self.description:
             attributes[OtelAttr.WORKFLOW_DESCRIPTION] = self.description
 
-        with create_workflow_span(
-            OtelAttr.WORKFLOW_RUN_SPAN,
-            attributes,
-        ) as span:
+        span = start_workflow_span(OtelAttr.WORKFLOW_RUN_SPAN, attributes)
+        try:
             emitted_in_progress_pending = False
             try:
                 # Add workflow started event (telemetry + surface state to consumers)
@@ -611,10 +626,17 @@ class Workflow(DictConvertible):
 
                 # Execute initial setup if provided
                 if initial_executor_fn:
-                    await initial_executor_fn()
+                    with _activate_span(span):
+                        await initial_executor_fn()
 
-                # All executor executions happen within workflow span
-                async for event in self._runner.run_until_convergence():
+                # Activate the workflow span for each runner pull, then detach before yielding to callers.
+                runner_events = self._runner.run_until_convergence()
+                while True:
+                    with _activate_span(span):
+                        try:
+                            event = await anext(runner_events)
+                        except StopAsyncIteration:
+                            break
                     yield event
 
                     if event.type == "request_info" and not emitted_in_progress_pending:
@@ -662,6 +684,8 @@ class Workflow(DictConvertible):
                 )
                 capture_exception(span, exception=exc)
                 raise
+        finally:
+            span.end()
 
     async def _execute_with_message_or_checkpoint(
         self,
@@ -1084,15 +1108,7 @@ class Workflow(DictConvertible):
             if request_id not in pending_requests:
                 raise ValueError(f"Response provided for unknown request ID: {request_id}")
             pending_request = pending_requests[request_id]
-            if pending_request.response_type is Content and isinstance(response, str):
-                response = Content.from_text(text=response)
-            # Try to coerce raw values (e.g., dicts from JSON) to the expected type
-            response = try_coerce_to_type(response, pending_request.response_type)
-            if not is_instance_of(response, pending_request.response_type):
-                raise ValueError(
-                    f"Response type mismatch for request ID {request_id}: "
-                    f"expected {pending_request.response_type}, got {type(response)}"
-                )
+            response = _coerce_request_info_response(response, pending_request.response_type, request_id)
             coerced_responses[request_id] = response
 
         # Cancelling siblings on error, like every other concurrent write into runner state. Each
