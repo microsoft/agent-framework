@@ -20,6 +20,7 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     Message,
+    ResponseInvalidatedException,
     ResponseStream,
     SupportsChatGetResponse,
     chat_middleware,
@@ -999,6 +1000,430 @@ async def test_base_client_with_function_calling(chat_client_base: SupportsChatG
     assert response.messages[1].contents[0].result == "Processed value1"
     assert response.messages[2].role == "assistant"
     assert response.messages[2].text == "done"
+
+
+async def test_function_call_with_length_finish_reason_executes_and_continues(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Usable function arguments remain actionable regardless of the enclosing finish reason."""
+    executions: list[str] = []
+
+    @tool(name="lookup", approval_mode="never_require")
+    def lookup(value: str) -> str:
+        executions.append(value)
+        return f"found {value}"
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[Content.from_function_call(call_id="call-1", name="lookup", arguments={"value": "a"})],
+            ),
+            finish_reason="length",
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"]), finish_reason="stop"),
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["look up a"])],
+        options={"tools": [lookup]},
+    )
+
+    assert executions == ["a"]
+    assert chat_client_base.call_count == 2  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert [message.role for message in response.messages] == ["assistant", "tool", "assistant"]
+    assert response.messages[1].contents[0].result == "found a"
+    assert response.text == "done"
+
+
+async def test_streamed_function_call_with_length_finish_reason_executes_and_continues(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Streaming uses argument validity, not the enclosing finish reason, to decide execution."""
+    executions: list[str] = []
+
+    @tool(name="lookup", approval_mode="never_require")
+    def lookup(value: str) -> str:
+        executions.append(value)
+        return f"found {value}"
+
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        [
+            ChatResponseUpdate(
+                role="assistant",
+                contents=[Content.from_function_call(call_id="call-1", name="lookup", arguments={"value": "a"})],
+                finish_reason="length",
+            )
+        ],
+        [ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")], finish_reason="stop")],
+    ]
+
+    stream = chat_client_base.get_response(
+        [Message(role="user", contents=["look up a"])],
+        options={"tools": [lookup]},
+        stream=True,
+    )
+    updates = [update async for update in stream]
+    response = await stream.get_final_response()
+
+    assert executions == ["a"]
+    assert chat_client_base.call_count == 2  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert [content.type for update in updates for content in update.contents] == [
+        "function_call",
+        "function_result",
+        "text",
+    ]
+    assert response.text == "done"
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non_streaming", "streaming"])
+async def test_response_invalidation_short_circuits_current_iteration(
+    chat_client_base: SupportsChatGetResponse,
+    streaming: bool,
+) -> None:
+    """Provider invalidation propagates without creating any local function side effect."""
+    from agent_framework._sessions import AgentSession
+    from agent_framework._tools import _FUNCTION_INVOCATION_BUDGET_STATE_KEY
+
+    middleware_calls = 0
+    tool_calls = 0
+    provider_calls = 0
+    invalidated = ResponseInvalidatedException("provider invalidated partial response output")
+
+    class TrackingMiddleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            nonlocal middleware_calls
+            middleware_calls += 1
+            await call_next()
+
+    @tool(name="guarded", approval_mode="always_require")
+    def guarded(value: str) -> str:
+        nonlocal tool_calls
+        tool_calls += 1
+        return value
+
+    session = AgentSession()
+    session.service_session_id = "existing-session"
+    budget_state: dict[str, Any] = {"attempt_count": 0, "total_function_calls": 2}
+    session.state[_FUNCTION_INVOCATION_BUDGET_STATE_KEY] = budget_state
+    yielded: list[ChatResponseUpdate] = []
+
+    if streaming:
+
+        def invalid_stream(**kwargs: Any) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+            del kwargs
+
+            async def updates() -> AsyncIterable[ChatResponseUpdate]:
+                nonlocal provider_calls
+                provider_calls += 1
+                yield ChatResponseUpdate(
+                    role="assistant",
+                    contents=[
+                        Content.from_function_call(
+                            call_id="invalid-call",
+                            name="guarded",
+                            arguments={"value": "x"},
+                        )
+                    ],
+                )
+                raise invalidated
+
+            return ResponseStream(updates(), finalizer=ChatResponse.from_updates)
+
+        chat_client_base._get_streaming_response = invalid_stream  # type: ignore[attr-defined, method-assign]  # ty: ignore[unresolved-attribute]
+        response_stream = chat_client_base.get_response(
+            [Message(role="user", contents=["run"])],
+            options={"tools": [guarded]},
+            stream=True,
+            client_kwargs={
+                "middleware": [TrackingMiddleware()],
+                "session": session,
+                _FUNCTION_INVOCATION_BUDGET_STATE_KEY: budget_state,
+            },
+        )
+        with pytest.raises(ResponseInvalidatedException) as exc_info:
+            async for update in response_stream:
+                yielded.append(update)
+    else:
+
+        async def invalid_response(**kwargs: Any) -> ChatResponse:
+            nonlocal provider_calls
+            del kwargs
+            provider_calls += 1
+            raise invalidated
+
+        chat_client_base._get_non_streaming_response = invalid_response  # type: ignore[attr-defined, method-assign]  # ty: ignore[unresolved-attribute]
+        with pytest.raises(ResponseInvalidatedException) as exc_info:
+            await chat_client_base.get_response(
+                [Message(role="user", contents=["run"])],
+                options={"tools": [guarded]},
+                client_kwargs={
+                    "middleware": [TrackingMiddleware()],
+                    "session": session,
+                    _FUNCTION_INVOCATION_BUDGET_STATE_KEY: budget_state,
+                },
+            )
+
+    assert exc_info.value is invalidated
+    assert provider_calls == 1
+    assert middleware_calls == 0
+    assert tool_calls == 0
+    assert budget_state == {}
+    assert _FUNCTION_INVOCATION_BUDGET_STATE_KEY not in session.state
+    assert session.service_session_id == "existing-session"
+    assert not any(
+        content.type in {"function_approval_request", "function_result"}
+        for update in yielded
+        for content in update.contents
+    )
+    if streaming:
+        assert [content.type for update in yielded for content in update.contents] == ["function_call"]
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non_streaming", "streaming"])
+async def test_response_invalidation_restores_structured_continuation_snapshot(
+    chat_client_base: SupportsChatGetResponse,
+    streaming: bool,
+) -> None:
+    """Cleanup restores a copy when a provider mutates structured continuation state in place."""
+    from agent_framework._sessions import AgentSession
+
+    original_service_session_id = {"conversation_id": "valid", "metadata": {"generation": 1}}
+    session = AgentSession(service_session_id=original_service_session_id)
+    invalidated = ResponseInvalidatedException("provider invalidated partial response output")
+
+    def mutate_continuation() -> None:
+        service_session_id = session.service_session_id
+        assert isinstance(service_session_id, dict)
+        service_session_id["conversation_id"] = "invalid"
+        metadata = service_session_id["metadata"]
+        assert isinstance(metadata, dict)
+        metadata["generation"] = 2
+
+    if streaming:
+
+        def invalid_stream(**kwargs: Any) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+            del kwargs
+
+            async def updates() -> AsyncIterable[ChatResponseUpdate]:
+                mutate_continuation()
+                raise invalidated
+                yield  # pragma: no cover
+
+            return ResponseStream(updates(), finalizer=ChatResponse.from_updates)
+
+        chat_client_base._get_streaming_response = invalid_stream  # type: ignore[attr-defined, method-assign]  # ty: ignore[unresolved-attribute]
+        stream = chat_client_base.get_response(
+            [Message(role="user", contents=["run"])],
+            options={"tools": []},
+            stream=True,
+            client_kwargs={"session": session},
+        )
+        with pytest.raises(ResponseInvalidatedException):
+            async for _ in stream:
+                pass
+    else:
+
+        async def invalid_response(**kwargs: Any) -> ChatResponse:
+            del kwargs
+            mutate_continuation()
+            raise invalidated
+
+        chat_client_base._get_non_streaming_response = invalid_response  # type: ignore[attr-defined, method-assign]  # ty: ignore[unresolved-attribute]
+        with pytest.raises(ResponseInvalidatedException):
+            await chat_client_base.get_response(
+                [Message(role="user", contents=["run"])],
+                options={"tools": []},
+                client_kwargs={"session": session},
+            )
+
+    assert session.service_session_id == {"conversation_id": "valid", "metadata": {"generation": 1}}
+    assert session.service_session_id is not original_service_session_id
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non_streaming", "streaming"])
+async def test_invalidated_response_is_not_persisted(
+    chat_client_base: SupportsChatGetResponse,
+    streaming: bool,
+) -> None:
+    """Per-service-call history never success-persists invalidated calls or partial results."""
+    from agent_framework import InMemoryHistoryProvider
+    from agent_framework._sessions import AgentSession
+
+    provider = InMemoryHistoryProvider()
+    session = AgentSession()
+    seed = Message(role="assistant", contents=["existing history"])
+    session.state[provider.source_id] = {"messages": [seed]}
+    invalidated = ResponseInvalidatedException("provider invalidated partial response output")
+    tool_calls = 0
+
+    @tool(name="local_tool", approval_mode="never_require")
+    def local_tool() -> str:
+        nonlocal tool_calls
+        tool_calls += 1
+        return "result"
+
+    if streaming:
+
+        class InvalidRawUpdate:
+            conversation_id = "invalid-session"
+
+        def invalid_stream(**kwargs: Any) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+            del kwargs
+
+            async def updates() -> AsyncIterable[ChatResponseUpdate]:
+                yield ChatResponseUpdate(
+                    role="assistant",
+                    contents=[Content.from_function_call(call_id="invalid-call", name="local_tool", arguments={})],
+                    raw_representation=InvalidRawUpdate(),
+                )
+                raise invalidated
+
+            return ResponseStream(updates(), finalizer=ChatResponse.from_updates)
+
+        chat_client_base._get_streaming_response = invalid_stream  # type: ignore[attr-defined, method-assign]  # ty: ignore[unresolved-attribute]
+    else:
+
+        async def invalid_response(**kwargs: Any) -> ChatResponse:
+            del kwargs
+            raise invalidated
+
+        chat_client_base._get_non_streaming_response = invalid_response  # type: ignore[attr-defined, method-assign]  # ty: ignore[unresolved-attribute]
+
+    agent = Agent(
+        client=chat_client_base,
+        tools=[local_tool],
+        context_providers=[provider],
+        require_per_service_call_history_persistence=True,
+    )
+
+    if streaming:
+        stream = agent.run("run", session=session, stream=True)
+        with pytest.raises(ResponseInvalidatedException) as exc_info:
+            async for _ in stream:
+                pass
+        with pytest.raises(ResponseInvalidatedException) as final_exc_info:
+            await stream.get_final_response()
+        assert final_exc_info.value is invalidated
+    else:
+        with pytest.raises(ResponseInvalidatedException) as exc_info:
+            await agent.run("run", session=session)
+
+    assert exc_info.value is invalidated
+    assert tool_calls == 0
+    assert session.state[provider.source_id]["messages"] == [seed]
+    assert session.service_session_id is None
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non_streaming", "streaming"])
+async def test_invalidated_final_no_tool_response_preserves_prior_continuation(
+    chat_client_base: SupportsChatGetResponse,
+    streaming: bool,
+) -> None:
+    """Providers can invalidate unexpected local calls returned after tools were disabled."""
+    from agent_framework._sessions import AgentSession
+    from agent_framework._tools import _FUNCTION_INVOCATION_BUDGET_STATE_KEY
+
+    tool_calls = 0
+    provider_calls = 0
+    invalidated = ResponseInvalidatedException("provider invalidated partial response output")
+
+    @tool(name="local_tool", approval_mode="never_require")
+    def local_tool() -> str:
+        nonlocal tool_calls
+        tool_calls += 1
+        return "result"
+
+    function_call = Content.from_function_call(call_id="valid-call", name="local_tool", arguments={})
+    session = AgentSession()
+    session.service_session_id = "starting-continuation"
+    budget_state: dict[str, Any] = {"attempt_count": 0}
+    session.state[_FUNCTION_INVOCATION_BUDGET_STATE_KEY] = budget_state
+    chat_client_base.function_invocation_configuration["max_iterations"] = 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    if streaming:
+
+        def scripted_stream(
+            *,
+            options: dict[str, Any],
+            **kwargs: Any,
+        ) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+            nonlocal provider_calls
+            del kwargs
+            provider_calls += 1
+
+            async def updates() -> AsyncIterable[ChatResponseUpdate]:
+                if provider_calls == 1:
+                    yield ChatResponseUpdate(
+                        role="assistant",
+                        contents=[function_call],
+                        finish_reason="tool_calls",
+                        conversation_id="valid-continuation",
+                    )
+                    return
+                assert options["tool_choice"] == "none"
+                yield ChatResponseUpdate(
+                    role="assistant",
+                    contents=[Content.from_function_call(call_id="invalid-call", name="local_tool", arguments={})],
+                    conversation_id="invalid-continuation",
+                )
+                raise invalidated
+
+            return ResponseStream(updates(), finalizer=ChatResponse.from_updates)
+
+        chat_client_base._get_streaming_response = scripted_stream  # type: ignore[attr-defined, method-assign]  # ty: ignore[unresolved-attribute]
+        stream = chat_client_base.get_response(
+            [Message(role="user", contents=["run"])],
+            options={"tools": [local_tool]},
+            stream=True,
+            client_kwargs={
+                "session": session,
+                _FUNCTION_INVOCATION_BUDGET_STATE_KEY: budget_state,
+            },
+        )
+        with pytest.raises(ResponseInvalidatedException) as exc_info:
+            async for _ in stream:
+                pass
+    else:
+
+        async def scripted_response(
+            *,
+            options: dict[str, Any],
+            **kwargs: Any,
+        ) -> ChatResponse:
+            nonlocal provider_calls
+            del kwargs
+            provider_calls += 1
+            if provider_calls == 1:
+                return ChatResponse(
+                    messages=Message(role="assistant", contents=[function_call]),
+                    finish_reason="tool_calls",
+                    conversation_id="valid-continuation",
+                )
+            assert options["tool_choice"] == "none"
+            raise invalidated
+
+        chat_client_base._get_non_streaming_response = scripted_response  # type: ignore[attr-defined, method-assign]  # ty: ignore[unresolved-attribute]
+        with pytest.raises(ResponseInvalidatedException) as exc_info:
+            await chat_client_base.get_response(
+                [Message(role="user", contents=["run"])],
+                options={"tools": [local_tool]},
+                client_kwargs={
+                    "session": session,
+                    _FUNCTION_INVOCATION_BUDGET_STATE_KEY: budget_state,
+                },
+            )
+
+    assert exc_info.value is invalidated
+    assert provider_calls == 2
+    assert tool_calls == 1
+    assert budget_state == {}
+    assert _FUNCTION_INVOCATION_BUDGET_STATE_KEY not in session.state
+    assert session.service_session_id == "valid-continuation"
 
 
 async def test_base_client_with_function_calling_string_input(chat_client_base: SupportsChatGetResponse):
