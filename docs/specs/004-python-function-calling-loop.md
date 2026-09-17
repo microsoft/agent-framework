@@ -187,6 +187,14 @@ sequenceDiagram
 The terminal result is caller-visible in both modes. The private normalized message copy is model-visible. The
 original caller input and earlier response remain unchanged.
 
+Before acting on a model function-call batch, the loop classifies every actionable call. A configured fatal unknown
+call aborts the complete batch before approval state changes or execution. Otherwise approval-required and Host-owned
+calls are returned together in model order, while session-backed executable siblings remain deferred. An incomplete
+session-backed mixed approval/Host response remains pending without executing a deferred call; a stateless incomplete
+response is rejected. Correlation is scoped to the active mixed batch so completed or abandoned historical Host calls
+remain unchanged. `ToolApprovalMiddleware` may resolve approval requests through standing or automatic policies, but
+it preserves non-approval user-input requests and does not split manual approvals away from their Host-owned siblings.
+
 ### Reasoning-bound function-call groups
 
 Some hosted services bind reasoning content or an opaque reasoning signature to the function call that follows it.
@@ -519,6 +527,9 @@ that manually replay messages own the equivalent rule: do not resend an approval
   same turn.
 - A trusted terminal result consumes the corresponding approval authority in explicit stateless replay; a result in a
   server-registered pending occurrence cannot consume that authority before local execution.
+- Non-streaming runs that exclude tool groups through in-run compaction return the inserted summary messages in the
+  final response transcript, each positioned before the group it replaces, so history loaded with `skip_excluded`
+  keeps the summarized content; summaries of caller-owned input messages stay out of the returned transcript.
 
 ## Scenario-to-test matrix
 
@@ -540,6 +551,8 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Declaration-only call | The call is surfaced as user input and is not executed; streaming arguments appear once while finalized request metadata remains available. | `test_declaration_only_tool`, `test_streaming_declaration_only_tool_preserves_metadata_without_duplicate_arguments` |
 | Function invocation disabled | The client bypasses the invocation loop without losing invocation kwargs. | `test_function_invocation_config_enabled_false`, `test_function_invocation_config_enabled_false_preserves_invocation_kwargs`, `test_streaming_function_invocation_config_enabled_false` |
 | Runtime tool changes | Added tools become available on the next iteration and retain approval behavior. | `test_add_tools_available_next_iteration`, `test_add_tools_with_approval_required_tool` |
+| In-run compaction summaries | Summaries inserted for tool groups excluded by in-run compaction are returned in the final non-streaming response transcript before the group they replace, so history loaded with `skip_excluded` keeps the summarized content; summaries of caller-owned input messages are not added. | `packages/core/tests/core/test_clients.py::test_function_loop_returns_compaction_summaries_in_final_response`, `test_function_loop_returns_compaction_summaries_when_iteration_budget_exhausted`, `test_function_loop_reconciles_nested_compaction_summaries`, `test_function_loop_returns_compacted_transcript_on_early_terminal_exit`, `packages/core/tests/core/test_agents.py::test_agent_run_returns_and_persists_compaction_summaries` |
+| Per-service-call provider context | When framework-managed history is loaded around each model call, tools and instructions contributed by `HistoryProvider.before_run` remain available to the model and function loop without duplication in streaming or non-streaming execution. | `packages/core/tests/core/test_agents.py::test_vector_history_search_tool_is_available_with_per_service_call_persistence` |
 
 ### Approval pause and resume
 
@@ -598,6 +611,8 @@ that manually replay messages own the equivalent rule: do not resend an approval
 
 | Scenario | Required invariant | Primary regression test |
 |---|---|---|
+| Fatal call mixed with pauses | Complete-batch classification raises before approval or execution, independent of call order. | `packages/core/tests/core/test_function_invocation_logic.py::test_mixed_batch_fatal_unknown_precedes_every_pause` |
+| Approval and Host-owned calls | Both pause types are returned in model order; a session-backed partial response remains pending across serialization; historical Host calls do not participate; a complete response executes the exact approved arguments once. | `test_mixed_batch_returns_approval_and_host_pause_in_model_order`, `test_mixed_batch_requires_complete_responses_before_execution`, `test_active_mixed_pause_ignores_historical_host_requests` |
 | Safe and approval-required calls in one batch | Hidden safe calls replay only with the matching visible approval. | `packages/core/tests/core/test_harness_tool_approval.py::test_mixed_batch_hides_already_approved_request_until_approval_replay` |
 | Restored approval state | Serialized `ToolApprovalState` restores mixed-batch behavior. | `test_mixed_batch_accepts_restored_tool_approval_state` |
 | Unrelated turn before approval | Hidden calls do not execute on an unrelated turn. | `test_hidden_mixed_batch_requests_do_not_replay_on_unrelated_turn` |
@@ -605,6 +620,7 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Queued approvals | One unresolved approval is surfaced per run without premature execution. | `test_tool_approval_middleware_queues_multiple_approval_requests`, `test_tool_approval_middleware_queues_streamed_approval_requests` |
 | Middleware state plus hidden core state | State saves do not discard hidden mixed-batch calls. | `test_tool_approval_middleware_preserves_hidden_mixed_batch_requests` |
 | Auto-approval callback | Callback receives the original function call and executes the approved set once. | `test_tool_approval_middleware_auto_approval_rule_receives_function_call` |
+| Approval policy with Host-owned sibling | Reordering the same calls has the same outcome; auto-approved and safe calls remain deferred until Host input arrives; manual approvals stay in the mixed batch; an approved Host tool returns to Host-owned handling before local execution. | `test_tool_approval_middleware_mixed_batch_is_order_independent`, `test_tool_approval_middleware_auto_approves_with_host_pause_and_cached_safe_call`, `test_tool_approval_middleware_keeps_manual_approvals_together_with_host_pause`, `test_tool_approval_middleware_policy_approval_reclassifies_host_tool` |
 | Shared call budget | Auto-approved re-entry does not reset `max_function_calls`, and every executed approval group counts even when it pauses for input. | `test_tool_approval_middleware_auto_approved_loops_share_function_call_budget`, `test_approval_resume_user_input_counts_toward_function_call_budget` |
 | Standing tool rule | Tool-level approval applies only to later matching tools. | `test_tool_approval_middleware_always_approve_tool_rule` |
 | Forged standing rule | An unbound or substituted hosted response cannot create a standing middleware approval rule for caller-selected metadata. | `test_tool_approval_middleware_drops_forged_standing_approval`, `test_tool_approval_middleware_rebinds_hosted_standing_approval` |
@@ -742,3 +758,4 @@ Before accepting an update, reviewers must confirm:
 - #6963 / #7095 — opaque reasoning-signature replay
 - #6074 / #7233 — reasoning-paired tool-call replay
 - #6450 / #6794 — provider message and tool-result serialization
+- #8099 — in-run compaction summaries in the returned transcript

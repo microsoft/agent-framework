@@ -427,7 +427,6 @@ class TestAgentExecutors:
     async def test_invoke_agent_not_found(self, mock_context, mock_state):
         """Test InvokeAzureAgentExecutor raises error when agent not found."""
         from agent_framework.exceptions import AgentInvalidRequestException
-
         from agent_framework_declarative._workflows import (
             InvokeAzureAgentExecutor,
         )
@@ -448,6 +447,80 @@ class TestAgentExecutors:
 
         assert "non_existent_agent" in str(exc_info.value)
         assert "not found in registry" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_invoke_agent_skips_internal_workflow_kwargs(self, mock_context, mock_state):
+        """Internal underscore keys in the run-kwargs bag must not reach Agent.run.
+
+        Regression for #8413: the workflow state bag carries internal routing
+        copies (e.g. `_raw_function_invocation_kwargs`) next to the public
+        kwargs, and the declarative agent step used to splat the whole bag into
+        `Agent.run`, which takes no `**kwargs` and raised TypeError.
+        """
+        from types import SimpleNamespace
+
+        from agent_framework_declarative._workflows import InvokeAzureAgentExecutor
+
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+
+        class _StrictAgent:
+            """Same public surface as Agent.run: no **kwargs catch-all."""
+
+            def __init__(self) -> None:
+                self.received_options: dict[str, Any] | None = None
+                self.received_public_kwargs: dict[str, Any] = {}
+
+            async def run(
+                self,
+                messages,
+                options=None,
+                function_invocation_kwargs=None,
+                client_kwargs=None,
+                session=None,
+                tools=None,
+                stream=False,
+            ):
+                self.received_options = options
+                self.received_public_kwargs = {
+                    "function_invocation_kwargs": function_invocation_kwargs,
+                    "client_kwargs": client_kwargs,
+                }
+                return SimpleNamespace(text="ok", messages=[], tool_calls=[])
+
+        agent = _StrictAgent()
+        run_kwargs_bag = {
+            "function_invocation_kwargs": {"forwarded_props": {"a": 1}},
+            "_raw_function_invocation_kwargs": {"forwarded_props": {"a": 1}},
+        }
+        mock_context.get_state = MagicMock(
+            side_effect=lambda key, default=None: run_kwargs_bag if key == "_workflow_run_kwargs" else default
+        )
+
+        executor = InvokeAzureAgentExecutor(
+            {"kind": "InvokeAzureAgent", "agent": "StubAgent", "input": "hello"},
+            agents={"StubAgent": agent},
+        )
+
+        # Before the fix this raises TypeError: Agent.run() got an unexpected
+        # keyword argument '_raw_function_invocation_kwargs'.
+        await executor._invoke_agent_and_store_results(
+            agent,
+            "StubAgent",
+            "hello",
+            state,
+            mock_context,
+            messages_var=None,
+            response_obj_var=None,
+            result_property=None,
+            auto_send=False,
+        )
+
+        assert agent.received_options is not None
+        # The full bag still reaches tool forwarding, internal copies included.
+        forwarded = agent.received_options["additional_function_arguments"]
+        assert forwarded["_raw_function_invocation_kwargs"] == {"forwarded_props": {"a": 1}}
+        assert forwarded["function_invocation_kwargs"] == {"forwarded_props": {"a": 1}}
 
 
 class TestHumanInputExecutors:
@@ -1824,7 +1897,6 @@ class TestExecutorKwargsForwarding:
             RESOLVED_WORKFLOW_RUN_KWARGS_KEY,
             WORKFLOW_RUN_KWARGS_KEY,
         )
-
         from agent_framework_declarative._workflows._executors_external_input import ExternalInputResponse
 
         storage = FileCheckpointStorage(
@@ -1911,7 +1983,9 @@ class TestExecutorKwargsForwarding:
             )
             expected_run_kwargs = {kwargs_channel: invocation_kwargs, raw_key: invocation_kwargs}
             assert call_kwargs[kwargs_channel] == invocation_kwargs
-            assert call_kwargs[raw_key] == invocation_kwargs
+            # The internal raw copy stays routing state for nested executors;
+            # it is not a public Agent.run parameter (#8413).
+            assert raw_key not in call_kwargs
         else:
             expected_run_kwargs = {kwargs_channel: {"shared": "G", "specific": "S"}}
             assert call_kwargs[kwargs_channel] == {"shared": "G", "specific": "S"}
@@ -1924,7 +1998,6 @@ class TestExecutorKwargsForwarding:
         """InvokeAzureAgentExecutor should forward run_kwargs to agent.run()."""
         from agent_framework._workflows._const import WORKFLOW_RUN_KWARGS_KEY
         from agent_framework._workflows._state import State
-
         from agent_framework_declarative._workflows._executors_agents import (
             InvokeAzureAgentExecutor,
         )
@@ -1996,7 +2069,6 @@ class TestExecutorKwargsForwarding:
         """Caller-provided options in run_kwargs should be merged, not cause TypeError."""
         from agent_framework._workflows._const import WORKFLOW_RUN_KWARGS_KEY
         from agent_framework._workflows._state import State
-
         from agent_framework_declarative._workflows._executors_agents import (
             InvokeAzureAgentExecutor,
         )
