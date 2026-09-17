@@ -559,6 +559,8 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 
     protected override void Visit(InvokeConnectorAction item) => this.NotSupported(item);
 
+    protected override void Visit(InvokeMcpToolAction item) => this.NotSupported(item);
+
     protected override void Visit(InvokeCustomModelAction item) => this.NotSupported(item);
 
     protected override void Visit(InvokeFlowAction item) => this.NotSupported(item);
@@ -572,6 +574,8 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     protected override void Visit(CSATQuestion item) => this.NotSupported(item);
 
     protected override void Visit(OAuthInput item) => this.NotSupported(item);
+
+    protected override void Visit(VoiceAuthenticate item) => this.NotSupported(item);
 
     protected override void Visit(BeginDialog item) => this.NotSupported(item);
 

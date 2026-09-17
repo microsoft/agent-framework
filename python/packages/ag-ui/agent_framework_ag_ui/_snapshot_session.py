@@ -28,7 +28,7 @@ from ._snapshots import (
     AGUIThreadSnapshotStore,
     _clear_thread_snapshot_interrupt,
 )
-from ._utils import make_json_safe
+from ._utils import _project_host_payload_history, make_json_safe
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +105,7 @@ class ThreadSnapshotSession:
         if snapshot.state is not None:
             yield StateSnapshotEvent(snapshot=snapshot.state)
         if snapshot.messages:
-            yield MessagesSnapshotEvent(messages=snapshot.messages)  # type: ignore[arg-type]
+            yield MessagesSnapshotEvent(messages=_project_host_payload_history(snapshot.messages))  # type: ignore[arg-type]
         yield _build_run_finished_event(run_id=run_id, thread_id=self._thread_id, interrupts=snapshot.interrupt)
 
     def effective_state(
@@ -134,11 +134,17 @@ class ThreadSnapshotSession:
     def resume_seeded_messages(self, incoming: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Prepend copies of stored thread history to a resume request's messages.
 
-        Resume requests carry only the synthesized interrupt response; seeding
+        Resume requests often carry only the synthesized interrupt response; seeding
         with stored history keeps the persisted thread from being truncated.
+
+        For non-empty client-replayed transcripts that already overlap stored
+        history, callers should use ``_reconstruct_messages_from_thread_snapshot``
+        instead so messages are not double-persisted (#8140).
         """
         if self._stored is None:
             return incoming
+        if not incoming:
+            return [copy.deepcopy(message) for message in self._stored.messages]
         return [copy.deepcopy(message) for message in self._stored.messages] + incoming
 
     async def save(

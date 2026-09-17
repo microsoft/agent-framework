@@ -4,7 +4,7 @@ description = "Debug UI for Microsoft Agent Framework with OpenAI-compatible API
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b260903"
+version = "1.0.0b260910"
 license-files = ["LICENSE"]
 urls.homepage = "https://github.com/microsoft/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -45,7 +45,7 @@ all = [
 devui = "agent_framework_devui:main"
 
 [tool.uv]
-prerelease = "if-necessary-or-explicit"
+prerelease = "if-necessary"
 environments = [
     "sys_platform == 'darwin'",
     "sys_platform == 'linux'",

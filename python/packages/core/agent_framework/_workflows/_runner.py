@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-import contextlib
 import logging
 import warnings
 from collections import defaultdict
@@ -125,24 +124,24 @@ class RunnerImpl:
             logger.info(f"Starting superstep {self._iteration + 1}")
             yield WorkflowEvent.superstep_started(iteration=self._iteration + 1)
 
-            # Run iteration concurrently with live event streaming: we poll
-            # for new events while the iteration coroutine progresses.
+            # Wake on either a live event or iteration completion, including silent supersteps.
             iteration_task = asyncio.create_task(self._run_iteration())
+            event_task: asyncio.Task[WorkflowEvent] | None = None
             try:
                 while not iteration_task.done():
-                    try:
-                        # Wait briefly for any new event; timeout allows progress checks
-                        event = await asyncio.wait_for(self._ctx.next_event(), timeout=0.05)
-                        yield event
-                    except asyncio.TimeoutError:
-                        # Periodically continue to let iteration advance
-                        continue
-            except asyncio.CancelledError:
-                # Propagate cancellation to the iteration task to avoid orphaned work
-                iteration_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await iteration_task
-                raise
+                    event_task = asyncio.create_task(self._ctx.next_event())
+                    done, _ = await asyncio.wait((iteration_task, event_task), return_when=asyncio.FIRST_COMPLETED)
+                    if event_task in done:
+                        yield event_task.result()
+            finally:
+                # Cancellation and generator closure must not leave an event waiter or executor running.
+                tasks: list[asyncio.Task[Any]] = (
+                    [iteration_task] if event_task is None else [iteration_task, event_task]
+                )
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
 
             # Propagate errors from iteration, but first surface any pending events
             try:
@@ -401,6 +400,11 @@ class RunnerImpl:
             # Try the updated behavior only if backward compatibility did not yield state
             try:
                 state_dict = await executor.on_checkpoint_save()
+                # Validate at save time so restore cannot fail later on a non-dict payload (#8183).
+                if not isinstance(state_dict, dict) or not all(isinstance(k, str) for k in state_dict):
+                    raise WorkflowCheckpointException(
+                        f"Executor state for {exec_id} is not a dict[str, Any]. Unable to save."
+                    )
                 await self._set_executor_state(exec_id, state_dict)
             except WorkflowCheckpointException:
                 raise

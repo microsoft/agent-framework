@@ -1,4 +1,4 @@
-test-results.xml
+test-results*.xml
 
 # GAIA data directories
 data_gaia_hub/

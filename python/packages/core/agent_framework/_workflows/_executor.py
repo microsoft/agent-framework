@@ -7,7 +7,6 @@ import functools
 import inspect
 import logging
 import types
-import typing
 from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar, overload
 
@@ -21,7 +20,13 @@ from ._model_utils import DictConvertible
 from ._request_info_mixin import RequestInfoMixin
 from ._runner_context import MessageType, RunnerContext, WorkflowMessage
 from ._state import State
-from ._typing_utils import contains_typevar, is_instance_of, normalize_type_to_list, resolve_type_annotation
+from ._typing_utils import (
+    _resolve_function_annotations,  # pyright: ignore[reportPrivateUsage]
+    contains_typevar,
+    is_instance_of,
+    normalize_type_to_list,
+    resolve_type_annotation,
+)
 from ._workflow_context import WorkflowContext, validate_workflow_context_annotation
 
 logger = logging.getLogger(__name__)
@@ -778,13 +783,7 @@ def _validate_handler_signature(
     if not skip_message_annotation and message_param.annotation == inspect.Parameter.empty:
         raise ValueError(f"Handler {func.__name__} must have a type annotation for the message parameter")
 
-    # Resolve string annotations from `from __future__ import annotations`.
-    # Fall back to raw annotations if resolution fails (e.g. unresolvable forward refs,
-    # AttributeError, or RecursionError), so registration failures are easier to diagnose.
-    try:
-        type_hints = typing.get_type_hints(func)
-    except (NameError, AttributeError, RecursionError):
-        type_hints = {p.name: p.annotation for p in params}
+    type_hints = _resolve_function_annotations(func, params)
 
     message_type = type_hints.get(message_param.name, message_param.annotation)
     if message_type == inspect.Parameter.empty:

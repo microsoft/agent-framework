@@ -24,6 +24,22 @@ Use `OpenAIChatClient` for new work unless you specifically need the Chat Comple
 
 The previous deprecated Responses alias has been removed. Use `OpenAIChatClient` directly.
 
+## Hosted function results
+
+`OpenAIChatClient` parses hosted `function_call_output` items in both streaming and non-streaming responses.
+Each result retains its `call_id` for correlation with the corresponding function call.
+Outputs explicitly marked `in_progress` are deferred without claiming their deduplication ID, so an empty
+or partial `.added` placeholder cannot suppress a later `.done` result. Completed empty results remain valid.
+
+Rich output parts are available through the function result's `items`; the backward-compatible `result`
+field contains only their text. Image and file parts retain their explicit provider type in OpenAI replay,
+including hosted file references, extensionless image URLs, and files whose names have image extensions.
+
+The ordinary AG-UI `TOOL_CALL_RESULT` emitter currently reads only `result`, not `items`. It emits the text
+for mixed text/attachment outputs and empty event content for image/file-only outputs. Preserving rich parts
+in framework content and OpenAI replay does not provide frontend attachment display; that is a separate
+transport/frontend capability, outside this parser's scope.
+
 ## Environment variables
 
 ### OpenAI

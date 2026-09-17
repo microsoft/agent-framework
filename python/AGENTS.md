@@ -79,6 +79,7 @@ python/
 │   │   ├── agent_framework/  # Public API exports
 │   │   └── tests/
 │   ├── foundry/              # agent-framework-foundry
+│   ├── lab/                  # Standalone experimental Lab project
 │   ├── anthropic/            # agent-framework-anthropic
 │   ├── ollama/               # agent-framework-ollama
 │   └── ...                   # Other provider packages
@@ -111,7 +112,7 @@ python/
 - [foundry](packages/foundry/README.md) - Microsoft Foundry chat, agent, memory, and embedding integrations
 - [azure-contentunderstanding](packages/azure-contentunderstanding/AGENTS.md) - Azure Content Understanding context provider
 - [azure-ai-search](packages/azure-ai-search/AGENTS.md) - Azure AI Search RAG
-- [azure-cosmos](packages/azure-cosmos/AGENTS.md) - Azure Cosmos DB-backed history provider
+- [azure-cosmos](packages/azure-cosmos/AGENTS.md) - Azure Cosmos DB for NoSQL vector, history, and checkpoint integrations
 
 Durable Task and Azure Functions integrations are maintained in the [Durable Agent Framework extension](https://github.com/microsoft/agent-framework-durable-extension).
 
@@ -134,5 +135,5 @@ Durable Task and Azure Functions integrations are maintained in the [Durable Age
 - [purview](packages/purview/AGENTS.md) - Data governance
 
 ### Experimental
-- [lab](packages/lab/AGENTS.md) - Experimental features
+- [lab](packages/lab/AGENTS.md) - Experimental features; standalone uv project with its own lockfile
 - [monty](packages/monty/AGENTS.md) - Monty-backed CodeAct integrations (alpha)

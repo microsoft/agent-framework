@@ -9,7 +9,7 @@ The flow is typically:
 
     user input -> Agent A -> Agent B -> Agent C -> Agent A -> ... -> output
 
-Depending of wether request info is enabled, the flow may include user input (except when an agent hands off):
+Depending on whether request info is enabled, the flow may include user input (except when an agent hands off):
 
     user input -> [Agent A -> Request info] -> [Agent B -> Request info] -> [Agent C -> ... -> output
 
@@ -71,6 +71,7 @@ else:
 
 
 logger = logging.getLogger(__name__)
+DEFAULT_WORKFLOW_NAME = "Handoff"
 
 
 # region Handoff events
@@ -299,6 +300,11 @@ class HandoffAgentExecutor(AgentExecutor):
             context_providers=agent.context_providers,
             middleware=agent.middleware,
             require_per_service_call_history_persistence=agent.require_per_service_call_history_persistence,
+            # Shared by reference rather than deep-copied, like `context_providers` and
+            # `middleware` above: both hold immutable configuration the clone never mutates,
+            # and a tokenizer can carry a vocabulary that is expensive or unsafe to copy.
+            compaction_strategy=agent.compaction_strategy,
+            tokenizer=agent.tokenizer,
             default_options=cloned_options,  # type: ignore[assignment]
             additional_properties=deepcopy(agent.additional_properties),
         )
@@ -614,7 +620,7 @@ class HandoffBuilder:
 
         Args:
             name: Optional workflow identifier used in logging and debugging.
-                  If not provided, a default name will be generated.
+                Defaults to ``"Handoff"``.
             participants: Optional list of ``Agent`` instances that will participate in the handoff workflow.
                           You can also call `.participants([...])` later. Each participant must have a
                           unique identifier (`.name` is preferred if set, otherwise `.id` is used).
@@ -630,7 +636,7 @@ class HandoffBuilder:
                 surface as workflow ``intermediate`` events. Pass ``"all_other"`` to select every participant
                 not selected by ``output_from``. Unlisted participant outputs are hidden.
         """
-        self._name = name
+        self._name = name or DEFAULT_WORKFLOW_NAME
         self._description = description
 
         # Participant related members

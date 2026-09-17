@@ -451,6 +451,60 @@ def test_filter_approval_controls_keeps_response_for_pending_placeholder() -> No
     assert any(placeholder in message.contents for message in filtered)
 
 
+def _replacement_approval_round(
+    *,
+    call_id: str,
+    occurrence_id: str,
+    request_id: str,
+) -> tuple[Content, Content]:
+    function_call = Content.from_function_call(
+        call_id=call_id,
+        name="guarded",
+        arguments="{}",
+        id=occurrence_id,
+    )
+    request = Content.from_function_approval_request(
+        id=request_id,
+        function_call=function_call,
+        additional_properties={"_replacement_approval_request": True},
+    )
+    return function_call, request
+
+
+def test_filter_approval_controls_correlates_replacement_by_occurrence() -> None:
+    """Resolving one reused-call-id replacement must leave its sibling pending."""
+    first_call, first_request = _replacement_approval_round(
+        call_id="reused",
+        occurrence_id="occurrence-1",
+        request_id="replacement-1",
+    )
+    second_call, second_request = _replacement_approval_round(
+        call_id="reused",
+        occurrence_id="occurrence-2",
+        request_id="replacement-2",
+    )
+    second_response = Content.from_function_approval_response(
+        approved=True,
+        id="occurrence-2",
+        function_call=second_call,
+    )
+
+    filtered = _filter_approval_control_messages([
+        Message(role="assistant", contents=[first_call, first_request]),
+        Message(role="assistant", contents=[second_call, second_request]),
+        Message(role="user", contents=[second_response]),
+        Message(role="tool", contents=[Content.from_function_result(call_id="reused", result="done")]),
+    ])
+
+    controls = [
+        content
+        for message in filtered
+        for content in message.contents
+        if content.type in {"function_approval_request", "function_approval_response"}
+    ]
+    assert controls == [first_request]
+
+
 class TestHistoryProviderBase:
     def test_default_flags(self) -> None:
         provider = ConcreteHistoryProvider("mem")
@@ -1583,6 +1637,28 @@ class TestFileHistoryProvider:
         assert raw[4 : 4 + first_record_length] == msgspec.msgpack.encode(messages[0].to_dict())
 
     @pytest.mark.parametrize("serialization_format", ["json", "msgpack"])
+    async def test_save_messages_deduplicates_replayed_transcript(
+        self, tmp_path: Path, serialization_format: Literal["json", "msgpack"]
+    ) -> None:
+        provider = FileHistoryProvider(tmp_path, serialization_format=serialization_format)
+        first_turn = [
+            Message(role="user", contents=["hello"]),
+            Message(role="assistant", contents=["hi there"]),
+        ]
+        full_transcript = [
+            Message(role="user", contents=["hello"]),
+            Message(role="assistant", contents=["hi there"]),
+            Message(role="user", contents=["follow-up"]),
+            Message(role="assistant", contents=["reply"]),
+        ]
+
+        await provider.save_messages("replayed-transcript", first_turn)
+        await provider.save_messages("replayed-transcript", full_transcript)
+
+        loaded = await provider.get_messages("replayed-transcript")
+        assert [message.text for message in loaded] == ["hello", "hi there", "follow-up", "reply"]
+
+    @pytest.mark.parametrize("serialization_format", ["json", "msgpack"])
     async def test_round_trips_marked_refusal_text(
         self, tmp_path: Path, serialization_format: Literal["json", "msgpack"]
     ) -> None:
@@ -1859,9 +1935,12 @@ class TestFileHistoryProvider:
         loaded = await provider.get_messages(session_id)
         assert [message.text for message in loaded] == ["first", "second"]
 
-    async def test_save_messages_deduplicates_identical_messages(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("serialization_format", ["json", "msgpack"])
+    async def test_save_messages_deduplicates_identical_messages(
+        self, tmp_path: Path, serialization_format: Literal["json", "msgpack"]
+    ) -> None:
         """Test that FileHistoryProvider does not re-append already persisted messages."""
-        provider = FileHistoryProvider(tmp_path)
+        provider = FileHistoryProvider(tmp_path, serialization_format=serialization_format)
 
         msg1 = Message(role="user", contents=["hello"])
         msg2 = Message(role="assistant", contents=["hi there"])
@@ -1874,9 +1953,12 @@ class TestFileHistoryProvider:
         loaded = await provider.get_messages("s1")
         assert len(loaded) == 2
 
-    async def test_save_messages_only_appends_new_messages(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("serialization_format", ["json", "msgpack"])
+    async def test_save_messages_only_appends_new_messages(
+        self, tmp_path: Path, serialization_format: Literal["json", "msgpack"]
+    ) -> None:
         """Test that FileHistoryProvider filters out old messages and only appends new ones"""
-        provider = FileHistoryProvider(tmp_path)
+        provider = FileHistoryProvider(tmp_path, serialization_format=serialization_format)
 
         msg1 = Message(role="user", contents=["hello"])
         msg2 = Message(role="assistant", contents=["hi there"])
@@ -1891,9 +1973,12 @@ class TestFileHistoryProvider:
         assert len(loaded) == 3
         assert loaded[2].text == "how are you?"
 
-    async def test_save_messages_different_roles_same_text_not_deduplicated(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("serialization_format", ["json", "msgpack"])
+    async def test_save_messages_different_roles_same_text_not_deduplicated(
+        self, tmp_path: Path, serialization_format: Literal["json", "msgpack"]
+    ) -> None:
         """Test that messages with the same text but different roles are kept separate."""
-        provider = FileHistoryProvider(tmp_path)
+        provider = FileHistoryProvider(tmp_path, serialization_format=serialization_format)
 
         msg1 = Message(role="user", contents=["ping"])
         msg2 = Message(role="assistant", contents=["ping"])
@@ -1920,9 +2005,12 @@ class TestFileHistoryProvider:
         raw_lines = (await asyncio.to_thread(session_file.read_text, encoding="utf-8")).splitlines()
         assert len(raw_lines) == 3
 
-    async def test_save_messages_preserves_duplicate_content(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("serialization_format", ["json", "msgpack"])
+    async def test_save_messages_preserves_duplicate_content(
+        self, tmp_path: Path, serialization_format: Literal["json", "msgpack"]
+    ) -> None:
         """Test that two identical user turns in the same batch are both persisted."""
-        provider = FileHistoryProvider(tmp_path)
+        provider = FileHistoryProvider(tmp_path, serialization_format=serialization_format)
 
         yes_1 = Message(role="user", contents=["yes"])
         yes_2 = Message(role="user", contents=["yes"])

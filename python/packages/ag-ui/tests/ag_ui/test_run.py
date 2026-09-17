@@ -61,6 +61,17 @@ from agent_framework_ag_ui._run_common import (
 )
 
 
+def _open_tool_call(flow: FlowState, call_id: str, name: str = "tool") -> None:
+    """Register a tool call as started in this run so TOOL_CALL_END is eligible."""
+    entry = {
+        "id": call_id,
+        "type": "function",
+        "function": {"name": name, "arguments": "{}"},
+    }
+    flow.pending_tool_calls.append(entry)
+    flow.tool_calls_by_id[call_id] = entry
+
+
 def _message_role(message: object) -> object:
     if isinstance(message, dict):
         return cast(dict[str, object], message).get("role")
@@ -903,6 +914,7 @@ def test_emit_tool_result_closes_open_message():
     # Simulate an open text message (e.g., from Feature #4 tool-only detection)
     flow.message_id = "open-msg-123"
     flow.tool_call_id = "call_456"
+    _open_tool_call(flow, "call_456")
 
     content = Content.from_function_result(call_id="call_456", result="tool result")
 
@@ -2056,6 +2068,7 @@ class TestEmitMcpToolResult:
     def test_produces_end_and_result_events(self):
         """MCP tool result emits ToolCallEnd + ToolCallResult events."""
         flow = FlowState()
+        _open_tool_call(flow, "mcp_call_1", name="mcp_tool")
         content = Content.from_mcp_server_tool_result(
             call_id="mcp_call_1",
             output={"results": [{"title": "Weather", "url": "https://example.com"}]},
@@ -2097,6 +2110,7 @@ class TestEmitMcpToolResult:
     def test_serializes_non_string_output(self):
         """Non-string output is serialized to JSON."""
         flow = FlowState()
+        _open_tool_call(flow, "mcp_call_6", name="mcp_tool")
         content = Content.from_mcp_server_tool_result(
             call_id="mcp_call_6",
             output={"key": "value", "count": 42},
@@ -2111,6 +2125,7 @@ class TestEmitMcpToolResult:
     def test_output_none_falls_back_to_empty_string(self):
         """When output is None (default), the result content is an empty string."""
         flow = FlowState()
+        _open_tool_call(flow, "mcp_call_none", name="mcp_tool")
         content = Content(type="mcp_server_tool_result", call_id="mcp_call_none")
 
         events = _emit_mcp_tool_result(content, flow)
@@ -2281,6 +2296,7 @@ class TestEmitContentMcpRouting:
     def test_routes_mcp_server_tool_result(self):
         """_emit_content dispatches mcp_server_tool_result to _emit_mcp_tool_result."""
         flow = FlowState()
+        _open_tool_call(flow, "route_test_2", name="mcp_tool")
         content = Content.from_mcp_server_tool_result(
             call_id="route_test_2",
             output="result data",
@@ -2690,6 +2706,98 @@ async def test_session_id_matches_thread_id_with_service_session():
     assert stub.last_session.service_session_id == "service-thread-789"
 
 
+async def test_scoped_session_id_preserves_service_session_id_thread_compatibility():
+    """Trusted scope changes internal identity without changing the provider continuation compatibility id."""
+    from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
+
+    from agent_framework_ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
+
+    stub = StubAgent()
+    agent = AgentFrameworkAgent(
+        agent=stub,
+        use_service_session=True,
+        service_session_id_from_thread_id=True,
+        snapshot_store=InMemoryAGUIThreadSnapshotStore(),
+    )
+
+    payload = {
+        "thread_id": "service-thread-789",
+        "run_id": "run-scoped-service",
+        "__ag_ui_snapshot_scope": "tenant-a",
+        "messages": [{"role": "user", "content": "Hello"}],
+    }
+
+    events = [event async for event in agent.run(payload)]
+
+    assert stub.last_session is not None
+    assert stub.last_session.session_id != "service-thread-789"
+    assert stub.last_session.service_session_id == "service-thread-789"
+    assert events[0].thread_id == "service-thread-789"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert events[-1].thread_id == "service-thread-789"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+
+async def test_scoped_session_id_supports_deprecated_legacy_mapping():
+    """The explicit migration escape hatch warns and preserves the raw internal session id."""
+    from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
+
+    from agent_framework_ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
+
+    stub = StubAgent()
+    with pytest.warns(DeprecationWarning, match="legacy_session_id_from_thread_id=True is deprecated"):
+        agent = AgentFrameworkAgent(
+            agent=stub,
+            snapshot_store=InMemoryAGUIThreadSnapshotStore(),
+            legacy_session_id_from_thread_id=True,
+        )
+
+    payload = {
+        "thread_id": "legacy-thread",
+        "run_id": "run-legacy-session",
+        "__ag_ui_snapshot_scope": "tenant-a",
+        "messages": [{"role": "user", "content": "Hello"}],
+    }
+
+    _ = [event async for event in agent.run(payload)]
+
+    assert stub.last_session is not None
+    assert stub.last_session.session_id == "legacy-thread"
+
+
+async def test_scoped_session_id_is_used_to_create_service_conversation():
+    """Provider-owned conversation creation uses the scope-isolated internal session id."""
+    from agent_framework import AgentSession
+
+    from agent_framework_ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
+
+    stub = StubAgent()
+    created_session_ids: list[str] = []
+
+    def create_conversation(*, session_id: str) -> AgentSession:
+        created_session_ids.append(session_id)
+        return AgentSession(session_id=session_id, service_session_id="provider-conversation")
+
+    setattr(stub, "create_conversation", create_conversation)
+    agent = AgentFrameworkAgent(
+        agent=stub,
+        use_service_session=True,
+        snapshot_store=InMemoryAGUIThreadSnapshotStore(),
+    )
+    payload = {
+        "thread_id": "service-thread-789",
+        "run_id": "run-create-scoped-service",
+        "__ag_ui_snapshot_scope": "tenant-a",
+        "messages": [{"role": "user", "content": "Hello"}],
+    }
+
+    _ = [event async for event in agent.run(payload)]
+
+    assert len(created_session_ids) == 1
+    assert created_session_ids[0] != "service-thread-789"
+    assert stub.last_session is not None
+    assert stub.last_session.session_id == created_session_ids[0]
+    assert stub.last_session.service_session_id == "provider-conversation"
+
+
 async def test_session_id_generated_when_no_thread_id():
     """Session gets a generated UUID as session_id when no thread_id is provided."""
     import uuid
@@ -2830,3 +2938,89 @@ async def test_stateless_snapshot_excludes_only_provider_service_session_state()
         {"client_value": "available"},
         {"private": "preserved", "client_value": "available"},
     ]
+
+
+async def test_reserved_service_session_keys_protected_without_agent_declaration():
+    """Reserved provider keys stay server-owned even if the agent declares nothing.
+
+    ``service_session_state_keys`` is resolved from the agent object AG-UI is handed, so an agent that does not
+    declare it, such as a wrapper that forgets to forward the attribute or an older provider package, would
+    otherwise silently fall back to accepting a client-supplied value. Reserving the key in
+    ``_RESERVED_SERVICE_SESSION_STATE_KEYS`` is the backstop that keeps those combinations safe.
+    """
+    from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
+
+    from agent_framework_ag_ui import AgentFrameworkAgent
+
+    stub = StubAgent()
+    assert not hasattr(stub, "service_session_state_keys")
+
+    observed_state: list[dict[str, Any]] = []
+    original_run = stub.run
+
+    def capture_state(*args: Any, **kwargs: Any) -> Any:
+        observed_state.append(dict(kwargs["session"].state))
+        return original_run(*args, **kwargs)
+
+    stub.run = capture_state  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+
+    agent = AgentFrameworkAgent(agent=stub)
+    _ = [
+        event
+        async for event in agent.run(
+            {
+                "thread_id": "frontend-thread",
+                "run_id": "attacker-run",
+                "messages": [{"role": "user", "content": "Hello"}],
+                "state": {
+                    "foundry_hosted_agent_session_id": "victim-sandbox",
+                    "client_value": "available",
+                },
+            }
+        )
+    ]
+
+    assert observed_state == [{"client_value": "available"}]
+
+
+async def test_request_state_cannot_assign_service_session_id():
+    """Chat history held by the provider is addressed by ``service_session_id``, never by client state.
+
+    ``AgentSession`` keeps ``service_session_id`` as its own attribute rather than a ``state`` entry, and only
+    trusted snapshot storage or a provider response may set it. This test locks in that boundary so a future
+    refactor cannot start sourcing conversation continuation from request Shared State.
+    """
+    from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
+
+    from agent_framework_ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
+
+    for use_service_session in (False, True):
+        stub = StubAgent()
+        observed: list[Any] = []
+        original_run = stub.run
+
+        def capture(*args: Any, **kwargs: Any) -> Any:
+            observed.append(kwargs["session"].service_session_id)
+            return original_run(*args, **kwargs)
+
+        stub.run = capture  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+
+        agent = AgentFrameworkAgent(
+            agent=stub,
+            use_service_session=use_service_session,
+            snapshot_store=InMemoryAGUIThreadSnapshotStore(),
+        )
+        _ = [
+            event
+            async for event in agent.run(
+                {
+                    "thread_id": "frontend-thread",
+                    "run_id": "attacker-run",
+                    "__ag_ui_snapshot_scope": "test",
+                    "messages": [{"role": "user", "content": "Hello"}],
+                    "state": {"__ag_ui_provider_service_session_id": "victim-conversation"},
+                }
+            )
+        ]
+
+        assert observed == [None], f"client state selected a conversation (use_service_session={use_service_session})"
