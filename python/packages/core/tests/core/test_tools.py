@@ -1820,20 +1820,21 @@ async def test_sequential_execution_isolates_contextvars() -> None:
     assert not should_terminate
     assert results[1][0].result == "None"
 
+
 async def test_resolve_approval_responses_hold_later_approval_calls_in_sequential_mode() -> None:
-    """ if [write[0], read(1), notify(2)] is requested, and `write` is pending approval while
-    `notify` is approved, `notify` must be held back. when `write` is later approved, 
+    """if [write[0], read(1), notify(2)] is requested, and `write` is pending approval while
+    `notify` is approved, `notify` must be held back. when `write` is later approved,
     `notify` must be restored and executed.
     """
 
     from agent_framework._sessions import AgentSession
-    from agent_framework._types import Message
     from agent_framework._tools import (
-        _resolve_approval_responses,
-        _FunctionExecutionBatch,
-        _TOOL_APPROVAL_STATE_KEY,
         _PENDING_APPROVAL_REQUESTS_KEY,
-    )   
+        _TOOL_APPROVAL_STATE_KEY,
+        _FunctionExecutionBatch,
+        _resolve_approval_responses,
+    )
+    from agent_framework._types import Message
 
     session = AgentSession()
     write_call = Content.from_function_call(call_id="1", name="write_file", arguments="{}")
@@ -1850,17 +1851,13 @@ async def test_resolve_approval_responses_hold_later_approval_calls_in_sequentia
         _PENDING_APPROVAL_REQUESTS_KEY: [write_approval.to_dict(), notify_approval.to_dict()]
     }
 
-    notify_response = Content.from_function_approval_response(
-        approved=True,
-        id="3",
-        function_call=notify_call
-    )
+    notify_response = Content.from_function_approval_response(approved=True, id="3", function_call=notify_call)
     notify_response.additional_properties = {"original_index": 2, "batch_id": "batch_1"}
 
     prepared_messages = [Message(role="user", contents=[notify_response])]
 
-
     executed_calls: list[Content] = []
+
     async def mock_execute(*, function_calls, options):
         executed_calls.extend(function_calls)
         return _FunctionExecutionBatch(result_groups=[])
@@ -1872,32 +1869,31 @@ async def test_resolve_approval_responses_hold_later_approval_calls_in_sequentia
         max_errors=3,
         execute_function_calls=mock_execute,
         invocation_session=session,
-        allow_concurrent_invocation=False
+        allow_concurrent_invocation=False,
     )
 
     assert len(executed_calls) == 0, "notify_user executed before write_file was approved"
     assert result.action == "return", "should return to wait for earlier approvals"
 
     # now user approved write (retry)
-    write_response = Content.from_function_approval_response(
-        approved=True,
-        id="1",
-        function_call=write_call
-    )
+    write_response = Content.from_function_approval_response(approved=True, id="1", function_call=write_call)
     write_response.additional_properties = {"original_index": 0, "batch_id": "batch_1", "_approval_request_id": "1"}
 
     prepared_messages_retry = [Message(role="user", contents=[write_response])]
-    result_retry = await _resolve_approval_responses(
+    await _resolve_approval_responses(
         prepared_messages=prepared_messages_retry,
         options={},
         errors_in_a_row=0,
         max_errors=3,
         execute_function_calls=mock_execute,
         invocation_session=session,
-        allow_concurrent_invocation=False
+        allow_concurrent_invocation=False,
     )
     assert len(executed_calls) == 2, "write_file and notify_user should have executed on retry"
+    assert executed_calls[0].function_call is not None
     assert executed_calls[0].function_call.name == "write_file"
+    assert executed_calls[1].function_call is not None
     assert executed_calls[1].function_call.name == "notify_user"
+
 
 # endregion
