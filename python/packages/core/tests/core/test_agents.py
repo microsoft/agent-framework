@@ -1979,6 +1979,72 @@ async def test_chat_agent_as_tool_propagate_session_no_service_session_id(client
     assert parent_session.service_session_id is None
 
 
+async def test_as_tool_resumes_nested_tool_approval() -> None:
+    """A sub-agent's own approval-gated tool can be approved and actually resumes.
+
+    Regression test for https://github.com/microsoft/agent-framework/issues/4963:
+    when a sub-agent used via ``as_tool()`` internally requires approval for one of
+    its own tools, the approval request must surface to the caller (already worked),
+    and sending the approval back must actually resume and execute the inner tool
+    instead of silently no-oping.
+    """
+    inner_calls = 0
+
+    @tool(name="get_weather_detail", approval_mode="always_require")
+    def get_weather_detail(location: str) -> str:
+        nonlocal inner_calls
+        inner_calls += 1
+        return f"The weather in {location} is sunny."
+
+    inner_client = MockBaseChatClient()
+    outer_client = MockBaseChatClient()
+
+    inner_agent = Agent(client=inner_client, name="weather_agent", tools=[get_weather_detail])
+    outer_agent = Agent(
+        client=outer_client,
+        name="coordinator_agent",
+        tools=[inner_agent.as_tool(name="weather_agent_tool", approval_mode="never_require")],
+    )
+
+    session = AgentSession()
+
+    # The as_tool() wrapper always drives the sub-agent with stream=True, so the
+    # sub-agent's queued responses must go through streaming_responses, not
+    # run_responses (which only the non-streaming path consumes).
+    outer_call = Content.from_function_call(
+        call_id="outer-call-1", name="weather_agent_tool", arguments='{"task": "What is the weather in Amsterdam?"}'
+    )
+    outer_client.run_responses = [ChatResponse(messages=Message(role="assistant", contents=[outer_call]))]
+
+    inner_call = Content.from_function_call(
+        call_id="inner-call-1", name="get_weather_detail", arguments='{"location": "Amsterdam"}'
+    )
+    inner_client.streaming_responses = [[ChatResponseUpdate(role="assistant", contents=[inner_call])]]
+
+    first_response = await outer_agent.run("What's the weather in Amsterdam?", session=session)
+
+    assert inner_calls == 0
+    assert first_response.user_input_requests, "the nested approval request must surface to the caller"
+    approval_request = first_response.user_input_requests[0]
+    assert approval_request.function_call is not None
+    assert approval_request.function_call.name == "get_weather_detail"
+
+    approval_response = approval_request.to_function_approval_response(True)
+
+    inner_client.streaming_responses = [
+        [ChatResponseUpdate(role="assistant", contents=[Content.from_text("The weather in Amsterdam is sunny.")])]
+    ]
+    outer_client.run_responses = [
+        ChatResponse(messages=Message(role="assistant", contents=["It's sunny in Amsterdam."]))
+    ]
+
+    second_response = await outer_agent.run(Message(role="user", contents=[approval_response]), session=session)
+
+    assert inner_calls == 1, "the inner tool must actually execute once the nested approval is resumed"
+    assert not second_response.user_input_requests
+    assert second_response.text == "It's sunny in Amsterdam."
+
+
 async def test_chat_agent_as_mcp_server_basic(client: SupportsChatGetResponse) -> None:
     """Test basic as_mcp_server functionality."""
     agent = Agent(client=client, name="TestAgent", description="Test agent for MCP")

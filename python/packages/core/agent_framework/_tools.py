@@ -128,6 +128,15 @@ _APPROVED_ARGUMENTS_CONTEXT_KEY: Final[str] = "_approved_function_arguments"
 _SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY: Final[str] = "_security_function_arguments"
 _PREPARED_ARGUMENTS_CONTEXT_KEY: Final[str] = "_prepared_function_arguments"
 _AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY: Final[str] = "_auto_prepare_function_arguments"
+# Tags a nested approval request/response (raised via UserInputRequiredException from inside
+# a tool such as Agent.as_tool()'s wrapper) with the outer tool call that owns it, so that when
+# the approval response comes back, it can be routed to the owning tool instead of being looked
+# up directly by the nested (inner) tool's name, which the outer tool_map never contains.
+_NESTED_TOOL_APPROVAL_OWNER_NAME_KEY: Final[str] = "__af_nested_approval_owner_name"
+_NESTED_TOOL_APPROVAL_OWNER_CALL_ID_KEY: Final[str] = "__af_nested_approval_owner_call_id"
+_NESTED_TOOL_APPROVAL_OWNER_ARGS_KEY: Final[str] = "__af_nested_approval_owner_arguments"
+_NESTED_APPROVAL_RESPONSE_CONTEXT_KEY: Final[str] = "_nested_approval_response"
+_NESTED_APPROVAL_OWNER_CALL_ID_CONTEXT_KEY: Final[str] = "_nested_approval_owner_call_id"
 _FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT: Final[str] = (
     "Function invocation limit reached before a final answer could be produced."
 )
@@ -1897,6 +1906,68 @@ def _finalize_function_result(
     return function_result
 
 
+async def _try_resume_nested_tool_approval(
+    *,
+    approval_response: Content,
+    tool_map: dict[str, FunctionTool],
+    runtime_kwargs: dict[str, Any],
+    invocation_session: AgentSession | None,
+    live_tools: list[ToolTypes] | None,
+) -> Content | None:
+    """Resume a nested approval (e.g. from Agent.as_tool()) through its owning tool call.
+
+    A tool such as an agent-as-tool wrapper can itself run something that pauses for
+    approval (a sub-agent's own tool). That pause is surfaced to the caller as an
+    ordinary approval request, tagged (by ``_execute_single_function_call``) with the
+    outer tool call that owns it. The nested tool's name is never in this run's
+    ``tool_map`` — only the owning tool is — so the approval response has to be
+    replayed through the owner, which forwards it to whatever is waiting for it via
+    ``FunctionInvocationContext.kwargs``.
+
+    Returns:
+        The owner's function result content if this response belongs to a tracked
+        nested pause, otherwise ``None`` so the caller can fall back to its existing
+        "assume hosted tool" behavior.
+    """
+    from ._middleware import FunctionInvocationContext
+
+    owner_name = approval_response.additional_properties.get(_NESTED_TOOL_APPROVAL_OWNER_NAME_KEY)
+    owner_call_id = approval_response.additional_properties.get(_NESTED_TOOL_APPROVAL_OWNER_CALL_ID_KEY)
+    if not isinstance(owner_name, str) or not isinstance(owner_call_id, str):
+        return None
+    owner_tool = tool_map.get(owner_name)
+    if owner_tool is None:
+        return None
+
+    owner_arguments = approval_response.additional_properties.get(_NESTED_TOOL_APPROVAL_OWNER_ARGS_KEY)
+    if not isinstance(owner_arguments, dict):
+        owner_arguments = {}
+
+    owner_context = FunctionInvocationContext(
+        function=owner_tool,
+        arguments=owner_arguments,
+        session=invocation_session,
+        kwargs=runtime_kwargs,
+        tools=live_tools,
+    )
+    # Carried via metadata, not kwargs: kwargs is the host-facing, documented channel
+    # (spread into the wrapped function's own **kwargs by some callers, e.g. Skills'
+    # resource dispatch) and must only ever contain what a host explicitly passed.
+    owner_context.metadata[_NESTED_APPROVAL_RESPONSE_CONTEXT_KEY] = approval_response
+    owner_context.metadata[_NESTED_APPROVAL_OWNER_CALL_ID_CONTEXT_KEY] = owner_call_id
+    function_result = await owner_tool.invoke(
+        arguments=owner_arguments,
+        context=owner_context,
+        tool_call_id=owner_call_id,
+    )
+    return _finalize_function_result(
+        call_id=owner_call_id,
+        result=function_result,
+        base_additional_properties=approval_response.additional_properties,
+        context=owner_context,
+    )
+
+
 async def _auto_invoke_function(
     function_call_content: Content,
     custom_args: dict[str, Any] | None = None,
@@ -1943,6 +2014,16 @@ async def _auto_invoke_function(
 
     approval_response: Content | None = None
 
+    # Filter out internal framework kwargs before passing to tools.
+    # conversation_id is an internal tracking ID that should not be forwarded to tools.
+    runtime_kwargs: dict[str, Any] = {
+        key: value
+        for key, value in (custom_args or {}).items()
+        if key not in {"_function_middleware_pipeline", "middleware", "conversation_id"}
+    }
+    if invocation_session is not None:
+        runtime_kwargs["session"] = invocation_session
+
     if function_call_content.type == "function_call":
         tool = tool_map.get(function_call_content.name)  # type: ignore[arg-type]
         # Tool should exist because _try_execute_function_calls validates this
@@ -1966,6 +2047,15 @@ async def _auto_invoke_function(
             return function_call_content
         tool = tool_map.get(approved_function_call.name)
         if tool is None:
+            owner_result = await _try_resume_nested_tool_approval(
+                approval_response=function_call_content,
+                tool_map=tool_map,
+                runtime_kwargs=runtime_kwargs,
+                invocation_session=invocation_session,
+                live_tools=live_tools,
+            )
+            if owner_result is not None:
+                return owner_result
             # we assume it is a hosted tool
             return function_call_content
 
@@ -1973,16 +2063,6 @@ async def _auto_invoke_function(
         function_call_content = approved_function_call
 
     parsed_args: dict[str, Any] = dict(function_call_content.parse_arguments() or {})
-
-    # Filter out internal framework kwargs before passing to tools.
-    # conversation_id is an internal tracking ID that should not be forwarded to tools.
-    runtime_kwargs: dict[str, Any] = {
-        key: value
-        for key, value in (custom_args or {}).items()
-        if key not in {"_function_middleware_pipeline", "middleware", "conversation_id"}
-    }
-    if invocation_session is not None:
-        runtime_kwargs["session"] = invocation_session
     args = dict(parsed_args)
 
     from ._middleware import FunctionInvocationContext, MiddlewareFailure
@@ -2001,6 +2081,12 @@ async def _auto_invoke_function(
                 )
                 if host_payload_budget is not None:
                     direct_context.metadata[_FUNCTION_RESULT_PAYLOAD_BUDGET_CONTEXT_KEY] = host_payload_budget
+                if function_call_content.call_id is not None:
+                    # Exposed (via metadata, not the host-facing kwargs) so a tool such
+                    # as Agent.as_tool()'s wrapper can key its own pause/resume
+                    # bookkeeping by this call, consistently on both the initial call
+                    # and any later resume replayed through _try_resume_nested_tool_approval.
+                    direct_context.metadata[_NESTED_APPROVAL_OWNER_CALL_ID_CONTEXT_KEY] = function_call_content.call_id
             function_result = await tool.invoke(
                 arguments=args,
                 context=direct_context,
@@ -2054,6 +2140,8 @@ async def _auto_invoke_function(
     middleware_context.metadata["call_id"] = call_id
     if function_call_content.id is not None:
         middleware_context.metadata["function_call_occurrence_id"] = function_call_content.id
+    # See the matching comment in the no-middleware branch above.
+    middleware_context.metadata[_NESTED_APPROVAL_OWNER_CALL_ID_CONTEXT_KEY] = call_id
 
     # Pass through the original approval response so middleware can decide whether
     # this replay corresponds to a middleware-specific approval flow.
@@ -2240,6 +2328,18 @@ async def _execute_single_function_call(
             item.call_id = call_id
             if not item.id:
                 item.id = call_id
+            if (
+                item.type == "function_approval_request"
+                and source_function_call.name is not None
+                and call_id is not None
+            ):
+                # Remember which outer tool call owns this pause so a later approval
+                # response can be resumed through it (see _try_resume_nested_tool_approval).
+                item.additional_properties[_NESTED_TOOL_APPROVAL_OWNER_NAME_KEY] = source_function_call.name
+                item.additional_properties[_NESTED_TOOL_APPROVAL_OWNER_CALL_ID_KEY] = call_id
+                item.additional_properties[_NESTED_TOOL_APPROVAL_OWNER_ARGS_KEY] = dict(
+                    source_function_call.parse_arguments() or {}
+                )
         if propagated_contents:
             return propagated_contents, False
         return [

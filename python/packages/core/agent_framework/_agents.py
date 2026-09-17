@@ -96,6 +96,10 @@ logger = logging.getLogger("agent_framework")
 # and nothing leaks into the caller's context while a stream is paused.
 _LOOP_ITERATION_TOKEN_KEY = "_agent_loop_iteration"  # nosec B105 - a context-options key, not a credential  # ruff: ignore[hardcoded-password-string]
 
+# Parent-session state key under which as_tool()'s wrapper persists a resumable child
+# session per outer tool call, when propagate_session=False. See _agent_wrapper.
+_AGENT_TOOL_CHILD_SESSIONS_STATE_KEY = "_af_agent_tool_child_sessions"
+
 if TYPE_CHECKING:
     ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
 else:
@@ -676,20 +680,45 @@ class BaseAgent(SerializationMixin):
                 ctx: the function invocation context used
                 **kwargs: only used to dynamically load the argument that is defined for this tool.
             """
-            session = ctx.session if propagate_session else None
+            parent_session = ctx.session
+            # Set (via metadata, never the host-facing kwargs) by _auto_invoke_function
+            # and _try_resume_nested_tool_approval in _tools.py. owner_call_id identifies
+            # this specific outer tool call on every invocation; nested_approval_response
+            # is only set when this call is replaying an approval response for a tool
+            # that this sub-agent itself required approval for -- not a fresh task.
+            owner_call_id = ctx.metadata.get("_nested_approval_owner_call_id")
+            nested_approval_response = ctx.metadata.get("_nested_approval_response")
 
-            # Create a child session that shares the parent's state dict but has
-            # an isolated service_session_id. This avoids mutating the parent
-            # session in-place, which would race under concurrent asyncio.gather
-            # tool invocations sharing the same session.
-            if session is not None:
-                child_session = AgentSession(session_id=session.session_id)
-                child_session.state = session.state  # shared by reference
-                child_session.service_session_id = None
-                session = child_session
+            session: AgentSession | None
+            if propagate_session and parent_session is not None:
+                # Create a child session that shares the parent's state dict but has
+                # an isolated service_session_id. This avoids mutating the parent
+                # session in-place, which would race under concurrent asyncio.gather
+                # tool invocations sharing the same session.
+                session = AgentSession(session_id=parent_session.session_id)
+                session.state = parent_session.state  # shared by reference
+                session.service_session_id = None
+            elif parent_session is not None and owner_call_id is not None:
+                # propagate_session=False keeps this sub-agent's own conversation
+                # private from the parent, but a nested tool inside it can still pause
+                # for approval. Persist a dedicated child session in the parent's state,
+                # keyed by this specific outer tool call, so a later resume for that
+                # same call continues the same sub-agent run instead of restarting it
+                # from the original task text.
+                child_sessions = parent_session.state.setdefault(_AGENT_TOOL_CHILD_SESSIONS_STATE_KEY, {})
+                stored_session = child_sessions.get(owner_call_id)
+                session = AgentSession.from_dict(stored_session) if stored_session is not None else AgentSession()
+            else:
+                session = None
+
+            run_input: str | list[Message]
+            if nested_approval_response is not None and session is not None:
+                run_input = [Message("user", [nested_approval_response])]
+            else:
+                run_input = str(kwargs.get(arg_name, ""))
 
             stream = self.run(
-                str(kwargs.get(arg_name, "")),
+                run_input,
                 stream=True,
                 session=session,
                 function_invocation_kwargs=dict(ctx.kwargs),
@@ -705,6 +734,22 @@ class BaseAgent(SerializationMixin):
                     if isawaitable(callback_result):
                         await callback_result
             final_response = await stream.get_final_response()
+
+            if (
+                not propagate_session
+                and parent_session is not None
+                and owner_call_id is not None
+                and session is not None
+            ):
+                child_sessions = parent_session.state.setdefault(_AGENT_TOOL_CHILD_SESSIONS_STATE_KEY, {})
+                if final_response.user_input_requests:
+                    # Still paused on a (possibly different) nested approval: keep the
+                    # child session around so the next resume picks up where this left off.
+                    child_sessions[owner_call_id] = session.to_dict()
+                else:
+                    # Fully resolved: drop the bookkeeping instead of leaking it in parent state.
+                    child_sessions.pop(owner_call_id, None)
+
             if final_response.user_input_requests:
                 raise UserInputRequiredException(contents=final_response.user_input_requests)
             # TODO(Copilot): update once #4331 merges
