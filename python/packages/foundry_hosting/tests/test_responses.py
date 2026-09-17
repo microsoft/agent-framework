@@ -5210,6 +5210,53 @@ class TestResponseFailedSurfacing:
         error: dict[str, Any] = body.get("error") or {}
         assert error.get("message") == "non-stream kaboom"
 
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_budget_failure_emits_typed_error_and_cost_control_metadata(self, stream: bool) -> None:
+        class _BudgetExceededError(RuntimeError):
+            response_headers = {
+                "retry-after": "120",
+                "x-ms-budget-cause": "budget_exceeded",
+                "x-ms-budget-state": "degraded",
+                "x-ms-consumed-budget": "0.26",
+                "x-ms-remaining-budget": "0.00",
+                "x-request-id": "not-forwarded",
+            }
+
+        async def _raise_budget_failure() -> AsyncIterator[AgentResponseUpdate]:
+            raise _BudgetExceededError("budget exceeded")
+            yield  # pragma: no cover
+
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
+        )
+        agent.run = MagicMock(
+            return_value=ResponseStream(
+                _raise_budget_failure(),
+                finalizer=AgentResponse.from_updates,
+            )
+        )
+        server = _make_server(agent)
+
+        resp = await _post(server, input_text="hello", stream=stream)
+
+        assert resp.status_code == 200
+        if stream:
+            events = _parse_sse_events(resp.text)
+            failed = next(event["data"]["response"] for event in events if event["event"] == "response.failed")
+        else:
+            failed = resp.json()
+
+        assert failed["status"] == "failed"
+        assert failed["error"]["code"] == "budget_exceeded"
+        cost_control = json.loads(failed["metadata"]["costControl"])
+        assert cost_control == {
+            "retry-after": "120",
+            "x-ms-budget-cause": "budget_exceeded",
+            "x-ms-budget-state": "degraded",
+            "x-ms-consumed-budget": "0.26",
+            "x-ms-remaining-budget": "0.00",
+        }
+
     async def test_streaming_run_failure_emits_response_failed(self) -> None:
         async def _raise_stream() -> AsyncIterator[AgentResponseUpdate]:
             yield AgentResponseUpdate(contents=[Content.from_text("partial ")], role="assistant")

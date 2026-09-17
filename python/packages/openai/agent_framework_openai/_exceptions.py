@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-from agent_framework.exceptions import ChatClientContentFilterException
+from agent_framework.exceptions import ChatClientContentFilterException, ChatClientException
 from openai import BadRequestError
 
 
@@ -52,6 +53,20 @@ class ContentFilterCodes(Enum):
     RESPONSIBLE_AI_POLICY_VIOLATION = "ResponsibleAIPolicyViolation"
     CONTENT_FILTERED = "ContentFiltered"
     UNKNOWN = "Unknown"
+
+
+class _OpenAIChatClientException(ChatClientException):
+    """Chat-client failure carrying response headers captured before streaming."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        inner_exception: Exception,
+        response_headers: Mapping[str, str] | None = None,
+    ) -> None:
+        super().__init__(message, inner_exception=inner_exception)
+        self.response_headers = dict(response_headers or {})
 
 
 @dataclass
