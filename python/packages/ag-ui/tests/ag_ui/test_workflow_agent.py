@@ -10,6 +10,7 @@ import pytest
 from agent_framework import (
     Executor,
     InMemoryCheckpointStorage,
+    Message,
     Workflow,
     WorkflowBuilder,
     WorkflowContext,
@@ -19,6 +20,26 @@ from agent_framework import (
 )
 
 from agent_framework_ag_ui import AgentFrameworkWorkflow
+
+
+class _HitlMessageRequestExecutor(Executor):
+    """Minimal HITL executor shared by snapshot resume regression tests."""
+
+    def __init__(self) -> None:
+        super().__init__(id="message_request_executor")
+
+    @handler
+    async def start(self, message: Any, ctx: WorkflowContext[Any, str]) -> None:
+        del message
+        await ctx.request_info({"prompt": "Need user follow-up"}, list[Message], request_id="handoff-user-input")
+
+    @response_handler
+    async def handle_user_input(
+        self, original_request: dict[str, Any], response: list[Message], ctx: WorkflowContext[Any, str]
+    ) -> None:
+        del original_request
+        user_text = response[0].text if response else ""
+        await ctx.yield_output(f"Captured response: {user_text}")
 
 
 async def _run(agent: AgentFrameworkWorkflow, payload: dict[str, Any]) -> list[Any]:
@@ -457,30 +478,11 @@ async def test_workflow_snapshot_preserves_streamed_reasoning() -> None:
 
 async def test_workflow_hitl_resume_persists_user_text_in_thread_snapshot() -> None:
     """HITL resume with messages:[] must still record the user reply in the snapshot (#8160)."""
-    from agent_framework import Message
-
     from agent_framework_ag_ui import InMemoryAGUIThreadSnapshotStore
     from agent_framework_ag_ui._snapshots import _SNAPSHOT_SCOPE_INPUT_KEY, AGUIThreadSnapshot
 
-    class MessageRequestExecutor(Executor):
-        def __init__(self) -> None:
-            super().__init__(id="message_request_executor")
-
-        @handler
-        async def start(self, message: Any, ctx: WorkflowContext[Any, str]) -> None:
-            del message
-            await ctx.request_info({"prompt": "Need user follow-up"}, list[Message], request_id="handoff-user-input")
-
-        @response_handler
-        async def handle_user_input(
-            self, original_request: dict, response: list[Message], ctx: WorkflowContext[Any, str]
-        ) -> None:
-            del original_request
-            user_text = response[0].text if response else ""
-            await ctx.yield_output(f"Captured response: {user_text}")
-
     storage = InMemoryCheckpointStorage()
-    workflow = WorkflowBuilder(start_executor=MessageRequestExecutor()).build()
+    workflow = WorkflowBuilder(start_executor=_HitlMessageRequestExecutor()).build()
     store = InMemoryAGUIThreadSnapshotStore()
     agent = AgentFrameworkWorkflow(workflow=workflow, snapshot_store=store, checkpoint_storage=storage)
 
@@ -547,30 +549,11 @@ async def test_workflow_hitl_resume_persists_user_text_in_thread_snapshot() -> N
 
 async def test_workflow_hitl_resume_keeps_repeated_yes_on_empty_messages() -> None:
     """A second HITL 'yes' with messages:[] must not be dropped as a content duplicate."""
-    from agent_framework import Message
-
     from agent_framework_ag_ui import InMemoryAGUIThreadSnapshotStore
     from agent_framework_ag_ui._snapshots import _SNAPSHOT_SCOPE_INPUT_KEY, AGUIThreadSnapshot
 
-    class MessageRequestExecutor(Executor):
-        def __init__(self) -> None:
-            super().__init__(id="message_request_executor")
-
-        @handler
-        async def start(self, message: Any, ctx: WorkflowContext[Any, str]) -> None:
-            del message
-            await ctx.request_info({"prompt": "Need user follow-up"}, list[Message], request_id="handoff-user-input")
-
-        @response_handler
-        async def handle_user_input(
-            self, original_request: dict, response: list[Message], ctx: WorkflowContext[Any, str]
-        ) -> None:
-            del original_request
-            user_text = response[0].text if response else ""
-            await ctx.yield_output(f"Captured response: {user_text}")
-
     storage = InMemoryCheckpointStorage()
-    workflow = WorkflowBuilder(start_executor=MessageRequestExecutor()).build()
+    workflow = WorkflowBuilder(start_executor=_HitlMessageRequestExecutor()).build()
     store = InMemoryAGUIThreadSnapshotStore()
     agent = AgentFrameworkWorkflow(workflow=workflow, snapshot_store=store, checkpoint_storage=storage)
 
@@ -614,6 +597,62 @@ async def test_workflow_hitl_resume_keeps_repeated_yes_on_empty_messages() -> No
     assert "RUN_ERROR" not in [event.type for event in resumed_events]
 
     snapshot = await store.get(scope="tenant-a", thread_id="thread-hitl-yes")
+    assert snapshot is not None
+    yes_turns = [
+        message
+        for message in snapshot.messages
+        if message.get("role") == "user" and message.get("content") == "yes"
+    ]
+    assert len(yes_turns) >= 2
+
+
+async def test_workflow_hitl_resume_keeps_yes_when_messages_replay_prior_yes() -> None:
+    """Client-replayed prior 'yes' in messages must not drop a new resume interrupt yes."""
+    from agent_framework_ag_ui import InMemoryAGUIThreadSnapshotStore
+    from agent_framework_ag_ui._snapshots import _SNAPSHOT_SCOPE_INPUT_KEY, AGUIThreadSnapshot
+
+    storage = InMemoryCheckpointStorage()
+    workflow = WorkflowBuilder(start_executor=_HitlMessageRequestExecutor()).build()
+    store = InMemoryAGUIThreadSnapshotStore()
+    agent = AgentFrameworkWorkflow(workflow=workflow, snapshot_store=store, checkpoint_storage=storage)
+
+    prior = [
+        {"id": "user-1", "role": "user", "content": "start"},
+        {"id": "assistant-1", "role": "assistant", "content": "confirm?"},
+        {"id": "user-yes-1", "role": "user", "content": "yes"},
+        {"id": "assistant-2", "role": "assistant", "content": "confirm again?"},
+    ]
+    await store.save(
+        scope="tenant-a",
+        thread_id="thread-hitl-replay-yes",
+        snapshot=AGUIThreadSnapshot(messages=prior, state=None, interrupt=None),
+    )
+
+    resumed_events = await _run(
+        agent,
+        {
+            "thread_id": "thread-hitl-replay-yes",
+            "run_id": "run-yes-replay",
+            "messages": list(prior),
+            "resume": {
+                "interrupts": [
+                    {
+                        "id": "handoff-user-input",
+                        "value": [
+                            {
+                                "role": "user",
+                                "contents": [{"type": "text", "text": "yes"}],
+                            }
+                        ],
+                    }
+                ]
+            },
+            _SNAPSHOT_SCOPE_INPUT_KEY: "tenant-a",
+        },
+    )
+    assert "RUN_ERROR" not in [event.type for event in resumed_events]
+
+    snapshot = await store.get(scope="tenant-a", thread_id="thread-hitl-replay-yes")
     assert snapshot is not None
     yes_turns = [
         message
@@ -724,4 +763,32 @@ def test_append_unique_snapshot_messages_keeps_second_hitl_yes_without_client_re
         second_yes,
         content_dedupe_against=[],
     )
+    assert [m["id"] for m in merged] == ["u0", "a0", "u1", "a1", "generated-yes-2"]
+
+
+def test_append_unique_snapshot_messages_keeps_resume_yes_when_client_replays_prior_yes() -> None:
+    """Replayed prior-yes rows (same ids as stored) must not be passed as content fallback."""
+    from agent_framework_ag_ui._workflow import _append_unique_snapshot_messages
+
+    history = [
+        {"id": "u0", "role": "user", "content": "start"},
+        {"id": "a0", "role": "assistant", "content": "confirm?"},
+        {"id": "u1", "role": "user", "content": "yes"},
+        {"id": "a1", "role": "assistant", "content": "confirm again?"},
+    ]
+    stored_ids = {message.get("id") for message in history if message.get("id")}
+    client_replay = list(history)
+    # Mirrors the run() call site: only count client turns not already stored by id.
+    current_turn_client_messages = [
+        message
+        for message in client_replay
+        if not (message.get("id") and message.get("id") in stored_ids)
+    ]
+    second_yes = [{"id": "generated-yes-2", "role": "user", "content": "yes"}]
+    merged = _append_unique_snapshot_messages(
+        history,
+        second_yes,
+        content_dedupe_against=current_turn_client_messages,
+    )
+    assert current_turn_client_messages == []
     assert [m["id"] for m in merged] == ["u0", "a0", "u1", "a1", "generated-yes-2"]

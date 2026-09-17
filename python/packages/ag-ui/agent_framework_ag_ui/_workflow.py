@@ -190,9 +190,11 @@ def _append_unique_snapshot_messages(
     """Append resume-derived turns that are not already present in the seed.
 
     Prefer id equality against ``existing``. Role/content fallback is limited to
-    ``content_dedupe_against`` (confirmed client-replay overlap). When that list is
-    empty or omitted, identical replies across separate HITL turns on ``messages: []``
-    resumes are kept rather than collapsed against full thread history.
+    ``content_dedupe_against`` (current-turn client overlap / id remaps). Callers
+    must not pass replayed prior transcript rows here — those keep their ids and
+    would otherwise let an earlier user ``"yes"`` consume a later resume interrupt
+    with the same text. When the list is empty or omitted, identical replies across
+    separate HITL turns on ``messages: []`` resumes are kept.
     """
     seen_ids = {message.get("id") for message in existing if message.get("id")}
     content_source = content_dedupe_against if content_dedupe_against is not None else []
@@ -813,10 +815,24 @@ class AgentFrameworkWorkflow:
                 pending_events=live_pending_events,
             )
             if hitl_messages:
+                # Content fallback is only for the current request's newly supplied
+                # turns (e.g. client id remap of the resume reply). Rows already in
+                # the stored snapshot keep their ids when replayed in ``messages`` and
+                # must not starve a later identical resume interrupt.
+                stored_ids = {
+                    message.get("id")
+                    for message in (stored_snapshot.messages if stored_snapshot is not None else [])
+                    if message.get("id")
+                }
+                current_turn_client_messages = [
+                    message
+                    for message in client_request_messages
+                    if not (message.get("id") and message.get("id") in stored_ids)
+                ]
                 builder_seed_messages = _append_unique_snapshot_messages(
                     builder_seed_messages,
                     hitl_messages,
-                    content_dedupe_against=client_request_messages,
+                    content_dedupe_against=current_turn_client_messages,
                 )
         snapshot_builder = _WorkflowSnapshotBuilder(builder_seed_messages) if snapshot_session.enabled else None
         if snapshot_builder is not None and effective_state:
