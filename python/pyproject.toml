@@ -30,7 +30,7 @@ dependencies = [
 dev = [
     "uv==0.12.9",
     "flit==4.0.2",
-    "ruff==0.16.5",
+    "ruff==0.16.6",
     "pytest==9.1.1",
     "pytest-asyncio==1.4.0",
     "pytest-cov==7.1.0",
@@ -40,7 +40,7 @@ dev = [
     "mypy==2.3.1",
     "pyright==1.1.411",
     "pyrefly==1.2.0",
-    "ty==0.0.77",
+    "ty==0.0.78",
     "zuban==0.9.3",
     "opentelemetry-sdk",
     "pandas>=2,<4",
@@ -49,6 +49,7 @@ dev = [
     "rich>=13.7.1,<16.0.0",
     "tomli==2.4.1",
     "prek==0.5.2",
+    "griffe==2.2.0",
 ]
 test = [
     "azure-monitor-opentelemetry",
@@ -100,6 +101,7 @@ agent-framework-hosting-telegram = { workspace = true }
 agent-framework-hyperlight = { workspace = true }
 agent-framework-mem0 = { workspace = true }
 agent-framework-mistral = { workspace = true }
+agent-framework-mongodb = { workspace = true }
 agent-framework-monty = { workspace = true }
 agent-framework-ollama = { workspace = true }
 agent-framework-openai = { workspace = true }
@@ -141,12 +143,12 @@ select = [
     "RET", # flake8-return check
     "RSE", # raise exception parantheses check
     "RUF", # RUF specific rules
+    "S", # Bandit checks
     "SIM", # flake8-simplify check
-    "T20", # typing checks
+    "T100", # Debugger
+    "T20", # flake8-print checks
     "TD", # todos
     "W", # pycodestyle warning checks
-    "T100", # Debugger,
-    "S", # Bandit checks
 ]
 ignore = [
     "D100", # allow missing docstring in public module
@@ -159,6 +161,7 @@ ignore = [
     "B027", # allow empty non-abstract method in ABC
     "B905", # `zip()` without an explicit `strict=` parameter
     "RUF067", # allow version detection in __init__.py
+    "RUF201", # allow stable rule codes in Ruff selectors
 ]
 
 [tool.ruff.lint.per-file-ignores]

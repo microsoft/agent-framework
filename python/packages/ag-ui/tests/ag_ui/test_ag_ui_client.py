@@ -2,8 +2,10 @@
 
 """Tests for AGUIChatClient."""
 
+import asyncio
 import json
 from collections.abc import AsyncGenerator, Awaitable, Mapping, MutableSequence
+from contextlib import AbstractContextManager, nullcontext
 from typing import Any, cast
 
 import httpx
@@ -69,6 +71,226 @@ class TestAGUIChatClient:
         """Test client as async context manager."""
         async with StubAGUIChatClient(endpoint="http://localhost:8888/") as client:
             assert client is not None
+
+    @pytest.mark.parametrize("stream", [False, True], ids=["non_streaming", "streaming"])
+    @pytest.mark.parametrize("set_cookie", [False, True], ids=["no_cookie_control", "response_cookie"])
+    @pytest.mark.parametrize("first_status", [200, 503], ids=["successful_response", "failed_response"])
+    @pytest.mark.parametrize("second_thread_id", ["thread_a", "thread_b"], ids=["same_thread", "different_thread"])
+    async def test_default_client_does_not_replay_response_cookies_between_runs(
+        self, monkeypatch: MonkeyPatch, stream: bool, set_cookie: bool, first_status: int, second_thread_id: str
+    ) -> None:
+        """Response cookies must not persist between runs, regardless of thread ID."""
+        requests: list[httpx.Request] = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            payload = json.loads(await request.aread())
+            headers = {"content-type": "text/event-stream"}
+            if set_cookie and len(requests) == 1:
+                headers["set-cookie"] = "session=thread-a-only; Path=/; HttpOnly; Secure"
+            events = [
+                {"type": "RUN_STARTED", "threadId": payload["thread_id"], "runId": payload["run_id"]},
+                {"type": "TEXT_MESSAGE_START", "messageId": "msg_1", "role": "assistant"},
+                {"type": "TEXT_MESSAGE_CONTENT", "messageId": "msg_1", "delta": "ok"},
+                {"type": "TEXT_MESSAGE_END", "messageId": "msg_1"},
+                {"type": "RUN_FINISHED", "threadId": payload["thread_id"], "runId": payload["run_id"]},
+            ]
+            return httpx.Response(
+                first_status if len(requests) == 1 else 200,
+                headers=headers,
+                content="".join(f"data: {json.dumps(event)}\n\n" for event in events).encode(),
+            )
+
+        async with httpx.MockTransport(handler) as transport:
+
+            async def handle_async_request(
+                _transport: httpx.AsyncHTTPTransport, request: httpx.Request
+            ) -> httpx.Response:
+                return await transport.handle_async_request(request)
+
+            # Replace only network I/O, preserving the default client's real cookie handling.
+            monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", handle_async_request)
+            async with StubAGUIChatClient(endpoint="https://agui.example.test/") as client:
+                http_client = client.http_service.http_client
+                for index, thread_id in enumerate(("thread_a", second_thread_id)):
+                    messages = [Message(role="user", contents=["Hello"])]
+                    expected_error: AbstractContextManager[object] = (
+                        pytest.raises(httpx.HTTPStatusError, match="503")
+                        if index == 0 and first_status == 503
+                        else nullcontext()
+                    )
+                    with expected_error:
+                        if stream:
+                            updates = [
+                                update
+                                async for update in client.get_response(
+                                    messages, stream=True, options={"metadata": {"thread_id": thread_id}}
+                                )
+                            ]
+                            assert "".join(update.text for update in updates) == "ok"
+                        else:
+                            response = await client.get_response(
+                                messages, options={"metadata": {"thread_id": thread_id}}
+                            )
+                            assert response.text == "ok"
+                    assert client.http_service.http_client is http_client
+
+        assert len(requests) == 2
+        assert [json.loads(request.content)["thread_id"] for request in requests] == ["thread_a", second_thread_id]
+        assert all(request.method == "POST" for request in requests)
+        assert all(request.headers["accept"] == "text/event-stream" for request in requests)
+        assert requests[0].headers.get("cookie") is None
+        assert requests[1].headers.get("cookie") is None
+        assert not http_client.cookies
+
+    @pytest.mark.parametrize("stream", [False, True], ids=["non_streaming", "streaming"])
+    async def test_default_client_does_not_replay_cookies_while_another_response_is_open(
+        self, monkeypatch: MonkeyPatch, stream: bool
+    ) -> None:
+        """Response cookies must be rejected before an overlapping request is built."""
+        requests: list[httpx.Request] = []
+        first_headers_received = asyncio.Event()
+        second_request_received = asyncio.Event()
+        response_body = (
+            b'data: {"type":"TEXT_MESSAGE_START","messageId":"msg_1","role":"assistant"}\n\n'
+            b'data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"msg_1","delta":"ok"}\n\n'
+            b'data: {"type":"TEXT_MESSAGE_END","messageId":"msg_1"}\n\n'
+        )
+
+        class PendingResponseStream(httpx.AsyncByteStream):
+            async def __aiter__(self) -> AsyncGenerator[bytes, None]:
+                # HTTPX has processed response headers before it starts reading this body.
+                first_headers_received.set()
+                await second_request_received.wait()
+                yield response_body
+
+        async def handle_async_request(_transport: httpx.AsyncHTTPTransport, request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            await request.aread()
+            if len(requests) == 1:
+                return httpx.Response(
+                    200,
+                    headers={
+                        "content-type": "text/event-stream",
+                        "set-cookie": "session=thread-a-only; Path=/; HttpOnly; Secure",
+                    },
+                    stream=PendingResponseStream(),
+                )
+            second_request_received.set()
+            return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=response_body)
+
+        monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", handle_async_request)
+        async with StubAGUIChatClient(endpoint="https://agui.example.test/") as client:
+            http_client = client.http_service.http_client
+
+            async def run(thread_id: str) -> str:
+                if thread_id == "thread_b":
+                    await first_headers_received.wait()
+                messages = [Message(role="user", contents=["Hello"])]
+                if stream:
+                    updates = [
+                        update
+                        async for update in client.get_response(
+                            messages, stream=True, options={"metadata": {"thread_id": thread_id}}
+                        )
+                    ]
+                    return "".join(update.text for update in updates)
+                response = await client.get_response(messages, options={"metadata": {"thread_id": thread_id}})
+                return response.text
+
+            tasks = [asyncio.create_task(run(thread_id)) for thread_id in ("thread_a", "thread_b")]
+            try:
+                responses = await asyncio.wait_for(asyncio.gather(*tasks), timeout=10)
+            finally:
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+
+            assert responses == ["ok", "ok"]
+            assert client.http_service.http_client is http_client
+
+        assert len(requests) == 2
+        assert [json.loads(request.content)["thread_id"] for request in requests] == ["thread_a", "thread_b"]
+        assert requests[0].headers.get("cookie") is None
+        assert requests[1].headers.get("cookie") is None
+        assert not http_client.cookies
+
+    @pytest.mark.parametrize("raise_in_context", [False, True], ids=["normal_exit", "exception_exit"])
+    async def test_context_manager_closes_owned_http_client(self, raise_in_context: bool) -> None:
+        """Owned HTTP clients close on both normal and exceptional context exits."""
+        client = StubAGUIChatClient(endpoint="https://agui.example.test/", timeout=17.0)
+        http_client = client.http_service.http_client
+        expected_error: AbstractContextManager[object] = (
+            pytest.raises(RuntimeError, match="context failed") if raise_in_context else nullcontext()
+        )
+        try:
+            with expected_error:
+                async with client:
+                    assert not http_client.is_closed
+                    assert http_client.timeout == httpx.Timeout(17.0)
+                    if raise_in_context:
+                        raise RuntimeError("context failed")
+
+            assert http_client.is_closed
+            await client.close()
+            assert http_client.is_closed
+        finally:
+            await http_client.aclose()
+
+    @pytest.mark.parametrize("raise_in_context", [False, True], ids=["normal_exit", "exception_exit"])
+    async def test_context_manager_preserves_supplied_http_client(self, raise_in_context: bool) -> None:
+        """Caller-owned clients retain their configuration and remain usable after cleanup."""
+        requests: list[httpx.Request] = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(
+                200,
+                headers={
+                    "content-type": "text/event-stream",
+                    "set-cookie": "response=session-only; Path=/; HttpOnly; Secure",
+                },
+                content=(
+                    b'data: {"type":"RUN_STARTED","threadId":"thread_1","runId":"run_1"}\n\n'
+                    b'data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"msg_1","delta":"ok"}\n\n'
+                    b'data: {"type":"RUN_FINISHED","threadId":"thread_1","runId":"run_1"}\n\n'
+                ),
+            )
+
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            headers={"Authorization": "Bearer test-token"},
+            cookies={"configured": "caller-owned"},
+            timeout=17.0,
+        ) as http_client:
+            client = StubAGUIChatClient(endpoint="https://agui.example.test/", http_client=http_client)
+            expected_error: AbstractContextManager[object] = (
+                pytest.raises(RuntimeError, match="context failed") if raise_in_context else nullcontext()
+            )
+            with expected_error:
+                async with client:
+                    assert client.http_service.http_client is http_client
+                    chat_response = await client.get_response(
+                        [Message(role="user", contents=["Hello"])],
+                        options={"metadata": {"thread_id": "thread_1"}},
+                    )
+                    assert chat_response.text == "ok"
+                    if raise_in_context:
+                        raise RuntimeError("context failed")
+
+            await client.close()
+            assert not http_client.is_closed
+            assert http_client.headers["authorization"] == "Bearer test-token"
+            assert http_client.cookies["configured"] == "caller-owned"
+            assert http_client.cookies["response"] == "session-only"
+            assert http_client.timeout == httpx.Timeout(17.0)
+            http_response = await http_client.get("https://agui.example.test/health")
+            assert http_response.status_code == 200
+
+        assert [request.method for request in requests] == ["POST", "GET"]
+        assert all(request.headers["authorization"] == "Bearer test-token" for request in requests)
+        assert requests[0].headers["cookie"] == "configured=caller-owned"
+        assert set(requests[1].headers["cookie"].split("; ")) == {"configured=caller-owned", "response=session-only"}
 
     async def test_extract_state_from_messages_no_state(self) -> None:
         """Test state extraction when no state is present."""

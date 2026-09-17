@@ -17,12 +17,18 @@ INTERNAL_SOURCE_PREFIX = "internal"
 # to pass kwargs from workflow.run() through to agent.run() and @tool functions.
 WORKFLOW_RUN_KWARGS_KEY = "_workflow_run_kwargs"
 
+# Key used to store collision-free, executor-aware workflow invocation kwargs.
+# WORKFLOW_RUN_KWARGS_KEY remains in the legacy dict format for compatibility with
+# older first-party packages and checkpoints.
+RESOLVED_WORKFLOW_RUN_KWARGS_KEY = "_resolved_workflow_run_kwargs"
+
 # State keys used to preserve caller-provided kwargs for nested workflow routing.
 RAW_FUNCTION_INVOCATION_KWARGS_KEY = "_raw_function_invocation_kwargs"
 RAW_CLIENT_KWARGS_KEY = "_raw_client_kwargs"
 
-# Sentinel key used in resolved invocation kwargs dicts to denote global kwargs
-# that apply to all executors (as opposed to per-executor keyed entries).
+# Legacy sentinel used by plain mixed input and the compatibility state stored at
+# WORKFLOW_RUN_KWARGS_KEY. New resolution state keeps global and executor-specific
+# namespaces separate.
 GLOBAL_KWARGS_KEY = "__global__"
 
 

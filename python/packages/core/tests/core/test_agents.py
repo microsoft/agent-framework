@@ -1,10 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import contextlib
 import inspect
 import json
 import logging
-from collections.abc import AsyncIterable, Awaitable, Callable, MutableSequence, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableSequence, Sequence
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -13,6 +14,7 @@ import pytest
 from pytest import raises
 
 from agent_framework import (
+    EXCLUDED_KEY,
     GROUP_ANNOTATION_KEY,
     GROUP_TOKEN_COUNT_KEY,
     Agent,
@@ -25,9 +27,12 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     ContextProvider,
+    Embedding,
     FunctionTool,
+    GeneratedEmbeddings,
     HistoryProvider,
     InMemoryHistoryProvider,
+    InMemoryStore,
     Message,
     MessageInjectionMiddleware,
     ResponseStream,
@@ -36,7 +41,9 @@ from agent_framework import (
     SlidingWindowStrategy,
     SupportsAgentRun,
     SupportsChatGetResponse,
+    ToolResultCompactionStrategy,
     TruncationStrategy,
+    VectorStoreHistoryProvider,
     chat_middleware,
     enqueue_messages,
     tool,
@@ -511,6 +518,72 @@ async def test_chat_agent_persists_history_per_service_call(
     assert provider_state["save_call_count"] == 2
     assert stored_messages[-1].text == "It is sunny in Seattle."
     assert session.service_session_id is None
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_vector_history_search_tool_is_available_with_per_service_call_persistence(
+    chat_client_base: MockBaseChatClient,
+    stream: bool,
+) -> None:
+    async def get_embeddings(values: Sequence[Any], *, options: Any = None) -> GeneratedEmbeddings[list[float]]:
+        return GeneratedEmbeddings([Embedding(vector=[1.0, 0.0]) for _ in values], options=options)
+
+    embedding_client = MagicMock()
+    embedding_client.get_embeddings = AsyncMock(side_effect=get_embeddings)
+    provider = VectorStoreHistoryProvider(
+        InMemoryStore(),
+        application_id="app",
+        collection_name="per_service_call_history",
+        embedding_generator=embedding_client,
+        embedding_options={"dimensions": 2},
+        include_search_tool=True,
+    )
+    function_call = Content.from_function_call(
+        call_id="search_call",
+        name="search_history",
+        arguments={"query": "earlier detail"},
+    )
+    if stream:
+        chat_client_base.streaming_responses = [
+            [ChatResponseUpdate(contents=[function_call], role="assistant", finish_reason="tool_calls")],
+            [ChatResponseUpdate(contents=[Content.from_text("done")], role="assistant", finish_reason="stop")],
+        ]
+    else:
+        chat_client_base.run_responses = [
+            ChatResponse(messages=Message(role="assistant", contents=[function_call])),
+            ChatResponse(messages=Message(role="assistant", contents=["done"])),
+        ]
+
+    captured_tool_names: list[list[str]] = []
+    captured_instructions: list[Any] = []
+    original_inner = chat_client_base._inner_get_response
+
+    def capture_inner(
+        *, messages: MutableSequence[Message], stream: bool, options: dict[str, Any], **kwargs: Any
+    ) -> Any:
+        captured_tool_names.append([tool.name for tool in options.get("tools", [])])
+        captured_instructions.append(options.get("instructions"))
+        return original_inner(messages=messages, stream=stream, options=options, **kwargs)
+
+    agent = Agent(
+        client=chat_client_base,
+        context_providers=[provider],
+        require_per_service_call_history_persistence=True,
+    )
+    session = agent.create_session()
+
+    with patch.object(chat_client_base, "_inner_get_response", side_effect=capture_inner):
+        if stream:
+            text = "".join([update.text or "" async for update in agent.run("question", session=session, stream=True)])
+        else:
+            text = (await agent.run("question", session=session)).text
+
+    assert text == "done"
+    assert captured_tool_names == [["search_history"], ["search_history"]]
+    assert all(
+        isinstance(instructions, str) and instructions.count("Use search_history") == 1
+        for instructions in captured_instructions
+    )
 
 
 async def test_message_injection_persists_each_injected_service_call(
@@ -1919,6 +1992,97 @@ async def test_chat_agent_as_mcp_server_basic(client: SupportsChatGetResponse) -
     assert hasattr(server, "version")
 
 
+async def test_agent_prepares_mcp_run_before_copying_functions(chat_client_base: Any) -> None:
+    captured_options: list[dict[str, Any]] = []
+    original_inner = chat_client_base._inner_get_response
+
+    async def capturing_inner(
+        *, messages: MutableSequence[Message], options: dict[str, Any], **kwargs: Any
+    ) -> ChatResponse:
+        captured_options.append(dict(options))
+        return await original_inner(messages=messages, options=options, **kwargs)
+
+    class RunPreparingMCPTool(_ConnectedMCPTool):
+        async def _prepare_for_run(self, kwargs: Mapping[str, Any]) -> None:
+            assert kwargs == {"credential": "token-b"}
+            replacement = _ConnectedMCPTool(name=self.name, function_names=["token-b-only"])
+            self._functions = list(replacement.functions)
+
+    chat_client_base._inner_get_response = capturing_inner
+    mcp_tool = RunPreparingMCPTool(name="principal-mcp", function_names=["token-a-only"])
+    agent = Agent(client=chat_client_base, tools=[mcp_tool])
+
+    await agent.run("hello", function_invocation_kwargs={"credential": "token-b"})
+
+    assert len(captured_options) >= 1
+    assert [tool.name for tool in captured_options[0]["tools"]] == ["token-b-only"]
+
+
+async def test_concurrent_agent_runs_reprepare_mcp_after_lazy_connect(chat_client_base: Any) -> None:
+    captured_tool_names: list[list[str]] = []
+    original_inner = chat_client_base._inner_get_response
+
+    async def capturing_inner(
+        *, messages: MutableSequence[Message], options: dict[str, Any], **kwargs: Any
+    ) -> ChatResponse:
+        captured_tool_names.append([tool.name for tool in options["tools"]])
+        return await original_inner(messages=messages, options=options, **kwargs)
+
+    class ConcurrentRunMCPTool(_ConnectedMCPTool):
+        def __init__(self) -> None:
+            super().__init__(name="principal-mcp", function_names=["unbound-only"])
+            self.is_connected = False
+            self._connect_lock = asyncio.Lock()
+            self.connect_started = asyncio.Event()
+            self.both_runs_prepared = asyncio.Event()
+            self.allow_connect = asyncio.Event()
+            self.disconnected_preparations: list[str] = []
+
+        async def _prepare_for_run(self, kwargs: Mapping[str, Any]) -> None:
+            credential = cast(str, kwargs["credential"])
+            if not self.is_connected:
+                self.disconnected_preparations.append(credential)
+                if len(self.disconnected_preparations) == 2:
+                    self.both_runs_prepared.set()
+                return
+            replacement = _ConnectedMCPTool(name=self.name, function_names=[f"{credential}-only"])
+            self._functions = list(replacement.functions)
+
+        async def connect(self, *, reset: bool = False) -> None:
+            async with self._connect_lock:
+                if self.is_connected:
+                    return
+                self.connect_started.set()
+                await self.allow_connect.wait()
+                self.is_connected = True
+
+        async def close(self) -> None:
+            self.is_connected = False
+
+    chat_client_base._inner_get_response = capturing_inner
+    mcp_tool = ConcurrentRunMCPTool()
+    first_agent = Agent(client=chat_client_base, tools=[mcp_tool])
+    second_agent = Agent(client=chat_client_base, tools=[mcp_tool])
+
+    async def run_with_credential(agent: Agent, prompt: str, credential: str) -> None:
+        await agent.run(prompt, function_invocation_kwargs={"credential": credential})
+
+    first_run = asyncio.create_task(run_with_credential(first_agent, "first", "token-a"))
+    await asyncio.wait_for(mcp_tool.connect_started.wait(), timeout=5)
+    second_run = asyncio.create_task(run_with_credential(second_agent, "second", "token-b"))
+    try:
+        await asyncio.wait_for(mcp_tool.both_runs_prepared.wait(), timeout=5)
+        mcp_tool.allow_connect.set()
+        await asyncio.gather(first_run, second_run)
+    finally:
+        mcp_tool.allow_connect.set()
+        await first_agent.__aexit__(None, None, None)
+        await second_agent.__aexit__(None, None, None)
+
+    assert mcp_tool.disconnected_preparations == ["token-a", "token-b"]
+    assert captured_tool_names == [["token-a-only"], ["token-b-only"]]
+
+
 async def test_chat_agent_run_with_mcp_tools(client: SupportsChatGetResponse) -> None:
     """Test run method with MCP tools to cover MCP tool handling code."""
     agent = Agent(client=client, name="TestAgent", description="Test agent")
@@ -2342,6 +2506,86 @@ async def test_chat_agent_run_level_compaction_and_tokenizer_override_agent_defa
 
     assert captured_roles == [["assistant"]]
     assert captured_token_counts == [[23]]
+
+
+async def test_agent_run_returns_and_persists_compaction_summaries(
+    chat_client_base: Any,
+) -> None:
+    # End-to-end regression test for #8099: with call-level compaction and a history
+    # provider loading with skip_excluded=True, the run must return — and persist — the
+    # summaries replacing excluded tool groups; otherwise the next turn silently loses
+    # the summarized tool results with nothing replacing them.
+    from agent_framework._sessions import InMemoryHistoryProvider
+
+    chat_client_base.function_invocation_configuration["enabled"] = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.function_invocation_configuration["max_iterations"] = 3  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    @tool(name="lookup_weather", approval_mode="never_require")
+    def lookup_weather(location: str) -> str:
+        return f"Weather in {location}: sunny"
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="call_1",
+                        name="lookup_weather",
+                        arguments='{"location": "London"}',
+                    )
+                ],
+            ),
+            response_id="resp_call_1",
+        ),
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="call_2",
+                        name="lookup_weather",
+                        arguments='{"location": "Paris"}',
+                    )
+                ],
+            ),
+            response_id="resp_call_2",
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"]), response_id="resp_done"),
+    ]
+
+    provider = InMemoryHistoryProvider(skip_excluded=True)
+    agent = Agent(
+        client=chat_client_base,
+        tools=[lookup_weather],
+        compaction_strategy=ToolResultCompactionStrategy(keep_last_tool_call_groups=1),
+        context_providers=[provider],
+    )
+    session = agent.create_session()
+
+    result = await agent.run("What is the weather in London?", session=session)
+
+    def _is_tool_result_summary(message: Message) -> bool:
+        return message.role == "assistant" and (message.text or "").startswith("[Tool results:")
+
+    returned_summaries = [message for message in result.messages if _is_tool_result_summary(message)]
+    assert len(returned_summaries) == 1, [message.text for message in result.messages]
+    assert "London" in (returned_summaries[0].text or "")
+
+    stored_messages = cast(list[Message], session.state[InMemoryHistoryProvider.DEFAULT_SOURCE_ID]["messages"])
+    stored_summaries = [message for message in stored_messages if _is_tool_result_summary(message)]
+    assert len(stored_summaries) == 1, [message.text for message in stored_messages]
+
+    # A follow-up turn loading with skip_excluded=True drops the excluded groups while
+    # the summary that replaces them survives.
+    loaded_messages = await provider.get_messages(
+        session_id="turn-2", state=cast("dict[str, Any]", session.state[InMemoryHistoryProvider.DEFAULT_SOURCE_ID])
+    )
+    loaded_summaries = [message for message in loaded_messages if _is_tool_result_summary(message)]
+    assert len(loaded_summaries) == 1
+    assert "London" in (loaded_summaries[0].text or "")
+    assert not any(message.additional_properties.get(EXCLUDED_KEY, False) for message in loaded_messages)
+    assert "done" in [message.text for message in loaded_messages]
 
 
 # region Test _merge_options
