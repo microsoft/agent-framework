@@ -27,8 +27,8 @@ Prerequisites:
     Deploy an embedding model to a Foundry-hosted inference endpoint that supports image inputs,
     such as Cohere-embed-v3-english.
 
-    The details page for that model, has a target URI and a Key, which should be set in environment variables or a .env
-    file as follows, the target URI should append the `/models` path:
+    The model details page provides a target URI and key. Set them using the
+    following environment variables or a .env file, and append `/models` to the target URI:
     - FOUNDRY_MODELS_ENDPOINT: Your Foundry models endpoint URL, for instance:
         https://<apim-instance>.azure-api.net/<foundry-instance>/models
     - FOUNDRY_MODELS_API_KEY: Your API key

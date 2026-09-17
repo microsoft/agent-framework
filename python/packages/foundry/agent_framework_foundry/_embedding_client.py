@@ -149,6 +149,8 @@ class RawFoundryEmbeddingClient(
         env_file_encoding: Encoding for .env file.
     """
 
+    INJECTABLE: ClassVar[set[str]] = {"image_client", "project_client", "text_client"}
+
     def __init__(
         self,
         *,
@@ -191,8 +193,8 @@ class RawFoundryEmbeddingClient(
 
         self.model = settings["embedding_model"]  # type: ignore[reportTypedDictNotRequiredAccess]
         self.image_model: str = settings.get("image_embedding_model") or self.model  # type: ignore[assignment]
-        resolved_models_endpoint = settings.get("models_endpoint")
-        resolved_project_endpoint = settings.get("project_endpoint")
+        resolved_models_endpoint = settings.get("models_endpoint") or None
+        resolved_project_endpoint = settings.get("project_endpoint") or None
         use_project_client = explicit_project_source or (
             not explicit_inference_source and resolved_models_endpoint is None and resolved_project_endpoint is not None
         )
@@ -245,7 +247,6 @@ class RawFoundryEmbeddingClient(
             self._openai_client = project_client.get_openai_client(**openai_kwargs)
             self._endpoint = _get_openai_model_base_url(str(self._openai_client.base_url))
             self._openai_client.base_url = self._endpoint
-            self.OTEL_PROVIDER_NAME = "azure.ai.foundry"  # type: ignore[misc]
         else:
             if not resolved_models_endpoint:
                 raise ValueError(
@@ -584,3 +585,5 @@ class FoundryEmbeddingClient(
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
         )
+        if otel_provider_name is None and self.project_client is not None:
+            self.otel_provider_name = "azure.ai.foundry"

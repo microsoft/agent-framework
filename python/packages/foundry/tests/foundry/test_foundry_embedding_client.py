@@ -301,8 +301,8 @@ class TestRawFoundryEmbeddingClient:
         openai_client.close.assert_awaited_once()
         project_client.close.assert_awaited_once()
 
-    def test_project_endpoint_from_env_creates_project_client(self) -> None:
-        """Project endpoint settings create an authenticated project OpenAI client."""
+    def test_project_endpoint_from_env_ignores_empty_models_endpoint(self) -> None:
+        """Empty Models settings do not override a configured project endpoint."""
         openai_client = _make_openai_client()
         project_client = MagicMock()
         project_client.get_openai_client.return_value = openai_client
@@ -314,6 +314,8 @@ class TestRawFoundryEmbeddingClient:
                 os.environ,
                 {
                     "FOUNDRY_PROJECT_ENDPOINT": "https://test.services.ai.azure.com/api/projects/test",
+                    "FOUNDRY_MODELS_ENDPOINT": "",
+                    "FOUNDRY_MODELS_API_KEY": "",
                     "FOUNDRY_EMBEDDING_MODEL": "text-embedding-3-small",
                 },
                 clear=True,
@@ -524,6 +526,37 @@ class TestFoundryEmbeddingClient:
         )
 
         assert client.otel_provider_name == "azure.ai.foundry"
+
+    def test_project_client_serialization_round_trip(self) -> None:
+        """Project-backed clients serialize without leaking an unsupported telemetry field."""
+        openai_client = _make_openai_client()
+        project_client = MagicMock()
+        project_client.get_openai_client.return_value = openai_client
+        client = FoundryEmbeddingClient(
+            model="text-embedding-3-small",
+            project_client=project_client,
+        )
+
+        serialized = client.to_dict()
+
+        assert "OTEL_PROVIDER_NAME" not in serialized
+        assert "project_client" not in serialized
+        assert serialized["otel_provider_name"] == "azure.ai.foundry"
+
+        restored_openai_client = _make_openai_client()
+        restored_project_client = MagicMock()
+        restored_project_client.get_openai_client.return_value = restored_openai_client
+        restored = FoundryEmbeddingClient.from_dict(
+            serialized,
+            dependencies={
+                "foundry_embedding_client": {
+                    "project_client": restored_project_client,
+                }
+            },
+        )
+
+        assert restored.project_client is restored_project_client
+        assert restored.otel_provider_name == "azure.ai.foundry"
 
 
 _SKIP_REASON = "Foundry inference integration tests disabled"
