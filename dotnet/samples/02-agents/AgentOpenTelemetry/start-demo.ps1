@@ -21,19 +21,48 @@ try {
     exit 1
 }
 
-# Check for Azure OpenAI configuration
-if ($env:AZURE_OPENAI_ENDPOINT) {
-    Write-Host "Found Azure OpenAI endpoint: $($env:AZURE_OPENAI_ENDPOINT)" -ForegroundColor Green
-    if ($env:AZURE_OPENAI_DEPLOYMENT_NAME) {
-        Write-Host "Using deployment: $($env:AZURE_OPENAI_DEPLOYMENT_NAME)" -ForegroundColor Green
-    } else {
-        Write-Host "Using default deployment: gpt-4o-mini" -ForegroundColor Cyan
-    }
+# Detect configuration — Foundry is preferred; Azure OpenAI API key is the fallback.
+$foundryEndpoint = $env:FOUNDRY_PROJECT_ENDPOINT
+$azureOpenAIEndpoint = $env:AZURE_OPENAI_ENDPOINT
+$azureOpenAIApiKey = $env:AZURE_OPENAI_API_KEY
+$azureOpenAIDeployment = $env:AZURE_OPENAI_DEPLOYMENT_NAME
+
+$defaultModel = "gpt-5-mini"
+
+if ($foundryEndpoint) {
+    # Option A: Foundry (recommended)
+    $foundryModel = if ($env:FOUNDRY_MODEL) { $env:FOUNDRY_MODEL } else { $defaultModel }
+    Write-Host "Configuration: Microsoft Foundry (recommended)" -ForegroundColor Green
+    Write-Host "Endpoint   : $foundryEndpoint" -ForegroundColor Green
+    Write-Host "Model      : $foundryModel$(if (!$env:FOUNDRY_MODEL) { ' (default)' })" -ForegroundColor Green
+    Write-Host "Note: Foundry uses DefaultAzureCredential. Authenticate (e.g., run 'az login')." -ForegroundColor Cyan
+} elseif ($azureOpenAIEndpoint -and $azureOpenAIApiKey) {
+    # Option B: Azure OpenAI API key fallback — API key is intentionally not printed
+    $deploymentName = if ($azureOpenAIDeployment) { $azureOpenAIDeployment } else { $defaultModel }
+    Write-Host "Configuration: Azure OpenAI API key (fallback mode)" -ForegroundColor Cyan
+    Write-Host "Endpoint   : $azureOpenAIEndpoint" -ForegroundColor Cyan
+    Write-Host "Deployment : $deploymentName$(if (!$azureOpenAIDeployment) { ' (default)' })" -ForegroundColor Cyan
 } else {
-    Write-Host "Warning: AZURE_OPENAI_ENDPOINT not found!" -ForegroundColor Yellow
-    Write-Host "Please set the AZURE_OPENAI_ENDPOINT environment variable" -ForegroundColor Yellow
-    Write-Host "Example: `$env:AZURE_OPENAI_ENDPOINT='https://your-resource.openai.azure.com/'" -ForegroundColor Yellow
+    Write-Host "Error: No valid configuration found." -ForegroundColor Red
     Write-Host ""
+    Write-Host "Option A — Microsoft Foundry (recommended):" -ForegroundColor Yellow
+    Write-Host "  `$env:FOUNDRY_PROJECT_ENDPOINT = 'https://<project>.services.ai.azure.com/api/projects/<project>'" -ForegroundColor Yellow
+    Write-Host "  `$env:FOUNDRY_MODEL            = '<model-name>'   # if not set, defaults to $defaultModel" -ForegroundColor Yellow
+    Write-Host "  az login" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "Option B — Azure OpenAI API key (local/dev fallback):" -ForegroundColor Yellow
+    Write-Host "  `$env:AZURE_OPENAI_ENDPOINT        = 'https://<resource>.openai.azure.com/'" -ForegroundColor Yellow
+    Write-Host "  `$env:AZURE_OPENAI_API_KEY          = '<your-api-key>'" -ForegroundColor Yellow
+    Write-Host "  `$env:AZURE_OPENAI_DEPLOYMENT_NAME  = '<deployment-name>'   # if not set, defaults to $defaultModel" -ForegroundColor Yellow
+    Write-Host ""
+    exit 1
+}
+
+# Optional: per-turn root trace toggle
+if ($env:OTEL_DEMO_NEW_TRACE_PER_TURN -eq "true") {
+    Write-Host "Telemetry: Per-turn root traces enabled (OTEL_DEMO_NEW_TRACE_PER_TURN=true)" -ForegroundColor Cyan
+} else {
+    Write-Host "Telemetry: Correlated session traces (default). Set OTEL_DEMO_NEW_TRACE_PER_TURN=true for per-turn root traces." -ForegroundColor Gray
 }
 
 # Build console application
