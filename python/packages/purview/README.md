@@ -314,8 +314,46 @@ except (PurviewAuthenticationError, PurviewRateLimitError, PurviewRequestError, 
 
 ---
 
+## Security Considerations
+
+### Identity is a trusted input
+
+Purview evaluates DLP policy **for a specific user**. The identity this integration resolves therefore
+decides *which* policy is applied, and it is resolved in this order:
+
+1. The `user_id` from the configured credential's token, when the credential resolves to a user.
+2. The `user_id` argument passed to the processor.
+3. `message.additional_properties["user_id"]`.
+4. `message.author_name`, when it is a GUID.
+
+Only source 1 is verified. Sources 2–4 are supplied by the hosting application, so **a host must not
+populate them from data that has crossed a trust boundary**. If an end user, an upstream service or a
+model response can influence `additional_properties["user_id"]` or `author_name`, that party can
+select a different user's DLP policy — typically one with weaker rules — and evade enforcement. Where
+identity must come from a request, derive it from a validated token on the server, never from the
+request body. Prefer a user-delegated credential (source 1) whenever possible.
+
+The `purview_app_location` in `PurviewSettings` is trusted in the same way: it selects which policy
+locations apply and must be configured by the host, not by the caller.
+
+### Fail-closed behaviour
+
+Policy evaluation fails closed. If no user id can be resolved, or the tenant or app location cannot be
+determined, the processor raises rather than letting content through unevaluated. Use
+`ignore_exceptions` if you deliberately want availability over enforcement — but understand that it
+disables enforcement for every error, not just transient ones.
+
+### What is evaluated
+
+Every content item on a message is submitted for evaluation, not just its text: binary/data content is
+sent as Purview binary content, and function calls, function results and other structured content are
+serialized to text. Only `usage` content is skipped, because it carries token counts rather than user
+data.
+
+---
+
 ## Notes
-- **User Identification**: When the configured credential resolves to a user token, that token's `user_id` is used for per-user policy scoping. For app-token credentials, provide a `user_id` per request (e.g. in `Message(..., additional_properties={"user_id": "<guid>"})`). If no user_id is provided or inferred, policy evaluation is skipped.
+- **User Identification**: When the configured credential resolves to a user token, that token's `user_id` is used for per-user policy scoping. For app-token credentials, provide a `user_id` per request (e.g. in `Message(..., additional_properties={"user_id": "<guid>"})`). If no user_id can be provided or inferred, the request fails rather than proceeding unevaluated — see [Security Considerations](#security-considerations).
 - **Blocking Messages**: Can be customized via `blocked_prompt_message` and `blocked_response_message` in `PurviewSettings`. By default, they are "Prompt blocked by policy" and "Response blocked by policy" respectively.
 - **Streaming Responses**: Post-response policy evaluation presently applies only to non-streaming chat responses.
 - **Error Handling**: Use `ignore_exceptions` and `ignore_payment_required` settings for graceful degradation. When enabled, errors are logged but don't fail the request.

@@ -1556,6 +1556,7 @@ def disable_instrumentation() -> None:
 def enable_instrumentation(
     *,
     enable_sensitive_data: bool | None = None,
+    enable_message_events: bool | None = None,
     force: bool = False,
 ) -> None:
     """Enable instrumentation for Microsoft Agent Framework.
@@ -1568,9 +1569,17 @@ def enable_instrumentation(
     Keyword Args:
         enable_sensitive_data: Enable OpenTelemetry sensitive events. Overrides
             the environment variable ENABLE_SENSITIVE_DATA if set. Default is None.
+        enable_message_events: Emit the baseline v1.36.0 GenAI message events for
+            model invocation when sensitive data capture is enabled. Explicit values
+            override the current setting, including values from ENABLE_MESSAGE_EVENTS.
+            Default is None, which preserves the current setting without re-reading
+            the environment. Does not affect experimental message span attributes.
         force: When True, clears any sticky disable previously set by
             ``disable_instrumentation()`` before enabling. Without it, calls are
             no-ops if instrumentation has been explicitly disabled.
+
+    Note:
+        This function does not configure or replace OpenTelemetry providers or exporters.
     """
     global OBSERVABILITY_SETTINGS
     if OBSERVABILITY_SETTINGS._user_disabled and not force:  # type: ignore[reportPrivateUsage]
@@ -1587,6 +1596,8 @@ def enable_instrumentation(
     else:
         # Re-read from current environment in case env vars were set after import (e.g. load_dotenv())
         OBSERVABILITY_SETTINGS.enable_sensitive_data = _read_bool_env("ENABLE_SENSITIVE_DATA")
+    if enable_message_events is not None:
+        OBSERVABILITY_SETTINGS.enable_message_events = enable_message_events
 
 
 def configure_otel_providers(

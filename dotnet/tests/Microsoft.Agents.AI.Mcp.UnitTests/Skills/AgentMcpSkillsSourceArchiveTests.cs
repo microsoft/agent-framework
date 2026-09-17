@@ -62,6 +62,186 @@ public sealed class AgentMcpSkillsSourceArchiveTests : IDisposable
 
     private const int ManyFileArchiveFileCount = 60;
 
+    [Theory]
+    [InlineData("description: First\ndescription: >-\n  Second", "\n")]
+    [InlineData("description: |-\n  First\nDescription: Second", "\n")]
+    [InlineData("description: Valid\nmetadata:\n  author: First\nmetadata:\n  author: Second", "\n")]
+    [InlineData("description: Valid\nAllowed-Tools: read", "\n")]
+    [InlineData("description: Valid\nallowed-tools: read\n\"allowed-tools\": other", "\n")]
+    [InlineData("description: Valid\nallowed-tools: read\n\"allowed-tools\": other", "\r\n")]
+    [InlineData("description: Valid\n'allowed-tools': other\nallowed-tools: read", "\n")]
+    [InlineData("description: Valid\n'allowed-tools': other\nallowed-tools: read", "\r\n")]
+    [InlineData("description: Valid\n\"description\": Other text", "\n")]
+    [InlineData("'description': Other text\ndescription: Valid", "\r\n")]
+    [InlineData("description: Valid\n\"Allowed-Tools\": other", "\n")]
+    [InlineData("description: Valid\nmetadata:\n  author: First\n\"metadata\":\n  author: Second", "\r\n")]
+    [InlineData("description: Valid\nlicense: MIT\n'license':", "\n")]
+    [InlineData("description: Valid\ncompatibility: Any runtime\n\"compatibility\": Other runtime", "\r\n")]
+    [InlineData("description: Valid\n\"name\": archived-skill", "\n")]
+    public async Task GetSkillsAsync_AmbiguousArchiveFrontmatter_SkipsSkillAsync(string fields, string newline)
+    {
+        // Arrange
+        string content = $"---\nname: archived-skill\n{fields}\n---\nBody.";
+        byte[] archive = BuildZip(("SKILL.md", content.Replace("\n", newline)));
+        await using var server = CreateArchiveServer(
+            ArchiveIndex("archived-skill", "skill://archives/archived-skill.zip"),
+            new Dictionary<string, byte[]> { ["archived-skill"] = archive });
+        await using var client = await server.CreateClientAsync();
+        var source = new AgentMcpSkillsSource(client, new() { ArchiveSkillsDirectory = this._extractionRoot });
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        Assert.Empty(skills);
+    }
+
+    [Theory]
+    [InlineData("\n")]
+    [InlineData("\r\n")]
+    public async Task GetSkillsAsync_ArchiveValueOnIndentedNextLine_PreservedAsync(string newline)
+    {
+        // Arrange
+        const string Content = "---\nname: archived-skill\ndescription:\n  'Read files'\nlicense: MIT\n---\nBody.";
+        byte[] archive = BuildZip(("SKILL.md", Content.Replace("\n", newline)));
+        await using var server = CreateArchiveServer(
+            ArchiveIndex("archived-skill", "skill://archives/archived-skill.zip"),
+            new Dictionary<string, byte[]> { ["archived-skill"] = archive });
+        await using var client = await server.CreateClientAsync();
+        var source = new AgentMcpSkillsSource(client, new() { ArchiveSkillsDirectory = this._extractionRoot });
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        var frontmatter = Assert.Single(skills).Frontmatter;
+        Assert.Equal("Read files", frontmatter.Description);
+        Assert.Equal("MIT", frontmatter.License);
+    }
+
+    [Theory]
+    [InlineData("license", "\n")]
+    [InlineData("license", "\r\n")]
+    [InlineData("compatibility", "\n")]
+    [InlineData("compatibility", "\r\n")]
+    [InlineData("allowed-tools", "\n")]
+    [InlineData("allowed-tools", "\r\n")]
+    public async Task GetSkillsAsync_ArchiveEmptyOptionalScalar_RemainsNullAsync(string field, string newline)
+    {
+        // Arrange
+        string content = $"---\nname: archived-skill\ndescription: Read files\n{field}: \t\n---\nBody.";
+        byte[] archive = BuildZip(("SKILL.md", content.Replace("\n", newline)));
+        await using var server = CreateArchiveServer(
+            ArchiveIndex("archived-skill", "skill://archives/archived-skill.zip"),
+            new Dictionary<string, byte[]> { ["archived-skill"] = archive });
+        await using var client = await server.CreateClientAsync();
+        var source = new AgentMcpSkillsSource(client, new() { ArchiveSkillsDirectory = this._extractionRoot });
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        var frontmatter = Assert.Single(skills).Frontmatter;
+        Assert.Equal("Read files", frontmatter.Description);
+        Assert.Null(frontmatter.License);
+        Assert.Null(frontmatter.Compatibility);
+        Assert.Null(frontmatter.AllowedTools);
+    }
+
+    [Theory]
+    [InlineData("author", "\n", "")]
+    [InlineData("author", "\r\n", "")]
+    [InlineData("Author", "\n", "")]
+    [InlineData("Author", "\r\n", "")]
+    [InlineData("author", "\n", "'")]
+    [InlineData("author", "\r\n", "'")]
+    [InlineData("Author", "\n", "'")]
+    [InlineData("Author", "\r\n", "'")]
+    [InlineData("author", "\n", "\"")]
+    [InlineData("author", "\r\n", "\"")]
+    [InlineData("Author", "\n", "\"")]
+    [InlineData("Author", "\r\n", "\"")]
+    public async Task GetSkillsAsync_ArchiveDuplicateMetadata_KeepsFirstValueAndLogsWarningAsync(
+        string secondKey, string newline, string quote)
+    {
+        // Arrange
+        string content =
+            $"---\n{quote}name{quote}: archived-skill\n{quote}description{quote}: >-\n  Read\n  files\n" +
+            $"{quote}compatibility{quote}:\n  Any runtime\n{quote}allowed-tools{quote}: 'read'\n{quote}metadata{quote}:\n" +
+            $"  author:\n    'First'\n  {secondKey}: Second\n  author: Third\n  version: '1.0'\n" +
+            $"{quote}license{quote}: |-\n  MIT\n  License\n---\nBody.";
+        byte[] archive = BuildZip(("SKILL.md", content.Replace("\n", newline)));
+        await using var server = CreateArchiveServer(
+            ArchiveIndex("archived-skill", "skill://archives/archived-skill.zip"),
+            new Dictionary<string, byte[]> { ["archived-skill"] = archive });
+        await using var client = await server.CreateClientAsync();
+        var logger = new Mock<ILogger>();
+        logger.Setup(l => l.IsEnabled(It.IsAny<LogLevel>())).Returns(true);
+        var loggerFactory = new Mock<ILoggerFactory>();
+        loggerFactory.Setup(f => f.CreateLogger(It.IsAny<string>())).Returns(logger.Object);
+        var source = new AgentMcpSkillsSource(
+            client, new() { ArchiveSkillsDirectory = this._extractionRoot }, loggerFactory.Object);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        var skill = Assert.Single(skills);
+        Assert.NotNull(skill.Frontmatter.Metadata);
+        Assert.Equal(2, skill.Frontmatter.Metadata.Count);
+        Assert.Equal("First", skill.Frontmatter.Metadata["author"]);
+        Assert.Equal("First", skill.Frontmatter.Metadata["Author"]);
+        Assert.Equal("1.0", skill.Frontmatter.Metadata["version"]);
+        Assert.Equal("Read files", skill.Frontmatter.Description);
+        Assert.Equal("MIT\nLicense", skill.Frontmatter.License);
+        Assert.Equal("Any runtime", skill.Frontmatter.Compatibility);
+        Assert.Equal("read", skill.Frontmatter.AllowedTools);
+        Assert.Contains("Body.", await skill.GetContentAsync());
+        logger.Verify(
+            l => l.Log(
+                LogLevel.Warning,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((state, _) =>
+                    state.ToString()!.Contains("duplicate metadata key", StringComparison.Ordinal) &&
+                    state.ToString()!.Contains("keeping the first value", StringComparison.Ordinal)),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Exactly(2));
+    }
+
+    [Theory]
+    [InlineData("First", "First", "\n")]
+    [InlineData("First", "First", "\r\n")]
+    [InlineData("\n    'First'", "First", "\n")]
+    [InlineData("\n    'First'", "First", "\r\n")]
+    [InlineData("|-\n    First\n    Second", "|-", "\n")]
+    [InlineData("|-\n    First\n    Second", "|-", "\r\n")]
+    [InlineData(">-\n    First\n    Second", ">-", "\n")]
+    [InlineData(">-\n    First\n    Second", ">-", "\r\n")]
+    public async Task GetSkillsAsync_ArchiveExistingMetadataScalarFormats_PreservedAsync(string value, string expected, string newline)
+    {
+        // Arrange
+        string content = "---\nname: archived-skill\ndescription: Read files\n" +
+            $"metadata:\n  author: {value}\n  version: '1.0'\n---\nBody.";
+        byte[] archive = BuildZip(("SKILL.md", content.Replace("\n", newline)));
+        await using var server = CreateArchiveServer(
+            ArchiveIndex("archived-skill", "skill://archives/archived-skill.zip"),
+            new Dictionary<string, byte[]> { ["archived-skill"] = archive });
+        await using var client = await server.CreateClientAsync();
+        var source = new AgentMcpSkillsSource(client, new() { ArchiveSkillsDirectory = this._extractionRoot });
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert - preserve the existing metadata scalar representation.
+        var skill = Assert.Single(skills);
+        Assert.NotNull(skill.Frontmatter.Metadata);
+        Assert.Equal(2, skill.Frontmatter.Metadata.Count);
+        Assert.Equal(expected, skill.Frontmatter.Metadata["author"]);
+        Assert.Equal("1.0", skill.Frontmatter.Metadata["version"]);
+        Assert.Contains("Body.", await skill.GetContentAsync());
+    }
+
     /// <summary>
     /// Malformed, unsupported, and mismatched archive digests that must be rejected.
     /// </summary>

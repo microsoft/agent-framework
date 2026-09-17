@@ -8,6 +8,11 @@
 *REMOVED*[MAAI001]abstract Microsoft.Agents.AI.AgentFileStore.SearchAsync(string! directory, string! regexPattern, string? globPattern = null, bool recursive = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<Microsoft.Agents.AI.FileSearchResult!>!>!
 [MAAI001]Microsoft.Agents.AI.BackgroundAgentsProviderOptions.WaitTimeout.get -> System.TimeSpan
 [MAAI001]Microsoft.Agents.AI.BackgroundAgentsProviderOptions.WaitTimeout.set -> void
+Microsoft.Agents.AI.AgentModeProvider.SetModeAsync(Microsoft.Agents.AI.AgentSession! session, string! mode, bool disableNotification, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+Microsoft.Agents.AI.AgentModeProviderOptions.DisableModeGetTool.get -> bool
+Microsoft.Agents.AI.AgentModeProviderOptions.DisableModeGetTool.set -> void
+Microsoft.Agents.AI.AgentModeProviderOptions.DisableModeSetTool.get -> bool
+Microsoft.Agents.AI.AgentModeProviderOptions.DisableModeSetTool.set -> void
 [MAAI001]Microsoft.Agents.AI.FileLineEdit.ExpectedLine.get -> string?
 [MAAI001]Microsoft.Agents.AI.FileLineEdit.ExpectedLine.set -> void
 [MAAI001]const Microsoft.Agents.AI.FileAccessProvider.ReadLinesToolName = "file_access_read_lines" -> string!

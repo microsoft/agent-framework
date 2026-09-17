@@ -458,14 +458,22 @@ class ToolApprovalMiddleware(AgentMiddleware):
 
                 approval_requests: list[Content] = []
                 buffered_approval_updates: list[AgentResponseUpdate] = []
+                streamed_user_input_contents: list[Content] = []
+                buffering = False
                 async for update in context.result:
                     update_approval_requests = [
                         content for content in update.contents if content.type == "function_approval_request"
                     ]
-                    if not update_approval_requests:
+                    if not buffering and not update_approval_requests:
+                        streamed_user_input_contents.extend(
+                            content for content in update.contents if content.user_input_request
+                        )
+                    if update_approval_requests:
+                        buffering = True
+                        approval_requests.extend(update_approval_requests)
+                    if not buffering:
                         yield update
                         continue
-                    approval_requests.extend(update_approval_requests)
                     buffered_update = copy.copy(update)
                     buffered_update.contents = list(update.contents)
                     buffered_approval_updates.append(buffered_update)
@@ -476,7 +484,10 @@ class ToolApprovalMiddleware(AgentMiddleware):
                 response_messages = [
                     Message(
                         role="assistant",
-                        contents=[content for update in buffered_approval_updates for content in update.contents],
+                        contents=[
+                            *streamed_user_input_contents,
+                            *(content for update in buffered_approval_updates for content in update.contents),
+                        ],
                     )
                 ]
                 has_other_user_input = self._has_non_approval_user_input(response_messages)
