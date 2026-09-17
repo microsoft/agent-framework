@@ -3810,6 +3810,219 @@ async def test_later_idless_host_result_does_not_complete_older_stateless_mixed_
     assert chat_client_base.call_count == 0  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
 
+async def test_completed_approval_result_is_not_claimed_by_older_stateless_host_request(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """A completed approval result remains owned by the nearer approval batch."""
+    from agent_framework import FunctionTool
+
+    calls = 0
+
+    @tool(name="approval_func", approval_mode="always_require")
+    def approval_func() -> str:
+        nonlocal calls
+        calls += 1
+        return "approved"
+
+    older_host_request = Content.from_function_call(
+        call_id="shared",
+        name="host_func",
+        arguments={},
+        id="older-host-occurrence",
+    )
+    older_host_request.user_input_request = True
+    approval_call = Content.from_function_call(
+        call_id="shared",
+        name="approval_func",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    completed_approval_result = Content.from_function_result(call_id="shared", result="approved")
+    host_func = FunctionTool(name="host_func", func=None, description="Handled by the caller")
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=["later response"])),
+    ]
+    messages = [
+        Message(role="assistant", contents=[older_host_request]),
+        Message(role="user", contents=["unrelated follow-up"]),
+        Message(role="assistant", contents=[approval_request]),
+        Message(role="user", contents=[approval_request.to_function_approval_response(approved=True)]),
+        Message(role="tool", contents=[completed_approval_result]),
+        Message(role="assistant", contents=["done"]),
+        Message(role="user", contents=["later"]),
+    ]
+
+    response = await chat_client_base.get_response(
+        messages,
+        options={"tools": [approval_func, host_func]},
+    )
+
+    assert response.text == "later response"
+    assert calls == 0
+    assert chat_client_base.call_count == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+
+async def test_ambiguous_later_host_result_does_not_complete_older_stateless_mixed_batch(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """An ambiguous result remains reserved to the nearer Host batch."""
+    from agent_framework import FunctionTool
+
+    calls = 0
+
+    @tool(name="approval_func", approval_mode="always_require")
+    def approval_func() -> str:
+        nonlocal calls
+        calls += 1
+        return "approved"
+
+    approval_call = Content.from_function_call(
+        call_id="approval",
+        name="approval_func",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    older_host_request = Content.from_function_call(
+        call_id="shared",
+        name="host_func",
+        arguments={},
+        id="older-host-occurrence",
+    )
+    older_host_request.user_input_request = True
+    later_host_requests = [
+        Content.from_function_call(
+            call_id="shared",
+            name="host_func",
+            arguments={},
+            id=f"later-host-occurrence-{index}",
+        )
+        for index in range(2)
+    ]
+    for request in later_host_requests:
+        request.user_input_request = True
+    ambiguous_result = Content.from_function_result(call_id="shared", result="later host result")
+    host_func = FunctionTool(name="host_func", func=None, description="Handled by the caller")
+    messages = [
+        Message(role="assistant", contents=[approval_request, older_host_request]),
+        Message(role="user", contents=[approval_request.to_function_approval_response(approved=True)]),
+        Message(role="assistant", contents=later_host_requests),
+        Message(role="user", contents=[ambiguous_result]),
+    ]
+
+    with pytest.raises(
+        RuntimeError,
+        match="A mixed function-call batch requires responses for every approval and Host-owned request",
+    ):
+        await chat_client_base.get_response(
+            messages,
+            options={"tools": [approval_func, host_func]},
+        )
+
+    assert calls == 0
+    assert chat_client_base.call_count == 0  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+
+async def test_id_bearing_result_for_idless_host_request_does_not_consume_approval(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """A result compatible with an ID-less Host request remains Host-owned."""
+    from agent_framework import FunctionTool
+
+    calls = 0
+
+    @tool(name="approval_func", approval_mode="always_require")
+    def approval_func() -> str:
+        nonlocal calls
+        calls += 1
+        return "approved"
+
+    approval_call = Content.from_function_call(
+        call_id="shared",
+        name="approval_func",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    host_request = Content.from_function_call(
+        call_id="shared",
+        name="host_func",
+        arguments={},
+    )
+    host_request.user_input_request = True
+    approval_response = approval_request.to_function_approval_response(approved=True)
+    host_result = Content.from_function_result(call_id="shared", result="host result")
+    host_result.id = "host-result-occurrence"
+    host_func = FunctionTool(name="host_func", func=None, description="Handled by the caller")
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+    messages = [
+        Message(role="assistant", contents=[approval_request]),
+        Message(role="user", contents=["unrelated follow-up"]),
+        Message(role="assistant", contents=[host_request]),
+        Message(role="user", contents=[approval_response, host_result]),
+    ]
+
+    response = await chat_client_base.get_response(
+        messages,
+        options={"tools": [approval_func, host_func]},
+    )
+
+    assert response.text == "done"
+    assert calls == 1
+    assert chat_client_base.call_count == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+
+def test_stateless_pause_response_ownership_scans_contents_linearly() -> None:
+    """Stateless response ownership reads transcript content a bounded number of times."""
+    from agent_framework._tools import _stateless_mixed_pause_batch_status
+
+    class CountingContent(Content):
+        type_reads = 0
+
+        def __getattribute__(self, name: str) -> Any:
+            if name == "type":
+                CountingContent.type_reads += 1
+            return super().__getattribute__(name)
+
+    batch_count = 200
+    messages: list[Message] = []
+    expected_result_ids: set[int] = set()
+    for index in range(batch_count):
+        request = CountingContent.from_function_call(
+            call_id=f"host-{index}",
+            name="host_func",
+            arguments={},
+            id=f"host-occurrence-{index}",
+        )
+        request.user_input_request = True
+        result = CountingContent.from_function_result(call_id=f"host-{index}", result="host result")
+        result.id = f"host-occurrence-{index}"
+        messages.extend([
+            Message(role="assistant", contents=[request]),
+            Message(role="user", contents=[result]),
+        ])
+        expected_result_ids.add(id(result))
+
+    CountingContent.type_reads = 0
+    incomplete, host_result_ids = _stateless_mixed_pause_batch_status(messages)
+
+    assert incomplete is False
+    assert host_result_ids == expected_result_ids
+    assert CountingContent.type_reads < batch_count * 50
+
+
 async def test_completed_split_stateless_mixed_batch_is_inert_on_later_turn(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:

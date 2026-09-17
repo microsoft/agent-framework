@@ -3203,41 +3203,112 @@ def _stateless_mixed_pause_batch_status(
             batch_items.append({"kind": kind, "request": content.to_dict()})
     finish_current_batch()
 
-    claimed_response_ids: set[int] = set()
+    responses_by_batch: list[list[Content]] = [[] for _ in request_batches]
+    latest_approval_by_identity: dict[str, int] = {}
+    latest_approval_by_call: dict[str, int] = {}
+    latest_host_by_occurrence: dict[tuple[str, str], int] = {}
+    latest_host_by_call: dict[str, int] = {}
+    latest_idless_host_by_call: dict[str, int] = {}
     matched_host_result_ids: set[int] = set()
-    for batch_end, items, kinds in reversed(request_batches):
-        responses = [
-            content
-            for content in flattened_contents[batch_end + 1 :]
-            if content.type in {"function_approval_response", "function_result"}
-            and id(content) not in claimed_response_ids
-        ]
+    next_batch_index = 0
+
+    def register_request_batch(batch_index: int) -> None:
+        for item in request_batches[batch_index][1]:
+            request = _content_from_state(item.get("request"))
+            if request is None:
+                continue
+            if item.get("kind") == "approval":
+                function_call = request.function_call
+                for identity in (
+                    request.id,
+                    function_call.id if function_call is not None else None,
+                ):
+                    if identity is not None:
+                        latest_approval_by_identity[identity] = batch_index
+                if function_call is not None and function_call.call_id is not None:
+                    latest_approval_by_call[function_call.call_id] = batch_index
+            elif item.get("kind") == "host" and request.call_id is not None:
+                latest_host_by_call[request.call_id] = batch_index
+                if request.id is None:
+                    latest_idless_host_by_call[request.call_id] = batch_index
+                else:
+                    latest_host_by_occurrence[request.call_id, request.id] = batch_index
+
+    for response_index, content in enumerate(flattened_contents):
+        if content.type not in {"function_approval_response", "function_result"}:
+            continue
+        while next_batch_index < len(request_batches) and request_batches[next_batch_index][0] < response_index:
+            register_request_batch(next_batch_index)
+            next_batch_index += 1
+
+        owner_candidates: list[tuple[int, str]] = []
+        if content.type == "function_approval_response":
+            identities = {
+                str(identity)
+                for identity in (
+                    content.additional_properties.get(_APPROVAL_REQUEST_ID_KEY),
+                    content.id,
+                )
+                if identity is not None
+            }
+            owner_candidates.extend(
+                (batch_index, "approval")
+                for identity in identities
+                if (batch_index := latest_approval_by_identity.get(identity)) is not None
+            )
+        elif content.call_id is not None:
+            if (approval_batch_index := latest_approval_by_call.get(content.call_id)) is not None:
+                owner_candidates.append((approval_batch_index, "approval"))
+            if content.id is None:
+                host_batch_index = latest_host_by_call.get(content.call_id)
+            else:
+                host_batch_index = max(
+                    (
+                        batch_index
+                        for batch_index in (
+                            latest_host_by_occurrence.get((content.call_id, content.id)),
+                            latest_idless_host_by_call.get(content.call_id),
+                        )
+                        if batch_index is not None
+                    ),
+                    default=None,
+                )
+            if host_batch_index is not None:
+                owner_candidates.append((host_batch_index, "host"))
+
+        if not owner_candidates:
+            continue
+        owner_batch_index, owner_kind = max(
+            owner_candidates,
+            key=lambda candidate: (candidate[0], candidate[1] == "host"),
+        )
+        responses_by_batch[owner_batch_index].append(content)
+        if owner_kind == "host":
+            matched_host_result_ids.add(id(content))
+
+    pending_approval_response_ids = {
+        id(response)
+        for response in _collect_approval_responses(
+            messages,
+            non_approval_result_ids=matched_host_result_ids,
+        ).values()
+    }
+    for batch_index in range(len(request_batches) - 1, -1, -1):
+        _, items, kinds = request_batches[batch_index]
+        responses = responses_by_batch[batch_index]
         matched_response_ids, incomplete, ordered_responses, ordered_host_result_ids = _match_mixed_pause_responses(
             items,
             responses,
         )
-        claimed_response_ids.update(matched_response_ids)
-        original_host_result_ids = {
-            id(content)
-            for content in responses
-            if content.type == "function_result" and id(content) in matched_response_ids
-        }
-        matched_host_result_ids.update(original_host_result_ids)
         if kinds != {"approval", "host"}:
             continue
         if incomplete:
             return True, matched_host_result_ids
 
-        pending_approval_response_ids = {
-            id(response)
-            for response in _collect_approval_responses(
-                messages,
-                non_approval_result_ids=matched_host_result_ids,
-            ).values()
-        }
         if matched_response_ids.isdisjoint(pending_approval_response_ids):
             continue
 
+        original_host_result_ids = matched_response_ids & matched_host_result_ids
         matched_host_result_ids.difference_update(original_host_result_ids)
         matched_host_result_ids.update(ordered_host_result_ids)
         filtered_messages: list[Message] = []
