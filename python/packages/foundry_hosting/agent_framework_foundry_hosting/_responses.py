@@ -275,6 +275,9 @@ class _SignalledIterator(Generic[_T]):
 # checkpoint in storage (if any), or replay the original input if none exists as no output was ever
 # durably persisted.
 _LATEST_CHECKPOINT_ID_KEY = "_last_checkpoint_id"
+# ``internal_metadata`` key carrying a truncating finish reason across resilient checkpoints, so a
+# turn cut short before a crash still ends ``incomplete`` after recovery.
+_INCOMPLETE_REASON_KEY = "_incomplete_reason"
 
 
 # Foundry Toolbox Auth integration
@@ -1297,8 +1300,14 @@ class _OutputItemTracker:
         self._oauth_consent_requests: set[tuple[str, str]] = set()
         # Set when an agent update reports the model stopped early (content filter, token
         # limit); the response then ends as ``incomplete`` instead of ``completed`` so callers
-        # can tell a cut-short turn from a successful one.
+        # can tell a cut-short turn from a successful one. Mirrored into the stream's
+        # ``internal_metadata`` so it survives a resilient checkpoint/recovery cycle, which
+        # rebuilds this tracker from the persisted response.
         self._incomplete_reason: ResponseIncompleteReason | None = None
+        persisted_reason = stream.internal_metadata.get(_INCOMPLETE_REASON_KEY)
+        if isinstance(persisted_reason, str):
+            with suppress(ValueError):
+                self._incomplete_reason = ResponseIncompleteReason(persisted_reason)
         for item in stream.response.get("output", []):
             if not isinstance(item, Mapping):
                 continue
@@ -1354,6 +1363,9 @@ class _OutputItemTracker:
             self._incomplete_reason = ResponseIncompleteReason.CONTENT_FILTER
         elif finish_reason == "length" and self._incomplete_reason is None:
             self._incomplete_reason = ResponseIncompleteReason.MAX_OUTPUT_TOKENS
+        else:
+            return
+        self._stream.internal_metadata[_INCOMPLETE_REASON_KEY] = self._incomplete_reason.value
 
     async def handle(
         self,

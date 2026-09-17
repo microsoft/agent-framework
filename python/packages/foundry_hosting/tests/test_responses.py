@@ -63,7 +63,7 @@ from azure.ai.agentserver.responses import (
     ResponsesServerOptions,
 )
 from azure.ai.agentserver.responses.aio import ResponseEventStream
-from azure.ai.agentserver.responses.models import CreateResponse, Item, OutputItem
+from azure.ai.agentserver.responses.models import CreateResponse, Item, OutputItem, ResponseIncompleteReason
 from azure.ai.agentserver.responses.streaming._checkpoint import ResponseCheckpointEvent
 from mcp import McpError
 from mcp.types import ErrorData
@@ -72,6 +72,7 @@ from typing_extensions import Any
 
 from agent_framework_foundry_hosting import ResponsesHostServer
 from agent_framework_foundry_hosting._responses import (
+    _INCOMPLETE_REASON_KEY,  # pyright: ignore[reportPrivateUsage]
     CONSENT_ERROR_CODE,
     ConsentError,
     _item_to_message,  # pyright: ignore[reportPrivateUsage]
@@ -5366,6 +5367,27 @@ class TestIncompleteFinishReasonSurfacing:
         resp = await _post(server, input_text="hello", stream=False)
         body = resp.json()
         assert body["incomplete_details"] == {"reason": "content_filter"}
+
+    async def test_incomplete_reason_survives_checkpoint_recovery(self) -> None:
+        """Resilient recovery rebuilds the tracker from the persisted response; the marker must ride along.
+
+        A filtered update followed by a crash and a later ``stop`` update must still end ``incomplete``.
+        """
+        stream = ResponseEventStream(response_id="resp_filtered")
+        stream.emit_created()
+        stream.emit_in_progress()
+        tracker = _OutputItemTracker(stream)
+        tracker.record_finish_reason("content_filter")
+        assert stream.internal_metadata[_INCOMPLETE_REASON_KEY] == "content_filter"
+
+        # Simulate recovery: a fresh tracker over the checkpointed response snapshot.
+        recovered = _OutputItemTracker(stream)
+        assert recovered.incomplete_reason == ResponseIncompleteReason.CONTENT_FILTER
+        recovered.record_finish_reason("stop")
+        assert recovered.incomplete_reason == ResponseIncompleteReason.CONTENT_FILTER
+
+        # A stream that was never marked restores nothing.
+        assert _OutputItemTracker(ResponseEventStream(response_id="resp_clean")).incomplete_reason is None
 
     async def test_workflow_agent_content_filter_marks_response_incomplete(self) -> None:
         workflow_agent = _build_text_workflow_agent("filtered by workflow", finish_reason="content_filter")
