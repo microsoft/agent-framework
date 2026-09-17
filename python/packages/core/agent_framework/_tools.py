@@ -3210,6 +3210,7 @@ def _stateless_mixed_pause_batch_status(
     latest_host_by_call: dict[str, int] = {}
     latest_idless_host_by_call: dict[str, int] = {}
     matched_host_result_ids: set[int] = set()
+    host_result_batch_indices: dict[int, int] = {}
     next_batch_index = 0
 
     def register_request_batch(batch_index: int) -> None:
@@ -3285,6 +3286,7 @@ def _stateless_mixed_pause_batch_status(
         responses_by_batch[owner_batch_index].append(content)
         if owner_kind == "host":
             matched_host_result_ids.add(id(content))
+            host_result_batch_indices[id(content)] = owner_batch_index
 
     pending_approval_response_ids = {
         id(response)
@@ -3292,6 +3294,17 @@ def _stateless_mixed_pause_batch_status(
             messages,
             non_approval_result_ids=matched_host_result_ids,
         ).values()
+    }
+    pending_approval_batch_indices = {
+        batch_index
+        for batch_index, responses in enumerate(responses_by_batch)
+        if any(id(response) in pending_approval_response_ids for response in responses)
+    }
+    first_pending_approval_batch = min(pending_approval_batch_indices, default=None)
+    active_host_result_ids = {
+        result_id
+        for result_id, batch_index in host_result_batch_indices.items()
+        if first_pending_approval_batch is not None and batch_index >= first_pending_approval_batch
     }
     for batch_index in range(len(request_batches) - 1, -1, -1):
         _, items, kinds = request_batches[batch_index]
@@ -3303,14 +3316,14 @@ def _stateless_mixed_pause_batch_status(
         if kinds != {"approval", "host"}:
             continue
         if incomplete:
-            return True, matched_host_result_ids
+            return True, active_host_result_ids
 
         if matched_response_ids.isdisjoint(pending_approval_response_ids):
             continue
 
-        original_host_result_ids = matched_response_ids & matched_host_result_ids
-        matched_host_result_ids.difference_update(original_host_result_ids)
-        matched_host_result_ids.update(ordered_host_result_ids)
+        original_host_result_ids = matched_response_ids & active_host_result_ids
+        active_host_result_ids.difference_update(original_host_result_ids)
+        active_host_result_ids.update(ordered_host_result_ids)
         filtered_messages: list[Message] = []
         for message in messages:
             message.contents = [content for content in message.contents if id(content) not in matched_response_ids]
@@ -3318,8 +3331,8 @@ def _stateless_mixed_pause_batch_status(
                 filtered_messages.append(message)
         filtered_messages.append(Message(role="user", contents=ordered_responses))
         messages[:] = filtered_messages
-        return False, matched_host_result_ids
-    return False, matched_host_result_ids
+        return False, active_host_result_ids
+    return False, active_host_result_ids
 
 
 def _collect_approval_responses(

@@ -3866,6 +3866,70 @@ async def test_completed_approval_result_is_not_claimed_by_older_stateless_host_
     assert chat_client_base.call_count == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
 
+def test_historical_stateless_host_result_does_not_capture_later_reused_call_approval() -> None:
+    """Historical Host exclusions do not keep completed calls open during approval normalization."""
+    from agent_framework._tools import (
+        _collect_approval_responses,
+        _replace_approval_contents_with_results,
+        _stateless_mixed_pause_batch_status,
+    )
+
+    old_host_request = Content.from_function_call(
+        call_id="shared",
+        name="host_func",
+        arguments={},
+        id="old-host-occurrence",
+    )
+    old_host_request.user_input_request = True
+    old_host_result = Content.from_function_result(call_id="shared", result="old host result")
+    old_host_result.id = "old-host-occurrence"
+    approval_call = Content.from_function_call(
+        call_id="shared",
+        name="approval_func",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    approval_response = approval_request.to_function_approval_response(approved=True)
+    messages = [
+        Message(role="assistant", contents=[old_host_request]),
+        Message(role="user", contents=[old_host_result]),
+        Message(role="assistant", contents=[approval_request]),
+        Message(role="user", contents=[approval_response]),
+    ]
+
+    incomplete, active_host_result_ids = _stateless_mixed_pause_batch_status(messages)
+    pending_responses = _collect_approval_responses(
+        messages,
+        non_approval_result_ids=active_host_result_ids,
+    )
+    approval_result = Content.from_function_result(call_id="shared", result="approved result")
+    _replace_approval_contents_with_results(
+        messages,
+        pending_responses,
+        [[approval_result]],
+        non_approval_result_ids=active_host_result_ids,
+    )
+
+    assert incomplete is False
+    assert active_host_result_ids == set()
+    assert list(pending_responses) == ["approval-occurrence"]
+    assert [
+        (content.type, content.name, content.id, content.result)
+        for message in messages
+        for content in message.contents
+        if content.type in {"function_call", "function_result"}
+    ] == [
+        ("function_call", "host_func", "old-host-occurrence", None),
+        ("function_result", None, "old-host-occurrence", "old host result"),
+        ("function_call", "approval_func", "approval-occurrence", None),
+        ("function_result", None, None, "approved result"),
+    ]
+
+
 async def test_ambiguous_later_host_result_does_not_complete_older_stateless_mixed_batch(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:
@@ -3998,7 +4062,6 @@ def test_stateless_pause_response_ownership_scans_contents_linearly() -> None:
 
     batch_count = 200
     messages: list[Message] = []
-    expected_result_ids: set[int] = set()
     for index in range(batch_count):
         request = CountingContent.from_function_call(
             call_id=f"host-{index}",
@@ -4013,13 +4076,12 @@ def test_stateless_pause_response_ownership_scans_contents_linearly() -> None:
             Message(role="assistant", contents=[request]),
             Message(role="user", contents=[result]),
         ])
-        expected_result_ids.add(id(result))
 
     CountingContent.type_reads = 0
     incomplete, host_result_ids = _stateless_mixed_pause_batch_status(messages)
 
     assert incomplete is False
-    assert host_result_ids == expected_result_ids
+    assert host_result_ids == set()
     assert CountingContent.type_reads < batch_count * 50
 
 
