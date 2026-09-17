@@ -3463,6 +3463,113 @@ async def test_mixed_batch_requires_complete_responses_before_execution(
     assert approval_arguments == ["expected"]
 
 
+@pytest.mark.parametrize("include_approval_response", [False, True], ids=["zero-responses", "approval-only"])
+async def test_stateless_split_mixed_batch_rejects_incomplete_replay_before_execution(
+    chat_client_base: SupportsChatGetResponse,
+    include_approval_response: bool,
+) -> None:
+    """A split stateless mixed batch cannot execute until every response arrives."""
+    from agent_framework import FunctionTool
+
+    calls = 0
+
+    @tool(name="approval_func", approval_mode="always_require")
+    def approval_func() -> str:
+        nonlocal calls
+        calls += 1
+        return "approved"
+
+    approval_call = Content.from_function_call(
+        call_id="approval",
+        name="approval_func",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    host_request = Content.from_function_call(
+        call_id="host",
+        name="host_func",
+        arguments={},
+        id="host-occurrence",
+    )
+    host_request.user_input_request = True
+    host_func = FunctionTool(name="host_func", func=None, description="Handled by the caller")
+    replay_contents = (
+        [approval_request.to_function_approval_response(approved=True)]
+        if include_approval_response
+        else [Content.from_text("unrelated follow-up")]
+    )
+    messages = [
+        Message(role="assistant", contents=[approval_request]),
+        Message(role="assistant", contents=[host_request]),
+        Message(role="user", contents=replay_contents),
+    ]
+
+    with pytest.raises(
+        RuntimeError,
+        match="A mixed function-call batch requires responses for every approval and Host-owned request",
+    ):
+        await chat_client_base.get_response(
+            messages,
+            options={"tools": [approval_func, host_func]},
+        )
+
+    assert calls == 0
+
+
+def test_stateless_mixed_batch_across_assistant_messages_requires_complete_responses() -> None:
+    """Split assistant messages remain one mixed batch and preserve response order."""
+    from agent_framework._tools import _stateless_mixed_pause_batch_status
+
+    approval_call = Content.from_function_call(
+        call_id="approval",
+        name="approval_func",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    host_request = Content.from_function_call(
+        call_id="host",
+        name="host_func",
+        arguments={},
+        id="host-occurrence",
+    )
+    host_request.user_input_request = True
+    approval_response = approval_request.to_function_approval_response(approved=True)
+    partial_messages = [
+        Message(role="assistant", contents=[approval_request]),
+        Message(role="assistant", contents=[host_request]),
+        Message(role="user", contents=[approval_response]),
+    ]
+
+    incomplete, _ = _stateless_mixed_pause_batch_status(partial_messages)
+
+    assert incomplete is True
+
+    host_result = Content.from_function_result(call_id="host", result="host result")
+    host_result.id = "host-occurrence"
+    complete_messages = [
+        Message(role="assistant", contents=[approval_request]),
+        Message(role="assistant", contents=[host_request]),
+        Message(role="user", contents=[host_result, approval_response]),
+    ]
+
+    incomplete, host_result_ids = _stateless_mixed_pause_batch_status(complete_messages)
+
+    assert incomplete is False
+    assert [content.type for content in complete_messages[-1].contents] == [
+        "function_approval_response",
+        "function_result",
+    ]
+    assert host_result_ids == {id(complete_messages[-1].contents[1])}
+
+
 def test_active_mixed_pause_ignores_historical_host_requests() -> None:
     """Only the session-recorded mixed batch participates in response correlation."""
     from agent_framework._tools import (
