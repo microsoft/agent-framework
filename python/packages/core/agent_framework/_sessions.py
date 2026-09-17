@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeAlias, TypeVar, cast
 
 import msgspec
-from typing_extensions import NotRequired, TypedDict
+from typing_extensions import TypedDict
 
 from ._feature_stage import ExperimentalFeature, experimental
 from ._filesystem import (
@@ -1705,11 +1705,20 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
         )
 
 
-class AgentSessionDict(TypedDict):
+class _AgentSessionDictRequired(TypedDict):
+    """Required fields for a serialized :class:`AgentSession`."""
+
+    session_id: str
+
+
+class AgentSessionDict(_AgentSessionDictRequired, total=False):
     """Serialized :class:`AgentSession` payload shape produced by :meth:`AgentSession.to_dict`.
 
     ``AgentSession.to_dict`` returns a plain ``dict[str, Any]`` that conforms to this
     schema. Callers that need a TypedDict view can ``cast`` the result.
+
+    Built as a required base plus ``total=False`` optional fields so postponed
+    annotations do not turn optional keys into required runtime metadata.
 
     ``service_session_id`` may be a plain string or a structured
     :data:`ServiceSessionId` mapping, matching :attr:`AgentSession.service_session_id`.
@@ -1717,10 +1726,9 @@ class AgentSessionDict(TypedDict):
     service-side storage.
     """
 
-    type: NotRequired[str]
-    session_id: str
-    service_session_id: NotRequired[str | ServiceSessionId | None]
-    state: NotRequired[dict[str, Any]]
+    type: str
+    service_session_id: str | ServiceSessionId | None
+    state: dict[str, Any]
 
 
 class AgentSession:

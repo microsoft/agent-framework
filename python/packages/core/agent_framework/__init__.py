@@ -196,7 +196,6 @@ _LAZY_MODULE_EXPORTS: Final[Mapping[str, tuple[str, ...]]] = {
     ),
     "._sessions": (
         "AgentSession",
-        "AgentSessionDict",
         "ContextProvider",
         "FileHistoryProvider",
         "FileSessionStore",
@@ -444,7 +443,6 @@ __all__ = [
     "AgentResponseUpdate",
     "AgentRunInputs",
     "AgentSession",
-    "AgentSessionDict",
     "AggregatingSkillsSource",
     "Annotation",
     "BackgroundAgentsProvider",

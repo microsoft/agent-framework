@@ -156,7 +156,6 @@ from ._middleware import (
 from ._sessions import (
     MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY,
     AgentSession,
-    AgentSessionDict,
     ContextProvider,
     FileHistoryProvider,
     FileSessionStore,
@@ -399,7 +398,6 @@ __all__ = [
     "AgentResponseUpdate",
     "AgentRunInputs",
     "AgentSession",
-    "AgentSessionDict",
     "AggregatingSkillsSource",
     "Annotation",
     "BackgroundAgentsProvider",

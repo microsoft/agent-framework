@@ -50,7 +50,7 @@ class AgentExecutorCheckpointState(TypedDict, total=False):
     Keys:
         cache: Messages buffered between runs before the next agent invocation.
         full_conversation: Prior inputs plus assistant/tool outputs after the last run.
-        agent_session: Serialized session payload (:class:`~agent_framework.AgentSessionDict`).
+        agent_session: Serialized session payload (:class:`~agent_framework._sessions.AgentSessionDict`).
         pending_agent_requests: In-flight agent-owned user-input requests by request id.
         pending_responses_to_agent: Queued content responses waiting to be sent to the agent.
     """
@@ -86,8 +86,7 @@ def _validate_agent_executor_checkpoint_state(state: Mapping[str, Any]) -> None:
                     f"got {type(item).__name__}."
                 )
 
-    if "pending_responses_to_agent" in state and state["pending_responses_to_agent"] is not None:
-        responses_raw = state["pending_responses_to_agent"]
+    if (responses_raw := state.get("pending_responses_to_agent")) is not None:
         if not isinstance(responses_raw, list):
             raise WorkflowCheckpointException(
                 "AgentExecutor checkpoint field 'pending_responses_to_agent' must be a list, "
@@ -102,8 +101,7 @@ def _validate_agent_executor_checkpoint_state(state: Mapping[str, Any]) -> None:
                     f"got {type(item).__name__}."
                 )
 
-    if "pending_agent_requests" in state and state["pending_agent_requests"] is not None:
-        pending_raw = state["pending_agent_requests"]
+    if (pending_raw := state.get("pending_agent_requests")) is not None:
         if not isinstance(pending_raw, dict):
             raise WorkflowCheckpointException(
                 "AgentExecutor checkpoint field 'pending_agent_requests' must be a dict, "
@@ -123,8 +121,7 @@ def _validate_agent_executor_checkpoint_state(state: Mapping[str, Any]) -> None:
                     f"got {type(content).__name__}."
                 )
 
-    if "agent_session" in state and state["agent_session"] is not None:
-        session_raw = state["agent_session"]
+    if (session_raw := state.get("agent_session")) is not None:
         if not isinstance(session_raw, dict):
             raise WorkflowCheckpointException(
                 "AgentExecutor checkpoint field 'agent_session' must be a dict, "
