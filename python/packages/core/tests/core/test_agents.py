@@ -2038,11 +2038,238 @@ async def test_as_tool_resumes_nested_tool_approval() -> None:
         ChatResponse(messages=Message(role="assistant", contents=["It's sunny in Amsterdam."]))
     ]
 
+    # Capture what actually gets sent to the outer model on resume: a real provider
+    # rejects a transcript where an assistant tool call has no matching tool result
+    # (this is the failure mode from the linked issue's second comment), so both the
+    # outer call (weather_agent_tool) and the newly-visible inner call
+    # (get_weather_detail) must each have their own paired function_result.
+    original_inner_get_response = outer_client._inner_get_response
+    sent_messages: list[Message] = []
+
+    def _capturing_inner_get_response(*, messages: Any, **kwargs: Any) -> Any:
+        sent_messages.extend(messages)
+        return original_inner_get_response(messages=messages, **kwargs)
+
+    outer_client._inner_get_response = _capturing_inner_get_response  # type: ignore[method-assign]
+
     second_response = await outer_agent.run(Message(role="user", contents=[approval_response]), session=session)
 
     assert inner_calls == 1, "the inner tool must actually execute once the nested approval is resumed"
     assert not second_response.user_input_requests
     assert second_response.text == "It's sunny in Amsterdam."
+
+    sent_contents = [content for message in sent_messages for content in message.contents]
+    call_ids_with_calls = {content.call_id for content in sent_contents if content.type == "function_call"}
+    call_ids_with_results = {content.call_id for content in sent_contents if content.type == "function_result"}
+    assert {"outer-call-1", "inner-call-1"} <= call_ids_with_calls, (
+        "both the outer wrapper's own call and the newly-spliced-in inner call must be visible"
+    )
+    assert {"outer-call-1", "inner-call-1"} <= call_ids_with_results, (
+        "both calls need their own matching function_result or a real provider rejects the request"
+    )
+
+
+async def test_as_tool_resumes_nested_tool_rejection() -> None:
+    """Rejecting a sub-agent's own approval-gated tool still resumes the sub-agent.
+
+    A nested approval response is routed to the owner regardless of the decision
+    (see _resolve_approval_responses): the owner's tool call still needs to settle
+    either way, not just be dropped when the answer happens to be "no".
+    """
+    inner_calls = 0
+
+    @tool(name="get_weather_detail", approval_mode="always_require")
+    def get_weather_detail(location: str) -> str:
+        nonlocal inner_calls
+        inner_calls += 1
+        return f"The weather in {location} is sunny."
+
+    inner_client = MockBaseChatClient()
+    outer_client = MockBaseChatClient()
+
+    inner_agent = Agent(client=inner_client, name="weather_agent", tools=[get_weather_detail])
+    outer_agent = Agent(
+        client=outer_client,
+        name="coordinator_agent",
+        tools=[inner_agent.as_tool(name="weather_agent_tool", approval_mode="never_require")],
+    )
+
+    session = AgentSession()
+
+    outer_call = Content.from_function_call(
+        call_id="outer-call-1", name="weather_agent_tool", arguments='{"task": "What is the weather in Amsterdam?"}'
+    )
+    outer_client.run_responses = [ChatResponse(messages=Message(role="assistant", contents=[outer_call]))]
+
+    inner_call = Content.from_function_call(
+        call_id="inner-call-1", name="get_weather_detail", arguments='{"location": "Amsterdam"}'
+    )
+    inner_client.streaming_responses = [[ChatResponseUpdate(role="assistant", contents=[inner_call])]]
+
+    first_response = await outer_agent.run("What's the weather in Amsterdam?", session=session)
+    approval_request = first_response.user_input_requests[0]
+    rejection_response = approval_request.to_function_approval_response(False)
+
+    # The sub-agent's model gets a chance to react naturally to the rejection instead of
+    # the framework silently dropping the whole exchange.
+    inner_client.streaming_responses = [
+        [ChatResponseUpdate(role="assistant", contents=[Content.from_text("I was not able to check the weather.")])]
+    ]
+    outer_client.run_responses = [
+        ChatResponse(messages=Message(role="assistant", contents=["Sorry, I couldn't check the weather."]))
+    ]
+
+    second_response = await outer_agent.run(Message(role="user", contents=[rejection_response]), session=session)
+
+    assert inner_calls == 0, "a rejected nested tool must never actually execute"
+    assert not second_response.user_input_requests
+    assert second_response.text == "Sorry, I couldn't check the weather."
+
+    # The paused child session must not leak forever in the parent's state once resolved.
+    child_sessions = session.state.get("_af_agent_tool_child_sessions", {})
+    assert "outer-call-1" not in child_sessions
+
+
+async def test_as_tool_resumes_nested_tool_approval_three_levels() -> None:
+    """A three-level Agent.as_tool() chain (A -> B -> C) resolves one hop at a time.
+
+    Regression test for the multi-level-nesting gap: tagging a pause with a single
+    owner slot (instead of a stack) loses the inner levels' own identity once it
+    bubbles through more than one as_tool() wrapper.
+    """
+    leaf_calls = 0
+
+    @tool(name="get_weather_detail", approval_mode="always_require")
+    def get_weather_detail(location: str) -> str:
+        nonlocal leaf_calls
+        leaf_calls += 1
+        return f"The weather in {location} is sunny."
+
+    leaf_client = MockBaseChatClient()
+    mid_client = MockBaseChatClient()
+    top_client = MockBaseChatClient()
+
+    leaf_agent = Agent(client=leaf_client, name="weather_agent", tools=[get_weather_detail])
+    mid_agent = Agent(
+        client=mid_client,
+        name="mid_agent",
+        tools=[leaf_agent.as_tool(name="weather_agent_tool", approval_mode="never_require")],
+    )
+    top_agent = Agent(
+        client=top_client,
+        name="top_agent",
+        tools=[mid_agent.as_tool(name="mid_agent_tool", approval_mode="never_require")],
+    )
+
+    session = AgentSession()
+
+    top_call = Content.from_function_call(
+        call_id="top-call-1", name="mid_agent_tool", arguments='{"task": "What is the weather in Amsterdam?"}'
+    )
+    top_client.run_responses = [ChatResponse(messages=Message(role="assistant", contents=[top_call]))]
+
+    mid_call = Content.from_function_call(
+        call_id="mid-call-1", name="weather_agent_tool", arguments='{"task": "What is the weather in Amsterdam?"}'
+    )
+    mid_client.streaming_responses = [[ChatResponseUpdate(role="assistant", contents=[mid_call])]]
+
+    leaf_call = Content.from_function_call(
+        call_id="leaf-call-1", name="get_weather_detail", arguments='{"location": "Amsterdam"}'
+    )
+    leaf_client.streaming_responses = [[ChatResponseUpdate(role="assistant", contents=[leaf_call])]]
+
+    first_response = await top_agent.run("What's the weather in Amsterdam?", session=session)
+
+    assert leaf_calls == 0
+    assert first_response.user_input_requests, "the leaf approval request must surface through two levels"
+    approval_request = first_response.user_input_requests[0]
+    assert approval_request.function_call is not None
+    assert approval_request.function_call.name == "get_weather_detail"
+
+    approval_response = approval_request.to_function_approval_response(True)
+
+    leaf_client.streaming_responses = [
+        [ChatResponseUpdate(role="assistant", contents=[Content.from_text("The weather in Amsterdam is sunny.")])]
+    ]
+    mid_client.streaming_responses = [
+        [ChatResponseUpdate(role="assistant", contents=[Content.from_text("The weather in Amsterdam is sunny.")])]
+    ]
+    top_client.run_responses = [ChatResponse(messages=Message(role="assistant", contents=["It's sunny in Amsterdam."]))]
+
+    second_response = await top_agent.run(Message(role="user", contents=[approval_response]), session=session)
+
+    assert leaf_calls == 1, "the leaf tool must actually execute once the chain resumes"
+    assert not second_response.user_input_requests
+    assert second_response.text == "It's sunny in Amsterdam."
+
+
+async def test_as_tool_resumes_two_simultaneous_nested_approvals_together() -> None:
+    """Two nested approvals for the same owner, answered in one turn, resume together.
+
+    Regression test for the concurrent-resume race: answering both in a single
+    outer.run() call must not race to restore/save the owner's stored child session
+    twice, duplicate the owner invocation, or leave one sibling unresolved.
+    """
+    weather_calls = 0
+    forecast_calls = 0
+
+    @tool(name="get_weather_detail", approval_mode="always_require")
+    def get_weather_detail(location: str) -> str:
+        nonlocal weather_calls
+        weather_calls += 1
+        return f"The weather in {location} is sunny."
+
+    @tool(name="get_forecast_detail", approval_mode="always_require")
+    def get_forecast_detail(location: str) -> str:
+        nonlocal forecast_calls
+        forecast_calls += 1
+        return f"The forecast for {location} is clear skies."
+
+    inner_client = MockBaseChatClient()
+    outer_client = MockBaseChatClient()
+
+    inner_agent = Agent(client=inner_client, name="weather_agent", tools=[get_weather_detail, get_forecast_detail])
+    outer_agent = Agent(
+        client=outer_client,
+        name="coordinator_agent",
+        tools=[inner_agent.as_tool(name="weather_agent_tool", approval_mode="never_require")],
+    )
+
+    session = AgentSession()
+
+    outer_call = Content.from_function_call(
+        call_id="outer-call-1", name="weather_agent_tool", arguments='{"task": "Weather and forecast for Amsterdam?"}'
+    )
+    outer_client.run_responses = [ChatResponse(messages=Message(role="assistant", contents=[outer_call]))]
+
+    weather_call = Content.from_function_call(
+        call_id="weather-call-1", name="get_weather_detail", arguments='{"location": "Amsterdam"}'
+    )
+    forecast_call = Content.from_function_call(
+        call_id="forecast-call-1", name="get_forecast_detail", arguments='{"location": "Amsterdam"}'
+    )
+    inner_client.streaming_responses = [[ChatResponseUpdate(role="assistant", contents=[weather_call, forecast_call])]]
+
+    first_response = await outer_agent.run("Weather and forecast for Amsterdam?", session=session)
+
+    assert weather_calls == 0
+    assert forecast_calls == 0
+    assert len(first_response.user_input_requests) == 2, "both nested approvals must surface together"
+    approval_responses = [request.to_function_approval_response(True) for request in first_response.user_input_requests]
+
+    inner_client.streaming_responses = [
+        [ChatResponseUpdate(role="assistant", contents=[Content.from_text("Sunny with clear skies.")])]
+    ]
+    outer_client.run_responses = [
+        ChatResponse(messages=Message(role="assistant", contents=["Amsterdam: sunny with clear skies."]))
+    ]
+
+    second_response = await outer_agent.run(Message(role="user", contents=approval_responses), session=session)
+
+    assert weather_calls == 1, "each nested tool must execute exactly once, not zero or twice"
+    assert forecast_calls == 1, "each nested tool must execute exactly once, not zero or twice"
+    assert not second_response.user_input_requests
+    assert second_response.text == "Amsterdam: sunny with clear skies."
 
 
 async def test_chat_agent_as_mcp_server_basic(client: SupportsChatGetResponse) -> None:

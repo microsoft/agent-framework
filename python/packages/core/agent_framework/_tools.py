@@ -129,12 +129,15 @@ _SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY: Final[str] = "_security_function_argum
 _PREPARED_ARGUMENTS_CONTEXT_KEY: Final[str] = "_prepared_function_arguments"
 _AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY: Final[str] = "_auto_prepare_function_arguments"
 # Tags a nested approval request/response (raised via UserInputRequiredException from inside
-# a tool such as Agent.as_tool()'s wrapper) with the outer tool call that owns it, so that when
-# the approval response comes back, it can be routed to the owning tool instead of being looked
-# up directly by the nested (inner) tool's name, which the outer tool_map never contains.
-_NESTED_TOOL_APPROVAL_OWNER_NAME_KEY: Final[str] = "__af_nested_approval_owner_name"
-_NESTED_TOOL_APPROVAL_OWNER_CALL_ID_KEY: Final[str] = "__af_nested_approval_owner_call_id"
-_NESTED_TOOL_APPROVAL_OWNER_ARGS_KEY: Final[str] = "__af_nested_approval_owner_arguments"
+# a tool such as Agent.as_tool()'s wrapper) with the chain of outer tool calls that own it, so
+# that when the approval response comes back, it can be routed through those owners instead of
+# being looked up directly by the nested (inner) tool's name, which no ancestor's tool_map
+# contains. A list rather than a single slot: each level of an A -> B -> C wrapper chain appends
+# its own frame instead of overwriting the one beneath it, so multi-level nesting resolves one
+# hop at a time. Each frame is a plain JSON-safe dict: {"name": str, "call_id": str, "arguments": dict}.
+_NESTED_TOOL_APPROVAL_OWNER_STACK_KEY: Final[str] = "__af_nested_approval_owner_stack"
+# Metadata (never the host-facing kwargs) keys used to hand a resume its approval response and
+# the stable call_id of the owning tool call, read by Agent.as_tool()'s wrapper.
 _NESTED_APPROVAL_RESPONSE_CONTEXT_KEY: Final[str] = "_nested_approval_response"
 _NESTED_APPROVAL_OWNER_CALL_ID_CONTEXT_KEY: Final[str] = "_nested_approval_owner_call_id"
 _FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT: Final[str] = (
@@ -1906,66 +1909,207 @@ def _finalize_function_result(
     return function_result
 
 
-async def _try_resume_nested_tool_approval(
-    *,
-    approval_response: Content,
-    tool_map: dict[str, FunctionTool],
-    runtime_kwargs: dict[str, Any],
-    invocation_session: AgentSession | None,
-    live_tools: list[ToolTypes] | None,
-) -> Content | None:
-    """Resume a nested approval (e.g. from Agent.as_tool()) through its owning tool call.
+@dataclass
+class _NestedApprovalResume:
+    """Carries the identity a resumed nested approval replays through.
 
-    A tool such as an agent-as-tool wrapper can itself run something that pauses for
-    approval (a sub-agent's own tool). That pause is surfaced to the caller as an
-    ordinary approval request, tagged (by ``_execute_single_function_call``) with the
-    outer tool call that owns it. The nested tool's name is never in this run's
-    ``tool_map`` — only the owning tool is — so the approval response has to be
-    replayed through the owner, which forwards it to whatever is waiting for it via
-    ``FunctionInvocationContext.kwargs``.
-
-    Returns:
-        The owner's function result content if this response belongs to a tracked
-        nested pause, otherwise ``None`` so the caller can fall back to its existing
-        "assume hosted tool" behavior.
+    Passed into a recursive ``_auto_invoke_function`` call that replays one or more approval
+    responses through the tool call that owns the nested pause (see
+    ``_try_resume_nested_tool_approval_group``). Every response in ``approval_responses``
+    shares the same owner: a child turn can raise more than one nested approval at once, and
+    they must all be replayed into the same resumed run together, not one at a time -- the
+    framework's own mixed-approval-batch handling expects every sibling from one pending batch
+    to be answered in the same turn.
     """
-    from ._middleware import FunctionInvocationContext
 
-    owner_name = approval_response.additional_properties.get(_NESTED_TOOL_APPROVAL_OWNER_NAME_KEY)
-    owner_call_id = approval_response.additional_properties.get(_NESTED_TOOL_APPROVAL_OWNER_CALL_ID_KEY)
-    if not isinstance(owner_name, str) or not isinstance(owner_call_id, str):
+    owner_call_id: str
+    approval_responses: list[Content]
+
+
+def _set_nested_approval_metadata(
+    context: Any,
+    function_call_content: Content,
+    nested_resume: "_NestedApprovalResume | None",
+) -> None:
+    """Expose the stable owner call id and, on a resume, the approval response(s) to resume with.
+
+    Carried via metadata, never the host-facing kwargs, so a tool such as ``Agent.as_tool()``'s
+    wrapper can key its own pause/resume bookkeeping by this call.
+
+    Without ``nested_resume``, the owner call id is simply this call's own call id -- correct
+    on the very first (fresh) invocation of the wrapper, which *is* the owner call. On a
+    resume, ``function_call_content`` is a synthetic call with no meaningful call id of its own
+    (see ``_try_resume_nested_tool_approval_group``), so the caller must supply the real,
+    stable owner call id explicitly instead.
+    """
+    if nested_resume is not None:
+        context.metadata[_NESTED_APPROVAL_OWNER_CALL_ID_CONTEXT_KEY] = nested_resume.owner_call_id
+        context.metadata[_NESTED_APPROVAL_RESPONSE_CONTEXT_KEY] = nested_resume.approval_responses
+    elif function_call_content.call_id is not None:
+        context.metadata[_NESTED_APPROVAL_OWNER_CALL_ID_CONTEXT_KEY] = function_call_content.call_id
+
+
+def _nested_owner_stack(content: Content) -> list[dict[str, Any]] | None:
+    """Return this approval request/response's nested-owner stack, if it has one.
+
+    A well-formed stack is a list of ``{"name": str, "call_id": str, "arguments": dict}`` frames.
+    """
+    raw_stack = content.additional_properties.get(_NESTED_TOOL_APPROVAL_OWNER_STACK_KEY)
+    if not isinstance(raw_stack, list) or not raw_stack:
         return None
+    stack = cast("list[Any]", raw_stack)
+    frame = stack[-1]
+    if not isinstance(frame, dict):
+        return None
+    frame_dict = cast("dict[str, Any]", frame)
+    if not isinstance(frame_dict.get("name"), str) or not isinstance(frame_dict.get("call_id"), str):
+        return None
+    return cast("list[dict[str, Any]]", stack)
+
+
+def _nested_owner_key(content: Content) -> tuple[str, str] | None:
+    """Return this approval response's immediate owner as a ``(name, call_id)`` key.
+
+    Used to group nested-owned responses that must resume the same owner one at a time.
+    """
+    if content.type != "function_approval_response":
+        return None
+    stack = _nested_owner_stack(content)
+    if stack is None:
+        return None
+    frame = stack[-1]
+    return cast(str, frame["name"]), cast(str, frame["call_id"])
+
+
+async def _try_resume_nested_tool_approval_group(
+    approval_responses: list[Content],
+    *,
+    custom_args: dict[str, Any] | None,
+    config: FunctionInvocationConfiguration,
+    tool_map: dict[str, FunctionTool],
+    invocation_session: AgentSession | None,
+    middleware_pipeline: FunctionMiddlewarePipeline | None,
+    live_tools: list[ToolTypes] | None,
+    host_payload_budget: _FunctionResultPayloadBudget | None,
+) -> list[list[Content]] | None:
+    """Resume a group of nested approvals through their shared owning tool call, in one run.
+
+    A tool such as an agent-as-tool wrapper (e.g. from ``Agent.as_tool()``) can itself run
+    something that pauses for approval
+    (a sub-agent's own tool) -- and a single sub-agent turn can raise more than one such pause
+    at once. Each is surfaced to the caller as an ordinary approval request, tagged (by
+    ``_execute_single_function_call``) with a stack of the outer tool calls that own it -- one
+    frame per level of nesting, so an A -> B -> C wrapper chain resolves one hop at a time
+    instead of the outermost level clobbering what an inner level already recorded. The nested
+    tools' names are never in this run's ``tool_map`` -- only the immediate owner is -- so the
+    responses have to be replayed together through that owner (the framework's own
+    mixed-approval-batch handling expects every sibling from one pending batch to be answered
+    in the same turn, not one at a time), which forwards them to whatever is waiting via
+    ``FunctionInvocationContext.metadata``.
+
+    ``approval_responses`` must all share the same immediate owner (see ``_nested_owner_key``,
+    which the caller groups by).
+
+    Returns one result group per response, in the same order, each keyed by that response's
+    *inner* call id so ``_replace_approval_contents_with_results`` can find it (it indexes
+    purely on the approval response's embedded ``function_call.call_id``, which this function
+    never rewrites). The first group also carries a pairing result keyed by the *owner's* own
+    call id, so the owner's original tool call -- still sitting, unresolved, in the transcript
+    -- gets a matching result too instead of being left dangling for a real provider to reject.
+
+    Returns ``None`` when the first response isn't a tracked nested pause, so the caller can
+    fall back to its existing "assume hosted tool" behavior.
+    """
+    from ._sessions import _suspend_run_persistence_gate  # pyright: ignore[reportPrivateUsage]
+    from ._types import Content
+
+    stack = _nested_owner_stack(approval_responses[0])
+    if stack is None:
+        return None
+    frame = stack[-1]
+    owner_name = cast(str, frame["name"])
+    owner_call_id = cast(str, frame["call_id"])
     owner_tool = tool_map.get(owner_name)
     if owner_tool is None:
         return None
-
-    owner_arguments = approval_response.additional_properties.get(_NESTED_TOOL_APPROVAL_OWNER_ARGS_KEY)
-    if not isinstance(owner_arguments, dict):
-        owner_arguments = {}
-
-    owner_context = FunctionInvocationContext(
-        function=owner_tool,
-        arguments=owner_arguments,
-        session=invocation_session,
-        kwargs=runtime_kwargs,
-        tools=live_tools,
+    raw_owner_arguments = frame.get("arguments")
+    owner_arguments: dict[str, Any] = (
+        cast("dict[str, Any]", raw_owner_arguments) if isinstance(raw_owner_arguments, dict) else {}
     )
-    # Carried via metadata, not kwargs: kwargs is the host-facing, documented channel
-    # (spread into the wrapped function's own **kwargs by some callers, e.g. Skills'
-    # resource dispatch) and must only ever contain what a host explicitly passed.
-    owner_context.metadata[_NESTED_APPROVAL_RESPONSE_CONTEXT_KEY] = approval_response
-    owner_context.metadata[_NESTED_APPROVAL_OWNER_CALL_ID_CONTEXT_KEY] = owner_call_id
-    function_result = await owner_tool.invoke(
-        arguments=owner_arguments,
-        context=owner_context,
-        tool_call_id=owner_call_id,
-    )
-    return _finalize_function_result(
+
+    inner_call_ids: list[str] = []
+    for response in approval_responses:
+        inner_call = response.function_call
+        if inner_call is None or inner_call.call_id is None:
+            return None
+        inner_call_ids.append(inner_call.call_id)
+
+    remaining_stack = stack[:-1]
+    forwarded_responses: list[Content] = []
+    for response in approval_responses:
+        forwarded = copy.copy(response)
+        forwarded.additional_properties = dict(response.additional_properties)
+        if remaining_stack:
+            forwarded.additional_properties[_NESTED_TOOL_APPROVAL_OWNER_STACK_KEY] = remaining_stack
+        else:
+            forwarded.additional_properties.pop(_NESTED_TOOL_APPROVAL_OWNER_STACK_KEY, None)
+        forwarded_responses.append(forwarded)
+
+    # A synthetic call to the owner tool: _auto_invoke_function runs it through the normal
+    # (middleware-inclusive) execution path as if the owner tool were being called fresh. Its
+    # own call id is never matched against anything -- the results actually spliced into the
+    # transcript are built below, individually keyed per response -- so the owner's own call
+    # id is as good a placeholder as any.
+    owner_call = Content.from_function_call(
         call_id=owner_call_id,
-        result=function_result,
-        base_additional_properties=approval_response.additional_properties,
-        context=owner_context,
+        name=owner_name,
+        arguments=json.dumps(owner_arguments),
     )
+    resume = _NestedApprovalResume(owner_call_id=owner_call_id, approval_responses=forwarded_responses)
+
+    try:
+        with _suspend_run_persistence_gate():
+            owner_result = await _auto_invoke_function(
+                owner_call,
+                custom_args,
+                config=config,
+                tool_map=tool_map,
+                invocation_session=invocation_session,
+                middleware_pipeline=middleware_pipeline,
+                live_tools=live_tools,
+                host_payload_budget=host_payload_budget,
+                nested_resume=resume,
+            )
+    except UserInputRequiredException as exc:
+        # The owner paused again, on a different (or the same) nested tool(s). Re-tag its
+        # pending request(s) with *this* level's own owner identity plus whatever ancestor
+        # frames remain, rather than letting _execute_single_function_call's generic handler
+        # derive a frame from this round's inner call (which would tag the wrong, transient
+        # identity and lose the chain back to the real owner).
+        repropagated = [item for item in exc.contents if isinstance(item, Content)] if exc.contents else []
+        for item in repropagated:
+            item.call_id = owner_call_id
+            if not item.id:
+                item.id = owner_call_id
+            if item.type != "function_approval_request":
+                continue
+            new_stack = [*remaining_stack, {"name": owner_name, "call_id": owner_call_id, "arguments": owner_arguments}]
+            item.additional_properties = dict(item.additional_properties)
+            item.additional_properties[_NESTED_TOOL_APPROVAL_OWNER_STACK_KEY] = new_stack
+        raise UserInputRequiredException(contents=repropagated) from exc
+
+    # Plain pairing/inner-keyed entries, not routed through middleware themselves: the owner's
+    # own tool call already ran the full (middleware-inclusive) path above; these just give
+    # each response's still-unresolved slot in the transcript a matching result, using the
+    # same content, so a real provider doesn't see any of them left dangling.
+    result_groups: list[list[Content]] = []
+    for index, inner_call_id in enumerate(inner_call_ids):
+        resumed_result = getattr(owner_result, "result", None)
+        group = [Content.from_function_result(call_id=inner_call_id, result=resumed_result)]
+        if index == 0:
+            group.append(Content.from_function_result(call_id=owner_call_id, result=resumed_result))
+        result_groups.append(group)
+    return result_groups
 
 
 async def _auto_invoke_function(
@@ -1978,6 +2122,7 @@ async def _auto_invoke_function(
     middleware_pipeline: FunctionMiddlewarePipeline | None = None,
     live_tools: list[ToolTypes] | None = None,
     host_payload_budget: _FunctionResultPayloadBudget | None = None,
+    nested_resume: "_NestedApprovalResume | None" = None,
 ) -> Content:
     """Invoke a function call requested by the agent, applying middleware that is defined.
 
@@ -1993,6 +2138,12 @@ async def _auto_invoke_function(
         live_tools: The live, mutable tools list for the current agent run, exposed on
             the FunctionInvocationContext so tools can add/remove tools at runtime.
         host_payload_budget: Shared request budget for retained Host-only function result payloads.
+        nested_resume: Set by _try_resume_nested_tool_approval_group when this call is actually
+            replaying one or more approval responses through the owning tool (e.g.
+            Agent.as_tool()'s wrapper). Overrides the owner-call-id metadata this function
+            would otherwise derive from ``function_call_content`` (which, for a resume, is a
+            synthetic call with no meaningful call id of its own), and carries the approval
+            response(s) the owner should resume with.
 
     Returns:
         The function result content.
@@ -2047,16 +2198,12 @@ async def _auto_invoke_function(
             return function_call_content
         tool = tool_map.get(approved_function_call.name)
         if tool is None:
-            owner_result = await _try_resume_nested_tool_approval(
-                approval_response=function_call_content,
-                tool_map=tool_map,
-                runtime_kwargs=runtime_kwargs,
-                invocation_session=invocation_session,
-                live_tools=live_tools,
-            )
-            if owner_result is not None:
-                return owner_result
-            # we assume it is a hosted tool
+            # Nested-owned responses (see _try_resume_nested_tool_approval_group) are handled
+            # one level up, in _execute_single_function_call, before this function is
+            # ever called for them -- it needs to return more than one Content item
+            # (the inner result plus a pairing result for the owner's own call), which
+            # this function's single-Content contract can't express. Anything that
+            # reaches this branch is assumed to be a hosted tool's own approval.
             return function_call_content
 
         approval_response = function_call_content
@@ -2081,12 +2228,7 @@ async def _auto_invoke_function(
                 )
                 if host_payload_budget is not None:
                     direct_context.metadata[_FUNCTION_RESULT_PAYLOAD_BUDGET_CONTEXT_KEY] = host_payload_budget
-                if function_call_content.call_id is not None:
-                    # Exposed (via metadata, not the host-facing kwargs) so a tool such
-                    # as Agent.as_tool()'s wrapper can key its own pause/resume
-                    # bookkeeping by this call, consistently on both the initial call
-                    # and any later resume replayed through _try_resume_nested_tool_approval.
-                    direct_context.metadata[_NESTED_APPROVAL_OWNER_CALL_ID_CONTEXT_KEY] = function_call_content.call_id
+                _set_nested_approval_metadata(direct_context, function_call_content, nested_resume)
             function_result = await tool.invoke(
                 arguments=args,
                 context=direct_context,
@@ -2140,8 +2282,7 @@ async def _auto_invoke_function(
     middleware_context.metadata["call_id"] = call_id
     if function_call_content.id is not None:
         middleware_context.metadata["function_call_occurrence_id"] = function_call_content.id
-    # See the matching comment in the no-middleware branch above.
-    middleware_context.metadata[_NESTED_APPROVAL_OWNER_CALL_ID_CONTEXT_KEY] = call_id
+    _set_nested_approval_metadata(middleware_context, function_call_content, nested_resume)
 
     # Pass through the original approval response so middleware can decide whether
     # this replay corresponds to a middleware-specific approval flow.
@@ -2321,6 +2462,10 @@ async def _execute_single_function_call(
             )
         ], True
     except UserInputRequiredException as exc:
+        # A nested-owned response (see _try_resume_nested_tool_approval_group) never reaches
+        # this function at all -- it is routed straight there from _try_execute_function_call_groups,
+        # since it needs the group's other responses too and can return more than one result
+        # group. Anything landing here is a genuinely fresh pause, so tag it accordingly.
         source_function_call = _underlying_function_call(function_call)
         call_id = source_function_call.call_id
         propagated_contents = [item for item in exc.contents if isinstance(item, Content)] if exc.contents else []
@@ -2334,12 +2479,18 @@ async def _execute_single_function_call(
                 and call_id is not None
             ):
                 # Remember which outer tool call owns this pause so a later approval
-                # response can be resumed through it (see _try_resume_nested_tool_approval).
-                item.additional_properties[_NESTED_TOOL_APPROVAL_OWNER_NAME_KEY] = source_function_call.name
-                item.additional_properties[_NESTED_TOOL_APPROVAL_OWNER_CALL_ID_KEY] = call_id
-                item.additional_properties[_NESTED_TOOL_APPROVAL_OWNER_ARGS_KEY] = dict(
-                    source_function_call.parse_arguments() or {}
+                # response can be resumed through it (see _try_resume_nested_tool_approval_group).
+                existing_stack = item.additional_properties.get(_NESTED_TOOL_APPROVAL_OWNER_STACK_KEY)
+                stack: list[dict[str, Any]] = (
+                    list(cast("list[dict[str, Any]]", existing_stack)) if isinstance(existing_stack, list) else []
                 )
+                stack.append({
+                    "name": source_function_call.name,
+                    "call_id": call_id,
+                    "arguments": dict(source_function_call.parse_arguments() or {}),
+                })
+                item.additional_properties = dict(item.additional_properties)
+                item.additional_properties[_NESTED_TOOL_APPROVAL_OWNER_STACK_KEY] = stack
         if propagated_contents:
             return propagated_contents, False
         return [
@@ -2487,13 +2638,26 @@ async def _try_execute_function_call_groups(
         return [[function_call] for function_call in declaration_only_calls], False
 
     # Only a fully executable batch reaches this point; run calls concurrently but retain per-call result groups.
-    # Create each task inside a copied context so the active agent span is
-    # preserved for every parallel tool invocation.
-    execution_tasks = [
-        contextvars.copy_context().run(
-            asyncio.create_task,
-            _execute_single_function_call(
-                function_call,
+    # Nested-owned approval responses (see _try_resume_nested_tool_approval_group) that share
+    # the same owner call must resume that owner's stored child session together, in one
+    # resumed run: running them independently would race to restore/save the same snapshot,
+    # and could duplicate the owner invocation or leave a sibling approval unresolved (the
+    # framework's own mixed-approval-batch handling also expects every sibling from one
+    # pending batch to be answered together). Group by owner and resume each group once;
+    # everything else still runs fully concurrently as before.
+    ordinary_calls: list[Content] = []
+    owner_groups: dict[tuple[str, str], list[Content]] = {}
+    for function_call in function_calls:
+        owner_key = _nested_owner_key(function_call)
+        if owner_key is None:
+            ordinary_calls.append(function_call)
+        else:
+            owner_groups.setdefault(owner_key, []).append(function_call)
+
+    async def _run_call(call: Content) -> list[tuple[list[Content], bool]]:
+        return [
+            await _execute_single_function_call(
+                call,
                 custom_args=custom_args,
                 config=config,
                 tool_map=tool_map,
@@ -2501,12 +2665,56 @@ async def _try_execute_function_call_groups(
                 middleware_pipeline=middleware_pipeline,
                 live_tools=live_tools,
                 host_payload_budget=host_payload_budget,
-            ),
-        )
-        for function_call in function_calls
+            )
+        ]
+
+    async def _run_owner_group(calls: list[Content]) -> list[tuple[list[Content], bool]]:
+        from ._middleware import MiddlewareTermination
+
+        try:
+            nested_groups = await _try_resume_nested_tool_approval_group(
+                calls,
+                custom_args=custom_args,
+                config=config,
+                tool_map=tool_map,
+                invocation_session=invocation_session,
+                middleware_pipeline=middleware_pipeline,
+                live_tools=live_tools,
+                host_payload_budget=host_payload_budget,
+            )
+        except MiddlewareTermination as exc:
+            if isinstance(exc.result, Content):
+                return [([exc.result], True)]
+            source_call_id = calls[0].function_call.call_id if calls[0].function_call is not None else None
+            return [([Content.from_function_result(call_id=source_call_id, result=exc.result)], True)]  # type: ignore[arg-type]
+        if nested_groups is None:
+            # Not actually a tracked nested pause (shouldn't happen: _nested_owner_key
+            # already validated this), so fall back per-item to the ordinary path.
+            return [
+                await _execute_single_function_call(
+                    call,
+                    custom_args=custom_args,
+                    config=config,
+                    tool_map=tool_map,
+                    invocation_session=invocation_session,
+                    middleware_pipeline=middleware_pipeline,
+                    live_tools=live_tools,
+                    host_payload_budget=host_payload_budget,
+                )
+                for call in calls
+            ]
+        return [(group, False) for group in nested_groups]
+
+    # Create each task inside a copied context so the active agent span is
+    # preserved for every parallel tool invocation.
+    execution_tasks = [
+        contextvars.copy_context().run(asyncio.create_task, _run_call(function_call))
+        for function_call in ordinary_calls
+    ] + [
+        contextvars.copy_context().run(asyncio.create_task, _run_owner_group(calls)) for calls in owner_groups.values()
     ]
     try:
-        execution_results = await asyncio.gather(*execution_tasks)
+        group_results = await asyncio.gather(*execution_tasks)
     except BaseException:
         # A loud escape from one call (e.g. MiddlewareFailure aborting the run
         # fail-closed) fails the whole batch: cancel in-flight siblings and wait for
@@ -2520,6 +2728,7 @@ async def _try_execute_function_call_groups(
         await asyncio.gather(*execution_tasks, return_exceptions=True)
         raise
 
+    execution_results = [result for group_result in group_results for result in group_result]
     should_terminate = any(terminate for _, terminate in execution_results)
     return [result_contents for result_contents, _ in execution_results], should_terminate
 
@@ -4181,9 +4390,15 @@ async def _resolve_approval_responses(
         _remove_unanswered_approval_batches_from_model_input(prepared_messages)
         return _FunctionProcessingResult(errors_in_a_row=errors_in_a_row)
 
-    # 3. Execute approved decisions once. Rejected decisions are converted to results during normalization below.
+    # 3. Execute approved decisions once. Rejected decisions are converted to results during
+    # normalization below -- except a nested-owned response (see _try_resume_nested_tool_approval_group):
+    # whether approved or rejected, the owning tool call (e.g. Agent.as_tool()'s wrapper) still has
+    # to resume so the decision reaches the sub-agent it belongs to and its own call gets a result,
+    # not just a synthesized "rejected" placeholder that leaves the owner's call dangling.
     responses_to_execute = [
-        response for response in pending_approval_responses.values() if _is_approval_granted(response.approved)
+        response
+        for response in pending_approval_responses.values()
+        if _is_approval_granted(response.approved) or _nested_owner_stack(response) is not None
     ]
     responses_not_granted = [
         response for response in pending_approval_responses.values() if not _is_approval_granted(response.approved)

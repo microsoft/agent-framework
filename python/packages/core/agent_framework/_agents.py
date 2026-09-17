@@ -681,13 +681,15 @@ class BaseAgent(SerializationMixin):
                 **kwargs: only used to dynamically load the argument that is defined for this tool.
             """
             parent_session = ctx.session
-            # Set (via metadata, never the host-facing kwargs) by _auto_invoke_function
-            # and _try_resume_nested_tool_approval in _tools.py. owner_call_id identifies
-            # this specific outer tool call on every invocation; nested_approval_response
-            # is only set when this call is replaying an approval response for a tool
-            # that this sub-agent itself required approval for -- not a fresh task.
+            # Set (via metadata, never the host-facing kwargs) by _auto_invoke_function and
+            # _try_resume_nested_tool_approval_group in _tools.py. owner_call_id identifies
+            # this specific outer tool call on every invocation; nested_approval_responses is
+            # only set when this call is replaying one or more approval responses for tools
+            # that this sub-agent itself required approval for -- not a fresh task. A single
+            # sub-agent turn can raise more than one such pause at once, so every response
+            # from that pending batch is always replayed together, in one resumed run.
             owner_call_id = ctx.metadata.get("_nested_approval_owner_call_id")
-            nested_approval_response = ctx.metadata.get("_nested_approval_response")
+            nested_approval_responses = ctx.metadata.get("_nested_approval_response")
 
             session: AgentSession | None
             if propagate_session and parent_session is not None:
@@ -712,8 +714,8 @@ class BaseAgent(SerializationMixin):
                 session = None
 
             run_input: str | list[Message]
-            if nested_approval_response is not None and session is not None:
-                run_input = [Message("user", [nested_approval_response])]
+            if nested_approval_responses is not None and session is not None:
+                run_input = [Message("user", list(nested_approval_responses))]
             else:
                 run_input = str(kwargs.get(arg_name, ""))
 
