@@ -135,6 +135,7 @@ An AG-UI server that implements approval workflows. Demonstrates:
 
 - Wrapping a tool with `ApprovalRequiredAIFunction` so it requires approval before running
 - Mapping a plain agent with `MapAGUIServer`, which natively emits an approval interrupt when the model calls the approval-required tool and resumes the run once the client sends the decision back
+- Registering a keyed `AgentSessionStore`, which is **required** for approvals: the framework only honors an approval decision it can match against an approval request it recorded itself when it interrupted the run. Approval requests replayed in the inbound message history are deliberately not trusted as the pairing authority, so without a server-side session the decision is rejected
 
 **Run the server:**
 

@@ -17,8 +17,14 @@ from contextlib import AsyncExitStack, _AsyncGeneratorContextManager  # type: ig
 from copy import copy
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from http.cookiejar import CookieJar, DefaultCookiePolicy
 from inspect import isawaitable
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypedDict, cast
+
+if sys.version_info >= (3, 13):
+    from warnings import deprecated  # pragma: no cover
+else:
+    from typing_extensions import deprecated  # pragma: no cover
 
 from opentelemetry import propagate
 from opentelemetry import trace as otel_trace
@@ -86,6 +92,9 @@ class MCPSpecificApproval(TypedDict, total=False):
     """Represents the specific approval mode for an MCP tool.
 
     When using this mode, the user must specify which tools always or never require approval.
+    Names match raw remote names or unambiguous prefixed names when the raw name already
+    matches its normalized form. Normalized-only aliases do not match. Discovery raises
+    ``ToolExecutionException`` if a configured name matches multiple raw remote names.
 
     Attributes:
         always_require_approval: A sequence of tool names that always require approval.
@@ -96,7 +105,30 @@ class MCPSpecificApproval(TypedDict, total=False):
     never_require_approval: Collection[str] | None
 
 
+MCPToolResultContentMode = Literal[
+    "structured_first",
+    "content_first",
+    "content_only",
+    "structured_only",
+    "both",
+]
+"""How model-visible text is selected when a tool result has both ``content`` and ``structuredContent``.
+
+MCP servers disagree on whether the two fields are duplicates or complementary (#7866).
+Callers pick an explicit policy:
+
+- ``structured_first`` (default): use ``structuredContent`` when present, else ``content``
+- ``content_first``: use ``content`` when non-empty, else ``structuredContent``
+- ``content_only``: ignore ``structuredContent`` for the model-visible result
+- ``structured_only``: ignore ``content`` for the model-visible result
+- ``both``: append serialized ``structuredContent`` after ``content`` blocks
+
+The full MCP payload is still retained on the Host channel regardless of mode.
+Custom ``parse_tool_results`` overrides this policy entirely.
+"""
+
 _MCP_REMOTE_NAME_KEY = "_mcp_remote_name"
+_MCP_IS_TOOL_KEY = "_mcp_is_tool"
 _MCP_NORMALIZED_NAME_KEY = "_mcp_normalized_name"
 _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY = "_mcp_tool_result_host_payload"
 _MCP_PROGRESSIVE_LIST_TOOL_NAME = "list_mcp_tools"
@@ -454,6 +486,10 @@ class _MCPHeaderScopedClient:
 #   session connection (the counter resets on reconnect).
 _DEFAULT_SAMPLING_MAX_TOKENS = 4096
 _DEFAULT_SAMPLING_MAX_REQUESTS = 25
+_MCP_SAMPLING_DEPRECATION_MESSAGE = (
+    "MCP sampling is deprecated as of MCP specification version 2026-07-28 and will be removed no later than "
+    "2027-07-28. MCP servers should call LLM provider APIs directly."
+)
 
 # A user-supplied gate invoked before each server-initiated sampling request is
 # forwarded to the chat client. It receives the raw ``CreateMessageRequestParams``
@@ -868,6 +904,7 @@ class MCPTool:
         always_load: Collection[str] | None = None,
         *,
         max_host_payload_size_bytes: int | None = _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES,
+        tool_result_content: MCPToolResultContentMode = "structured_first",
     ) -> None:
         """Initialize the MCP Tool base.
 
@@ -884,6 +921,7 @@ class MCPTool:
                 A non-empty collection exposes only the raw remote tools whose names appear in it. For
                 compatibility, the prefixed local function name is also accepted when the raw remote name already
                 matches its normalized form; normalized aliases do not authorize a different raw remote tool.
+                A configured name matching multiple raw remote names raises ``ToolExecutionException``.
                 An empty collection (``[]``) exposes no tools — if you simply want to
                 disable tool execution, prefer ``load_tools=False`` instead. ``[]`` is
                 useful as a runtime guard or when you want to load tool metadata for
@@ -937,6 +975,9 @@ class MCPTool:
             max_host_payload_size_bytes: Maximum encoded size of the complete MCP result retained
                 for Host transports. Oversized payloads are omitted from the Host channel while
                 the parsed model result is preserved. Set to ``None`` to disable the limit.
+            tool_result_content: How to choose model-visible text when both ``content`` and
+                ``structuredContent`` are present. See :data:`MCPToolResultContentMode`.
+                Ignored when ``parse_tool_results`` is set. Default ``structured_first``.
         """
         if use_progressive_disclosure and not load_tools:
             raise ValueError("use_progressive_disclosure=True requires load_tools=True.")
@@ -949,6 +990,17 @@ class MCPTool:
             )
         if max_host_payload_size_bytes is not None and max_host_payload_size_bytes <= 0:
             raise ValueError("max_host_payload_size_bytes must be positive or None.")
+        allowed_modes = {
+            "structured_first",
+            "content_first",
+            "content_only",
+            "structured_only",
+            "both",
+        }
+        if tool_result_content not in allowed_modes:
+            raise ValueError(
+                f"tool_result_content must be one of {sorted(allowed_modes)}, got {tool_result_content!r}."
+            )
         self.name = name
         self.description = description or ""
         self.approval_mode = approval_mode
@@ -957,6 +1009,7 @@ class MCPTool:
         self.additional_properties = additional_properties
         self.load_tools_flag = load_tools
         self.parse_tool_results = parse_tool_results
+        self.tool_result_content = tool_result_content
         self.load_prompts_flag = load_prompts
         self.parse_prompt_results = parse_prompt_results
         self.max_host_payload_size_bytes = max_host_payload_size_bytes
@@ -979,6 +1032,14 @@ class MCPTool:
         self.sampling_approval_callback = sampling_approval_callback
         self.sampling_max_tokens = sampling_max_tokens
         self.sampling_max_requests = sampling_max_requests
+        self._sampling_deprecation_warned = False
+        if (
+            client is not None
+            or sampling_approval_callback is not None
+            or sampling_max_tokens != _DEFAULT_SAMPLING_MAX_TOKENS
+            or sampling_max_requests != _DEFAULT_SAMPLING_MAX_REQUESTS
+        ):
+            self._warn_sampling_deprecated(stacklevel=4)
         self._sampling_request_count = 0
         self._functions: list[FunctionTool] = []
         self.use_progressive_disclosure = use_progressive_disclosure
@@ -1139,8 +1200,30 @@ class MCPTool:
                 case _:
                     result.append(Content.from_text(str(item), **additional_kwargs))
 
+        structured_block: Content | None = None
         if mcp_type.structuredContent is not None:
-            result.append(Content.from_text(json.dumps(mcp_type.structuredContent, default=str), **additional_kwargs))
+            structured_block = Content.from_text(
+                json.dumps(mcp_type.structuredContent, default=str), **additional_kwargs
+            )
+
+        # Select model-visible content per explicit policy (#7866). Host payload still
+        # retains the full MCP result regardless of this choice.
+        mode = self.tool_result_content
+        if mode == "both":
+            if structured_block is not None:
+                result.append(structured_block)
+        elif mode == "content_only":
+            pass
+        elif mode == "structured_only":
+            result = [structured_block] if structured_block is not None else []
+        elif mode == "content_first":
+            if not result and structured_block is not None:
+                result.append(structured_block)
+        elif mode == "structured_first":
+            if structured_block is not None:
+                result = [structured_block]
+        else:  # pragma: no cover - validated in __init__
+            raise ValueError(f"Unknown tool_result_content mode: {mode!r}")
 
         if not result:
             result.append(Content.from_text("null", **additional_kwargs))
@@ -1310,6 +1393,7 @@ class MCPTool:
 
     def _filtered_functions(self) -> list[FunctionTool]:
         """Return loaded MCP functions after applying ``allowed_tools``."""
+        self._validate_config_names(self._functions)
         if self.allowed_tools is None:
             return self._functions
         allowed_names = set(self.allowed_tools)
@@ -1318,6 +1402,38 @@ class MCPTool:
             if self._function_matches_names(func, allowed_names):
                 filtered_functions.append(func)
         return filtered_functions
+
+    def _validate_config_names(self, functions: Sequence[FunctionTool]) -> None:
+        """Reject configured names that identify more than one raw remote name."""
+        configured_names = set(self.allowed_tools or ())
+        if isinstance(self.approval_mode, dict):
+            configured_names.update(self.approval_mode.get("always_require_approval") or ())
+            configured_names.update(self.approval_mode.get("never_require_approval") or ())
+        if not configured_names:
+            return
+
+        remote_by_config_name: dict[str, str] = {}
+        for func in functions:
+            additional_properties = func.additional_properties or {}
+            normalized_name = additional_properties.get(_MCP_NORMALIZED_NAME_KEY)
+            remote_name = additional_properties.get(_MCP_REMOTE_NAME_KEY)
+            if not isinstance(normalized_name, str) or not isinstance(remote_name, str):
+                continue
+            for name in _mcp_config_candidate_names(
+                local_name=func.name,
+                normalized_name=normalized_name,
+                remote_name=remote_name,
+            ):
+                if name not in configured_names:
+                    continue
+                existing_remote = remote_by_config_name.get(name)
+                if existing_remote is not None and existing_remote != remote_name:
+                    raise ToolExecutionException(
+                        f"MCP configuration name {name!r} is ambiguous: it matches raw remote names "
+                        f"{existing_remote!r} and {remote_name!r}. "
+                        "Use an unambiguous name or a different tool_name_prefix."
+                    )
+                remote_by_config_name[name] = remote_name
 
     def _function_matches_names(self, func: FunctionTool, names: set[str]) -> bool:
         """Return whether a generated MCP function matches a configured name set."""
@@ -1877,7 +1993,7 @@ class MCPTool:
                         ),
                         message_handler=self.message_handler,
                         logging_callback=self.logging_callback,
-                        sampling_callback=self.sampling_callback,
+                        sampling_callback=self.sampling_callback,  # pyright: ignore[reportDeprecated]
                         sampling_capabilities=sampling_capabilities,
                     )
                 )
@@ -2017,12 +2133,28 @@ class MCPTool:
             return cap
         return requested
 
+    def _warn_sampling_deprecated(self, *, stacklevel: int) -> None:
+        """Emit the MCP sampling deprecation warning once for this tool."""
+        if self._sampling_deprecation_warned:
+            return
+        warnings.warn(
+            _MCP_SAMPLING_DEPRECATION_MESSAGE,
+            DeprecationWarning,
+            stacklevel=stacklevel,
+        )
+        self._sampling_deprecation_warned = True
+
+    @deprecated(_MCP_SAMPLING_DEPRECATION_MESSAGE, category=None)
     async def sampling_callback(
         self,
         context: RequestContext[ClientSession, Any],
         params: types.CreateMessageRequestParams,
     ) -> types.CreateMessageResult | types.CreateMessageResultWithTools | types.ErrorData:
         """Callback function for sampling.
+
+        .. deprecated:: 2026-07-28
+            MCP sampling will be removed no later than 2027-07-28. MCP servers should
+            call LLM provider APIs directly.
 
         This function is called when the MCP server sends a ``sampling/createMessage``
         request. It enforces safety guardrails and, if the request is approved, uses the
@@ -2052,6 +2184,8 @@ class MCPTool:
             request is denied, rate limited, or generation fails.
         """
         from mcp import types
+
+        self._warn_sampling_deprecated(stacklevel=3)
 
         if not self.client:
             return types.ErrorData(
@@ -2278,7 +2412,8 @@ class MCPTool:
         them into FunctionTool instances. Handles pagination automatically.
 
         Raises:
-            ToolExecutionException: If the MCP server is not connected.
+            ToolExecutionException: If the MCP server is not connected or a configured
+                allow/approval name matches multiple raw remote names.
         """
         async with self._function_load_lock:
             await self._load_prompts_locked()
@@ -2293,6 +2428,7 @@ class MCPTool:
 
         # Track existing function names to prevent duplicates
         existing_names = {func.name for func in self._functions}
+        new_functions: list[FunctionTool] = []
 
         params: types.PaginatedRequestParams | None = None
         while True:
@@ -2356,13 +2492,16 @@ class MCPTool:
                         _MCP_NORMALIZED_NAME_KEY: normalized_name,
                     },
                 )
-                self._functions.append(func)
+                new_functions.append(func)
                 existing_names.add(local_name)
 
             # Check if there are more pages
             if not prompt_list.nextCursor:
                 break
             params = types.PaginatedRequestParams(cursor=prompt_list.nextCursor)
+
+        self._validate_config_names([*self._functions, *new_functions])
+        self._functions.extend(new_functions)
 
     async def load_tools(self) -> None:
         """Load tools from the MCP server.
@@ -2371,7 +2510,9 @@ class MCPTool:
         them into FunctionTool instances. Handles pagination automatically.
 
         Raises:
-            ToolExecutionException: If the MCP server is not connected.
+            ToolExecutionException: If the MCP server is not connected, multiple tools
+                map to the same local name, or a configured allow/approval name matches
+                multiple raw remote names.
         """
         async with self._function_load_lock:
             await self._load_tools_locked()
@@ -2384,9 +2525,15 @@ class MCPTool:
             logger.debug("Skipping MCP tool loading because the server did not advertise tools support.")
             return
 
-        # Track existing function names to prevent duplicates
+        # Previous tools are reusable; seed duplicate detection only with retained non-tool functions.
+        existing_tools: dict[str, FunctionTool] = {}
         existing_remote_by_local: dict[str, str] = {}
+        new_functions: list[FunctionTool] = []
+        reused_tool_names: set[str] = set()
         for func in self._functions:
+            if (func.additional_properties or {}).get(_MCP_IS_TOOL_KEY):
+                existing_tools[func.name] = func
+                continue
             remote_name = (func.additional_properties or {}).get(_MCP_REMOTE_NAME_KEY)
             if isinstance(remote_name, str):
                 existing_remote_by_local[func.name] = remote_name
@@ -2468,6 +2615,14 @@ class MCPTool:
 
                 existing_remote_by_local[local_name] = tool.name
 
+                existing_tool = existing_tools.get(local_name)
+                if (
+                    existing_tool is not None
+                    and (existing_tool.additional_properties or {}).get(_MCP_REMOTE_NAME_KEY) == tool.name
+                ):
+                    reused_tool_names.add(local_name)
+                    continue
+
                 approval_mode = self._determine_approval_mode(
                     *_mcp_config_candidate_names(
                         local_name=local_name,
@@ -2486,18 +2641,28 @@ class MCPTool:
                     additional_properties={
                         _MCP_REMOTE_NAME_KEY: tool.name,
                         _MCP_NORMALIZED_NAME_KEY: normalized_name,
+                        _MCP_IS_TOOL_KEY: True,
                     },
                 )
-                self._functions.append(func)
+                new_functions.append(func)
 
             # Check if there are more pages
             if not tool_list.nextCursor:
                 break
             params = types.PaginatedRequestParams(cursor=tool_list.nextCursor)
 
+        current_functions = [
+            func
+            for func in self._functions
+            if not (func.additional_properties or {}).get(_MCP_IS_TOOL_KEY) or func.name in reused_tool_names
+        ]
+        current_functions.extend(new_functions)
+        self._validate_config_names(current_functions)
+        self._functions[:] = current_functions
         self._tool_call_meta_by_name = tool_call_meta_by_name
         self._tool_task_support_by_name = tool_task_support_by_name
         self._tool_param_names_by_name = tool_param_names_by_name
+        self._progressive_loaded_tool_names.difference_update(existing_tools.keys() - reused_tool_names)
 
     async def _cancel_pending_reload_tasks(self) -> None:
         """Cancel session-bound discovery reloads and wait for them to finish."""
@@ -3371,6 +3536,7 @@ class MCPStdioTool(MCPTool):
         task_options: MCPTaskOptions | None = None,
         additional_tool_argument_names: Sequence[str] | Mapping[str, Sequence[str]] | None = None,
         max_host_payload_size_bytes: int | None = _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES,
+        tool_result_content: MCPToolResultContentMode = "structured_first",
         **kwargs: Any,
     ) -> None:
         """Initialize the MCP stdio tool.
@@ -3413,6 +3579,8 @@ class MCPStdioTool(MCPTool):
             allowed_tools: Optional allow-list of MCP tool names to expose as functions.
                 ``None`` (the default) exposes every tool advertised by the MCP server.
                 A non-empty collection exposes only the tools whose names appear in it.
+                Names match raw remote names or unambiguous prefixed names when normalization
+                leaves the raw name unchanged. Ambiguous allow/approval names raise ``ToolExecutionException``.
                 An empty collection (``[]``) exposes no tools — if you simply want to
                 disable tool execution, prefer ``load_tools=False`` instead. ``[]`` is
                 useful as a runtime guard or when you want to load tool metadata for
@@ -3463,6 +3631,8 @@ class MCPStdioTool(MCPTool):
                 process you do not control.
             max_host_payload_size_bytes: Maximum encoded MCP result size retained for Host
                 transports. ``None`` disables the limit.
+            tool_result_content: How to choose model-visible text when both ``content`` and
+                ``structuredContent`` are present. See :data:`MCPToolResultContentMode`.
             kwargs: Any extra arguments to pass to the stdio client.
         """
         super().__init__(
@@ -3487,6 +3657,7 @@ class MCPStdioTool(MCPTool):
             sampling_max_tokens=sampling_max_tokens,
             sampling_max_requests=sampling_max_requests,
             max_host_payload_size_bytes=max_host_payload_size_bytes,
+            tool_result_content=tool_result_content,
         )
         self.command = command
         self.args = args or []
@@ -3574,6 +3745,7 @@ class MCPStreamableHTTPTool(MCPTool):
         task_options: MCPTaskOptions | None = None,
         additional_tool_argument_names: Sequence[str] | Mapping[str, Sequence[str]] | None = None,
         max_host_payload_size_bytes: int | None = _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES,
+        tool_result_content: MCPToolResultContentMode = "structured_first",
         **kwargs: Any,
     ) -> None:
         """Initialize the MCP streamable HTTP tool.
@@ -3582,7 +3754,7 @@ class MCPStreamableHTTPTool(MCPTool):
             The arguments are used to create a streamable HTTP client using the
             new ``mcp.client.streamable_http.streamable_http_client`` API.
             If an asyncClient is provided via ``http_client``, it will be used as the underlying transport client.
-            Otherwise, the ``streamable_http_client`` API will create and manage a default client.
+            Otherwise, the tool creates and manages a default client without response-cookie persistence.
 
         Args:
             name: The name of the tool.
@@ -3617,6 +3789,8 @@ class MCPStreamableHTTPTool(MCPTool):
             allowed_tools: Optional allow-list of MCP tool names to expose as functions.
                 ``None`` (the default) exposes every tool advertised by the MCP server.
                 A non-empty collection exposes only the tools whose names appear in it.
+                Names match raw remote names or unambiguous prefixed names when normalization
+                leaves the raw name unchanged. Ambiguous allow/approval names raise ``ToolExecutionException``.
                 An empty collection (``[]``) exposes no tools — if you simply want to
                 disable tool execution, prefer ``load_tools=False`` instead. ``[]`` is
                 useful as a runtime guard or when you want to load tool metadata for
@@ -3639,8 +3813,13 @@ class MCPStreamableHTTPTool(MCPTool):
                 (``min(requested, cap)``); ``None`` disables it.
             sampling_max_requests: Per-session cap on the number of sampling requests; further
                 requests are rejected. Resets on reconnect. ``None`` disables it.
-            http_client: Optional asyncClient to use. If not provided, the
-                ``streamable_http_client`` API will create and manage a default client.
+            http_client: Optional asyncClient to use. If not provided, the tool creates and manages
+                a client that does not persist response cookies, with or without a ``header_provider``.
+                Explicit ``Cookie`` headers from ``static_headers`` or a ``header_provider`` are supported.
+                Supplied clients retain their cookie behavior and remain caller-owned. Applications
+                requiring cookie-based sessions must supply a client scoped to one authenticated
+                principal and manage its lifetime. Cookie rejection does not partition MCP protocol
+                sessions or other server-side state between principals.
                 Use ``static_headers`` for fixed headers. To configure timeouts or other
                 HTTP client settings, create and pass your own ``asyncClient`` instance.
                 Security: when you attach sensitive headers (e.g. authentication tokens)
@@ -3727,6 +3906,8 @@ class MCPStreamableHTTPTool(MCPTool):
                 ``http_client``.
             max_host_payload_size_bytes: Maximum encoded MCP result size retained for Host
                 transports. ``None`` disables the limit.
+            tool_result_content: How to choose model-visible text when both ``content`` and
+                ``structuredContent`` are present. See :data:`MCPToolResultContentMode`.
             kwargs: Additional keyword arguments (accepted for backward compatibility but not used).
         """
         super().__init__(
@@ -3751,6 +3932,7 @@ class MCPStreamableHTTPTool(MCPTool):
             sampling_max_tokens=sampling_max_tokens,
             sampling_max_requests=sampling_max_requests,
             max_host_payload_size_bytes=max_host_payload_size_bytes,
+            tool_result_content=tool_result_content,
         )
         self.url = url
         self.terminate_on_close = terminate_on_close
@@ -3806,17 +3988,20 @@ class MCPStreamableHTTPTool(MCPTool):
 
         self._promote_pending_session_headers()
 
+        target_origin = (
+            _url_origin(URL(self.url)) if self._static_headers or self._header_provider is not None else None
+        )
         http_client = self._httpx_client
-        if self._static_headers or self._header_provider is not None:
-            target_origin = _url_origin(URL(self.url))
-            if http_client is None:
-                http_client = AsyncClient(
-                    follow_redirects=True,
-                    timeout=Timeout(MCP_DEFAULT_TIMEOUT, read=MCP_DEFAULT_SSE_READ_TIMEOUT),
-                )
-                self._httpx_client = http_client
-                self._exit_stack.push_async_callback(self._close_owned_http_client, http_client)
+        if http_client is None:
+            http_client = AsyncClient(
+                follow_redirects=True,
+                timeout=Timeout(MCP_DEFAULT_TIMEOUT, read=MCP_DEFAULT_SSE_READ_TIMEOUT),
+                cookies=CookieJar(policy=DefaultCookiePolicy(allowed_domains=[])),
+            )
+            self._httpx_client = http_client
+            self._exit_stack.push_async_callback(self._close_owned_http_client, http_client)
 
+        if target_origin is not None:
             if not hasattr(self, "_inject_headers_hook"):
 
                 async def _inject_headers(request: Request) -> None:  # ruff:ignore[unused-async]
@@ -3888,9 +4073,7 @@ class MCPStreamableHTTPTool(MCPTool):
                 # while successful sessions keep the hook through transport shutdown.
                 self._exit_stack.callback(self._remove_header_hook)
 
-        transport_http_client = (
-            _MCPHeaderScopedClient(http_client, self._header_request_owner) if http_client is not None else None
-        )
+        transport_http_client = _MCPHeaderScopedClient(http_client, self._header_request_owner)
 
         return streamable_http_client(
             url=self.url,
@@ -4158,6 +4341,7 @@ class MCPWebsocketTool(MCPTool):
         task_options: MCPTaskOptions | None = None,
         additional_tool_argument_names: Sequence[str] | Mapping[str, Sequence[str]] | None = None,
         max_host_payload_size_bytes: int | None = _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES,
+        tool_result_content: MCPToolResultContentMode = "structured_first",
         **kwargs: Any,
     ) -> None:
         """Initialize the MCP WebSocket tool.
@@ -4201,6 +4385,8 @@ class MCPWebsocketTool(MCPTool):
             allowed_tools: Optional allow-list of MCP tool names to expose as functions.
                 ``None`` (the default) exposes every tool advertised by the MCP server.
                 A non-empty collection exposes only the tools whose names appear in it.
+                Names match raw remote names or unambiguous prefixed names when normalization
+                leaves the raw name unchanged. Ambiguous allow/approval names raise ``ToolExecutionException``.
                 An empty collection (``[]``) exposes no tools — if you simply want to
                 disable tool execution, prefer ``load_tools=False`` instead. ``[]`` is
                 useful as a runtime guard or when you want to load tool metadata for
@@ -4248,6 +4434,8 @@ class MCPWebsocketTool(MCPTool):
                 ``function_invocation_kwargs`` for servers you do not control.
             max_host_payload_size_bytes: Maximum encoded MCP result size retained for Host
                 transports. ``None`` disables the limit.
+            tool_result_content: How to choose model-visible text when both ``content`` and
+                ``structuredContent`` are present. See :data:`MCPToolResultContentMode`.
             kwargs: Any extra arguments to pass to the WebSocket client.
         """
         super().__init__(
@@ -4272,6 +4460,7 @@ class MCPWebsocketTool(MCPTool):
             sampling_max_tokens=sampling_max_tokens,
             sampling_max_requests=sampling_max_requests,
             max_host_payload_size_bytes=max_host_payload_size_bytes,
+            tool_result_content=tool_result_content,
         )
         self.url = url
         self._client_kwargs = kwargs

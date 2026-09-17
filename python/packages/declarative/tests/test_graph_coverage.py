@@ -2762,8 +2762,8 @@ class TestExpressionEdgeCases:
 class TestLongMessageTextHandling:
     """Tests for handling long MessageText results that exceed PowerFx limits."""
 
-    async def test_short_message_text_embedded_inline(self, mock_state):
-        """Test that short MessageText results are embedded inline."""
+    async def test_short_message_text_round_trips_without_residual_temp_state(self, mock_state):
+        """Test that short MessageText results are removed from temporary state after evaluation."""
         state = DeclarativeWorkflowState(mock_state)
         state.initialize()
 
@@ -2771,11 +2771,11 @@ class TestLongMessageTextHandling:
         short_text = "Hello world"
         state.set("Local.Messages", [{"text": short_text, "contents": [{"type": "text", "text": short_text}]}])
 
-        # Evaluate a formula with MessageText - should embed inline
+        # Evaluate a formula with MessageText.
         result = state.eval("=Upper(MessageText(Local.Messages))")
         assert result == "HELLO WORLD"
 
-        # No temp variable should be created for short strings
+        # Temporary state should be cleaned up after evaluation.
         temp_var = state.get("Local._TempMessageText0")
         assert temp_var is None
 
