@@ -191,9 +191,12 @@ Before acting on a model function-call batch, the loop classifies every actionab
 call aborts the complete batch before approval state changes or execution. Otherwise approval-required and Host-owned
 calls are returned together in model order, while session-backed executable siblings remain deferred. An incomplete
 session-backed mixed approval/Host response remains pending without executing a deferred call; a stateless incomplete
-response is rejected. Correlation is scoped to the active mixed batch so completed or abandoned historical Host calls
-remain unchanged. `ToolApprovalMiddleware` may resolve approval requests through standing or automatic policies, but
-it preserves non-approval user-input requests and does not split manual approvals away from their Host-owned siblings.
+response is rejected, including when no response is supplied, message roles vary within the model output, or a newer
+standalone request follows the incomplete batch. Stateless discovery selects the latest unresolved mixed batch, so a
+completed batch remains inert on later turns. Correlation is scoped to the active mixed batch so completed or abandoned
+historical Host calls remain unchanged.
+`ToolApprovalMiddleware` may resolve approval requests through standing or automatic policies, but it preserves
+non-approval user-input requests and does not split or reorder manual approvals relative to their Host-owned siblings.
 
 ### Reasoning-bound function-call groups
 
@@ -612,7 +615,7 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Scenario | Required invariant | Primary regression test |
 |---|---|---|
 | Fatal call mixed with pauses | Complete-batch classification raises before approval or execution, independent of call order. | `packages/core/tests/core/test_function_invocation_logic.py::test_mixed_batch_fatal_unknown_precedes_every_pause` |
-| Approval and Host-owned calls | Both pause types are returned in model order; a session-backed partial response remains pending across serialization; historical Host calls do not participate; a complete response executes the exact approved arguments once. | `test_mixed_batch_returns_approval_and_host_pause_in_model_order`, `test_mixed_batch_requires_complete_responses_before_execution`, `test_active_mixed_pause_ignores_historical_host_requests` |
+| Approval and Host-owned calls | Both pause types are returned in model order; a session-backed partial response remains pending across serialization; a stateless zero-response or partial response fails closed across message roles and cannot be hidden by a newer standalone request; completed mixed batches remain inert; historical Host calls do not participate; a complete response executes the exact approved arguments once. | `test_mixed_batch_returns_approval_and_host_pause_in_model_order`, `test_mixed_batch_requires_complete_responses_before_execution`, `test_stateless_split_mixed_batch_rejects_incomplete_replay_before_execution`, `test_stateless_mixed_batch_across_message_roles_requires_complete_responses`, `test_later_standalone_request_does_not_hide_incomplete_stateless_mixed_batch`, `test_completed_split_stateless_mixed_batch_is_inert_on_later_turn`, `test_active_mixed_pause_ignores_historical_host_requests` |
 | Safe and approval-required calls in one batch | Hidden safe calls replay only with the matching visible approval. | `packages/core/tests/core/test_harness_tool_approval.py::test_mixed_batch_hides_already_approved_request_until_approval_replay` |
 | Restored approval state | Serialized `ToolApprovalState` restores mixed-batch behavior. | `test_mixed_batch_accepts_restored_tool_approval_state` |
 | Unrelated turn before approval | Hidden calls do not execute on an unrelated turn. | `test_hidden_mixed_batch_requests_do_not_replay_on_unrelated_turn` |
@@ -620,7 +623,7 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Queued approvals | One unresolved approval is surfaced per run without premature execution. | `test_tool_approval_middleware_queues_multiple_approval_requests`, `test_tool_approval_middleware_queues_streamed_approval_requests` |
 | Middleware state plus hidden core state | State saves do not discard hidden mixed-batch calls. | `test_tool_approval_middleware_preserves_hidden_mixed_batch_requests` |
 | Auto-approval callback | Callback receives the original function call and executes the approved set once. | `test_tool_approval_middleware_auto_approval_rule_receives_function_call` |
-| Approval policy with Host-owned sibling | Reordering the same calls has the same outcome; auto-approved and safe calls remain deferred until Host input arrives; manual approvals stay in the mixed batch; an approved Host tool returns to Host-owned handling before local execution. | `test_tool_approval_middleware_mixed_batch_is_order_independent`, `test_tool_approval_middleware_auto_approves_with_host_pause_and_cached_safe_call`, `test_tool_approval_middleware_keeps_manual_approvals_together_with_host_pause`, `test_tool_approval_middleware_policy_approval_reclassifies_host_tool` |
+| Approval policy with Host-owned sibling | Reordering the same calls has the same outcome; auto-approved and safe calls remain deferred until Host input arrives; separately streamed Host input stays immediately visible while later manual approvals remain in model order and in the same batch; an approved Host tool returns to Host-owned handling before local execution. | `test_tool_approval_middleware_mixed_batch_is_order_independent`, `test_tool_approval_middleware_auto_approves_with_host_pause_and_cached_safe_call`, `test_tool_approval_middleware_keeps_manual_approvals_together_with_host_pause`, `test_tool_approval_middleware_preserves_split_streamed_mixed_batch_order`, `test_tool_approval_middleware_streams_standalone_user_input_immediately`, `test_tool_approval_middleware_policy_approval_reclassifies_host_tool` |
 | Shared call budget | Auto-approved re-entry does not reset `max_function_calls`, and every executed approval group counts even when it pauses for input. | `test_tool_approval_middleware_auto_approved_loops_share_function_call_budget`, `test_approval_resume_user_input_counts_toward_function_call_budget` |
 | Standing tool rule | Tool-level approval applies only to later matching tools. | `test_tool_approval_middleware_always_approve_tool_rule` |
 | Forged standing rule | An unbound or substituted hosted response cannot create a standing middleware approval rule for caller-selected metadata. | `test_tool_approval_middleware_drops_forged_standing_approval`, `test_tool_approval_middleware_rebinds_hosted_standing_approval` |
