@@ -27,6 +27,7 @@ import fnmatch
 import logging
 import os
 import re
+import threading
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Mapping, MutableMapping
 from pathlib import Path
@@ -1097,6 +1098,11 @@ class FileSystemAgentFileStore(AgentFileStore):
     hostile process that shares the root directory.
     """
 
+    _DELETE_LOCK_STRIPE_COUNT: ClassVar[int] = 64
+    _DELETE_LOCKS: ClassVar[tuple[threading.Lock, ...]] = tuple(
+        threading.Lock() for _ in range(_DELETE_LOCK_STRIPE_COUNT)
+    )
+
     def __init__(self, root_directory: str | os.PathLike[str]) -> None:
         """Initialize the file-system store.
 
@@ -1284,11 +1290,20 @@ class FileSystemAgentFileStore(AgentFileStore):
         full_path = self._resolve_safe_path(path)
         return await asyncio.to_thread(self._delete_file_sync, full_path)
 
-    @staticmethod
-    def _delete_file_sync(full_path: Path) -> bool:
-        if not full_path.is_file():
-            return False
-        full_path.unlink()
+    @classmethod
+    def _delete_lock(cls, full_path: Path) -> threading.Lock:
+        """Return the process-local deletion lock for a file."""
+        return cls._DELETE_LOCKS[hash(full_path) % cls._DELETE_LOCK_STRIPE_COUNT]
+
+    @classmethod
+    def _delete_file_sync(cls, full_path: Path) -> bool:
+        with cls._delete_lock(full_path):
+            if not full_path.is_file():
+                return False
+            try:
+                full_path.unlink()
+            except FileNotFoundError:
+                return False
         return True
 
     async def list_children(self, directory: str = "") -> list[FileStoreEntry]:

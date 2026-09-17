@@ -7,9 +7,11 @@ import json
 import os
 import re
 import stat
+import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -285,6 +287,53 @@ async def test_filesystem_store_round_trips_files(tmp_path: Path) -> None:
 
     assert await store.delete("nested/a.txt") is True
     assert await store.delete("nested/a.txt") is False
+
+
+async def test_filesystem_store_concurrent_delete(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Concurrent deletion should report one deletion and one missing file."""
+    store = FileSystemAgentFileStore(tmp_path)
+    other_store = FileSystemAgentFileStore(tmp_path)
+    await store.write("shared.txt", "content")
+
+    file_path = (tmp_path / "shared.txt").resolve()
+    original_to_thread = asyncio.to_thread
+    original_unlink = Path.unlink
+    worker_barrier = threading.Barrier(2)
+    unlink_barrier = threading.Barrier(2)
+    unlink_guard = threading.Lock()
+    overlapping_delete_completed = False
+
+    async def synchronized_to_thread(function: Any, /, *args: Any, **kwargs: Any) -> Any:
+        def synchronized_call() -> Any:
+            worker_barrier.wait(timeout=5)
+            return function(*args, **kwargs)
+
+        return await original_to_thread(synchronized_call)
+
+    def macos_style_unlink(path: Path, missing_ok: bool = False) -> None:
+        nonlocal overlapping_delete_completed
+        if path.resolve() != file_path:
+            original_unlink(path, missing_ok=missing_ok)
+            return
+
+        try:
+            unlink_barrier.wait(timeout=0.5)
+        except threading.BrokenBarrierError:
+            original_unlink(path, missing_ok=missing_ok)
+            return
+
+        # Model concurrent macOS unlinks, where both calls may report success even though only one removes the file.
+        with unlink_guard:
+            if not overlapping_delete_completed:
+                original_unlink(path, missing_ok=missing_ok)
+                overlapping_delete_completed = True
+
+    monkeypatch.setattr(asyncio, "to_thread", synchronized_to_thread)
+    monkeypatch.setattr(Path, "unlink", macos_style_unlink)
+
+    results = await asyncio.gather(store.delete("shared.txt"), other_store.delete("shared.txt"))
+
+    assert sorted(results) == [False, True]
 
 
 async def test_filesystem_store_rejects_traversal_and_rooted_paths(tmp_path: Path) -> None:
