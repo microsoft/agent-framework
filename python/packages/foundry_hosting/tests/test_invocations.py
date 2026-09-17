@@ -200,6 +200,17 @@ class TestInit:
         with pytest.raises(TypeError, match="agent must be an agent instance or a zero-argument callable"):
             InvocationsHostServer(agent)
 
+    def test_rejects_agent_class_requiring_constructor_arguments(self) -> None:
+        with pytest.raises(TypeError, match="agent callable must accept no arguments"):
+            InvocationsHostServer(cast(Any, _ContextAgent))
+
+    def test_rejects_factory_requiring_arguments(self) -> None:
+        def create_agent(name: str) -> _FakeAgent:
+            return _make_agent(response_text=name)
+
+        with pytest.raises(TypeError, match="agent callable must accept no arguments"):
+            InvocationsHostServer(cast(Any, create_agent))
+
 
 # endregion
 

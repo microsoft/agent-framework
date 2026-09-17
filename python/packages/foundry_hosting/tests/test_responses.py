@@ -858,6 +858,13 @@ class TestResponsesHostServerInit:
         with pytest.raises(TypeError, match="agent must be an agent instance or a zero-argument callable"):
             ResponsesHostServer(agent)
 
+    async def test_zero_argument_agent_class_is_resolved_as_factory(self) -> None:
+        server = _make_server(cast(Any, _StrictCustomAgent), history_source="agent")
+
+        response = await _post(server)
+
+        assert response.json()["status"] == "completed"
+
     def test_init_basic(self) -> None:
         agent = _make_agent(
             response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
