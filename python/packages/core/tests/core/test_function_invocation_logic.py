@@ -3463,6 +3463,89 @@ async def test_mixed_batch_requires_complete_responses_before_execution(
     assert approval_arguments == ["expected"]
 
 
+async def test_sequential_mixed_batch_preserves_approval_and_host_model_order(
+    chat_client_base: SupportsChatGetResponse,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sequential replay should not move an approval result behind its Host-owned sibling."""
+    from agent_framework import FunctionTool
+
+    @tool(name="approval_func", approval_mode="always_require")
+    def approval_func() -> str:
+        return "approved"
+
+    host_func = FunctionTool(name="host_func", func=None, description="Handled by the caller")
+    agent = Agent(client=chat_client_base, tools=[approval_func, host_func])
+    chat_client_base.function_invocation_configuration["allow_concurrent_invocation"] = False  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    continuation_result_orders: list[list[str | None]] = []
+    original_inner_get_response = chat_client_base._inner_get_response  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    def capture_inner_get_response(**kwargs: Any) -> Any:
+        continuation_result_orders.append([
+            content.call_id
+            for message in kwargs["messages"]
+            for content in message.contents
+            if content.type == "function_result"
+        ])
+        return original_inner_get_response(**kwargs)
+
+    monkeypatch.setattr(chat_client_base, "_inner_get_response", capture_inner_get_response)
+    session = AgentSession()
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="approval",
+                        name="approval_func",
+                        arguments={},
+                        id="approval-occurrence",
+                    ),
+                    Content.from_function_call(
+                        call_id="host",
+                        name="host_func",
+                        arguments={},
+                        id="host-occurrence",
+                    ),
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+
+    first_response = await agent.run("run both", session=session)
+    approval_request = next(
+        content
+        for message in first_response.messages
+        for content in message.contents
+        if content.type == "function_approval_request"
+    )
+    host_request = next(
+        content
+        for message in first_response.messages
+        for content in message.contents
+        if content.type == "function_call" and content.user_input_request
+    )
+    assert host_request.call_id is not None
+    host_result = Content.from_function_result(call_id=host_request.call_id, result="host result")
+    host_result.id = host_request.id
+
+    final_response = await agent.run(
+        Message(
+            role="user",
+            contents=[
+                approval_request.to_function_approval_response(approved=True),
+                host_result,
+            ],
+        ),
+        session=session,
+    )
+
+    assert final_response.text == "done"
+    assert continuation_result_orders[-1] == ["approval", "host"]
+
+
 @pytest.mark.parametrize("include_approval_response", [False, True], ids=["zero-responses", "approval-only"])
 async def test_stateless_split_mixed_batch_rejects_incomplete_replay_before_execution(
     chat_client_base: SupportsChatGetResponse,
