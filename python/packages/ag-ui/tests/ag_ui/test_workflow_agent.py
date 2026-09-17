@@ -557,6 +557,19 @@ async def test_workflow_hitl_resume_keeps_repeated_yes_on_empty_messages() -> No
     store = InMemoryAGUIThreadSnapshotStore()
     agent = AgentFrameworkWorkflow(workflow=workflow, snapshot_store=store, checkpoint_storage=storage)
 
+    # Establish a live pending request_info interrupt on this workflow instance.
+    first_events = await _run(
+        agent,
+        {
+            "thread_id": "thread-hitl-yes",
+            "run_id": "run-yes-1",
+            "messages": [{"id": "user-1", "role": "user", "content": "start"}],
+            _SNAPSHOT_SCOPE_INPUT_KEY: "tenant-a",
+        },
+    )
+    assert "RUN_ERROR" not in [event.type for event in first_events]
+
+    # Simulate a thread that already persisted an earlier identical "yes".
     await store.save(
         scope="tenant-a",
         thread_id="thread-hitl-yes",
@@ -622,6 +635,18 @@ async def test_workflow_hitl_resume_keeps_yes_when_messages_replay_prior_yes() -
         {"id": "user-yes-1", "role": "user", "content": "yes"},
         {"id": "assistant-2", "role": "assistant", "content": "confirm again?"},
     ]
+
+    first_events = await _run(
+        agent,
+        {
+            "thread_id": "thread-hitl-replay-yes",
+            "run_id": "run-yes-setup",
+            "messages": [{"id": "user-1", "role": "user", "content": "start"}],
+            _SNAPSHOT_SCOPE_INPUT_KEY: "tenant-a",
+        },
+    )
+    assert "RUN_ERROR" not in [event.type for event in first_events]
+
     await store.save(
         scope="tenant-a",
         thread_id="thread-hitl-replay-yes",
