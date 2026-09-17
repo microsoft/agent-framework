@@ -4,11 +4,14 @@
 # Install the relevant packages for full type support.
 
 from agent_framework_azure_ai_search import (
+    AzureAISearchCollection,
     AzureAISearchContextProvider,
     AzureAISearchSettings,
+    AzureAISearchStore,
 )
 from agent_framework_azure_cosmos import CosmosHistoryProvider
-from agent_framework_azurefunctions import AgentFunctionApp
+from agent_framework_azure_cosmos._vector_store import AzureCosmosSettings, CosmosCollection, CosmosStore
+from agent_framework_azurefunctions import AgentFunctionApp, WorkflowHitlContext
 from agent_framework_durabletask import (
     AgentCallbackContext,
     AgentResponseCallbackProtocol,
@@ -23,12 +26,18 @@ __all__ = [
     "AgentCallbackContext",
     "AgentFunctionApp",
     "AgentResponseCallbackProtocol",
+    "AzureAISearchCollection",
     "AzureAISearchContextProvider",
     "AzureAISearchSettings",
+    "AzureAISearchStore",
+    "AzureCosmosSettings",
+    "CosmosCollection",
     "CosmosHistoryProvider",
+    "CosmosStore",
     "DurableAIAgent",
     "DurableAIAgentClient",
     "DurableAIAgentOrchestrationContext",
     "DurableAIAgentWorker",
     "DurableWorkflowClient",
+    "WorkflowHitlContext",
 ]

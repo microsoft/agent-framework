@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import base64
 import datetime
+import json
 import logging
 import os
 from typing import Any, cast
@@ -10,10 +12,19 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from agent_framework import Agent, Content, FunctionTool, Message
+from agent_framework._settings import SecretString
+from agent_framework.exceptions import (
+    ChatClientException,
+    ChatClientInvalidAuthException,
+    ChatClientInvalidRequestException,
+)
+from google.genai import errors as genai_errors
 from google.genai import types
 from pydantic import BaseModel
+from typing_extensions import NotRequired, TypedDict
 
 from agent_framework_gemini import GeminiChatClient, GeminiChatOptions, RawGeminiChatClient, ThinkingConfig
+from agent_framework_gemini._feature_usage import FeatureIndex
 
 
 def _has_gemini_integration_credentials() -> bool:
@@ -38,6 +49,12 @@ skip_if_no_credentials = pytest.mark.skipif(
 
 _TEST_MODEL = os.getenv("GOOGLE_MODEL") or os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
 
+
+class _ToolListItem(TypedDict):
+    title: str
+    description: NotRequired[str]
+
+
 # stub helpers
 
 
@@ -46,6 +63,9 @@ def _make_part(
     text: str | None = None,
     thought: bool = False,
     function_call: tuple[str | None, str, dict[str, Any]] | None = None,
+    thought_signature: bytes | None = None,
+    tool_call: tuple[str | None, types.ToolType, dict[str, Any]] | None = None,
+    tool_response: tuple[str | None, types.ToolType, dict[str, Any]] | None = None,
     executable_code: str | None = None,
     code_execution_result: str | None = None,
 ) -> MagicMock:
@@ -55,13 +75,19 @@ def _make_part(
         text: Text content of the part.
         thought: Whether this is a thinking/reasoning part.
         function_call: Tuple of (id, name, args) if this is a function call part.
+        thought_signature: Opaque Gemini 3 thought signature attached to the part, if any.
+        tool_call: Tuple of (id, tool_type, args) if this is a server-side tool call part.
+        tool_response: Tuple of (id, tool_type, response) if this is a server-side tool response part.
         executable_code: Source code string for a code execution part.
         code_execution_result: Output string for a code execution result part.
     """
     part = MagicMock()
     part.text = text
     part.thought = thought
+    part.thought_signature = thought_signature
     part.function_response = None
+    part.tool_call = None
+    part.tool_response = None
     part.executable_code = None
     part.code_execution_result = None
 
@@ -71,6 +97,16 @@ def _make_part(
         part.function_call = mock_function_call
     else:
         part.function_call = None
+
+    if tool_call:
+        mock_tool_call = MagicMock()
+        mock_tool_call.id, mock_tool_call.tool_type, mock_tool_call.args = tool_call
+        part.tool_call = mock_tool_call
+
+    if tool_response:
+        mock_tool_response = MagicMock()
+        mock_tool_response.id, mock_tool_response.tool_type, mock_tool_response.response = tool_response
+        part.tool_response = mock_tool_response
 
     if executable_code is not None:
         mock_exec = MagicMock()
@@ -133,12 +169,13 @@ async def _async_iter(items: list[Any]):
 def _make_gemini_client(
     model: str | None = "gemini-2.5-flash",
     mock_client: MagicMock | None = None,
+    **kwargs: Any,
 ) -> tuple[GeminiChatClient, MagicMock]:
     """Return a (GeminiChatClient, mock_genai_client) pair."""
     mock = mock_client or MagicMock()
     mock._api_client.vertexai = False
     mock._api_client._http_options.base_url = "https://generativelanguage.googleapis.com/"
-    client = GeminiChatClient(client=mock, model=model)
+    client = GeminiChatClient(client=mock, model=model, **kwargs)
     return client, mock
 
 
@@ -191,7 +228,10 @@ def test_client_created_from_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
     assert client.model == "gemini-2.5-flash"
 
 
-def test_client_created_from_google_api_key_env(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("api_key", [None, "explicit-key", SecretString("explicit-key")], ids=["env", "str", "secret"])
+def test_client_created_from_google_api_key_env(
+    monkeypatch: pytest.MonkeyPatch, api_key: str | SecretString | None
+) -> None:
     """Initialises successfully when the SDK-standard Google API key environment variable is set."""
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("GEMINI_MODEL", raising=False)
@@ -207,9 +247,10 @@ def test_client_created_from_google_api_key_env(monkeypatch: pytest.MonkeyPatch)
 
     with patch("agent_framework_gemini._chat_client.genai.Client") as client_factory:
         client_factory.return_value = mock_client
-        client = GeminiChatClient()
+        client = GeminiChatClient(api_key=api_key)
 
-    assert client_factory.call_args.kwargs["api_key"] == "test-key-123"
+    assert type(client_factory.call_args.kwargs["api_key"]) is str
+    assert client_factory.call_args.kwargs["api_key"] == ("test-key-123" if api_key is None else "explicit-key")
     assert "vertexai" not in client_factory.call_args.kwargs
     assert client.model == "gemini-2.5-flash-lite"
     assert client.service_url() == "https://generativelanguage.googleapis.com"
@@ -275,7 +316,10 @@ def test_missing_api_key_raises_when_no_client_injected(monkeypatch: pytest.Monk
         GeminiChatClient(model="gemini-2.5-flash")
 
 
-def test_vertex_ai_express_mode_uses_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("api_key", [None, "explicit-key", SecretString("explicit-key")], ids=["env", "str", "secret"])
+def test_vertex_ai_express_mode_uses_api_key(
+    monkeypatch: pytest.MonkeyPatch, api_key: str | SecretString | None
+) -> None:
     """Passes the API key in Vertex AI express mode when no project/location pair is configured."""
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("GEMINI_MODEL", raising=False)
@@ -289,10 +333,11 @@ def test_vertex_ai_express_mode_uses_api_key(monkeypatch: pytest.MonkeyPatch) ->
     mock_client._api_client._http_options.base_url = "https://aiplatform.googleapis.com/"
 
     with patch("agent_framework_gemini._chat_client.genai.Client", return_value=mock_client) as client_factory:
-        client = GeminiChatClient(model="gemini-2.5-flash-lite")
+        client = GeminiChatClient(model="gemini-2.5-flash-lite", api_key=api_key)
 
     assert client_factory.call_args.kwargs["vertexai"] is True
-    assert client_factory.call_args.kwargs["api_key"] == "test-key-123"
+    assert type(client_factory.call_args.kwargs["api_key"]) is str
+    assert client_factory.call_args.kwargs["api_key"] == ("test-key-123" if api_key is None else "explicit-key")
     assert "project" not in client_factory.call_args.kwargs
     assert "location" not in client_factory.call_args.kwargs
     assert client.service_url() == "https://aiplatform.googleapis.com"
@@ -341,9 +386,63 @@ async def test_get_response_returns_text() -> None:
     client, mock = _make_gemini_client()
     mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Hello!")]))
 
-    response = await client.get_response(messages=[Message(role="user", contents=[Content.from_text("Hi")])])
+    with patch("agent_framework_gemini._chat_client.mark_feature_used") as mark_feature_used:
+        response = await client.get_response(messages=[Message(role="user", contents=[Content.from_text("Hi")])])
 
+    mark_feature_used.assert_called_once_with(FeatureIndex.GEMINI)
     assert response.messages[0].text == "Hello!"
+
+
+@pytest.mark.parametrize(
+    ("sdk_exception", "expected_exception"),
+    [
+        (genai_errors.ClientError(401, {"error": {"message": "invalid api key"}}), ChatClientInvalidAuthException),
+        (genai_errors.ClientError(403, {"error": {"message": "permission denied"}}), ChatClientInvalidAuthException),
+        (genai_errors.ClientError(400, {"error": {"message": "bad request"}}), ChatClientInvalidRequestException),
+        (genai_errors.ServerError(500, {"error": {"message": "server error"}}), ChatClientException),
+        # Not a google-genai APIError at all (transport failure, credential refresh, ...):
+        # must still be wrapped so ``except ChatClientException`` callers never see it raw.
+        (RuntimeError("connection reset"), ChatClientException),
+    ],
+)
+async def test_get_response_wraps_sdk_errors(sdk_exception: Exception, expected_exception: type[Exception]) -> None:
+    """Non-streaming get_response must translate raw google-genai SDK errors into the
+    framework's ChatClientException hierarchy, matching every other provider
+    (OpenAI, Anthropic, Mistral, Ollama, Bedrock)."""
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content = AsyncMock(side_effect=sdk_exception)
+
+    with pytest.raises(expected_exception, match="Gemini"):
+        await client.get_response(messages=[Message(role="user", contents=[Content.from_text("Hi")])])
+
+
+async def test_get_response_streaming_wraps_sdk_errors() -> None:
+    """Streaming get_response must translate raw google-genai SDK errors into the
+    framework's ChatClientException hierarchy too, both when the call itself fails
+    and when the failure happens partway through iterating the stream."""
+    # 1. Failure raised by the generate_content_stream call itself.
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content_stream = AsyncMock(
+        side_effect=genai_errors.ClientError(401, {"error": {"message": "invalid api key"}})
+    )
+    with pytest.raises(ChatClientInvalidAuthException, match="Gemini"):
+        async for _ in client.get_response(
+            messages=[Message(role="user", contents=[Content.from_text("Hi")])], stream=True
+        ):
+            pass
+
+    # 2. Failure raised mid-stream, after at least one chunk has been yielded.
+    async def _raise_after_first_chunk(**_: Any):
+        yield _make_response([_make_part(text="partial")])
+        raise genai_errors.ClientError(403, {"error": {"message": "permission denied"}})
+
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content_stream = AsyncMock(return_value=_raise_after_first_chunk())
+    with pytest.raises(ChatClientInvalidAuthException, match="Gemini"):
+        async for _ in client.get_response(
+            messages=[Message(role="user", contents=[Content.from_text("Hi")])], stream=True
+        ):
+            pass
 
 
 async def test_get_response_model_from_response() -> None:
@@ -431,19 +530,39 @@ async def test_get_response_no_usage_when_metadata_absent() -> None:
 @pytest.mark.parametrize(
     ("gemini_reason", "expected"),
     [
+        # Currently-mapped values: must keep mapping to exactly what they map to today.
         ("STOP", "stop"),
         ("MAX_TOKENS", "length"),
         ("SAFETY", "content_filter"),
         ("RECITATION", "content_filter"),
+        ("LANGUAGE", "content_filter"),
         ("BLOCKLIST", "content_filter"),
         ("PROHIBITED_CONTENT", "content_filter"),
         ("SPII", "content_filter"),
+        ("IMAGE_SAFETY", "content_filter"),
+        ("IMAGE_PROHIBITED_CONTENT", "content_filter"),
+        ("IMAGE_RECITATION", "content_filter"),
         ("MALFORMED_FUNCTION_CALL", "tool_calls"),
-        ("OTHER", None),
+        ("UNEXPECTED_TOOL_CALL", "tool_calls"),
+        # Real google-genai FinishReason values with no entry in _FINISH_REASON_MAP: must now
+        # pass through as the raw string instead of being silently dropped to None.
+        ("OTHER", "OTHER"),
+        ("TOO_MANY_TOOL_CALLS", "TOO_MANY_TOOL_CALLS"),
+        ("NO_IMAGE", "NO_IMAGE"),
+        ("IMAGE_OTHER", "IMAGE_OTHER"),
+        # Absent / unspecified: must still yield None.
+        (None, None),
+        ("FINISH_REASON_UNSPECIFIED", None),
     ],
 )
-async def test_finish_reason_mapping(gemini_reason: str, expected: str | None) -> None:
-    """Maps Gemini finish reason strings to the correct FinishReasonLiteral values."""
+async def test_finish_reason_mapping(gemini_reason: str | None, expected: str | None) -> None:
+    """Maps Gemini finish reason strings to the correct FinishReasonLiteral values.
+
+    Unmapped-but-real provider values (e.g. TOO_MANY_TOOL_CALLS) must pass through as the raw
+    string rather than vanishing to None, mirroring the fallback PR #7105 added for the other
+    chat clients (bedrock, claude, core, github_copilot, ollama, openai) but not gemini.
+    FINISH_REASON_UNSPECIFIED and an absent reason remain the legitimate None cases.
+    """
     client, mock = _make_gemini_client()
     mock.aio.models.generate_content = AsyncMock(
         return_value=_make_response([_make_part(text="Hi")], finish_reason=gemini_reason)
@@ -452,6 +571,37 @@ async def test_finish_reason_mapping(gemini_reason: str, expected: str | None) -
     response = await client.get_response(messages=[Message(role="user", contents=[Content.from_text("Hi")])])
 
     assert response.finish_reason == expected
+
+
+async def test_unmapped_finish_reason_still_attaches_usage_on_streamed_final_chunk() -> None:
+    """An unmapped provider finish reason must not suppress the final chunk's usage/token accounting.
+
+    Before this fix, `_process_chunk` attached usage only when `_map_finish_reason` returned a
+    non-None value. Since TOO_MANY_TOOL_CALLS is a real google-genai FinishReason absent from
+    `_FINISH_REASON_MAP`, it mapped to None, which silently dropped both the finish reason and
+    the whole turn's usage/token accounting for the final streamed chunk.
+    """
+    client, mock = _make_gemini_client()
+    chunks = [
+        _make_response([_make_part(text="Hello ")], finish_reason=None, prompt_tokens=None, output_tokens=None),
+        _make_response(
+            [_make_part(text="world!")],
+            finish_reason="TOO_MANY_TOOL_CALLS",
+            prompt_tokens=10,
+            output_tokens=5,
+        ),
+    ]
+    mock.aio.models.generate_content_stream = AsyncMock(return_value=_async_iter(chunks))
+
+    stream = client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Hi")])],
+        stream=True,
+    )
+
+    updates = [update async for update in stream]
+
+    assert updates[-1].finish_reason == "TOO_MANY_TOOL_CALLS"
+    assert any(c.type == "usage" for c in updates[-1].contents)
 
 
 # message conversion
@@ -683,8 +833,8 @@ async def test_non_function_result_content_in_tool_message_is_skipped() -> None:
 # thinking parts
 
 
-async def test_thinking_parts_are_silently_skipped() -> None:
-    """Excludes thought-summary parts from ChatResponse.contents, returning only the final answer."""
+async def test_thinking_parts_are_surfaced_as_reasoning() -> None:
+    """Surfaces thought-summary parts as text_reasoning content alongside the final answer."""
     client, mock = _make_gemini_client()
     mock.aio.models.generate_content = AsyncMock(
         return_value=_make_response([
@@ -697,8 +847,26 @@ async def test_thinking_parts_are_silently_skipped() -> None:
         messages=[Message(role="user", contents=[Content.from_text("What is the answer?")])]
     )
 
-    assert len(response.messages[0].contents) == 1
+    contents = response.messages[0].contents
+    assert len(contents) == 2
+    assert contents[0].type == "text_reasoning"
+    assert contents[0].text == "I should think first..."
+    assert contents[1].type == "text"
     assert response.messages[0].text == "The answer is 42."
+
+
+async def test_empty_thinking_part_produces_no_reasoning_content() -> None:
+    """A thought part with no text yields no content rather than empty reasoning."""
+    client, _ = _make_gemini_client()
+
+    contents = client._parse_parts([
+        _make_part(text=None, thought=True),
+        _make_part(text="The answer is 42."),
+    ])
+
+    assert len(contents) == 1
+    assert contents[0].type == "text"
+    assert contents[0].text == "The answer is 42."
 
 
 def test_function_call_part_preserves_thought_signature_from_raw_part() -> None:
@@ -723,6 +891,321 @@ def test_function_call_part_preserves_thought_signature_from_raw_part() -> None:
     assert parts[0].function_call.id == "call-1"
     assert parts[0].function_call.name == "get_weather"
     assert parts[0].function_call.args == {"location": "Paris"}
+
+
+def test_function_call_part_captures_thought_signature_as_reasoning_content() -> None:
+    """Parsing a functionCall part surfaces its thought_signature as preceding reasoning content."""
+    client, _ = _make_gemini_client()
+
+    contents = client._parse_parts([
+        _make_part(function_call=("call-1", "get_weather", {"location": "Paris"}), thought_signature=b"sig-123")
+    ])
+
+    assert len(contents) == 2
+    assert contents[0].type == "text_reasoning"
+    assert contents[0].protected_data == base64.b64encode(b"sig-123").decode("utf-8")
+    assert contents[1].type == "function_call"
+    assert contents[1].call_id == "call-1"
+
+
+def test_captured_thought_signature_is_json_serializable() -> None:
+    """The captured signature must survive json.dumps(message.to_dict()) used by history providers."""
+    client, _ = _make_gemini_client()
+    contents = client._parse_parts([
+        _make_part(function_call=("call-1", "get_weather", {"location": "Paris"}), thought_signature=b"sig-123")
+    ])
+    message = Message(role="assistant", contents=contents)
+
+    serialized = json.dumps(message.to_dict())
+
+    restored = Message.from_dict(json.loads(serialized))
+    parts = client._convert_message_contents(restored.contents, {})
+    # Reasoning content is not sent back as a part; only the function call is, carrying the signature.
+    assert len(parts) == 1
+    assert parts[0].thought_signature == b"sig-123"
+
+
+def test_function_call_part_without_thought_signature_emits_no_reasoning_content() -> None:
+    """A functionCall part without a signature produces only the function_call content."""
+    client, _ = _make_gemini_client()
+
+    contents = client._parse_parts([_make_part(function_call=("call-1", "get_weather", {"location": "Paris"}))])
+
+    assert len(contents) == 1
+    assert contents[0].type == "function_call"
+
+
+def test_reconstructed_function_call_replays_thought_signature_from_reasoning_content() -> None:
+    """A function call rebuilt without its raw Part still replays the signature from reasoning content."""
+    client, _ = _make_gemini_client()
+    reasoning = Content.from_text_reasoning(protected_data=base64.b64encode(b"sig-123").decode("utf-8"))
+    call = Content.from_function_call(call_id="call-1", name="get_weather", arguments={"location": "Paris"})
+
+    parts = client._convert_message_contents([reasoning, call], {})
+
+    assert len(parts) == 1
+    assert parts[0].thought_signature == b"sig-123"
+    assert parts[0].function_call is not None
+    assert parts[0].function_call.id == "call-1"
+
+
+def test_function_call_without_thought_signature_replays_without_one() -> None:
+    """A function call lacking any signature produces a part with no thought_signature."""
+    client, _ = _make_gemini_client()
+    content = Content.from_function_call(call_id="call-1", name="get_weather", arguments={"location": "Paris"})
+
+    parts = client._convert_message_contents([content], {})
+
+    assert len(parts) == 1
+    assert parts[0].thought_signature is None
+
+
+def test_malformed_thought_signature_is_ignored_gracefully(caplog: pytest.LogCaptureFixture) -> None:
+    """A corrupted or non-string reasoning signature degrades to no signature instead of crashing."""
+    client, _ = _make_gemini_client()
+    corrupted = Content.from_text_reasoning(protected_data="not valid base64!!!")
+    call1 = Content.from_function_call(call_id="call-1", name="get_weather", arguments={"location": "Paris"})
+    non_string = Content("text_reasoning", protected_data=cast(Any, 123))
+    call2 = Content.from_function_call(call_id="call-2", name="get_weather", arguments={"location": "Paris"})
+
+    with caplog.at_level(logging.WARNING):
+        parts = client._convert_message_contents([corrupted, call1, non_string, call2], {})
+
+    assert len(parts) == 2
+    assert parts[0].thought_signature is None
+    assert parts[1].thought_signature is None
+    assert "malformed thought_signature" in caplog.text
+
+
+def test_reconstructed_function_call_signature_survives_round_trip() -> None:
+    """Parse yields reasoning+call; a rebuilt call (raw Part dropped) still replays the signature."""
+    client, _ = _make_gemini_client()
+
+    parsed = client._parse_parts([
+        _make_part(function_call=("call-1", "get_weather", {"location": "Paris"}), thought_signature=b"sig-123")
+    ])
+    reasoning = parsed[0]
+    fc = parsed[1]
+    assert fc.call_id is not None
+    assert fc.name is not None
+    # Simulate a layer that reconstructs the call from call_id/name/arguments, dropping raw_representation,
+    # while the sibling reasoning content is preserved in history.
+    rebuilt_call = Content.from_function_call(call_id=fc.call_id, name=fc.name, arguments=fc.arguments)
+
+    parts = client._convert_message_contents([reasoning, rebuilt_call], {})
+
+    assert parts[-1].thought_signature == b"sig-123"
+
+
+def test_replayed_call_is_signed_by_call_id_when_the_carrier_is_dropped() -> None:
+    """The approval replay history has no carrier at all; the call is still re-signed by call_id."""
+    client, _ = _make_gemini_client()
+    parsed = client._parse_parts([
+        _make_part(function_call=("call-1", "get_weather", {"location": "Paris"}), thought_signature=b"sig-123")
+    ])
+    call = parsed[1]
+    assert call.call_id is not None
+    # The history an approval round trip produces: the call rebuilt from the function_call nested in
+    # the approval content, with neither a reasoning carrier nor the original raw Part.
+    replay = [Content.from_function_call(call_id=call.call_id, name="get_weather", arguments={"location": "Paris"})]
+    assert [content.type for content in replay] == ["function_call"]
+    assert not any(content.type == "text_reasoning" and content.protected_data for content in replay)
+    assert not isinstance(replay[0].raw_representation, types.Part)
+
+    parts = client._convert_message_contents(replay, {})
+
+    assert len(parts) == 1
+    assert parts[0].thought_signature == b"sig-123"
+
+
+def test_call_id_backfill_uses_the_generated_id_when_gemini_omits_one() -> None:
+    """Signatures are keyed by the resolved call_id, so the generated-id fallback path is covered."""
+    client, _ = _make_gemini_client()
+    part = _make_part(function_call=(None, "get_weather", {"location": "Paris"}), thought_signature=b"sig-123")
+
+    parsed = client._parse_parts([part])
+    call = parsed[1]
+    assert call.call_id is not None
+    assert call.call_id.startswith("tool-call-")
+    replay = [Content.from_function_call(call_id=call.call_id, name="get_weather", arguments={"location": "Paris"})]
+
+    parts = client._convert_message_contents(replay, {})
+
+    assert parts[0].thought_signature == b"sig-123"
+
+
+@pytest.mark.parametrize(
+    "intervening",
+    [
+        pytest.param(
+            Content.from_function_approval_response(
+                True,
+                id="call-1",
+                function_call=Content.from_function_call(call_id="call-1", name="get_weather", arguments={}),
+            ),
+            id="approval_response",
+        ),
+        pytest.param(Content.from_text_reasoning(text="a thought summary"), id="unsigned_reasoning"),
+    ],
+)
+def test_signature_survives_content_between_the_carrier_and_the_call(intervening: Content) -> None:
+    """Content that emits no Part must not break the reasoning-to-call pairing."""
+    client, _ = _make_gemini_client()
+    reasoning = Content.from_text_reasoning(protected_data=base64.b64encode(b"sig-123").decode("utf-8"))
+    call = Content.from_function_call(call_id="call-1", name="get_weather", arguments={"location": "Paris"})
+
+    parts = client._convert_message_contents([reasoning, intervening, call], {})
+
+    assert parts[-1].function_call is not None
+    assert parts[-1].thought_signature == b"sig-123"
+
+
+def test_call_id_backfill_never_overrides_a_signature_already_on_the_part() -> None:
+    """Backfill only fills gaps, so a raw Part's own signature always wins."""
+    client, _ = _make_gemini_client()
+    client._parse_parts([
+        _make_part(function_call=("call-1", "get_weather", {"location": "Paris"}), thought_signature=b"stale-sig")
+    ])
+    raw_part = types.Part(
+        function_call=types.FunctionCall(id="call-1", name="get_weather", args={"location": "Paris"}),
+        thought_signature=b"fresh-sig",
+    )
+    call = Content.from_function_call(
+        call_id="call-1",
+        name="get_weather",
+        arguments={"location": "Paris"},
+        raw_representation=raw_part,
+    )
+
+    parts = client._convert_message_contents([call], {})
+
+    assert parts[0].thought_signature == b"fresh-sig"
+
+
+def test_thought_signature_cache_is_bounded() -> None:
+    """The per-client signature cache must not grow without limit on long conversations."""
+    client, _ = _make_gemini_client()
+    overflow = client.max_tracked_thought_signatures + 5
+
+    for index in range(overflow):
+        client._parse_parts([_make_part(function_call=(f"call-{index}", "get_weather", {}), thought_signature=b"sig")])
+
+    cache = client._thought_signature_cache
+    assert len(cache) == client.max_tracked_thought_signatures
+    assert "call-0" not in cache
+    assert f"call-{overflow - 1}" in cache
+
+
+def test_max_tracked_thought_signatures_is_configurable() -> None:
+    """The retention bound is a constructor option, so hosts can tune it per client."""
+    client, _ = _make_gemini_client(max_tracked_thought_signatures=2)
+
+    for index in range(3):
+        client._parse_parts([_make_part(function_call=(f"call-{index}", "get_weather", {}), thought_signature=b"sig")])
+
+    assert list(client._thought_signature_cache) == ["call-1", "call-2"]
+
+
+def test_max_tracked_thought_signatures_rejects_non_positive_values() -> None:
+    """A bound below 1 would evict every signature immediately, so it is rejected up front."""
+    with pytest.raises(ValueError, match="max_tracked_thought_signatures"):
+        _make_gemini_client(max_tracked_thought_signatures=0)
+
+
+def test_server_side_tool_call_part_is_informational_only() -> None:
+    """Server-side Gemini tool calls are transcript content, not local function invocation requests."""
+    client, _ = _make_gemini_client()
+    raw_part = types.Part(
+        tool_call=types.ToolCall(id="search-1", tool_type=types.ToolType.FILE_SEARCH, args={"query": "docs"})
+    )
+
+    contents = client._parse_parts([raw_part])
+
+    assert len(contents) == 1
+    assert contents[0].type == "function_call"
+    assert contents[0].call_id == "search-1"
+    assert contents[0].name == "FILE_SEARCH"
+    assert contents[0].parse_arguments() == {"query": "docs"}
+    assert contents[0].informational_only is True
+
+
+def test_server_side_tool_call_part_preserves_raw_part_on_replay() -> None:
+    """Informational server-side calls must round-trip as Gemini tool_call parts, not function_call parts."""
+    client, _ = _make_gemini_client()
+    raw_part = types.Part(
+        tool_call=types.ToolCall(id="search-1", tool_type=types.ToolType.FILE_SEARCH, args={"query": "docs"})
+    )
+    content = Content.from_function_call(
+        call_id="search-1",
+        name="FILE_SEARCH",
+        arguments={"query": "docs"},
+        informational_only=True,
+        raw_representation=raw_part,
+    )
+
+    parts = client._convert_message_contents([content], {})
+
+    assert len(parts) == 1
+    assert parts[0].tool_call is not None
+    assert parts[0].function_call is None
+    assert parts[0].tool_call.id == "search-1"
+    assert parts[0].tool_call.tool_type == types.ToolType.FILE_SEARCH
+    assert parts[0].tool_call.args == {"query": "docs"}
+
+
+def test_server_side_tool_response_part_preserves_raw_part_on_replay() -> None:
+    """Server-side Gemini tool responses stay in their native tool_response representation."""
+    client, _ = _make_gemini_client()
+    raw_part = types.Part(
+        tool_response=types.ToolResponse(
+            id="search-1",
+            tool_type=types.ToolType.FILE_SEARCH,
+            response={"results": ["doc"]},
+        )
+    )
+    content = Content.from_function_result(
+        call_id="search-1",
+        result={"results": ["doc"]},
+        raw_representation=raw_part,
+    )
+
+    parts = client._convert_message_contents([content], {})
+
+    assert len(parts) == 1
+    assert parts[0].tool_response is not None
+    assert parts[0].function_response is None
+    assert parts[0].tool_response.id == "search-1"
+    assert parts[0].tool_response.tool_type == types.ToolType.FILE_SEARCH
+    assert parts[0].tool_response.response == '{"results": ["doc"]}'
+
+
+def test_server_side_tool_response_part_uses_content_values_on_replay() -> None:
+    """Server-side Gemini tool responses replay the framework call ID and result."""
+    client, _ = _make_gemini_client()
+    raw_part = types.Part(
+        tool_response=types.ToolResponse(
+            id=None,
+            tool_type=types.ToolType.FILE_SEARCH,
+            response={"results": ["raw"]},
+        )
+    )
+    content = Content.from_function_result(
+        call_id="generated-search-id",
+        result={"results": ["content"]},
+        raw_representation=raw_part,
+    )
+
+    parts = client._convert_message_contents([content], {})
+
+    assert len(parts) == 1
+    assert parts[0].tool_response is not None
+    assert parts[0].function_response is None
+    assert parts[0].tool_response.id == "generated-search-id"
+    assert parts[0].tool_response.tool_type == types.ToolType.FILE_SEARCH
+    assert parts[0].tool_response.response == '{"results": ["content"]}'
+    assert raw_part.tool_response is not None
+    assert raw_part.tool_response.id is None
+    assert raw_part.tool_response.response == {"results": ["raw"]}
 
 
 # multimodal (data/uri) parts
@@ -892,6 +1375,8 @@ async def test_unknown_part_type_is_skipped() -> None:
     unknown_part.text = None
     unknown_part.function_call = None
     unknown_part.function_response = None
+    unknown_part.tool_call = None
+    unknown_part.tool_response = None
     unknown_part.executable_code = None
     unknown_part.code_execution_result = None
     mock.aio.models.generate_content = AsyncMock(return_value=_make_response([unknown_part, _make_part(text="Hi")]))
@@ -910,6 +1395,8 @@ async def test_empty_executable_code_part_is_skipped() -> None:
     mock_part.thought = False
     mock_part.function_call = None
     mock_part.function_response = None
+    mock_part.tool_call = None
+    mock_part.tool_response = None
     mock_part.code_execution_result = None
     mock_part.executable_code = MagicMock()
     mock_part.executable_code.code = ""
@@ -1095,6 +1582,53 @@ async def test_response_format_sets_json_mime_type() -> None:
 
     config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
     assert config.response_mime_type == "application/json"
+
+
+async def test_response_format_pydantic_model_sets_response_schema() -> None:
+    """A Pydantic model response_format must reach Gemini as response_schema, not just JSON mode.
+
+    Without the schema, the model is asked for JSON but is not constrained by it, so it can
+    return arbitrary JSON that then fails to parse into the requested model - the failure mode
+    #5888 described for mapping-shaped schemas, on the shape #5893 left out of scope.
+    """
+    from pydantic import BaseModel
+
+    class Reply(BaseModel):
+        text: str
+
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="{}")]))
+
+    await client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Hi")])],
+        options={"response_format": Reply},
+    )
+
+    config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
+    assert config.response_mime_type == "application/json"
+    assert config.response_schema == Reply.model_json_schema()
+
+
+async def test_response_schema_option_wins_over_pydantic_response_format() -> None:
+    """An explicit response_schema still takes precedence, as it already does for mapping shapes."""
+    from pydantic import BaseModel
+
+    class Reply(BaseModel):
+        text: str
+
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="{}")]))
+    explicit = {"type": "object", "properties": {"other": {"type": "string"}}}
+
+    await client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Hi")])],
+        # response_format binds the options TypedDict to Reply while response_schema only
+        # exists on GeminiChatOptions[None]; no get_response overload accepts the combination.
+        options=cast(Any, {"response_format": Reply, "response_schema": explicit}),
+    )
+
+    config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
+    assert config.response_schema == explicit
 
 
 async def test_response_format_populates_value_on_chat_response() -> None:
@@ -1508,6 +2042,31 @@ async def test_function_tool_converted_to_function_declaration() -> None:
     assert function_declaration.name == "get_weather"
 
 
+async def test_function_tool_json_schema_forwarded_to_parameters_json_schema() -> None:
+    """Forwards full JSON Schema from FunctionTool instead of coercing it into Gemini's Schema subset."""
+
+    def add_items(items: list[_ToolListItem]) -> str:
+        """Add items."""
+        return "ok"
+
+    tool = FunctionTool(name="add_items", func=add_items)
+    schema = tool.parameters()
+    assert "$defs" in schema
+
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Done")]))
+
+    await client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Add items")])],
+        options={"tools": [tool]},
+    )
+
+    config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
+    function_declaration = _first_function_declaration(config)
+    assert function_declaration.parameters is None
+    assert function_declaration.parameters_json_schema == schema
+
+
 async def test_callable_tool_resolved_via_validate_options() -> None:
     """Raw callables passed as tools must be normalized by _validate_options into FunctionTools
     and reach the Gemini config as function declarations.
@@ -1529,6 +2088,63 @@ async def test_callable_tool_resolved_via_validate_options() -> None:
     assert config.tools is not None
     function_declaration = _first_function_declaration(config)
     assert function_declaration.name == "get_weather"
+
+
+async def test_developer_api_mixed_native_and_function_tools_enable_server_side_invocations() -> None:
+    """Enables Gemini Developer API server-side tool invocations when built-ins and function tools are mixed."""
+    tool = _make_dummy_tool()
+    search_tool = GeminiChatClient.get_web_search_tool()
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Done")]))
+
+    await client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Search and call a tool")])],
+        options={"tools": [search_tool, tool]},
+    )
+
+    config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
+    assert config.tool_config is not None
+    assert config.tool_config.include_server_side_tool_invocations is True
+
+
+async def test_developer_api_mixed_native_and_function_tools_preserve_tool_choice() -> None:
+    """Preserves function calling mode while enabling Developer API server-side built-in tool invocations."""
+    tool = _make_dummy_tool()
+    search_tool = GeminiChatClient.get_web_search_tool()
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Done")]))
+
+    await client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Search and call a tool")])],
+        options={"tools": [search_tool, tool], "tool_choice": "auto"},
+    )
+
+    config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
+    function_calling_config = _function_calling_config(config)
+    assert function_calling_config.mode == "AUTO"
+    assert config.tool_config is not None
+    assert config.tool_config.include_server_side_tool_invocations is True
+
+
+async def test_vertex_ai_mixed_native_and_function_tools_do_not_enable_server_side_invocations() -> None:
+    """Does not set the Developer API-only server-side invocation flag for Vertex AI."""
+    tool = _make_dummy_tool()
+    search_tool = GeminiChatClient.get_web_search_tool()
+    mock = MagicMock()
+    mock._api_client.vertexai = True
+    client = GeminiChatClient(client=mock, model="gemini-2.5-flash")
+    mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Done")]))
+
+    await client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Search and call a tool")])],
+        options={"tools": [search_tool, tool], "tool_choice": "auto"},
+    )
+
+    config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
+    function_calling_config = _function_calling_config(config)
+    assert function_calling_config.mode == "AUTO"
+    assert config.tool_config is not None
+    assert config.tool_config.include_server_side_tool_invocations is None
 
 
 # _coerce_to_dict
@@ -1852,6 +2468,8 @@ async def test_function_response_part_in_response_mapped_to_content() -> None:
     part.text = None
     part.thought = False
     part.function_call = None
+    part.tool_call = None
+    part.tool_response = None
     part.function_response = MagicMock()
     part.function_response.id = "call-99"
     part.function_response.response = {"result": "done"}

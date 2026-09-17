@@ -2,29 +2,48 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
+import json
 import os
 import sys
 import warnings
 from functools import wraps
+from importlib import import_module
 from pathlib import Path
 from typing import Annotated, Any, cast
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
+import agent_framework._telemetry as telemetry
 import pytest
-from agent_framework import Agent, ChatResponse, Content, Message, SupportsChatGetResponse, tool
-from agent_framework._telemetry import get_user_agent
+from agent_framework import (
+    Agent,
+    ChatResponse,
+    Content,
+    FunctionInvocationConfiguration,
+    Message,
+    SupportsChatGetResponse,
+    tool,
+)
+from agent_framework._sessions import AgentSession
+from agent_framework._telemetry import get_user_agent, mark_feature_used
 from agent_framework.exceptions import ChatClientException, ChatClientInvalidRequestException
-from agent_framework_openai import OpenAIContentFilterException
+from agent_framework_openai import OpenAIChatClient, OpenAIContentFilterException
 from agent_framework_openai._chat_client import RawOpenAIChatClient
 from azure.ai.projects.models import MCPTool as FoundryMCPTool
 from azure.core.exceptions import ResourceNotFoundError
+from azure.core.pipeline import Pipeline
+from azure.core.pipeline.policies import RedirectPolicy, UserAgentPolicy
+from azure.core.pipeline.transport import HttpRequest, HttpResponse, HttpTransport
 from azure.identity import AzureCliCredential
-from openai import BadRequestError
+from openai import AsyncOpenAI, BadRequestError, DefaultAsyncHttpxClient
 from pydantic import BaseModel
 from pytest import param
 
 from agent_framework_foundry import FoundryChatClient, RawFoundryChatClient
+from agent_framework_foundry._feature_usage import FeatureIndex, FeatureUsagePolicy
+
+_OPENAI_HTTPX = cast(Any, import_module(DefaultAsyncHttpxClient.__mro__[1].__module__.partition(".")[0]))
 
 
 class OutputStruct(BaseModel):
@@ -32,6 +51,74 @@ class OutputStruct(BaseModel):
 
     location: str
     weather: str | None = None
+
+
+def test_foundry_feature_usage_policy_refreshes_user_agent() -> None:
+    with telemetry._feature_mask_lock:
+        telemetry._feature_mask = 0
+    mark_feature_used(FeatureIndex.FOUNDRY_CHAT_CLIENT)
+    request = MagicMock()
+    request.http_request.url = "https://project.services.ai.azure.com/api/projects/test"
+    request.http_request.headers = {"User-Agent": "azsdk-python-ai-projects/1.0 agent-framework-python/1.0"}
+    FeatureUsagePolicy().on_request(request)
+
+    assert request.http_request.headers["User-Agent"] == (
+        "azsdk-python-ai-projects/1.0 agent-framework-python/1.0 (feat=v1.1000000000000)"
+    )
+
+
+def test_foundry_feature_usage_policy_removes_token_on_cross_origin_redirect() -> None:
+    class _Response(HttpResponse):
+        def body(self) -> bytes:
+            return b""
+
+    class _RedirectTransport(HttpTransport[HttpRequest, HttpResponse]):
+        def __init__(self) -> None:
+            self.sent_headers: list[dict[str, str]] = []
+
+        def __enter__(self) -> _RedirectTransport:
+            return self
+
+        def __exit__(self, *args: Any) -> None:
+            self.close()
+
+        def open(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+        def send(self, request: HttpRequest, **kwargs: Any) -> HttpResponse:
+            self.sent_headers.append(dict(request.headers))
+            response = _Response(request, None)
+            if len(self.sent_headers) == 1:
+                response.status_code = 302
+                response.headers = {"location": "https://example.com/redirected"}
+            else:
+                response.status_code = 200
+                response.headers = {}
+            return response
+
+    with telemetry._feature_mask_lock:
+        telemetry._feature_mask = 0
+    mark_feature_used(FeatureIndex.FOUNDRY_CHAT_CLIENT)
+    transport = _RedirectTransport()
+    pipeline = cast(Any, Pipeline)(
+        transport, [UserAgentPolicy(user_agent=get_user_agent()), RedirectPolicy(), FeatureUsagePolicy()]
+    )
+
+    pipeline.run(HttpRequest("GET", "https://project.services.ai.azure.com/api/projects/test"))
+
+    assert "(feat=v1." in transport.sent_headers[0]["User-Agent"]
+    assert "(feat=v1." not in transport.sent_headers[1]["User-Agent"]
+
+
+def test_foundry_feature_index_does_not_own_toolbox() -> None:
+    assert not hasattr(FeatureIndex, "FOUNDRY_TOOLBOX")
+
+
+def test_raw_foundry_chat_client_owns_foundry_feature_bit() -> None:
+    assert RawFoundryChatClient._FEATURE_USAGE_INDEX is FeatureIndex.FOUNDRY_CHAT_CLIENT
 
 
 @tool(approval_mode="never_require")
@@ -157,6 +244,7 @@ def test_init() -> None:
     assert client.model == _TEST_FOUNDRY_MODEL
     assert client.project_client is mock_project_client
     assert isinstance(client, SupportsChatGetResponse)
+    mock_project_client.get_openai_client.assert_called_once_with()
 
 
 def test_raw_foundry_chat_client_init_uses_explicit_parameters() -> None:
@@ -196,6 +284,7 @@ def test_init_with_default_header() -> None:
         assert client.default_headers is not None
         assert key in client.default_headers
         assert client.default_headers[key] == value
+    project_client.get_openai_client.assert_called_once_with(default_headers=default_headers)
 
 
 def test_init_with_project_endpoint_creates_project_client() -> None:
@@ -218,6 +307,11 @@ def test_init_with_project_endpoint_creates_project_client() -> None:
     assert factory.call_args.kwargs["credential"] is credential
     assert factory.call_args.kwargs["allow_preview"] is True
     assert factory.call_args.kwargs["user_agent"] == get_user_agent()
+    policies = factory.call_args.kwargs["per_retry_policies"]
+    assert len(policies) == 1
+    assert isinstance(policies[0], FeatureUsagePolicy)
+    assert "custom_hook_policy" not in factory.call_args.kwargs
+    project_client.get_openai_client.assert_called_once_with(http_client=ANY)
 
 
 def test_init_with_empty_model_raises(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -360,6 +454,71 @@ async def test_get_response_with_invalid_input() -> None:
         await client.get_response(messages=[])
 
 
+async def test_get_response_does_not_request_encrypted_reasoning_by_default() -> None:
+    """Foundry chat calls must not opt into encrypted reasoning unless requested."""
+    mock_response = MagicMock(
+        id="response_123",
+        model="test-model",
+        created_at=1000000000,
+        metadata={},
+        output_parsed=None,
+        output=[],
+        usage=None,
+        finish_reason=None,
+        conversation=None,
+        status="completed",
+    )
+
+    async def create_response(**kwargs: Any) -> Any:
+        if "reasoning.encrypted_content" in kwargs.get("include", []):
+            raise ValueError("Encrypted content is not supported with this model.")
+        return _as_raw(mock_response)
+
+    mock_openai_client = _make_mock_openai_client()
+    mock_openai_client.responses.with_raw_response.create.side_effect = create_response
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = mock_openai_client
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+
+    response = await client.get_response([Message(role="user", contents=["Hello"])])
+
+    assert response.response_id == "response_123"
+
+
+async def test_get_response_preserves_explicit_encrypted_reasoning_opt_in() -> None:
+    """Capable Foundry deployments can receive an explicit encrypted-reasoning opt-in."""
+    mock_response = MagicMock(
+        id="response_123",
+        model="test-model",
+        created_at=1000000000,
+        metadata={},
+        output_parsed=None,
+        output=[],
+        usage=None,
+        finish_reason=None,
+        conversation=None,
+        status="completed",
+    )
+
+    async def create_response(**kwargs: Any) -> Any:
+        if "reasoning.encrypted_content" not in kwargs.get("include", []):
+            raise ValueError("Encrypted reasoning opt-in was not forwarded.")
+        return _as_raw(mock_response)
+
+    mock_openai_client = _make_mock_openai_client()
+    mock_openai_client.responses.with_raw_response.create.side_effect = create_response
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = mock_openai_client
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+
+    response = await client.get_response(
+        [Message(role="user", contents=["Hello"])],
+        options={"include": ["reasoning.encrypted_content"]},
+    )
+
+    assert response.response_id == "response_123"
+
+
 async def test_web_search_tool_with_location() -> None:
     mock_openai_client = _make_mock_openai_client()
     project_client = MagicMock()
@@ -474,6 +633,28 @@ async def test_chat_message_parsing_with_function_calls() -> None:
             "output": "Function executed successfully",
         },
     ]
+
+
+@pytest.mark.parametrize(
+    ("output", "expected"),
+    [
+        pytest.param([], "", id="empty-list"),
+        pytest.param([{"value": 1}], '[{"value": 1}]', id="non-empty-list"),
+    ],
+)
+def test_foundry_function_result_list_respects_rich_output_capability(
+    output: list[dict[str, Any]],
+    expected: str,
+) -> None:
+    mock_openai_client = _make_mock_openai_client()
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = mock_openai_client
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+    content = Content("function_result", call_id="test-call-id", result=output)
+
+    result = client._prepare_content_for_openai("user", content)
+
+    assert result["output"] == expected
 
 
 async def test_content_filter_exception() -> None:
@@ -916,7 +1097,7 @@ async def test_integration_web_search() -> None:
 
 @pytest.mark.flaky
 @pytest.mark.integration
-@pytest.mark.xfail(reason="Azure AI Foundry stopped accepting array-format output in function_call_output ~2026-04-03")
+@pytest.mark.xfail(reason="Microsoft Foundry stopped accepting array-format output in function_call_output ~2026-04-03")
 @skip_if_foundry_integration_tests_disabled
 @_with_foundry_debug()
 async def test_integration_tool_rich_content_image() -> None:
@@ -955,6 +1136,31 @@ def test_get_code_interpreter_tool_with_file_ids() -> None:
 
     tool_obj = RawFoundryChatClient.get_code_interpreter_tool(file_ids=["file-abc123"])
     assert tool_obj is not None
+
+
+def test_code_interpreter_tool_serializes_to_otel_tool_definitions() -> None:
+    """Hosted code interpreter tools must serialize into OTel tool definitions.
+
+    Regression test: ``CodeInterpreterTool`` is an Azure SDK model (a non-dict ``Mapping``)
+    whose nested ``container`` (``AutoCodeInterpreterToolParam``) is itself a non-dict
+    ``Mapping``. Capturing telemetry for a request carrying this tool previously raised
+    ``TypeError: Object of type AutoCodeInterpreterToolParam is not JSON serializable``.
+    """
+    import json
+
+    from agent_framework.observability import OtelAttr, _get_span_attributes
+
+    tool_obj = RawFoundryChatClient.get_code_interpreter_tool(file_ids=["assistant-abc123"])
+
+    attributes = _get_span_attributes(operation_name="chat", provider_name="foundry", tools=tool_obj)
+
+    definitions = json.loads(attributes[OtelAttr.TOOL_DEFINITIONS])
+    assert definitions == [
+        {
+            "type": "code_interpreter",
+            "name": "code_interpreter",
+        }
+    ]
 
 
 def test_get_file_search_tool() -> None:
@@ -1426,3 +1632,232 @@ def test_agent_accepts_foundry_chat_clients() -> None:
     client = FoundryChatClient(project_client=mock_project, model="test-model")
     agent = Agent(client=client, instructions="test agent")
     assert agent.client is client
+
+
+_CONCURRENCY_MARKERS = ("first", "second")
+
+
+def _concurrency_response(marker: str, model: str) -> dict[str, Any]:
+    return {
+        "id": f"response-{marker}",
+        "created_at": 0,
+        "model": model,
+        "object": "response",
+        "output": [
+            {
+                "id": f"function-{marker}",
+                "type": "function_call",
+                "call_id": f"call-{marker}",
+                "name": "remote_lookup",
+                "arguments": json.dumps({"prompt": marker}),
+                "status": "completed",
+            },
+            {
+                "id": f"message-{marker}",
+                "type": "message",
+                "role": "assistant",
+                "status": "completed",
+                "content": [
+                    {
+                        "type": "output_text",
+                        "text": f"response for {marker}",
+                        "annotations": [],
+                        "logprobs": [],
+                    }
+                ],
+            },
+        ],
+        "parallel_tool_calls": True,
+        "tool_choice": "auto",
+        "tools": [],
+        "status": "completed",
+    }
+
+
+def _concurrency_stream_events(marker: str, model: str) -> list[dict[str, Any]]:
+    return [
+        {
+            "type": "response.output_item.added",
+            "output_index": 0,
+            "sequence_number": 0,
+            "item": {
+                "id": f"function-{marker}",
+                "type": "function_call",
+                "call_id": f"call-{marker}",
+                "name": "remote_lookup",
+                "arguments": "",
+                "status": "in_progress",
+            },
+        },
+        {
+            "type": "response.function_call_arguments.delta",
+            "item_id": f"function-{marker}",
+            "output_index": 0,
+            "sequence_number": 1,
+            "delta": json.dumps({"prompt": marker}),
+        },
+        {
+            "type": "response.output_text.delta",
+            "content_index": 0,
+            "delta": f"response for {marker}",
+            "item_id": f"message-{marker}",
+            "logprobs": [],
+            "output_index": 1,
+            "sequence_number": 2,
+        },
+        {
+            "type": "response.completed",
+            "sequence_number": 3,
+            "response": _concurrency_response(marker, model),
+        },
+    ]
+
+
+class _ResponsesTransport:
+    def __init__(self, model: str) -> None:
+        self.model = model
+        self.requests: dict[str, list[dict[str, Any]]] = {marker: [] for marker in _CONCURRENCY_MARKERS}
+        self.active_requests = 0
+        self.max_active_requests = 0
+        self._both_calls_started = asyncio.Event()
+
+    async def __call__(self, request: Any) -> Any:
+        body = request.content.decode()
+        marker = next((marker for marker in _CONCURRENCY_MARKERS if marker in body), None)
+        if marker is None:
+            raise AssertionError(f"Expected one of {_CONCURRENCY_MARKERS} in the request body: {body[:200]!r}")
+        self.requests[marker].append(json.loads(body))
+        self.active_requests += 1
+        self.max_active_requests = max(self.max_active_requests, self.active_requests)
+        if self.active_requests == 2:
+            self._both_calls_started.set()
+        try:
+            try:
+                await asyncio.wait_for(self._both_calls_started.wait(), timeout=5)
+            except TimeoutError as exc:
+                raise AssertionError("Concurrent chat requests did not overlap within 5 seconds") from exc
+            if self.requests[marker][-1].get("stream"):
+                content = "".join(
+                    f"data: {json.dumps(event)}\n\n" for event in _concurrency_stream_events(marker, self.model)
+                )
+                return _OPENAI_HTTPX.Response(
+                    200,
+                    headers={"content-type": "text/event-stream"},
+                    content=f"{content}data: [DONE]\n\n",
+                )
+            return _OPENAI_HTTPX.Response(200, json=_concurrency_response(marker, self.model))
+        finally:
+            self.active_requests -= 1
+
+
+class _ProjectClient:
+    def __init__(self, client: AsyncOpenAI) -> None:
+        self._client = client
+
+    def get_openai_client(self, **kwargs: Any) -> AsyncOpenAI:
+        del kwargs
+        return self._client
+
+
+def _build_concurrency_client(
+    provider: str,
+    model: str,
+    transport: _ResponsesTransport,
+) -> tuple[OpenAIChatClient[Any] | FoundryChatClient, AsyncOpenAI]:
+    async_client = AsyncOpenAI(
+        api_key="test-key",
+        base_url="https://example.test/v1",
+        http_client=DefaultAsyncHttpxClient(transport=_OPENAI_HTTPX.MockTransport(transport)),
+    )
+    function_invocation_configuration: FunctionInvocationConfiguration = {"enabled": False}
+    if provider == "foundry":
+        project_client = _ProjectClient(async_client)
+        return (
+            FoundryChatClient(
+                project_client=cast(Any, project_client),
+                model=model,
+                function_invocation_configuration=function_invocation_configuration,
+            ),
+            async_client,
+        )
+    return (
+        OpenAIChatClient(
+            model=model,
+            async_client=async_client,
+            function_invocation_configuration=function_invocation_configuration,
+        ),
+        async_client,
+    )
+
+
+async def _run_concurrent_agent(
+    client: OpenAIChatClient[Any] | FoundryChatClient,
+    prompt: str,
+    *,
+    stream: bool,
+) -> tuple[str, set[str], set[str], AgentSession]:
+    agent = Agent(client=client)
+    session = agent.get_session(service_session_id=f"previous-{prompt}")
+    if stream:
+        text_parts: list[str] = []
+        call_ids: set[str] = set()
+        arguments: set[str] = set()
+        async for update in agent.run(prompt, session=session, stream=True):
+            for content in update.contents:
+                if content.type == "text" and content.text is not None:
+                    text_parts.append(content.text)
+                elif content.type == "function_call" and content.call_id is not None:
+                    call_ids.add(content.call_id)
+                    arguments.add(str(content.arguments))
+        return "".join(text_parts), call_ids, arguments, session
+
+    response = await agent.run(prompt, session=session, stream=False)
+    call_contents = [
+        content for message in response.messages for content in message.contents if content.type == "function_call"
+    ]
+    return (
+        response.text,
+        {content.call_id for content in call_contents if content.call_id is not None},
+        {str(content.arguments) for content in call_contents},
+        session,
+    )
+
+
+@pytest.mark.parametrize("provider", ["openai", "foundry"])
+@pytest.mark.parametrize(
+    ("first_stream", "second_stream"),
+    [(False, False), (True, True), (True, False)],
+    ids=["non-streaming", "streaming", "mixed"],
+)
+async def test_shared_chat_client_keeps_concurrent_agent_runs_isolated(
+    provider: str,
+    first_stream: bool,
+    second_stream: bool,
+) -> None:
+    model = "test-model"
+    transport = _ResponsesTransport(model)
+    client, async_client = _build_concurrency_client(provider, model, transport)
+
+    try:
+        first, second = await asyncio.gather(
+            _run_concurrent_agent(client, "first", stream=first_stream),
+            _run_concurrent_agent(client, "second", stream=second_stream),
+        )
+    finally:
+        await async_client.close()
+
+    first_text, first_call_ids, first_arguments, first_session = first
+    second_text, second_call_ids, second_arguments, second_session = second
+    assert first_text == "response for first"
+    assert second_text == "response for second"
+    assert first_call_ids == {"call-first"}
+    assert second_call_ids == {"call-second"}
+    assert json.dumps({"prompt": "first"}) in first_arguments
+    assert json.dumps({"prompt": "second"}) in second_arguments
+    assert transport.requests["first"][0]["previous_response_id"] == "previous-first"
+    assert transport.requests["second"][0]["previous_response_id"] == "previous-second"
+    assert all("second" not in json.dumps(request) for request in transport.requests["first"])
+    assert all("first" not in json.dumps(request) for request in transport.requests["second"])
+    assert first_session.service_session_id == "response-first"
+    assert second_session.service_session_id == "response-second"
+    assert transport.max_active_requests == 2

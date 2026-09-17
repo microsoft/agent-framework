@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// Agent Observability — OpenTelemetry tracing with Azure AI Foundry
+// Agent Observability — OpenTelemetry tracing with Microsoft Foundry
 //
 // This sample shows how to instrument an AI agent with OpenTelemetry
 // for distributed tracing and telemetry logging.

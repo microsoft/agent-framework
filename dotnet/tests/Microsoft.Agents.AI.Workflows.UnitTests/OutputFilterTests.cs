@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
-using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.Execution;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
@@ -26,7 +25,7 @@ public class OutputFilterTests
     {
         OutputFilter filter = CreateFilterWithOutputFrom("end");
 
-        filter.CanOutput("end", "some output").Should().BeTrue("the executor was registered via WithOutputFrom");
+        Assert.True(filter.CanOutput("end", "some output"));
     }
 
     [Fact]
@@ -34,7 +33,7 @@ public class OutputFilterTests
     {
         OutputFilter filter = CreateFilterWithOutputFrom("end");
 
-        filter.CanOutput("start", "some output").Should().BeFalse("start was not registered as an output executor");
+        Assert.False(filter.CanOutput("start", "some output"));
     }
 
     [Fact]
@@ -42,7 +41,7 @@ public class OutputFilterTests
     {
         OutputFilter filter = CreateFilterWithOutputFrom("end");
 
-        filter.CanOutput("nonexistent", "some output").Should().BeFalse("an executor not in the workflow should not be an output executor");
+        Assert.False(filter.CanOutput("nonexistent", "some output"));
     }
 
     [Fact]
@@ -50,8 +49,9 @@ public class OutputFilterTests
     {
         OutputFilter filter = CreateFilterWithOutputFrom("end");
 
-        filter.TryGetTags("end", out HashSet<OutputTag>? tags).Should().BeTrue();
-        tags.Should().NotBeNull().And.BeEmpty("terminal designation carries no tag");
+        Assert.True(filter.TryGetTags("end", out HashSet<OutputTag>? tags));
+        Assert.NotNull(tags);
+        Assert.Empty(tags);
     }
 
     [Fact]
@@ -67,8 +67,8 @@ public class OutputFilterTests
 
         OutputFilter filter = new(workflow);
 
-        filter.TryGetTags("end", out HashSet<OutputTag>? tags).Should().BeTrue();
-        tags.Should().BeEquivalentTo(new[] { OutputTag.Intermediate });
+        Assert.True(filter.TryGetTags("end", out HashSet<OutputTag>? tags));
+        Assert.Equivalent(new[] { OutputTag.Intermediate }, tags);
     }
 
     [Fact]
@@ -85,9 +85,8 @@ public class OutputFilterTests
 
         OutputFilter filter = new(workflow);
 
-        filter.TryGetTags("end", out HashSet<OutputTag>? tags).Should().BeTrue();
-        tags.Should().BeEquivalentTo(new[] { OutputTag.Intermediate },
-            "terminal designation contributes no tag; the union is the intermediate set");
+        Assert.True(filter.TryGetTags("end", out HashSet<OutputTag>? tags));
+        Assert.Equivalent(new[] { OutputTag.Intermediate }, tags);
     }
 
     [Fact]
@@ -95,8 +94,8 @@ public class OutputFilterTests
     {
         OutputFilter filter = CreateFilterWithOutputFrom("end");
 
-        filter.TryGetTags("start", out HashSet<OutputTag>? tags).Should().BeFalse();
-        tags.Should().BeNull();
+        Assert.False(filter.TryGetTags("start", out HashSet<OutputTag>? tags));
+        Assert.Null(tags);
     }
 
     private sealed class NoOpExecutor(string id) : Executor(id)

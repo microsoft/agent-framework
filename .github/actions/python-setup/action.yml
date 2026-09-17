@@ -17,12 +17,12 @@ runs:
     using: "composite"
     steps:
       - name: Set up uv
-        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
             version-file: "python/pyproject.toml"
             enable-cache: true
             cache-suffix: ${{ inputs.os }}-${{ inputs.python-version }}
-            cache-dependency-glob: "**/uv.lock"
+            cache-dependency-glob: "python/uv.lock"
       - name: Exclude incompatible workspace packages
         if: ${{ inputs.exclude-packages != '' }}
         shell: bash
@@ -46,4 +46,4 @@ runs:
       - name: Install the project
         shell: bash
         run: |
-          cd python && uv sync --all-packages --all-extras --dev --prerelease=if-necessary-or-explicit
+          cd python && uv sync --all-packages --all-extras --all-groups --prerelease=if-necessary

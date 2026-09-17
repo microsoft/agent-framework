@@ -391,6 +391,17 @@ class TestToolApprovalTypes:
         assert response.approved is False
         assert response.reason == "Not authorized"
 
+    @pytest.mark.parametrize("approved", ["true", "false", 1, 0, None])
+    def test_approval_response_rejects_non_boolean(self, approved: Any):
+        """Approval workflow coercion must reject malformed decision values."""
+        with pytest.raises(TypeError, match="approved must be a bool"):
+            ToolApprovalResponse(approved=approved)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+
+    def test_approval_response_requires_approved(self):
+        """Missing approval decisions are rejected by response construction."""
+        with pytest.raises(TypeError):
+            ToolApprovalResponse()  # type: ignore[call-arg]  # ty: ignore[missing-argument]
+
 
 class TestInvokeFunctionToolEdgeCases:
     """Tests for edge cases and error handling."""

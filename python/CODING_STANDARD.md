@@ -27,11 +27,11 @@ Public modules must include a module-level docstring, including `__init__.py` fi
 
 ## Type Annotations
 
-We use typing as a helper, it is not a goal in and of itself, so be pragmatic about where and when to strictly type, versus when to use a targetted cast or ignore.
+We use typing as a helper, it is not a goal in and of itself, so be pragmatic about where and when to strictly type, versus when to use a targeted cast or ignore.
 In general, the public interfaces of our classes, are important to get right, internally it is okay to have loosely typed code, as long as tests cover the code itself.
 This includes making a conscious choice when to program defensively, you can always do `getattr(item, 'attribute')` but that might end up causing you issues down the road
 because the type of `item` in this case, should have that attribute and if it doesn't it points to a larger issue, so if the type is expected to have that attribute, you should
-use `item.attribute` to ensure it fails at that point, rather then somewhere downstream where a value is expected but none was found.
+use `item.attribute` to ensure it fails at that point, rather than somewhere downstream where a value is expected but none was found.
 
 ### Future Annotations
 
@@ -105,7 +105,12 @@ Use typing as a helper first and suppressions as a last resort:
   (`# pyright: ignore[reportGeneralTypeIssues]`), file-level is allowed if there is a compelling reason for it, that should be documented right beneath the ignore.
   Never change the global suppression flags unless the dev team okays it.
 - **Private usage boundary**: Accessing private members across `agent_framework*` packages can be acceptable for this
-  codebase, but private member usage for non-Agent Framework dependencies should remain flagged.
+  codebase, but private member usage for non-Agent Framework dependencies should remain flagged. Do not make an
+  internal helper public merely to satisfy pyright private-usage checks inside the package; use a targeted
+  `# pyright: ignore[reportPrivateUsage]` when the internal dependency is intentional.
+- **Avoid typing-only wrappers**: Do not introduce trivial pass-through functions solely to satisfy typing or private
+  usage checks. Prefer a targeted ignore, cast, or clearer annotation over an extra one-line function that adds runtime
+  overhead without improving the design.
 
 ## Function Parameter Guidelines
 
@@ -235,6 +240,7 @@ AgentFrameworkException                          # Base for all AF exceptions
 │   └── AgentContentFilterException              # Agent content filter triggered
 │
 ├── ChatClientException                          # Chat client lifecycle and communication failures
+│   ├── ResponseInvalidatedException             # Provider invalidated partial response output
 │   ├── ChatClientInvalidAuthException           # Chat client auth failures
 │   ├── ChatClientInvalidRequestException        # Invalid request to chat client
 │   ├── ChatClientInvalidResponseException       # Invalid/unexpected response from chat client
@@ -265,6 +271,7 @@ AgentFrameworkException                          # Base for all AF exceptions
 │   └── ToolExecutionException                   # Failure during tool execution
 │
 ├── MiddlewareException                          # Middleware failures
+│   ├── MiddlewareFailure                        # Control-flow: fatal fail-closed abort of the run
 │   └── MiddlewareTermination                    # Control-flow: early middleware termination
 │
 └── SettingNotFoundError                         # Required setting not resolved from any source
@@ -278,6 +285,7 @@ AgentFrameworkException                          # Base for all AF exceptions
 | Object in wrong state (e.g., client not initialized) | `RuntimeError` |
 | External service returns 401/403 | `IntegrationInvalidAuthException` (or `ChatClient`/`Agent` variant) |
 | External service returns unexpected response | `IntegrationInvalidResponseException` (or variant) |
+| Chat provider invalidates partial response output containing local function calls | `ResponseInvalidatedException` |
 | Content filter blocks a request | `IntegrationContentFilterException` (or variant) |
 | Request validation fails before sending to service | `IntegrationInvalidRequestException` (or variant) |
 | Agent not found in registry | `AgentInvalidRequestException` |
@@ -682,6 +690,20 @@ otel_messages.append(_to_otel_message(message)) # this already serializes
 message_data = message.to_dict(exclude_none=True)  # and this does so again!
 logger.info(message_data, extra={...})
 ```
+
+When converting arbitrary values for telemetry, protocol, or event payloads, reuse the optimized framework
+converter instead of adding a package-local recursive serializer:
+
+```python
+from agent_framework._serialization import make_json_safe  # pyright: ignore[reportPrivateUsage]
+
+payload = make_json_safe(value)
+```
+
+Use a model's `to_dict()` directly when its type is known. Use `make_json_safe()` for heterogeneous values that may
+contain framework models, Pydantic models, dataclasses, containers, or primitives. Keep provider-specific conversion
+local when an API requires exact aliases, JSON modes, or opaque JSON strings, and avoid `json.dumps()` followed by
+`json.loads()` unless crossing such a required wire-format boundary.
 
 ## Test Organization
 

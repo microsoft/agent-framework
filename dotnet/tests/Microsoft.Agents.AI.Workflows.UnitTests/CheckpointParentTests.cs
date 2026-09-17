@@ -3,7 +3,6 @@
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.InProc;
 
@@ -45,12 +44,12 @@ public class CheckpointParentTests
         }
 
         // Assert: The first checkpoint should have been created and stored with a null parent.
-        checkpoints.Should().NotBeEmpty("at least one checkpoint should have been created");
+        Assert.NotEmpty(checkpoints);
 
         CheckpointInfo firstCheckpoint = checkpoints[0];
         Checkpoint storedFirst = await ((ICheckpointManager)checkpointManager)
             .LookupCheckpointAsync(firstCheckpoint.SessionId, firstCheckpoint);
-        storedFirst.Parent.Should().BeNull("the first checkpoint should have no parent");
+        Assert.Null(storedFirst.Parent);
     }
 
     [Theory]
@@ -90,22 +89,22 @@ public class CheckpointParentTests
         }
 
         // Assert: We should have at least 3 checkpoints
-        checkpoints.Should().HaveCountGreaterThanOrEqualTo(3);
+        Assert.True(checkpoints.Count >= 3);
 
         // Verify the parent chain
         Checkpoint stored0 = await ((ICheckpointManager)checkpointManager)
             .LookupCheckpointAsync(checkpoints[0].SessionId, checkpoints[0]);
-        stored0.Parent.Should().BeNull("the first checkpoint should have no parent");
+        Assert.Null(stored0.Parent);
 
         Checkpoint stored1 = await ((ICheckpointManager)checkpointManager)
             .LookupCheckpointAsync(checkpoints[1].SessionId, checkpoints[1]);
-        stored1.Parent.Should().NotBeNull("the second checkpoint should have a parent");
-        stored1.Parent.Should().Be(checkpoints[0], "the second checkpoint's parent should be the first checkpoint");
+        Assert.NotNull(stored1.Parent);
+        Assert.Equal(checkpoints[0], stored1.Parent);
 
         Checkpoint stored2 = await ((ICheckpointManager)checkpointManager)
             .LookupCheckpointAsync(checkpoints[2].SessionId, checkpoints[2]);
-        stored2.Parent.Should().NotBeNull("the third checkpoint should have a parent");
-        stored2.Parent.Should().Be(checkpoints[1], "the third checkpoint's parent should be the second checkpoint");
+        Assert.NotNull(stored2.Parent);
+        Assert.Equal(checkpoints[1], stored2.Parent);
     }
 
     [Theory]
@@ -142,7 +141,7 @@ public class CheckpointParentTests
             }
         }
 
-        firstRunCheckpoints.Should().HaveCountGreaterThanOrEqualTo(2);
+        Assert.True(firstRunCheckpoints.Count >= 2);
         CheckpointInfo resumePoint = firstRunCheckpoints[0];
 
         // Dispose the first run to release workflow ownership before resuming.
@@ -166,10 +165,10 @@ public class CheckpointParentTests
         }
 
         // Assert: The first checkpoint after resume should have the resume point as its parent.
-        resumedCheckpoints.Should().NotBeEmpty();
+        Assert.NotEmpty(resumedCheckpoints);
         Checkpoint storedResumed = await ((ICheckpointManager)checkpointManager)
             .LookupCheckpointAsync(resumedCheckpoints[0].SessionId, resumedCheckpoints[0]);
-        storedResumed.Parent.Should().NotBeNull("checkpoint created after resume should have a parent");
-        storedResumed.Parent.Should().Be(resumePoint, "checkpoint after resume should reference the checkpoint we resumed from");
+        Assert.NotNull(storedResumed.Parent);
+        Assert.Equal(resumePoint, storedResumed.Parent);
     }
 }

@@ -21,7 +21,10 @@ parameter to access HITL and state APIs directly.
 
 Key public symbols:
 
-* :func:`workflow` / :class:`FunctionalWorkflow` — decorator and runtime.
+* :func:`workflow` / :class:`FunctionalWorkflowDefinition` — decorator and
+  stateless definition.
+* :class:`FunctionalWorkflow` — stateful runtime created by
+  :meth:`FunctionalWorkflowDefinition.build`.
 * :func:`step` / :class:`StepWrapper` — optional step decorator.
 * :class:`RunContext` — execution context injected into workflow and step
   functions.
@@ -49,15 +52,20 @@ from typing import Any, Generic, Literal, TypeVar, overload
 from .._feature_stage import ExperimentalFeature, experimental
 from .._serialization import make_json_safe
 from .._types import AgentResponse, AgentResponseUpdate, ResponseStream
-from ..observability import OtelAttr, capture_exception, create_workflow_span
+from ..observability import (
+    OtelAttr,
+    _activate_span,
+    capture_exception,
+    start_workflow_span,
+)
 from ._checkpoint import CheckpointStorage, WorkflowCheckpoint
 from ._events import (
     WorkflowErrorDetails,
     WorkflowEvent,
     WorkflowRunState,
-    _framework_event_origin,
+    _framework_event,
 )
-from ._workflow import WorkflowRunResult
+from ._workflow import WorkflowRunResult, _coerce_request_info_response
 
 logger = logging.getLogger(__name__)
 
@@ -236,6 +244,9 @@ class RunContext:
         found, value = self._get_response(rid)
         if found:
             self._pending_requests.pop(rid, None)
+            # Functional workflows intentionally allow None responses; _set_responses logs a warning for them.
+            if value is not None:
+                value = _coerce_request_info_response(value, response_type, rid)
             return value
 
         # No response — emit event and interrupt
@@ -629,6 +640,46 @@ def step(
 
 
 # ---------------------------------------------------------------------------
+# FunctionalWorkflowDefinition
+# ---------------------------------------------------------------------------
+
+
+@experimental(feature_id=ExperimentalFeature.FUNCTIONAL_WORKFLOWS)
+class FunctionalWorkflowDefinition:
+    """Stateless definition produced by :func:`workflow`.
+
+    Call :meth:`build` to create a stateful :class:`FunctionalWorkflow`.
+    Each built workflow represents one logical caller or session.
+    """
+
+    def __init__(
+        self,
+        func: Callable[..., Awaitable[Any]],
+        *,
+        name: str | None = None,
+        description: str | None = None,
+    ) -> None:
+        FunctionalWorkflow._classify_signature(func)
+        self._func = func
+        self.name = name or func.__name__
+        self.description = description
+        functools.update_wrapper(self, func)  # type: ignore[arg-type]
+
+    def build(
+        self,
+        *,
+        checkpoint_storage: CheckpointStorage | None = None,
+    ) -> FunctionalWorkflow:
+        """Build a stateful workflow for one logical caller or session."""
+        return FunctionalWorkflow(
+            self._func,
+            name=self.name,
+            description=self.description,
+            checkpoint_storage=checkpoint_storage,
+        )
+
+
+# ---------------------------------------------------------------------------
 # FunctionalWorkflow
 # ---------------------------------------------------------------------------
 
@@ -637,14 +688,18 @@ def step(
 class FunctionalWorkflow:
     """A workflow backed by a user-defined async function.
 
-    Created by the :func:`workflow` decorator.  Exposes the same ``run()``
-    interface as graph-based :class:`Workflow` objects, returning a
+    Built from a :class:`FunctionalWorkflowDefinition`. Exposes the same
+    ``run()`` interface as graph-based :class:`Workflow` objects, returning a
     :class:`WorkflowRunResult` (or a :class:`ResponseStream` in streaming
     mode).
 
     The underlying function is executed directly — no graph compilation or
     edge wiring is involved.  Native Python control flow (``if``/``else``,
     ``for``, ``asyncio.gather``) is used for branching and parallelism.
+
+    Like graph-based :class:`Workflow`, each instance owns mutable execution
+    state across calls to :meth:`run`. Scope an instance to one logical
+    caller or session; build separate instances for independent callers.
 
     Args:
         func: The async function that implements the workflow logic.
@@ -664,7 +719,8 @@ class FunctionalWorkflow:
                 return await to_upper(data)
 
 
-            result = await my_pipeline.run("hello")
+            pipeline = my_pipeline.build()
+            result = await pipeline.run("hello")
             print(result.get_outputs())  # ['HELLO']
     """
 
@@ -686,6 +742,7 @@ class FunctionalWorkflow:
         self._last_message: Any = None
         self._last_step_cache: dict[tuple[str, int], Any] = {}
         self._last_step_cache_auto_request_info_counts: dict[tuple[str, int], int] = {}
+        self._last_state: dict[str, Any] = {}
         self._last_pending_request_ids: set[str] = set()
 
         # Signature arity is validated once at decoration time.
@@ -698,6 +755,30 @@ class FunctionalWorkflow:
         self.graph_signature_hash = self._compute_signature_hash()
 
         functools.update_wrapper(self, func)  # type: ignore[arg-type]
+
+    def _capture_replay_state(self, ctx: RunContext, message: Any | None = None) -> None:
+        """Capture the state needed to continue a response-only HITL replay."""
+        if message is not None:
+            self._last_message = message
+        self._last_step_cache = dict(ctx._step_cache)
+        self._last_step_cache_auto_request_info_counts = dict(ctx._step_cache_auto_request_info_counts)
+        self._last_state = dict(ctx._state)
+        self._last_pending_request_ids = set(ctx._pending_requests)
+
+    def _restore_replay_state(self, ctx: RunContext) -> Any:
+        """Restore cached execution state and return the message used by the replay."""
+        ctx._step_cache = dict(self._last_step_cache)
+        ctx._step_cache_auto_request_info_counts = dict(self._last_step_cache_auto_request_info_counts)
+        ctx._state = dict(self._last_state)
+        return self._last_message
+
+    def _clear_replay_state(self) -> None:
+        """Clear all state retained for a response-only replay."""
+        self._last_message = None
+        self._last_step_cache = {}
+        self._last_step_cache_auto_request_info_counts = {}
+        self._last_state = {}
+        self._last_pending_request_ids = set()
 
     @staticmethod
     def _classify_signature(func: Callable[..., Any]) -> list[str]:
@@ -811,6 +892,24 @@ class FunctionalWorkflow:
                 execution is not allowed).
         """
         self._validate_run_params(message, responses, checkpoint_id)
+        # Warn (but don't block) when a fresh message or a checkpoint restore begins while a prior
+        # run left request_info events pending. Mirrors Workflow.run. Delivering responses is the
+        # normal way to complete the pending cycle and is intentionally not warned.
+        if (message is not None or checkpoint_id is not None) and self._last_pending_request_ids:
+            logger.warning(
+                "Workflow %s received %s while %d request_info event(s) are still pending from an "
+                "unfinished request/response cycle; %s. Deliver responses (responses=...) to complete "
+                "the pending cycle before starting new input.",
+                self.name,
+                "a fresh message" if message is not None else "a checkpoint restore",
+                len(self._last_pending_request_ids),
+                (
+                    "those requests remain answerable, but this run advances workflow state, so a "
+                    "response that arrives later may apply to a workflow that has moved on"
+                    if message is not None
+                    else "those pending requests will be overwritten by the checkpoint's state"
+                ),
+            )
         if responses and checkpoint_id is None:
             # Require at least one response key to match a currently-pending
             # request; prevents silent replay against stale state while still
@@ -915,7 +1014,7 @@ class FunctionalWorkflow:
             if storage is None:
                 raise ValueError(
                     "Cannot restore from checkpoint without checkpoint_storage. "
-                    "Provide checkpoint_storage parameter or set it on the @workflow decorator."
+                    "Provide checkpoint_storage to build() or to this run."
                 )
             checkpoint = await storage.load(checkpoint_id)
             if checkpoint.graph_signature_hash != self.graph_signature_hash:
@@ -940,10 +1039,9 @@ class FunctionalWorkflow:
 
         # For response-only replay (no checkpoint), restore cached state
         if checkpoint_id is None and responses:
+            replay_message = self._restore_replay_state(ctx)
             if message is None:
-                message = self._last_message
-            ctx._step_cache = dict(self._last_step_cache)
-            ctx._step_cache_auto_request_info_counts = dict(self._last_step_cache_auto_request_info_counts)
+                message = replay_message
 
         # Store message for future replays
         if message is not None:
@@ -963,111 +1061,107 @@ class FunctionalWorkflow:
 
             ctx._on_step_completed = _on_step_completed
 
-        # Tracing
+        # Tracing: start the run span without attaching it. Attaching with
+        # create_workflow_span() across a yield leaves OpenTelemetry's context
+        # token set when this generator is later closed on GC from a different
+        # Context. Activate the span only around non-yielding work.
         attributes: dict[str, Any] = {OtelAttr.WORKFLOW_NAME: self.name}
         if self.description:
             attributes[OtelAttr.WORKFLOW_DESCRIPTION] = self.description
 
-        with create_workflow_span(OtelAttr.WORKFLOW_RUN_SPAN, attributes) as span:
-            saw_request = False
-            try:
-                span.add_event(OtelAttr.WORKFLOW_STARTED)
+        span = start_workflow_span(OtelAttr.WORKFLOW_RUN_SPAN, attributes)
+        saw_request = False
+        try:
+            span.add_event(OtelAttr.WORKFLOW_STARTED)
 
-                with _framework_event_origin():
-                    yield WorkflowEvent.started()
-                with _framework_event_origin():
-                    yield WorkflowEvent.status(WorkflowRunState.IN_PROGRESS)
+            yield _framework_event(WorkflowEvent.started)
+            yield _framework_event(WorkflowEvent.status, WorkflowRunState.IN_PROGRESS)
 
-                # Execute the user function
+            # Execute the user function with the run span current so nested
+            # executor/processing spans parent correctly.
+            with _activate_span(span):
                 return_value = await self._execute(ctx, message)
 
                 # Emit the return value as the workflow output.
                 if return_value is not None:
-                    with _framework_event_origin():
-                        await ctx.add_event(WorkflowEvent("output", executor_id=self.name, data=return_value))
+                    await ctx.add_event(
+                        _framework_event(WorkflowEvent, "output", executor_id=self.name, data=return_value)
+                    )
 
                 # Persist step cache for response-only replay
-                self._last_step_cache = dict(ctx._step_cache)
-                self._last_step_cache_auto_request_info_counts = dict(ctx._step_cache_auto_request_info_counts)
+                self._capture_replay_state(ctx, message)
 
-                # Yield collected events.
-                # NOTE: Events are buffered during _execute() and yielded after
-                # the user function completes.  This is *not* true streaming —
-                # all events have already been produced by this point.  True
-                # per-token streaming from inner agent calls is a future
-                # enhancement.
-                for event in ctx._get_events():
-                    if event.type == "request_info":
-                        saw_request = True
-                    yield event
-                    if event.type == "request_info":
-                        with _framework_event_origin():
-                            yield WorkflowEvent.status(WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS)
+            # Yield collected events.
+            # NOTE: Events are buffered during _execute() and yielded after
+            # the user function completes.  This is *not* true streaming —
+            # all events have already been produced by this point.  True
+            # per-token streaming from inner agent calls is a future
+            # enhancement.
+            for event in ctx._get_events():
+                if event.type == "request_info":
+                    saw_request = True
+                yield event
+                if event.type == "request_info":
+                    yield _framework_event(WorkflowEvent.status, WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS)
 
-                # Save final checkpoint if storage is available
-                if storage is not None:
-                    await self._save_checkpoint(ctx, storage, ckpt_chain[0])
+            # Save final checkpoint if storage is available
+            if storage is not None:
+                await self._save_checkpoint(ctx, storage, ckpt_chain[0])
 
-                # Final status
-                if saw_request:
-                    self._last_pending_request_ids = set(ctx._pending_requests)
-                    with _framework_event_origin():
-                        yield WorkflowEvent.status(WorkflowRunState.IDLE_WITH_PENDING_REQUESTS)
-                else:
-                    # Clean completion — drop cross-run replay state.
-                    self._last_message = None
-                    self._last_step_cache = {}
-                    self._last_step_cache_auto_request_info_counts = {}
-                    self._last_pending_request_ids = set()
-                    with _framework_event_origin():
-                        yield WorkflowEvent.status(WorkflowRunState.IDLE)
+            # Final status
+            if saw_request:
+                yield _framework_event(WorkflowEvent.status, WorkflowRunState.IDLE_WITH_PENDING_REQUESTS)
+            else:
+                # Clean completion — drop cross-run replay state.
+                self._clear_replay_state()
+                yield _framework_event(WorkflowEvent.status, WorkflowRunState.IDLE)
 
-                span.add_event(OtelAttr.WORKFLOW_COMPLETED)
+            span.add_event(OtelAttr.WORKFLOW_COMPLETED)
 
-            except WorkflowInterrupted:
-                # Persist step cache for response-only replay
-                self._last_step_cache = dict(ctx._step_cache)
-                self._last_step_cache_auto_request_info_counts = dict(ctx._step_cache_auto_request_info_counts)
-                self._last_pending_request_ids = set(ctx._pending_requests)
+        except WorkflowInterrupted:
+            # Persist step cache for response-only replay
+            self._capture_replay_state(ctx, message)
 
-                # HITL interruption — yield events collected so far
-                for event in ctx._get_events():
-                    if event.type == "request_info":
-                        saw_request = True
-                    yield event
-                    if event.type == "request_info":
-                        with _framework_event_origin():
-                            yield WorkflowEvent.status(WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS)
+            # HITL interruption — yield events collected so far
+            for event in ctx._get_events():
+                if event.type == "request_info":
+                    saw_request = True
+                yield event
+                if event.type == "request_info":
+                    yield _framework_event(WorkflowEvent.status, WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS)
 
-                # Save checkpoint
-                if storage is not None:
-                    await self._save_checkpoint(ctx, storage, ckpt_chain[0])
+            # Save checkpoint
+            if storage is not None:
+                await self._save_checkpoint(ctx, storage, ckpt_chain[0])
 
-                with _framework_event_origin():
-                    yield WorkflowEvent.status(WorkflowRunState.IDLE_WITH_PENDING_REQUESTS)
+            yield _framework_event(WorkflowEvent.status, WorkflowRunState.IDLE_WITH_PENDING_REQUESTS)
 
-                span.add_event(OtelAttr.WORKFLOW_COMPLETED)
+            span.add_event(OtelAttr.WORKFLOW_COMPLETED)
 
-            except Exception as exc:
-                # Yield any events collected before the failure
-                for event in ctx._get_events():
-                    yield event
+        except Exception as exc:
+            # Yield any events collected before the failure
+            for event in ctx._get_events():
+                yield event
 
-                details = WorkflowErrorDetails.from_exception(exc)
-                with _framework_event_origin():
-                    yield WorkflowEvent.failed(details)
-                with _framework_event_origin():
-                    yield WorkflowEvent.status(WorkflowRunState.FAILED)
+            details = WorkflowErrorDetails.from_exception(exc)
+            yield _framework_event(WorkflowEvent.failed, details)
+            yield _framework_event(WorkflowEvent.status, WorkflowRunState.FAILED)
 
-                span.add_event(
-                    name=OtelAttr.WORKFLOW_ERROR,
-                    attributes={
-                        "error.message": str(exc),
-                        "error.type": type(exc).__name__,
-                    },
-                )
-                capture_exception(span, exception=exc)
-                raise
+            span.add_event(
+                name=OtelAttr.WORKFLOW_ERROR,
+                attributes={
+                    "error.message": str(exc),
+                    "error.type": type(exc).__name__,
+                },
+            )
+            capture_exception(span, exception=exc)
+            raise
+        finally:
+            # ResponseStream cleanup_hooks do not run when the generator is
+            # closed by GC. Release the run lock here so a follow-up run
+            # after an abandoned stream is not rejected as concurrent.
+            self._release_run_guard()
+            span.end()
 
     async def _execute(self, ctx: RunContext, message: Any) -> Any:
         """Run the user's async function with the active context."""
@@ -1230,8 +1324,11 @@ class FunctionalWorkflow:
             raise RuntimeError("Workflow is already running. Concurrent executions are not allowed.")
         self._is_running = True
 
-    async def _run_cleanup(self) -> None:
+    def _release_run_guard(self) -> None:
         self._is_running = False
+
+    async def _run_cleanup(self) -> None:
+        self._release_run_guard()
 
 
 # ---------------------------------------------------------------------------
@@ -1240,7 +1337,7 @@ class FunctionalWorkflow:
 
 
 @overload
-def workflow(func: Callable[..., Awaitable[Any]]) -> FunctionalWorkflow: ...
+def workflow(func: Callable[..., Awaitable[Any]]) -> FunctionalWorkflowDefinition: ...
 
 
 @overload
@@ -1248,8 +1345,7 @@ def workflow(
     *,
     name: str | None = None,
     description: str | None = None,
-    checkpoint_storage: CheckpointStorage | None = None,
-) -> Callable[[Callable[..., Awaitable[Any]]], FunctionalWorkflow]: ...
+) -> Callable[[Callable[..., Awaitable[Any]]], FunctionalWorkflowDefinition]: ...
 
 
 @experimental(feature_id=ExperimentalFeature.FUNCTIONAL_WORKFLOWS)
@@ -1258,29 +1354,26 @@ def workflow(
     *,
     name: str | None = None,
     description: str | None = None,
-    checkpoint_storage: CheckpointStorage | None = None,
-) -> FunctionalWorkflow | Callable[[Callable[..., Awaitable[Any]]], FunctionalWorkflow]:
-    """Decorator that converts an async function into a :class:`FunctionalWorkflow`.
+) -> FunctionalWorkflowDefinition | Callable[[Callable[..., Awaitable[Any]]], FunctionalWorkflowDefinition]:
+    """Decorator that creates a stateless :class:`FunctionalWorkflowDefinition`.
 
     Supports both bare ``@workflow`` and parameterized
     ``@workflow(name="my_wf")`` forms.
 
     The decorated function receives its input as the first positional argument
     and a :class:`RunContext` instance wherever a parameter is annotated with
-    that type.  The resulting :class:`FunctionalWorkflow` object exposes the
-    same ``run()`` interface as graph-based workflows.
+    that type. Call ``build()`` on the resulting definition to create a
+    stateful :class:`FunctionalWorkflow`.
 
     Args:
         func: The async function to decorate (when using the bare
             ``@workflow`` form).
         name: Display name for the workflow.  Defaults to ``func.__name__``.
         description: Optional human-readable description.
-        checkpoint_storage: Default :class:`CheckpointStorage` for
-            persisting step results and workflow state.
 
     Returns:
-        A :class:`FunctionalWorkflow` (bare form) or a decorator that
-        produces one (parameterized form).
+        A :class:`FunctionalWorkflowDefinition` (bare form) or a decorator
+        that produces one (parameterized form).
 
     Examples:
 
@@ -1293,14 +1386,17 @@ def workflow(
 
 
             # Parameterized form
-            @workflow(name="my_pipeline", checkpoint_storage=storage)
+            @workflow(name="my_pipeline")
             async def pipeline(data: str) -> str: ...
+
+
+            instance = pipeline.build(checkpoint_storage=storage)
     """
     if func is not None:
-        return FunctionalWorkflow(func, name=name, description=description, checkpoint_storage=checkpoint_storage)
+        return FunctionalWorkflowDefinition(func, name=name, description=description)
 
-    def _decorator(fn: Callable[..., Awaitable[Any]]) -> FunctionalWorkflow:
-        return FunctionalWorkflow(fn, name=name, description=description, checkpoint_storage=checkpoint_storage)
+    def _decorator(fn: Callable[..., Awaitable[Any]]) -> FunctionalWorkflowDefinition:
+        return FunctionalWorkflowDefinition(fn, name=name, description=description)
 
     return _decorator
 
@@ -1324,6 +1420,12 @@ class FunctionalWorkflowAgent:
     as :class:`FunctionApprovalRequestContent` items (mirroring the graph
     :class:`WorkflowAgent`), so HITL workflows are callable via this
     adapter.  Callers resume via ``responses=`` / ``checkpoint_id=``.
+
+    The wrapped workflow owns mutable execution state. Scope the workflow and
+    this adapter to one logical caller or session; create separate workflow
+    instances for independent or mutually untrusted callers. If those
+    instances use checkpoint storage, the host must also authorize and
+    tenant-scope access to that external store.
 
     Args:
         workflow: The :class:`FunctionalWorkflow` to wrap.

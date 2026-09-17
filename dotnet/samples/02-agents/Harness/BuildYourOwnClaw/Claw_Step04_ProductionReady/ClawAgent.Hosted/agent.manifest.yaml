@@ -1,0 +1,38 @@
+﻿# yaml-language-server: $schema=https://raw.githubusercontent.com/microsoft/AgentSchema/refs/heads/main/schemas/v1.0/AgentManifest.yaml
+name: personal-finance-claw
+displayName: "Personal Finance Claw"
+
+description: >
+  A production-ready personal finance claw hosted as a Foundry Hosted Agent with
+  Agent Framework harness capabilities, observability, optional Purview governance,
+  local finance skills, CodeAct, and background agents.
+
+metadata:
+  tags:
+    - AI Agent Hosting
+    - Azure AI AgentServer
+    - Responses Protocol
+    - Agent Framework
+    - Observability
+    - Purview
+    - Evaluation
+
+template:
+  name: personal-finance-claw
+  kind: hosted
+  protocols:
+    - protocol: responses
+      version: 2.0.0
+  resources:
+    cpu: "1.0"
+    memory: 2Gi
+  environment_variables:
+    - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
+      value: "{{AZURE_AI_MODEL_DEPLOYMENT_NAME}}"
+    - name: TOOLBOX_MCP_SERVER_URL
+      value: "{{TOOLBOX_MCP_SERVER_URL}}"
+    - name: PURVIEW_CLIENT_APP_ID
+      value: "{{PURVIEW_CLIENT_APP_ID}}"
+parameters:
+  properties: []
+resources: []

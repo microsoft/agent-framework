@@ -579,6 +579,67 @@ public class ApprovalNotRequiredFunctionBypassingChatClientTests
 
     #endregion
 
+    #region Usage Pass-Through Tests
+
+    /// <summary>
+    /// Verifies that usage reported by the inner client is surfaced unchanged, since this decorator
+    /// makes exactly one inner call and must not drop or alter usage.
+    /// </summary>
+    [Fact]
+    public async Task GetResponseAsync_PassesUsageThroughUnchangedAsync()
+    {
+        // Arrange
+        var usage = new UsageDetails { InputTokenCount = 11, OutputTokenCount = 7, TotalTokenCount = 18 };
+        var innerClient = CreateMockChatClient((_, _, _) =>
+            Task.FromResult(new ChatResponse([new ChatMessage(ChatRole.Assistant, "Hello")]) { Usage = usage }));
+
+        var decorator = new ApprovalNotRequiredFunctionBypassingChatClient(innerClient);
+        var session = new ChatClientAgentSession();
+
+        // Act
+        var response = await RunWithAgentContextAsync(decorator, session);
+
+        // Assert
+        Assert.NotNull(response.Usage);
+        Assert.Equal(11, response.Usage!.InputTokenCount);
+        Assert.Equal(7, response.Usage.OutputTokenCount);
+        Assert.Equal(18, response.Usage.TotalTokenCount);
+    }
+
+    /// <summary>
+    /// Verifies that a streaming update carrying both auto-approved approval content and usage content
+    /// still surfaces its usage after the approval content is stripped.
+    /// </summary>
+    [Fact]
+    public async Task GetStreamingResponseAsync_UpdateWithAutoApprovedAndUsage_StillSurfacesUsageAsync()
+    {
+        // Arrange
+        var noApprovalTool = AIFunctionFactory.Create(() => "result", "plainTool");
+        var approval = new ToolApprovalRequestContent("req1", new FunctionCallContent("call1", "plainTool"));
+        var usage = new UsageDetails { InputTokenCount = 9, OutputTokenCount = 4, TotalTokenCount = 13 };
+
+        var innerClient = CreateMockStreamingChatClient((_, _, _) =>
+            ToAsyncEnumerableAsync(new ChatResponseUpdate(ChatRole.Assistant, [approval, new UsageContent(usage)])));
+
+        var decorator = new ApprovalNotRequiredFunctionBypassingChatClient(innerClient);
+        var session = new ChatClientAgentSession();
+        var options = new ChatOptions { Tools = [noApprovalTool] };
+
+        // Act
+        List<ChatResponseUpdate> updates = [];
+        await RunStreamingWithAgentContextAsync(decorator, session, updates, options);
+
+        // Assert — the approval request was bypassed but the usage survived.
+        Assert.DoesNotContain(updates.SelectMany(static u => u.Contents), static c => c is ToolApprovalRequestContent);
+        var response = updates.ToChatResponse();
+        Assert.NotNull(response.Usage);
+        Assert.Equal(9, response.Usage!.InputTokenCount);
+        Assert.Equal(4, response.Usage.OutputTokenCount);
+        Assert.Equal(13, response.Usage.TotalTokenCount);
+    }
+
+    #endregion
+
     #region Helpers
 
     private static async Task<ChatResponse> RunWithAgentContextAsync(

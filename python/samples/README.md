@@ -6,11 +6,11 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 
 | Folder | Description |
 |--------|-------------|
-| [`01-get-started/`](./01-get-started/) | Progressive tutorial: hello agent → hosting |
+| [`01-get-started/`](./01-get-started/) | Progressive tutorial: hello agent → graph workflows |
 | [`02-agents/`](./02-agents/) | Deep-dive by concept: tools, middleware, providers, orchestrations |
 | [`03-workflows/`](./03-workflows/) | Workflow patterns: sequential, concurrent, state, declarative, explicit output designation |
-| [`04-hosting/`](./04-hosting/) | Deployment: Azure Functions, Durable Tasks, A2A |
-| [`05-end-to-end/`](./05-end-to-end/) | Full applications, evaluation, demos |
+| [`04-hosting/`](./04-hosting/) | Deployment: A2A, self-hosted protocol helpers, and Foundry hosted agents |
+| [`05-end-to-end/`](./05-end-to-end/) | Full applications, evaluation, demos, including the [AG-UI single-agent demo](./05-end-to-end/ag_ui_single_agent/) using `FoundryChatClient` |
 
 ## Getting Started
 
@@ -23,13 +23,17 @@ Start with `01-get-started/` and work through the numbered files:
 5. **[05_functional_workflow_with_agents.py](./01-get-started/05_functional_workflow_with_agents.py)** — Call agents inside a functional workflow
 6. **[06_functional_workflow_basics.py](./01-get-started/06_functional_workflow_basics.py)** — Write a workflow as a plain async function
 7. **[07_first_graph_workflow.py](./01-get-started/07_first_graph_workflow.py)** — Build a workflow with executors and edges
-8. **[08_host_your_agent.py](./01-get-started/08_host_your_agent.py)** — Host your agent via Azure Functions
+
+Durable Task and Azure Functions samples have moved to the [Durable Agent Framework extension](https://github.com/microsoft/agent-framework-durable-extension/tree/main/python/samples).
 
 ## Prerequisites
 
 ```bash
-pip install agent-framework
+pip install agent-framework-foundry
 ```
+
+Install only the specific Agent Framework distributions required by the sample you want to run.
+Individual sample READMEs and PEP 723 metadata list any additional packages.
 
 ### Environment Variables
 
@@ -120,6 +124,8 @@ variable.
 | `agent-framework-core` | `observability` | `ENABLE_INSTRUMENTATION` | `true` |
 | `agent-framework-core` | `observability` | `ENABLE_SENSITIVE_DATA` | `false` |
 | `agent-framework-core` | `observability` | `ENABLE_CONSOLE_EXPORTERS` | `true` |
+| `agent-framework-core` | `agent_framework._telemetry` | `AGENT_FRAMEWORK_FEATURE_MASK_DISABLED` | `true` |
+| `agent-framework-core` | `agent_framework._telemetry` | `AGENT_FRAMEWORK_USER_AGENT_DISABLED` | `true` |
 | `agent-framework-core` | `observability` | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4317` |
 | `agent-framework-core` | `observability` | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | `http://localhost:4318/v1/traces` |
 | `agent-framework-core` | `observability` | `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | `http://localhost:4318/v1/metrics` |
@@ -142,6 +148,10 @@ variable.
 | `agent-framework-github-copilot` | `GitHubCopilotAgent` | `GITHUB_COPILOT_TIMEOUT` | `60` |
 | `agent-framework-github-copilot` | `GitHubCopilotAgent` | `GITHUB_COPILOT_LOG_LEVEL` | `info` |
 | `agent-framework-mem0` | `agent_framework_mem0 package import` | `MEM0_TELEMETRY` | `false` |
+| `agent-framework-mistral` | `MistralChatClient / MistralEmbeddingClient` | `MISTRAL_API_KEY` | `your-api-key` |
+| `agent-framework-mistral` | `MistralChatClient` | `MISTRAL_CHAT_MODEL` | `mistral-small-latest` |
+| `agent-framework-mistral` | `MistralEmbeddingClient` | `MISTRAL_EMBEDDING_MODEL` | `mistral-embed` |
+| `agent-framework-mistral` | `MistralChatClient / MistralEmbeddingClient` | `MISTRAL_SERVER_URL` | `https://api.mistral.ai` |
 | `agent-framework-ollama` | `OllamaChatClient` | `OLLAMA_HOST` | `http://localhost:11434` |
 | `agent-framework-ollama` | `OllamaChatClient` | `OLLAMA_MODEL` | `llama3.1:8b` |
 | `agent-framework-openai` | `OpenAIChatClient / OpenAIChatCompletionClient / OpenAIEmbeddingClient` | `OPENAI_API_KEY` | `sk-proj-...` |

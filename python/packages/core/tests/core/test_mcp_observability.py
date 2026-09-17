@@ -124,7 +124,9 @@ async def test_mcp_initialize_span(span_exporter: InMemorySpanExporter):
     with pytest.MonkeyPatch.context() as m:
         m.setattr(tool, "get_mcp_client", lambda: mock_transport)
 
-        async def patched_connect(self_: Any, *, reset: bool = False, load_configured: bool = True) -> None:
+        async def patched_connect(
+            self_: Any, *, reset: bool = False, load_configured: bool = True, reset_discovery: bool = False
+        ) -> None:
             # Simulate _connect_on_owner: create initialize span and call session.initialize()
             from agent_framework._mcp import create_mcp_client_span
             from agent_framework.observability import OtelAttr

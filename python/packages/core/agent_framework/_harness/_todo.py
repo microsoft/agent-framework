@@ -7,7 +7,6 @@ import json
 import os
 import weakref
 from abc import ABC, abstractmethod
-from base64 import urlsafe_b64encode
 from collections.abc import Mapping, MutableMapping
 from pathlib import Path
 from typing import Any, ClassVar, cast
@@ -15,8 +14,13 @@ from typing import Any, ClassVar, cast
 from typing_extensions import NotRequired, TypedDict
 
 from .._feature_stage import ExperimentalFeature, experimental
+from .._filesystem import (
+    _is_literal_storage_key_segment_safe,  # pyright: ignore[reportPrivateUsage]
+    _storage_key_segment,  # pyright: ignore[reportPrivateUsage]
+)
 from .._serialization import SerializationMixin
 from .._sessions import AgentSession, ContextProvider, SessionContext
+from .._telemetry import FeatureIndex, mark_feature_used
 from .._tools import tool
 from .._types import Message
 
@@ -47,7 +51,6 @@ DEFAULT_TODO_INSTRUCTIONS = (
 )
 
 
-@experimental(feature_id=ExperimentalFeature.HARNESS)
 class TodoItem(SerializationMixin):
     """Represent one todo item tracked for the current session."""
 
@@ -106,7 +109,6 @@ class TodoItem(SerializationMixin):
         )
 
 
-@experimental(feature_id=ExperimentalFeature.HARNESS)
 class TodoInput(SerializationMixin):
     """Describe one todo item to create."""
 
@@ -142,7 +144,6 @@ class TodoInput(SerializationMixin):
         return cls(title=title, description=description)
 
 
-@experimental(feature_id=ExperimentalFeature.HARNESS)
 class TodoCompleteInput(SerializationMixin):
     """Describe one todo item to mark as complete."""
 
@@ -227,7 +228,6 @@ def _safe_next_id(items: list[TodoItem], next_id: int) -> int:
     return max(next_id, max((item.id for item in items), default=0) + 1)
 
 
-@experimental(feature_id=ExperimentalFeature.HARNESS)
 class TodoStore(ABC):
     """Abstract backing store for session todo items."""
 
@@ -245,7 +245,6 @@ class TodoStore(ABC):
         return items
 
 
-@experimental(feature_id=ExperimentalFeature.HARNESS)
 class TodoSessionStore(TodoStore):
     """Store todo state inside ``AgentSession.state``."""
 
@@ -320,30 +319,6 @@ class TodoFileStore(TodoStore):
         self._base_root = self.base_path.resolve()
 
     _ENCODED_SEGMENT_PREFIX: ClassVar[str] = "~todo-"
-    _WINDOWS_RESERVED_FILE_STEMS: ClassVar[frozenset[str]] = frozenset({
-        "CON",
-        "PRN",
-        "AUX",
-        "NUL",
-        "COM1",
-        "COM2",
-        "COM3",
-        "COM4",
-        "COM5",
-        "COM6",
-        "COM7",
-        "COM8",
-        "COM9",
-        "LPT1",
-        "LPT2",
-        "LPT3",
-        "LPT4",
-        "LPT5",
-        "LPT6",
-        "LPT7",
-        "LPT8",
-        "LPT9",
-    })
 
     def _get_state_path(self, session: AgentSession, *, source_id: str) -> Path:
         """Return the JSON file path for one session and source ID."""
@@ -366,28 +341,22 @@ class TodoFileStore(TodoStore):
 
     @classmethod
     def _path_segment(cls, value: object, *, label: str, reject_path_separators: bool = False) -> str:
-        """Return a filesystem-safe path segment for user-controlled state values."""
+        """Return a filesystem-safe path segment for user-controlled state values.
+
+        Delegates to the shared
+        :func:`~agent_framework._filesystem._storage_key_segment` derivation, so
+        two byte-distinct values do not share a directory (values past a
+        length cap fall back to a collision-resistant digest).
+        """
         raw_value = str(value)
         if reject_path_separators and ("/" in raw_value or "\\" in raw_value):
             raise ValueError(f"TodoFileStore {label} must not contain path separators: {raw_value!r}")
-        if cls._is_literal_path_segment_safe(raw_value):
-            return raw_value
-        encoded_value = urlsafe_b64encode(raw_value.encode("utf-8")).decode("ascii").rstrip("=")
-        return f"{cls._ENCODED_SEGMENT_PREFIX}{encoded_value or label}"
+        return _storage_key_segment(raw_value, encoded_prefix=cls._ENCODED_SEGMENT_PREFIX)
 
     @classmethod
     def _is_literal_path_segment_safe(cls, value: str) -> bool:
         """Return whether a value can be used directly as one path segment."""
-        if (
-            not value
-            or value.startswith(".")
-            or value.endswith((" ", "."))
-            or value.upper() in cls._WINDOWS_RESERVED_FILE_STEMS
-        ):
-            return False
-        if any(ord(character) < 32 for character in value):
-            return False
-        return all(character.isalnum() or character in "._-" for character in value)
+        return _is_literal_storage_key_segment_safe(value)
 
     def _state_filename(self, source_id: str) -> str:
         """Return a source-specific JSON state filename."""
@@ -447,7 +416,6 @@ class TodoFileStore(TodoStore):
                 temp_path.unlink(missing_ok=True)
 
 
-@experimental(feature_id=ExperimentalFeature.HARNESS)
 class TodoProvider(ContextProvider):
     """Provide todo management tools and instructions to an agent.
 
@@ -504,6 +472,7 @@ class TodoProvider(ContextProvider):
         state: dict[str, Any],
     ) -> None:
         """Inject todo tools and instructions before the model runs."""
+        mark_feature_used(FeatureIndex.CORE_TODO_PROVIDER)
         del agent, state
 
         @tool(name="todos_add", approval_mode="never_require")

@@ -12,10 +12,4 @@ internal enum ArchiveFormat
 
     /// <summary>A ZIP archive.</summary>
     Zip,
-
-    /// <summary>An uncompressed TAR archive.</summary>
-    Tar,
-
-    /// <summary>A gzip-compressed TAR archive (<c>.tar.gz</c>/<c>.tgz</c>).</summary>
-    TarGz,
 }

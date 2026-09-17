@@ -1,6 +1,6 @@
 ﻿# What this sample demonstrates
 
-This sample demonstrates how to use a `HarnessAgent` with the Harness `AIContextProviders` (`TodoProvider` and `AgentModeProvider`) for interactive research tasks with web search capabilities powered by Azure AI Foundry. The `HarnessAgent` pre-configures function invocation, per-service-call chat history persistence, and context-window compaction.
+This sample demonstrates how to use a `HarnessAgent` with the Harness `AIContextProviders` (`TodoProvider` and `AgentModeProvider`) for interactive research tasks with web search capabilities powered by Microsoft Foundry. The `HarnessAgent` pre-configures function invocation, per-service-call chat history persistence, and context-window compaction.
 
 Key features showcased:
 
@@ -19,7 +19,7 @@ Key features showcased:
 
 Before running this sample, ensure you have:
 
-1. An Azure AI Foundry project with a deployed model (e.g., `gpt-5.4`)
+1. A Microsoft Foundry project with a deployed model (e.g., `gpt-5.4`)
 2. Azure CLI installed and authenticated (`az login`)
 
 ## Environment Variables
@@ -27,7 +27,7 @@ Before running this sample, ensure you have:
 Set the following environment variables:
 
 ```bash
-# Required: Your Azure AI Foundry OpenAI endpoint
+# Required: Your Microsoft Foundry OpenAI endpoint
 export AZURE_FOUNDRY_OPENAI_ENDPOINT="https://your-project.services.ai.azure.com/openai/v1/"
 
 # Optional: Model deployment name (defaults to gpt-5.4)

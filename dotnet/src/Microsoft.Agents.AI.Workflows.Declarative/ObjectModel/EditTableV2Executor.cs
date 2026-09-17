@@ -31,14 +31,26 @@ internal sealed class EditTableV2Executor(EditTableV2 model, WorkflowFormulaStat
         {
             ValueExpression addItemValue = Throw.IfNull(addItemOperation.Value, $"{nameof(this.Model)}.{nameof(this.Model.ChangeType)}");
             EvaluationResult<DataValue> expressionResult = this.Evaluator.GetValue(addItemValue);
-            RecordValue newRecord = BuildRecord(tableValue.Type.ToRecord(), expressionResult.Value.ToFormula());
-            await tableValue.AppendAsync(newRecord, cancellationToken).ConfigureAwait(false);
-            await this.AssignAsync(this.Model.ItemsVariable, newRecord, context).ConfigureAwait(false);
+            FormulaValue addValue = expressionResult.Value.ToFormula();
+            RecordType recordType = tableValue.Type.ToRecord();
+            TableValue resultTable;
+            if (!recordType.FieldNames.Any() && !tableValue.Rows.Any())
+            {
+                RecordValue newRecord = BuildRecordFromValue(addValue);
+                resultTable = FormulaValue.NewTable(newRecord.Type, newRecord);
+            }
+            else
+            {
+                RecordValue newRecord = BuildRecord(recordType, addValue);
+                await tableValue.AppendAsync(newRecord, cancellationToken).ConfigureAwait(false);
+                resultTable = tableValue;
+            }
+            await this.AssignAsync(this.Model.ItemsVariable, resultTable, context).ConfigureAwait(false);
         }
         else if (changeType is ClearItemsOperation)
         {
             await tableValue.ClearAsync(cancellationToken).ConfigureAwait(false);
-            await this.AssignAsync(this.Model.ItemsVariable, FormulaValue.NewBlank(), context).ConfigureAwait(false);
+            await this.AssignAsync(this.Model.ItemsVariable, tableValue, context).ConfigureAwait(false);
         }
         else if (changeType is RemoveItemOperation removeItemOperation)
         {
@@ -47,29 +59,44 @@ internal sealed class EditTableV2Executor(EditTableV2 model, WorkflowFormulaStat
             if (expressionResult.Value.ToFormula() is TableValue removeItemTable)
             {
                 await tableValue.RemoveAsync(removeItemTable.Rows.Select(row => row.Value), all: true, cancellationToken).ConfigureAwait(false);
-                await this.AssignAsync(this.Model.ItemsVariable, FormulaValue.NewBlank(), context).ConfigureAwait(false);
+                await this.AssignAsync(this.Model.ItemsVariable, tableValue, context).ConfigureAwait(false);
             }
         }
-        else if (changeType is TakeLastItemOperation)
+        else if (changeType is TakeLastItemOperation takeLastOperation)
         {
             RecordValue? lastRow = tableValue.Rows.LastOrDefault()?.Value;
             if (lastRow is not null)
             {
                 await tableValue.RemoveAsync([lastRow], all: true, cancellationToken).ConfigureAwait(false);
-                await this.AssignAsync(this.Model.ItemsVariable, lastRow, context).ConfigureAwait(false);
+                await this.AssignAsync(this.Model.ItemsVariable, tableValue, context).ConfigureAwait(false);
+                await this.AssignAsync(takeLastOperation.ResultVariable?.Path, lastRow, context).ConfigureAwait(false);
+            }
+            else
+            {
+                await this.AssignAsync(takeLastOperation.ResultVariable?.Path, FormulaValue.NewBlank(), context).ConfigureAwait(false);
             }
         }
-        else if (changeType is TakeFirstItemOperation)
+        else if (changeType is TakeFirstItemOperation takeFirstOperation)
         {
             RecordValue? firstRow = tableValue.Rows.FirstOrDefault()?.Value;
             if (firstRow is not null)
             {
                 await tableValue.RemoveAsync([firstRow], all: true, cancellationToken).ConfigureAwait(false);
-                await this.AssignAsync(this.Model.ItemsVariable, firstRow, context).ConfigureAwait(false);
+                await this.AssignAsync(this.Model.ItemsVariable, tableValue, context).ConfigureAwait(false);
+                await this.AssignAsync(takeFirstOperation.ResultVariable?.Path, firstRow, context).ConfigureAwait(false);
+            }
+            else
+            {
+                await this.AssignAsync(takeFirstOperation.ResultVariable?.Path, FormulaValue.NewBlank(), context).ConfigureAwait(false);
             }
         }
 
         return default;
+
+        static RecordValue BuildRecordFromValue(FormulaValue value) =>
+            value is RecordValue recordValue ?
+                recordValue :
+                FormulaValue.NewRecordFromFields(new NamedValue("Value", value));
 
         static RecordValue BuildRecord(RecordType recordType, FormulaValue value)
         {

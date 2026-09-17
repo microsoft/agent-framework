@@ -1,6 +1,6 @@
 # Evaluation — Foundry Rubric
 
-This sample evaluates a pre-existing Azure AI Foundry agent against a **rubric evaluator**
+This sample evaluates a pre-existing Microsoft Foundry agent against a **rubric evaluator**
 authored in the Foundry portal. Rubric evaluators are LLM-as-judge evaluators with custom
 scoring dimensions you define for your domain; agent-framework references them by name and
 version, mixes them with built-in evaluators, and exposes per-dimension scores you can gate
@@ -20,7 +20,7 @@ CI on.
 
 - .NET 10 SDK or later.
 - Azure CLI installed and authenticated (`az login`).
-- An Azure AI Foundry project with a deployed model.
+- A Microsoft Foundry project with a deployed model.
 - A registered Foundry agent in that project (the agent the rubric was created against).
 - A rubric evaluator created in the Foundry portal. Creating rubrics through the portal
   currently requires picking a Foundry agent as the generation context, so this

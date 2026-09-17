@@ -43,7 +43,11 @@ async def example_user_scoped_memory() -> None:
             context_providers=[
                 Mem0ContextProvider(
                     source_id="mem0",
+                    # Storage scope: memories are stamped with this user_id.
                     user_id=user_id,
+                    # Retrieval scope: only this user's memories are read back.
+                    # Retrieval scope is always explicit; it never inherits the storage scope.
+                    search_user_id=user_id,
                 )
             ],
         ) as user_agent,
@@ -82,6 +86,9 @@ async def example_agent_scoped_memory() -> None:
                 Mem0ContextProvider(
                     source_id="mem0",
                     agent_id="scoped_assistant",
+                    # Agent-wide retrieval is opt-in and returns memories written by any user
+                    # under this agent_id, so only use it for knowledge that is safe to share.
+                    search_agent_id="scoped_assistant",
                 )
             ],
         ) as scoped_agent,
@@ -119,6 +126,7 @@ async def example_multiple_agents() -> None:
                 Mem0ContextProvider(
                     source_id="mem0",
                     agent_id=agent_id_1,
+                    search_agent_id=agent_id_1,
                 )
             ],
         ) as personal_agent,
@@ -130,6 +138,7 @@ async def example_multiple_agents() -> None:
                 Mem0ContextProvider(
                     source_id="mem0",
                     agent_id=agent_id_2,
+                    search_agent_id=agent_id_2,
                 )
             ],
         ) as work_agent,

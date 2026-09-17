@@ -97,14 +97,14 @@ from azure.identity import AzureCliCredential
 Advanced sample demonstrating feature X.
 
 Environment variables:
-    FOUNDRY_PROJECT_ENDPOINT — Azure AI Foundry project endpoint
+    FOUNDRY_PROJECT_ENDPOINT — Microsoft Foundry project endpoint
     FOUNDRY_MODEL            — Model deployment name (e.g. gpt-4o)
 """
 ```
 
 ### Default Client for Samples
 
-Unless a sample is specifically demonstrating a particular provider (OpenAI direct, Anthropic, Ollama, etc.), use `FoundryChatClient` from `agent_framework.azure` as the default client. This is the recommended client for Azure AI Foundry deployments.
+Unless a sample is specifically demonstrating a particular provider (OpenAI direct, Anthropic, Ollama, etc.), use `FoundryChatClient` from `agent_framework.azure` as the default client. This is the recommended client for Microsoft Foundry deployments.
 
 Provider-specific samples belong in `02-agents/providers/<provider>/` and should use the provider's native client (e.g., `OpenAIChatClient` for OpenAI, `AnthropicClient` for Anthropic).
 

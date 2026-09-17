@@ -375,6 +375,18 @@ class TestErrorHandling:
 
 class TestLocalEvaluatorIntegration:
     @pytest.mark.asyncio
+    async def test_zero_checks(self):
+        """A LocalEvaluator with no checks produces items with 0 scores, which count as failed."""
+        local = LocalEvaluator()
+        results = await local.evaluate([_make_item()])
+
+        assert results.result_counts == {"passed": 0, "failed": 1, "errored": 0}
+        assert results.all_passed is False
+        assert results.items[0].scores == []
+        with pytest.raises(EvalNotPassedError):
+            results.raise_for_status()
+
+    @pytest.mark.asyncio
     async def test_mixed_checks(self):
         """Function evaluators mix with built-in checks in LocalEvaluator."""
 

@@ -9,6 +9,7 @@ from collections.abc import Awaitable, Callable, Mapping, MutableMapping, Sequen
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from copy import deepcopy
 from functools import partial
+from inspect import isawaitable
 from itertools import chain
 from typing import (
     TYPE_CHECKING,
@@ -25,7 +26,15 @@ from uuid import uuid4
 
 from ._clients import BaseChatClient, SupportsChatGetResponse
 from ._docstrings import apply_layered_docstring
-from ._middleware import AgentMiddlewareLayer, FunctionInvocationContext, MiddlewareTypes, categorize_middleware
+from ._middleware import (
+    AgentMiddlewareLayer,
+    FunctionInvocationContext,
+    MiddlewareTypes,
+    _as_middleware_list,  # pyright: ignore[reportPrivateUsage]
+    _copy_middleware_sequence,  # pyright: ignore[reportPrivateUsage]
+    _select_run_level_tools,  # pyright: ignore[reportPrivateUsage]
+    categorize_middleware,
+)
 from ._serialization import SerializationMixin
 from ._sessions import (
     AgentSession,
@@ -35,8 +44,12 @@ from ._sessions import (
     PerServiceCallHistoryPersistingMiddleware,
     ServiceSessionId,
     SessionContext,
+    _adopt_run_persistence_gate_claim,  # pyright: ignore[reportPrivateUsage]
+    _defer_run_persistence,  # pyright: ignore[reportPrivateUsage]
+    _run_identity_scope,  # pyright: ignore[reportPrivateUsage]
     is_local_history_conversation_id,
 )
+from ._telemetry import FeatureIndex, mark_feature_used
 from ._types import (
     AgentResponse,
     AgentResponseUpdate,
@@ -45,6 +58,7 @@ from ._types import (
     ChatResponseUpdate,
     Message,
     ResponseStream,
+    _append_instructions,  # pyright: ignore[reportPrivateUsage]
     _build_agent_response_from_chat_response,  # pyright: ignore[reportPrivateUsage]
     map_chat_to_agent_update,
     normalize_messages,
@@ -72,6 +86,15 @@ if TYPE_CHECKING:
     from ._types import ChatOptions
 
 logger = logging.getLogger("agent_framework")
+
+# AgentLoopMiddleware stamps this key into the run options while a loop
+# iteration is running, so providers scoped to the whole user turn
+# (``after_run_once_per_turn``) skip their per-iteration ``after_run`` and only
+# fire once at the loop boundary. It rides the run's options rather than a
+# context variable: options reach only the runs the loop itself drives, so a
+# nested ``agent.run()`` (fresh options, its own session) keeps its own turn,
+# and nothing leaks into the caller's context while a stream is paused.
+_LOOP_ITERATION_TOKEN_KEY = "_agent_loop_iteration"  # nosec B105 - a context-options key, not a credential  # ruff: ignore[hardcoded-password-string]
 
 if TYPE_CHECKING:
     ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
@@ -148,8 +171,8 @@ def _merge_options(base: dict[str, Any], override: dict[str, Any]) -> dict[str, 
             # Merge metadata dicts
             result["metadata"] = {**result["metadata"], **value}
         elif key == "instructions" and result.get("instructions"):
-            # Concatenate instructions
-            result["instructions"] = f"{result['instructions']}\n{value}"
+            # Concatenate instructions, preserving provider-native structured values
+            result["instructions"] = _append_instructions(result["instructions"], value)
         else:
             result[key] = value
     return {key: value for key, value in result.items() if value is not None}
@@ -429,7 +452,8 @@ class BaseAgent(SerializationMixin):
             name: The name of the agent, can be None.
             description: The description of the agent.
             context_providers: Context providers to include during agent invocation.
-            middleware: List of middleware.
+            middleware: List of middleware. The constructor copies the sequence; assign
+                to or mutate the ``middleware`` attribute for post-construction changes.
             additional_properties: Additional properties set on the agent.
         """
         if id is None:
@@ -439,7 +463,7 @@ class BaseAgent(SerializationMixin):
         self.description = description
         self.context_providers: list[ContextProvider] = list(context_providers or [])
         self.middleware: list[MiddlewareTypes] | None = (
-            cast(list[MiddlewareTypes], middleware) if middleware is not None else None
+            _copy_middleware_sequence(middleware) if middleware is not None else None
         )
         self.additional_properties: dict[str, Any] = cast(dict[str, Any], additional_properties or {})
 
@@ -528,13 +552,26 @@ class BaseAgent(SerializationMixin):
         *,
         session: AgentSession | None,
         context: SessionContext,
+        only_per_turn: bool = False,
     ) -> None:
         """Run after_run on all context providers in reverse order.
+
+        When an egress-enforcement gate is active for this run (see
+        ``_sessions._defer_run_persistence``), the provider work is deferred to the gate
+        owner so denied or transformed content never becomes durable ahead of its
+        verdict. The gate owner resets the gate before executing deferred callables, so
+        the re-entrant call below runs inline.
 
         Keyword Args:
             session: The conversation session.
             context: The invocation context with response populated.
+            only_per_turn: When True, run only providers that opted into
+                once-per-turn semantics (``after_run_once_per_turn``); used by
+                AgentLoopMiddleware when a loop ends. When False, those
+                providers are skipped while a loop iteration is in progress.
         """
+        if _defer_run_persistence(partial(self._run_after_providers, session=session, context=context)):
+            return
         provider_session = session
         if provider_session is None and self.context_providers:
             provider_session = AgentSession()
@@ -545,8 +582,16 @@ class BaseAgent(SerializationMixin):
         per_service_call_history_required = self.require_per_service_call_history_persistence and any(
             isinstance(provider, HistoryProvider) for provider in self.context_providers
         )
+        # The loop stamps the runs it drives via their options; anything else
+        # (nested run, caller-side run while a stream is paused) is its own turn.
+        in_loop_iteration = context.options.get(_LOOP_ITERATION_TOKEN_KEY) is not None
         for provider in reversed(self.context_providers):
             if per_service_call_history_required and isinstance(provider, HistoryProvider):
+                continue
+            once_per_turn = getattr(provider, "after_run_once_per_turn", False)
+            if only_per_turn and not once_per_turn:
+                continue
+            if in_loop_iteration and once_per_turn:
                 continue
             if provider_session is None:
                 raise RuntimeError("Provider session must be available when context providers are configured.")
@@ -631,14 +676,34 @@ class BaseAgent(SerializationMixin):
                 ctx: the function invocation context used
                 **kwargs: only used to dynamically load the argument that is defined for this tool.
             """
+            session = ctx.session if propagate_session else None
+
+            # Create a child session that shares the parent's state dict but has
+            # an isolated service_session_id. This avoids mutating the parent
+            # session in-place, which would race under concurrent asyncio.gather
+            # tool invocations sharing the same session.
+            if session is not None:
+                child_session = AgentSession(session_id=session.session_id)
+                child_session.state = session.state  # shared by reference
+                child_session.service_session_id = None
+                session = child_session
+
             stream = self.run(
                 str(kwargs.get(arg_name, "")),
                 stream=True,
-                session=ctx.session if propagate_session else None,
+                session=session,
                 function_invocation_kwargs=dict(ctx.kwargs),
             )
             if stream_callback is not None:
-                stream.with_transform_hook(stream_callback)
+                # The callback is a host-facing observer: feed it the *released*
+                # updates by consuming the stream, never by registering a transform
+                # hook on it. Hooks can end up applied to buffered content ahead of an
+                # egress gate's verdict (see ResponseStream.buffered_and_gated), so a
+                # hook-registered observer could see denied or unredacted content.
+                async for update in stream:
+                    callback_result = stream_callback(update)
+                    if isawaitable(callback_result):
+                        await callback_result
             final_response = await stream.get_final_response()
             if final_response.user_input_requests:
                 raise UserInputRequiredException(contents=final_response.user_input_requests)
@@ -1039,19 +1104,30 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 client_kwargs=client_kwargs,
             )
 
+        # Stamp a fresh identity for this run and adopt a pending run-persistence gate
+        # claim targeted at this agent (offered by the middleware layer's final
+        # handler). The identity marks this run's dynamic extent — including the
+        # streaming consumption below — so an active gate defers exactly this run's
+        # own persistence, while nested or middleware-initiated runs (which stamp
+        # their own identities here) persist inline at their own run boundaries.
+        run_identity: object = object()
+        _adopt_run_persistence_gate_claim(self, run_identity)
+
         if not stream:
 
             async def _run_non_streaming() -> AgentResponse[Any]:
-                ctx = await _prepare_run_context()
-                response = await self._call_chat_client(ctx, stream=False)
-                return await self._parse_non_streaming_response(ctx, response)
+                with _run_identity_scope(run_identity):
+                    ctx = await _prepare_run_context()
+                    response = await self._call_chat_client(ctx, stream=False)
+                    return await self._parse_non_streaming_response(ctx, response)
 
             return _run_non_streaming()
 
         async def _run_streaming() -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
-            ctx = await _prepare_run_context()
-            stream_response = self._call_chat_client(ctx, stream=True)
-            return self._parse_streaming_response(ctx, stream_response)
+            with _run_identity_scope(run_identity):
+                ctx = await _prepare_run_context()
+                stream_response = self._call_chat_client(ctx, stream=True)
+                return self._parse_streaming_response(ctx, stream_response, run_identity=run_identity)
 
         return cast(
             ResponseStream[AgentResponseUpdate, AgentResponse[Any]],
@@ -1102,6 +1178,38 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             client_kwargs=context["client_kwargs"],
         )
 
+    def _update_session_from_chat_response(
+        self,
+        session: AgentSession | None,
+        response: ChatResponse[Any],
+    ) -> None:
+        """Update session continuation state from a chat response."""
+        if (
+            session
+            and response.conversation_id
+            and not is_local_history_conversation_id(response.conversation_id)
+            and session.service_session_id != response.conversation_id
+        ):
+            session.service_session_id = response.conversation_id
+
+    def _update_session_from_chat_response_update(
+        self,
+        session: AgentSession | None,
+        update: AgentResponseUpdate,
+    ) -> None:
+        """Update session continuation state from a streaming agent update."""
+        if session is None:
+            return
+        raw = update.raw_representation
+        conversation_id = getattr(raw, "conversation_id", None) if raw else None
+        if (
+            isinstance(conversation_id, str)
+            and conversation_id
+            and not is_local_history_conversation_id(conversation_id)
+            and session.service_session_id != conversation_id
+        ):
+            session.service_session_id = conversation_id
+
     async def _parse_non_streaming_response(
         self,
         context: _RunContext,
@@ -1116,13 +1224,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 message.author_name = context["agent_name"]
 
         session = context["session"]
-        if (
-            session
-            and response.conversation_id
-            and not is_local_history_conversation_id(response.conversation_id)
-            and session.service_session_id != response.conversation_id
-        ):
-            session.service_session_id = response.conversation_id
+        self._update_session_from_chat_response(session, response)
 
         agent_response = _build_agent_response_from_chat_response(
             response,
@@ -1138,6 +1240,8 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         self,
         context: _RunContext,
         stream_response: ResponseStream[ChatResponseUpdate, ChatResponse[Any]],
+        *,
+        run_identity: object,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """Finalize a streaming chat response into an agent response stream."""
 
@@ -1164,22 +1268,15 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             if context["suppress_response_id"]:
                 response.response_id = None
             session_context._response = response  # type: ignore[assignment]
-            await self._run_after_providers(session=session, context=session_context)
+            # Result hooks run during finalization, outside the per-pull identity
+            # scope registered below, so re-stamp this run's identity around its
+            # run-end persistence.
+            with _run_identity_scope(run_identity):
+                await self._run_after_providers(session=session, context=session_context)
 
         def _propagate_conversation_id(update: AgentResponseUpdate) -> AgentResponseUpdate:
             """Eagerly propagate conversation_id to session as updates arrive."""
-            session = context["session"]
-            if session is None:
-                return update
-            raw = update.raw_representation
-            conversation_id = getattr(raw, "conversation_id", None) if raw else None
-            if (
-                isinstance(conversation_id, str)
-                and conversation_id
-                and not is_local_history_conversation_id(conversation_id)
-                and session.service_session_id != conversation_id
-            ):
-                session.service_session_id = conversation_id
+            self._update_session_from_chat_response_update(context["session"], update)
             return update
 
         def _suppress_response_id(update: AgentResponseUpdate) -> AgentResponseUpdate:
@@ -1202,6 +1299,13 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         )
         if context["suppress_response_id"]:
             stream = stream.with_transform_hook(_suppress_response_id)
+
+        # Streaming consumption happens in the consumer's context, outside the
+        # _run_identity_scope that wrapped this run's setup. Stamp the run identity
+        # around every underlying pull so persistence issued mid-consumption (e.g.
+        # per-service-call history persists inside the function-invocation loop)
+        # carries this run's identity; nested runs re-stamp their own within theirs.
+        stream = stream.with_pull_context_manager(partial(_run_identity_scope, run_identity))
 
         return stream.with_transform_hook(_propagate_conversation_id).with_result_hook(_post_hook)
 
@@ -1256,8 +1360,13 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         opts = dict(options) if options else {}
         existing_additional_args: dict[str, Any] = opts.pop("additional_function_arguments", None) or {}
 
-        # Get tools from options or named parameter (named param takes precedence)
-        tools_ = tools if tools is not None else opts.pop("tools", None)
+        # Run-level tools: the named parameter takes precedence over an options entry
+        # (_select_run_level_tools is the framework's single statement of that rule,
+        # shared with the middleware layer's run-start resolution). The options entry
+        # is consumed either way, so a losing options["tools"] can never ride the
+        # remaining options into the request and silently override the resolved list.
+        tools_ = _select_run_level_tools(tools, opts)
+        opts.pop("tools", None)
 
         input_messages = normalize_messages(messages)
 
@@ -1296,8 +1405,10 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             self.context_providers.append(InMemoryHistoryProvider())
 
         active_session = session
+        framework_created_session = False
         if active_session is None and self.context_providers:
             active_session = AgentSession()
+            framework_created_session = True
 
         per_service_call_history_providers = self._resolve_per_service_call_history_providers(
             session=active_session,
@@ -1346,12 +1457,22 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         # Normalize tools
         normalized_tools = _normalize_tools(tools_)
 
+        # Extract additional function arguments
+        effective_function_invocation_kwargs = (
+            dict(function_invocation_kwargs) if function_invocation_kwargs is not None else {}
+        )
+        additional_function_arguments = {**effective_function_invocation_kwargs, **existing_additional_args}
+
         # Resolve final tool list (configured tools + runtime provided tools + local MCP server tools)
         final_tools = list(base_tools)
         for tool in normalized_tools:
             if isinstance(tool, MCPTool):
+                await tool._prepare_for_run(additional_function_arguments)  # pyright: ignore[reportPrivateUsage]
                 if not tool.is_connected:
+                    # The handshake and discovery requests are issued before any tool call, so the run's
+                    # kwargs must reach header_provider here or those requests go out unauthenticated.
                     await self._async_exit_stack.enter_async_context(tool)
+                    await tool._prepare_for_run(additional_function_arguments)  # pyright: ignore[reportPrivateUsage]
                 _append_unique_tools(
                     final_tools,
                     tool.functions,
@@ -1361,18 +1482,17 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 _append_unique_tools(final_tools, [tool])
 
         for mcp_server in self.mcp_tools:
+            await mcp_server._prepare_for_run(additional_function_arguments)  # pyright: ignore[reportPrivateUsage]
             if not mcp_server.is_connected:
                 await self._async_exit_stack.enter_async_context(mcp_server)
+                await mcp_server._prepare_for_run(  # pyright: ignore[reportPrivateUsage]
+                    additional_function_arguments
+                )
             _append_unique_tools(
                 final_tools,
                 mcp_server.functions,
                 duplicate_error_message=mcp_duplicate_message,
             )
-
-        effective_function_invocation_kwargs = (
-            dict(function_invocation_kwargs) if function_invocation_kwargs is not None else {}
-        )
-        additional_function_arguments = {**effective_function_invocation_kwargs, **existing_additional_args}
 
         model = opts.pop("model", None)
 
@@ -1403,13 +1523,21 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         # _merge_options strips unset (None) options, so e.g. an unset `store` is not forwarded
         # and the service decides its own default.
         co = _merge_options(chat_options, run_opts)
+        # The loop marker must remain on SessionContext.options for after_run provider
+        # scoping, but it is framework-private metadata and must not reach the client.
+        co.pop(_LOOP_ITERATION_TOKEN_KEY, None)
 
         # Build session_messages from session context: context messages + input messages
         session_messages: list[Message] = session_context.get_messages(include_input=True)
 
         effective_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
+        from ._tools import _APPROVAL_SESSION_IS_AUTHORITATIVE_KEY  # pyright: ignore[reportPrivateUsage]
+
+        effective_client_kwargs.pop(_APPROVAL_SESSION_IS_AUTHORITATIVE_KEY, None)
         if active_session is not None:
             effective_client_kwargs["session"] = active_session
+            effective_client_kwargs[_APPROVAL_SESSION_IS_AUTHORITATIVE_KEY] = not framework_created_session
+        per_service_call_history_middleware: PerServiceCallHistoryPersistingMiddleware | None = None
         if per_service_call_history_providers and active_session is not None:
             per_service_call_history_middleware = PerServiceCallHistoryPersistingMiddleware(
                 agent=self,
@@ -1417,37 +1545,33 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 providers=per_service_call_history_providers,
                 service_stores_history=service_stores_history,
             )
-            existing_middleware = effective_client_kwargs.get("middleware")
-            if isinstance(existing_middleware, Sequence) and not isinstance(existing_middleware, (str, bytes)):
-                effective_client_kwargs["middleware"] = [per_service_call_history_middleware, *existing_middleware]
-            elif existing_middleware is not None:
-                effective_client_kwargs["middleware"] = [
-                    per_service_call_history_middleware,
-                    cast(MiddlewareTypes, existing_middleware),
-                ]
-            else:
-                effective_client_kwargs["middleware"] = [per_service_call_history_middleware]
         provider_middleware = session_context.get_middleware()
         if provider_middleware:
-            middleware_list = categorize_middleware(provider_middleware)
+            # Providers may only contribute chat/function middleware (enforced by
+            # SessionContext.extend_middleware); declare the same contract here so a
+            # bundle member outside these categories fails loudly at this seam too.
+            middleware_list = categorize_middleware(provider_middleware, supported_categories=("chat", "function"))
             provider_function_chat_middleware = [
                 *middleware_list["function"],
                 *middleware_list["chat"],
             ]
             if provider_function_chat_middleware:
-                existing_middleware = effective_client_kwargs.get("middleware")
-                if isinstance(existing_middleware, Sequence) and not isinstance(existing_middleware, (str, bytes)):
-                    effective_client_kwargs["middleware"] = [
-                        *existing_middleware,
-                        *provider_function_chat_middleware,
-                    ]
-                elif existing_middleware is not None:
-                    effective_client_kwargs["middleware"] = [
-                        cast(MiddlewareTypes, existing_middleware),
-                        *provider_function_chat_middleware,
-                    ]
-                else:
-                    effective_client_kwargs["middleware"] = provider_function_chat_middleware
+                existing_middleware = cast(
+                    "MiddlewareTypes | Sequence[MiddlewareTypes] | None", effective_client_kwargs.get("middleware")
+                )
+                effective_client_kwargs["middleware"] = [
+                    *_as_middleware_list(existing_middleware),
+                    *provider_function_chat_middleware,
+                ]
+
+        if per_service_call_history_middleware is not None:
+            existing_middleware = cast(
+                "MiddlewareTypes | Sequence[MiddlewareTypes] | None", effective_client_kwargs.get("middleware")
+            )
+            effective_client_kwargs["middleware"] = [
+                *_as_middleware_list(existing_middleware),
+                per_service_call_history_middleware,
+            ]
 
         return {
             "session": active_session,
@@ -1540,10 +1664,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         # Merge provider-contributed instructions into chat_options
         if session_context.instructions:
             combined_instructions = "\n".join(session_context.instructions)
-            if "instructions" in chat_options:
-                chat_options["instructions"] = f"{chat_options['instructions']}\n{combined_instructions}"
-            else:
-                chat_options["instructions"] = combined_instructions
+            chat_options["instructions"] = _append_instructions(chat_options.get("instructions"), combined_instructions)
 
         return session_context, chat_options
 
@@ -1758,6 +1879,7 @@ class Agent(
         client_kwargs: Mapping[str, Any] | None = None,
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """Run the agent."""
+        mark_feature_used(FeatureIndex.CORE_AGENT)
         super_run = cast(
             "Callable[..., Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]]",
             super().run,

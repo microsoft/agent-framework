@@ -6,6 +6,7 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from agent_framework import WorkflowInvocationKwargs
 
 try:
     import powerfx  # noqa: F401
@@ -426,7 +427,6 @@ class TestAgentExecutors:
     async def test_invoke_agent_not_found(self, mock_context, mock_state):
         """Test InvokeAzureAgentExecutor raises error when agent not found."""
         from agent_framework.exceptions import AgentInvalidRequestException
-
         from agent_framework_declarative._workflows import (
             InvokeAzureAgentExecutor,
         )
@@ -447,6 +447,80 @@ class TestAgentExecutors:
 
         assert "non_existent_agent" in str(exc_info.value)
         assert "not found in registry" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_invoke_agent_skips_internal_workflow_kwargs(self, mock_context, mock_state):
+        """Internal underscore keys in the run-kwargs bag must not reach Agent.run.
+
+        Regression for #8413: the workflow state bag carries internal routing
+        copies (e.g. `_raw_function_invocation_kwargs`) next to the public
+        kwargs, and the declarative agent step used to splat the whole bag into
+        `Agent.run`, which takes no `**kwargs` and raised TypeError.
+        """
+        from types import SimpleNamespace
+
+        from agent_framework_declarative._workflows import InvokeAzureAgentExecutor
+
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+
+        class _StrictAgent:
+            """Same public surface as Agent.run: no **kwargs catch-all."""
+
+            def __init__(self) -> None:
+                self.received_options: dict[str, Any] | None = None
+                self.received_public_kwargs: dict[str, Any] = {}
+
+            async def run(
+                self,
+                messages,
+                options=None,
+                function_invocation_kwargs=None,
+                client_kwargs=None,
+                session=None,
+                tools=None,
+                stream=False,
+            ):
+                self.received_options = options
+                self.received_public_kwargs = {
+                    "function_invocation_kwargs": function_invocation_kwargs,
+                    "client_kwargs": client_kwargs,
+                }
+                return SimpleNamespace(text="ok", messages=[], tool_calls=[])
+
+        agent = _StrictAgent()
+        run_kwargs_bag = {
+            "function_invocation_kwargs": {"forwarded_props": {"a": 1}},
+            "_raw_function_invocation_kwargs": {"forwarded_props": {"a": 1}},
+        }
+        mock_context.get_state = MagicMock(
+            side_effect=lambda key, default=None: run_kwargs_bag if key == "_workflow_run_kwargs" else default
+        )
+
+        executor = InvokeAzureAgentExecutor(
+            {"kind": "InvokeAzureAgent", "agent": "StubAgent", "input": "hello"},
+            agents={"StubAgent": agent},
+        )
+
+        # Before the fix this raises TypeError: Agent.run() got an unexpected
+        # keyword argument '_raw_function_invocation_kwargs'.
+        await executor._invoke_agent_and_store_results(
+            agent,
+            "StubAgent",
+            "hello",
+            state,
+            mock_context,
+            messages_var=None,
+            response_obj_var=None,
+            result_property=None,
+            auto_send=False,
+        )
+
+        assert agent.received_options is not None
+        # The full bag still reaches tool forwarding, internal copies included.
+        forwarded = agent.received_options["additional_function_arguments"]
+        assert forwarded["_raw_function_invocation_kwargs"] == {"forwarded_props": {"a": 1}}
+        assert forwarded["function_invocation_kwargs"] == {"forwarded_props": {"a": 1}}
 
 
 class TestHumanInputExecutors:
@@ -934,6 +1008,49 @@ class TestEditTableV2Executor:
         result = state.get("Local.records")
         assert result == [{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}]
 
+    @pytest.mark.parametrize("item", [False, 0, "", [], {}])
+    async def test_edit_table_v2_add_preserves_falsey_item(self, mock_context, mock_state, item):
+        """Test EditTableV2 preserves a falsey item instead of treating it as missing."""
+        from agent_framework_declarative._workflows._executors_basic import EditTableV2Executor
+
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+        state.set("Local.items", [True])
+
+        action_def = {
+            "kind": "EditTableV2",
+            "table": "Local.items",
+            "operation": "add",
+            "item": item,
+        }
+        executor = EditTableV2Executor(action_def)
+        await executor.handle_action(ActionTrigger(), mock_context)
+
+        result = state.get("Local.items")
+        assert result[:-1] == [True]
+        assert result[-1] == item
+        assert type(result[-1]) is type(item)
+
+    async def test_edit_table_v2_add_uses_legacy_value_when_item_is_none(self, mock_context, mock_state):
+        """Test EditTableV2 retains the legacy value fallback for a missing item."""
+        from agent_framework_declarative._workflows._executors_basic import EditTableV2Executor
+
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+
+        action_def = {
+            "kind": "EditTableV2",
+            "table": "Local.items",
+            "operation": "add",
+            "item": None,
+            "value": "legacy",
+        }
+        executor = EditTableV2Executor(action_def)
+        await executor.handle_action(ActionTrigger(), mock_context)
+
+        result = state.get("Local.items")
+        assert result == ["legacy"]
+
     @pytest.mark.asyncio
     async def test_edit_table_v2_add_or_update_new(self, mock_context, mock_state):
         """Test EditTableV2 with addOrUpdate - adding new record."""
@@ -1279,6 +1396,368 @@ class TestExtractJsonFromResponse:
         result = _extract_json_from_response(text)
         assert result == {"status": "complete", "id": 42}
 
+    def test_multiple_qualified_code_blocks_returns_last_valid(self):
+        """Test that the last valid qualified code block is returned."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        text = """```json
+{"status": "pending"}
+```
+```json
+{"status": "complete"}
+```"""
+        result = _extract_json_from_response(text)
+        assert result == {"status": "complete"}
+
+    def test_invalid_later_qualified_code_block_uses_previous_valid(self):
+        """Test that an invalid later block does not replace an earlier valid block."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        text = """```json
+{"status": "complete"}
+```
+```json
+not valid JSON
+```"""
+        result = _extract_json_from_response(text)
+        assert result == {"status": "complete"}
+
+    def test_qualified_code_block_takes_precedence_over_plain_block(self):
+        """Test that a qualified block is preferred over a later plain block."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        text = """```json
+{"source": "qualified"}
+```
+```
+{"source": "plain"}
+```"""
+        result = _extract_json_from_response(text)
+        assert result == {"source": "qualified"}
+
+    def test_invalid_qualified_code_block_falls_through_to_plain_block(self):
+        """Test that plain blocks are considered when qualified blocks are invalid."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        text = """```json
+not valid JSON
+```
+```
+{"source": "plain"}
+```"""
+        result = _extract_json_from_response(text)
+        assert result == {"source": "plain"}
+
+    @pytest.mark.parametrize(("json_text", "expected"), [("null", None), ("false", False), ("0", 0)])
+    def test_json_scalar_in_qualified_code_block(self, json_text, expected):
+        """Test that valid JSON scalars are not confused with a missing result."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        result = _extract_json_from_response(f"```json\n{json_text}\n```")
+        assert result == expected
+
+    def test_unrecognized_code_block_qualifier_is_not_removed(self):
+        """Test that the plain-block pass does not consume language qualifiers."""
+        import json
+
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        with pytest.raises(json.JSONDecodeError):
+            _extract_json_from_response("```yaml\nfalse\n```")
+
+    def test_inline_json_code_block(self):
+        """Test extracting JSON from an inline qualified code block."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        result = _extract_json_from_response('Result: ```json{"status": "complete"}```.')
+        assert result == {"status": "complete"}
+
+    def test_inline_json_array_code_block(self):
+        """Test extracting a JSON array from an inline qualified code block."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        result = _extract_json_from_response("Result: ```json[1, 2]```.")
+        assert result == [1, 2]
+
+    def test_json5_scalar_is_not_treated_as_json_qualified(self):
+        """Test that a JSON5 qualifier prefix is not interpreted as JSON."""
+        import json
+
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        with pytest.raises(json.JSONDecodeError):
+            _extract_json_from_response("```json5```")
+
+    @pytest.mark.parametrize("qualifier", ["json5", "jsonc"])
+    def test_nonstandard_json_qualified_object_uses_general_fallback(self, qualifier):
+        """Test that objects in nonstandard JSON blocks are recovered by fallback."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        result = _extract_json_from_response(f'```{qualifier}\n{{"status": "complete"}}\n```')
+        assert result == {"status": "complete"}
+
+    def test_nonstandard_json_block_does_not_take_qualified_precedence(self):
+        """Test that JSON5 blocks do not take precedence over plain blocks."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        text = """```json5
+{"source": "json5"}
+```
+```
+{"source": "plain"}
+```"""
+        result = _extract_json_from_response(text)
+        assert result == {"source": "plain"}
+
+    def test_json_code_block_with_crlf(self):
+        """Test extracting JSON from a code block with CRLF line endings."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        result = _extract_json_from_response('Result:\r\n```json\r\n{"status": "complete"}\r\n```\r\n')
+        assert result == {"status": "complete"}
+
+    def test_array_with_brackets_and_escapes_in_string(self):
+        """Test nested delimiters and escapes inside JSON strings."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        text = r'Info: [{"message": "Use [x] and {y}", "path": "C:\\temp"}]'
+        result = _extract_json_from_response(text)
+        assert result == [{"message": "Use [x] and {y}", "path": r"C:\temp"}]
+
+    def test_unterminated_code_block_raises_error(self):
+        """Test that an unterminated whitespace-heavy code block fails safely."""
+        import json
+
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        text = f"```json\n{' ' * 64}X"
+        with pytest.raises(json.JSONDecodeError):
+            _extract_json_from_response(text)
+
+    @pytest.mark.parametrize("text", ["{" * 64 + "X", "[" * 64 + "X"])
+    def test_repeated_unmatched_brackets_raise_error(self, text):
+        """Test that repeated unmatched opening brackets fail safely."""
+        import json
+
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        with pytest.raises(json.JSONDecodeError):
+            _extract_json_from_response(text)
+
+    def test_valid_json_after_unmatched_outer_bracket(self):
+        """Test recovering valid JSON nested after an unmatched outer bracket."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        result = _extract_json_from_response('{{"status": "complete"}')
+        assert result == {"status": "complete"}
+
+    def test_valid_json_after_mismatched_bracket_candidate(self):
+        """Test recovering valid JSON after a malformed mixed-bracket candidate."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        text = '{"broken": [} then {"status": "complete"} ]}'
+        result = _extract_json_from_response(text)
+        assert result == {"status": "complete"}
+
+    def test_valid_outer_json_is_preferred_over_crossing_reverse_candidate(self):
+        """Test a reverse-indexed crossing candidate does not override valid JSON."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        result = _extract_json_from_response('{"s": "["}"]')
+        assert result == {"s": "["}
+
+    def test_valid_outer_json_is_preferred_over_nested_candidate(self):
+        """Test a malformed wrapper does not cause a nested value to win."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        result = _extract_json_from_response('{"mixed": [} {"final": {"nested": 1}} ]}')
+        assert result == {"final": {"nested": 1}}
+
+    def test_valid_json_after_double_escaped_fragment(self):
+        """Test recovering valid JSON after a double-escaped malformed fragment."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        text = r'{\"partial\": true} then {"status": "complete"}'
+        result = _extract_json_from_response(text)
+        assert result == {"status": "complete"}
+
+    def test_valid_json_after_double_escaped_fenced_fragment(self):
+        """Test recovering valid JSON after an invalid fenced fragment."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        text = """```json
+{\\"partial\\": true}
+```
+{"status": "complete"}"""
+        result = _extract_json_from_response(text)
+        assert result == {"status": "complete"}
+
+    def test_valid_json_after_brace_in_quoted_explanation(self):
+        """Test recovering valid JSON after a brace in quoted explanatory text."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        text = 'The model said "use { as the opener" before {"status": "complete"}'
+        result = _extract_json_from_response(text)
+        assert result == {"status": "complete"}
+
+    def test_valid_json_after_unterminated_quoted_candidate(self):
+        """Test recovering valid JSON after an unterminated quoted candidate."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        text = '{"partial: true} then {"status": "complete"}'
+        result = _extract_json_from_response(text)
+        assert result == {"status": "complete"}
+
+    def test_latest_json_after_valid_and_unterminated_candidates(self):
+        """Test returning the latest JSON after an earlier valid and poisoned candidate."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        text = '{"status": "pending"} {"partial: true} then {"status": "complete"}'
+        result = _extract_json_from_response(text)
+        assert result == {"status": "complete"}
+
+    def test_valid_json_after_two_poisoned_candidates(self):
+        """Test recovering valid JSON after two malformed candidates."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        text = '{"mixed": [} {"partial: true} then {"status": "complete"}'
+        result = _extract_json_from_response(text)
+        assert result == {"status": "complete"}
+
+    def test_valid_json_after_many_malformed_candidates(self):
+        """Test recovery is not limited by the number of malformed candidates."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        text = "[{}[[" * 50 + '{"final": "value"}'
+        result = _extract_json_from_response(text)
+        assert result == {"final": "value"}
+
+    def test_review_reported_malformed_candidate_sequence(self):
+        """Test the review-reported malformed prefix before final JSON."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        result = _extract_json_from_response('[{}[["{"final": "value"}')
+        assert result == {"final": "value"}
+
+    def test_valid_json_before_nested_malformed_suffix(self):
+        """Test a malformed suffix cannot consume the earlier candidate's decode budget."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        result = _extract_json_from_response('{"good": 1} [[[[[[[[[[x]]]]]]]]]]')
+        assert result == {"good": 1}
+
+    def test_last_sibling_json_inside_malformed_wrapper(self):
+        """Test that the last valid sibling wins inside a malformed wrapper."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        result = _extract_json_from_response('[x {"first": 1} {"last": 2}]')
+        assert result == {"last": 2}
+
+    def test_valid_json_inside_deeply_nested_malformed_wrapper(self):
+        """Test recovery budget is reserved for a deeply nested valid value."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        result = _extract_json_from_response('[[[[x {"final": "value"}]]]]')
+        assert result == {"final": "value"}
+
+    def test_valid_json_between_malformed_prefix_and_suffix(self):
+        """Test recovery prioritizes compact JSON over malformed wrappers."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        text = ("[" * 4) + 'x {"good": 1} ' + ("[" * 9) + "x" + ("]" * 13)
+        result = _extract_json_from_response(text)
+        assert result == {"good": 1}
+
+    def test_rightmost_recovered_json_wins(self):
+        """Test recovery returns the rightmost valid JSON within its budget."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        text = '[[x {"earlier": 1} {"final": "this is the final longer value"}]]'
+        result = _extract_json_from_response(text)
+        assert result == {"final": "this is the final longer value"}
+
+    def test_recovered_outer_object_wins_over_nested_object(self):
+        """Test recovery prefers a valid outer object over its nested child."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        result = _extract_json_from_response('[[x {"final": {"nested": 1}}]]')
+        assert result == {"final": {"nested": 1}}
+
+    def test_recovered_outer_array_wins_over_nested_object(self):
+        """Test recovery prefers a valid outer array over its nested child."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        result = _extract_json_from_response('[[x [{"nested": 1}]]]')
+        assert result == [{"nested": 1}]
+
 
 class TestPowerFxConditionalImport:
     """The _declarative_base module should be importable without dotnet/powerfx."""
@@ -1341,12 +1820,184 @@ class TestPowerFxConditionalImport:
 class TestExecutorKwargsForwarding:
     """Workflow run kwargs should be forwarded through executor agent invocations."""
 
+    @pytest.mark.parametrize("kwargs_channel", ["function_invocation_kwargs", "client_kwargs"])
+    @pytest.mark.parametrize(
+        ("executor_ids", "invocation_kwargs", "expected"),
+        [
+            (
+                ("agent1", "sibling"),
+                {
+                    "__global__": {"shared": "G", "overridden": "global"},
+                    "agent1": {"specific": "A", "overridden": "specific"},
+                },
+                (
+                    {"shared": "G", "specific": "A", "overridden": "specific"},
+                    {"shared": "G", "overridden": "global"},
+                ),
+            ),
+            (
+                ("__global__", "sibling"),
+                WorkflowInvocationKwargs(
+                    global_kwargs={"shared": "G", "overridden": "global"},
+                    executor_kwargs={"__global__": {"specific": "A", "overridden": "specific"}},
+                ),
+                (
+                    {"shared": "G", "specific": "A", "overridden": "specific"},
+                    {"shared": "G", "overridden": "global"},
+                ),
+            ),
+        ],
+        ids=["legacy-mixed", "global-executor-collision"],
+    )
+    async def test_workflow_run_resolves_executor_kwargs(
+        self,
+        kwargs_channel: str,
+        executor_ids: tuple[str, str],
+        invocation_kwargs: dict[str, Any] | WorkflowInvocationKwargs,
+        expected: tuple[dict[str, Any], dict[str, Any]],
+    ) -> None:
+        """The public declarative path resolves legacy mixed and collision-free state."""
+        agents: dict[str, Any] = {}
+        actions: list[dict[str, Any]] = []
+        for index, executor_id in enumerate(executor_ids):
+            agent_name = f"agent_{index}"
+            response = MagicMock(text="response", messages=[], tool_calls=[])
+            agent = MagicMock(name=agent_name)
+            agent.run = AsyncMock(return_value=response)
+            agents[agent_name] = agent
+            actions.append({"kind": "InvokeAzureAgent", "id": executor_id, "agent": agent_name, "input": "hello"})
+
+        workflow = DeclarativeWorkflowBuilder(
+            {"name": "kwargs_workflow", "actions": actions},
+            agents=agents,
+        ).build()
+        if kwargs_channel == "function_invocation_kwargs":
+            await workflow.run(ActionTrigger(), function_invocation_kwargs=invocation_kwargs)
+        else:
+            await workflow.run(ActionTrigger(), client_kwargs=invocation_kwargs)
+
+        for agent, expected_kwargs in zip(agents.values(), expected, strict=True):
+            call_kwargs = agent.run.call_args.kwargs
+            assert call_kwargs[kwargs_channel] == expected_kwargs
+            assert call_kwargs["options"]["additional_function_arguments"] == {kwargs_channel: expected_kwargs}
+            assert "_raw_function_invocation_kwargs" not in call_kwargs
+            assert "_raw_client_kwargs" not in call_kwargs
+
+    @pytest.mark.parametrize("kwargs_channel", ["function_invocation_kwargs", "client_kwargs"])
+    @pytest.mark.parametrize("legacy_checkpoint", [False, True], ids=["new-state", "legacy-state"])
+    async def test_workflow_run_kwargs_survive_file_checkpoint_restore(
+        self,
+        tmp_path: Any,
+        kwargs_channel: str,
+        legacy_checkpoint: bool,
+    ) -> None:
+        """New checkpoints resolve kwargs while legacy checkpoints keep historical forwarding."""
+        from agent_framework import FileCheckpointStorage
+        from agent_framework._workflows._const import (
+            RESOLVED_WORKFLOW_RUN_KWARGS_KEY,
+            WORKFLOW_RUN_KWARGS_KEY,
+        )
+        from agent_framework_declarative._workflows._executors_external_input import ExternalInputResponse
+
+        storage = FileCheckpointStorage(
+            tmp_path,
+            allowed_checkpoint_types=[
+                "agent_framework_declarative._workflows._declarative_base:ActionComplete",
+                "agent_framework_declarative._workflows._declarative_base:ActionTrigger",
+                "agent_framework_declarative._workflows._executors_external_input:ExternalInputRequest",
+                "agent_framework_declarative._workflows._executors_external_input:ExternalInputResponse",
+            ],
+        )
+        executor_id = "sibling" if legacy_checkpoint else "__global__"
+
+        def build_workflow() -> tuple[Any, Any]:
+            response = MagicMock(text="response", messages=[], tool_calls=[])
+            agent = MagicMock(name="checkpoint_agent")
+            agent.run = AsyncMock(return_value=response)
+            workflow = DeclarativeWorkflowBuilder(
+                {
+                    "name": "declarative_kwargs_checkpoint",
+                    "actions": [
+                        {
+                            "kind": "RequestExternalInput",
+                            "id": "pause",
+                            "prompt": "Continue?",
+                            "variable": "Local.answer",
+                        },
+                        {
+                            "kind": "InvokeAzureAgent",
+                            "id": executor_id,
+                            "agent": "checkpoint_agent",
+                            "input": "hello",
+                        },
+                    ],
+                },
+                agents={"checkpoint_agent": agent},
+                checkpoint_storage=storage,
+            ).build()
+            return workflow, agent
+
+        if legacy_checkpoint:
+            invocation_kwargs: dict[str, Any] | WorkflowInvocationKwargs = {
+                "__global__": {"shared": "G"},
+                "sibling": {"specific": "S"},
+            }
+        else:
+            invocation_kwargs = WorkflowInvocationKwargs(
+                global_kwargs={"shared": "G"},
+                executor_kwargs={"__global__": {"specific": "S"}},
+            )
+
+        workflow, _ = build_workflow()
+        if kwargs_channel == "function_invocation_kwargs":
+            paused = await workflow.run(ActionTrigger(), function_invocation_kwargs=invocation_kwargs)
+        else:
+            paused = await workflow.run(ActionTrigger(), client_kwargs=invocation_kwargs)
+        [request] = paused.get_request_info_events()
+        checkpoints = await storage.list_checkpoints(workflow_name=workflow.name)
+        checkpoint = max(
+            (item for item in checkpoints if item.pending_request_info_events),
+            key=lambda item: item.timestamp,
+        )
+        if legacy_checkpoint:
+            checkpoint.state.pop(RESOLVED_WORKFLOW_RUN_KWARGS_KEY, None)
+            await storage.save(checkpoint)
+        else:
+            assert checkpoint.state[RESOLVED_WORKFLOW_RUN_KWARGS_KEY][kwargs_channel]
+            assert isinstance(checkpoint.state[WORKFLOW_RUN_KWARGS_KEY][kwargs_channel], dict)
+
+        resumed_workflow, resumed_agent = build_workflow()
+        resumed = await resumed_workflow.run(checkpoint_id=checkpoint.checkpoint_id)
+        [resumed_request] = resumed.get_request_info_events()
+        assert resumed_request.request_id == request.request_id
+        await resumed_workflow.run(
+            responses={resumed_request.request_id: ExternalInputResponse(user_input="yes")},
+        )
+
+        call_kwargs = resumed_agent.run.call_args.kwargs
+        if legacy_checkpoint:
+            raw_key = (
+                "_raw_function_invocation_kwargs"
+                if kwargs_channel == "function_invocation_kwargs"
+                else "_raw_client_kwargs"
+            )
+            expected_run_kwargs = {kwargs_channel: invocation_kwargs, raw_key: invocation_kwargs}
+            assert call_kwargs[kwargs_channel] == invocation_kwargs
+            # The internal raw copy stays routing state for nested executors;
+            # it is not a public Agent.run parameter (#8413).
+            assert raw_key not in call_kwargs
+        else:
+            expected_run_kwargs = {kwargs_channel: {"shared": "G", "specific": "S"}}
+            assert call_kwargs[kwargs_channel] == {"shared": "G", "specific": "S"}
+            assert "_raw_function_invocation_kwargs" not in call_kwargs
+            assert "_raw_client_kwargs" not in call_kwargs
+        assert call_kwargs["options"]["additional_function_arguments"] == expected_run_kwargs
+
     @pytest.mark.asyncio
     async def test_invoke_agent_forwards_kwargs(self):
         """InvokeAzureAgentExecutor should forward run_kwargs to agent.run()."""
         from agent_framework._workflows._const import WORKFLOW_RUN_KWARGS_KEY
         from agent_framework._workflows._state import State
-
         from agent_framework_declarative._workflows._executors_agents import (
             InvokeAzureAgentExecutor,
         )
@@ -1386,6 +2037,7 @@ class TestExecutorKwargsForwarding:
         mock_ctx.yield_output = AsyncMock()
 
         executor = InvokeAzureAgentExecutor.__new__(InvokeAzureAgentExecutor)
+        executor.id = "test_agent"
         executor._agents = {"test_agent": mock_agent}
 
         await executor._invoke_agent_and_store_results(
@@ -1417,7 +2069,6 @@ class TestExecutorKwargsForwarding:
         """Caller-provided options in run_kwargs should be merged, not cause TypeError."""
         from agent_framework._workflows._const import WORKFLOW_RUN_KWARGS_KEY
         from agent_framework._workflows._state import State
-
         from agent_framework_declarative._workflows._executors_agents import (
             InvokeAzureAgentExecutor,
         )
@@ -1456,6 +2107,7 @@ class TestExecutorKwargsForwarding:
         mock_ctx.yield_output = AsyncMock()
 
         executor = InvokeAzureAgentExecutor.__new__(InvokeAzureAgentExecutor)
+        executor.id = "test_agent"
         executor._agents = {"test_agent": mock_agent}
 
         await executor._invoke_agent_and_store_results(

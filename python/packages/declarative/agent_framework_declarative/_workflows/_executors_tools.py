@@ -82,6 +82,11 @@ class ToolApprovalResponse:
     approved: bool
     reason: str | None = None
 
+    def __post_init__(self) -> None:
+        """Reject non-boolean approval decisions."""
+        if not isinstance(self.approved, bool):
+            raise TypeError("approved must be a bool.")
+
 
 # ============================================================================
 # Result Types
@@ -524,7 +529,7 @@ class BaseToolExecutor(DeclarativeActionExecutor):
         messages_var, result_var, auto_send = self._get_output_config()
 
         # Check if approved
-        if not response.approved:
+        if response.approved is not True:
             logger.info(f"{self.__class__.__name__}: tool invocation rejected: {response.reason}")
 
             # Store rejection status (don't raise error)

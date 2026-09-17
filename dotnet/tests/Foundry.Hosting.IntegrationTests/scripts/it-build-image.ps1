@@ -83,13 +83,24 @@ $hashedDirs = @(
 $sourceFiles = @()
 foreach ($dir in $hashedDirs) {
     if (Test-Path $dir) {
-        $sourceFiles += @(git -c core.quotepath=false ls-files -- $dir)
+        $sourceFiles += @(git -c core.quotepath=false ls-files --cached --others --exclude-standard -- $dir)
     }
 }
 if ($sourceFiles.Count -eq 0) {
-    throw "No tracked files found under any of: $($hashedDirs -join ', ')"
+    throw "No source files found under any of: $($hashedDirs -join ', ')"
 }
-$fileHashes = git hash-object -- $sourceFiles
+
+# Keep each git invocation below the Windows command-line length limit.
+$fileHashes = @()
+$maxHashBatchSize = 100
+for ($offset = 0; $offset -lt $sourceFiles.Count; $offset += $maxHashBatchSize) {
+    $end = [Math]::Min($offset + $maxHashBatchSize - 1, $sourceFiles.Count - 1)
+    $fileHashes += @(git hash-object -- $sourceFiles[$offset..$end])
+    if ($LASTEXITCODE -ne 0) {
+        throw "git hash-object failed with exit code $LASTEXITCODE."
+    }
+}
+
 $shaInput = ($fileHashes -join "`n" | git hash-object --stdin).Trim()
 $tag = $shaInput.Substring(0, 12)
 $image = "$Registry/$Repository`:$tag"

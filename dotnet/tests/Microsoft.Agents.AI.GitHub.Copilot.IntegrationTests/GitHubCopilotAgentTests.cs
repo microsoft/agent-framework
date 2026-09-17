@@ -15,9 +15,20 @@ public class GitHubCopilotAgentTests
 {
     private static void SkipIfCopilotNotConfigured()
     {
-        if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("COPILOT_GITHUB_TOKEN")))
+        bool actionsAuth =
+            string.Equals(Environment.GetEnvironmentVariable("GITHUB_ACTIONS"), "true", StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("GITHUB_TOKEN"));
+        bool localOptIn =
+            string.Equals(
+                Environment.GetEnvironmentVariable("RUN_COPILOT_INTEGRATION_TESTS"),
+                "true",
+                StringComparison.OrdinalIgnoreCase);
+
+        if (!actionsAuth && !localOptIn)
         {
-            Assert.Skip("COPILOT_GITHUB_TOKEN not set; skipping GitHub Copilot integration tests.");
+            Assert.Skip(
+                "GitHub Actions auth is unavailable and RUN_COPILOT_INTEGRATION_TESTS is not true; " +
+                "skipping GitHub Copilot integration tests.");
         }
     }
 

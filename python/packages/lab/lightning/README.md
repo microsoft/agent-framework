@@ -24,7 +24,7 @@ pip install -e ".[lightning,math]"
 pip install -e ".[lightning,tau2]"
 ```
 
-To prepare for RL training, you'll also need to install dependencies like PyTorch, Ray, and vLLM. See the [Agent-lightning setup instructions](https://microsoft.github.io/agent-lightning/stable/tutorials/installation/) for more details.
+To prepare for RL training, you'll also need to install dependencies like PyTorch, Ray, and vLLM. See the [Agent-lightning setup instructions](https://microsoft.github.io/agent-lightning/0.3.0/tutorials/installation/) for more details.
 
 ## Usage Patterns
 

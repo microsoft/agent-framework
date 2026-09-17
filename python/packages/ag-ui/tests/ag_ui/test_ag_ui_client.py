@@ -2,10 +2,14 @@
 
 """Tests for AGUIChatClient."""
 
+import asyncio
 import json
-from collections.abc import AsyncGenerator, Awaitable, MutableSequence
-from typing import Any
+from collections.abc import AsyncGenerator, Awaitable, Mapping, MutableSequence
+from contextlib import AbstractContextManager, nullcontext
+from typing import Any, cast
 
+import httpx
+import pytest
 from ag_ui.core import Interrupt, ResumeEntry
 from agent_framework import (
     ChatOptions,
@@ -46,7 +50,7 @@ class StubAGUIChatClient(AGUIChatClient):
         self,
         *,
         messages: MutableSequence[Message],
-        options: ChatOptions[Any] | dict[str, Any] | None,
+        options: Mapping[str, Any],
         stream: bool = False,
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         """Proxy to protected response call."""
@@ -68,6 +72,226 @@ class TestAGUIChatClient:
         async with StubAGUIChatClient(endpoint="http://localhost:8888/") as client:
             assert client is not None
 
+    @pytest.mark.parametrize("stream", [False, True], ids=["non_streaming", "streaming"])
+    @pytest.mark.parametrize("set_cookie", [False, True], ids=["no_cookie_control", "response_cookie"])
+    @pytest.mark.parametrize("first_status", [200, 503], ids=["successful_response", "failed_response"])
+    @pytest.mark.parametrize("second_thread_id", ["thread_a", "thread_b"], ids=["same_thread", "different_thread"])
+    async def test_default_client_does_not_replay_response_cookies_between_runs(
+        self, monkeypatch: MonkeyPatch, stream: bool, set_cookie: bool, first_status: int, second_thread_id: str
+    ) -> None:
+        """Response cookies must not persist between runs, regardless of thread ID."""
+        requests: list[httpx.Request] = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            payload = json.loads(await request.aread())
+            headers = {"content-type": "text/event-stream"}
+            if set_cookie and len(requests) == 1:
+                headers["set-cookie"] = "session=thread-a-only; Path=/; HttpOnly; Secure"
+            events = [
+                {"type": "RUN_STARTED", "threadId": payload["thread_id"], "runId": payload["run_id"]},
+                {"type": "TEXT_MESSAGE_START", "messageId": "msg_1", "role": "assistant"},
+                {"type": "TEXT_MESSAGE_CONTENT", "messageId": "msg_1", "delta": "ok"},
+                {"type": "TEXT_MESSAGE_END", "messageId": "msg_1"},
+                {"type": "RUN_FINISHED", "threadId": payload["thread_id"], "runId": payload["run_id"]},
+            ]
+            return httpx.Response(
+                first_status if len(requests) == 1 else 200,
+                headers=headers,
+                content="".join(f"data: {json.dumps(event)}\n\n" for event in events).encode(),
+            )
+
+        async with httpx.MockTransport(handler) as transport:
+
+            async def handle_async_request(
+                _transport: httpx.AsyncHTTPTransport, request: httpx.Request
+            ) -> httpx.Response:
+                return await transport.handle_async_request(request)
+
+            # Replace only network I/O, preserving the default client's real cookie handling.
+            monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", handle_async_request)
+            async with StubAGUIChatClient(endpoint="https://agui.example.test/") as client:
+                http_client = client.http_service.http_client
+                for index, thread_id in enumerate(("thread_a", second_thread_id)):
+                    messages = [Message(role="user", contents=["Hello"])]
+                    expected_error: AbstractContextManager[object] = (
+                        pytest.raises(httpx.HTTPStatusError, match="503")
+                        if index == 0 and first_status == 503
+                        else nullcontext()
+                    )
+                    with expected_error:
+                        if stream:
+                            updates = [
+                                update
+                                async for update in client.get_response(
+                                    messages, stream=True, options={"metadata": {"thread_id": thread_id}}
+                                )
+                            ]
+                            assert "".join(update.text for update in updates) == "ok"
+                        else:
+                            response = await client.get_response(
+                                messages, options={"metadata": {"thread_id": thread_id}}
+                            )
+                            assert response.text == "ok"
+                    assert client.http_service.http_client is http_client
+
+        assert len(requests) == 2
+        assert [json.loads(request.content)["thread_id"] for request in requests] == ["thread_a", second_thread_id]
+        assert all(request.method == "POST" for request in requests)
+        assert all(request.headers["accept"] == "text/event-stream" for request in requests)
+        assert requests[0].headers.get("cookie") is None
+        assert requests[1].headers.get("cookie") is None
+        assert not http_client.cookies
+
+    @pytest.mark.parametrize("stream", [False, True], ids=["non_streaming", "streaming"])
+    async def test_default_client_does_not_replay_cookies_while_another_response_is_open(
+        self, monkeypatch: MonkeyPatch, stream: bool
+    ) -> None:
+        """Response cookies must be rejected before an overlapping request is built."""
+        requests: list[httpx.Request] = []
+        first_headers_received = asyncio.Event()
+        second_request_received = asyncio.Event()
+        response_body = (
+            b'data: {"type":"TEXT_MESSAGE_START","messageId":"msg_1","role":"assistant"}\n\n'
+            b'data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"msg_1","delta":"ok"}\n\n'
+            b'data: {"type":"TEXT_MESSAGE_END","messageId":"msg_1"}\n\n'
+        )
+
+        class PendingResponseStream(httpx.AsyncByteStream):
+            async def __aiter__(self) -> AsyncGenerator[bytes, None]:
+                # HTTPX has processed response headers before it starts reading this body.
+                first_headers_received.set()
+                await second_request_received.wait()
+                yield response_body
+
+        async def handle_async_request(_transport: httpx.AsyncHTTPTransport, request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            await request.aread()
+            if len(requests) == 1:
+                return httpx.Response(
+                    200,
+                    headers={
+                        "content-type": "text/event-stream",
+                        "set-cookie": "session=thread-a-only; Path=/; HttpOnly; Secure",
+                    },
+                    stream=PendingResponseStream(),
+                )
+            second_request_received.set()
+            return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=response_body)
+
+        monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", handle_async_request)
+        async with StubAGUIChatClient(endpoint="https://agui.example.test/") as client:
+            http_client = client.http_service.http_client
+
+            async def run(thread_id: str) -> str:
+                if thread_id == "thread_b":
+                    await first_headers_received.wait()
+                messages = [Message(role="user", contents=["Hello"])]
+                if stream:
+                    updates = [
+                        update
+                        async for update in client.get_response(
+                            messages, stream=True, options={"metadata": {"thread_id": thread_id}}
+                        )
+                    ]
+                    return "".join(update.text for update in updates)
+                response = await client.get_response(messages, options={"metadata": {"thread_id": thread_id}})
+                return response.text
+
+            tasks = [asyncio.create_task(run(thread_id)) for thread_id in ("thread_a", "thread_b")]
+            try:
+                responses = await asyncio.wait_for(asyncio.gather(*tasks), timeout=10)
+            finally:
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+
+            assert responses == ["ok", "ok"]
+            assert client.http_service.http_client is http_client
+
+        assert len(requests) == 2
+        assert [json.loads(request.content)["thread_id"] for request in requests] == ["thread_a", "thread_b"]
+        assert requests[0].headers.get("cookie") is None
+        assert requests[1].headers.get("cookie") is None
+        assert not http_client.cookies
+
+    @pytest.mark.parametrize("raise_in_context", [False, True], ids=["normal_exit", "exception_exit"])
+    async def test_context_manager_closes_owned_http_client(self, raise_in_context: bool) -> None:
+        """Owned HTTP clients close on both normal and exceptional context exits."""
+        client = StubAGUIChatClient(endpoint="https://agui.example.test/", timeout=17.0)
+        http_client = client.http_service.http_client
+        expected_error: AbstractContextManager[object] = (
+            pytest.raises(RuntimeError, match="context failed") if raise_in_context else nullcontext()
+        )
+        try:
+            with expected_error:
+                async with client:
+                    assert not http_client.is_closed
+                    assert http_client.timeout == httpx.Timeout(17.0)
+                    if raise_in_context:
+                        raise RuntimeError("context failed")
+
+            assert http_client.is_closed
+            await client.close()
+            assert http_client.is_closed
+        finally:
+            await http_client.aclose()
+
+    @pytest.mark.parametrize("raise_in_context", [False, True], ids=["normal_exit", "exception_exit"])
+    async def test_context_manager_preserves_supplied_http_client(self, raise_in_context: bool) -> None:
+        """Caller-owned clients retain their configuration and remain usable after cleanup."""
+        requests: list[httpx.Request] = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(
+                200,
+                headers={
+                    "content-type": "text/event-stream",
+                    "set-cookie": "response=session-only; Path=/; HttpOnly; Secure",
+                },
+                content=(
+                    b'data: {"type":"RUN_STARTED","threadId":"thread_1","runId":"run_1"}\n\n'
+                    b'data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"msg_1","delta":"ok"}\n\n'
+                    b'data: {"type":"RUN_FINISHED","threadId":"thread_1","runId":"run_1"}\n\n'
+                ),
+            )
+
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            headers={"Authorization": "Bearer test-token"},
+            cookies={"configured": "caller-owned"},
+            timeout=17.0,
+        ) as http_client:
+            client = StubAGUIChatClient(endpoint="https://agui.example.test/", http_client=http_client)
+            expected_error: AbstractContextManager[object] = (
+                pytest.raises(RuntimeError, match="context failed") if raise_in_context else nullcontext()
+            )
+            with expected_error:
+                async with client:
+                    assert client.http_service.http_client is http_client
+                    chat_response = await client.get_response(
+                        [Message(role="user", contents=["Hello"])],
+                        options={"metadata": {"thread_id": "thread_1"}},
+                    )
+                    assert chat_response.text == "ok"
+                    if raise_in_context:
+                        raise RuntimeError("context failed")
+
+            await client.close()
+            assert not http_client.is_closed
+            assert http_client.headers["authorization"] == "Bearer test-token"
+            assert http_client.cookies["configured"] == "caller-owned"
+            assert http_client.cookies["response"] == "session-only"
+            assert http_client.timeout == httpx.Timeout(17.0)
+            http_response = await http_client.get("https://agui.example.test/health")
+            assert http_response.status_code == 200
+
+        assert [request.method for request in requests] == ["POST", "GET"]
+        assert all(request.headers["authorization"] == "Bearer test-token" for request in requests)
+        assert requests[0].headers["cookie"] == "configured=caller-owned"
+        assert set(requests[1].headers["cookie"].split("; ")) == {"configured=caller-owned", "response=session-only"}
+
     async def test_extract_state_from_messages_no_state(self) -> None:
         """Test state extraction when no state is present."""
         client = StubAGUIChatClient(endpoint="http://localhost:8888/")
@@ -82,8 +306,73 @@ class TestAGUIChatClient:
         assert state is None
 
     async def test_extract_state_from_messages_with_state(self) -> None:
-        """Test state extraction from last message."""
+        """A marked state carrier populates the request state."""
+        from agent_framework_ag_ui import state_carrier
+
+        client = StubAGUIChatClient(endpoint="http://localhost:8888/")
+
+        state_data = {"key": "value", "count": 42}
+
+        messages = [
+            Message(role="user", contents=["Hello"]),
+            Message(
+                role="user",
+                contents=[state_carrier(state_data)],
+            ),
+        ]
+
+        result_messages, state = client.extract_state_from_messages(messages)
+
+        assert len(result_messages) == 1
+        assert result_messages[0].text == "Hello"
+        assert state == state_data
+
+    async def test_extract_state_from_messages_removes_historical_carriers_and_uses_latest_state(self) -> None:
+        """Historical carriers are removed and the most recent carrier supplies state."""
+        from agent_framework_ag_ui import state_carrier
+
+        client = StubAGUIChatClient(endpoint="http://localhost:8888/")
+        old_carrier = Message(role="user", contents=[state_carrier({"version": "old"})])
+        new_carrier = Message(role="user", contents=[state_carrier({"version": "new"})])
+        messages = [
+            Message(role="user", contents=["Initial prompt"]),
+            old_carrier,
+            Message(role="assistant", contents=["Initial response"]),
+            new_carrier,
+            Message(role="user", contents=["Follow-up prompt"]),
+        ]
+
+        result_messages, state = client.extract_state_from_messages(messages)
+
+        assert result_messages == [messages[0], messages[2], messages[4]]
+        assert state == {"version": "new"}
+
+    async def test_explicit_final_carrier_wins_over_legacy_fallback(self) -> None:
+        """Legacy mode does not reinterpret an earlier document after removing a final carrier."""
+        from agent_framework_ag_ui import state_carrier
+
+        client = StubAGUIChatClient(endpoint="http://localhost:8888/")
+        messages = [
+            Message(
+                role="user",
+                contents=[Content.from_data(b'{"document":"keep"}', media_type="application/json")],
+            ),
+            Message(role="user", contents=[state_carrier({"source": "explicit"})]),
+        ]
+
+        result_messages, state = client._extract_state_from_messages(
+            messages,
+            allow_legacy_state_carrier=True,
+        )
+
+        assert result_messages == messages[:1]
+        assert state == {"source": "explicit"}
+
+    async def test_extract_state_from_messages_with_parameterized_data_uri(self) -> None:
+        """Test state extraction from JSON data URIs with media type parameters."""
         import base64
+
+        from agent_framework_ag_ui._state import STATE_CARRIER_KEY
 
         client = StubAGUIChatClient(endpoint="http://localhost:8888/")
 
@@ -95,7 +384,12 @@ class TestAGUIChatClient:
             Message(role="user", contents=["Hello"]),
             Message(
                 role="user",
-                contents=[Content.from_uri(uri=f"data:application/json;base64,{state_b64}")],
+                contents=[
+                    Content.from_uri(
+                        uri=f"data:application/json;charset=utf-8;base64,{state_b64}",
+                        additional_properties={STATE_CARRIER_KEY: True},
+                    )
+                ],
             ),
         ]
 
@@ -109,6 +403,8 @@ class TestAGUIChatClient:
         """Test state extraction with invalid JSON."""
         import base64
 
+        from agent_framework_ag_ui._state import STATE_CARRIER_KEY
+
         client = StubAGUIChatClient(endpoint="http://localhost:8888/")
 
         invalid_json = "not valid json"
@@ -117,13 +413,41 @@ class TestAGUIChatClient:
         messages = [
             Message(
                 role="user",
-                contents=[Content.from_uri(uri=f"data:application/json;base64,{state_b64}")],
+                contents=[
+                    Content.from_uri(
+                        uri=f"data:application/json;base64,{state_b64}",
+                        additional_properties={STATE_CARRIER_KEY: True},
+                    )
+                ],
             ),
         ]
 
         result_messages, state = client.extract_state_from_messages(messages)
 
-        assert result_messages == messages
+        assert result_messages == []
+        assert state is None
+
+    async def test_extract_state_invalid_base64(self) -> None:
+        """Test state extraction with invalid base64."""
+        from agent_framework_ag_ui._state import STATE_CARRIER_KEY
+
+        client = StubAGUIChatClient(endpoint="http://localhost:8888/")
+
+        messages = [
+            Message(
+                role="user",
+                contents=[
+                    Content.from_uri(
+                        uri="data:application/json;base64,not-valid-base64!",
+                        additional_properties={STATE_CARRIER_KEY: True},
+                    )
+                ],
+            ),
+        ]
+
+        result_messages, state = client.extract_state_from_messages(messages)
+
+        assert result_messages == []
         assert state is None
 
     async def test_convert_messages_to_agui_format(self) -> None:
@@ -142,6 +466,187 @@ class TestAGUIChatClient:
         assert agui_messages[1]["role"] == "assistant"
         assert agui_messages[1]["content"] == "Let me check."
         assert agui_messages[1]["id"] == "msg_123"
+
+    async def test_sends_multimodal_messages_in_request(self) -> None:
+        """The client sends ordered multimodal content in the HTTP request JSON."""
+        captured_request: dict[str, Any] = {}
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            captured_request.update(json.loads(request.content))
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                content=(
+                    b'data: {"type":"RUN_STARTED","threadId":"thread_1","runId":"run_1"}\n\n'
+                    b'data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"msg_1","delta":"ok"}\n\n'
+                    b'data: {"type":"RUN_FINISHED","threadId":"thread_1","runId":"run_1"}\n\n'
+                ),
+            )
+
+        message = Message(
+            role="user",
+            contents=[
+                Content.from_text("describe this"),
+                Content.from_uri("https://example.com/cat.png", media_type="image/png"),
+                Content.from_data(b"abc", media_type="image/png"),
+            ],
+            message_id="msg-request",
+        )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            client = StubAGUIChatClient(endpoint="http://localhost:8888/", http_client=http_client)
+            response = await client.inner_get_response(messages=[message], options={})
+
+        assert response is not None
+        assert captured_request["messages"] == [
+            {
+                "id": "msg-request",
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "describe this"},
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "url",
+                            "value": "https://example.com/cat.png",
+                            "mimeType": "image/png",
+                        },
+                    },
+                    {
+                        "type": "image",
+                        "source": {"type": "data", "value": "YWJj", "mimeType": "image/png"},
+                    },
+                ],
+            }
+        ]
+
+    async def test_sends_mixed_json_attachment_when_legacy_compatibility_is_enabled(self) -> None:
+        """Legacy compatibility does not consume a prompt with a JSON attachment."""
+        captured_request: dict[str, Any] = {}
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            captured_request.update(json.loads(request.content))
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                content=(
+                    b'data: {"type":"RUN_STARTED","threadId":"thread_1","runId":"run_1"}\n\n'
+                    b'data: {"type":"RUN_FINISHED","threadId":"thread_1","runId":"run_1"}\n\n'
+                ),
+            )
+
+        message = Message(
+            role="user",
+            contents=[
+                Content.from_text("summarize the attached JSON document"),
+                Content.from_data(b'{"document":"keep me"}', media_type="application/json"),
+            ],
+            message_id="msg-json-document",
+        )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            client = StubAGUIChatClient(endpoint="http://localhost:8888/", http_client=http_client)
+            response = await client.inner_get_response(
+                messages=[message],
+                options={"allow_legacy_state_carrier": True},
+            )
+
+        assert response is not None
+        assert "state" not in captured_request
+        assert captured_request["messages"] == [
+            {
+                "id": "msg-json-document",
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "summarize the attached JSON document"},
+                    {
+                        "type": "document",
+                        "source": {
+                            "type": "data",
+                            "value": "eyJkb2N1bWVudCI6ImtlZXAgbWUifQ==",
+                            "mimeType": "application/json",
+                        },
+                    },
+                ],
+            }
+        ]
+
+    async def test_sends_json_attachment_without_state_carrier_in_request(self) -> None:
+        """An unmarked JSON-only document is sent as AG-UI document input."""
+        captured_request: dict[str, Any] = {}
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            captured_request.update(json.loads(request.content))
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                content=(
+                    b'data: {"type":"RUN_STARTED","threadId":"thread_1","runId":"run_1"}\n\n'
+                    b'data: {"type":"RUN_FINISHED","threadId":"thread_1","runId":"run_1"}\n\n'
+                ),
+            )
+
+        message = Message(
+            role="user",
+            contents=[Content.from_data(b'{"document":"keep me"}', media_type="application/json")],
+            message_id="msg-json-only-document",
+        )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            client = StubAGUIChatClient(endpoint="http://localhost:8888/", http_client=http_client)
+            response = await client.inner_get_response(messages=[message], options={})
+
+        assert response is not None
+        assert "state" not in captured_request
+        assert captured_request["messages"] == [
+            {
+                "id": "msg-json-only-document",
+                "role": "user",
+                "content": [
+                    {
+                        "type": "document",
+                        "source": {
+                            "type": "data",
+                            "value": "eyJkb2N1bWVudCI6ImtlZXAgbWUifQ==",
+                            "mimeType": "application/json",
+                        },
+                    }
+                ],
+            }
+        ]
+
+    async def test_sends_legacy_json_state_with_compatibility_option(self) -> None:
+        """The legacy option extracts an unmarked final JSON state during migration."""
+        captured_request: dict[str, Any] = {}
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            captured_request.update(json.loads(request.content))
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                content=(
+                    b'data: {"type":"RUN_STARTED","threadId":"thread_1","runId":"run_1"}\n\n'
+                    b'data: {"type":"RUN_FINISHED","threadId":"thread_1","runId":"run_1"}\n\n'
+                ),
+            )
+
+        message = Message(
+            role="user",
+            contents=[Content.from_data(b'{"legacy":"keep"}', media_type="application/json")],
+            message_id="msg-legacy-state",
+        )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            client = StubAGUIChatClient(endpoint="http://localhost:8888/", http_client=http_client)
+            with pytest.warns(DeprecationWarning, match="state_carrier"):
+                response = await client.inner_get_response(
+                    messages=[message],
+                    options={"allow_legacy_state_carrier": True},
+                )
+
+        assert response is not None
+        assert captured_request["state"] == {"legacy": "keep"}
+        assert captured_request["messages"] == []
 
     async def test_get_thread_id_from_metadata(self) -> None:
         """Test thread ID extraction from metadata."""
@@ -185,7 +690,7 @@ class TestAGUIChatClient:
         stream = client.inner_get_response(messages=messages, stream=True, options=chat_options)
         assert isinstance(stream, ResponseStream)
         async for update in stream:
-            updates.append(update)
+            updates.append(cast(ChatResponseUpdate, update))
 
         assert len(updates) == 4
         assert updates[0].additional_properties is not None
@@ -330,18 +835,16 @@ class TestAGUIChatClient:
             pass
 
     async def test_state_transmission(self, monkeypatch: MonkeyPatch) -> None:
-        """Test state is properly transmitted to server."""
-        import base64
+        """A marked state carrier is transmitted through the request state field."""
+        from agent_framework_ag_ui import state_carrier
 
         state_data = {"user_id": "123", "session": "abc"}
-        state_json = json.dumps(state_data)
-        state_b64 = base64.b64encode(state_json.encode("utf-8")).decode("utf-8")
 
         messages = [
             Message(role="user", contents=["Hello"]),
             Message(
                 role="user",
-                contents=[Content.from_uri(uri=f"data:application/json;base64,{state_b64}")],
+                contents=[state_carrier(state_data)],
             ),
         ]
 
@@ -428,7 +931,7 @@ class TestAGUIChatClient:
         stream = client.inner_get_response(messages=messages, stream=True, options={"tools": [my_tool]})
         assert isinstance(stream, ResponseStream)
         async for update in stream:
-            updates.append(update)
+            updates.append(cast(ChatResponseUpdate, update))
 
         # Find the function_call content - it should have agui_thread_id
         found = False
@@ -440,6 +943,54 @@ class TestAGUIChatClient:
                     found = True
                     break
         assert found, "Expected to find function_call content for my_tool"
+
+    async def test_tool_call_args_id_mismatch_does_not_execute_current_client_tool(
+        self, monkeypatch: MonkeyPatch
+    ) -> None:
+        """Mismatched TOOL_CALL_ARGS must not be rebound to the latest client tool."""
+        executed: list[int] = []
+
+        @tool
+        def danger_tool(amount: int) -> str:
+            """Record an invocation for the regression assertion."""
+            executed.append(amount)
+            return f"danger={amount}"
+
+        call_count = 0
+
+        async def mock_post_run(*args: object, **kwargs: Any) -> AsyncGenerator[dict[str, Any], None]:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                mock_events = [
+                    {"type": "RUN_STARTED", "threadId": "thread_1", "runId": "run_1"},
+                    {"type": "TOOL_CALL_START", "toolCallId": "safe", "toolName": "safe_tool"},
+                    {"type": "TOOL_CALL_START", "toolCallId": "danger", "toolName": "danger_tool"},
+                    {"type": "TOOL_CALL_ARGS", "toolCallId": "safe", "delta": '{"amount": 100}'},
+                    {"type": "TOOL_CALL_END", "toolCallId": "safe"},
+                    {"type": "TOOL_CALL_END", "toolCallId": "danger"},
+                    {"type": "RUN_FINISHED", "threadId": "thread_1", "runId": "run_1"},
+                ]
+            else:
+                mock_events = [
+                    {"type": "RUN_STARTED", "threadId": "thread_1", "runId": "run_2"},
+                    {"type": "TEXT_MESSAGE_CONTENT", "messageId": "msg_1", "delta": "done"},
+                    {"type": "RUN_FINISHED", "threadId": "thread_1", "runId": "run_2"},
+                ]
+
+            for event in mock_events:
+                yield event
+
+        client = StubAGUIChatClient(endpoint="http://localhost:8888/")
+        monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
+
+        response = await client.get_response(
+            [Message(role="user", contents=["Test"])],
+            options={"tools": [danger_tool]},
+        )
+
+        assert response.text == "done"
+        assert executed == []
 
     async def test_interrupt_options_transmission(self, monkeypatch: MonkeyPatch) -> None:
         """Interrupt option fields are forwarded to the HTTP service."""

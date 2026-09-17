@@ -1,11 +1,11 @@
 # Agent with Memory Using Valkey + Amazon Bedrock
 
-This sample demonstrates using Valkey for persistent chat history with the Agent Framework, powered by Amazon Bedrock via the `AWSSDK.Extensions.Bedrock.MEAI` adapter.
+This sample demonstrates using Valkey for persistent chat history with the Agent Framework, powered by Amazon Bedrock via the `AWS.Bedrock.MEAI` adapter.
 
 ## Components
 
 - **ValkeyChatHistoryProvider** — Persists conversation history across sessions using Valkey lists. Works with any Valkey or Redis OSS server (no search module required).
-- **Amazon Bedrock** — Provides the LLM via `AWSSDK.Extensions.Bedrock.MEAI`, which implements `IChatClient` from `Microsoft.Extensions.AI`.
+- **Amazon Bedrock** — Provides the LLM via `AWS.Bedrock.MEAI`, which implements `IChatClient` from `Microsoft.Extensions.AI`.
 
 ## Prerequisites
 

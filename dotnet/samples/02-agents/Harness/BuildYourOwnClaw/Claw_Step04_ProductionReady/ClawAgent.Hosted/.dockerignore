@@ -1,0 +1,10 @@
+.env
+bin/
+obj/
+.vs/
+.vscode/
+*.user
+.azure/
+.checkpoints/
+agent-file-memory/
+*.log

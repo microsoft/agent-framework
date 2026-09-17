@@ -1,6 +1,6 @@
 # Foundry Provider Samples
 
-This folder contains Azure AI Foundry and Foundry Local samples for Agent Framework.
+This folder contains Microsoft Foundry and Foundry Local samples for Agent Framework.
 
 ## FoundryAgent Samples
 

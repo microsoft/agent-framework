@@ -48,7 +48,7 @@ either loop) marks a boundary into another agent run, so the printed count is th
 agent runs across both loops.
 
 Environment variables:
-    FOUNDRY_PROJECT_ENDPOINT — Azure AI Foundry project endpoint URL
+    FOUNDRY_PROJECT_ENDPOINT — Microsoft Foundry project endpoint URL
     FOUNDRY_MODEL            — Model deployment name
 
 Authentication:

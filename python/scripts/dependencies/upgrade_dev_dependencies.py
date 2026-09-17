@@ -1,12 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
-# ruff: noqa: INP001
 
-"""Refresh dev dependency pins across the Python workspace."""
+"""Refresh development dependency pins across the Python workspace."""
 
 from __future__ import annotations
 
-import logging
 import argparse
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -16,16 +15,17 @@ from rich import print
 from scripts.dependencies._dependency_bounds_upper_impl import (
     VersionCatalog,
     _apply_package_replacements,
-    _collect_dev_pin_replacements,
+    _collect_development_pin_replacements,
     _load_lock_versions,
 )
 from scripts.task_runner import discover_projects
 
 logger = logging.getLogger(__name__)
 
+
 @dataclass(frozen=True)
 class WorkspaceProject:
-    """Workspace project metadata used for dev dependency pin refresh."""
+    """Workspace project metadata used for development dependency pin refresh."""
 
     name: str
     project_path: str
@@ -56,7 +56,7 @@ def _discover_workspace_projects(workspace_root: Path) -> list[WorkspaceProject]
     ]
 
     # The root project carries the repo-wide dev toolchain pins, while package pyprojects may
-    # carry package-specific dev extras/groups. Refresh both surfaces in one pass so the
+    # carry package-specific development groups. Refresh both surfaces in one pass so the
     # workspace stays internally consistent after a tooling bump.
     # Reuse the shared workspace discovery logic so this script stays aligned with the rest
     # of the repo-level task runners when packages are added or moved.
@@ -103,10 +103,10 @@ def _select_projects(projects: list[WorkspaceProject], package_filters: list[str
 
 
 def main() -> None:
-    """Refresh exact dev dependency pins in workspace pyproject files."""
+    """Refresh exact development dependency pins in workspace pyproject files."""
     parser = argparse.ArgumentParser(
         description=(
-            "Refresh dev dependency pins across the workspace pyproject.toml files. "
+            "Refresh development dependency pins across the workspace pyproject.toml files. "
             "By default, resolves versions from PyPI and falls back to uv.lock when network access is unavailable."
         )
     )
@@ -120,7 +120,7 @@ def main() -> None:
         "--version-source",
         choices=["pypi", "lock"],
         default="pypi",
-        help="Version source for selecting the newest dev pin.",
+        help="Version source for selecting the newest development dependency pin.",
     )
     parser.add_argument(
         "--dry-run",
@@ -137,7 +137,7 @@ def main() -> None:
 
     workspace_root = Path(__file__).resolve().parents[2]
     lock_versions = _load_lock_versions(workspace_root)
-    # Reuse the same version catalog as the bound-expansion tooling so dev pin refreshes choose
+    # Reuse the same version catalog as the bound-expansion tooling so development pin refreshes choose
     # versions with the same PyPI-vs-lock fallback behavior as the dependency validators.
     catalog = VersionCatalog(lock_versions=lock_versions, source=args.version_source)
 
@@ -145,7 +145,10 @@ def main() -> None:
         _discover_workspace_projects(workspace_root),
         package_filters=args.packages,
     )
-    logger.debug(f"Selected projects for dev dependency refresh: {[project.pyproject_path for project in selected_projects]}")
+    logger.debug(
+        "Selected projects for development dependency refresh: %s",
+        [project.pyproject_path for project in selected_projects],
+    )
     if not selected_projects:
         filters = ", ".join(args.packages or [])
         raise SystemExit(f"No matching workspace projects found for: {filters}")
@@ -153,10 +156,10 @@ def main() -> None:
     updated_projects = 0
     updated_requirements = 0
     for project in selected_projects:
-        # Keep the replacement logic centralized in the upper-bound helper so exact dev pins are
+        # Keep the replacement logic centralized in the upper-bound helper so exact development pins are
         # formatted consistently regardless of whether we update them directly here or while
         # widening runtime dependency bounds.
-        replacements = _collect_dev_pin_replacements(project.pyproject_file, catalog=catalog)
+        replacements = _collect_development_pin_replacements(project.pyproject_file, catalog=catalog)
         if not replacements:
             continue
 
@@ -171,16 +174,16 @@ def main() -> None:
         _apply_package_replacements(project.pyproject_file, replacements)
         print(
             f"[green]Updated {project.pyproject_path}[/green] "
-            f"({project.name}) with {len(replacements)} dev dependency pin refresh(es)."
+            f"({project.name}) with {len(replacements)} development dependency pin refresh(es)."
         )
 
     if updated_projects == 0:
-        print("[green]No dev dependency pin updates were needed.[/green]")
+        print("[green]No development dependency pin updates were needed.[/green]")
         return
 
     action = "Would update" if args.dry_run else "Updated"
     print(
-        f"[green]{action} {updated_requirements} dev dependency pin(s) "
+        f"[green]{action} {updated_requirements} development dependency pin(s) "
         f"across {updated_projects} workspace project(s).[/green]"
     )
 

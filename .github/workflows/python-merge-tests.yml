@@ -36,14 +36,17 @@ jobs:
       openaiChanged: ${{ steps.filter.outputs.openai }}
       azureChanged: ${{ steps.filter.outputs.azure }}
       miscChanged: ${{ steps.filter.outputs.misc }}
-      functionsChanged: ${{ steps.filter.outputs.functions }}
       foundryChanged: ${{ steps.filter.outputs.foundry }}
       foundryHostingChanged: ${{ steps.filter.outputs.foundry_hosting }}
       cosmosChanged: ${{ steps.filter.outputs.cosmos }}
+      qdrantChanged: ${{ steps.filter.outputs.qdrant }}
+      mongodbChanged: ${{ steps.filter.outputs.mongodb }}
+      redisChanged: ${{ steps.filter.outputs.redis }}
       githubCopilotChanged: ${{ steps.filter.outputs.github_copilot }}
+      postgresChanged: ${{ steps.filter.outputs.postgres }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: filter
         with:
           filters: |
@@ -68,16 +71,15 @@ jobs:
             misc:
               - 'python/packages/anthropic/**'
               - 'python/packages/hyperlight/**'
+              - 'python/packages/mistral/**'
               - 'python/packages/ollama/**'
               - 'python/packages/core/agent_framework/_mcp.py'
               - 'python/packages/core/tests/core/test_mcp.py'
+              - 'python/packages/hosting-mcp/**'
               - 'python/scripts/local_mcp_streamable_http_server.py'
               - '.github/actions/setup-local-mcp-server/**'
               - '.github/workflows/python-merge-tests.yml'
               - '.github/workflows/python-integration-tests.yml'
-            functions:
-              - 'python/packages/azurefunctions/**'
-              - 'python/packages/durabletask/**'
             foundry:
               - 'python/packages/foundry/**'
               - 'python/samples/**/providers/foundry/**'
@@ -86,8 +88,25 @@ jobs:
               - 'python/packages/foundry_hosting/**'
             cosmos:
               - 'python/packages/azure-cosmos/**'
+            qdrant:
+              - 'python/packages/qdrant/**'
+              - '.github/workflows/python-merge-tests.yml'
+              - '.github/workflows/python-integration-tests.yml'
+            mongodb:
+              - 'python/packages/mongodb/**'
+              - '.github/workflows/python-merge-tests.yml'
+              - '.github/workflows/python-integration-tests.yml'
+            redis:
+              - 'python/packages/redis/**'
+              - 'python/packages/core/agent_framework/redis/**'
             github_copilot:
               - 'python/packages/github_copilot/**'
+            postgres:
+              - 'python/packages/postgres/**'
+              - 'python/pyproject.toml'
+              - 'python/uv.lock'
+              - '.github/workflows/python-merge-tests.yml'
+              - '.github/workflows/python-integration-tests.yml'
       # run only if 'python' files were changed
       - name: python tests
         if: steps.filter.outputs.python == 'true'
@@ -96,6 +115,109 @@ jobs:
       - name: not python tests
         if: steps.filter.outputs.python != 'true'
         run: echo "NOT python file"
+  python-tests-qdrant:
+    name: Python Integration Tests - Qdrant
+    needs: paths-filter
+    if: >
+      needs.paths-filter.outputs.pythonChanges == 'true' &&
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' ||
+       needs.paths-filter.outputs.qdrantChanged == 'true' ||
+       needs.paths-filter.outputs.coreChanged == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      qdrant:
+        image: qdrant/qdrant:v1.16.2
+        env:
+          QDRANT__TELEMETRY_DISABLED: "true"
+        ports:
+          - 6333:6333
+    env:
+      QDRANT_TEST_URL: "http://localhost:6333"
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up python and install the project
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: ${{ env.UV_PYTHON }}
+          os: ${{ runner.os }}
+      - name: Wait for Qdrant
+        run: |
+          for i in {1..60}; do
+            if curl --fail --silent http://localhost:6333/readyz > /dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Qdrant did not become ready in time." >&2
+          exit 1
+      - name: Test with pytest (Qdrant integration)
+        run: uv run --directory packages/qdrant poe test-integration --junitxml=${{ github.workspace }}/python/pytest.xml
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-results-qdrant
+          path: ./python/pytest.xml
+          if-no-files-found: ignore
+
+  # MongoDB tests use the official disposable Atlas Local image and need no cloud credentials.
+  python-tests-mongodb:
+    name: Python Integration Tests - MongoDB
+    needs: paths-filter
+    if: >
+      needs.paths-filter.outputs.pythonChanges == 'true' &&
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' ||
+       needs.paths-filter.outputs.mongodbChanged == 'true' ||
+       needs.paths-filter.outputs.coreChanged == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    services:
+      mongodb:
+        image: mongodb/mongodb-atlas-local@sha256:82da14850e350f15aae720ebba130ade6a607335877486a63252b3ad8ef3b12a
+        ports:
+          - 27017:27017
+    env:
+      MONGODB_TEST_URI: "mongodb://localhost:27017/?directConnection=true"
+      MONGODB_TEST_DATABASE: af_vectors_test
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up python and install the project
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: ${{ env.UV_PYTHON }}
+          os: ${{ runner.os }}
+      - name: Test MongoDB integration
+        run: >
+          uv run --directory packages/mongodb poe test-integration
+          --junitxml=${{ github.workspace }}/python/pytest-mongodb.xml
+      - name: Surface failing tests
+        if: always()
+        uses: pmeier/pytest-results-action@fdc7f18d9934e38aca411ca9557e6577bd25ca9c # v0.9.0
+        with:
+          path: ./python/pytest-mongodb.xml
+          summary: true
+          display-options: fEX
+          fail-on-empty: false
+          title: MongoDB integration test results
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-results-mongodb
+          path: ./python/pytest-mongodb.xml
+          if-no-files-found: ignore
+
   # Unit tests: always run all non-integration tests across all packages
   python-tests-unit:
     name: Python Tests - Unit
@@ -109,7 +231,7 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Set up python and install the project
         id: python-setup
         uses: ./.github/actions/python-setup
@@ -126,7 +248,7 @@ jobs:
         working-directory: ./python
       - name: Surface failing tests
         if: always()
-        uses: pmeier/pytest-results-action@20b595761ba9bf89e115e875f8bc863f913bc8ad # v0.7.2
+        uses: pmeier/pytest-results-action@fdc7f18d9934e38aca411ca9557e6577bd25ca9c # v0.9.0
         with:
           path: ./python/pytest.xml
           summary: true
@@ -156,7 +278,7 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Set up python and install the project
         id: python-setup
         uses: ./.github/actions/python-setup
@@ -180,7 +302,7 @@ jobs:
         working-directory: ./python
       - name: Surface failing tests
         if: always()
-        uses: pmeier/pytest-results-action@20b595761ba9bf89e115e875f8bc863f913bc8ad # v0.7.2
+        uses: pmeier/pytest-results-action@fdc7f18d9934e38aca411ca9557e6577bd25ca9c # v0.9.0
         with:
           path: ./python/pytest.xml
           summary: true
@@ -189,7 +311,7 @@ jobs:
           title: OpenAI integration test results
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: test-results-openai
           path: ./python/pytest.xml
@@ -217,7 +339,7 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Set up python and install the project
         id: python-setup
         uses: ./.github/actions/python-setup
@@ -226,7 +348,7 @@ jobs:
           os: ${{ runner.os }}
       - name: Azure CLI Login
         if: github.event_name != 'pull_request'
-        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
+        uses: azure/login@7ddb5af1ef8758cf1353cf3b42f940aee27ba21c # v3.0.2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -250,7 +372,7 @@ jobs:
         working-directory: ./python
       - name: Surface failing tests
         if: always()
-        uses: pmeier/pytest-results-action@20b595761ba9bf89e115e875f8bc863f913bc8ad # v0.7.2
+        uses: pmeier/pytest-results-action@fdc7f18d9934e38aca411ca9557e6577bd25ca9c # v0.9.0
         with:
           path: ./python/pytest.xml
           summary: true
@@ -259,7 +381,7 @@ jobs:
           title: Azure OpenAI integration test results
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: test-results-azure-openai
           path: ./python/pytest.xml
@@ -287,7 +409,7 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Set up python and install the project
         id: python-setup
         uses: ./.github/actions/python-setup
@@ -298,7 +420,7 @@ jobs:
         run: curl -fsSL https://ollama.com/install.sh | sh
         working-directory: .
       - name: Cache Ollama models
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.ollama/models
           key: ollama-models-qwen2.5-1.5b-nomic-embed-text-v1
@@ -338,13 +460,15 @@ jobs:
           fallback_url: ${{ env.LOCAL_MCP_URL }}
       - name: Prefer local MCP URL when available
         run: echo "LOCAL_MCP_URL=${{ steps.local-mcp.outputs.effective_url }}" >> "$GITHUB_ENV"
-      - name: Test with pytest (Anthropic, Hyperlight, Ollama, MCP integration)
+      - name: Test with pytest (Anthropic, Hyperlight, Mistral, Ollama, MCP integration)
         run: >
           uv run pytest --import-mode=importlib
           packages/anthropic/tests
           packages/hyperlight/tests
+          packages/mistral/tests
           packages/ollama/tests
           packages/core/tests/core/test_mcp.py
+          packages/hosting-mcp/tests
           -m integration
           -n logical --dist worksteal
           --timeout=120 --session-timeout=900 --timeout_method thread
@@ -373,7 +497,7 @@ jobs:
           kill -KILL -- "-$server_pid" 2>/dev/null || kill -KILL "$server_pid" 2>/dev/null || true
       - name: Surface failing tests
         if: always()
-        uses: pmeier/pytest-results-action@20b595761ba9bf89e115e875f8bc863f913bc8ad # v0.7.2
+        uses: pmeier/pytest-results-action@fdc7f18d9934e38aca411ca9557e6577bd25ca9c # v0.9.0
         with:
           path: ./python/pytest.xml
           summary: true
@@ -382,87 +506,9 @@ jobs:
           title: Misc integration test results
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: test-results-misc
-          path: ./python/pytest.xml
-          if-no-files-found: ignore
-
-  # Azure Functions + Durable Task integration tests
-  python-tests-functions:
-    name: Python Tests - Functions Integration
-    needs: paths-filter
-    if: >
-      github.event_name != 'pull_request' &&
-      needs.paths-filter.outputs.pythonChanges == 'true' &&
-      (github.event_name != 'merge_group' ||
-       needs.paths-filter.outputs.functionsChanged == 'true' ||
-       needs.paths-filter.outputs.coreChanged == 'true')
-    runs-on: ubuntu-latest
-    environment: integration
-    env:
-      UV_PYTHON: "3.11"
-      OPENAI_CHAT_COMPLETION_MODEL: ${{ vars.OPENAI__CHATMODELID }}
-      OPENAI_CHAT_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
-      OPENAI_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
-      OPENAI_EMBEDDING_MODEL: ${{ vars.OPENAI_EMBEDDING_MODEL_ID }}
-      OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
-      AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
-      AZURE_OPENAI_MODEL: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
-      AZURE_OPENAI_CHAT_MODEL: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
-      AZURE_OPENAI_CHAT_COMPLETION_MODEL: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
-      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
-      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL }}
-      FUNCTIONS_WORKER_RUNTIME: "python"
-      DURABLE_TASK_SCHEDULER_CONNECTION_STRING: "Endpoint=http://localhost:8080;TaskHub=default;Authentication=None"
-      AzureWebJobsStorage: "UseDevelopmentStorage=true"
-    defaults:
-      run:
-        working-directory: python
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - name: Set up python and install the project
-        id: python-setup
-        uses: ./.github/actions/python-setup
-        with:
-          python-version: ${{ env.UV_PYTHON }}
-          os: ${{ runner.os }}
-      - name: Azure CLI Login
-        if: github.event_name != 'pull_request'
-        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      - name: Set up Azure Functions Integration Test Emulators
-        uses: ./.github/actions/azure-functions-integration-setup
-        id: azure-functions-setup
-      - name: Test with pytest (Functions + Durable Task integration)
-        run: >
-          uv run pytest --import-mode=importlib
-          packages/azurefunctions/tests/integration_tests
-          packages/durabletask/tests/integration_tests
-          -m integration
-          -n logical --dist worksteal
-          -x
-          --timeout=480 --session-timeout=900 --timeout_method thread
-          --retries 2 --retry-delay 5
-          --junitxml=pytest.xml
-        working-directory: ./python
-      - name: Surface failing tests
-        if: always()
-        uses: pmeier/pytest-results-action@20b595761ba9bf89e115e875f8bc863f913bc8ad # v0.7.2
-        with:
-          path: ./python/pytest.xml
-          summary: true
-          display-options: fEX
-          fail-on-empty: false
-          title: Functions integration test results
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: test-results-functions
           path: ./python/pytest.xml
           if-no-files-found: ignore
 
@@ -491,7 +537,7 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Set up python and install the project
         id: python-setup
         uses: ./.github/actions/python-setup
@@ -500,7 +546,7 @@ jobs:
           os: ${{ runner.os }}
       - name: Azure CLI Login
         if: github.event_name != 'pull_request'
-        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
+        uses: azure/login@7ddb5af1ef8758cf1353cf3b42f940aee27ba21c # v3.0.2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -518,7 +564,7 @@ jobs:
         working-directory: ./python
       - name: Surface failing tests
         if: always()
-        uses: pmeier/pytest-results-action@20b595761ba9bf89e115e875f8bc863f913bc8ad # v0.7.2
+        uses: pmeier/pytest-results-action@fdc7f18d9934e38aca411ca9557e6577bd25ca9c # v0.9.0
         with:
           path: ./python/pytest.xml
           summary: true
@@ -527,7 +573,7 @@ jobs:
           title: Test results
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: test-results-foundry
           path: ./python/pytest.xml
@@ -552,7 +598,7 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Set up python and install the project
         id: python-setup
         uses: ./.github/actions/python-setup
@@ -561,7 +607,7 @@ jobs:
           os: ${{ runner.os }}
       - name: Azure CLI Login
         if: github.event_name != 'pull_request'
-        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
+        uses: azure/login@7ddb5af1ef8758cf1353cf3b42f940aee27ba21c # v3.0.2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -579,7 +625,7 @@ jobs:
         working-directory: ./python
       - name: Surface failing tests
         if: always()
-        uses: pmeier/pytest-results-action@20b595761ba9bf89e115e875f8bc863f913bc8ad # v0.7.2
+        uses: pmeier/pytest-results-action@fdc7f18d9934e38aca411ca9557e6577bd25ca9c # v0.9.0
         with:
           path: ./python/pytest.xml
           summary: true
@@ -588,7 +634,7 @@ jobs:
           title: Foundry Hosting integration test results
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: test-results-foundry-hosting
           path: ./python/pytest.xml
@@ -623,7 +669,7 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Set up python and install the project
         id: python-setup
         uses: ./.github/actions/python-setup
@@ -646,7 +692,7 @@ jobs:
         working-directory: ./python
       - name: Surface failing tests
         if: always()
-        uses: pmeier/pytest-results-action@20b595761ba9bf89e115e875f8bc863f913bc8ad # v0.7.2
+        uses: pmeier/pytest-results-action@fdc7f18d9934e38aca411ca9557e6577bd25ca9c # v0.9.0
         with:
           path: ./python/pytest.xml
           summary: true
@@ -655,7 +701,7 @@ jobs:
           title: Cosmos integration test results
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: test-results-cosmos
           path: ./python/pytest.xml
@@ -673,15 +719,18 @@ jobs:
        needs.paths-filter.outputs.coreChanged == 'true')
     runs-on: ubuntu-latest
     environment: integration
+    permissions:
+      copilot-requests: write
+      contents: read
     timeout-minutes: 60
     env:
-      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+      GITHUB_TOKEN: ${{ github.token }}
       GITHUB_COPILOT_TIMEOUT: "120"
     defaults:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Set up python and install the project
         id: python-setup
         uses: ./.github/actions/python-setup
@@ -698,7 +747,7 @@ jobs:
           --junitxml=pytest.xml
       - name: Surface failing tests
         if: always()
-        uses: pmeier/pytest-results-action@20b595761ba9bf89e115e875f8bc863f913bc8ad # v0.7.2
+        uses: pmeier/pytest-results-action@fdc7f18d9934e38aca411ca9557e6577bd25ca9c # v0.9.0
         with:
           path: ./python/pytest.xml
           summary: true
@@ -707,10 +756,122 @@ jobs:
           title: GitHub Copilot integration test results
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: test-results-github-copilot
           path: ./python/pytest.xml
+          if-no-files-found: ignore
+
+  # PostgreSQL tests use a disposable local service and need no cloud credentials.
+  python-tests-postgres:
+    name: Python Tests - PostgreSQL Integration
+    needs: paths-filter
+    if: >
+      needs.paths-filter.outputs.pythonChanges == 'true' &&
+      (github.event_name == 'schedule' ||
+       github.event_name == 'workflow_dispatch' ||
+       needs.paths-filter.outputs.postgresChanged == 'true' ||
+       needs.paths-filter.outputs.coreChanged == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.2-pg17@sha256:feb68f4f15446397d8cac7f4fe48fe4586de83160d1fc48b46283312d1a33966
+        env:
+          POSTGRES_PASSWORD: local_test
+          POSTGRES_DB: af_vectors_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d af_vectors_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      POSTGRES_TEST_CONNECTION_STRING: postgresql://postgres:local_test@localhost:5432/af_vectors_test
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up python and install the project
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: ${{ env.UV_PYTHON }}
+          os: ${{ runner.os }}
+      - name: Enable pgvector in the disposable test database
+        run: >
+          docker exec "${{ job.services.postgres.id }}" psql -U postgres -d af_vectors_test
+          -v ON_ERROR_STOP=1 -c 'CREATE EXTENSION IF NOT EXISTS vector'
+      - name: Test PostgreSQL integration
+        run: >
+          uv run pytest --import-mode=importlib packages/postgres/tests
+          -m integration --timeout=120 --session-timeout=900 --timeout_method thread
+          --junitxml=pytest-postgres.xml
+      - name: Surface failing tests
+        if: always()
+        uses: pmeier/pytest-results-action@fdc7f18d9934e38aca411ca9557e6577bd25ca9c # v0.9.0
+        with:
+          path: ./python/pytest-postgres.xml
+          summary: true
+          display-options: fEX
+          fail-on-empty: false
+          title: PostgreSQL integration test results
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-results-postgres
+          path: ./python/pytest-postgres.xml
+          if-no-files-found: ignore
+
+  python-tests-redis:
+    name: Python Tests - Redis Integration
+    needs: paths-filter
+    if: >
+      github.event_name != 'pull_request' &&
+      needs.paths-filter.outputs.pythonChanges == 'true' &&
+      (github.event_name != 'merge_group' ||
+       needs.paths-filter.outputs.redisChanged == 'true' ||
+       needs.paths-filter.outputs.coreChanged == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    services:
+      redis:
+        image: redis:8.0.3
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      REDIS_VECTOR_TEST_URL: redis://localhost:6379
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up python and install the project
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: ${{ env.UV_PYTHON }}
+          os: ${{ runner.os }}
+      - name: Test Redis HASH and JSON vector collections
+        run: >
+          uv run --no-sync pytest packages/redis/tests/test_vector_store.py
+          -m integration --timeout=120 --junitxml=pytest-redis.xml
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-results-redis
+          path: ./python/pytest-redis.xml
           if-no-files-found: ignore
 
   # Integration test trend report (aggregates per-job JUnit XML results)
@@ -725,18 +886,21 @@ jobs:
         python-tests-openai,
         python-tests-azure-openai,
         python-tests-misc-integration,
-        python-tests-functions,
         python-tests-foundry,
         python-tests-foundry-hosting,
         python-tests-cosmos,
+        python-tests-qdrant,
+        python-tests-mongodb,
         python-tests-github-copilot,
+        python-tests-postgres,
+        python-tests-redis,
       ]
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Set up python and install the project
         uses: ./.github/actions/python-setup
         with:
@@ -748,7 +912,7 @@ jobs:
           pattern: test-results-*
           path: test-results/
       - name: Restore report history cache
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: python/integration-report-history.json
           key: integration-report-history-merge-${{ github.run_id }}
@@ -765,13 +929,13 @@ jobs:
         run: cat integration-test-report.md >> $GITHUB_STEP_SUMMARY
       - name: Save report history cache
         if: always()
-        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: python/integration-report-history.json
           key: integration-report-history-merge-${{ github.run_id }}
       - name: Upload unified trend report
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: integration-test-report
           path: |
@@ -787,23 +951,26 @@ jobs:
         python-tests-openai,
         python-tests-azure-openai,
         python-tests-misc-integration,
-        python-tests-functions,
         python-tests-foundry,
         python-tests-foundry-hosting,
         python-tests-cosmos,
+        python-tests-qdrant,
+        python-tests-mongodb,
         python-tests-github-copilot,
+        python-tests-postgres,
+        python-tests-redis,
       ]
     steps:
       - name: Fail workflow if tests failed
         id: check_tests_failed
         if: contains(join(needs.*.result, ','), 'failure')
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: core.setFailed('Integration Tests Failed!')
 
       - name: Fail workflow if tests cancelled
         id: check_tests_cancelled
         if: contains(join(needs.*.result, ','), 'cancelled')
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: core.setFailed('Integration Tests Cancelled!')

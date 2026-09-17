@@ -1,15 +1,12 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Diagnostics.CodeAnalysis;
 using System.Text.Json.Serialization;
-using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI;
 
 /// <summary>
 /// Represents a single todo item managed by the <see cref="TodoProvider"/>.
 /// </summary>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class TodoItem
 {
     /// <summary>

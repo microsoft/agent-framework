@@ -3,6 +3,7 @@
 from collections.abc import AsyncIterable, Awaitable, Sequence
 from typing import Any, Literal, overload
 
+import agent_framework._telemetry as telemetry
 import pytest
 from agent_framework import (
     AgentExecutorResponse,
@@ -20,8 +21,12 @@ from agent_framework import (
     WorkflowRunState,
     handler,
 )
+from agent_framework._telemetry import FeatureIndex as CoreFeatureIndex
+from agent_framework._telemetry import get_feature_token
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
 from agent_framework.orchestrations import SequentialBuilder
+
+from agent_framework_orchestrations._feature_usage import FeatureIndex
 
 
 class _EchoAgent(BaseAgent):
@@ -91,9 +96,29 @@ class _InvalidExecutor(Executor):
         pass
 
 
+def test_sequential_builder_does_not_mark_custom_workflow() -> None:
+    with telemetry._feature_mask_lock:
+        telemetry._feature_mask = 0
+
+    SequentialBuilder(participants=[_EchoAgent(name="echo")]).build()
+
+    token = get_feature_token()
+    assert token is not None
+    mask = int(token.split(".", 1)[1], 16)
+    assert mask & (1 << FeatureIndex.ORCHESTRATION_SEQUENTIAL)
+    assert not mask & (1 << CoreFeatureIndex.CORE_WORKFLOW)
+
+
 def test_sequential_builder_rejects_empty_participants() -> None:
     with pytest.raises(ValueError):
         SequentialBuilder(participants=[])
+
+
+def test_sequential_builder_uses_stable_default_and_custom_name() -> None:
+    participant = _EchoAgent(name="echo")
+
+    assert SequentialBuilder(participants=[participant]).build().name == "Sequential"
+    assert SequentialBuilder(name="custom-sequential", participants=[participant]).build().name == "custom-sequential"
 
 
 def test_sequential_builder_validation_rejects_invalid_executor() -> None:
@@ -194,6 +219,7 @@ async def test_sequential_checkpoint_resume_round_trip() -> None:
 
     initial_agents = (_EchoAgent(id="agent1", name="A1"), _EchoAgent(id="agent2", name="A2"))
     wf = SequentialBuilder(participants=list(initial_agents), checkpoint_storage=storage).build()
+    assert wf.name == "Sequential"
 
     baseline_updates: list[AgentResponseUpdate] = []
     async for ev in wf.run("checkpoint sequential", stream=True):

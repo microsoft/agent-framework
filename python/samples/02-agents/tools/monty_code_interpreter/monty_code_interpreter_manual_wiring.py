@@ -8,7 +8,7 @@ from typing import Annotated, Any, Literal
 
 from agent_framework import Agent, tool
 from agent_framework.foundry import FoundryChatClient
-from agent_framework_monty import MontyExecuteCodeTool
+from agent_framework.monty import MontyExecuteCodeTool
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -23,10 +23,10 @@ well-suited when the tool registry is fixed for the agent's lifetime. The
 tradeoff is that dynamic tool changes between runs are not supported - any
 mutations to the tool would not update the agent's instructions automatically.
 
-Note: `agent-framework-monty` is an alpha package and is not yet part of
-`agent-framework[all]`. Install it explicitly with:
+`agent-framework-monty` is a beta package included in `agent-framework[all]`.
+Install the main package with:
 
-    pip install agent-framework agent-framework-monty --pre
+    pip install agent-framework-monty agent-framework-foundry --pre
 """
 
 load_dotenv()

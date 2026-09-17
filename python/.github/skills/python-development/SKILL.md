@@ -25,6 +25,10 @@ Every `.py` file must start with:
 - Use `Mapping` instead of `MutableMapping` for read-only input parameters
 - Prefer `# type: ignore[...]` over unnecessary casts, or `isinstance` checks, when these are internally called and executed methods
     But make sure the ignore is specific for both mypy and pyright so that we don't miss other mistakes
+- Internal private helpers may be used across `agent_framework*` modules when intentional; use a targeted
+  `# pyright: ignore[reportPrivateUsage]` instead of making the helper public just to satisfy pyright.
+- Do not add trivial pass-through or one-line helper functions solely to appease typing. Prefer targeted ignores,
+  casts, or clearer annotations over adding runtime overhead without a design benefit.
 
 ## Function Parameters
 

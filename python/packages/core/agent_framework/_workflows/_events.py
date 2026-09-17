@@ -6,8 +6,8 @@ import builtins
 import sys
 import traceback as _traceback
 import warnings
-from collections.abc import Generator
-from contextlib import contextmanager
+from collections.abc import Callable, Generator, Mapping
+from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass
 from enum import Enum
@@ -46,13 +46,36 @@ def _current_event_origin() -> WorkflowEventSource:
 
 
 @contextmanager
-def _framework_event_origin() -> Generator[None]:  # pyright: ignore[reportUnusedFunction]
-    """Temporarily mark subsequently created events as originating from the framework (internal)."""
+def _framework_event_origin() -> Generator[None]:
+    """Temporarily mark subsequently created events as originating from the framework (internal).
+
+    Callers must not ``yield`` from an async generator while this manager is active.
+    Async-generator finalization can inject ``GeneratorExit`` from a different
+    ``Context`` than the one that created the token (for example when an abandoned
+    ``ResponseStream`` is garbage-collected), and ``ContextVar.reset`` then raises.
+    """
     token = _event_origin_context.set(WorkflowEventSource.FRAMEWORK)
     try:
         yield
     finally:
-        _event_origin_context.reset(token)
+        with suppress(ValueError):
+            # Token may have been created in a different Context when an
+            # abandoned ResponseStream is garbage-collected. Leave the var
+            # as-is rather than raising during generator/GC cleanup.
+            _event_origin_context.reset(token)
+
+
+def _framework_event(  # pyright: ignore[reportUnusedFunction]
+    factory: Callable[..., WorkflowEvent[Any]], *args: Any, **kwargs: Any
+) -> WorkflowEvent[Any]:
+    """Build a framework-origin event and return it after resetting the origin token.
+
+    Callers can ``yield`` the result without holding ``_framework_event_origin()``
+    across an async-generator yield, which would leak the ContextVar token if the
+    stream is abandoned and finalized from a different Context.
+    """
+    with _framework_event_origin():
+        return factory(*args, **kwargs)
 
 
 class WorkflowRunState(str, Enum):
@@ -124,7 +147,7 @@ WorkflowEventType = Literal[
     "executor_failed",  # Executor handler raised error (use .executor_id, .details)
     "executor_bypassed",  # Executor skipped via cache hit during replay (use .executor_id, .data)
     # Orchestration event types (use .data for typed payload)
-    "group_chat",  # Group chat orchestrator events (use .data as GroupChatRequestSentEvent | GroupChatResponseReceivedEvent) # noqa: E501
+    "group_chat",  # Group chat orchestrator events (use .data as GroupChatRequestSentEvent | GroupChatResponseReceivedEvent) # ruff:ignore[line-too-long]
     "handoff_sent",  # Handoff routing events (use .data as HandoffSentEvent)
     "magentic_orchestrator",  # Magentic orchestrator events (use .data as MagenticOrchestratorEvent)
 ]
@@ -426,14 +449,24 @@ class WorkflowEvent(Generic[DataT]):
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> WorkflowEvent[Any]:
-        """Create a REQUEST_INFO event from a dictionary."""
+    def from_dict(
+        cls,
+        data: dict[str, Any],
+        *,
+        allowed_types: Mapping[str, builtins.type[Any]] | None = None,
+    ) -> WorkflowEvent[Any]:
+        """Create a request-info event from a dictionary.
+
+        Args:
+            data: Serialized request-info event fields.
+            allowed_types: Optional exact mapping of serialized names to trusted custom types.
+        """
         for prop in ["data", "request_id", "source_executor_id", "request_type", "response_type"]:
             if prop not in data:
                 raise KeyError(f"Missing '{prop}' field in WorkflowEvent dictionary.")
 
         request_data = data["data"]
-        request_type = deserialize_type(data["request_type"])
+        request_type = deserialize_type(data["request_type"], allowed_types=allowed_types)
 
         if request_type is not type(request_data):
             raise TypeError(
@@ -444,5 +477,5 @@ class WorkflowEvent(Generic[DataT]):
             request_id=data["request_id"],
             source_executor_id=data["source_executor_id"],
             request_data=cast(Any, request_data),  # type: ignore
-            response_type=deserialize_type(data["response_type"]),
+            response_type=deserialize_type(data["response_type"], allowed_types=allowed_types),
         )

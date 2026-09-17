@@ -48,7 +48,7 @@ Show how to:
 - Apply conditional persistence logic (short vs long emails).
 
 Prerequisites:
-- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_PROJECT_ENDPOINT must be your Microsoft Foundry Agent Service (V2) project endpoint.
 - Familiarity with WorkflowBuilder, executors, edges, and events.
 - Understanding of multi-selection edge groups and how their selection function maps to target ids.
 - Experience with workflow state for persisting and reusing objects.

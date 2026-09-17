@@ -2,10 +2,16 @@
 
 # ruff: noqa: E402
 
+import base64
+import inspect
+import json
+import logging
 import os
 import unittest.mock
 from collections.abc import Sequence
 from datetime import datetime, timezone
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -21,14 +27,18 @@ from agent_framework import (
     Content,
     ContextProvider,
     HistoryProvider,
+    MCPStdioTool,
     Message,
     tool,
 )
 from agent_framework.exceptions import AgentException
-from copilot.session import PermissionHandler, PreToolUseHookInput
+from copilot.session import PermissionHandler, PermissionInvocation, PreToolUseHookInput
 from copilot.session_events import (
     AssistantUsageData,
     Data,
+    PermissionRequestShell,
+    PermissionRequestShellCommand,
+    PermissionRequestWrite,
     SessionEvent,
     SessionEventType,
     ToolExecutionCompleteError,
@@ -36,7 +46,8 @@ from copilot.session_events import (
 )
 from copilot.tools import ToolInvocation, ToolResult
 
-from agent_framework_github_copilot import GitHubCopilotAgent, GitHubCopilotOptions
+from agent_framework_github_copilot import GitHubCopilotAgent, GitHubCopilotOptions, RawGitHubCopilotAgent
+from agent_framework_github_copilot._feature_usage import FeatureIndex
 
 
 def copilot_options(options: GitHubCopilotOptions) -> GitHubCopilotOptions:
@@ -53,6 +64,34 @@ def pre_tool_use_input(tool_name: str) -> PreToolUseHookInput:
         "toolName": tool_name,
         "toolArgs": {},
     }
+
+
+def shell_request(
+    command_identifiers: Sequence[str], can_offer_session_approval: bool = True
+) -> PermissionRequestShell:
+    """Build a shell permission request covering the given command identifiers."""
+    return PermissionRequestShell(
+        can_offer_session_approval=can_offer_session_approval,
+        commands=[
+            PermissionRequestShellCommand(identifier=identifier, read_only=True) for identifier in command_identifiers
+        ],
+        full_command_text=" && ".join(command_identifiers),
+        has_write_file_redirection=False,
+        intention="run commands",
+        possible_paths=[],
+        possible_urls=[],
+    )
+
+
+def write_request(can_offer_session_approval: bool = True) -> PermissionRequestWrite:
+    """Build a write permission request."""
+    return PermissionRequestWrite(
+        can_offer_session_approval=can_offer_session_approval,
+        diff="+ hello",
+        file_name="a.txt",
+        intention="write a file",
+        new_file_contents="hello",
+    )
 
 
 def create_session_event(
@@ -91,12 +130,34 @@ def mock_session() -> MagicMock:
 
 @pytest.fixture
 def mock_client(mock_session: MagicMock) -> MagicMock:
-    """Create a mock CopilotClient."""
+    """Create a mock CopilotClient.
+
+    ``create_session`` / ``resume_session`` validate their call arguments against the
+    real SDK signatures, so that agent-internal or otherwise invalid keyword arguments
+    (which a permissive mock would silently accept) surface as ``TypeError`` here just
+    as they would against the real client.
+    """
+    from copilot import CopilotClient
+
+    def _validating(method_name: str) -> "AsyncMock":
+        real = getattr(CopilotClient, method_name)
+        sig = inspect.signature(real)
+        params = list(sig.parameters.values())
+        if params and params[0].name == "self":
+            sig = sig.replace(parameters=params[1:])
+
+        def _side_effect(*args: Any, **kwargs: Any) -> MagicMock:
+            # Raises TypeError if args/kwargs are not valid for the real signature.
+            sig.bind(*args, **kwargs)
+            return mock_session
+
+        return AsyncMock(side_effect=_side_effect)
+
     client = MagicMock()
     client.start = AsyncMock()
     client.stop = AsyncMock(return_value=[])
-    client.create_session = AsyncMock(return_value=mock_session)
-    client.resume_session = AsyncMock(return_value=mock_session)
+    client.create_session = _validating("create_session")
+    client.resume_session = _validating("resume_session")
     return client
 
 
@@ -240,34 +301,34 @@ class TestGitHubCopilotAgentInit:
         assert agent._settings.get("model") == "gpt-5.1-mini"
 
     def test_init_stores_instruction_directories(self) -> None:
-        """Test that instruction_directories are stored on the agent instance."""
+        """Test that instruction_directories are retained for passthrough to the SDK."""
         agent = GitHubCopilotAgent(default_options=copilot_options({"instruction_directories": ["/my/instructions"]}))
-        assert agent._instruction_directories == ["/my/instructions"]  # type: ignore
+        assert agent._default_options.get("instruction_directories") == ["/my/instructions"]
 
     def test_init_without_instruction_directories(self) -> None:
-        """Test that instruction_directories default to None when not provided."""
+        """Test that instruction_directories are absent when not provided."""
         agent = GitHubCopilotAgent()
-        assert agent._instruction_directories is None  # type: ignore
+        assert "instruction_directories" not in agent._default_options
 
     def test_init_stores_skill_directories(self) -> None:
-        """Test that skill_directories are stored on the agent instance."""
+        """Test that skill_directories are retained for passthrough to the SDK."""
         agent = GitHubCopilotAgent(default_options=copilot_options({"skill_directories": ["/my/skills"]}))
-        assert agent._skill_directories == ["/my/skills"]  # type: ignore
+        assert agent._default_options.get("skill_directories") == ["/my/skills"]
 
     def test_init_without_skill_directories(self) -> None:
-        """Test that skill_directories default to None when not provided."""
+        """Test that skill_directories are absent when not provided."""
         agent = GitHubCopilotAgent()
-        assert agent._skill_directories is None  # type: ignore
+        assert "skill_directories" not in agent._default_options
 
     def test_init_stores_disabled_skills(self) -> None:
-        """Test that disabled_skills are stored on the agent instance."""
+        """Test that disabled_skills are retained for passthrough to the SDK."""
         agent = GitHubCopilotAgent(default_options=copilot_options({"disabled_skills": ["skill-a"]}))
-        assert agent._disabled_skills == ["skill-a"]  # type: ignore
+        assert agent._default_options.get("disabled_skills") == ["skill-a"]
 
     def test_init_without_disabled_skills(self) -> None:
-        """Test that disabled_skills default to None when not provided."""
+        """Test that disabled_skills are absent when not provided."""
         agent = GitHubCopilotAgent()
-        assert agent._disabled_skills is None  # type: ignore
+        assert "disabled_skills" not in agent._default_options
 
 
 class TestGitHubCopilotAgentLifecycle:
@@ -364,6 +425,76 @@ class TestGitHubCopilotAgentLifecycle:
             kwargs = MockClient.call_args.kwargs
             assert kwargs["base_directory"] == "/custom/copilot/home"
 
+    async def test_start_passes_telemetry_to_client(self) -> None:
+        """Test that telemetry settings are passed to the Copilot client."""
+        telemetry = {
+            "exporter_type": "otlp-http",
+            "otlp_endpoint": "http://localhost:4318",
+            "otlp_protocol": "http/json",
+            "capture_content": True,
+        }
+        with patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient:
+            mock_client = MagicMock()
+            mock_client.start = AsyncMock()
+            MockClient.return_value = mock_client
+
+            agent = GitHubCopilotAgent(
+                default_options=copilot_options(cast(GitHubCopilotOptions, {"telemetry": telemetry}))
+            )
+            await agent.start()
+
+            assert MockClient.call_args.kwargs["telemetry"] == telemetry
+
+    async def test_start_parses_json_telemetry_string(self) -> None:
+        """JSON strings from env/.env settings are parsed before reaching the client."""
+        telemetry = {
+            "exporter_type": "otlp-http",
+            "otlp_endpoint": "http://localhost:4318",
+            "capture_content": True,
+        }
+        with (
+            patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient,
+            patch.dict("os.environ", {"GITHUB_COPILOT_TELEMETRY": json.dumps(telemetry)}),
+        ):
+            mock_client = MagicMock()
+            mock_client.start = AsyncMock()
+            MockClient.return_value = mock_client
+
+            agent = GitHubCopilotAgent()
+            await agent.start()
+
+            assert MockClient.call_args.kwargs["telemetry"] == telemetry
+
+    async def test_start_ignores_malformed_telemetry_string(self) -> None:
+        """A malformed telemetry JSON value is dropped instead of breaking startup."""
+        with (
+            patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient,
+            patch.dict("os.environ", {"GITHUB_COPILOT_TELEMETRY": "{not json"}),
+        ):
+            mock_client = MagicMock()
+            mock_client.start = AsyncMock()
+            MockClient.return_value = mock_client
+
+            agent = GitHubCopilotAgent()
+            await agent.start()
+
+            assert "telemetry" not in MockClient.call_args.kwargs
+
+    async def test_start_ignores_non_object_telemetry_string(self) -> None:
+        """Valid JSON that is not an object cannot be a TelemetryConfig and is dropped."""
+        with (
+            patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient,
+            patch.dict("os.environ", {"GITHUB_COPILOT_TELEMETRY": "[1, 2]"}),
+        ):
+            mock_client = MagicMock()
+            mock_client.start = AsyncMock()
+            MockClient.return_value = mock_client
+
+            agent = GitHubCopilotAgent()
+            await agent.start()
+
+            assert "telemetry" not in MockClient.call_args.kwargs
+
     async def test_start_base_directory_not_set_when_unspecified(self) -> None:
         """Test that base_directory is not included in client kwargs when not specified."""
         with patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient:
@@ -407,8 +538,10 @@ class TestGitHubCopilotAgentRun:
         mock_session.send_and_wait.return_value = assistant_message_event
 
         agent = GitHubCopilotAgent(client=mock_client)
-        response = await agent.run("Hello")
+        with patch("agent_framework_github_copilot._agent.mark_feature_used") as mark_feature_used:
+            response = await agent.run("Hello")
 
+        mark_feature_used.assert_called_once_with(FeatureIndex.GITHUB_COPILOT)
         assert isinstance(response, AgentResponse)
         assert len(response.messages) == 1
         assert response.messages[0].role == "assistant"
@@ -488,7 +621,14 @@ class TestGitHubCopilotAgentRun:
                 input_tokens=5,
                 output_tokens=2,
                 finish_reason="length",
+                content_filter_triggered=True,
             ),
+            id=uuid4(),
+            timestamp=datetime.now(timezone.utc),
+            type=SessionEventType.ASSISTANT_USAGE,
+        )
+        empty_usage_event = SessionEvent(
+            data=AssistantUsageData(model="gpt-5.1-mini"),
             id=uuid4(),
             timestamp=datetime.now(timezone.utc),
             type=SessionEventType.ASSISTANT_USAGE,
@@ -503,6 +643,7 @@ class TestGitHubCopilotAgentRun:
         async def mock_send_and_wait(*args: Any, **kwargs: Any) -> SessionEvent:
             usage_handler(usage_event)
             usage_handler(second_usage_event)
+            usage_handler(empty_usage_event)
             return assistant_message_event
 
         mock_session.on = mock_on
@@ -511,7 +652,7 @@ class TestGitHubCopilotAgentRun:
         agent = GitHubCopilotAgent(client=mock_client)
         response = await agent.run("Hello")
 
-        assert response.finish_reason == "length"
+        assert response.finish_reason == "content_filter"
         assert response.usage_details == {
             "input_token_count": 125,
             "output_token_count": 42,
@@ -596,7 +737,7 @@ class TestGitHubCopilotAgentRunStreaming:
             model="gpt-5.1-mini",
             input_tokens=10,
             output_tokens=4,
-            finish_reason="stop",
+            finish_reason="provider_specific_reason",
         )
         usage_event = SessionEvent(
             data=usage_data,
@@ -620,7 +761,7 @@ class TestGitHubCopilotAgentRunStreaming:
         response = await stream.get_final_response()
 
         assert response.text == "Hello"
-        assert response.finish_reason == "stop"
+        assert response.finish_reason == "provider_specific_reason"
         assert response.usage_details == {
             "input_token_count": 10,
             "output_token_count": 4,
@@ -1085,16 +1226,11 @@ class TestGitHubCopilotAgentSessionManagement:
         mock_client.create_session.assert_called_once()
         mock_client.resume_session.assert_called_once_with(
             mock_session.session_id,
-            on_permission_request=unittest.mock.ANY,
+            tools=unittest.mock.ANY,
             streaming=unittest.mock.ANY,
             model=unittest.mock.ANY,
-            system_message=unittest.mock.ANY,
-            tools=unittest.mock.ANY,
-            mcp_servers=unittest.mock.ANY,
-            provider=unittest.mock.ANY,
-            instruction_directories=unittest.mock.ANY,
-            skill_directories=unittest.mock.ANY,
-            disabled_skills=unittest.mock.ANY,
+            on_permission_request=unittest.mock.ANY,
+            enable_file_hooks=unittest.mock.ANY,
             hooks=unittest.mock.ANY,
         )
 
@@ -1198,7 +1334,7 @@ class TestGitHubCopilotAgentSessionManagement:
         from copilot.session import PermissionDecisionApproveOnce, PermissionRequestResult
         from copilot.session_events import PermissionRequest
 
-        def my_handler(request: PermissionRequest, context: dict[str, str]) -> PermissionRequestResult:
+        def my_handler(request: PermissionRequest, context: PermissionInvocation) -> PermissionRequestResult:
             return PermissionDecisionApproveOnce()
 
         def my_tool(arg: str) -> str:
@@ -1265,7 +1401,7 @@ class TestGitHubCopilotAgentSessionManagement:
         mock_client: MagicMock,
         mock_session: MagicMock,
     ) -> None:
-        """Test that instruction_directories is None when not specified."""
+        """Test that instruction_directories is omitted when not specified."""
         agent = GitHubCopilotAgent(client=mock_client)
         await agent.start()
 
@@ -1273,7 +1409,7 @@ class TestGitHubCopilotAgentSessionManagement:
 
         call_args = mock_client.create_session.call_args
         config = call_args.kwargs
-        assert config["instruction_directories"] is None
+        assert "instruction_directories" not in config
 
     async def test_instruction_directories_empty_list_clears_defaults(
         self,
@@ -1359,7 +1495,7 @@ class TestGitHubCopilotAgentSessionManagement:
         mock_client: MagicMock,
         mock_session: MagicMock,
     ) -> None:
-        """Test that skill_directories is None when not specified."""
+        """Test that skill_directories is omitted when not specified."""
         agent = GitHubCopilotAgent(client=mock_client)
         await agent.start()
 
@@ -1367,7 +1503,7 @@ class TestGitHubCopilotAgentSessionManagement:
 
         call_args = mock_client.create_session.call_args
         config = call_args.kwargs
-        assert config["skill_directories"] is None
+        assert "skill_directories" not in config
 
     async def test_skill_directories_empty_list_clears_defaults(
         self,
@@ -1453,7 +1589,7 @@ class TestGitHubCopilotAgentSessionManagement:
         mock_client: MagicMock,
         mock_session: MagicMock,
     ) -> None:
-        """Test that disabled_skills is None when not specified."""
+        """Test that disabled_skills is omitted when not specified."""
         agent = GitHubCopilotAgent(client=mock_client)
         await agent.start()
 
@@ -1461,7 +1597,7 @@ class TestGitHubCopilotAgentSessionManagement:
 
         call_args = mock_client.create_session.call_args
         config = call_args.kwargs
-        assert config["disabled_skills"] is None
+        assert "disabled_skills" not in config
 
     async def test_disabled_skills_empty_list_clears_defaults(
         self,
@@ -1594,7 +1730,7 @@ class TestGitHubCopilotAgentMCPServers:
 
         call_args = mock_client.create_session.call_args
         config = call_args.kwargs
-        assert config["mcp_servers"] is None
+        assert "mcp_servers" not in config
 
 
 class TestGitHubCopilotAgentProvider:
@@ -1660,7 +1796,7 @@ class TestGitHubCopilotAgentProvider:
         self,
         mock_client: MagicMock,
     ) -> None:
-        """Test that provider is None in session config when not set."""
+        """Test that provider is omitted from session config when not set."""
         agent = GitHubCopilotAgent(client=mock_client)
         await agent.start()
 
@@ -1668,13 +1804,13 @@ class TestGitHubCopilotAgentProvider:
 
         call_args = mock_client.create_session.call_args
         config = call_args.kwargs
-        assert config["provider"] is None
+        assert "provider" not in config
 
     async def test_resume_session_excludes_provider_when_not_set(
         self,
         mock_client: MagicMock,
     ) -> None:
-        """Test that provider is None in resume session config when not set."""
+        """Test that provider is omitted from resume session config when not set."""
         agent = GitHubCopilotAgent(client=mock_client)
         await agent.start()
 
@@ -1685,7 +1821,7 @@ class TestGitHubCopilotAgentProvider:
 
         call_args = mock_client.resume_session.call_args
         config = call_args.kwargs
-        assert config["provider"] is None
+        assert "provider" not in config
 
     async def test_runtime_provider_takes_precedence(
         self,
@@ -1721,11 +1857,11 @@ class TestGitHubCopilotAgentProvider:
         assert config["provider"]["type"] == "openai"
         assert config["provider"]["base_url"] == "https://runtime.openai.com"
 
-    async def test_provider_not_leaked_into_default_options(
+    async def test_provider_retained_in_default_options(
         self,
         mock_client: MagicMock,
     ) -> None:
-        """Test that provider is popped from opts and not left in _default_options."""
+        """Test that provider is retained in _default_options for passthrough to the SDK."""
         from copilot.session import ProviderConfig
 
         provider: ProviderConfig = {
@@ -1739,9 +1875,9 @@ class TestGitHubCopilotAgentProvider:
             default_options=copilot_options({"provider": provider, "model": "gpt-5"}),
         )
 
-        assert "provider" not in agent._default_options
-        assert agent._provider is not None
-        assert agent._provider["type"] == "azure"
+        # model is consumed into settings; provider rides through default_options.
+        assert "model" not in agent._default_options
+        assert agent._default_options["provider"]["type"] == "azure"
 
     async def test_provider_coexists_with_other_options(
         self,
@@ -1787,6 +1923,374 @@ class TestGitHubCopilotAgentProvider:
         assert config["model"] == "gpt-5"
         assert config["mcp_servers"] is not None
         assert config["tools"] is not None
+
+
+class TestGitHubCopilotAgentOptionsPassthrough:
+    """Regression tests for the options-passthrough contract of _build_session_kwargs."""
+
+    async def test_arbitrary_option_forwarded_verbatim(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """An option without a dedicated mapping is forwarded verbatim to create_session."""
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options=cast(Any, {"reasoning_effort": "high", "context_tier": "large"}),
+        )
+        await agent.start()
+
+        await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+
+        config = mock_client.create_session.call_args.kwargs
+        assert config["reasoning_effort"] == "high"
+        assert config["context_tier"] == "large"
+
+    async def test_mcp_tool_is_rejected_with_the_native_configuration(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """An MCP server cannot keep its framework behavior here, so it is refused, not dropped."""
+        with pytest.raises(TypeError, match="mcp_servers"):
+            GitHubCopilotAgent(client=mock_client, tools=[MCPStdioTool(name="weather", command="python")])
+
+    async def test_mcp_tool_in_a_tuple_is_rejected(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """``tools`` takes any sequence, so a tuple must not slip past the refusal."""
+        with pytest.raises(TypeError, match="mcp_servers"):
+            GitHubCopilotAgent(client=mock_client, tools=(MCPStdioTool(name="weather", command="python"),))
+
+    async def test_mcp_tool_from_default_options_is_rejected(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """Tools reach the SDK from the options too, so the refusal cannot live in the constructor alone."""
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options=cast(Any, {"tools": [MCPStdioTool(name="weather", command="python")]}),
+        )
+        await agent.start()
+
+        with pytest.raises(AgentException, match="mcp_servers"):
+            await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+
+    async def test_mcp_tool_inside_a_tool_collection_from_options_is_rejected(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """Option-supplied tools are normalized too, so a wrapper cannot hide an MCP server."""
+        toolbox = SimpleNamespace(tools=[MCPStdioTool(name="weather", command="python")])
+        agent = GitHubCopilotAgent(client=mock_client, default_options=cast(Any, {"tools": [toolbox]}))
+        await agent.start()
+
+        with pytest.raises(AgentException, match="mcp_servers"):
+            await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+
+    async def test_tools_from_default_options_are_honored(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """Tools supplied via default_options are converted and forwarded, not dropped."""
+        from copilot.tools import Tool as CopilotTool
+
+        passthrough_tool = CopilotTool(
+            name="passthrough",
+            description="A pre-built SDK tool supplied through default_options.",
+            handler=AsyncMock(),
+            parameters={"type": "object", "properties": {}},
+        )
+
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options=cast(Any, {"tools": [passthrough_tool]}),
+        )
+        await agent.start()
+
+        await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+
+        config = mock_client.create_session.call_args.kwargs
+        assert config["tools"] is not None
+        assert any(t.name == "passthrough" for t in config["tools"])
+
+    async def test_caller_hooks_forwarded_verbatim(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """A caller-supplied native ``hooks`` dict is forwarded instead of being clobbered."""
+
+        def my_pre_tool_use(_input: Any, _context: Any) -> Any:
+            return None
+
+        hooks = {"on_pre_tool_use": my_pre_tool_use}
+        agent = GitHubCopilotAgent(client=mock_client, default_options=cast(Any, {"hooks": hooks}))
+        await agent.start()
+
+        await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+
+        config = mock_client.create_session.call_args.kwargs
+        assert config["hooks"]["on_pre_tool_use"] is my_pre_tool_use
+
+    async def test_internal_keys_do_not_leak_to_create_session(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_message_event: SessionEvent,
+    ) -> None:
+        """Agent-internal / client-level keys must not be forwarded to create_session."""
+        mock_session.send_and_wait.return_value = assistant_message_event
+
+        def runtime_hook(_input: Any, _context: Any) -> Any:
+            return None
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        # timeout and on_pre_tool_use are consumed by the agent, not create_session.
+        await agent.run(
+            "hello",
+            options=cast(
+                Any,
+                {
+                    "timeout": 30,
+                    "on_pre_tool_use": runtime_hook,
+                    "telemetry": {"exporter_type": "file", "file_path": "/tmp/copilot.jsonl"},
+                },
+            ),
+        )
+
+        config = mock_client.create_session.call_args.kwargs
+        for leaked in (
+            "timeout",
+            "on_pre_tool_use",
+            "on_function_approval",
+            "cli_path",
+            "log_level",
+            "base_directory",
+            "telemetry",
+        ):
+            assert leaked not in config
+        # on_pre_tool_use is still honored via the hooks parameter.
+        assert config["hooks"]["on_pre_tool_use"] is runtime_hook
+
+    async def test_workspace_config_options_default_to_off(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """Workspace-driven options are disabled unless the caller opts in."""
+        agent = GitHubCopilotAgent(client=mock_client)
+        await agent.start()
+
+        await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+
+        config = mock_client.create_session.call_args.kwargs
+        assert config["enable_file_hooks"] is False
+        # Options that only shape prompt context are left untouched.
+        assert "enable_host_git_operations" not in config
+
+    async def test_workspace_config_options_honor_default_options(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """A caller opting in through default_options is not overridden."""
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options=cast(Any, {"enable_file_hooks": True}),
+        )
+        await agent.start()
+
+        await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+
+        config = mock_client.create_session.call_args.kwargs
+        assert config["enable_file_hooks"] is True
+
+    async def test_workspace_config_options_honor_runtime_options(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_message_event: SessionEvent,
+    ) -> None:
+        """Per-run options override the agent-level value for workspace-driven options."""
+        mock_session.send_and_wait.return_value = assistant_message_event
+
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options=cast(Any, {"enable_file_hooks": True}),
+        )
+        await agent.run("hello", options=cast(Any, {"enable_file_hooks": False}))
+
+        config = mock_client.create_session.call_args.kwargs
+        assert config["enable_file_hooks"] is False
+
+
+def _write_file_hook(working_directory: Path) -> None:
+    """Create a hook definition the CLI would load if file hooks were enabled."""
+    hooks_dir = working_directory / ".github" / "hooks"
+    hooks_dir.mkdir(parents=True)
+    (hooks_dir / "sessionStart.json").write_text(
+        json.dumps({
+            "version": 1,
+            "hooks": {"sessionStart": [{"type": "command", "command": "echo hello"}]},
+        }),
+        encoding="utf-8",
+    )
+
+
+class TestGitHubCopilotAgentFileHooksWarning:
+    """Test cases for the warning raised when file hooks are present but not loaded."""
+
+    async def test_warns_when_working_directory_defines_file_hooks(
+        self,
+        mock_client: MagicMock,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Hooks that will not run are called out so the behavior is not silent."""
+        _write_file_hook(tmp_path)
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options=cast(Any, {"working_directory": str(tmp_path)}),
+        )
+        await agent.start()
+
+        with caplog.at_level(logging.WARNING, logger="agent_framework.github_copilot"):
+            await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+
+        assert "Not loading the file hooks" in caplog.text
+
+    async def test_no_warning_without_file_hooks(
+        self,
+        mock_client: MagicMock,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Nothing is reported when the working directory defines no hooks."""
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options=cast(Any, {"working_directory": str(tmp_path)}),
+        )
+        await agent.start()
+
+        with caplog.at_level(logging.WARNING, logger="agent_framework.github_copilot"):
+            await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+
+        assert "Not loading the file hooks" not in caplog.text
+
+    async def test_no_warning_when_caller_opted_in(
+        self,
+        mock_client: MagicMock,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A caller who enabled file hooks has nothing to be warned about."""
+        _write_file_hook(tmp_path)
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options=cast(Any, {"working_directory": str(tmp_path), "enable_file_hooks": True}),
+        )
+        await agent.start()
+
+        with caplog.at_level(logging.WARNING, logger="agent_framework.github_copilot"):
+            await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+
+        assert "Not loading the file hooks" not in caplog.text
+
+    async def test_no_warning_when_caller_opted_out(
+        self,
+        mock_client: MagicMock,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """An explicit opt-out is a deliberate choice, not something to report."""
+        _write_file_hook(tmp_path)
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options=cast(Any, {"working_directory": str(tmp_path), "enable_file_hooks": False}),
+        )
+        await agent.start()
+
+        with caplog.at_level(logging.WARNING, logger="agent_framework.github_copilot"):
+            await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+
+        assert "Not loading the file hooks" not in caplog.text
+
+    async def test_warning_is_emitted_once_per_agent(
+        self,
+        mock_client: MagicMock,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A long-lived agent does not repeat the warning on every session."""
+        _write_file_hook(tmp_path)
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options=cast(Any, {"working_directory": str(tmp_path)}),
+        )
+        await agent.start()
+
+        with caplog.at_level(logging.WARNING, logger="agent_framework.github_copilot"):
+            await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+            await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+
+        assert caplog.text.count("Not loading the file hooks") == 1
+
+    async def test_uses_working_directory_configured_on_injected_client(
+        self,
+        mock_client: MagicMock,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A client built with its own working_directory decides where the CLI looks."""
+        _write_file_hook(tmp_path)
+        # The CLI process runs in the client's directory, so hooks resolve relative to it
+        # even though this process is running somewhere else entirely.
+        mock_client._options.working_directory = str(tmp_path)
+        agent = GitHubCopilotAgent(client=mock_client)
+        await agent.start()
+
+        with caplog.at_level(logging.WARNING, logger="agent_framework.github_copilot"):
+            await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+
+        assert "Not loading the file hooks" in caplog.text
+        assert str(tmp_path) in caplog.text
+
+    async def test_session_working_directory_takes_precedence_over_client(
+        self,
+        mock_client: MagicMock,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """An explicit session working_directory wins, matching the SDK's own resolution."""
+        session_dir = tmp_path / "session"
+        client_dir = tmp_path / "client"
+        session_dir.mkdir()
+        client_dir.mkdir()
+        _write_file_hook(session_dir)
+        mock_client._options.working_directory = str(client_dir)
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options=cast(Any, {"working_directory": str(session_dir)}),
+        )
+        await agent.start()
+
+        with caplog.at_level(logging.WARNING, logger="agent_framework.github_copilot"):
+            await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+
+        assert str(session_dir) in caplog.text
+
+    async def test_unreadable_client_options_fall_back_to_process_directory(
+        self,
+        mock_client: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A client that does not expose its options degrades quietly instead of raising."""
+        del mock_client._options
+        agent = GitHubCopilotAgent(client=mock_client)
+        await agent.start()
+
+        with caplog.at_level(logging.WARNING, logger="agent_framework.github_copilot"):
+            await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+
+        config = mock_client.create_session.call_args.kwargs
+        assert config["enable_file_hooks"] is False
 
 
 class TestGitHubCopilotAgentToolConversion:
@@ -2367,7 +2871,7 @@ class TestGitHubCopilotAgentPermissions:
         from copilot.session import PermissionDecisionApproveOnce, PermissionRequestResult
         from copilot.session_events import PermissionRequest
 
-        def approve_shell(request: PermissionRequest, context: dict[str, str]) -> PermissionRequestResult:
+        def approve_shell(request: PermissionRequest, context: PermissionInvocation) -> PermissionRequestResult:
             if request.kind == "shell":
                 return PermissionDecisionApproveOnce()
             return PermissionDecisionDeniedInteractivelyByUser()
@@ -2385,7 +2889,7 @@ class TestGitHubCopilotAgentPermissions:
         from copilot.session import PermissionDecisionApproveOnce, PermissionRequestResult
         from copilot.session_events import PermissionRequest
 
-        def approve_shell_read(request: PermissionRequest, context: dict[str, str]) -> PermissionRequestResult:
+        def approve_shell_read(request: PermissionRequest, context: PermissionInvocation) -> PermissionRequestResult:
             if request.kind in ("shell", "read"):
                 return PermissionDecisionApproveOnce()
             return PermissionDecisionDeniedInteractivelyByUser()
@@ -2422,6 +2926,347 @@ class TestGitHubCopilotAgentPermissions:
         config = call_args.kwargs
         assert "on_permission_request" in config
         assert config["on_permission_request"] is not None
+
+
+class TestNormalizeApproveForSession:
+    """Regression tests for issue #7553.
+
+    A bare ``PermissionDecisionApproveForSession()`` serializes to
+    ``{"kind": "approve-for-session"}``. The Copilot CLI cannot interpret that and crashes
+    with ``Cannot read properties of undefined (reading 'commandIdentifiers')``, so the
+    agent scopes such decisions to the request that triggered them.
+    """
+
+    @staticmethod
+    async def normalize(request: Any, decision: Any) -> Any:
+        """Run ``decision`` through the agent's permission-handler wrapper."""
+        from agent_framework_github_copilot._agent import _with_normalized_permission_decisions
+
+        handler = _with_normalized_permission_decisions(lambda _request, _invocation: decision)
+        return await handler(request, {"session_id": "test-session"})
+
+    async def test_shell_request_derives_command_identifiers(self) -> None:
+        """A shell prompt yields a commands approval covering every command in the request."""
+        from copilot.generated.rpc import (
+            PermissionDecisionApproveForSession,
+            PermissionDecisionApproveForSessionApprovalCommands,
+        )
+
+        result = await self.normalize(shell_request(["ls", "cat"]), PermissionDecisionApproveForSession())
+
+        assert isinstance(result, PermissionDecisionApproveForSession)
+        assert isinstance(result.approval, PermissionDecisionApproveForSessionApprovalCommands)
+        assert result.approval.command_identifiers == ["ls", "cat"]
+
+    async def test_normalized_shell_decision_serializes_with_command_identifiers(self) -> None:
+        """The serialized payload carries the key whose absence crashed the CLI."""
+        from copilot.generated.rpc import PermissionDecisionApproveForSession
+
+        result = await self.normalize(shell_request(["ls"]), PermissionDecisionApproveForSession())
+
+        payload = result.to_dict()
+        assert payload["kind"] == "approve-for-session"
+        assert payload["approval"]["commandIdentifiers"] == ["ls"]
+
+    async def test_unnormalized_decision_is_missing_approval(self) -> None:
+        """Guard the premise of this fix: the bare decision really does omit ``approval``."""
+        from copilot.generated.rpc import PermissionDecisionApproveForSession
+
+        assert PermissionDecisionApproveForSession().to_dict() == {"kind": "approve-for-session"}
+
+    async def test_read_request_derives_read_approval(self) -> None:
+        """A read prompt yields a read approval."""
+        from copilot.generated.rpc import (
+            PermissionDecisionApproveForSession,
+            PermissionDecisionApproveForSessionApprovalRead,
+        )
+        from copilot.session_events import PermissionRequestRead
+
+        request = PermissionRequestRead(intention="read it", path="/tmp/a.txt")
+        result = await self.normalize(request, PermissionDecisionApproveForSession())
+
+        assert isinstance(result.approval, PermissionDecisionApproveForSessionApprovalRead)
+
+    async def test_write_request_derives_write_approval(self) -> None:
+        """A write prompt yields a write approval."""
+        from copilot.generated.rpc import (
+            PermissionDecisionApproveForSession,
+            PermissionDecisionApproveForSessionApprovalWrite,
+        )
+
+        result = await self.normalize(write_request(), PermissionDecisionApproveForSession())
+
+        assert isinstance(result.approval, PermissionDecisionApproveForSessionApprovalWrite)
+
+    async def test_mcp_request_derives_server_and_tool(self) -> None:
+        """An MCP prompt yields an approval naming the server and tool."""
+        from copilot.generated.rpc import (
+            PermissionDecisionApproveForSession,
+            PermissionDecisionApproveForSessionApprovalMCP,
+        )
+        from copilot.session_events import PermissionRequestMcp
+
+        request = PermissionRequestMcp(
+            read_only=True, server_name="my-server", tool_name="my-tool", tool_title="My Tool", args={}
+        )
+        result = await self.normalize(request, PermissionDecisionApproveForSession())
+
+        assert isinstance(result.approval, PermissionDecisionApproveForSessionApprovalMCP)
+        assert result.approval.server_name == "my-server"
+        assert result.approval.tool_name == "my-tool"
+
+    async def test_custom_tool_request_derives_tool_name(self) -> None:
+        """A custom-tool prompt yields an approval naming the tool."""
+        from copilot.generated.rpc import (
+            PermissionDecisionApproveForSession,
+            PermissionDecisionApproveForSessionApprovalCustomTool,
+        )
+        from copilot.session_events import PermissionRequestCustomTool
+
+        request = PermissionRequestCustomTool(tool_description="does a thing", tool_name="my_tool", args={})
+        result = await self.normalize(request, PermissionDecisionApproveForSession())
+
+        assert isinstance(result.approval, PermissionDecisionApproveForSessionApprovalCustomTool)
+        assert result.approval.tool_name == "my_tool"
+
+    async def test_memory_request_derives_memory_approval(self) -> None:
+        """A memory prompt yields a memory approval."""
+        from copilot.generated.rpc import (
+            PermissionDecisionApproveForSession,
+            PermissionDecisionApproveForSessionApprovalMemory,
+        )
+        from copilot.session_events import PermissionRequestMemory
+
+        request = PermissionRequestMemory(fact="the sky is blue")
+        result = await self.normalize(request, PermissionDecisionApproveForSession())
+
+        assert isinstance(result.approval, PermissionDecisionApproveForSessionApprovalMemory)
+
+    async def test_extension_management_request_preserves_operation(self) -> None:
+        """An extension-management prompt yields an approval carrying the request's operation."""
+        from copilot.generated.rpc import (
+            PermissionDecisionApproveForSession,
+            PermissionDecisionApproveForSessionApprovalExtensionManagement,
+        )
+        from copilot.session_events import PermissionRequestExtensionManagement
+
+        request = PermissionRequestExtensionManagement(operation="enable", extension_name="my-ext")
+        result = await self.normalize(request, PermissionDecisionApproveForSession())
+
+        assert isinstance(result, PermissionDecisionApproveForSession)
+        assert isinstance(result.approval, PermissionDecisionApproveForSessionApprovalExtensionManagement)
+        assert result.approval.operation == "enable"
+        assert result.to_dict()["approval"] == {"kind": "extension-management", "operation": "enable"}
+
+    async def test_extension_permission_access_request_preserves_extension_name(self) -> None:
+        """An extension-permission-access prompt yields an approval carrying the extension name."""
+        from copilot.generated.rpc import (
+            PermissionDecisionApproveForSession,
+            PermissionDecisionApproveForSessionApprovalExtensionPermissionAccess,
+        )
+        from copilot.session_events import PermissionRequestExtensionPermissionAccess
+
+        request = PermissionRequestExtensionPermissionAccess(capabilities=["read"], extension_name="my-ext")
+        result = await self.normalize(request, PermissionDecisionApproveForSession())
+
+        assert isinstance(result, PermissionDecisionApproveForSession)
+        assert isinstance(result.approval, PermissionDecisionApproveForSessionApprovalExtensionPermissionAccess)
+        assert result.approval.extension_name == "my-ext"
+        assert result.to_dict()["approval"] == {"kind": "extension-permission-access", "extensionName": "my-ext"}
+
+    async def test_url_request_derives_domain_instead_of_approval(self) -> None:
+        """A URL prompt is scoped by ``domain``; URL prompts have no ``approval``."""
+        from copilot.generated.rpc import PermissionDecisionApproveForSession
+        from copilot.session_events import PermissionRequestUrl
+
+        request = PermissionRequestUrl(intention="fetch", url="https://example.com/some/path?q=1")
+        result = await self.normalize(request, PermissionDecisionApproveForSession())
+
+        assert isinstance(result, PermissionDecisionApproveForSession)
+        assert result.domain == "example.com"
+        assert result.approval is None
+
+    async def test_url_request_without_derivable_domain_falls_back_to_approve_once(self) -> None:
+        """A URL with no host cannot be scoped, so the decision narrows to a single approval."""
+        from copilot.generated.rpc import PermissionDecisionApproveForSession, PermissionDecisionApproveOnce
+        from copilot.session_events import PermissionRequestUrl
+
+        request = PermissionRequestUrl(intention="fetch", url="not-a-url")
+        result = await self.normalize(request, PermissionDecisionApproveForSession())
+
+        assert isinstance(result, PermissionDecisionApproveOnce)
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com\\@evil.com/a",  # backslash moves the authority boundary under WHATWG
+            "https://example.com\t@evil.com/a",  # tab is stripped by WHATWG before parsing
+            "https://example.com\n@evil.com/a",  # newline is stripped by WHATWG before parsing
+            "https://example.com\r@evil.com/a",  # carriage return is stripped by WHATWG before parsing
+        ],
+    )
+    async def test_parser_ambiguous_url_falls_back_to_approve_once(self, url: str) -> None:
+        """A URL whose host Python and the CLI parse differently must not persist a domain.
+
+        The CLI (WHATWG) contacts ``example.com`` for these URLs while ``urlparse`` derives
+        ``evil.com``. Persisting ``evil.com`` would widen approval to an unrelated,
+        attacker-chosen domain, so the decision must narrow to a single-use approval.
+        """
+        from copilot.generated.rpc import PermissionDecisionApproveForSession, PermissionDecisionApproveOnce
+        from copilot.session_events import PermissionRequestUrl
+
+        request = PermissionRequestUrl(intention="fetch", url=url)
+        result = await self.normalize(request, PermissionDecisionApproveForSession())
+
+        assert isinstance(result, PermissionDecisionApproveOnce)
+
+    async def test_unambiguous_url_with_userinfo_derives_real_host(self) -> None:
+        """Userinfo without ambiguous characters is safe; the real host is persisted."""
+        from copilot.generated.rpc import PermissionDecisionApproveForSession
+        from copilot.session_events import PermissionRequestUrl
+
+        request = PermissionRequestUrl(intention="fetch", url="https://user:pass@example.com/a")
+        result = await self.normalize(request, PermissionDecisionApproveForSession())
+
+        assert isinstance(result, PermissionDecisionApproveForSession)
+        assert result.domain == "example.com"
+
+    async def test_shell_request_that_cannot_offer_session_approval_narrows_to_approve_once(self) -> None:
+        """Never fabricate a session approval the prompt said it could not offer."""
+        from copilot.generated.rpc import PermissionDecisionApproveForSession, PermissionDecisionApproveOnce
+
+        request = shell_request(["rm"], can_offer_session_approval=False)
+        result = await self.normalize(request, PermissionDecisionApproveForSession())
+
+        assert isinstance(result, PermissionDecisionApproveOnce)
+
+    async def test_write_request_that_cannot_offer_session_approval_narrows_to_approve_once(self) -> None:
+        """The same narrowing applies to write prompts."""
+        from copilot.generated.rpc import PermissionDecisionApproveForSession, PermissionDecisionApproveOnce
+
+        request = write_request(can_offer_session_approval=False)
+        result = await self.normalize(request, PermissionDecisionApproveForSession())
+
+        assert isinstance(result, PermissionDecisionApproveOnce)
+
+    async def test_hook_request_without_session_approval_narrows_to_approve_once(self) -> None:
+        """A hook prompt has no session-scoped approval representation."""
+        from copilot.generated.rpc import PermissionDecisionApproveForSession, PermissionDecisionApproveOnce
+        from copilot.session_events import PermissionRequestHook
+
+        request = PermissionRequestHook(tool_name="t", hook_message="nope", tool_args={})
+        result = await self.normalize(request, PermissionDecisionApproveForSession())
+
+        assert isinstance(result, PermissionDecisionApproveOnce)
+
+    async def test_fully_specified_approval_is_passed_through_untouched(self) -> None:
+        """A decision that already names its scope must not be rewritten."""
+        from copilot.generated.rpc import (
+            PermissionDecisionApproveForSession,
+            PermissionDecisionApproveForSessionApprovalRead,
+        )
+
+        decision = PermissionDecisionApproveForSession(approval=PermissionDecisionApproveForSessionApprovalRead())
+        result = await self.normalize(shell_request(["ls"]), decision)
+
+        assert result is decision
+
+    async def test_explicit_domain_is_passed_through_untouched(self) -> None:
+        """A decision scoped by ``domain`` must not be rewritten either."""
+        from copilot.generated.rpc import PermissionDecisionApproveForSession
+        from copilot.session_events import PermissionRequestUrl
+
+        decision = PermissionDecisionApproveForSession(domain="contoso.com")
+        request = PermissionRequestUrl(intention="fetch", url="https://example.com/a")
+        result = await self.normalize(request, decision)
+
+        assert result is decision
+        assert result.domain == "contoso.com"
+
+    @pytest.mark.parametrize("decision_name", ["PermissionDecisionApproveOnce", "PermissionDecisionUserNotAvailable"])
+    async def test_other_decision_kinds_are_passed_through_untouched(self, decision_name: str) -> None:
+        """Only ``approve-for-session`` decisions are eligible for normalization."""
+        import copilot.generated.rpc as rpc
+
+        decision = getattr(rpc, decision_name)()
+        result = await self.normalize(shell_request(["ls"]), decision)
+
+        assert result is decision
+
+    async def test_async_handlers_are_supported(self) -> None:
+        """The wrapper awaits async handlers before normalizing."""
+        from copilot.generated.rpc import (
+            PermissionDecisionApproveForSession,
+            PermissionDecisionApproveForSessionApprovalCommands,
+        )
+
+        from agent_framework_github_copilot._agent import _with_normalized_permission_decisions
+
+        async def async_handler(_request: Any, _invocation: Any) -> Any:
+            return PermissionDecisionApproveForSession()
+
+        handler = _with_normalized_permission_decisions(async_handler)
+        result = await handler(shell_request(["ls"]), {"session_id": "test-session"})
+
+        assert isinstance(result, PermissionDecisionApproveForSession)
+        assert isinstance(result.approval, PermissionDecisionApproveForSessionApprovalCommands)
+
+    async def test_legacy_dict_permission_handlers_are_supported(self) -> None:
+        """The wrapper continues to support handlers typed for the legacy dictionary context."""
+        from copilot.generated.rpc import PermissionDecisionApproveOnce
+        from copilot.session_events import PermissionRequest
+
+        received_context: dict[str, str] = {}
+
+        def legacy_handler(request: PermissionRequest, context: dict[str, str]) -> Any:
+            received_context.update(context)
+            return PermissionDecisionApproveOnce()
+
+        from agent_framework_github_copilot._agent import _with_normalized_permission_decisions
+
+        handler = _with_normalized_permission_decisions(legacy_handler)  # type: ignore[arg-type]
+        await handler(shell_request(["ls"]), {"session_id": "test-session"})
+
+        assert received_context == {"session_id": "test-session"}
+
+    async def test_handler_exceptions_propagate(self) -> None:
+        """Handler failures must keep reaching the SDK, which denies the request."""
+        from agent_framework_github_copilot._agent import _with_normalized_permission_decisions
+
+        def failing_handler(_request: Any, _invocation: Any) -> Any:
+            raise RuntimeError("handler exploded")
+
+        handler = _with_normalized_permission_decisions(failing_handler)
+
+        with pytest.raises(RuntimeError, match="handler exploded"):
+            await handler(shell_request(["ls"]), {"session_id": "test-session"})
+
+    async def test_agent_wires_the_normalizer_into_the_session(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """End to end: the handler reaching create_session normalizes decisions."""
+        from copilot.generated.rpc import (
+            PermissionDecisionApproveForSession,
+            PermissionDecisionApproveForSessionApprovalCommands,
+        )
+
+        def approve_for_session(_request: Any, _invocation: Any) -> Any:
+            return PermissionDecisionApproveForSession()
+
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options=copilot_options({"on_permission_request": approve_for_session}),
+        )
+        await agent.start()
+        await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+
+        handler = mock_client.create_session.call_args.kwargs["on_permission_request"]
+        result = await handler(shell_request(["ls"]), {"session_id": "test-session"})
+
+        assert isinstance(result.approval, PermissionDecisionApproveForSessionApprovalCommands)
+        assert result.approval.command_identifiers == ["ls"]
 
 
 class SpyContextProvider(ContextProvider):
@@ -3239,13 +4084,167 @@ class TestGitHubCopilotAgentContextProviders:
         assert "load_skill" in tool_names
 
 
+class TestGitHubCopilotAttachments:
+    """Tests for forwarding inline binary message content as Copilot attachments."""
+
+    async def test_data_content_forwarded_as_blob_attachment(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_message_event: SessionEvent,
+    ) -> None:
+        """Non-streaming: DataContent is sent to the SDK as an inline blob attachment."""
+        mock_session.send_and_wait.return_value = assistant_message_event
+        image_bytes = b"\x89PNG\r\n\x1a\n-fake-image"
+        message = Message(
+            role="user",
+            contents=[
+                Content.from_text("Describe this image"),
+                Content.from_data(data=image_bytes, media_type="image/png"),
+            ],
+        )
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        await agent.run(message)
+
+        attachments = mock_session.send_and_wait.call_args.kwargs["attachments"]
+        assert attachments is not None
+        assert len(attachments) == 1
+        assert attachments[0]["type"] == "blob"
+        assert attachments[0]["mimeType"] == "image/png"
+        assert base64.b64decode(attachments[0]["data"]) == image_bytes
+
+    async def test_data_content_forwarded_as_blob_attachment_streaming(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        session_idle_event: SessionEvent,
+    ) -> None:
+        """Streaming: DataContent is sent to the SDK as an inline blob attachment."""
+
+        def mock_on(handler: Any) -> Any:
+            handler(session_idle_event)
+            return lambda: None
+
+        mock_session.on = mock_on
+        image_bytes = b"\x89PNG\r\n\x1a\n-fake-image"
+        message = Message(
+            role="user",
+            contents=[
+                Content.from_text("Describe this image"),
+                Content.from_data(data=image_bytes, media_type="image/png"),
+            ],
+        )
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        async for _ in agent.run(message, stream=True):
+            pass
+
+        attachments = mock_session.send.call_args.kwargs["attachments"]
+        assert attachments is not None
+        assert len(attachments) == 1
+        assert attachments[0]["type"] == "blob"
+        assert attachments[0]["mimeType"] == "image/png"
+        assert base64.b64decode(attachments[0]["data"]) == image_bytes
+
+    async def test_text_only_message_sends_no_attachments(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_message_event: SessionEvent,
+    ) -> None:
+        """A text-only message results in no attachments being forwarded."""
+        mock_session.send_and_wait.return_value = assistant_message_event
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        await agent.run("Just text, no attachments")
+
+        assert mock_session.send_and_wait.call_args.kwargs["attachments"] is None
+
+    def test_prepare_attachments_skips_data_without_media_type(self) -> None:
+        """Data content lacking a media type is dropped rather than sent without a MIME type."""
+        content = Content.from_data(data=b"payload", media_type="application/octet-stream")
+        content.media_type = None
+        message = Message(role="user", contents=[content])
+
+        attachments = GitHubCopilotAgent._prepare_attachments_for_copilot([message])
+
+        assert attachments is None
+
+    async def test_non_base64_data_uri_is_skipped_not_raised(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_message_event: SessionEvent,
+    ) -> None:
+        """A non-base64 ``data:`` URI is skipped by the send path instead of failing the request.
+
+        Uses ``RawGitHubCopilotAgent`` (no telemetry layer) to isolate the provider's own
+        attachment handling. The telemetry layer in ``GitHubCopilotAgent`` independently
+        serializes message content and would trip a separate core limitation on this
+        contrived input, which is unrelated to attachment forwarding.
+        """
+        mock_session.send_and_wait.return_value = assistant_message_event
+        # ``Content.from_uri`` classifies this as type="data" but it is not base64-encoded,
+        # so extracting its bytes raises ContentError internally.
+        non_base64 = Content.from_uri("data:text/plain,hello")
+        assert non_base64.type == "data"
+        message = Message(role="user", contents=[Content.from_text("hi"), non_base64])
+
+        agent = RawGitHubCopilotAgent(client=mock_client)
+        # Should complete without raising.
+        await agent.run(message)
+
+        assert mock_session.send_and_wait.call_args.kwargs["attachments"] is None
+
+    def test_prepare_attachments_skips_non_base64_data_uri(self) -> None:
+        """The helper drops a non-base64 ``data:`` URI rather than raising ContentError."""
+        message = Message(role="user", contents=[Content.from_uri("data:text/plain,hello")])
+
+        attachments = GitHubCopilotAgent._prepare_attachments_for_copilot([message])
+
+        assert attachments is None
+
+
 # ---------------------------------------------------------------------------
-# Integration tests — require COPILOT_GITHUB_TOKEN env var
+# Integration tests — require GitHub Actions auth or explicit local opt-in
 # ---------------------------------------------------------------------------
+def _copilot_integration_configured() -> bool:
+    actions_auth = os.getenv("GITHUB_ACTIONS", "").lower() == "true" and bool(os.getenv("GITHUB_TOKEN", "").strip())
+    local_opt_in = os.getenv("RUN_COPILOT_INTEGRATION_TESTS", "").lower() == "true"
+    return actions_auth or local_opt_in
+
+
+@pytest.mark.parametrize(
+    ("environment", "expected"),
+    [
+        ({}, False),
+        ({"GITHUB_TOKEN": "unrelated-token"}, False),
+        ({"GITHUB_ACTIONS": "true"}, False),
+        ({"GITHUB_ACTIONS": "true", "GITHUB_TOKEN": "actions-token"}, True),
+        ({"RUN_COPILOT_INTEGRATION_TESTS": "true"}, True),
+    ],
+)
+def test_copilot_integration_configured(
+    monkeypatch: pytest.MonkeyPatch,
+    environment: dict[str, str],
+    expected: bool,
+) -> None:
+    """Integration tests require Actions auth or an explicit local opt-in."""
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.delenv("RUN_COPILOT_INTEGRATION_TESTS", raising=False)
+    for name, value in environment.items():
+        monkeypatch.setenv(name, value)
+
+    assert _copilot_integration_configured() is expected
+
 
 skip_if_copilot_integration_tests_disabled = pytest.mark.skipif(
-    os.getenv("COPILOT_GITHUB_TOKEN", "") == "",
-    reason="No COPILOT_GITHUB_TOKEN provided; skipping integration tests.",
+    not _copilot_integration_configured(),
+    reason=(
+        "GitHub Actions auth is unavailable and RUN_COPILOT_INTEGRATION_TESTS is not true; skipping integration tests."
+    ),
 )
 
 

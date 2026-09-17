@@ -1,111 +1,224 @@
 # Hosted-Toolbox
 
-A hosted Foundry agent that loads tools from a single Foundry Toolbox via the AF Foundry hosting bridge.
+A hosted agent that consumes tools from a Foundry Toolbox (Foundry Toolset) at runtime. Requires TOOLBOX_NAME set to a toolbox that exists in your project and that the agent identity can access.
 
-`AddFoundryToolboxes(credential, name)` registers a `FoundryToolboxService` that connects to the Foundry Toolboxes MCP proxy at startup, discovers the toolbox's bundled tools via `tools/list`, and makes them available to the agent on every request. The agent code does nothing per request; the toolbox is baked in on the server.
-
-This is the minimal toolbox intro. For a richer walkthrough where a single toolbox bundles three MCP tools each authenticated differently, see [`Hosted-Toolbox-AuthPaths/`](../Hosted-Toolbox-AuthPaths/).
+This sample deploys to Foundry **directly from source (code / ZIP upload)**: the platform builds and runs your code with no container image, so there is no Dockerfile to author or container registry to manage. Source deploy is the default for .NET.
 
 ## Prerequisites
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
-- A Foundry project with a deployed model (e.g., `gpt-4o`) and a Toolbox configured
+- An **existing** Foundry project with an **existing** model deployment (for example `gpt-4o`).
+  This sample's `azure.yaml` declares no `deployments:` block, so `azd` connects to a project and
+  a deployment you already have rather than creating them. `azd ai agent init` prompts you to pick
+  the project, and takes the deployment name as the `-d` argument.
 - Azure CLI logged in (`az login`)
+- Azure Developer CLI (`azd`) with the AI agents extension: `azd extension install azure.ai.agents`
+
+## Files
+
+| File | Purpose |
+|------|---------|
+| `Program.cs` | The agent: pre-registers a Foundry Toolbox and serves its tools, hosts it with the Responses protocol. |
+| `azure.yaml` | The unified `azd` project file. Declares the Foundry project and the hosted agent with `codeConfiguration` (source/ZIP deploy), and passes the listen port and the model deployment name to the container through env. |
+| `.agentignore` | Controls which files are excluded from the code-deploy ZIP upload (`.gitignore` syntax). |
+| `HostedToolbox.csproj` | Self-contained project: single target framework and explicit package versions. It also opts out of the repository's central package management, which does not travel inside the ZIP. |
+| `.env.example` | Template for local configuration. |
+| `../../scripts/Add-LocalFrameworkFeed.ps1`, `../../scripts/add-local-framework-feed.sh` | Contributor-only helpers, see [Deploy your local framework changes](#deploy-your-local-framework-changes-contributors). |
 
 ## Configuration
 
-Copy the template and fill in your values:
+Copy the template and fill in your project endpoint:
+
+PowerShell:
 
 ```powershell
-Copy-Item .env.example .env
+copy .env.example .env
 ```
 
-Edit `.env`:
+Bash:
+
+```bash
+cp .env.example .env
+```
 
 ```env
-AZURE_AI_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
+FOUNDRY_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
 AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4o
-TOOLBOX_NAME=my-toolset
+TOOLBOX_NAME=<your-toolbox-name>
+ASPNETCORE_URLS=http://+:8088
+AZURE_TOKEN_CREDENTIALS=dev
 ```
 
-Configuration notes:
+> `.env` is gitignored. The `.env.example` template is checked in as a reference.
 
-- `AZURE_AI_PROJECT_ENDPOINT` (local-dev) or `FOUNDRY_PROJECT_ENDPOINT` (auto-injected in hosted containers).
-- `AZURE_AI_MODEL_DEPLOYMENT_NAME` (default `gpt-4o`).
-- `TOOLBOX_NAME` (default `my-toolset`). Use `TOOLBOX_NAME`, not `FOUNDRY_TOOLBOX_NAME`: all `FOUNDRY_*` env-var names are reserved by the Foundry platform and rejected at agent-create, so a `FOUNDRY_*`-named value would not survive deployment.
+> `ASPNETCORE_URLS` pins the local run to the port the `Using-Samples` REPLs expect. Recent
+> `Microsoft.Agents.AI.Foundry.Hosting` versions bind that port themselves, so it only matters
+> while this project is pinned to an older published package.
 
-The `Foundry.Hosting` package builds the toolbox proxy URL from `FOUNDRY_PROJECT_ENDPOINT` as `{FOUNDRY_PROJECT_ENDPOINT}/toolboxes/{TOOLBOX_NAME}/mcp?api-version=v1` per [`tools-integration-spec.md`](https://github.com/microsoft/AgentSchema/blob/main/specs/agents/hosted_agents/container-spec/docs/tools-integration-spec.md) §2–§3.
+> **Windows note:** write `.env` as UTF-8 **without** a byte order mark. `azd` reads the file
+> during `azd ai agent init` and fails with `unexpected character` when a mark is present.
 
-## Running directly (contributors)
+> **Local development on a machine without a managed identity:** set `AZURE_TOKEN_CREDENTIALS=dev`.
+> `Program.cs` authenticates with `DefaultAzureCredential`. On a developer machine with no
+> managed identity, `DefaultAzureCredential` probes the Azure Instance Metadata Service (IMDS,
+> `169.254.169.254`) and blocks for a long time before every model call. `AZURE_TOKEN_CREDENTIALS=dev`
+> restricts it to developer credentials (Azure CLI, Visual Studio, `azd`) and skips that probe.
+> Only for local runs; the deployed agent uses the platform-injected managed identity.
 
-```powershell
+## Run and test locally
+
+Local runs use two terminals: one hosts the agent, the other is a code-first client that talks to it,
+see the sibling [`Using-Samples`](../Using-Samples/) REPLs.
+
+**Terminal 1 — host the agent:**
+
+```
 cd dotnet/samples/04-hosting/FoundryHostedAgents/responses/Hosted-Toolbox
-dotnet run --tl:off
+az login
+dotnet run
 ```
 
-### Test it
+The agent starts on `http://localhost:8088`.
 
-Using the Azure Developer CLI:
+**Terminal 2 — chat with it (code-first REPL):**
+
+PowerShell:
 
 ```powershell
-azd ai agent invoke --local "What tools do you have available, and what can they do?"
+cd dotnet/samples/04-hosting/FoundryHostedAgents/responses/Using-Samples/SimpleAgent
+$env:AZURE_AI_AGENT_NAME = "hosted-toolbox"
+dotnet run -- --local
 ```
 
-## Running with Docker
+Bash:
 
-### 1. Publish for the container runtime
-
-```powershell
-dotnet publish -c Debug -f net10.0 -r linux-musl-x64 --self-contained false -o out
+```bash
+cd dotnet/samples/04-hosting/FoundryHostedAgents/responses/Using-Samples/SimpleAgent
+export AZURE_AI_AGENT_NAME="hosted-toolbox"
+dotnet run -- --local
 ```
 
-### 2. Build and run
+Try: `List the tools you have available.`
+
+## Deploy to Foundry (source / ZIP)
+
+`azd` scaffolds the project into a working folder, so every step below runs from an **empty
+directory outside the repository**, and `-m` points at this sample's `azure.yaml`.
+
+### Step 1: create the working directory and enter it
+
+PowerShell:
 
 ```powershell
-docker build -f Dockerfile.contributor -t hosted-toolbox .
-
-$env:AZURE_BEARER_TOKEN = (az account get-access-token --resource https://ai.azure.com --query accessToken -o tsv)
-
-docker run --rm -p 8088:8088 `
-  -e AGENT_NAME=hosted-toolbox-agent `
-  -e AZURE_BEARER_TOKEN=$env:AZURE_BEARER_TOKEN `
-  --env-file .env `
-  hosted-toolbox
+$work = Join-Path $env:TEMP "hosted-toolbox-work"
+mkdir $work
+cd $work
 ```
 
-## Deploying to Foundry (azd spec)
+### Step 2: scaffold the project
 
-This sample includes an `azd` manifest (`agent.manifest.yaml`) and hosted agent spec (`agent.yaml`) for deployment to Foundry.
+`azd ai agent init` copies the sample into a subfolder named `hosted-toolbox` (the top-level `name:`
+in `azure.yaml`) and writes the adopted `azure.yaml` and the `azd` environment there. It prompts
+you to pick the Foundry project; `-d` is the name of an existing model deployment in that project.
 
-Initialize an `azd` project from this sample's manifest:
+PowerShell:
 
 ```powershell
-mkdir hosted-toolbox; cd hosted-toolbox
-azd ai agent init -m https://github.com/microsoft/agent-framework/blob/main/dotnet/samples/04-hosting/FoundryHostedAgents/responses/Hosted-Toolbox/agent.manifest.yaml
+$sample = "<repo>/dotnet/samples/04-hosting/FoundryHostedAgents/responses/Hosted-Toolbox/azure.yaml"
+
+azd auth login
+azd ai agent init -m $sample -d <model-deployment>
 ```
 
-Then deploy:
+### Step 3: provision and deploy
 
-```powershell
+Contributors changing the Agent Framework source: do the extra step in
+[Deploy your local framework changes](#deploy-your-local-framework-changes-contributors) now,
+before the commands below. Everyone else can ignore it.
+
+```
+cd hosted-toolbox
+azd env get-values
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME <model-deployment>
+azd env set TOOLBOX_NAME <your-toolbox-name>
+azd provision
 azd deploy
+azd ai agent invoke "List the tools you have available."
 ```
 
-If you need to override defaults, set deployment-time environment variables in the `azd` environment before deploying:
+`azd` packages the source into a ZIP (honoring `.agentignore`), uploads it, and Foundry runs
+`dotnet restore` + `dotnet publish` on it during provisioning (`dependencyResolution: remote_build`
+in `azure.yaml`). No Dockerfile, no container registry.
+
+> **The toolbox must already exist in the project, and the agent identity must be able to read it.**
+> `TOOLBOX_NAME` is resolved at runtime against the project's toolboxes (list them with
+> `GET <project-endpoint>/toolboxes?api-version=v1`). The deployed agent runs under a managed
+> identity that `azd` grants `Foundry User` on the project, which is enough to read the toolbox.
+
+> **Toolboxes that contain OAuth-gated tools return a consent request, not an answer.** If the
+> toolbox includes MCP tools that require per-user OAuth (for example a GitHub or mail connection),
+> the first invoke streams an `oauth_consent_request` output item and finishes with
+> `response.incomplete` instead of a final message. That is expected: the caller is meant to
+> complete the consent and resume. The sibling [`Hosted-Toolbox-AuthPaths`](../Hosted-Toolbox-AuthPaths/)
+> sample and its client show that flow end to end. To see a plain tool answer instead, point
+> `TOOLBOX_NAME` at a toolbox whose tools need no consent (for example `web_search` /
+> `code_interpreter` only).
+
+### Step 4: clean up
+
+```
+azd down
+```
+
+> **`azd down` does not delete the hosted agent.** It reports success but leaves the deployed agent
+> in place. Delete it explicitly with a REST call:
+>
+> ```bash
+> az rest --method delete \
+>   --url "<project-endpoint>/agents/hosted-toolbox" \
+>   --url-parameters api-version=v1 force=true \
+>   --resource https://ai.azure.com
+> ```
+
+Then delete the working directory.
+
+## Deploy your local framework changes (contributors)
+
+**Skip this section unless you are changing the Agent Framework itself.** The project restores the
+**published** Agent Framework packages, and Foundry restores from nuget.org when it builds the
+upload, so editing framework source in this repository changes nothing about the deployed agent.
+
+The helper script packs your local framework source into NuGet packages and puts them **inside the
+upload**, together with a `nuget.config` that points the restore at them. Run it in the flow above,
+**between step 2 and step 3**:
+
+PowerShell:
 
 ```powershell
-azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME gpt-4o
-azd env set TOOLBOX_NAME my-toolset
+cd $work
+<repo>/dotnet/samples/04-hosting/FoundryHostedAgents/scripts/Add-LocalFrameworkFeed.ps1 -Path ./hosted-toolbox
 ```
 
-For end-to-end hosted agent deployment guidance, see the [official deployment guide](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent).
+Bash:
 
----
+```bash
+cd "$WORK"
+<repo>/dotnet/samples/04-hosting/FoundryHostedAgents/scripts/add-local-framework-feed.sh ./hosted-toolbox
+```
 
-## NuGet package users
+See the
+[`Hosted-ChatClientAgent`](../Hosted-ChatClientAgent/README.md#deploy-your-local-framework-changes-contributors)
+README for the full explanation of what the script changes and why.
 
-Use the standard `Dockerfile` instead of `Dockerfile.contributor`. See the commented section in `HostedToolbox.csproj` for the `PackageReference` alternative.
+## Troubleshooting
 
-## Related samples
+**`azd ai agent invoke` fails with `404 not_found: Conversation '<id>' not found`**
 
-- [`Hosted-Toolbox-AuthPaths/`](../Hosted-Toolbox-AuthPaths/) — same hosting bones as this sample, but the toolbox bundles three MCP tools each authenticated differently (key, Entra agent identity, inline `Authorization`), driven by the shared `Using-Samples/SimpleAgent/` REPL.
-- [`Hosted-McpTools/`](../Hosted-McpTools/) — contrasts client-side `McpClient` vs server-side `HostedMcpServerTool` for non-toolbox MCP servers.
+`azd` reuses the saved session and conversation per agent. Once the agent is redeployed or deleted,
+that conversation no longer exists on the server. Start a fresh one:
+
+```
+azd ai agent invoke --new-conversation "Hello!"
+```
+
+For the full hosted-agent deployment guide, see the [official source-code deployment doc](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent-code).

@@ -1,22 +1,25 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <IsReleaseCandidate>false</IsReleaseCandidate>
+    <IsReleased>true</IsReleased>
     <InjectSharedThrow>true</InjectSharedThrow>
     <InjectSharedDiagnosticIds>true</InjectSharedDiagnosticIds>
     <InjectExperimentalAttributeOnLegacy>true</InjectExperimentalAttributeOnLegacy>
     <InjectIsExternalInitOnLegacy>true</InjectIsExternalInitOnLegacy>
     <InjectTrimAttributesOnLegacy>true</InjectTrimAttributesOnLegacy>
+    <NoWarn>$(NoWarn);MAAI001</NoWarn>
   </PropertyGroup>
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
 
+  <!-- Disable package validation baseline until the first release -->
+  <PropertyGroup>
+    <PackageValidationBaselineVersion />
+    <EnablePackageValidation>false</EnablePackageValidation>
+  </PropertyGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\Microsoft.Agents.AI\Microsoft.Agents.AI.csproj" />
-  </ItemGroup>
-
-  <ItemGroup Condition="$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net8.0'))">
-    <ProjectReference Include="..\Microsoft.Agents.AI.Tools.Shell\Microsoft.Agents.AI.Tools.Shell.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

@@ -9,9 +9,14 @@ from agent_framework._settings import load_settings
 from agent_framework.exceptions import SettingNotFoundError
 from agent_framework.foundry import FoundryLocalClient
 
+from agent_framework_foundry_local._feature_usage import FeatureIndex
 from agent_framework_foundry_local._foundry_local_client import FoundryLocalSettings
 
 # Settings Tests
+
+
+def test_foundry_local_owns_foundry_local_feature() -> None:
+    assert FoundryLocalClient._FEATURE_USAGE_INDEX is FeatureIndex.FOUNDRY_LOCAL
 
 
 def test_foundry_local_settings_init_from_env(foundry_local_unit_test_env: dict[str, str]) -> None:

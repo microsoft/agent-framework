@@ -1,42 +1,37 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.ClientModel.Primitives;
 using System.ComponentModel;
-using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.Hosting;
 using Microsoft.Agents.AI.Hosting.AGUI.AspNetCore;
-using Microsoft.AspNetCore.Http.Json;
-using Microsoft.AspNetCore.HttpLogging;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.Options;
+using OpenAI;
 using OpenAI.Chat;
-using ServerFunctionApproval;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
-
-builder.Services.AddHttpLogging(logging =>
-{
-    logging.LoggingFields = HttpLoggingFields.RequestPropertiesAndHeaders | HttpLoggingFields.RequestBody
-        | HttpLoggingFields.ResponsePropertiesAndHeaders | HttpLoggingFields.ResponseBody;
-    logging.RequestBodyLogLimit = int.MaxValue;
-    logging.ResponseBodyLogLimit = int.MaxValue;
-});
-
-builder.Services.AddHttpClient().AddLogging();
-builder.Services.ConfigureHttpJsonOptions(options =>
-    options.SerializerOptions.TypeInfoResolverChain.Add(ApprovalJsonContext.Default));
 builder.Services.AddAGUIServer();
 
-// WARNING: When adding session persistence (e.g., WithInMemorySessionStore), or running in production,
-// make sure to also register a SessionIsolationKeyProvider to scope sessions by principal in multi-user
-// deployments, e.g.:
-// builder.Services.UseClaimsBasedSessionIsolation(new() { ClaimType = ClaimTypes.NameIdentifier });
+// A session store is REQUIRED for human-in-the-loop. The framework only honors an approval decision that it
+// can match against an approval request it recorded itself when it interrupted the run. Without a session
+// store that server-side record is lost between requests, and every approval decision the client sends back
+// is rejected. Approval requests present in the inbound message history are deliberately NOT trusted as the
+// pairing authority - otherwise any client could forge an approval and execute an approval-required tool.
+// In production, use a persistent session store instead of the in-memory one: InMemoryAgentSessionStore keeps
+// every session for the lifetime of the process, with no size limit, expiry or eviction, and sessions are keyed
+// by a thread id the client chooses. It also has no atomic consume, so two concurrent requests on one thread can
+// read the same pending approval before either writes back.
+builder.Services.AddKeyedSingleton<AgentSessionStore>("AGUIAssistant", new InMemoryAgentSessionStore());
+
+// WARNING: When session persistence is enabled, in a multi-user deployment you must also register an
+// AgentIsolationKeyProvider to scope sessions by principal, e.g.:
+// builder.Services.UseClaimsBasedAgentIsolation(new() { ClaimType = ClaimTypes.NameIdentifier });
 
 WebApplication app = builder.Build();
 
-app.UseHttpLogging();
-
-string endpoint = builder.Configuration["AZURE_OPENAI_ENDPOINT"]
+Uri endpoint = AzureOpenAIEndpoint.From(
+    builder.Configuration["AZURE_OPENAI_ENDPOINT"])
     ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 string deploymentName = builder.Configuration["AZURE_OPENAI_DEPLOYMENT_NAME"]
     ?? throw new InvalidOperationException("AZURE_OPENAI_DEPLOYMENT_NAME is not set.");
@@ -48,21 +43,20 @@ static string ApproveExpenseReport(string expenseReportId)
     return $"Expense report {expenseReportId} approved";
 }
 
-// Get JsonSerializerOptions
-var jsonOptions = app.Services.GetRequiredService<IOptions<JsonOptions>>().Value;
-
-// Create approval-required tool
-#pragma warning disable MEAI001 // Type is for evaluation purposes only
-AITool[] tools = [new ApprovalRequiredAIFunction(AIFunctionFactory.Create(ApproveExpenseReport))];
-#pragma warning restore MEAI001
+// Wrap the tool in ApprovalRequiredAIFunction so the run interrupts for approval before it executes.
+AITool[] tools =
+[
+    new ApprovalRequiredAIFunction(
+        AIFunctionFactory.Create(ApproveExpenseReport, name: "approve_expense_report"))
+];
 
 // Create base agent
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-ChatClient openAIChatClient = new AzureOpenAIClient(
-        new Uri(endpoint),
-        new DefaultAzureCredential())
+ChatClient openAIChatClient = new OpenAIClient(
+    new BearerTokenPolicy(new DefaultAzureCredential(), "https://ai.azure.com/.default"),
+    new OpenAIClientOptions { Endpoint = endpoint })
     .GetChatClient(deploymentName);
 
 ChatClientAgent baseAgent = openAIChatClient.AsAIAgent(
@@ -70,8 +64,7 @@ ChatClientAgent baseAgent = openAIChatClient.AsAIAgent(
     instructions: "You are a helpful assistant in charge of approving expenses",
     tools: tools);
 
-// Wrap with ServerFunctionApprovalAgent
-var agent = new ServerFunctionApprovalAgent(baseAgent, jsonOptions.SerializerOptions);
-
-app.MapAGUIServer("/", agent);
+// No custom approval protocol is required: MapAGUIServer emits the approval interrupt natively when the
+// model calls the approval-required tool, and resumes the run when the client sends the decision back.
+app.MapAGUIServer("/", baseAgent);
 await app.RunAsync();

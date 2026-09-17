@@ -23,7 +23,7 @@ var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ??
 var deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
 
 // A sample function to load the next three calendar events for the user.
-Func<Task<string[]>> loadNextThreeCalendarEvents = async () =>
+async Task<string[]> LoadNextThreeCalendarEventsAsync()
 {
     // In a real implementation, this method would connect to a calendar service
     return
@@ -32,7 +32,7 @@ Func<Task<string[]>> loadNextThreeCalendarEvents = async () =>
         "Team meeting today at 17:00",
         "Birthday party today at 20:00"
     ];
-};
+}
 
 // Create an agent with an AI context provider attached that aggregates two other providers.
 // You must dissable client side conversation storage for clients that support it:
@@ -64,7 +64,7 @@ AIAgent agent = new AIProjectClient(
         // The agent will call each provider in sequence, accumulating context from each.
         AIContextProviders = [
             new TodoListAIContextProvider(),
-            new CalendarSearchAIContextProvider(loadNextThreeCalendarEvents)
+            new CalendarSearchAIContextProvider(LoadNextThreeCalendarEventsAsync)
         ],
     });
 

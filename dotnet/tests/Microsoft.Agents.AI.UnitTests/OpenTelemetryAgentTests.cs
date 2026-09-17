@@ -606,7 +606,7 @@ public class OpenTelemetryAgentTests
             Assert.False(tags.ContainsKey("gen_ai.system_instructions"));
 
             // gen_ai.tool.definitions is always emitted regardless of EnableSensitiveData (ME.AI 10.4.0+).
-            // ME.AI 10.5.1 omits description/parameters for function tools when sensitive data is disabled.
+            // ME.AI 10.9.0 omits description/parameters for function tools when sensitive data is disabled.
             Assert.Equal(ReplaceWhitespace("""
                 [
                   {
@@ -871,6 +871,17 @@ public class OpenTelemetryAgentTests
         Assert.Equal(3, activities.Count);
         Assert.Contains(activities, a => a.DisplayName.StartsWith("invoke_agent", StringComparison.Ordinal));
         Assert.Equal(2, activities.Count(a => string.Equals(a.GetTagItem("gen_ai.operation.name") as string, "chat", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public void DefaultSourceName_ReturnsDocumentedSourceName()
+    {
+        // Callers pass this to TracerProviderBuilder.AddSource, so it must stay in sync with the source name the
+        // agent emits spans under, which Ctor_NullOrWhitespaceSourceName_AutoWiredChatClientUsesDefaultSource_Async
+        // pins to the same literal. Comparing against the literal here guards a rename of the internal constant.
+
+        // Arrange & Act & Assert
+        Assert.Equal("Experimental.Microsoft.Agents.AI", OpenTelemetryAgent.DefaultSourceName);
     }
 
     [Theory]

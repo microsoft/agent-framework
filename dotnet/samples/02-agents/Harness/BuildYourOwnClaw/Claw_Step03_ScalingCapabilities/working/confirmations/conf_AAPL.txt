@@ -1,0 +1,6 @@
+TRADE CONFIRMATION
+Confirmation: TRADE-9F8E7D6C
+Date: 2024-11-03
+Symbol: AAPL
+Action: BUY
+Quantity: 75

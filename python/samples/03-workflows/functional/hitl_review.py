@@ -59,14 +59,17 @@ async def review_pipeline(topic: str, ctx: RunContext) -> str:
 
 
 async def main():
+    workflow_instance = review_pipeline.build()
+
     # Phase 1: Run until the workflow pauses for human input
     print("=== Phase 1: Initial run ===")
-    result1 = await review_pipeline.run("AI Safety")
+    result1 = await workflow_instance.run("AI Safety")
 
     # If request_info() was reached, the state is IDLE_WITH_PENDING_REQUESTS.
     # If the workflow completed without hitting request_info(), it would be IDLE.
     print(f"State: {(final_state := result1.get_final_state())}")
-    assert final_state == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
+    if final_state != WorkflowRunState.IDLE_WITH_PENDING_REQUESTS:
+        raise RuntimeError(f"Expected pending review input, but workflow entered {final_state}.")
 
     requests = result1.get_request_info_events()
     print(f"Pending request: {requests[0].request_id}")
@@ -74,7 +77,7 @@ async def main():
     # Phase 2: Resume with the human's response
     print("\n=== Phase 2: Resume with feedback ===")
     print("(write_draft should NOT execute again — saved by @step)")
-    result2 = await review_pipeline.run(responses={"review_request": "Add more details about alignment research"})
+    result2 = await workflow_instance.run(responses={"review_request": "Add more details about alignment research"})
 
     print(f"State: {result2.get_final_state()}")
     print(f"Output: {result2.get_outputs()[0]}")

@@ -12,14 +12,20 @@ _IMPORTS: dict[str, tuple[str, str]] = {
     "AgentCallbackContext": ("agent_framework_durabletask", "agent-framework-durabletask"),
     "AgentFunctionApp": ("agent_framework_azurefunctions", "agent-framework-azurefunctions"),
     "AgentResponseCallbackProtocol": ("agent_framework_durabletask", "agent-framework-durabletask"),
+    "AzureAISearchCollection": ("agent_framework_azure_ai_search", "agent-framework-azure-ai-search"),
     "AzureAISearchContextProvider": ("agent_framework_azure_ai_search", "agent-framework-azure-ai-search"),
     "AzureAISearchSettings": ("agent_framework_azure_ai_search", "agent-framework-azure-ai-search"),
+    "AzureAISearchStore": ("agent_framework_azure_ai_search", "agent-framework-azure-ai-search"),
+    "AzureCosmosSettings": ("agent_framework_azure_cosmos", "agent-framework-azure-cosmos"),
+    "CosmosCollection": ("agent_framework_azure_cosmos", "agent-framework-azure-cosmos"),
     "CosmosHistoryProvider": ("agent_framework_azure_cosmos", "agent-framework-azure-cosmos"),
+    "CosmosStore": ("agent_framework_azure_cosmos", "agent-framework-azure-cosmos"),
     "DurableAIAgent": ("agent_framework_durabletask", "agent-framework-durabletask"),
     "DurableAIAgentClient": ("agent_framework_durabletask", "agent-framework-durabletask"),
     "DurableAIAgentOrchestrationContext": ("agent_framework_durabletask", "agent-framework-durabletask"),
     "DurableAIAgentWorker": ("agent_framework_durabletask", "agent-framework-durabletask"),
     "DurableWorkflowClient": ("agent_framework_durabletask", "agent-framework-durabletask"),
+    "WorkflowHitlContext": ("agent_framework_azurefunctions", "agent-framework-azurefunctions"),
 }
 
 

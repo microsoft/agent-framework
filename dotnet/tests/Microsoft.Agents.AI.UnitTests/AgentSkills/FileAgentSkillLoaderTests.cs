@@ -1,9 +1,19 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+#if NET
+using System.Diagnostics;
+#endif
 using System.IO;
 using System.Linq;
+#if NET
+using System.Runtime.Versioning;
+#endif
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
+using Moq;
 
 namespace Microsoft.Agents.AI.UnitTests.AgentSkills;
 
@@ -31,6 +41,446 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         {
             Directory.Delete(this._testRoot, recursive: true);
         }
+    }
+
+    /// <summary>
+    /// Existing scalar representations with metadata before or after them, with and without duplicate metadata.
+    /// </summary>
+    public static TheoryData<string, string, string, bool, bool, string> ExistingScalarFormats
+    {
+        get
+        {
+            var data = new TheoryData<string, string, string, bool, bool, string>();
+            // Pin the existing lightweight parser's output, not full YAML conformance.
+            (string Value, string Expected)[] cases =
+            [
+                ("Read files", "Read files"),
+                ("'Read files'", "Read files"),
+                ("\"Read files\"", "Read files"),
+                ("\"  Read files  \"", "  Read files  "),
+                ("\"Use #tags: safely\"", "Use #tags: safely"),
+                ("\"Use 'quotes' safely\"", "Use 'quotes' safely"),
+                ("'Use \"quotes\" safely'", "Use \"quotes\" safely"),
+                ("\"| not a block\"", "| not a block"),
+                ("\n  Read files", "Read files"),
+                ("\n\n  'Read files'", "Read files"),
+                ("\n  >-\n    Read\n    files", "Read files"),
+                ("|\n  Read\n  files", "Read\nfiles"),
+                ("|-\n  Read\n  files", "Read\nfiles"),
+                ("|+\n  Read\n  files", "Read\nfiles\n"),
+                (">\n  Read\n  files", "Read files"),
+                (">-\n  Read\n  files", "Read files"),
+                (">+\n  Read\n  files", "Read files\n"),
+                ("|-\n\n  Read\n  files", "Read\nfiles"),
+                ("|-\n  Read\n\n  files", "Read\n\nfiles"),
+                ("|-\n  Read\n    indented\n  files", "Read\n  indented\nfiles"),
+                ("|-\n  description: text\n  Description: text", "description: text\nDescription: text"),
+                ("|-\n  \"description\": text\n  'allowed-tools': text", "\"description\": text\n'allowed-tools': text"),
+            ];
+            foreach (var (value, expected) in cases)
+            {
+                foreach (string newline in new[] { "\n", "\r\n" })
+                {
+                    foreach (bool metadataFirst in new[] { false, true })
+                    {
+                        foreach (string quote in new[] { "", "'", "\"" })
+                        {
+                            data.Add(value, expected, newline, metadataFirst, false, quote);
+                            data.Add(value, expected, newline, metadataFirst, true, quote);
+                        }
+                    }
+                }
+            }
+
+            return data;
+        }
+    }
+
+    /// <summary>
+    /// Duplicate and incorrectly cased root properties with quoted names.
+    /// </summary>
+    public static TheoryData<string, string> ConflictingQuotedFields
+    {
+        get
+        {
+            var data = new TheoryData<string, string>();
+            (string Key, string Value)[] fields =
+            [
+                ("name", "test-skill"),
+                ("description", "Read files"),
+                ("license", "MIT"),
+                ("compatibility", "Any runtime"),
+                ("metadata", "\n  author: First"),
+                ("allowed-tools", "read"),
+            ];
+            foreach (var (key, value) in fields)
+            {
+                string otherFields = string.Join("\n", fields.Where(f => f.Key != key).Select(f => $"{f.Key}: {f.Value}"));
+                foreach (char quote in new[] { '\'', '"' })
+                {
+                    string quotedKey = $"{quote}{key}{quote}";
+                    string quotedField = $"{quotedKey}: {value}";
+                    string bareField = $"{key}: {value}";
+                    char otherQuote = quote == '\'' ? '"' : '\'';
+                    foreach (string newline in new[] { "\n", "\r\n" })
+                    {
+                        string incorrectlyCasedField = $"{quote}{key.ToUpperInvariant()}{quote}: {value}";
+                        string content = $"---\n{otherFields}\n{incorrectlyCasedField}\n---\nBody.";
+                        string diagnostic = $"incorrectly cased frontmatter field '{key.ToUpperInvariant()}'; expected '{key}'";
+                        data.Add(content.Replace("\n", newline), diagnostic);
+                        foreach (string declaration in new[]
+                        {
+                            $"{quotedField}\n{bareField}",
+                            $"{bareField}\n{quotedField}",
+                            $"{quotedField}\n{quotedField}",
+                            $"{quotedField}\n{otherQuote}{key}{otherQuote}: {value}",
+                            $"{quotedKey}:\n{bareField}",
+                            $"{bareField}\n{quotedKey}:",
+                        })
+                        {
+                            content = $"---\n{otherFields}\n{declaration}\n---\nBody.";
+                            data.Add(content.Replace("\n", newline), $"duplicate frontmatter field '{key}'");
+                        }
+                    }
+                }
+            }
+
+            return data;
+        }
+    }
+
+    /// <summary>
+    /// Existing metadata scalar outputs, including the lightweight parser's incomplete YAML normalization.
+    /// </summary>
+    public static TheoryData<string, string, string> ExistingMetadataScalarFormats
+    {
+        get
+        {
+            var data = new TheoryData<string, string, string>();
+            (string Value, string Expected)[] cases =
+            [
+                ("First", "First"),
+                ("'First'", "First"),
+                ("\"First\"", "First"),
+                ("\"  First  \"", "  First  "),
+                ("\"Use #tags: safely\"", "Use #tags: safely"),
+                ("\"Use 'quotes' safely\"", "Use 'quotes' safely"),
+                ("'Use \"quotes\" safely'", "Use \"quotes\" safely"),
+                ("''", "''"),
+                ("\"\"", "\"\""),
+                ("\"\\n\"", "\\n"),
+                ("'It''s fine'", "It''s fine"),
+                ("\n    First", "First"),
+                ("\n    'First'", "First"),
+                ("\n    \"First\"", "First"),
+                ("First\n    Second", "First"),
+                ("\"First\n    Second\"", "\"First"),
+                ("'First\n    Second'", "'First"),
+                ("|\n    First\n    Second", "|"),
+                ("|-\n    First\n    Second", "|-"),
+                ("|+\n    First\n    Second", "|+"),
+                (">\n    First\n    Second", ">"),
+                (">-\n    First\n    Second", ">-"),
+                (">+\n    First\n    Second", ">+"),
+                ("\n    |-\n      First\n      Second", "|-"),
+            ];
+            foreach (var (value, expected) in cases)
+            {
+                data.Add(value, expected, "\n");
+                data.Add(value, expected, "\r\n");
+            }
+
+            return data;
+        }
+    }
+
+    /// <summary>
+    /// Duplicate and incorrectly cased fields before and after inline or block values.
+    /// </summary>
+    public static TheoryData<string, string, string> ConflictingScalarFormats
+    {
+        get
+        {
+            var data = new TheoryData<string, string, string>();
+            string[] firstValues = ["First", "'First'", "\"First\"", "|-\n  First", ">-\n  First"];
+            string[] secondValues = ["Second", "'Second'", "\"Second\"", "|-\n  Second", ">-\n  Second"];
+            string[] secondKeys = ["description", "Description", "DESCRIPTION"];
+            foreach (string firstValue in firstValues)
+            {
+                foreach (string secondValue in secondValues)
+                {
+                    foreach (string secondKey in secondKeys)
+                    {
+                        data.Add(firstValue, secondValue, secondKey);
+                    }
+                }
+            }
+
+            return data;
+        }
+    }
+
+    /// <summary>
+    /// Duplicate metadata values and case-insensitive key collisions, with LF and CRLF.
+    /// </summary>
+    public static TheoryData<string, string, string, string, string, string> DuplicateMetadataEntries
+    {
+        get
+        {
+            var data = new TheoryData<string, string, string, string, string, string>();
+            (string Key, string DuplicateKey, string Value, string DuplicateValue, string Expected)[] cases =
+            [
+                ("author", "author", "First", "Second", "First"),
+                ("Author", "Author", "'First'", "\"Second\"", "First"),
+                ("author", "author", "\"First\"", "'Second'", "First"),
+                ("author", "author", "Same", "Same", "Same"),
+                ("author", "author", "''", "Second", "''"),
+                ("author", "author", "\"\"", "Second", "\"\""),
+                ("author", "author", "\"  First  \"", "Second", "  First  "),
+                ("author", "author", "0", "Second", "0"),
+                ("description", "description", "First", "Second", "First"),
+                ("metadata", "metadata", "First", "Second", "First"),
+                ("vendor-key", "vendor-key", "First", "Second", "First"),
+                ("vendor_key", "vendor_key", "First", "Second", "First"),
+                ("author", "Author", "First", "Second", "First"),
+                ("Author", "author", "First", "Second", "First"),
+                ("author", "AUTHOR", "First", "Second", "First"),
+                ("description", "Description", "First", "Second", "First"),
+                ("metadata", "Metadata", "First", "Second", "First"),
+                ("vendor-key", "Vendor-Key", "First", "Second", "First"),
+                ("author", "author", "\n    'First'", "Second", "First"),
+                ("author", "Author", "First", "\n    \"Second\"", "First"),
+                ("author", "author", "\"author: First\"", "Second", "author: First"),
+                ("author", "author", "First\n  # author: Not a field", "Second", "First"),
+                ("author", "author", "|-\n    First\n    paragraph", "Second", "|-"),
+                ("author", "Author", "First", ">-\n    Second\n    paragraph", "First"),
+                ("author", "author", ">\n    First\n    paragraph", "|\n    Second\n    paragraph", ">"),
+            ];
+            foreach (var (key, duplicateKey, value, duplicateValue, expected) in cases)
+            {
+                data.Add(key, duplicateKey, value, duplicateValue, expected, "\n");
+                data.Add(key, duplicateKey, value, duplicateValue, expected, "\r\n");
+            }
+
+            return data;
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(ExistingScalarFormats))]
+    public async Task GetSkillsAsync_ExistingScalarFormats_PreservedAsync(
+        string value, string expected, string newline, bool metadataFirst, bool duplicateMetadata, string quote)
+    {
+        // Arrange
+        string fields = $"{quote}name{quote}: test-skill\n{quote}description{quote}: {value}\n" +
+            $"{quote}license{quote}: 'MIT'\n{quote}compatibility{quote}: Any runtime\n{quote}allowed-tools{quote}: read\n";
+        string metadata = $"{quote}metadata{quote}:\n  author: test\n" + (duplicateMetadata ? "  author: Ignored\n" : "");
+        string content = "---\n" + (metadataFirst ? metadata + fields : fields + metadata) + "---\nBody.";
+        _ = this.CreateSkillDirectoryWithRawContent("test-skill", content.Replace("\n", newline));
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        var frontmatter = Assert.Single(skills).Frontmatter;
+        Assert.Equal(expected, frontmatter.Description);
+        Assert.Equal("MIT", frontmatter.License);
+        Assert.Equal("Any runtime", frontmatter.Compatibility);
+        Assert.Equal("read", frontmatter.AllowedTools);
+        Assert.NotNull(frontmatter.Metadata);
+        Assert.Equal("test", frontmatter.Metadata["author"]);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExistingMetadataScalarFormats))]
+    public async Task GetSkillsAsync_ExistingMetadataScalarFormats_PreservedAsync(string value, string expected, string newline)
+    {
+        // Arrange
+        string content =
+            "---\nname: test-skill\ndescription: Read files\n" +
+            $"metadata:\n  author: {value}\n  version: '1.0'\nlicense: MIT\n---\nBody.";
+        _ = this.CreateSkillDirectoryWithRawContent("test-skill", content.Replace("\n", newline));
+        var logger = new Mock<ILogger>();
+        logger.Setup(l => l.IsEnabled(It.IsAny<LogLevel>())).Returns(true);
+        var loggerFactory = new Mock<ILoggerFactory>();
+        loggerFactory.Setup(f => f.CreateLogger(It.IsAny<string>())).Returns(logger.Object);
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor, loggerFactory: loggerFactory.Object);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert - preserve existing scalar parsing rather than expanding YAML support.
+        var skill = Assert.Single(skills);
+        Assert.Equal("Read files", skill.Frontmatter.Description);
+        Assert.Equal("MIT", skill.Frontmatter.License);
+        Assert.NotNull(skill.Frontmatter.Metadata);
+        Assert.Equal(2, skill.Frontmatter.Metadata.Count);
+        Assert.Equal(expected, skill.Frontmatter.Metadata["author"]);
+        Assert.Equal("1.0", skill.Frontmatter.Metadata["version"]);
+        Assert.Contains("Body.", await skill.GetContentAsync());
+        logger.Verify(
+            l => l.Log(
+                It.Is<LogLevel>(level => level >= LogLevel.Warning),
+                It.IsAny<EventId>(),
+                It.IsAny<It.IsAnyType>(),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Never);
+    }
+
+    [Theory]
+    [MemberData(nameof(ConflictingScalarFormats))]
+    public async Task GetSkillsAsync_ConflictingScalarFormats_ExcludesSkillAndLogsErrorAsync(
+        string firstValue,
+        string secondValue,
+        string secondKey)
+    {
+        // Arrange
+        string content = $"---\nname: test-skill\ndescription: {firstValue}\n{secondKey}: {secondValue}\nlicense: MIT\n---\nBody.";
+        _ = this.CreateSkillDirectoryWithRawContent("test-skill", content);
+        var logger = new Mock<ILogger>();
+        logger.Setup(l => l.IsEnabled(It.IsAny<LogLevel>())).Returns(true);
+        var loggerFactory = new Mock<ILoggerFactory>();
+        loggerFactory.Setup(f => f.CreateLogger(It.IsAny<string>())).Returns(logger.Object);
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor, loggerFactory: loggerFactory.Object);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        Assert.Empty(skills);
+        string diagnostic = secondKey == "description"
+            ? "duplicate frontmatter field 'description'"
+            : $"incorrectly cased frontmatter field '{secondKey}'; expected 'description'";
+        logger.Verify(
+            l => l.Log(
+                LogLevel.Error,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((state, _) => state.ToString()!.IndexOf(diagnostic, StringComparison.Ordinal) >= 0),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_NestedMetadataAndUnknownFields_KeepsFirstMetadataValueAsync()
+    {
+        // Arrange
+        const string Content =
+            "---\nname: test-skill\ndescription: Read files\n" +
+            "# description: Not a field\n" +
+            "metadata:\n  author: First\n  author: Second\n  Description: Nested text\n" +
+            "  \"description\": Ignored\n  'metadata': Ignored\n" +
+            "vendor-option: First\nvendor-option: Second\n" +
+            "'vendor-option': Third\n\"VENDOR-OPTION\": Fourth\n---\n\"description\": Body text";
+        _ = this.CreateSkillDirectoryWithRawContent("test-skill", Content);
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        var frontmatter = Assert.Single(skills).Frontmatter;
+        Assert.Equal("Read files", frontmatter.Description);
+        Assert.NotNull(frontmatter.Metadata);
+        Assert.Equal(2, frontmatter.Metadata.Count);
+        Assert.Equal("First", frontmatter.Metadata["author"]);
+        Assert.Equal("Nested text", frontmatter.Metadata["Description"]);
+    }
+
+    [Theory]
+    [MemberData(nameof(DuplicateMetadataEntries))]
+    public async Task GetSkillsAsync_DuplicateMetadata_KeepsFirstValueAndLogsWarningAsync(
+        string key,
+        string duplicateKey,
+        string value,
+        string duplicateValue,
+        string expected,
+        string newline)
+    {
+        // Arrange
+        string content =
+            "---\nname: test-skill\ndescription: Read files\nmetadata:\n" +
+            $"  {key}: {value}\n  other: Preserved\n  {duplicateKey}: {duplicateValue}\n" +
+            $"  {duplicateKey}: Third\n  tail: Retained\nlicense: MIT\n---\nBody.";
+        _ = this.CreateSkillDirectoryWithRawContent("test-skill", content.Replace("\n", newline));
+        var logger = new Mock<ILogger>();
+        logger.Setup(l => l.IsEnabled(It.IsAny<LogLevel>())).Returns(true);
+        var loggerFactory = new Mock<ILoggerFactory>();
+        loggerFactory.Setup(f => f.CreateLogger(It.IsAny<string>())).Returns(logger.Object);
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor, loggerFactory: loggerFactory.Object);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        var skill = Assert.Single(skills);
+        var frontmatter = skill.Frontmatter;
+        Assert.Equal("Read files", frontmatter.Description);
+        Assert.Equal("MIT", frontmatter.License);
+        Assert.Contains("Body.", await skill.GetContentAsync());
+        Assert.NotNull(frontmatter.Metadata);
+        Assert.Equal(3, frontmatter.Metadata.Count);
+        Assert.Equal(expected, frontmatter.Metadata[key]);
+        Assert.Equal(expected, frontmatter.Metadata[duplicateKey]);
+        Assert.Equal("Preserved", frontmatter.Metadata["other"]);
+        Assert.Equal("Retained", frontmatter.Metadata["tail"]);
+        Assert.Equal(key, Assert.Single(frontmatter.Metadata.Keys, k => string.Equals(k, key, StringComparison.OrdinalIgnoreCase)));
+        string diagnostic = $"duplicate metadata key '{duplicateKey}'; keeping the first value";
+        logger.Verify(
+            l => l.Log(
+                LogLevel.Warning,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((state, _) =>
+                    state.ToString()!.IndexOf("SKILL.md", StringComparison.Ordinal) >= 0 &&
+                    state.ToString()!.IndexOf(diagnostic, StringComparison.Ordinal) >= 0),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Exactly(2));
+    }
+
+    [Theory]
+    [InlineData("''")]
+    [InlineData("\"\"")]
+    public async Task GetSkillsAsync_EmptyQuotedOptionalValues_KeepExistingRepresentationAsync(string value)
+    {
+        // Arrange
+        string content =
+            "---\nname: test-skill\ndescription: Read files\n" +
+            $"license: {value}\ncompatibility: {value}\nallowed-tools: {value}\n---\nBody.";
+        _ = this.CreateSkillDirectoryWithRawContent("test-skill", content);
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert - empty-quote normalization belongs to the separate YAML conformance work.
+        var frontmatter = Assert.Single(skills).Frontmatter;
+        Assert.Equal(value, frontmatter.License);
+        Assert.Equal(value, frontmatter.Compatibility);
+        Assert.Equal(value, frontmatter.AllowedTools);
+    }
+
+    [Theory]
+    [InlineData("|")]
+    [InlineData("|-")]
+    [InlineData("|+")]
+    [InlineData(">")]
+    [InlineData(">-")]
+    [InlineData(">+")]
+    public async Task GetSkillsAsync_EmptyBlockBeforeAnotherField_ExcludesSkillAsync(string value)
+    {
+        // Arrange
+        _ = this.CreateSkillDirectoryWithRawContent(
+            "test-skill", $"---\nname: test-skill\ndescription: {value}\n\nlicense: MIT\n---\nBody.");
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        Assert.Empty(skills);
     }
 
     [Fact]
@@ -175,6 +625,211 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         File.WriteAllText(
             Path.Combine(skillDir, "SKILL.md"),
             "---\nname: no-desc\n---\nBody.");
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        Assert.Empty(skills);
+    }
+
+    [Theory]
+    [InlineData("name")]
+    [InlineData("description")]
+    [InlineData("license")]
+    [InlineData("compatibility")]
+    [InlineData("metadata")]
+    [InlineData("allowed-tools")]
+    public async Task GetSkillsAsync_DuplicateRecognizedFrontmatterField_ExcludesSkillAsync(string field)
+    {
+        // Arrange
+        string fields = field switch
+        {
+            "name" => "name: ambiguous-skill\nname: ambiguous-skill\ndescription: A skill",
+            "description" => "name: ambiguous-skill\ndescription: A skill\ndescription: A second description",
+            "metadata" => "name: ambiguous-skill\ndescription: A skill\nmetadata:\n  author: first\nmetadata:\n  version: 1.0",
+            _ => $"name: ambiguous-skill\ndescription: A skill\n{field}: first\n{field}: second",
+        };
+        _ = this.CreateSkillDirectoryWithRawContent(
+            "ambiguous-skill",
+            $"---\n{fields}\n---\nBody.");
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        Assert.Empty(skills);
+    }
+
+    [Theory]
+    [InlineData("name", "Name")]
+    [InlineData("description", "Description")]
+    [InlineData("license", "License")]
+    [InlineData("compatibility", "Compatibility")]
+    [InlineData("metadata", "Metadata")]
+    [InlineData("allowed-tools", "Allowed-Tools")]
+    public async Task GetSkillsAsync_IncorrectlyCasedRecognizedFrontmatterField_ExcludesSkillAsync(
+        string field,
+        string incorrectlyCasedField)
+    {
+        // Arrange
+        string fields = field switch
+        {
+            "name" => $"{incorrectlyCasedField}: ambiguous-skill\ndescription: A skill",
+            "description" => $"name: ambiguous-skill\n{incorrectlyCasedField}: A skill",
+            "metadata" => $"name: ambiguous-skill\ndescription: A skill\n{incorrectlyCasedField}:\n  author: test",
+            _ => $"name: ambiguous-skill\ndescription: A skill\n{incorrectlyCasedField}: value",
+        };
+        _ = this.CreateSkillDirectoryWithRawContent(
+            "ambiguous-skill",
+            $"---\n{fields}\n---\nBody.");
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        Assert.Empty(skills);
+    }
+
+    [Theory]
+    [MemberData(nameof(ConflictingQuotedFields))]
+    public async Task GetSkillsAsync_ConflictingQuotedFields_ExcludesSkillAndLogsErrorAsync(
+        string content,
+        string diagnostic)
+    {
+        // Arrange
+        _ = this.CreateSkillDirectoryWithRawContent("test-skill", content);
+        var logger = new Mock<ILogger>();
+        logger.Setup(l => l.IsEnabled(It.IsAny<LogLevel>())).Returns(true);
+        var loggerFactory = new Mock<ILoggerFactory>();
+        loggerFactory.Setup(f => f.CreateLogger(It.IsAny<string>())).Returns(logger.Object);
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor, loggerFactory: loggerFactory.Object);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        Assert.Empty(skills);
+        logger.Verify(
+            l => l.Log(
+                LogLevel.Error,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((state, _) => state.ToString()!.IndexOf(diagnostic, StringComparison.Ordinal) >= 0),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once);
+    }
+
+    [Theory]
+    [InlineData("'", "\n")]
+    [InlineData("'", "\r\n")]
+    [InlineData("\"", "\n")]
+    [InlineData("\"", "\r\n")]
+    public async Task GetSkillsAsync_QuotedEmptyOptionalFields_RemainUnsetAsync(string quote, string newline)
+    {
+        // Arrange
+        string content =
+            $"---\n{quote}metadata{quote}:\n{quote}name{quote}: test-skill\n" +
+            $"{quote}description{quote}: Read files\n{quote}license{quote}:\n" +
+            $"{quote}compatibility{quote}:\n{quote}allowed-tools{quote}:\n---\nBody.";
+        _ = this.CreateSkillDirectoryWithRawContent("test-skill", content.Replace("\n", newline));
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        var frontmatter = Assert.Single(skills).Frontmatter;
+        Assert.Equal("test-skill", frontmatter.Name);
+        Assert.Equal("Read files", frontmatter.Description);
+        Assert.Null(frontmatter.Metadata);
+        Assert.Null(frontmatter.License);
+        Assert.Null(frontmatter.Compatibility);
+        Assert.Null(frontmatter.AllowedTools);
+    }
+
+    [Theory]
+    [InlineData("metadata", "\n")]
+    [InlineData("metadata", "\r\n")]
+    [InlineData("license", "\n")]
+    [InlineData("license", "\r\n")]
+    [InlineData("compatibility", "\n")]
+    [InlineData("compatibility", "\r\n")]
+    [InlineData("allowed-tools", "\n")]
+    [InlineData("allowed-tools", "\r\n")]
+    [InlineData("vendor-option", "\n")]
+    [InlineData("vendor-option", "\r\n")]
+    public async Task GetSkillsAsync_EmptyInlineValue_DoesNotConsumeNextFieldAsync(string field, string newline)
+    {
+        // Arrange
+        string content = $"---\n{field}: \t\nname: test-skill\ndescription: A test skill.\n---\nBody.";
+        _ = this.CreateSkillDirectoryWithRawContent("test-skill", content.Replace("\n", newline));
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        var skill = Assert.Single(skills);
+        Assert.Equal("test-skill", skill.Frontmatter.Name);
+        Assert.Equal("A test skill.", skill.Frontmatter.Description);
+        Assert.Null(skill.Frontmatter.License);
+        Assert.Null(skill.Frontmatter.Compatibility);
+        Assert.Null(skill.Frontmatter.AllowedTools);
+    }
+
+    [Theory]
+    [InlineData("license", "\n")]
+    [InlineData("license", "\r\n")]
+    [InlineData("compatibility", "\n")]
+    [InlineData("compatibility", "\r\n")]
+    [InlineData("allowed-tools", "\n")]
+    [InlineData("allowed-tools", "\r\n")]
+    public async Task GetSkillsAsync_EmptyOptionalScalarAtEnd_RemainsNullAsync(string field, string newline)
+    {
+        // Arrange
+        string content = $"---\nname: test-skill\ndescription: Read files\n{field}: \t\n---\nBody.";
+        _ = this.CreateSkillDirectoryWithRawContent("test-skill", content.Replace("\n", newline));
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        var frontmatter = Assert.Single(skills).Frontmatter;
+        Assert.Equal("Read files", frontmatter.Description);
+        Assert.Null(frontmatter.License);
+        Assert.Null(frontmatter.Compatibility);
+        Assert.Null(frontmatter.AllowedTools);
+    }
+
+    [Theory]
+    [InlineData("name:", "\n")]
+    [InlineData("name:", "\r\n")]
+    [InlineData("description:", "\n")]
+    [InlineData("description:", "\r\n")]
+    [InlineData("metadata:\nmetadata:", "\n")]
+    [InlineData("metadata:\nmetadata:", "\r\n")]
+    [InlineData("license:\nlicense: MIT", "\n")]
+    [InlineData("license:\nlicense: MIT", "\r\n")]
+    [InlineData("license: MIT\nlicense:", "\n")]
+    [InlineData("license: MIT\nlicense:", "\r\n")]
+    [InlineData("compatibility:\ncompatibility: Any runtime", "\n")]
+    [InlineData("compatibility:\ncompatibility: Any runtime", "\r\n")]
+    [InlineData("allowed-tools:\nallowed-tools: read", "\n")]
+    [InlineData("allowed-tools:\nallowed-tools: read", "\r\n")]
+    [InlineData("Metadata:", "\n")]
+    [InlineData("Metadata:", "\r\n")]
+    [InlineData("allowed-tools: read\nALLOWED-TOOLS:", "\n")]
+    [InlineData("allowed-tools: read\nALLOWED-TOOLS:", "\r\n")]
+    public async Task GetSkillsAsync_EmptyInlineValue_DoesNotBypassKeyValidationAsync(string fields, string newline)
+    {
+        // Arrange
+        string content = $"---\n{fields}\nname: test-skill\ndescription: A test skill.\n---\nBody.";
+        _ = this.CreateSkillDirectoryWithRawContent("test-skill", content.Replace("\n", newline));
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
 
         // Act
@@ -589,6 +1244,93 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         Assert.Equal("Document content here.", content);
     }
 
+#if NET
+    [Fact]
+    public async Task ReadSkillResourceAsync_ResourceReplacedWithSymlink_ThrowsAsync()
+    {
+        // Arrange
+        string skillDir = this.CreateSkillDirectory("read-symlink-skill", "A skill", "See docs.");
+        string refsDir = Path.Combine(skillDir, "references");
+        Directory.CreateDirectory(refsDir);
+        string resourcePath = Path.Combine(refsDir, "doc.md");
+        File.WriteAllText(resourcePath, "Safe content.");
+        string outsidePath = Path.Combine(this._testRoot, "secret.md");
+        File.WriteAllText(outsidePath, "Secret content.");
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+        var resource = skills[0].GetTestResources()!.Single(r => r.Name == "references/doc.md");
+
+        File.Delete(resourcePath);
+        if (!TryCreateFileSymbolicLink(resourcePath, outsidePath))
+        {
+            Assert.Skip("Symbolic links are not supported in this environment.");
+        }
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(() => resource.ReadAsync());
+    }
+
+    [Fact]
+    public async Task RunSkillScriptAsync_ScriptReplacedWithSymlink_DoesNotInvokeRunnerAsync()
+    {
+        // Arrange
+        string skillDir = this.CreateSkillDirectory("run-symlink-skill", "A skill", "Run scripts.");
+        string scriptsDir = Path.Combine(skillDir, "scripts");
+        Directory.CreateDirectory(scriptsDir);
+        string scriptPath = Path.Combine(scriptsDir, "run.py");
+        File.WriteAllText(scriptPath, "print('safe')");
+        string outsidePath = Path.Combine(this._testRoot, "outside.py");
+        File.WriteAllText(outsidePath, "print('outside')");
+        bool runnerCalled = false;
+        var source = new AgentFileSkillsSource(
+            this._testRoot,
+            (skill, script, args, serviceProvider, cancellationToken) =>
+            {
+                runnerCalled = true;
+                return Task.FromResult<object?>(null);
+            });
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+        var script = await skills[0].GetScriptAsync("scripts/run.py");
+
+        File.Delete(scriptPath);
+        if (!TryCreateFileSymbolicLink(scriptPath, outsidePath))
+        {
+            Assert.Skip("Symbolic links are not supported in this environment.");
+        }
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => script!.RunAsync(skills[0], null, null));
+        Assert.False(runnerCalled);
+    }
+
+    [Fact]
+    public async Task ReadSkillResourceAsync_SkillDirectoryReplacedWithSymlink_ThrowsAsync()
+    {
+        // Arrange — a skill whose directory sits below the configured root
+        string skillDir = this.CreateSkillDirectory("swapped-skill", "A skill", "See docs.");
+        string resourcePath = Path.Combine(skillDir, "doc.md");
+        File.WriteAllText(resourcePath, "Safe content.");
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+        var resource = skills[0].GetTestResources()!.Single(r => r.Name == "doc.md");
+
+        // Replace the whole skill directory with a link to an attacker-controlled directory
+        // that mirrors the discovered layout.
+        string decoyDir = Path.Combine(this._testRoot, "decoy");
+        Directory.CreateDirectory(decoyDir);
+        File.WriteAllText(Path.Combine(decoyDir, "doc.md"), "Attacker content.");
+        Directory.Delete(skillDir, recursive: true);
+        if (!TryCreateDirectorySymbolicLink(skillDir, decoyDir) && !TryCreateDirectoryJunction(skillDir, decoyDir))
+        {
+            Assert.Skip("Directory links are not supported in this environment.");
+        }
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(() => resource.ReadAsync());
+    }
+#endif
+
     [Fact]
     public async Task GetSkillsAsync_NameExceedsMaxLength_ExcludesSkillAsync()
     {
@@ -628,6 +1370,223 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
     }
 
 #if NET
+    private static bool TryCreateDirectorySymbolicLink(string linkPath, string targetPath)
+    {
+        try
+        {
+            Directory.CreateSymbolicLink(linkPath, targetPath);
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return false;
+        }
+        catch (PlatformNotSupportedException)
+        {
+            return false;
+        }
+
+        return Directory.Exists(linkPath)
+            && (File.GetAttributes(linkPath) & FileAttributes.ReparsePoint) != 0;
+    }
+
+    private static bool TryCreateFileSymbolicLink(string linkPath, string targetPath)
+    {
+        try
+        {
+            File.CreateSymbolicLink(linkPath, targetPath);
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return false;
+        }
+        catch (PlatformNotSupportedException)
+        {
+            return false;
+        }
+
+        return File.Exists(linkPath)
+            && (File.GetAttributes(linkPath) & FileAttributes.ReparsePoint) != 0;
+    }
+
+    private static bool TryCreateDirectoryJunction(string linkPath, string targetPath)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return false;
+        }
+
+        string commandInterpreter = Environment.GetEnvironmentVariable("COMSPEC") ?? "cmd.exe";
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = commandInterpreter,
+            Arguments = $"/c mklink /J \"{linkPath}\" \"{targetPath}\"",
+            CreateNoWindow = true,
+            RedirectStandardError = true,
+            RedirectStandardOutput = true,
+            UseShellExecute = false,
+        };
+
+        using Process? process = Process.Start(startInfo);
+        if (process is null)
+        {
+            return false;
+        }
+
+        process.WaitForExit();
+        return process.ExitCode == 0
+            && Directory.Exists(linkPath)
+            && (File.GetAttributes(linkPath) & FileAttributes.ReparsePoint) != 0;
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_SymlinkedSkillDirectory_SkipsLinkedSkillAsync()
+    {
+        // Arrange
+        string root = Path.Combine(this._testRoot, "root");
+        string outsideSkill = Path.Combine(this._testRoot, "outside", "evil-skill");
+        string linkedSkill = Path.Combine(root, "evil-skill");
+        Directory.CreateDirectory(root);
+        Directory.CreateDirectory(outsideSkill);
+        File.WriteAllText(
+            Path.Combine(outsideSkill, "SKILL.md"),
+            "---\nname: evil-skill\ndescription: Linked skill\n---\nBody.");
+        _ = CreateSkillDirectory(root, "good-skill");
+
+        if (!TryCreateDirectorySymbolicLink(linkedSkill, outsideSkill))
+        {
+            return;
+        }
+
+        try
+        {
+            var source = new AgentFileSkillsSource(root, s_noOpExecutor);
+
+            // Act
+            var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+            // Assert
+            Assert.Single(skills);
+            Assert.Equal("good-skill", skills[0].Frontmatter.Name);
+        }
+        finally
+        {
+            Directory.Delete(linkedSkill);
+        }
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_SymlinkedSkillFile_SkipsSkillAsync()
+    {
+        // Arrange
+        string root = Path.Combine(this._testRoot, "root");
+        string skillDirectory = Path.Combine(root, "evil-skill");
+        string outsideSkillFile = Path.Combine(this._testRoot, "outside-SKILL.md");
+        string linkedSkillFile = Path.Combine(skillDirectory, "SKILL.md");
+        Directory.CreateDirectory(skillDirectory);
+        File.WriteAllText(
+            outsideSkillFile,
+            "---\nname: evil-skill\ndescription: Linked skill file\n---\nBody.");
+
+        if (!TryCreateFileSymbolicLink(linkedSkillFile, outsideSkillFile))
+        {
+            return;
+        }
+
+        try
+        {
+            var source = new AgentFileSkillsSource(root, s_noOpExecutor);
+
+            // Act
+            var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+            // Assert
+            Assert.Empty(skills);
+        }
+        finally
+        {
+            File.Delete(linkedSkillFile);
+        }
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_ConfiguredRootIsSymlink_DiscoversRealSkillsAsync()
+    {
+        // Arrange
+        string realRoot = Path.Combine(this._testRoot, "real-root");
+        string linkedRoot = Path.Combine(this._testRoot, "linked-root");
+        _ = CreateSkillDirectory(realRoot, "my-skill");
+
+        if (!TryCreateDirectorySymbolicLink(linkedRoot, realRoot))
+        {
+            return;
+        }
+
+        try
+        {
+            var source = new AgentFileSkillsSource(linkedRoot, s_noOpExecutor);
+
+            // Act
+            var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+            // Assert
+            Assert.Single(skills);
+            Assert.Equal("my-skill", skills[0].Frontmatter.Name);
+        }
+        finally
+        {
+            Directory.Delete(linkedRoot);
+        }
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_JunctionedSkillDirectory_SkipsLinkedSkillAsync()
+    {
+        // Arrange
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        string root = Path.Combine(this._testRoot, "root");
+        string outsideSkill = Path.Combine(this._testRoot, "outside", "evil-skill");
+        string junctionSkill = Path.Combine(root, "evil-skill");
+        Directory.CreateDirectory(root);
+        Directory.CreateDirectory(outsideSkill);
+        File.WriteAllText(
+            Path.Combine(outsideSkill, "SKILL.md"),
+            "---\nname: evil-skill\ndescription: Junctioned skill\n---\nBody.");
+        _ = CreateSkillDirectory(root, "good-skill");
+
+        if (!TryCreateDirectoryJunction(junctionSkill, outsideSkill))
+        {
+            return;
+        }
+
+        try
+        {
+            var source = new AgentFileSkillsSource(root, s_noOpExecutor);
+
+            // Act
+            var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+            // Assert
+            Assert.Single(skills);
+            Assert.Equal("good-skill", skills[0].Frontmatter.Name);
+        }
+        finally
+        {
+            Directory.Delete(junctionSkill);
+        }
+    }
+
     [Fact]
     public async Task GetSkillsAsync_SymlinkInPath_SkipsSymlinkedResourcesAsync()
     {
@@ -786,6 +1745,111 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         Assert.Empty(skill.GetTestResources()!);
     }
 #endif
+
+    /// <summary>
+    /// Denies permission to list the contents of <paramref name="path"/> while leaving the
+    /// directory itself inspectable, so enumerating it fails but reading its attributes does not.
+    /// Returns <see langword="false"/> when the environment does not honor the restriction
+    /// (for example, an elevated or root test host), in which case no cleanup is required.
+    /// </summary>
+    private static bool TryDenyDirectoryListing(string path, out Action restore)
+    {
+        restore = static () => { };
+
+        try
+        {
+#if NET
+            restore = OperatingSystem.IsWindows()
+                ? DenyDirectoryListingOnWindows(path)
+                : DenyDirectoryListingOnUnix(path);
+#else
+            restore = DenyDirectoryListingOnWindows(path);
+#endif
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
+        {
+            return false;
+        }
+
+        // Confirm the restriction actually takes effect; elevated hosts can bypass it.
+        try
+        {
+            _ = Directory.GetDirectories(path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return true;
+        }
+
+        restore();
+        restore = static () => { };
+        return false;
+    }
+
+#if NET
+    [SupportedOSPlatform("windows")]
+#endif
+    private static Action DenyDirectoryListingOnWindows(string path)
+    {
+        var directoryInfo = new DirectoryInfo(path);
+        SecurityIdentifier user = WindowsIdentity.GetCurrent().User!;
+        var denyRule = new FileSystemAccessRule(user, FileSystemRights.ListDirectory, AccessControlType.Deny);
+
+        DirectorySecurity security = directoryInfo.GetAccessControl();
+        security.AddAccessRule(denyRule);
+        directoryInfo.SetAccessControl(security);
+
+        return () =>
+        {
+            DirectorySecurity currentSecurity = directoryInfo.GetAccessControl();
+            currentSecurity.RemoveAccessRule(denyRule);
+            directoryInfo.SetAccessControl(currentSecurity);
+        };
+    }
+
+#if NET
+    [UnsupportedOSPlatform("windows")]
+    private static Action DenyDirectoryListingOnUnix(string path)
+    {
+        UnixFileMode originalMode = File.GetUnixFileMode(path);
+
+        // Execute-only: the directory can still be traversed and stat'ed, but not listed.
+        File.SetUnixFileMode(path, UnixFileMode.UserExecute);
+
+        return () => File.SetUnixFileMode(path, originalMode);
+    }
+#endif
+
+    [Fact]
+    public async Task GetSkillsAsync_UnreadableSubdirectory_StillDiscoversSiblingSkillsAsync()
+    {
+        // Arrange — discovery must not abort when a single subdirectory cannot be enumerated.
+        string root = Path.Combine(this._testRoot, "root");
+        string blockedDirectory = Path.Combine(root, "blocked");
+        Directory.CreateDirectory(blockedDirectory);
+        _ = CreateSkillDirectory(root, "good-skill");
+
+        if (!TryDenyDirectoryListing(blockedDirectory, out Action restore))
+        {
+            return;
+        }
+
+        try
+        {
+            var source = new AgentFileSkillsSource(root, s_noOpExecutor);
+
+            // Act
+            var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+            // Assert
+            Assert.Single(skills);
+            Assert.Equal("good-skill", skills[0].Frontmatter.Name);
+        }
+        finally
+        {
+            restore();
+        }
+    }
 
     [Fact]
     public async Task GetSkillsAsync_FileWithUtf8Bom_ParsesSuccessfullyAsync()
@@ -1095,6 +2159,16 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
             Path.Combine(skillDir, "SKILL.md"),
             $"---\nname: {name}\ndescription: {description}\n---\n{body}");
         return skillDir;
+    }
+
+    private static string CreateSkillDirectory(string root, string name)
+    {
+        string skillDirectory = Path.Combine(root, name);
+        Directory.CreateDirectory(skillDirectory);
+        File.WriteAllText(
+            Path.Combine(skillDirectory, "SKILL.md"),
+            $"---\nname: {name}\ndescription: A skill\n---\nBody.");
+        return skillDirectory;
     }
 
     private string CreateSkillDirectoryWithRawContent(string directoryName, string rawContent)

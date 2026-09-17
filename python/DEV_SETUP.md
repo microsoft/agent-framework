@@ -61,20 +61,28 @@ uv python install 3.10 3.11 3.12 3.13
 PYTHON_VERSION="3.10"
 uv venv --python $PYTHON_VERSION
 # Install AF and all dependencies
-uv sync --dev
+uv sync --all-groups
 # Install all the tools and dependencies
 uv run poe install
 # Install prek hooks
 uv run poe prek-install
 ```
 
-Alternatively, you can reinstall the venv, pacakges, dependencies and prek hooks with a single command (but this requires poe in the current env), this is especially useful if you want to switch python versions:
+Alternatively, you can reinstall the venv, packages, dependencies and prek hooks with a single command (but this requires poe in the current env), this is especially useful if you want to switch python versions:
 
 ```bash
 uv run poe setup -p 3.13
 ```
 
 You can then run different commands through Poe the Poet, use `uv run poe` to discover which ones.
+
+The root setup excludes the experimental Lab package. Lab has a separate environment and lockfile:
+
+```bash
+cd packages/lab
+uv sync --all-extras --all-groups
+uv run poe test
+```
 
 ## VSCode Setup
 
@@ -157,6 +165,12 @@ uv run poe --directory packages/core test
 
 Large packages (core, ag-ui, orchestrations, anthropic) use `pytest-xdist` for parallel test execution within the package. The aggregate `test -A` sweep also uses `pytest-xdist` across the selected packages.
 
+### Testing deprecations
+
+When an API is marked as deprecated, update the test suite to use its replacement at the same time. Keep only
+focused tests that validate the deprecated API and its warning; ordinary behavior, integration, and sample tests
+should exercise the supported API so deprecation warnings do not accumulate in test runs.
+
 ## Code quality checks
 
 To run the same checks that run during a commit and the GitHub Action `Python Code Quality`, you can use this command, from the [python](../python) folder:
@@ -177,6 +191,10 @@ uv run poe test -A -C
 ```
 
 This will show you which files are not covered by the tests, including the specific lines not covered. Make sure to consider the untested lines from the code you are working on, but feel free to add other tests as well, that is always welcome!
+
+CI automatically enforces at least 85% line coverage for every package classified Beta or
+Production/Stable. Alpha packages are reported without blocking, and the DevUI and experimental Lab
+packages are excluded from aggregate coverage enforcement.
 
 ## Catching up with the latest changes
 
@@ -215,7 +233,7 @@ uv venv
 
 and then you can run the following tasks:
 ```bash
-uv sync --all-extras --dev
+uv sync --all-extras --all-groups
 ```
 
 After this initial setup, you can use the following tasks to manage your development environment. It is advised to use the following setup command since that also installs the prek hooks.
@@ -229,13 +247,18 @@ uv run poe setup -P 3.12
 ```
 
 #### `install`
-Install all dependencies (including extras and dev dependencies) from the lockfile using frozen resolution:
+Install all dependencies (including extras and dependency groups) from the lockfile using frozen resolution:
 ```bash
 uv run poe install
 ```
+The root `dev` group contains shared tooling and source/type-check support. Package-specific test fixtures use
+`test` groups. The standalone Lab project keeps its own development and feature groups, including `tau2`, under
+`packages/lab/pyproject.toml`.
 For intentional dependency upgrades, run `uv lock --upgrade-package <dependency-name>` and then run `uv run poe install`.
 
-For repo-wide dev tooling refreshes, run `uv run poe upgrade-dev-dependencies` to repin dev dependencies, refresh `uv.lock`, and rerun validation, typing, and tests.
+For repo-wide development dependency refreshes, run `uv run poe upgrade-dev-dependencies` to repin exact
+dependencies in development groups, refresh `uv.lock`, and rerun validation, typing, and tests.
+This root task does not update Lab; use `uv lock --upgrade` from `packages/lab` or its dedicated Dependabot updates.
 
 #### `venv`
 Create a virtual environment with specified Python version or switch python version:
@@ -370,7 +393,8 @@ uv run poe check -S
 ```
 
 #### `validate-dependency-bounds-test`
-Run workspace-wide dependency compatibility gates at lower and upper resolutions. This runs test + pyright across all packages and stops on first failure:
+Run workspace-wide dependency compatibility gates at lower and upper resolutions. This runs tests plus Pyright (or a
+package-specific `dependency-pyright` task) across all packages and stops on first failure:
 ```bash
 uv run poe validate-dependency-bounds-test
 # Defaults to --package "*"; pass a package to scope test mode
@@ -392,11 +416,11 @@ uv run poe add-dependency-and-validate-bounds -P core -D "<dependency-spec>"
 ```
 
 #### `upgrade-dev-dependencies`
-Refresh exact dev dependency pins across the workspace, run `uv lock --upgrade`, reinstall from the frozen lockfile, then rerun validation, typing, and tests:
+Refresh exact development dependency pins across the workspace, run `uv lock --upgrade`, reinstall from the frozen lockfile, then rerun validation, typing, and tests:
 ```bash
 uv run poe upgrade-dev-dependencies
 ```
-Use this for repo-wide dev tooling refreshes. For targeted runtime dependency upgrades, prefer `uv lock --upgrade-package <dependency-name>` plus the package-scoped bound validation tasks above.
+Use this for repo-wide development tooling and dependency-group refreshes. For targeted runtime dependency upgrades, prefer `uv lock --upgrade-package <dependency-name>` plus the package-scoped bound validation tasks above.
 
 ### Building and Publishing
 

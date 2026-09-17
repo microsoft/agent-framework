@@ -12,11 +12,11 @@ load_dotenv()
 """
 Foundry Agent — Connect to a HostedAgent (no version needed)
 
-HostedAgents in Azure AI Foundry are pre-deployed agents that don't require
+HostedAgents in Microsoft Foundry are pre-deployed agents that don't require
 a version number. You only need the agent name to connect.
 
 Environment variables:
-    FOUNDRY_PROJECT_ENDPOINT — Azure AI Foundry project endpoint
+    FOUNDRY_PROJECT_ENDPOINT — Microsoft Foundry project endpoint
     FOUNDRY_AGENT_NAME       — Name of the hosted agent
 """
 

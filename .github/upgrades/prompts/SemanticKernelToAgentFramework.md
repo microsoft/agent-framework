@@ -23,16 +23,16 @@ For each project that needs to be migrated, you need to do the following:
 - Identify the specific Semantic Kernel agent types being used:
   - `ChatCompletionAgent` → `ChatClientAgent`
   - `OpenAIAssistantAgent` → `assistantsClient.CreateAIAgent()` (via OpenAI Assistants client extension)
-  - `AzureAIAgent` → `persistentAgentsClient.CreateAIAgent()` (via Azure AI Foundry client extension)
+  - `AzureAIAgent` → `persistentAgentsClient.CreateAIAgent()` (via Microsoft Foundry client extension)
   - `OpenAIResponseAgent` → `responsesClient.CreateAIAgent()` (via OpenAI Responses client extension)
   - `A2AAgent` → `AIAgent` (via A2A card resolver)
   - `BedrockAgent` → Custom implementation required (not supported)
 - Determine if agents are being created new or retrieved from hosted services:
   - **New agents**: Use `CreateAIAgent()` methods
-  - **Existing hosted agents**: Use `GetAIAgent(agentId)` methods for OpenAI Assistants and Azure AI Foundry
+  - **Existing hosted agents**: Use `GetAIAgent(agentId)` methods for OpenAI Assistants and Microsoft Foundry
 </agent_type_identification>
 
-- Determine the AI provider being used (OpenAI, Azure OpenAI, Azure AI Foundry, etc.)
+- Determine the AI provider being used (OpenAI, Azure OpenAI, Microsoft Foundry, etc.)
 - Analyze tool/function registration patterns
 - Review thread management and invocation patterns
 
@@ -90,7 +90,7 @@ below in wrong order or skip any of them):
    you generate report when migration complete. Report should contain:
      - all project dependencies changes (mention what was changed, added or removed, including provider-specific packages)
      - all code files that were changed (mention what was changed in the file, if it was not changed, just mention that the file was not changed)
-     - provider-specific migration patterns used (OpenAI, Azure OpenAI, Azure AI Foundry, A2A, ONNX, etc.)
+     - provider-specific migration patterns used (OpenAI, Azure OpenAI, Microsoft Foundry, A2A, ONNX, etc.)
      - all cases where you could not convert the code because of unsupported features and you were unable to find a workaround
      - unsupported providers that require custom implementation (Bedrock, CopilotStudio)
      - breaking glass pattern migrations (InnerContent → RawRepresentation) and any CodeInterpreter or advanced tool usage
@@ -221,9 +221,9 @@ using Microsoft.SemanticKernel.Connectors.OpenAI;
 using Microsoft.Extensions.AI;
 using Microsoft.Agents.AI;
 // Provider-specific namespaces (add only if needed):
-using OpenAI; // For OpenAI provider
-using Azure.AI.OpenAI; // For Azure OpenAI provider
-using Azure.AI.Agents.Persistent; // For Azure AI Foundry provider
+using OpenAI; // For OpenAI and Azure OpenAI providers
+using System.ClientModel.Primitives; // For BearerTokenPolicy with Azure OpenAI
+using Azure.AI.Agents.Persistent; // For Microsoft Foundry provider
 using Azure.Identity; // For Azure authentication
 ```
 </configuration_changes>
@@ -499,7 +499,7 @@ For every thread created if there's intent to cleanup, the caller should track a
 var assistantClient = new OpenAIClient(apiKey).GetAssistantClient();
 await assistantClient.DeleteThreadAsync(thread.ConversationId);
 
-// For Azure AI Foundry (when cleanup is needed):
+// For Microsoft Foundry (when cleanup is needed):
 var persistentClient = new PersistentAgentsClient(endpoint, credential);
 await persistentClient.Threads.DeleteThreadAsync(thread.ConversationId);
 
@@ -514,7 +514,7 @@ await persistentClient.Threads.DeleteThreadAsync(thread.ConversationId);
 1. Remove `thread.DeleteAsync()` calls
 2. Use provider-specific client for cleanup when required
 3. Access thread ID via `thread.ConversationId` property
-4. Only implement cleanup for providers that require it (Assistants, Azure AI Foundry)
+4. Only implement cleanup for providers that require it (Assistants, Microsoft Foundry)
 </api_changes>
 
 ### Provider-Specific Creation Patterns
@@ -545,18 +545,22 @@ AIAgent agent = new OpenAIClient(apiKey)
 
 **Azure OpenAI:**
 ```csharp
-AIAgent agent = new AzureOpenAIClient(endpoint, credential)
+Uri openAIEndpoint = new($"{endpoint.ToString().TrimEnd('/')}/openai/v1/");
+
+AIAgent agent = new OpenAIClient(
+        new BearerTokenPolicy(credential, "https://ai.azure.com/.default"),
+        new OpenAIClientOptions { Endpoint = openAIEndpoint })
     .GetChatClient(deploymentName)
-    .CreateAIAgent(instructions: instructions);
+    .AsAIAgent(instructions: instructions);
 ```
 
-**Azure AI Foundry (New):**
+**Microsoft Foundry (New):**
 ```csharp
 AIAgent agent = new PersistentAgentsClient(endpoint, credential)
     .CreateAIAgent(model: deploymentName, instructions: instructions);
 ```
 
-**Azure AI Foundry (Existing):**
+**Microsoft Foundry (Existing):**
 ```csharp
 AIAgent agent = await new PersistentAgentsClient(endpoint, credential)
     .GetAIAgentAsync(agentId);
@@ -571,9 +575,13 @@ AIAgent agent = new OpenAIClient(apiKey)
 
 **Azure OpenAI Responses:** *(Recommended for Azure OpenAI)*
 ```csharp
-AIAgent agent = new AzureOpenAIClient(endpoint, credential)
-    .GetOpenAIResponseClient(deploymentName)
-    .CreateAIAgent(instructions: instructions);
+Uri openAIEndpoint = new($"{endpoint.ToString().TrimEnd('/')}/openai/v1/");
+
+AIAgent agent = new OpenAIClient(
+        new BearerTokenPolicy(credential, "https://ai.azure.com/.default"),
+        new OpenAIClientOptions { Endpoint = openAIEndpoint })
+    .GetResponsesClient()
+    .AsAIAgent(model: deploymentName, instructions: instructions);
 ```
 
 **A2A:**
@@ -979,11 +987,11 @@ AgentThread thread = agent.GetNewThread();
 **Add Agent Framework Packages:**
 ```xml
 <PackageReference Include="Microsoft.Agents.AI.OpenAI" />
-<PackageReference Include="Azure.AI.OpenAI" />
+<PackageReference Include="OpenAI" />
 <PackageReference Include="Azure.Identity" />
 ```
 
-**Note**: If not using `AzureCliCredential`, you can use `ApiKeyCredential` instead without the `Azure.Identity` package.
+**Note**: If not using Entra ID (`AzureCliCredential` / `DefaultAzureCredential`), you can use `ApiKeyCredential` instead without the `Azure.Identity` package.
 </configuration_changes>
 
 **Before (Semantic Kernel):**
@@ -1005,13 +1013,18 @@ ChatCompletionAgent agent = new()
 
 **After (Agent Framework):**
 ```csharp
-using Microsoft.Agents.AI;
-using Azure.AI.OpenAI;
+using System.ClientModel.Primitives;
 using Azure.Identity;
+using Microsoft.Agents.AI;
+using OpenAI;
+using OpenAI.Chat;
 
-AIAgent agent = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
+var openAIEndpoint = $"{endpoint.TrimEnd('/')}/openai/v1/";
+AIAgent agent = new OpenAIClient(
+        new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+        new OpenAIClientOptions { Endpoint = new Uri(openAIEndpoint) })
     .GetChatClient(deploymentName)
-    .CreateAIAgent(instructions: "You are a helpful assistant");
+    .AsAIAgent(instructions: "You are a helpful assistant");
 ```
 
 ### 3. OpenAI Assistants Migration
@@ -1079,7 +1092,7 @@ AgentThread thread = agent.GetNewThread();
 ```
 </api_changes>
 
-### 4. Azure AI Foundry (AzureAIAgent) Migration
+### 4. Microsoft Foundry (AzureAIAgent) Migration
 
 <configuration_changes>
 **Remove Semantic Kernel Packages:**
@@ -1273,14 +1286,15 @@ var result = await agent.RunAsync(userInput, thread);
 **Add Agent Framework Packages:**
 ```xml
 <PackageReference Include="Microsoft.Agents.AI.OpenAI" />
-<PackageReference Include="Azure.AI.OpenAI" />
+<PackageReference Include="OpenAI" />
+<PackageReference Include="Azure.Identity" />
 ```
 </configuration_changes>
 
 <api_changes>
 **Replace this Semantic Kernel pattern:**
 
-Azure OpenAI Responses uses `AzureOpenAIClient` instead of `OpenAIClient`. The thread management is done manually where the thread needs to be passed to the `InvokeAsync` method and updated with the `item.Thread` from the response.
+Azure OpenAI Responses uses the OpenAI SDK with a custom endpoint and Entra token policy. The thread management is done manually where the thread needs to be passed to the `InvokeAsync` method and updated with the `item.Thread` from the response.
 
 ```csharp
 using Microsoft.SemanticKernel.Agents.OpenAI;
@@ -1311,21 +1325,28 @@ await foreach (AgentResponseItem<ChatMessageContent> responseItem in responseIte
 Agent Framework automatically manages the thread, so there's no need to manually update it.
 
 ```csharp
-using Microsoft.Agents.AI.OpenAI;
-using Azure.AI.OpenAI;
+using System.ClientModel.Primitives;
+using Azure.Identity;
+using Microsoft.Agents.AI;
+using OpenAI;
+using OpenAI.Responses;
 
-AIAgent agent = new AzureOpenAIClient(endpoint, new AzureCliCredential())
-    .GetOpenAIResponseClient(modelId)
-    .CreateAIAgent(
+Uri openAIEndpoint = new($"{endpoint.ToString().TrimEnd('/')}/openai/v1/");
+AIAgent agent = new OpenAIClient(
+        new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+        new OpenAIClientOptions { Endpoint = openAIEndpoint })
+    .GetResponsesClient()
+    .AsAIAgent(
+        model: modelId,
         name: "ResponseAgent",
         instructions: "Answer all queries in English and French.",
         tools: [/* AITools */]);
 
-AgentThread thread = agent.GetNewThread();
+AgentSession session = await agent.CreateSessionAsync();
 
-var result = await agent.RunAsync(userInput, thread);
+var result = await agent.RunAsync(userInput, session);
 
-// The thread will be automatically updated with the new response id from this point
+// The session is updated with the new response id.
 ```
 </api_changes>
 
@@ -1607,5 +1628,4 @@ var filteredAgent = originalAgent
     .Use(CustomAutoFunctionMiddleware)
     .Build();
 ```
-
 

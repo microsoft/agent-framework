@@ -9,6 +9,7 @@ the real runtime live in ``test_monty_codeact_integration.py``.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 import types
@@ -21,9 +22,11 @@ from unittest.mock import MagicMock
 import pytest
 from agent_framework import Content, FunctionTool, Message, tool
 from agent_framework._sessions import SessionContext
+from agent_framework.exceptions import ToolException
 
 from agent_framework_monty import MontyCodeActProvider, MontyExecuteCodeTool
 from agent_framework_monty import _execute_code_tool as execute_code_module
+from agent_framework_monty import _instructions as instructions_module
 from agent_framework_monty import _monty_bridge as bridge_module
 
 # ---------------------------------------------------------------------------
@@ -48,6 +51,10 @@ class _FakeFunctionSnapshot:
     def resume(self, payload: Any) -> Any:
         assert self._script is not None, "Snapshot must be attached to a script."
         return self._script.advance(("function_resume", self, payload))
+
+    def resume_auto(self) -> Any:
+        assert self._script is not None, "Snapshot must be attached to a script."
+        return self._script.advance(("function_resume_auto", self, None))
 
 
 @dataclass
@@ -115,28 +122,78 @@ def _get_script() -> _FakeScript:
     return script
 
 
-class _FakeMonty:
+class _FakeSession:
+    """Fake ``MontySession`` matching the pydantic-monty pool/checkout API."""
+
     def __init__(
         self,
-        code: str,
         *,
         script_name: str,
         type_check: bool,
         type_check_stubs: str | None,
+        limits: dict[str, Any] | None = None,
     ) -> None:
-        self.code = code
         self.script_name = script_name
         self.type_check = type_check
         self.type_check_stubs = type_check_stubs
+        self.limits = limits
+        self.code: str | None = None
         self._script = _get_script()
 
-    def start(self, *, print_callback: Any) -> Any:
+    def __enter__(self) -> _FakeSession:
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        return None
+
+    def feed_start(
+        self,
+        code: str,
+        *,
+        print_callback: Any = None,
+        mount: Any = None,
+        **kwargs: Any,
+    ) -> Any:
+        self.code = code
+        self.mount = mount
         while True:
             item = self._script.next_item()
             if isinstance(item, _PrintAction):
-                print_callback("stdout", item.text)
+                if print_callback is not None:
+                    print_callback("stdout", item.text)
                 continue
             return item
+
+
+class _FakeMonty:
+    """Fake ``Monty`` pool: ``with Monty() as pool: with pool.checkout() as session``."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        self.pool_kwargs = kwargs
+        self.last_session: _FakeSession | None = None
+
+    def __enter__(self) -> _FakeMonty:
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        return None
+
+    def checkout(
+        self,
+        *,
+        script_name: str = "main.py",
+        type_check: bool = False,
+        type_check_stubs: str | None = None,
+        limits: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> _FakeSession:
+        self.last_session = _FakeSession(
+            script_name=script_name,
+            type_check=type_check,
+            type_check_stubs=type_check_stubs,
+            limits=limits,
+        )
+        return self.last_session
 
 
 @pytest.fixture(autouse=True)
@@ -182,6 +239,14 @@ def mul_tool(
 def dangerous_tool(payload: Annotated[str, "Anything"]) -> str:
     """A tool that always requires approval."""
     return payload
+
+
+def _decode_content_bytes(item: Content) -> bytes:
+    import base64
+
+    assert item.uri is not None
+    _, _, encoded = item.uri.partition("base64,")
+    return base64.b64decode(encoded)
 
 
 # ---------------------------------------------------------------------------
@@ -335,6 +400,22 @@ def test_dynamic_description_default_mentions_no_filesystem() -> None:
     assert "Filesystem access is unavailable" in description
 
 
+def test_instruction_builders_describe_write_caps_and_visible_tools(tmp_path: Path) -> None:
+    from agent_framework_monty import FileMount
+
+    mount = FileMount(host_path=tmp_path, mount_path="/work", mode="read-write", write_bytes_limit=128)
+    description = instructions_module.build_execute_code_description(tools=[add_tool], mounts=[mount])
+    instructions = instructions_module.build_codeact_instructions(
+        tools=[add_tool],
+        tools_visible_to_model=True,
+        mounts=[mount],
+    )
+
+    assert "write cap 128 bytes" in description
+    assert "Files written to `/work` are returned" in description
+    assert "Some tools may also appear directly" in instructions
+
+
 def test_resource_limits_round_trip() -> None:
     monty_tool = MontyExecuteCodeTool(resource_limits={"max_duration_secs": 5.0})
     assert monty_tool.resource_limits == {"max_duration_secs": 5.0}
@@ -358,6 +439,61 @@ def test_execute_code_filtered_out_when_added_as_tool() -> None:
     )
     monty_tool = MontyExecuteCodeTool(tools=[spurious, add_tool])
     assert [t.name for t in monty_tool.get_tools()] == ["add_tool"]
+
+
+def test_mount_helpers_validate_inputs_and_convert_mounts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent_framework_monty import FileMount
+
+    host_dir = tmp_path / "host"
+    host_dir.mkdir()
+    file_path = tmp_path / "file.txt"
+    file_path.write_text("x", encoding="utf-8")
+
+    assert execute_code_module._is_file_mount_pair((host_dir, "/work")) is True
+    assert execute_code_module._is_file_mount_pair(FileMount(host_path=host_dir, mount_path="/work")) is False
+    assert execute_code_module._is_file_mount_pair((host_dir, "/work", "extra")) is False
+    assert execute_code_module._is_file_mount_pair((host_dir, 1)) is False
+
+    with pytest.raises(ValueError, match="must not be empty"):
+        execute_code_module._normalize_mount_path(" ")
+    with pytest.raises(ValueError, match="must not contain '..' segments"):
+        execute_code_module._normalize_mount_path("/work/../escape")
+    with pytest.raises(ValueError, match="must point to a concrete absolute path"):
+        execute_code_module._normalize_mount_path("/")
+    with pytest.raises(ValueError, match="existing directory"):
+        execute_code_module._resolve_existing_directory(file_path)
+
+    calls: list[dict[str, Any]] = []
+
+    class _FakeMountDir:
+        def __init__(self, **kwargs: Any) -> None:
+            calls.append(kwargs)
+
+    monkeypatch.setattr(bridge_module, "load_monty", lambda: types.SimpleNamespace(MountDir=_FakeMountDir))
+    execute_code_module._to_monty_mount(
+        FileMount(host_path=host_dir, mount_path="/work", mode="read-write", write_bytes_limit=12)
+    )
+
+    assert calls == [
+        {
+            "virtual_path": "/work",
+            "host_path": str(host_dir),
+            "mode": "read-write",
+            "write_bytes_limit": 12,
+        }
+    ]
+
+
+def test_to_dict_materializes_dynamic_description(tmp_path: Path) -> None:
+    monty_tool = MontyExecuteCodeTool(tools=[add_tool], workspace_root=tmp_path)
+    serialized = monty_tool.to_dict()
+
+    assert monty_tool.workspace_root == tmp_path.resolve()
+    assert "description" in serialized
+    assert "add_tool" in serialized["description"]
 
 
 # ---------------------------------------------------------------------------
@@ -507,6 +643,69 @@ async def test_run_code_returns_error_content_on_runtime_failure(monkeypatch: py
     assert "boom" in (result[0].error_details or "")
 
 
+def test_build_execution_contents_handles_truncation_and_non_json_output() -> None:
+    truncated = execute_code_module._build_execution_contents(
+        result={"stdout": "hello", "truncated": True, "output": complex(1, 2)}
+    )
+    assert [item.text for item in truncated] == ["hello\n\n[stdout truncated]", "(1+2j)"]
+
+    truncated_only = execute_code_module._build_execution_contents(
+        result={"stdout": "", "truncated": True, "output": None}
+    )
+    assert [item.text for item in truncated_only] == ["[stdout truncated]"]
+
+
+def test_capture_written_files_returns_new_files_and_omits_large_ones(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent_framework_monty import FileMount
+
+    writable = tmp_path / "writable"
+    writable.mkdir()
+    readonly = tmp_path / "readonly"
+    readonly.mkdir()
+    nested = writable / "nested"
+    nested.mkdir()
+
+    existing = writable / "existing.txt"
+    existing.write_text("before", encoding="utf-8")
+    (nested / "report.txt").write_text("old", encoding="utf-8")
+    (readonly / "ignored.txt").write_text("unchanged", encoding="utf-8")
+
+    mounts = [
+        FileMount(host_path=writable, mount_path="/work", mode="read-write"),
+        FileMount(host_path=readonly, mount_path="/readonly", mode="read-only"),
+    ]
+    pre_state = execute_code_module._snapshot_writable_mounts(mounts)
+
+    existing.write_text("after", encoding="utf-8")
+    (nested / "report.txt").write_text("updated", encoding="utf-8")
+    (writable / "artifact.bin").write_bytes(b"\x00\x01")
+    (writable / "large.txt").write_text("123456789", encoding="utf-8")
+    monkeypatch.setattr(execute_code_module, "MAX_CAPTURED_FILE_BYTES", 8)
+
+    captured = execute_code_module._capture_written_files(mounts, pre_state)
+    data_items = [item for item in captured if item.type == "data"]
+    text_items = [item for item in captured if item.type == "text"]
+
+    assert set(pre_state) == {"/work"}
+    assert "existing.txt" in pre_state["/work"]
+    assert "ignored.txt" not in pre_state["/work"]
+    assert {item.additional_properties["path"] for item in data_items} == {
+        "/work/artifact.bin",
+        "/work/existing.txt",
+        "/work/nested/report.txt",
+    }
+    assert any("large.txt" in (item.text or "") and "omitted" in (item.text or "") for item in text_items)
+    assert any(
+        _decode_content_bytes(item) == b"after"
+        for item in data_items
+        if item.additional_properties["path"] == "/work/existing.txt"
+    )
+    assert all(not item.additional_properties["path"].startswith("/readonly/") for item in data_items)
+
+
 # ---------------------------------------------------------------------------
 # MontyCodeActProvider tests
 # ---------------------------------------------------------------------------
@@ -537,6 +736,20 @@ def test_provider_delegates_tool_management_to_internal_tool() -> None:
 
     provider.clear_tools()
     assert provider.get_tools() == []
+
+
+def test_provider_delegates_file_mount_management_to_internal_tool(tmp_path: Path) -> None:
+    provider = MontyCodeActProvider()
+    provider.add_file_mounts((tmp_path, "/work"))
+
+    assert [mount.mount_path for mount in provider.get_file_mounts()] == ["/work"]
+
+    provider.remove_file_mount("/work")
+    assert provider.get_file_mounts() == []
+
+    provider.add_file_mounts((tmp_path, "/again"))
+    provider.clear_file_mounts()
+    assert provider.get_file_mounts() == []
 
 
 # ---------------------------------------------------------------------------
@@ -640,3 +853,114 @@ async def test_invoke_tool_awaits_partial_wrapped_async_method() -> None:
     cid, payload = await bridge._invoke_tool(7, "adder", {"a": 6, "b": 7})
     assert cid == 7
     assert payload == {"return_value": 13}, payload
+
+
+async def test_tool_callbacks_share_registered_invocation_limit() -> None:
+    @tool(max_invocations=1)
+    def limited() -> int:
+        return 42
+
+    first = execute_code_module._make_tool_callback(limited)
+    second = execute_code_module._make_tool_callback(limited)
+    assert await first() == 42
+    assert limited.invocation_count == 1
+    for callback in (first, second, execute_code_module._make_tool_callback(limited)):
+        with pytest.raises(ToolException, match="maximum invocation limit"):
+            await callback()
+    assert limited.invocation_count == 1
+
+    limited.invocation_count = 0
+    assert await second() == 42
+    assert limited.invocation_count == 1
+
+
+@pytest.mark.parametrize("is_async", [False, True])
+async def test_tool_callbacks_share_registered_exception_limit(is_async: bool) -> None:
+    def fail() -> int:
+        raise ValueError("expected failure")
+
+    async def async_fail() -> int:
+        await asyncio.sleep(0)
+        return fail()
+
+    failing = FunctionTool(name="failing", func=async_fail if is_async else fail, max_invocation_exceptions=1)
+    with pytest.raises(ValueError, match="expected failure"):
+        await execute_code_module._make_tool_callback(failing)()
+    with pytest.raises(ToolException, match="maximum exception limit"):
+        await execute_code_module._make_tool_callback(failing)()
+    assert failing.invocation_count == 1
+    assert failing.invocation_exception_count == 1
+
+
+async def test_concurrent_tool_callbacks_share_registered_invocation_limit() -> None:
+    @tool(max_invocations=1)
+    async def limited() -> int:
+        await asyncio.sleep(0)
+        return 42
+
+    bridges = [
+        bridge_module.InlineCodeBridge({"limited": execute_code_module._make_tool_callback(limited)}) for _ in range(8)
+    ]
+    results = await asyncio.gather(*(bridge._invoke_tool(index, "limited", {}) for index, bridge in enumerate(bridges)))
+
+    assert sum(payload == {"return_value": 42} for _, payload in results) == 1
+    assert sum(payload.get("exc_type") == "ToolException" for _, payload in results) == 7
+    assert limited.invocation_count == 1
+
+
+async def test_tool_callback_preserves_bound_instance_and_result_parser() -> None:
+    parser = MagicMock(return_value=[Content.from_text("parsed")])
+
+    class Counter:
+        def __init__(self) -> None:
+            self.value = 0
+
+        @tool(max_invocations=1, result_parser=parser)
+        def increment(self) -> int:
+            self.value += 1
+            return self.value
+
+    first_owner = Counter()
+    second_owner = Counter()
+    first_tool = first_owner.increment
+    second_tool = second_owner.increment
+
+    assert await execute_code_module._make_tool_callback(first_tool)() == 1
+    with pytest.raises(ToolException, match="maximum invocation limit"):
+        await execute_code_module._make_tool_callback(first_tool)()
+    assert await execute_code_module._make_tool_callback(second_tool)() == 1
+    assert first_owner.value == second_owner.value == 1
+    assert first_tool.invocation_count == second_tool.invocation_count == 1
+    assert first_tool.result_parser is parser
+    parser.assert_not_called()
+
+    first_tool.invocation_count = 0
+    assert await first_tool.invoke() == [Content.from_text("parsed")]
+    parser.assert_called_once_with(2)
+
+
+async def test_provider_runs_share_registered_tool_invocation_limit() -> None:
+    @tool(max_invocations=1)
+    def limited() -> int:
+        return 42
+
+    provider = MontyCodeActProvider(tools=[limited])
+    for run_index in range(2):
+        context = SessionContext(input_messages=[])
+        await provider.before_run(agent=MagicMock(), session=None, context=context, state={})
+        run_tool = context.tools[0]
+        assert isinstance(run_tool, MontyExecuteCodeTool)
+        assert run_tool.get_tools()[0] is limited
+        script = _set_script(
+            _FakeFunctionSnapshot(function_name="limited", call_id=1),
+            _FakeFutureSnapshot(pending_call_ids=[1]),
+            _FakeMontyComplete(),
+        )
+        await run_tool._run_code(code="await limited()")
+        payload = script.resume_log[-1][2][1]
+        if run_index == 0:
+            assert payload == {"return_value": 42}
+        else:
+            assert payload["exc_type"] == "ToolException"
+            assert "maximum invocation limit" in payload["message"]
+        assert limited.invocation_count == 1

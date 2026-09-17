@@ -25,13 +25,13 @@ pip install agent-framework-azure-ai-search agent-framework-foundry
    - [Create Azure AI Search service](https://learn.microsoft.com/azure/search/search-create-service-portal)
    - [Create and populate a search index](https://learn.microsoft.com/azure/search/search-what-is-an-index)
 
-2. **Azure AI Foundry project** with a model deployment
-   - [Create Azure AI Foundry project](https://learn.microsoft.com/azure/ai-studio/how-to/create-projects)
+2. **Microsoft Foundry project** with a model deployment
+   - [Create Microsoft Foundry project](https://learn.microsoft.com/azure/ai-studio/how-to/create-projects)
    - Deploy a model (e.g., GPT-4o)
 
 3. **For Agentic mode only**: Azure OpenAI resource for Knowledge Base model calls
    - [Create Azure OpenAI resource](https://learn.microsoft.com/azure/ai-services/openai/how-to/create-resource)
-   - Note: This is separate from your Azure AI Foundry project endpoint
+   - Note: This is separate from your Microsoft Foundry project endpoint
 
 ### Authentication
 
@@ -65,7 +65,7 @@ azure-search-documents`) — no code change.
 **Common (both modes):**
 - `AZURE_SEARCH_ENDPOINT`: Your Azure AI Search endpoint (e.g., `https://myservice.search.windows.net`)
 - `AZURE_SEARCH_INDEX_NAME`: Name of your search index
-- `FOUNDRY_PROJECT_ENDPOINT`: Your Azure AI Foundry project endpoint
+- `FOUNDRY_PROJECT_ENDPOINT`: Your Microsoft Foundry project endpoint
 - `FOUNDRY_MODEL`: Model deployment name (e.g., `gpt-4o`, defaults to `gpt-4o`)
 - `AZURE_SEARCH_API_KEY`: _(Optional)_ Your search API key - if not provided, uses DefaultAzureCredential
 
@@ -277,7 +277,7 @@ async with Agent(
 ## Additional Resources
 
 - [Azure AI Search Documentation](https://learn.microsoft.com/azure/search/)
-- [Azure AI Foundry Documentation](https://learn.microsoft.com/azure/ai-studio/)
+- [Microsoft Foundry Documentation](https://learn.microsoft.com/azure/ai-studio/)
 - [RAG with Azure AI Search](https://learn.microsoft.com/azure/search/retrieval-augmented-generation-overview)
 - [Semantic Search in Azure AI Search](https://learn.microsoft.com/azure/search/semantic-search-overview)
 - [Knowledge Bases in Azure AI Search](https://learn.microsoft.com/azure/search/knowledge-store-concept-intro)

@@ -6,7 +6,6 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
-using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Execution;
 using Microsoft.Agents.AI.Workflows.InProc;
@@ -127,8 +126,8 @@ public class HandoffAgentExecutorTests : AIAgentHostingExecutorTestsBase
 
         // Validate that our test assumptions hold
         string functionCallPortId = $"{HandoffAgentExecutor.IdFor(subworkflowAgent)}_FunctionCall";
-        map.TryGetResponsePortExecutorId(functionCallPortId, out string? responsePortExecutorId).Should().BeTrue();
-        responsePortExecutorId.Should().Be(executor.Id);
+        Assert.True(map.TryGetResponsePortExecutorId(functionCallPortId, out string? responsePortExecutorId));
+        Assert.Equal(executor.Id, responsePortExecutorId);
 
         // Act
         HandoffState message = new(new(false), null, null);
@@ -137,8 +136,8 @@ public class HandoffAgentExecutorTests : AIAgentHostingExecutorTestsBase
         await testContext.StateManager.PublishUpdatesAsync(null);
 
         // Assert
-        testContext.ExternalRequests.Should().HaveCount(1)
-                                .And.ContainSingle(request => request.IsDataOfType<FunctionCallContent>());
+        Assert.Single(testContext.ExternalRequests);
+        Assert.Single(testContext.ExternalRequests, request => request.IsDataOfType<FunctionCallContent>());
 
         FunctionCallContent functionCallContent = testContext.ExternalRequests.Single().Data.As<FunctionCallContent>()!;
         object? requestData = functionCallContent.Arguments!["data"];
@@ -167,9 +166,9 @@ public class HandoffAgentExecutorTests : AIAgentHostingExecutorTestsBase
         string requestId = $"{functionCallPortId.Length}:{functionCallPortId}:{functionCallContent.CallId}";
         DeliveryMapping? mapping = await map.PrepareDeliveryForResponseAsync(new(requestPortInfo, requestId, new(responseContent)));
 
-        mapping!.Deliveries.Should().HaveCount(1);
+        Assert.Single(mapping!.Deliveries);
 
-        MessageDelivery delivery = mapping!.Deliveries.Single();
+        MessageDelivery delivery = mapping.Deliveries.Single();
 
         object? result = await executor.ExecuteCoreAsync(delivery.Envelope.Message,
                                                          delivery.Envelope.MessageType,
@@ -198,8 +197,8 @@ public class HandoffAgentExecutorTests : AIAgentHostingExecutorTestsBase
         HandoffState state = new(new(false), null);
 
         // Act / Assert
-        Func<Task> runStreamingAsync = async () => await executor.HandleAsync(state, testContext);
-        await runStreamingAsync.Should().NotThrowAsync();
+        async Task runStreamingAsync() => await executor.HandleAsync(state, testContext);
+        Assert.Null(await Record.ExceptionAsync(runStreamingAsync));
     }
 }
 
@@ -243,16 +242,16 @@ internal sealed class OptionValidatingChatClient(string baseInstructions, string
 
     private void CheckOptions(ChatOptions? options)
     {
-        options.Should().NotBeNull();
+        Assert.NotNull(options);
 
-        options.Instructions.Should().NotBeNullOrEmpty("Handoff orchestration should preserve and augment instructions.")
-                                 .And.Contain(baseInstructions, because: "Handoff orchestration should preserve existing instructions.")
-                                 .And.Contain(handoffInstructions, because: "Handoff orchestration should inject handoff instructions.");
+        Assert.False(string.IsNullOrEmpty(options.Instructions));
+        Assert.Contains(baseInstructions, options.Instructions);
+        Assert.Contains(handoffInstructions, options.Instructions);
 
-        options.Tools.Should().NotBeNullOrEmpty("Handoff orchestration should preserve and augment tools.")
-                              .And.Contain(tool => tool.Name == baseTool.Name, "Handoff orchestration should preserve existing tools.")
-                              .And.Contain(tool => tool.Name.StartsWith(HandoffWorkflowBuilder.FunctionPrefix, StringComparison.Ordinal),
-                                           because: "Handoff orchestration should inject handoff tools.");
+        Assert.NotNull(options.Tools);
+        Assert.NotEmpty(options.Tools);
+        Assert.Contains(options.Tools, tool => tool.Name == baseTool.Name);
+        Assert.Contains(options.Tools, tool => tool.Name.StartsWith(HandoffWorkflowBuilder.FunctionPrefix, StringComparison.Ordinal));
     }
 
     private List<ChatMessage> ResponseMessages =>

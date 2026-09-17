@@ -2,18 +2,22 @@
 
 // This sample shows how to create and use a simple AI agent with tools from an MCP Server that requires authentication.
 
+using System.ClientModel.Primitives;
 using System.Diagnostics;
 using System.Net;
 using System.Text;
 using System.Web;
-using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.Logging;
+using ModelContextProtocol.Authentication;
 using ModelContextProtocol.Client;
+using OpenAI;
 using OpenAI.Chat;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
+Uri endpoint = AzureOpenAIEndpoint.From(
+    Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT"))
+    ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
 
 // We can customize a shared HttpClient with a custom handler if desired
@@ -39,7 +43,7 @@ var transport = new HttpClientTransport(new()
             ClientName = "ProtectedMcpClient",
         },
         RedirectUri = new Uri("http://localhost:1179/callback"),
-        AuthorizationRedirectDelegate = HandleAuthorizationUrlAsync,
+        AuthorizationCallbackHandler = HandleAuthorizationCallbackAsync,
     }
 }, httpClient, consoleLoggerFactory);
 
@@ -52,9 +56,9 @@ var mcpTools = await mcpClient.ListToolsAsync().ConfigureAwait(false);
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-AIAgent agent = new AzureOpenAIClient(
-    new Uri(endpoint),
-    new DefaultAzureCredential())
+AIAgent agent = new OpenAIClient(
+    new BearerTokenPolicy(new DefaultAzureCredential(), "https://ai.azure.com/.default"),
+    new OpenAIClientOptions { Endpoint = endpoint })
      .GetChatClient(deploymentName)
      .AsAIAgent(instructions: "You answer questions related to the weather.", tools: [.. mcpTools]);
 
@@ -63,12 +67,14 @@ Console.WriteLine(await agent.RunAsync("Get current weather alerts for New York?
 
 // Handles the OAuth authorization URL by starting a local HTTP server and opening a browser.
 // This implementation demonstrates how SDK consumers can provide their own authorization flow.
-static async Task<string?> HandleAuthorizationUrlAsync(Uri authorizationUrl, Uri redirectUri, CancellationToken cancellationToken)
+static async Task<AuthorizationResult?> HandleAuthorizationCallbackAsync(
+    AuthorizationCallbackContext callbackContext,
+    CancellationToken cancellationToken)
 {
     Console.WriteLine("Starting OAuth authorization flow...");
-    Console.WriteLine($"Opening browser to: {authorizationUrl}");
+    Console.WriteLine($"Opening browser to: {callbackContext.AuthorizationUri}");
 
-    var listenerPrefix = redirectUri.GetLeftPart(UriPartial.Authority);
+    var listenerPrefix = callbackContext.RedirectUri.GetLeftPart(UriPartial.Authority);
     if (!listenerPrefix.EndsWith("/", StringComparison.InvariantCultureIgnoreCase))
     {
         listenerPrefix += "/";
@@ -82,11 +88,13 @@ static async Task<string?> HandleAuthorizationUrlAsync(Uri authorizationUrl, Uri
         listener.Start();
         Console.WriteLine($"Listening for OAuth callback on: {listenerPrefix}");
 
-        OpenBrowser(authorizationUrl);
+        OpenBrowser(callbackContext.AuthorizationUri);
 
         var context = await listener.GetContextAsync();
         var query = HttpUtility.ParseQueryString(context.Request.Url?.Query ?? string.Empty);
         var code = query["code"];
+        var state = query["state"];
+        var issuer = query["iss"];
         var error = query["error"];
 
         const string ResponseHtml = "<html><body><h1>Authentication complete</h1><p>You can close this window now.</p></body></html>";
@@ -102,14 +110,19 @@ static async Task<string?> HandleAuthorizationUrlAsync(Uri authorizationUrl, Uri
             return null;
         }
 
-        if (string.IsNullOrEmpty(code))
+        if (string.IsNullOrEmpty(code) || string.IsNullOrEmpty(state))
         {
-            Console.WriteLine("No authorization code received");
+            Console.WriteLine("The authorization response did not contain both code and state.");
             return null;
         }
 
         Console.WriteLine("Authorization code received successfully.");
-        return code;
+        return new AuthorizationResult
+        {
+            Code = code,
+            State = state,
+            Iss = issuer,
+        };
     }
     catch (Exception ex)
     {

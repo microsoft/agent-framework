@@ -288,8 +288,11 @@ class HarnessApp(App[None]):
             # Answer the current follow-up question
             self._handle_follow_up_answer(text)
         elif self._app_state.mode == BottomPanelMode.STREAMING:
-            # Input during streaming (message injection placeholder)
-            pass
+            # Input submitted while the agent is streaming — enqueue it for
+            # injection into the ongoing run. Handled synchronously so it does
+            # not cancel the exclusive turn worker.
+            if self._runner is not None:
+                self._runner.on_streaming_input(text, self._session)
         elif text.startswith("/"):
             # Try command handlers
             self._try_command_handlers(text)
@@ -441,9 +444,10 @@ class HarnessApp(App[None]):
         if mode == BottomPanelMode.TEXT_INPUT:
             text_container.display = True
             list_container.display = False
-            # Restore focus to text input
+            # Restore the normal placeholder and focus to text input
             try:
                 text_input = self.query_one("#text-input", HarnessTextInput)
+                text_input.placeholder = self._placeholder
                 text_input.focus_input()
             except NoMatches:
                 pass
@@ -454,6 +458,12 @@ class HarnessApp(App[None]):
         elif mode == BottomPanelMode.STREAMING:
             text_container.display = True
             list_container.display = False
+            # Hint that typed input will be queued for injection into the run.
+            try:
+                text_input = self.query_one("#text-input", HarnessTextInput)
+                text_input.placeholder = "type to queue a message for the agent…"
+            except NoMatches:
+                pass
 
     def _sync_list_selection(self) -> None:
         """Sync the list selection widget with state."""
@@ -487,6 +497,7 @@ class HarnessApp(App[None]):
         state = self._app_state
         status.show_spinner = state.show_spinner
         status.usage_text = state.usage_text or ""
+        status.queued_text = " ".join(state.queued_items)
 
     def _sync_mode_help(self) -> None:
         """Sync the mode/help display and rule colors with state."""

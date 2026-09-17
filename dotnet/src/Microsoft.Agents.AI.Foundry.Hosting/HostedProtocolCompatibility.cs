@@ -43,7 +43,7 @@ internal static class HostedProtocolCompatibility
     internal const string UnsupportedProtocolErrorCode = "unsupported_container_protocol_version";
 
     /// <summary>
-    /// Returns the error to throw when this <c>2.0.0</c>-only image is served container protocol
+    /// Returns the error response when this <c>2.0.0</c>-only image is served container protocol
     /// <c>1.0.0</c>, or <see langword="null"/> when the request is compatible (or the container is not
     /// hosted by Foundry, e.g. local development).
     /// </summary>

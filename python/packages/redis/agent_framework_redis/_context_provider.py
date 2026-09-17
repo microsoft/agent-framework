@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 import numpy as np
 from agent_framework import Message
 from agent_framework._sessions import AgentSession, ContextProvider, SessionContext
+from agent_framework._telemetry import mark_feature_used
 from agent_framework.exceptions import (
     AgentException,
     IntegrationInvalidRequestException,
@@ -24,6 +25,8 @@ from redisvl.query import AggregateHybridQuery, TextQuery
 from redisvl.query.filter import FilterExpression, Tag
 from redisvl.utils.token_escaper import TokenEscaper
 from redisvl.utils.vectorize import BaseVectorizer
+
+from ._feature_usage import FeatureIndex
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
@@ -122,6 +125,7 @@ class RedisContextProvider(ContextProvider):
         state: dict[str, Any],
     ) -> None:
         """Retrieve scoped context from Redis and add to the session context."""
+        mark_feature_used(FeatureIndex.REDIS)
         self._validate_filters()
         input_text = "\n".join(msg.text for msg in context.input_messages if msg and msg.text and msg.text.strip())
         if not input_text.strip():
@@ -147,6 +151,7 @@ class RedisContextProvider(ContextProvider):
         state: dict[str, Any],
     ) -> None:
         """Store request/response messages to Redis for future retrieval."""
+        mark_feature_used(FeatureIndex.REDIS)
         self._validate_filters()
 
         messages_to_store: list[Message] = list(context.input_messages)

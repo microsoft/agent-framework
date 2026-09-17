@@ -30,7 +30,7 @@ Key concepts demonstrated:
 
 Prerequisites:
 - Set A2A_AGENT_HOST to the URL of a running A2A server
-- Set FOUNDRY_PROJECT_ENDPOINT to your Azure AI Foundry project endpoint
+- Set FOUNDRY_PROJECT_ENDPOINT to your Microsoft Foundry project endpoint
 - Set FOUNDRY_MODEL to the model deployment name (e.g. gpt-4o)
 
 To run this sample:

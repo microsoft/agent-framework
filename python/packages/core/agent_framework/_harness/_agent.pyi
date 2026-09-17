@@ -14,6 +14,7 @@ from .._sessions import ContextProvider, HistoryProvider
 from .._skills import SkillsProvider
 from .._tools import ToolTypes
 from .._types import ChatOptions
+from ._background_agents import DEFAULT_BACKGROUND_AGENTS_WAIT_TIMEOUT_SECONDS
 from ._file_access import AgentFileStore
 from ._loop import DEFAULT_MAX_ITERATIONS, NextMessageCallable, ShouldContinueCallable
 from ._mode import AgentModeProvider
@@ -22,6 +23,7 @@ from ._tool_approval import ToolApprovalRuleCallback
 
 DEFAULT_HARNESS_INSTRUCTIONS: str
 HARNESS_AGENT_PROVIDER_NAME: str
+_SHELL_TOOLING_FEATURE_ID: str
 
 OptionsCoT = TypeVar(
     "OptionsCoT",
@@ -68,7 +70,6 @@ def create_harness_agent(
     mode_provider: AgentModeProvider | None = None,
     disable_file_memory: bool = False,
     file_memory_store: AgentFileStore | None = None,
-    disable_file_access: bool = False,
     file_access_store: AgentFileStore | None = None,
     file_access_disable_write_tools: bool = False,
     file_access_disable_readonly_tool_approval: bool = False,
@@ -77,6 +78,7 @@ def create_harness_agent(
     skills_paths: str | Path | Sequence[str | Path] | None = None,
     background_agents: Sequence[SupportsAgentRun] | None = None,
     background_agents_instructions: str | None = None,
+    background_agents_wait_timeout_seconds: int = DEFAULT_BACKGROUND_AGENTS_WAIT_TIMEOUT_SECONDS,
     shell_executor: _ShellExecutorLike | None = None,
     shell_environment_provider_options: _ShellEnvironmentProviderOptionsLike | None = None,
     disable_web_search: bool = False,

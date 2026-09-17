@@ -21,12 +21,6 @@ from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import Field
 
-try:
-    import orjson  # pyright: ignore[reportMissingImports]
-except ImportError:
-    orjson = None
-
-
 load_dotenv()
 
 """
@@ -37,20 +31,18 @@ experimental `FileHistoryProvider`, reading the stored JSONL file back from
 disk, and then continuing the same conversation with another city.
 
 Environment variables:
-    FOUNDRY_PROJECT_ENDPOINT: Azure AI Foundry project endpoint.
+    FOUNDRY_PROJECT_ENDPOINT: Microsoft Foundry project endpoint.
     FOUNDRY_MODEL: Foundry model deployment name.
 
 Key components:
 - `FileHistoryProvider`: Stores one message JSON object per line in a local
-  `.jsonl` file for each session.
+  `.jsonl` file for each session using msgspec JSON by default.
 - `get_weather`: A function tool that makes the persisted file show the
   assistant function call and tool result records.
 - `json.dumps(..., indent=2)`: Pretty-prints a few persisted JSONL records
   while keeping the on-disk file compact and valid.
 - `load_dotenv()`: Loads `.env` values up front so the sample can stay focused
   on history persistence instead of manual environment variable plumbing.
-- Optional `orjson`: Uses `orjson.dumps` / `orjson.loads` automatically when
-  available, otherwise falls back to the standard library `json` module.
 
 Security posture:
 - The history file is plaintext JSONL on disk, so use a trusted storage
@@ -109,13 +101,7 @@ async def main() -> None:
                 "and answer in one sentence using the tool result."
             ),
             tools=[get_weather],
-            context_providers=[
-                FileHistoryProvider(
-                    storage_directory,
-                    dumps=orjson.dumps if orjson else None,
-                    loads=orjson.loads if orjson else None,
-                )
-            ],
+            context_providers=[FileHistoryProvider(storage_directory)],
             default_options={"store": False},
         )
 

@@ -35,23 +35,17 @@ async def _downstream(message: str, ctx: WorkflowContext[Never, str]) -> None:  
     await ctx.yield_output("from-downstream")
 
 
-def test_designation_unset_emits_deprecation_warning() -> None:
-    """State A: WorkflowBuilder built without explicit designation warns."""
-    with pytest.warns(DeprecationWarning, match="output_from or intermediate_output_from") as warning_info:
+def test_designation_unset_does_not_warn() -> None:
+    """Omitted designation is the supported all-output default."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
         WorkflowBuilder(start_executor=_emit_one).build()
-    assert str(warning_info[0].message) == (
-        "WorkflowBuilder built without explicit output_from or intermediate_output_from; "
-        "every yield_output produces type='output' for compatibility. Pass output_from='all', "
-        "output_from=[...], or intermediate_output_from=[...] to opt into explicit designation - "
-        "explicit designation will be required in a future version."
-    )
 
 
 @pytest.mark.asyncio
 async def test_designation_unset_preserves_compatibility_all_output_behavior() -> None:
-    """Omitted designation keeps compatibility all-output behavior while warning."""
-    with pytest.warns(DeprecationWarning, match="output_from or intermediate_output_from"):
-        workflow = WorkflowBuilder(start_executor=_start).add_edge(_start, _downstream).build()
+    """Omitted designation emits all workflow outputs."""
+    workflow = WorkflowBuilder(start_executor=_start).add_edge(_start, _downstream).build()
 
     result = await workflow.run([Message(role="user", contents=["hi"])])
 

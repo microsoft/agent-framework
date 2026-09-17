@@ -9,6 +9,7 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from agent_framework import Message
 
 from agent_framework_declarative._workflows import (
     ActionComplete,
@@ -67,6 +68,7 @@ def mock_context(mock_state: MagicMock) -> MagicMock:
     """Create a mock workflow context."""
     ctx = MagicMock()
     ctx.state = mock_state
+    ctx.get_state = MagicMock(side_effect=mock_state.get)
     ctx.send_message = AsyncMock()
     ctx.yield_output = AsyncMock()
     ctx.request_info = AsyncMock()
@@ -1522,6 +1524,19 @@ class TestDeclarativeActionExecutorBase:
         inputs = state.get("Workflow.Inputs")
         assert inputs == {"input": "string trigger"}
 
+    async def test_ensure_state_initialized_with_message_input(self, mock_context, mock_state):
+        """Test _ensure_state_initialized with a single Message input."""
+        from agent_framework_declarative._workflows._executors_control_flow import JoinExecutor
+
+        executor = JoinExecutor({"kind": "Entry"})
+        message = Message(role="user", contents=["message trigger"], message_id="message-1")
+        await executor.handle_action(message, mock_context)
+
+        state = DeclarativeWorkflowState(mock_state)
+        assert state.get("Workflow.Inputs") == {"input": "message trigger"}
+        assert state.get("System.LastMessage") == {"Text": "message trigger", "Id": "message-1"}
+        assert state.get("System.LastMessageText") == "message trigger"
+
     async def test_ensure_state_initialized_with_custom_object(self, mock_context, mock_state):
         """Test _ensure_state_initialized with custom object converts to string."""
         from agent_framework_declarative._workflows._executors_basic import (
@@ -2747,8 +2762,8 @@ class TestExpressionEdgeCases:
 class TestLongMessageTextHandling:
     """Tests for handling long MessageText results that exceed PowerFx limits."""
 
-    async def test_short_message_text_embedded_inline(self, mock_state):
-        """Test that short MessageText results are embedded inline."""
+    async def test_short_message_text_round_trips_without_residual_temp_state(self, mock_state):
+        """Test that short MessageText results are removed from temporary state after evaluation."""
         state = DeclarativeWorkflowState(mock_state)
         state.initialize()
 
@@ -2756,11 +2771,11 @@ class TestLongMessageTextHandling:
         short_text = "Hello world"
         state.set("Local.Messages", [{"text": short_text, "contents": [{"type": "text", "text": short_text}]}])
 
-        # Evaluate a formula with MessageText - should embed inline
+        # Evaluate a formula with MessageText.
         result = state.eval("=Upper(MessageText(Local.Messages))")
         assert result == "HELLO WORLD"
 
-        # No temp variable should be created for short strings
+        # Temporary state should be cleaned up after evaluation.
         temp_var = state.get("Local._TempMessageText0")
         assert temp_var is None
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sys
 from collections.abc import (
     AsyncIterable,
@@ -15,14 +16,15 @@ from collections.abc import (
 )
 from datetime import datetime, timezone
 from itertools import chain
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias, cast, overload
+from uuid import uuid4
 
 from agent_framework._clients import BaseChatClient
 from agent_framework._compaction import CompactionStrategy, TokenizerProtocol
 from agent_framework._docstrings import apply_layered_docstring
 from agent_framework._middleware import ChatAndFunctionMiddlewareTypes, ChatMiddlewareLayer
 from agent_framework._settings import SecretString
-from agent_framework._telemetry import USER_AGENT_KEY
+from agent_framework._telemetry import USER_AGENT_KEY, mark_feature_used
 from agent_framework._tools import (
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
@@ -48,9 +50,11 @@ from agent_framework.observability import ChatTelemetryLayer
 from openai import AsyncAzureOpenAI, AsyncOpenAI, BadRequestError
 from openai.lib._parsing._completions import type_to_response_format_param
 from openai.types import CompletionUsage
+from openai.types.chat import completion_create_params
 from openai.types.chat.chat_completion import ChatCompletion, Choice
-from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
+from openai.types.chat.chat_completion_chunk import ChatCompletionChunk, ChoiceDelta
 from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
+from openai.types.chat.chat_completion_message import ChatCompletionMessage
 from openai.types.chat.chat_completion_message_custom_tool_call import (
     ChatCompletionMessageCustomToolCall,
 )
@@ -58,8 +62,11 @@ from openai.types.chat.completion_create_params import WebSearchOptions
 from pydantic import BaseModel
 
 from ._exceptions import OpenAIContentFilterException
+from ._feature_usage import FeatureIndex
 from ._shared import (
+    PROMPT_CACHE_BREAKPOINT_KEY,
     AzureTokenProvider,
+    _attach_prompt_cache_breakpoint,  # pyright: ignore[reportPrivateUsage]
     load_openai_service_settings,
     maybe_append_azure_endpoint_guidance,
 )
@@ -77,6 +84,14 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import TypedDict  # pragma: no cover
 
+_prompt_cache_options_supported = hasattr(completion_create_params, "PromptCacheOptions")
+
+
+class _PromptCacheOptions(TypedDict, total=False):
+    mode: Literal["implicit", "explicit"]
+    ttl: Literal["30m"]
+
+
 if TYPE_CHECKING:
     from azure.core.credentials import TokenCredential
     from azure.core.credentials_async import AsyncTokenCredential
@@ -85,10 +100,74 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("agent_framework.openai")
 
+_MODEL_OUTPUT_KIND_KEY = "model_output_kind"
+_MODEL_OUTPUT_REFUSAL = "refusal"
+
+
+def _is_refusal_text_content(content: Content) -> bool:
+    return content.type == "text" and content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY) == _MODEL_OUTPUT_REFUSAL
+
+
+# Error message shared with tests — extracted to a constant to keep the
+# implementation and its assertions in sync.
+_AZURE_WEB_SEARCH_UNSUPPORTED_MSG = (
+    "Web search is not supported by the Azure OpenAI Chat Completions API. "
+    "Use agent_framework.openai.OpenAIChatClient (Responses API) for "
+    "web search support on Azure."
+)
+
 DEFAULT_AZURE_OPENAI_CHAT_COMPLETION_API_VERSION = "2024-12-01-preview"
+
+# The Chat Completions API validates a message ``name`` against ``^[^\s<|\\/>]+$``, so an
+# author name containing whitespace (or ``< | \ / >``) fails the whole request with a 400.
+# Mirrors SanitizeAuthorName in the .NET client (dotnet/extensions): strip characters outside
+# ``[a-zA-Z0-9_]``, drop the name entirely when nothing remains, truncate to 64 characters.
+# See https://github.com/microsoft/agent-framework/issues/7126
+_INVALID_AUTHOR_NAME_RE = re.compile(r"[^a-zA-Z0-9_]+")
+_MAX_AUTHOR_NAME_LENGTH = 64
+
+
+def _sanitize_author_name(name: str | None) -> str | None:
+    """Sanitize an author name for use as the Chat Completions message ``name`` field."""
+    if not name:
+        return None
+    sanitized = _INVALID_AUTHOR_NAME_RE.sub("", name)
+    return sanitized[:_MAX_AUTHOR_NAME_LENGTH] if sanitized else None
+
 
 ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
 ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
+
+
+OpenAIChatResponseContentsParser: TypeAlias = Callable[
+    ["ChatCompletionMessage | ChoiceDelta", list[Content]], list[Content]
+]
+"""Hook to customize how a response message/delta is parsed into ``Content`` items.
+
+Called once per choice (non-streaming) or per streaming update-choice, after the client
+has built its default ``Content`` list. Receives the already-selected OpenAI
+``ChatCompletionMessage`` (non-streaming) or ``ChoiceDelta`` (streaming) and the
+default-parsed contents, and returns the contents to use instead. The client resolves the
+streaming/non-streaming dispatch, so a parser can read provider fields directly (e.g.
+``getattr(message, "reasoning", None)``) without branching.
+
+This is the extension point for OpenAI-compatible endpoints that return non-standard fields
+(e.g. OpenRouter/vLLM ``reasoning`` / ``reasoning_details`` or Mistral chunked ``content``).
+The stock client stays free of provider-specific branches; supply a parser to surface such
+data. Return the input list unchanged to opt out for a given choice.
+"""
+
+OpenAIChatMessagePreparer: TypeAlias = Callable[["Message", list[dict[str, Any]]], list[dict[str, Any]]]
+"""Hook to customize the outgoing request messages built from a single framework ``Message``.
+
+Called once per framework ``Message`` after the client has built its default list of OpenAI
+message dicts. Receives the source ``Message`` and the default dicts, and returns the dicts to
+send instead.
+
+This is the send-side counterpart of :data:`OpenAIChatResponseContentsParser`. Providers such as
+vLLM require reasoning to be echoed back on later turns under the same key it was received; use a
+preparer to inject those fields. Return the input list unchanged to opt out.
+"""
 
 
 # region OpenAI Chat Options TypedDict
@@ -149,6 +228,13 @@ class OpenAIChatCompletionOptions(ChatOptions[ResponseModelT], Generic[ResponseM
     """Output verbosity for GPT-5 family models. Lower values yield shorter responses.
     See: https://developers.openai.com/cookbook/examples/gpt-5/gpt-5_new_params_and_tools#1-verbosity-parameter"""
 
+    prompt_cache_options: _PromptCacheOptions
+    """Request-wide prompt cache policy for GPT-5.6 and later models.
+    Set mode to 'explicit' to use only the breakpoints set on content parts via
+    ``Content.additional_properties["prompt_cache_breakpoint"]``.
+    Sending this option requires openai 2.45.0 or later.
+    See: https://developers.openai.com/api/docs/guides/prompt-caching#prompt-cache-breakpoints"""
+
 
 OpenAIChatCompletionOptionsT = TypeVar(
     "OpenAIChatCompletionOptionsT",
@@ -184,6 +270,7 @@ class RawOpenAIChatCompletionClient(
     """
 
     INJECTABLE: ClassVar[set[str]] = {"client"}
+    _FEATURE_USAGE_INDEX: ClassVar[int | None] = FeatureIndex.OPENAI
 
     @overload
     def __init__(
@@ -196,6 +283,8 @@ class RawOpenAIChatCompletionClient(
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncOpenAI | None = None,
         instruction_role: str | None = None,
+        response_parser: OpenAIChatResponseContentsParser | None = None,
+        message_preparer: OpenAIChatMessagePreparer | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         additional_properties: dict[str, Any] | None = None,
@@ -216,6 +305,10 @@ class RawOpenAIChatCompletionClient(
             default_headers: Additional HTTP headers.
             async_client: Pre-configured OpenAI client.
             instruction_role: Role for instruction messages (for example ``"system"``).
+            response_parser: Optional hook to customize response parsing into ``Content`` items.
+                See ``OpenAIChatResponseContentsParser``.
+            message_preparer: Optional hook to customize outgoing request messages.
+                See ``OpenAIChatMessagePreparer``.
             compaction_strategy: Optional per-client compaction override.
             tokenizer: Optional tokenizer for compaction strategies.
             additional_properties: Additional properties stored on the client instance.
@@ -238,6 +331,8 @@ class RawOpenAIChatCompletionClient(
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncAzureOpenAI | AsyncOpenAI | None = None,
         instruction_role: str | None = None,
+        response_parser: OpenAIChatResponseContentsParser | None = None,
+        message_preparer: OpenAIChatMessagePreparer | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         additional_properties: dict[str, Any] | None = None,
@@ -265,6 +360,10 @@ class RawOpenAIChatCompletionClient(
             async_client: Pre-configured client. Passing ``AsyncAzureOpenAI`` keeps the client on
                 Azure; passing ``AsyncOpenAI`` keeps the client on OpenAI and bypasses env lookup.
             instruction_role: Role for instruction messages (for example ``"system"``).
+            response_parser: Optional hook to customize response parsing into ``Content`` items.
+                See ``OpenAIChatResponseContentsParser``.
+            message_preparer: Optional hook to customize outgoing request messages.
+                See ``OpenAIChatMessagePreparer``.
             compaction_strategy: Optional per-client compaction override.
             tokenizer: Optional tokenizer for compaction strategies.
             additional_properties: Additional properties stored on the client instance.
@@ -287,6 +386,8 @@ class RawOpenAIChatCompletionClient(
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncOpenAI | None = None,
         instruction_role: str | None = None,
+        response_parser: OpenAIChatResponseContentsParser | None = None,
+        message_preparer: OpenAIChatMessagePreparer | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         additional_properties: dict[str, Any] | None = None,
@@ -320,6 +421,13 @@ class RawOpenAIChatCompletionClient(
             async_client: Pre-configured client. Passing ``AsyncAzureOpenAI`` keeps the client on
                 Azure; passing ``AsyncOpenAI`` keeps the client on OpenAI and bypasses env lookup.
             instruction_role: Role for instruction messages (for example ``"system"``).
+            response_parser: Optional hook to customize how each response choice/delta is parsed
+                into ``Content`` items. Use it to surface non-standard fields from
+                OpenAI-compatible endpoints (e.g. OpenRouter/vLLM reasoning or Mistral chunked
+                content) without subclassing. See ``OpenAIChatResponseContentsParser``.
+            message_preparer: Optional hook to customize the outgoing request messages built from
+                each framework ``Message``. Use it to echo provider-specific fields (e.g. vLLM
+                ``reasoning``) back on later turns. See ``OpenAIChatMessagePreparer``.
             compaction_strategy: Optional per-client compaction override.
             tokenizer: Optional tokenizer for compaction strategies.
             additional_properties: Additional properties stored on the client instance.
@@ -373,6 +481,9 @@ class RawOpenAIChatCompletionClient(
         else:
             self.default_headers = None
         self.instruction_role = instruction_role
+        self.response_parser = response_parser
+        self.message_preparer = message_preparer
+        self._use_azure_client = use_azure_client
         if use_azure_client:
             self.OTEL_PROVIDER_NAME = "azure.ai.openai"  # type: ignore[misc]
 
@@ -511,18 +622,42 @@ class RawOpenAIChatCompletionClient(
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         # prepare
         options_dict = self._prepare_options(messages, options)
+        extra_headers = cast("Mapping[str, Any] | None", kwargs.get("extra_headers"))
 
         if stream:
-            # Streaming mode
-            options_dict["stream_options"] = {"include_usage": True}
 
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
                 client = self.client
+                tool_call_identities: dict[tuple[int, int], tuple[str, str]] = {}
+                if self._FEATURE_USAGE_INDEX is not None:
+                    mark_feature_used(self._FEATURE_USAGE_INDEX)
+                request_options = dict(options_dict)
+                request_options["stream_options"] = {"include_usage": True}
+                if extra_headers is not None:
+                    request_options["extra_headers"] = dict(extra_headers)
                 try:
-                    async for chunk in await client.chat.completions.create(stream=True, **options_dict):
+                    async for chunk in await client.chat.completions.create(stream=True, **request_options):
                         if len(chunk.choices) == 0 and chunk.usage is None:
                             continue
-                        yield self._parse_response_update_from_openai(chunk)
+                        update = self._parse_response_update_from_openai(chunk)
+                        for content in update.contents:
+                            if content.type != "function_call":
+                                continue
+                            choice_index = content.additional_properties.get("tool_call_choice_index")
+                            tool_index = content.additional_properties.get("tool_call_index")
+                            if not isinstance(choice_index, int) or not isinstance(tool_index, int):
+                                continue
+                            index_key = (choice_index, tool_index)
+                            identity = tool_call_identities.get(index_key)
+                            if identity is None:
+                                identity = (f"af-call-{uuid4().hex}", content.call_id or "")
+                            occurrence_id, provider_call_id = identity
+                            if content.call_id:
+                                provider_call_id = content.call_id
+                            tool_call_identities[index_key] = (occurrence_id, provider_call_id)
+                            content.id = occurrence_id
+                            content.call_id = provider_call_id
+                        yield update
                 except BadRequestError as ex:
                     if ex.code == "content_filter":
                         raise OpenAIContentFilterException(
@@ -550,9 +685,14 @@ class RawOpenAIChatCompletionClient(
         # Non-streaming mode
         async def _get_response() -> ChatResponse:
             client = self.client
+            if self._FEATURE_USAGE_INDEX is not None:
+                mark_feature_used(self._FEATURE_USAGE_INDEX)
+            request_options = dict(options_dict)
+            if extra_headers is not None:
+                request_options["extra_headers"] = dict(extra_headers)
             try:
                 return self._parse_response_from_openai(
-                    await client.chat.completions.create(stream=False, **options_dict), options
+                    await client.chat.completions.create(stream=False, **request_options), options
                 )
             except BadRequestError as ex:
                 if ex.code == "content_filter":
@@ -589,6 +729,12 @@ class RawOpenAIChatCompletionClient(
         Converts FunctionTool to JSON schema format. Web search tools are routed
         to web_search_options parameter. All other tools pass through unchanged.
 
+        Note:
+            Azure OpenAI Chat Completions API does not support ``web_search_options``.
+            When configured with an Azure endpoint, passing web search tools raises
+            :class:`ValueError`. Use :class:`~agent_framework.openai.OpenAIChatClient`
+            (Responses API) for web search support on Azure.
+
         Args:
             tools: Tool(s) to prepare.
 
@@ -603,6 +749,8 @@ class RawOpenAIChatCompletionClient(
             elif isinstance(tool, MutableMapping):
                 typed_tool = cast(MutableMapping[str, Any], tool)
                 if typed_tool.get("type") == "web_search":
+                    if self._use_azure_client:
+                        raise ValueError(_AZURE_WEB_SEARCH_UNSUPPORTED_MSG)
                     # Web search is handled via web_search_options, not tools array
                     web_search_options = {k: v for k, v in typed_tool.items() if k != "type"}
                 else:
@@ -629,6 +777,11 @@ class RawOpenAIChatCompletionClient(
         run_options = {
             k: v for k, v in options.items() if v is not None and k not in {"instructions", "tools", "conversation_id"}
         }
+
+        if run_options.get("prompt_cache_options") is not None and not _prompt_cache_options_supported:
+            raise ChatClientInvalidRequestException(
+                "prompt_cache_options requires openai>=2.45.0; upgrade the openai package to use it."
+            )
 
         # messages
         if messages and "messages" not in run_options:
@@ -677,10 +830,41 @@ class RawOpenAIChatCompletionClient(
         # response format
         if response_format := options.get("response_format"):
             if isinstance(response_format, dict):
-                run_options["response_format"] = response_format
+                run_options["response_format"] = self._normalize_response_format_dict(
+                    cast("dict[str, Any]", response_format)
+                )
             else:
                 run_options["response_format"] = type_to_response_format_param(response_format)
         return run_options
+
+    @staticmethod
+    def _normalize_response_format_dict(response_format: dict[str, Any]) -> dict[str, Any]:
+        """Wrap raw JSON schemas (e.g. ``{"type": "object", ...}``) in the json_schema envelope.
+
+        Mirrors the Responses client's ``_convert_response_format`` handling of raw
+        schemas so both clients accept the same inputs; dicts already using a valid
+        Chat Completions response_format type pass through unchanged.
+        """
+        format_type = response_format.get("type")
+        if format_type in {"json_schema", "json_object", "text"}:
+            return response_format
+        # Detect raw JSON Schema by primitive type or known schema keywords.
+        json_schema_keywords = {"properties", "anyOf", "oneOf", "allOf", "$ref", "$defs"}
+        json_schema_primitive_types = {"object", "array", "string", "number", "integer", "boolean", "null"}
+        if format_type in json_schema_primitive_types or (
+            format_type is None and any(k in response_format for k in json_schema_keywords)
+        ):
+            schema = dict(response_format)
+            if schema.get("type") == "object" and "additionalProperties" not in schema:
+                schema["additionalProperties"] = False
+            # Pop title from schema since OpenAI strict mode rejects unknown keys;
+            # use it as the schema name in the envelope instead.
+            name = str(schema.pop("title", None) or "response")
+            return {
+                "type": "json_schema",
+                "json_schema": {"name": name, "schema": schema, "strict": True},
+            }
+        return response_format
 
     def _parse_response_from_openai(self, response: ChatCompletion, options: Mapping[str, Any]) -> ChatResponse:
         """Parse a response from OpenAI into a ChatResponse."""
@@ -690,14 +874,18 @@ class RawOpenAIChatCompletionClient(
         for choice in response.choices:
             response_metadata.update(self._get_metadata_from_chat_choice(choice))
             if choice.finish_reason:
-                finish_reason = choice.finish_reason  # type: ignore[assignment]
+                finish_reason = "tool_calls" if choice.finish_reason == "function_call" else choice.finish_reason  # type: ignore[assignment]
             contents: list[Content] = []
             if text_content := self._parse_text_from_openai(choice):
                 contents.append(text_content)
+            if refusal_content := self._parse_refusal_from_openai(choice):
+                contents.append(refusal_content)
             if parsed_tool_calls := [tool for tool in self._parse_tool_calls_from_openai(choice)]:
                 contents.extend(parsed_tool_calls)
             if reasoning_details := getattr(choice.message, "reasoning_details", None):
                 contents.append(Content.from_text_reasoning(protected_data=json.dumps(reasoning_details)))
+            if self.response_parser is not None:
+                contents = list(self.response_parser(choice.message, contents))
             messages.append(Message(role="assistant", contents=contents))
         return ChatResponse(
             response_id=response.id,
@@ -729,7 +917,7 @@ class RawOpenAIChatCompletionClient(
         for choice in chunk.choices:
             chunk_metadata.update(self._get_metadata_from_chat_choice(choice))
             if choice.finish_reason:
-                finish_reason = choice.finish_reason  # type: ignore[assignment]
+                finish_reason = "tool_calls" if choice.finish_reason == "function_call" else choice.finish_reason  # type: ignore[assignment]
 
             # Some OpenAI-compatible providers (e.g. Azure) send `"delta": null`
             # on finish chunks instead of the spec-compliant `"delta": {}`.
@@ -737,11 +925,17 @@ class RawOpenAIChatCompletionClient(
             if choice.delta is None:  # pyright: ignore[reportUnnecessaryComparison]
                 continue
 
-            contents.extend(self._parse_tool_calls_from_openai(choice))
+            choice_contents: list[Content] = []
+            choice_contents.extend(self._parse_tool_calls_from_openai(choice))
             if text_content := self._parse_text_from_openai(choice):
-                contents.append(text_content)
+                choice_contents.append(text_content)
+            if refusal_content := self._parse_refusal_from_openai(choice):
+                choice_contents.append(refusal_content)
             if reasoning_details := getattr(choice.delta, "reasoning_details", None):
-                contents.append(Content.from_text_reasoning(protected_data=json.dumps(reasoning_details)))
+                choice_contents.append(Content.from_text_reasoning(protected_data=json.dumps(reasoning_details)))
+            if self.response_parser is not None:
+                choice_contents = list(self.response_parser(choice.delta, choice_contents))
+            contents.extend(choice_contents)
         return ChatResponseUpdate(
             created_at=datetime.fromtimestamp(chunk.created, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
             contents=contents,
@@ -761,18 +955,22 @@ class RawOpenAIChatCompletionClient(
             total_token_count=usage.total_tokens,
         )
         if usage.completion_tokens_details:
-            if tokens := usage.completion_tokens_details.accepted_prediction_tokens:
+            if (tokens := usage.completion_tokens_details.accepted_prediction_tokens) is not None:
                 details["completion/accepted_prediction_tokens"] = tokens
-            if tokens := usage.completion_tokens_details.audio_tokens:
+            if (tokens := usage.completion_tokens_details.audio_tokens) is not None:
                 details["completion/audio_tokens"] = tokens
             if (tokens := usage.completion_tokens_details.reasoning_tokens) is not None:
                 details["completion/reasoning_tokens"] = tokens
                 details["reasoning_output_token_count"] = tokens
-            if tokens := usage.completion_tokens_details.rejected_prediction_tokens:
+            if (tokens := usage.completion_tokens_details.rejected_prediction_tokens) is not None:
                 details["completion/rejected_prediction_tokens"] = tokens
         if usage.prompt_tokens_details:
-            if tokens := usage.prompt_tokens_details.audio_tokens:
+            if (tokens := usage.prompt_tokens_details.audio_tokens) is not None:
                 details["prompt/audio_tokens"] = tokens
+            cache_write_tokens = cast("int | None", getattr(usage.prompt_tokens_details, "cache_write_tokens", None))
+            if cache_write_tokens is not None:
+                details["prompt/cache_write_tokens"] = cache_write_tokens
+                details["cache_creation_input_token_count"] = cache_write_tokens
             if (tokens := usage.prompt_tokens_details.cached_tokens) is not None:
                 details["prompt/cached_tokens"] = tokens
                 details["cache_read_input_token_count"] = tokens
@@ -782,9 +980,20 @@ class RawOpenAIChatCompletionClient(
         """Parse the choice into a Content object with type='text'."""
         message = choice.message if isinstance(choice, Choice) else choice.delta
         if message.content:
+            if not isinstance(message.content, str):
+                return None
             return Content.from_text(text=message.content, raw_representation=choice)
+        return None
+
+    def _parse_refusal_from_openai(self, choice: Choice | ChunkChoice) -> Content | None:
+        """Parse a refusal as text carrying an experimental model-output marker."""
+        message = choice.message if isinstance(choice, Choice) else choice.delta
         if hasattr(message, "refusal") and message.refusal:
-            return Content.from_text(text=message.refusal, raw_representation=choice)
+            return Content.from_text(
+                text=message.refusal,
+                additional_properties={_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
+                raw_representation=choice,
+            )
         return None
 
     def _get_metadata_from_chat_response(self, response: ChatCompletion) -> dict[str, Any]:
@@ -819,6 +1028,17 @@ class RawOpenAIChatCompletionClient(
                         arguments=tool.function.arguments if tool.function.arguments else "",
                         raw_representation=tool.function,
                     )
+                    # Preserve the streaming tool-call index. Parallel calls interleave
+                    # argument deltas that carry an empty id and name; the index is the
+                    # only stable key a consumer can use to reassemble each call's
+                    # arguments. It is dropped otherwise (raw_representation is the
+                    # function, not the tool call).
+                    tool_index = getattr(tool, "index", None)
+                    if tool_index is not None:
+                        fcc.additional_properties["tool_call_index"] = tool_index
+                        choice_index = getattr(choice, "index", None)
+                        if choice_index is not None:
+                            fcc.additional_properties["tool_call_choice_index"] = choice_index
                     resp.append(fcc)
 
         # When you enable asynchronous content filtering in Azure OpenAI, you may receive empty deltas
@@ -855,20 +1075,49 @@ class RawOpenAIChatCompletionClient(
     # region Parsers
 
     def _prepare_message_for_openai(self, message: Message) -> list[dict[str, Any]]:
-        """Prepare a chat message for OpenAI."""
-        # System/developer messages must use plain string content because some
-        # OpenAI-compatible endpoints reject list content for non-user roles.
+        """Prepare a chat message for OpenAI, applying the ``message_preparer`` hook if set.
+
+        The hook is applied here so it runs exactly once per framework ``Message`` for every
+        role, including ``system`` / ``developer`` messages that build a different shape.
+        """
+        all_messages = self._build_openai_messages(message)
+        if self.message_preparer is not None:
+            all_messages = list(self.message_preparer(message, all_messages))
+        return all_messages
+
+    def _build_openai_messages(self, message: Message) -> list[dict[str, Any]]:
+        """Build the default OpenAI message dicts for a framework message (no hook applied)."""
+        # System/developer messages default to plain string content because some
+        # OpenAI-compatible endpoints reject list content for non-user roles. The
+        # exception is a prompt cache breakpoint on a text part: it can only live on
+        # a typed part, so opting in switches that message to list content.
         if message.role in ("system", "developer"):
-            texts = [content.text for content in message.contents if content.type == "text" and content.text]
-            if texts:
-                sys_args: dict[str, Any] = {"role": message.role, "content": "\n".join(texts)}
-                if message.author_name:
-                    sys_args["name"] = message.author_name
+            text_contents = [content for content in message.contents if content.type == "text" and content.text]
+            if text_contents:
+                # Keep list form only if a breakpoint actually landed on a built part
+                # (mirrors the flatten logic below); a non-mapping value stays a string.
+                parts = [self._prepare_content_for_openai(content) for content in text_contents]
+                content_value: str | list[dict[str, Any]]
+                if any(PROMPT_CACHE_BREAKPOINT_KEY in part for part in parts):
+                    content_value = parts
+                else:
+                    content_value = "\n".join(content.text for content in text_contents if content.text)
+                sys_args: dict[str, Any] = {"role": message.role, "content": content_value}
+                if author_name := _sanitize_author_name(message.author_name):
+                    sys_args["name"] = author_name
                 return [sys_args]
             return []
 
         all_messages: list[dict[str, Any]] = []
         pending_reasoning: Any = None
+        assistant_refusal_parts: list[str] = []
+        # The most recently emitted assistant dict when it was built from plain text or tool
+        # calls (always ``all_messages[-1]`` while set). Text and tool calls from one assistant
+        # turn belong in a single Chat Completions message: splitting them leaves a provider
+        # reasoning field (``reasoning_details`` or one added by ``message_preparer``) on only
+        # one half, which providers like DeepSeek reject on the tool-result follow-up.
+        # See https://github.com/microsoft/agent-framework/issues/8382
+        mergeable_assistant: dict[str, Any] | None = None
         for content in message.contents:
             # Skip approval content - it's internal framework state, not for the LLM
             if content.type in ("function_approval_request", "function_approval_response"):
@@ -877,19 +1126,34 @@ class RawOpenAIChatCompletionClient(
             args: dict[str, Any] = {
                 "role": message.role,
             }
-            if message.author_name and message.role != "tool":
-                args["name"] = message.author_name
+            if message.role != "tool" and (author_name := _sanitize_author_name(message.author_name)):
+                args["name"] = author_name
             if "reasoning_details" in message.additional_properties and (
                 details := message.additional_properties["reasoning_details"]
             ):
                 args["reasoning_details"] = details
+
             match content.type:
                 case "function_call":
                     if all_messages and "tool_calls" in all_messages[-1]:
                         # If the last message already has tool calls, append to it
                         all_messages[-1]["tool_calls"].append(self._prepare_content_for_openai(content))
+                    elif mergeable_assistant is not None:
+                        # Attach to the text message emitted for this same turn
+                        mergeable_assistant["tool_calls"] = [self._prepare_content_for_openai(content)]
                     else:
                         args["tool_calls"] = [self._prepare_content_for_openai(content)]
+                case "text" if (
+                    message.role == "assistant"
+                    and mergeable_assistant is not None
+                    and "content" not in mergeable_assistant
+                    and not _is_refusal_text_content(content)
+                ):
+                    # Text following the tool calls of this same turn (streaming can coalesce
+                    # tool calls first) joins that message instead of starting a new one.
+                    if prepared_text := self._prepare_content_for_openai(content):
+                        mergeable_assistant["content"] = [prepared_text]
+                    continue
                 case "function_result":
                     args["tool_call_id"] = content.call_id
                     if content.items:
@@ -905,20 +1169,33 @@ class RawOpenAIChatCompletionClient(
                     else:
                         args["content"] = content.result if content.result is not None else ""
                     all_messages.append(args)
+                    mergeable_assistant = None
                     continue
                 case "text_reasoning" if (protected_data := content.protected_data) is not None:
                     # Buffer reasoning to attach to the next message with content/tool_calls
                     pending_reasoning = json.loads(protected_data)
+                case "text_reasoning":
+                    if content.text is None:
+                        continue
+                    args["content"] = [{"type": "text", "text": content.text}]
+                case "text" if message.role == "assistant" and _is_refusal_text_content(content):
+                    assistant_refusal_parts.append(content.text or "")
+                    continue
                 case _:
-                    if "content" not in args:
-                        args["content"] = []
-                    # this is a list to allow multi-modal content
-                    args["content"].append(self._prepare_content_for_openai(content))  # type: ignore
+                    prepared_content = self._prepare_content_for_openai(content)
+                    if prepared_content:
+                        if "content" not in args:
+                            args["content"] = []
+                        # this is a list to allow multi-modal content
+                        args["content"].append(prepared_content)  # type: ignore
             if "content" in args or "tool_calls" in args:
                 if pending_reasoning is not None:
                     args["reasoning_details"] = pending_reasoning
                     pending_reasoning = None
                 all_messages.append(args)
+                mergeable_assistant = (
+                    args if message.role == "assistant" and content.type in ("text", "function_call") else None
+                )
 
         # If reasoning was the only content, emit a valid message with empty content
         if pending_reasoning is not None:
@@ -930,9 +1207,51 @@ class RawOpenAIChatCompletionClient(
                     "content": "",
                     "reasoning_details": pending_reasoning,
                 }
-                if message.author_name and message.role != "tool":
-                    pending_args["name"] = message.author_name
+                if message.role != "tool" and (author_name := _sanitize_author_name(message.author_name)):
+                    pending_args["name"] = author_name
                 all_messages.append(pending_args)
+
+        if assistant_refusal_parts:
+            merged_assistant: dict[str, Any] | None = None
+            merged_messages: list[dict[str, Any]] = []
+            for prepared_message in all_messages:
+                if prepared_message.get("role") != "assistant" or "tool_call_id" in prepared_message:
+                    merged_messages.append(prepared_message)
+                    continue
+                if merged_assistant is None:
+                    merged_assistant = prepared_message
+                    merged_messages.append(merged_assistant)
+                    continue
+                incoming_content = prepared_message.get("content")
+                existing_content = merged_assistant.get("content")
+                if isinstance(existing_content, list) and isinstance(incoming_content, list):
+                    cast("list[Any]", existing_content).extend(cast("list[Any]", incoming_content))
+                elif isinstance(existing_content, str) and isinstance(incoming_content, str):
+                    merged_assistant["content"] = existing_content + incoming_content
+                elif isinstance(existing_content, list) and isinstance(incoming_content, str):
+                    cast("list[Any]", existing_content).append({"type": "text", "text": incoming_content})
+                elif isinstance(existing_content, str) and isinstance(incoming_content, list):
+                    merged_assistant["content"] = [
+                        {"type": "text", "text": existing_content},
+                        *cast("list[Any]", incoming_content),
+                    ]
+                elif incoming_content is not None:
+                    merged_assistant["content"] = incoming_content
+                if incoming_tool_calls := prepared_message.get("tool_calls"):
+                    merged_assistant.setdefault("tool_calls", []).extend(incoming_tool_calls)
+                for key, value in prepared_message.items():
+                    if key not in {"role", "content", "tool_calls"}:
+                        merged_assistant.setdefault(key, value)
+            if merged_assistant is None:
+                merged_assistant = {
+                    "role": "assistant",
+                    "content": None,
+                }
+                if author_name := _sanitize_author_name(message.author_name):
+                    merged_assistant["name"] = author_name
+                merged_messages.append(merged_assistant)
+            merged_assistant["refusal"] = "".join(assistant_refusal_parts)
+            all_messages = merged_messages
 
         # Flatten text-only content lists to plain strings for broader
         # compatibility with OpenAI-like endpoints (e.g. Foundry Local).
@@ -948,6 +1267,10 @@ class RawOpenAIChatCompletionClient(
                     text_item = cast(Mapping[str, Any], item)
                     if text_item.get("type") != "text":
                         break
+                    if PROMPT_CACHE_BREAKPOINT_KEY in text_item:
+                        # A plain string cannot carry a prompt cache breakpoint;
+                        # keep the typed part form for this message.
+                        break
                     text_items.append(text_item)
                 else:
                     msg["content"] = "\n".join(
@@ -960,6 +1283,11 @@ class RawOpenAIChatCompletionClient(
     def _prepare_content_for_openai(self, content: Content) -> dict[str, Any]:
         """Prepare content for OpenAI."""
         match content.type:
+            case "text":
+                return _attach_prompt_cache_breakpoint(
+                    {"type": "text", "text": content.text},
+                    content,
+                )
             case "function_call":
                 args = json.dumps(content.arguments) if isinstance(content.arguments, Mapping) else content.arguments
                 return {
@@ -977,18 +1305,21 @@ class RawOpenAIChatCompletionClient(
                 detail = content.additional_properties.get("detail")
                 if isinstance(detail, str):
                     image_url_obj["detail"] = detail
-                return {
-                    "type": "image_url",
-                    "image_url": image_url_obj,
-                }
+                return _attach_prompt_cache_breakpoint(
+                    {
+                        "type": "image_url",
+                        "image_url": image_url_obj,
+                    },
+                    content,
+                )
             case "data" | "uri" if content.has_top_level_media_type("audio"):
                 if content.media_type and "wav" in content.media_type:
                     audio_format = "wav"
                 elif content.media_type and "mp3" in content.media_type:
                     audio_format = "mp3"
                 else:
-                    # Fallback to default to_dict for unsupported audio formats
-                    return content.to_dict(exclude_none=True)
+                    logger.debug("Unsupported audio media type: %s", content.media_type)
+                    return {}
 
                 # Extract base64 data from data URI
                 audio_data = content.uri
@@ -996,13 +1327,16 @@ class RawOpenAIChatCompletionClient(
                     # Extract just the base64 part after "data:audio/format;base64,"
                     audio_data = audio_data.split(",", 1)[-1]  # type: ignore[union-attr]
 
-                return {
-                    "type": "input_audio",
-                    "input_audio": {
-                        "data": audio_data,
-                        "format": audio_format,
+                return _attach_prompt_cache_breakpoint(
+                    {
+                        "type": "input_audio",
+                        "input_audio": {
+                            "data": audio_data,
+                            "format": audio_format,
+                        },
                     },
-                }
+                    content,
+                )
             case "data" | "uri" if content.has_top_level_media_type("application") and content.uri.startswith("data:"):  # type: ignore[union-attr]
                 # All application/* media types should be treated as files for OpenAI
                 filename = getattr(content, "filename", None) or (
@@ -1013,13 +1347,16 @@ class RawOpenAIChatCompletionClient(
                 file_obj = {"file_data": content.uri}
                 if filename:
                     file_obj["filename"] = filename
-                return {
-                    "type": "file",
-                    "file": file_obj,
-                }
+                return _attach_prompt_cache_breakpoint(
+                    {
+                        "type": "file",
+                        "file": file_obj,
+                    },
+                    content,
+                )
             case _:
-                # Default fallback for all other content types
-                return content.to_dict(exclude_none=True)
+                logger.debug("Unsupported content type passed (type: %s)", content.type)
+                return {}
 
     @override
     def service_url(self) -> str:
@@ -1050,12 +1387,14 @@ class OpenAIChatCompletionClient(
         self,
         model: str | None = None,
         *,
-        api_key: str | Callable[[], str | Awaitable[str]] | None = None,
+        api_key: str | SecretString | Callable[[], str | Awaitable[str]] | None = None,
         org_id: str | None = None,
         base_url: str | None = None,
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncOpenAI | None = None,
         instruction_role: str | None = None,
+        response_parser: OpenAIChatResponseContentsParser | None = None,
+        message_preparer: OpenAIChatMessagePreparer | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
@@ -1073,6 +1412,10 @@ class OpenAIChatCompletionClient(
             default_headers: Additional HTTP headers.
             async_client: Pre-configured OpenAI client.
             instruction_role: Role for instruction messages (for example ``"system"``).
+            response_parser: Optional hook to customize response parsing into ``Content`` items.
+                See ``OpenAIChatResponseContentsParser``.
+            message_preparer: Optional hook to customize outgoing request messages.
+                See ``OpenAIChatMessagePreparer``.
             base_url: Base URL override. When not provided explicitly, the constructor reads
                 ``OPENAI_BASE_URL``.
             env_file_path: Optional ``.env`` file that is checked before the process environment
@@ -1091,11 +1434,13 @@ class OpenAIChatCompletionClient(
         azure_endpoint: str | None = None,
         credential: AzureCredentialTypes | AzureTokenProvider | None = None,
         api_version: str | None = None,
-        api_key: str | Callable[[], str | Awaitable[str]] | None = None,
+        api_key: str | SecretString | Callable[[], str | Awaitable[str]] | None = None,
         base_url: str | None = None,
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncAzureOpenAI | AsyncOpenAI | None = None,
         instruction_role: str | None = None,
+        response_parser: OpenAIChatResponseContentsParser | None = None,
+        message_preparer: OpenAIChatMessagePreparer | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
@@ -1122,6 +1467,10 @@ class OpenAIChatCompletionClient(
             async_client: Pre-configured client. Passing ``AsyncAzureOpenAI`` keeps the client on
                 Azure; passing ``AsyncOpenAI`` keeps the client on OpenAI and bypasses env lookup.
             instruction_role: Role for instruction messages (for example ``"system"``).
+            response_parser: Optional hook to customize response parsing into ``Content`` items.
+                See ``OpenAIChatResponseContentsParser``.
+            message_preparer: Optional hook to customize outgoing request messages.
+                See ``OpenAIChatMessagePreparer``.
             env_file_path: Optional ``.env`` file that is checked before process environment
                 variables for ``AZURE_OPENAI_*`` values.
             env_file_encoding: Encoding for the ``.env`` file.
@@ -1134,12 +1483,14 @@ class OpenAIChatCompletionClient(
         self,
         model: str | None = None,
         *,
-        api_key: str | Callable[[], str | Awaitable[str]] | None = None,
+        api_key: str | SecretString | Callable[[], str | Awaitable[str]] | None = None,
         credential: AzureCredentialTypes | AzureTokenProvider | None = None,
         org_id: str | None = None,
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncOpenAI | None = None,
         instruction_role: str | None = None,
+        response_parser: OpenAIChatResponseContentsParser | None = None,
+        message_preparer: OpenAIChatMessagePreparer | None = None,
         base_url: str | None = None,
         azure_endpoint: str | None = None,
         api_version: str | None = None,
@@ -1168,6 +1519,12 @@ class OpenAIChatCompletionClient(
             async_client: Pre-configured client. Passing ``AsyncAzureOpenAI`` keeps the client on
                 Azure; passing ``AsyncOpenAI`` keeps the client on OpenAI and bypasses env lookup.
             instruction_role: Role to use for instruction messages (for example ``"system"``).
+            response_parser: Optional hook to customize how each response choice/delta is parsed
+                into ``Content`` items (e.g. to surface OpenRouter/vLLM reasoning or Mistral
+                chunked content). See ``OpenAIChatResponseContentsParser``.
+            message_preparer: Optional hook to customize the outgoing request messages built from
+                each framework ``Message`` (e.g. to echo vLLM ``reasoning`` back on later turns).
+                See ``OpenAIChatMessagePreparer``.
             base_url: Base URL override. For OpenAI routing this maps to ``OPENAI_BASE_URL``.
                 For Azure routing this may be used instead of ``azure_endpoint`` when you want
                 to pass the full ``.../openai/v1`` base URL directly.
@@ -1235,6 +1592,8 @@ class OpenAIChatCompletionClient(
             default_headers=default_headers,
             async_client=async_client,
             instruction_role=instruction_role,
+            response_parser=response_parser,
+            message_preparer=message_preparer,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
             middleware=middleware,

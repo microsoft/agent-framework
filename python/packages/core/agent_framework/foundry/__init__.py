@@ -6,6 +6,7 @@ This module lazily re-exports objects from:
 - ``agent-framework-anthropic``
 - ``agent-framework-azure-contentunderstanding``
 - ``agent-framework-foundry``
+- ``agent-framework-foundry-hosting``
 - ``agent-framework-foundry-local``
 """
 
@@ -22,6 +23,7 @@ _IMPORTS: dict[str, tuple[str, str]] = {
     "DocumentStatus": ("agent_framework_azure_contentunderstanding", "agent-framework-azure-contentunderstanding"),
     "FileSearchBackend": ("agent_framework_azure_contentunderstanding", "agent-framework-azure-contentunderstanding"),
     "FileSearchConfig": ("agent_framework_azure_contentunderstanding", "agent-framework-azure-contentunderstanding"),
+    "FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY": ("agent_framework_foundry", "agent-framework-foundry"),
     "FoundryAgent": ("agent_framework_foundry", "agent-framework-foundry"),
     "FoundryAgentOptions": ("agent_framework_foundry", "agent-framework-foundry"),
     "FoundryChatClient": ("agent_framework_foundry", "agent-framework-foundry"),
@@ -31,6 +33,16 @@ _IMPORTS: dict[str, tuple[str, str]] = {
     "FoundryEmbeddingSettings": ("agent_framework_foundry", "agent-framework-foundry"),
     "FoundryEvals": ("agent_framework_foundry", "agent-framework-foundry"),
     "FoundryMemoryProvider": ("agent_framework_foundry", "agent-framework-foundry"),
+    "FoundryAgentSessionStore": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),
+    "StoreProvider": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),
+    "AgentSessionStoreProvider": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),
+    "CheckpointStoreProvider": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),
+    "FoundryCheckpointStore": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),
+    "ContextScopedStoreProvider": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),
+    "FoundryFunctionApprovalStore": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),
+    "FunctionApprovalStore": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),
+    "FunctionApprovalStoreProvider": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),
+    "FoundryToolbox": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),
     "FoundryLocalChatOptions": ("agent_framework_foundry_local", "agent-framework-foundry-local"),
     "FoundryLocalClient": ("agent_framework_foundry_local", "agent-framework-foundry-local"),
     "FoundryLocalSettings": ("agent_framework_foundry_local", "agent-framework-foundry-local"),
@@ -40,6 +52,8 @@ _IMPORTS: dict[str, tuple[str, str]] = {
     "RawFoundryAgentChatClient": ("agent_framework_foundry", "agent-framework-foundry"),
     "RawFoundryChatClient": ("agent_framework_foundry", "agent-framework-foundry"),
     "RawFoundryEmbeddingClient": ("agent_framework_foundry", "agent-framework-foundry"),
+    "InvocationsHostServer": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),
+    "ResponsesHostServer": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),
     "evaluate_foundry_target": ("agent_framework_foundry", "agent-framework-foundry"),
     "evaluate_traces": ("agent_framework_foundry", "agent-framework-foundry"),
     "to_prompt_agent": ("agent_framework_foundry", "agent-framework-foundry"),

@@ -7,11 +7,11 @@ consulted: Pratyush Mishra, Shivam Shrivastava, Manni Arora (Centrica eval scena
 informed: Agent Framework team, Foundry Evals team
 ---
 
-# Agent Evaluation Architecture with Azure AI Foundry Integration
+# Agent Evaluation Architecture with Microsoft Foundry Integration
 
 ## Context and Problem Statement
 
-Azure AI Foundry provides a rich evaluation service for AI agents — built-in evaluators for agent behavior (task adherence, intent resolution), tool usage (tool call accuracy, tool selection), quality (coherence, fluency, relevance), and safety (violence, self-harm, prohibited actions). Results are viewable in the Foundry portal with dashboards and comparison views.
+Microsoft Foundry provides a rich evaluation service for AI agents — built-in evaluators for agent behavior (task adherence, intent resolution), tool usage (tool call accuracy, tool selection), quality (coherence, fluency, relevance), and safety (violence, self-harm, prohibited actions). Results are viewable in the Foundry portal with dashboards and comparison views.
 
 However, using Foundry Evals with an agent-framework agent today requires significant manual effort. Developers must:
 
@@ -445,7 +445,7 @@ These factorings produce different scores for the same conversation. The framewo
 
 ### Azure AI: FoundryEvals
 
-`Evaluator` implementation backed by Azure AI Foundry:
+`Evaluator` implementation backed by Microsoft Foundry:
 
 ```python
 class FoundryEvals:
@@ -812,4 +812,4 @@ public sealed class EvalItem
 
 ## More Information
 
-- [Foundry Evals documentation](https://learn.microsoft.com/azure/ai-foundry/concepts/evaluation-approach-gen-ai) — Azure AI Foundry evaluation overview
+- [Foundry Evals documentation](https://learn.microsoft.com/azure/ai-foundry/concepts/evaluation-approach-gen-ai) — Microsoft Foundry evaluation overview

@@ -83,23 +83,20 @@ public static class AGUIEndpointRouteBuilderExtensions
     /// </para>
     /// <para>
     /// <strong>Trust model.</strong> The AG-UI <c>RunAgentInput.ThreadId</c> arrives
-    /// from the wire and is treated as a chain-resume identifier — <em>not</em> as an
-    /// authorization token. The <see cref="AgentSessionStore"/> contract carries no
-    /// principal/owner dimension, so when a persistent store is registered any caller
-    /// who knows or guesses another caller's <c>ThreadId</c> can resume that other
-    /// caller's persisted thread. Hosts that serve more than one user must compose a
-    /// principal dimension into the lookup key. The recommended way is to wrap the
+    /// from the wire and is treated as a chain-resume identifier, not as an authorization
+    /// token. The <see cref="AgentSessionStore"/> contract accepts a <c>userId</c> partition,
+    /// which must come from a trusted identity rather than from the wire <c>ThreadId</c>.
+    /// The recommended way to supply it is to wrap the
     /// keyed <see cref="AgentSessionStore"/> in
     /// <see cref="IsolationKeyScopedAgentSessionStore"/>, typically by calling
-    /// <c>UseClaimsBasedSessionIsolation(...)</c> from
+    /// <c>UseClaimsBasedAgentIsolation(...)</c> from
     /// <c>Microsoft.Agents.AI.Hosting.AspNetCore</c> (or by registering a custom
-    /// <see cref="SessionIsolationKeyProvider"/>) and registering the store via the
+    /// <see cref="AgentIsolationKeyProvider"/>) and registering the store via the
     /// <c>WithSessionStore(...)</c> / <c>WithInMemorySessionStore(...)</c> helpers on
-    /// <see cref="IHostedAgentBuilder"/> so that the wrapper is applied. When no
-    /// isolation provider is registered, behavior is unchanged — the bare
-    /// <c>ThreadId</c> is used as the conversation identifier, which is appropriate
-    /// for first-run / single-user / prototyping scenarios but unsafe for
-    /// multi-user hosts.
+    /// <see cref="IHostedAgentBuilder"/> so that the wrapper is applied. When no isolation
+    /// provider is registered, <c>userId</c> is <see langword="null"/> and all callers share
+    /// one partition. This is appropriate for single-user applications and prototyping,
+    /// but unsafe for multi-user hosts.
     /// </para>
     /// </remarks>
     public static IEndpointConventionBuilder MapAGUIServer(
@@ -113,7 +110,7 @@ public static class AGUIEndpointRouteBuilderExtensions
         var agentSessionStore = endpoints.ServiceProvider.GetKeyedService<AgentSessionStore>(aiAgent.Name);
 
         // Ensure that we have an IsolationKeyScopedAgentSessionStore registered.
-        var isolationKeyProvider = endpoints.ServiceProvider.GetService<SessionIsolationKeyProvider>();
+        var isolationKeyProvider = endpoints.ServiceProvider.GetService<AgentIsolationKeyProvider>();
         if (agentSessionStore?.GetService<IsolationKeyScopedAgentSessionStore>() is null)
         {
             agentSessionStore ??= new NoopAgentSessionStore();
@@ -122,7 +119,7 @@ public static class AGUIEndpointRouteBuilderExtensions
 
         var hostAgent = new AIHostAgent(aiAgent, agentSessionStore);
 
-        return endpoints.MapPost(pattern, async (
+        IEndpointConventionBuilder endpoint = endpoints.MapPost(pattern, async (
             [FromBody] RunAgentInput? input,
             [FromServices] IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions> jsonOptions,
             HttpContext context,
@@ -170,6 +167,16 @@ public static class AGUIEndpointRouteBuilderExtensions
             return new AGUIServerSentEventsResult(eventsWithSessionSave, sseLogger);
 #endif
         });
+
+        MarkFeatureUsed();
+        return endpoint;
+    }
+
+    private static void MarkFeatureUsed()
+    {
+#pragma warning disable MAAI001
+        FeatureUsage.MarkUsed((int)FeatureIndex.HostingAGUI);
+#pragma warning restore MAAI001
     }
 
     private static async IAsyncEnumerable<BaseEvent> SaveSessionAfterStreamingAsync(

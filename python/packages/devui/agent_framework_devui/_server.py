@@ -837,17 +837,14 @@ class DevServer:
                     return await openai_executor.execute_sync(request)
 
                 # Route to local Agent Framework executor (original behavior)
-                raw_body = await raw_request.body()
-                logger.info(f"Raw request body: {raw_body.decode()}")
-                logger.info(f"Parsed request: metadata={request.metadata}")
-
                 # Get entity_id from metadata
                 entity_id = request.get_entity_id()
-                logger.info(f"Extracted entity_id: {entity_id}")
 
                 if not entity_id:
                     error = OpenAIError.create("Missing entity_id in metadata. Provide metadata.entity_id in request.")
                     return JSONResponse(status_code=400, content=error.to_dict())
+
+                logger.info("Extracted entity_id: %s", entity_id)
 
                 # Get executor and validate entity exists
                 executor = await self._ensure_executor()
@@ -899,7 +896,7 @@ class DevServer:
                     logger.info(f"[CANCELLATION] Cancelling task for {response_id}")
                     task.cancel()
                     # Wait briefly for cancellation to propagate
-                    try:  # noqa: SIM105
+                    try:  # ruff:ignore[suppressible-exception]
                         await asyncio.wait_for(task, timeout=0.5)
                     except (asyncio.CancelledError, asyncio.TimeoutError):
                         pass
@@ -944,7 +941,6 @@ class DevServer:
 
                     try:
                         metadata = request_data.get("metadata")
-                        logger.debug(f"Creating OpenAI conversation with metadata: {metadata}")
                         conversation = await client.conversations.create(metadata=metadata)
                         logger.info(f"Created OpenAI conversation: {conversation.id}")
                         return conversation.model_dump()
@@ -1231,19 +1227,17 @@ class DevServer:
     ) -> AsyncGenerator[str]:
         """Stream execution directly through executor."""
         try:
-            # Collect events for final response.completed event
-            events: list[Any] = []
-
             # Get conversation_id for trace storage
             conversation_getter = getattr(request, "_get_conversation_id", None)
             conversation_id = conversation_getter() if callable(conversation_getter) else None
 
             # Stream all events
             async for event in executor.execute_streaming(request):
-                events.append(event)
+                event_type_value = getattr(event, "type", None)
+                event_type = event_type_value if isinstance(event_type_value, str) else None
 
                 # Store trace events for context inspection (persisted with conversation)
-                if conversation_id and hasattr(event, "type") and event.type == "response.trace.completed":
+                if conversation_id and event_type == "response.trace.completed":
                     try:
                         trace_data = event.data if hasattr(event, "data") else None
                         if trace_data and isinstance(conversation_id, str):
@@ -1267,28 +1261,6 @@ class DevServer:
                 else:
                     payload = json.dumps(str(event))
                 yield f"data: {payload}\n\n"
-
-            # Aggregate to final response and emit response.completed event (OpenAI standard)
-            from .models import ResponseCompletedEvent
-
-            final_response = await executor.message_mapper.aggregate_to_response(events, request)
-
-            # The sequence number for response.completed should be the next number after all events
-            # The last event in the list should have the highest sequence number so far
-            # We need to increment from that
-            last_seq = 0
-            for event in reversed(events):
-                sequence_number = getattr(event, "sequence_number", None)
-                if isinstance(sequence_number, int):
-                    last_seq = sequence_number
-                    break
-
-            completed_event = ResponseCompletedEvent(
-                type="response.completed",
-                response=final_response,
-                sequence_number=last_seq + 1,
-            )
-            yield f"data: {completed_event.model_dump_json()}\n\n"
 
             # Send final done event
             yield "data: [DONE]\n\n"

@@ -5,7 +5,6 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
-using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.Observability;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
@@ -83,28 +82,26 @@ public sealed class WorkflowRunActivityStopTests : IDisposable
             .Where(a => a.RootId == testActivity.RootId &&
                         a.OperationName.StartsWith(ActivityNames.WorkflowSession, StringComparison.Ordinal))
             .ToList();
-        startedSessions.Should().HaveCount(1, "workflow.session Activity should be started");
+        Assert.Single(startedSessions ?? []);
 
         var stoppedSessions = this._stoppedActivities
             .Where(a => a.RootId == testActivity.RootId &&
                         a.OperationName.StartsWith(ActivityNames.WorkflowSession, StringComparison.Ordinal))
             .ToList();
-        stoppedSessions.Should().HaveCount(1,
-            "workflow.session Activity should be stopped/disposed so it is exported to telemetry backends");
+        Assert.Single(stoppedSessions ?? []);
 
         // Assert - workflow_invoke should have been started and stopped
         var startedWorkflowRuns = this._startedActivities
             .Where(a => a.RootId == testActivity.RootId &&
                         a.OperationName.StartsWith(ActivityNames.WorkflowInvoke, StringComparison.Ordinal))
             .ToList();
-        startedWorkflowRuns.Should().HaveCount(1, "workflow_invoke Activity should be started");
+        Assert.Single(startedWorkflowRuns ?? []);
 
         var stoppedWorkflowRuns = this._stoppedActivities
             .Where(a => a.RootId == testActivity.RootId &&
                         a.OperationName.StartsWith(ActivityNames.WorkflowInvoke, StringComparison.Ordinal))
             .ToList();
-        stoppedWorkflowRuns.Should().HaveCount(1,
-            "workflow_invoke Activity should be stopped/disposed so it is exported to telemetry backends (issue #4155)");
+        Assert.Single(stoppedWorkflowRuns ?? []);
     }
 
     /// <summary>
@@ -127,28 +124,26 @@ public sealed class WorkflowRunActivityStopTests : IDisposable
             .Where(a => a.RootId == testActivity.RootId &&
                         a.OperationName.StartsWith(ActivityNames.WorkflowSession, StringComparison.Ordinal))
             .ToList();
-        startedSessions.Should().HaveCount(1, "workflow.session Activity should be started");
+        Assert.Single(startedSessions ?? []);
 
         var stoppedSessions = this._stoppedActivities
             .Where(a => a.RootId == testActivity.RootId &&
                         a.OperationName.StartsWith(ActivityNames.WorkflowSession, StringComparison.Ordinal))
             .ToList();
-        stoppedSessions.Should().HaveCount(1,
-            "workflow.session Activity should be stopped/disposed so it is exported to telemetry backends");
+        Assert.Single(stoppedSessions ?? []);
 
         // Assert - workflow_invoke should have been started and stopped
         var startedWorkflowRuns = this._startedActivities
             .Where(a => a.RootId == testActivity.RootId &&
                         a.OperationName.StartsWith(ActivityNames.WorkflowInvoke, StringComparison.Ordinal))
             .ToList();
-        startedWorkflowRuns.Should().HaveCount(1, "workflow_invoke Activity should be started");
+        Assert.Single(startedWorkflowRuns ?? []);
 
         var stoppedWorkflowRuns = this._stoppedActivities
             .Where(a => a.RootId == testActivity.RootId &&
                         a.OperationName.StartsWith(ActivityNames.WorkflowInvoke, StringComparison.Ordinal))
             .ToList();
-        stoppedWorkflowRuns.Should().HaveCount(1,
-            "workflow_invoke Activity should be stopped/disposed so it is exported to telemetry backends (issue #4155)");
+        Assert.Single(stoppedWorkflowRuns ?? []);
     }
 
     /// <summary>
@@ -180,22 +175,21 @@ public sealed class WorkflowRunActivityStopTests : IDisposable
             .Where(a => a.RootId == testActivity.RootId &&
                         a.OperationName.StartsWith(ActivityNames.WorkflowSession, StringComparison.Ordinal))
             .ToList();
-        startedSessions.Should().HaveCount(1, "workflow.session Activity should be started");
+        Assert.Single(startedSessions ?? []);
 
         // Assert - workflow_invoke should have been started
         var startedWorkflowRuns = this._startedActivities
             .Where(a => a.RootId == testActivity.RootId &&
                         a.OperationName.StartsWith(ActivityNames.WorkflowInvoke, StringComparison.Ordinal))
             .ToList();
-        startedWorkflowRuns.Should().HaveCount(1, "workflow_invoke Activity should be started");
+        Assert.Single(startedWorkflowRuns ?? []);
 
         // Assert - workflow_invoke should have been stopped
         var stoppedWorkflowRuns = this._stoppedActivities
             .Where(a => a.RootId == testActivity.RootId &&
                         a.OperationName.StartsWith(ActivityNames.WorkflowInvoke, StringComparison.Ordinal))
             .ToList();
-        stoppedWorkflowRuns.Should().HaveCount(1,
-            "workflow_invoke Activity should be stopped/disposed so it is exported to telemetry backends (issue #4155)");
+        Assert.Single(stoppedWorkflowRuns ?? []);
     }
 
     /// <summary>
@@ -234,30 +228,26 @@ public sealed class WorkflowRunActivityStopTests : IDisposable
             .Where(a => a.RootId == testActivity.RootId &&
                         a.OperationName.StartsWith(ActivityNames.WorkflowSession, StringComparison.Ordinal))
             .ToList();
-        startedSessions.Should().HaveCount(2,
-            "each streaming invocation should start its own workflow.session Activity");
+        Assert.Equal(2, startedSessions.Count);
 
         var stoppedSessions = this._stoppedActivities
             .Where(a => a.RootId == testActivity.RootId &&
                         a.OperationName.StartsWith(ActivityNames.WorkflowSession, StringComparison.Ordinal))
             .ToList();
-        stoppedSessions.Should().HaveCount(2,
-            "each workflow.session Activity should be stopped/disposed so it is exported to telemetry backends");
+        Assert.Equal(2, stoppedSessions.Count);
 
         // Assert - two workflow_invoke activities should have been started and stopped
         var startedWorkflowRuns = this._startedActivities
             .Where(a => a.RootId == testActivity.RootId &&
                         a.OperationName.StartsWith(ActivityNames.WorkflowInvoke, StringComparison.Ordinal))
             .ToList();
-        startedWorkflowRuns.Should().HaveCount(2,
-            "each streaming invocation should start its own workflow_invoke Activity");
+        Assert.Equal(2, startedWorkflowRuns.Count);
 
         var stoppedWorkflowRuns = this._stoppedActivities
             .Where(a => a.RootId == testActivity.RootId &&
                         a.OperationName.StartsWith(ActivityNames.WorkflowInvoke, StringComparison.Ordinal))
             .ToList();
-        stoppedWorkflowRuns.Should().HaveCount(2,
-            "each workflow_invoke Activity should be stopped/disposed so it is exported to telemetry backends in multi-turn scenarios");
+        Assert.Equal(2, stoppedWorkflowRuns.Count);
     }
 
     /// <summary>
@@ -293,9 +283,7 @@ public sealed class WorkflowRunActivityStopTests : IDisposable
                 .Where(a => neverStopped.Contains(a.Id))
                 .Select(a => a.OperationName)
                 .ToList();
-            neverStoppedNames.Should().BeEmpty(
-                "all started activities should be stopped so they are exported. " +
-                $"Activities started but never stopped: [{string.Join(", ", neverStoppedNames)}]");
+            Assert.Empty(neverStoppedNames ?? []);
         }
     }
 
@@ -327,18 +315,16 @@ public sealed class WorkflowRunActivityStopTests : IDisposable
             .Where(a => a.RootId == testActivity.RootId &&
                         a.OperationName.StartsWith(ActivityNames.WorkflowSession, StringComparison.Ordinal))
             .ToList();
-        sessionActivities.Should().HaveCount(1, "one session activity should exist");
+        Assert.Single(sessionActivities);
 
-        appActivity.ParentId.Should().Be(testActivity.Id,
-            "application activity should be parented under the test root, not the workflow session");
+        Assert.Equal(testActivity.Id, appActivity.ParentId);
 
         // Assert — the run activity should still be parented under the session
         var invokeActivities = this._startedActivities
             .Where(a => a.RootId == testActivity.RootId &&
                         a.OperationName.StartsWith(ActivityNames.WorkflowInvoke, StringComparison.Ordinal))
             .ToList();
-        invokeActivities.Should().HaveCount(1, "one workflow_invoke activity should exist");
-        invokeActivities[0].ParentId.Should().Be(sessionActivities[0].Id,
-            "workflow_invoke activity should be nested under the session activity");
+        var invokeActivity = Assert.Single(invokeActivities);
+        Assert.Equal(Assert.Single(sessionActivities).Id, invokeActivity.ParentId);
     }
 }

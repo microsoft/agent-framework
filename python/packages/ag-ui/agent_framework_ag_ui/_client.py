@@ -4,10 +4,13 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import sys
 import uuid
+import warnings
+from binascii import Error as BinasciiError
 from collections.abc import AsyncIterable, Awaitable, Mapping, MutableSequence, Sequence
 from functools import wraps
 from typing import TYPE_CHECKING, Any, Generic, TypedDict, cast
@@ -23,12 +26,15 @@ from agent_framework import (
     ResponseStream,
 )
 from agent_framework._middleware import ChatMiddlewareLayer
+from agent_framework._telemetry import mark_feature_used
 from agent_framework._tools import FunctionInvocationConfiguration, FunctionInvocationLayer
 from agent_framework.observability import ChatTelemetryLayer
 
 from ._event_converters import AGUIEventConverter
+from ._feature_usage import FeatureIndex
 from ._http_service import AGUIHttpService, _serialize_available_interrupts, _serialize_resume
 from ._message_adapters import agent_framework_messages_to_agui
+from ._state import STATE_CARRIER_KEY
 from ._utils import convert_tools_to_agui_format
 
 if sys.version_info >= (3, 13):
@@ -67,6 +73,54 @@ AGUIChatOptionsT = TypeVar(
     default="AGUIChatOptions",
     covariant=True,
 )
+
+
+def _is_state_carrier_message(message: Message) -> bool:
+    """Return whether a message is a dedicated, explicitly marked state carrier."""
+    if len(message.contents) != 1:
+        return False
+    content = message.contents[0]
+    return isinstance(content, Content) and (content.additional_properties or {}).get(STATE_CARRIER_KEY) is True
+
+
+def _decode_json_state(content: Content) -> dict[str, Any] | None:
+    """Decode a base64 JSON state content, returning None for invalid input."""
+    if content.type != "data" or content.media_type != "application/json":
+        return None
+
+    try:
+        uri = content.uri
+        prefix, _, encoded_data = uri.partition(",")  # type: ignore[union-attr]
+        if not prefix.startswith("data:"):
+            return None
+
+        media_type, *parameters = prefix[5:].split(";")
+        if media_type != "application/json" or "base64" not in parameters:
+            return None
+
+        decoded_bytes = base64.b64decode(encoded_data, validate=True)
+        state = json.loads(decoded_bytes.decode("utf-8"))
+        if not isinstance(state, dict):
+            logger.warning("AG-UI state carrier JSON must decode to an object")
+            return None
+        return state
+    except (BinasciiError, UnicodeDecodeError, json.JSONDecodeError, ValueError, TypeError, AttributeError) as e:
+        logger.warning(f"Failed to extract state from message: {e}")
+        return None
+
+
+def _extract_legacy_json_state(message: Message) -> dict[str, Any] | None:
+    """Extract the historical implicit state convention from a final state-only message."""
+    if len(message.contents) != 1:
+        return None
+
+    content = message.contents[0]
+    if not isinstance(content, Content):
+        return None
+    if (content.additional_properties or {}).get(STATE_CARRIER_KEY) is True:
+        return None
+
+    return _decode_json_state(content)
 
 
 def _apply_server_function_call_unwrap(client: BaseChatClientT) -> BaseChatClientT:
@@ -225,7 +279,10 @@ class AGUIChatClient(
 
         Args:
             endpoint: The AG-UI server endpoint URL (e.g., "http://localhost:8888/")
-            http_client: Optional httpx.AsyncClient instance. If None, one will be created.
+            http_client: Optional httpx.AsyncClient instance. If None, creates a client that does not
+                persist response cookies. Supplied clients retain their cookie behavior and remain
+                caller-owned; scope cookie-based authentication to a single authenticated principal
+                rather than sharing it across users.
             timeout: Request timeout in seconds (default: 60.0)
             additional_properties: Additional properties to store
             middleware: Optional middleware to apply to the client.
@@ -243,7 +300,7 @@ class AGUIChatClient(
         )
 
     async def close(self) -> None:
-        """Close the HTTP client."""
+        """Close the internally created HTTP client, leaving supplied clients open."""
         await self._http_service.close()
 
     async def __aenter__(self) -> Self:
@@ -276,37 +333,45 @@ class AGUIChatClient(
         self._registered_server_tools = registered
         logger.debug(f"[AGUIChatClient] Registered server placeholder: {tool_name}")
 
-    def _extract_state_from_messages(self, messages: Sequence[Message]) -> tuple[list[Message], dict[str, Any] | None]:
-        """Extract state from last message if present.
+    def _extract_state_from_messages(
+        self,
+        messages: Sequence[Message],
+        *,
+        allow_legacy_state_carrier: bool = False,
+    ) -> tuple[list[Message], dict[str, Any] | None]:
+        """Extract explicitly marked state from client-controlled message history.
 
         Args:
             messages: List of chat messages
+            allow_legacy_state_carrier: Whether to recognize the deprecated implicit
+                final base64 JSON state convention.
 
         Returns:
             Tuple of (messages_without_state, state_dict)
         """
-        if not messages:
-            return list(messages), None
+        messages_to_send: list[Message] = []
+        state: dict[str, Any] | None = None
 
-        last_message = messages[-1]
+        for message in messages:
+            if _is_state_carrier_message(message):
+                content = cast(Content, message.contents[0])
+                if (extracted_state := _decode_json_state(content)) is not None:
+                    state = extracted_state
+                continue
+            messages_to_send.append(message)
 
-        for content in last_message.contents:
-            if isinstance(content, Content) and content.type == "data" and content.media_type == "application/json":
-                try:
-                    uri = content.uri
-                    if uri.startswith("data:application/json;base64,"):  # type: ignore[union-attr]
-                        import base64
+        if allow_legacy_state_carrier and messages and not _is_state_carrier_message(messages[-1]):
+            legacy_state = _extract_legacy_json_state(messages[-1])
+            if legacy_state is not None:
+                messages_to_send.pop()
+                state = legacy_state
+                warnings.warn(
+                    "Implicit AG-UI JSON state extraction is deprecated; use state_carrier() instead.",
+                    DeprecationWarning,
+                    stacklevel=3,
+                )
 
-                        encoded_data = uri.split(",", 1)[1]  # type: ignore[union-attr]
-                        decoded_bytes = base64.b64decode(encoded_data)
-                        state = json.loads(decoded_bytes.decode("utf-8"))
-
-                        messages_without_state = list(messages[:-1]) if len(messages) > 1 else []
-                        return messages_without_state, state
-                except (json.JSONDecodeError, ValueError, KeyError) as e:
-                    logger.warning(f"Failed to extract state from message: {e}")
-
-        return list(messages), None
+        return messages_to_send, state
 
     def _convert_messages_to_agui_format(self, messages: list[Message]) -> list[dict[str, Any]]:
         """Convert Agent Framework messages to AG-UI format.
@@ -396,7 +461,11 @@ class AGUIChatClient(
         Yields:
             ChatResponseUpdate objects
         """
-        messages_to_send, state = self._extract_state_from_messages(messages)
+        mark_feature_used(FeatureIndex.AG_UI)
+        messages_to_send, state = self._extract_state_from_messages(
+            messages,
+            allow_legacy_state_carrier=options.get("allow_legacy_state_carrier") is True,
+        )
 
         thread_id = self._get_thread_id(options)
         run_id = f"run_{uuid.uuid4().hex}"

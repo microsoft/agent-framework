@@ -4,6 +4,7 @@ using System;
 using System.ClientModel.Primitives;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Diagnostics.CodeAnalysis;
 using System.Net.Http;
 using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
@@ -14,6 +15,7 @@ using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Azure.Core;
 using Microsoft.Extensions.AI;
+using OpenAI.Conversations;
 using OpenAI.Responses;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative;
@@ -52,7 +54,7 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
     /// <inheritdoc/>
     public override async Task<string> CreateConversationAsync(CancellationToken cancellationToken = default)
     {
-        ProjectConversation conversation =
+        ConversationResource conversation =
             await this.GetConversationClient()
                 .CreateProjectConversationAsync(options: null, cancellationToken).ConfigureAwait(false);
 
@@ -132,12 +134,79 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
                 agent.RunStreamingAsync([.. messages], null, runOptions, cancellationToken) :
                 agent.RunStreamingAsync([], null, runOptions, cancellationToken);
 
-        await foreach (AgentResponseUpdate update in agentResponse.ConfigureAwait(false))
+        await foreach (AgentResponseUpdate update in WithFailureDetectionAsync(agentResponse, agentVersionResult.Name, cancellationToken).ConfigureAwait(false))
         {
-            update.AuthorName = agentVersionResult.Name;
             yield return update;
         }
     }
+
+    /// <summary>
+    /// Surfaces a failed Responses API run as <see cref="ErrorContent"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>Microsoft.Extensions.AI.OpenAI</c> maps the <c>response.failed</c> event onto a
+    /// contentless update, leaving a failed run indistinguishable from an empty successful one.
+    /// </para>
+    /// <para>
+    /// The failed update is replaced rather than supplemented: it carries the provider's error text
+    /// in its raw representation, and updates reach clients verbatim regardless of the host's
+    /// exception-detail policy.
+    /// </para>
+    /// </remarks>
+    internal static async IAsyncEnumerable<AgentResponseUpdate> WithFailureDetectionAsync(
+        IAsyncEnumerable<AgentResponseUpdate> updates,
+        string? authorName,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        await foreach (AgentResponseUpdate update in updates.WithCancellation(cancellationToken).ConfigureAwait(false))
+        {
+            update.AuthorName = authorName;
+
+            yield return TryCreateFailureUpdate(update, authorName, out AgentResponseUpdate? failureUpdate)
+                ? failureUpdate
+                : update;
+        }
+    }
+
+    /// <summary>
+    /// Builds an <see cref="ErrorContent"/> update when <paramref name="update"/> represents a failed run.
+    /// </summary>
+    private static bool TryCreateFailureUpdate(
+        AgentResponseUpdate update,
+        string? authorName,
+        [NotNullWhen(true)] out AgentResponseUpdate? failureUpdate)
+    {
+        failureUpdate = null;
+
+        if (update.RawRepresentation is not ChatResponseUpdate chatUpdate ||
+            chatUpdate.RawRepresentation is not StreamingResponseFailedUpdate failedUpdate)
+        {
+            return false;
+        }
+
+        ResponseError? error = failedUpdate.Response?.Error;
+
+        // A failure with no detail must still explain itself to the client.
+        ErrorContent errorContent =
+            new(string.IsNullOrWhiteSpace(error?.Message) ? DefaultFailureMessage : error!.Message)
+            {
+                ErrorCode = error?.Code.ToString() is { Length: > 0 } code ? code : DefaultFailureCode,
+            };
+
+        failureUpdate =
+            new(ChatRole.Assistant, [errorContent])
+            {
+                AuthorName = authorName,
+                ResponseId = update.ResponseId ?? failedUpdate.Response?.Id,
+                CreatedAt = update.CreatedAt,
+            };
+
+        return true;
+    }
+
+    private const string DefaultFailureMessage = "The agent run failed.";
+    private const string DefaultFailureCode = "failed";
 
     private async Task<ProjectsAgentVersion> QueryAgentAsync(string agentName, string? agentVersion, CancellationToken cancellationToken = default)
     {
@@ -212,8 +281,8 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
     /// <inheritdoc/>
     public override async Task<ChatMessage> GetMessageAsync(string conversationId, string messageId, CancellationToken cancellationToken = default)
     {
-        AgentResponseItem responseItem = await this.GetConversationClient().GetProjectConversationItemAsync(conversationId, messageId, include: null, cancellationToken).ConfigureAwait(false);
-        ResponseItem[] items = [responseItem.AsResponseResultItem()];
+        ResponseItem responseItem = await this.GetConversationClient().GetProjectConversationItemAsync(conversationId, messageId, include: null, cancellationToken).ConfigureAwait(false);
+        ResponseItem[] items = [responseItem];
         ChatMessage[] messages = [.. items.AsChatMessages()];
         if (messages.Length != 1)
         {
@@ -235,9 +304,9 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
     {
         AgentListOrder order = newestFirst ? AgentListOrder.Ascending : AgentListOrder.Descending;
 
-        await foreach (AgentResponseItem responseItem in this.GetConversationClient().GetProjectConversationItemsAsync(conversationId, null, limit, order.ToString(), after, before, include: null, cancellationToken).ConfigureAwait(false))
+        await foreach (ResponseItem responseItem in this.GetConversationClient().GetProjectConversationItemsAsync(conversationId, null, limit, order.ToString(), after, before, include: null, cancellationToken).ConfigureAwait(false))
         {
-            ResponseItem[] items = [responseItem.AsResponseResultItem()];
+            ResponseItem[] items = [responseItem];
             foreach (ChatMessage message in items.AsChatMessages())
             {
                 yield return message;

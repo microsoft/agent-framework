@@ -3,9 +3,11 @@
 using System.ComponentModel;
 using Azure;
 using Azure.AI.Projects;
+using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Azure.Search.Documents;
 using Azure.Search.Documents.Models;
+using Foundry.Hosting.IntegrationTests.TestContainer;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Foundry;
 using Microsoft.Agents.AI.Foundry.Hosting;
@@ -34,6 +36,7 @@ AIAgent agent = scenario switch
     "happy-path" => CreateHappyPathAgent(projectClient, deployment),
     "unsupported-protocol" => CreateHappyPathAgent(projectClient, deployment),
     "store-config" => CreateStoreConfigAgent(projectClient, deployment),
+    "downstream-store" => CreateDownstreamStoreAgent(projectClient, deployment),
     "tool-calling" => CreateToolCallingAgent(projectClient, deployment),
     "tool-calling-approval" => CreateToolCallingApprovalAgent(projectClient, deployment),
     "mcp-toolbox" => CreateMcpToolboxAgent(projectClient, deployment),
@@ -41,10 +44,26 @@ AIAgent agent = scenario switch
     "custom-storage" => CreateCustomStorageAgent(projectClient, deployment),
     "memory" => await CreateMemoryAgentAsync(projectClient, deployment).ConfigureAwait(false),
     "azure-search-rag" => CreateAzureSearchRagAgent(projectClient, deployment),
+    "azure-search-tool-annotations" => CreateAzureSearchToolAnnotationsAgent(projectClient, deployment),
+    "web-search-annotations" => CreateWebSearchAnnotationsAgent(projectClient, deployment),
     "session-files" => CreateSessionFilesAgent(projectClient, deployment),
     "agent-skills" => CreateAgentSkillsAgent(projectClient, deployment),
+    "user-identity" => CreateUserIdentityAgent(projectClient, deployment),
+    "resilient-workflow" => ResilientWorkflowAgent.Create(),
+    "steerable-long-running" => new SteerableLongRunningAgent(),
     _ => throw new InvalidOperationException($"Unknown IT_SCENARIO '{scenario}'.")
 };
+
+if (scenario == "happy-path")
+{
+    var agentHostBuilder = AgentHost.CreateBuilder(args);
+    agentHostBuilder.Services.AddFoundryResponses(agent);
+    agentHostBuilder.RegisterProtocol("responses", endpoints => endpoints.MapFoundryResponses());
+
+    var agentHostApp = agentHostBuilder.Build();
+    agentHostApp.Run();
+    return;
+}
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -54,16 +73,19 @@ if (!string.IsNullOrEmpty(port))
     builder.WebHost.UseUrls($"http://+:{port}");
 }
 
-builder.Services.AddFoundryResponses(agent);
-
-// toolbox-oauth-consent scenario: pre-register a Foundry toolbox whose tool source is fronted by a
-// per-user OAuth connection. IT_TOOLBOX_NAME names that toolbox (the fixture sets it). With the
-// startup-deferral fix the container stays routable even though the toolbox cannot enumerate without
-// a consented user, and the first user request surfaces an oauth_consent_request.
-var consentToolboxName = Environment.GetEnvironmentVariable("IT_TOOLBOX_NAME");
-if (!string.IsNullOrEmpty(consentToolboxName))
+builder.Services.AddFoundryResponses(agent, configure: options =>
 {
-    builder.Services.AddFoundryToolboxes(credential, consentToolboxName);
+    options.ResilientBackground =
+        scenario is "resilient-workflow" or "steerable-long-running";
+    options.SteerableConversations = scenario == "steerable-long-running";
+});
+
+// Scenarios that consume a project toolbox set IT_TOOLBOX_NAME through their fixture.
+// The hosting bridge resolves the toolbox through its MCP endpoint and adds its tools to every request.
+var toolboxName = Environment.GetEnvironmentVariable("IT_TOOLBOX_NAME");
+if (!string.IsNullOrEmpty(toolboxName))
+{
+    builder.Services.AddFoundryToolboxes(credential, toolboxName);
 }
 
 var app = builder.Build();
@@ -88,6 +110,19 @@ static AIAgent CreateStoreConfigAgent(AIProjectClient client, string deployment)
                       "and use any facts the user told you earlier in the conversation.",
         name: "store-config-agent",
         description: "Store and session semantics test agent.");
+
+// downstream-store scenario: an ordinary Foundry ChatClientAgent, like the first hosted agent sample,
+// wrapped so the caller is told which conversation the agent's own run left behind on the service. The
+// platform already records the hosted turn in the caller's conversation; anything the agent's run also
+// leaves behind is a second copy of the same turn, on a trail nobody reads.
+static AIAgent CreateDownstreamStoreAgent(AIProjectClient client, string deployment) =>
+    new DownstreamConversationReportingAgent(
+        client.AsAIAgent(
+            model: deployment,
+            instructions: "You are a helpful assistant. Answer the user's question concisely and accurately, " +
+                          "and use any facts the user told you earlier in the conversation.",
+            name: "downstream-store-agent",
+            description: "Downstream store test agent."));
 
 static AIAgent CreateToolCallingAgent(AIProjectClient client, string deployment) =>
     client.AsAIAgent(
@@ -173,6 +208,59 @@ static AIAgent CreateAzureSearchRagAgent(AIProjectClient client, string deployme
     });
 }
 
+static AIAgent CreateWebSearchAnnotationsAgent(AIProjectClient client, string deployment) =>
+    client.AsAIAgent(new ChatClientAgentOptions
+    {
+        Name = "web-search-annotations-agent",
+        Description = "Hosted web search annotation test agent.",
+        ChatOptions = new ChatOptions
+        {
+            ModelId = deployment,
+            Instructions = """
+                Answer with current information from the web search results.
+                Include citations for the sources used in the answer.
+                """,
+            Tools = [new HostedWebSearchTool()],
+            ToolMode = ChatToolMode.RequireAny,
+        },
+    });
+
+static AIAgent CreateAzureSearchToolAnnotationsAgent(AIProjectClient client, string deployment)
+{
+    var connectionId = Environment.GetEnvironmentVariable("AZURE_SEARCH_CONNECTION_ID")
+        ?? throw new InvalidOperationException(
+            "AZURE_SEARCH_CONNECTION_ID is not set for IT_SCENARIO=azure-search-tool-annotations.");
+    var indexName = Environment.GetEnvironmentVariable("AZURE_SEARCH_INDEX_NAME")
+        ?? throw new InvalidOperationException(
+            "AZURE_SEARCH_INDEX_NAME is not set for IT_SCENARIO=azure-search-tool-annotations.");
+    var searchTool = FoundryAITool.CreateAzureAISearchTool(new AzureAISearchToolOptions(
+    [
+        new AzureAISearchToolIndex
+        {
+            ProjectConnectionId = connectionId,
+            IndexName = indexName,
+            QueryType = AzureAISearchQueryType.Simple,
+            TopK = 3,
+        }
+    ]));
+
+    return client.AsAIAgent(new ChatClientAgentOptions
+    {
+        Name = "azure-search-tool-annotations-agent",
+        Description = "Azure AI Search hosted tool annotation test agent.",
+        ChatOptions = new ChatOptions
+        {
+            ModelId = deployment,
+            Instructions = """
+                Answer only from the Azure AI Search results.
+                Include citations for the sources used in the answer.
+                """,
+            Tools = [searchTool],
+            ToolMode = ChatToolMode.RequireAny,
+        },
+    });
+}
+
 static Func<string, CancellationToken, Task<IEnumerable<TextSearchProvider.TextSearchResult>>>
     CreateAzureSearchAdapter(SearchClient client, int top = 3) =>
     async (query, cancellationToken) =>
@@ -195,6 +283,12 @@ static Func<string, CancellationToken, Task<IEnumerable<TextSearchProvider.TextS
 
         return results;
     };
+// user-identity scenario: returns USER-ID:<platform-user-key> without calling a model so the
+// assertion works even when the subscription has no OpenAI chat deployment. The hosting layer
+// writes HostedSessionContext from x-agent-user-id before RunCoreAsync.
+static AIAgent CreateUserIdentityAgent(AIProjectClient _, string __) =>
+    new UserIdentityEchoAgent();
+
 // session-files scenario: agent reads files from $HOME inside the per-session sandbox volume.
 // Mirrors the dotnet/samples/04-hosting/FoundryHostedAgents/responses/Hosted-Files sample.
 static AIAgent CreateSessionFilesAgent(AIProjectClient client, string deployment) =>

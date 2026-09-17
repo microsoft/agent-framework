@@ -19,17 +19,20 @@ public sealed class AgentFileSkillScript : AgentSkillScript
     private static readonly JsonElement s_defaultSchema = CreateDefaultSchema();
 
     private readonly AgentFileSkillScriptRunner? _runner;
+    private readonly AgentFileSkillPathScope _scope;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentFileSkillScript"/> class.
     /// </summary>
     /// <param name="name">The script name.</param>
     /// <param name="fullPath">The absolute file path to the script.</param>
+    /// <param name="scope">The trusted path scope the script was discovered in.</param>
     /// <param name="runner">Optional external runner for running the script. An <see cref="InvalidOperationException"/> is thrown from <see cref="RunAsync"/> if no runner is provided.</param>
-    internal AgentFileSkillScript(string name, string fullPath, AgentFileSkillScriptRunner? runner = null)
+    internal AgentFileSkillScript(string name, string fullPath, AgentFileSkillPathScope scope, AgentFileSkillScriptRunner? runner = null)
         : base(name)
     {
         this.FullPath = Throw.IfNullOrWhitespace(fullPath);
+        this._scope = Throw.IfNull(scope);
         this._runner = runner;
     }
 
@@ -59,6 +62,8 @@ public sealed class AgentFileSkillScript : AgentSkillScript
                 $"Script '{this.Name}' cannot be executed because no {nameof(AgentFileSkillScriptRunner)} was provided. " +
                 $"Supply a script runner when constructing {nameof(AgentFileSkillsSource)} to enable script execution.");
         }
+
+        AgentFileSkillPathValidator.ValidateForUse(this.FullPath, this._scope, "Script", this.Name);
 
         return await this._runner(fileSkill, this, arguments, serviceProvider, cancellationToken).ConfigureAwait(false);
     }

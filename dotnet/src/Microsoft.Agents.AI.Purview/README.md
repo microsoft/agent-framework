@@ -28,14 +28,15 @@ Add Purview when you need to:
 ## Quick Start
 
 ``` csharp
-using Azure.AI.OpenAI;
+using System.ClientModel.Primitives;
 using Azure.Core;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Purview;
 using Microsoft.Extensions.AI;
+using OpenAI;
 
-Uri endpoint = new Uri("..."); // The endpoint of Azure OpenAI instance.
+Uri endpoint = new Uri("https://your-resource.openai.azure.com/openai/v1/");
 string deploymentName = "..."; // The deployment name of your Azure OpenAI instance ex: gpt-4o-mini
 string purviewClientAppId = "..."; // The client id of your entra app registration. 
 
@@ -47,11 +48,11 @@ TokenCredential browserCredential = new InteractiveBrowserCredential(
         ClientId = purviewClientAppId
     });
 
-IChatClient client = new AzureOpenAIClient(
-    new Uri(endpoint),
-    new AzureCliCredential())
-    .GetResponsesClient(deploymentName)
-    .AsIChatClient()
+IChatClient client = new OpenAIClient(
+    new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+    new OpenAIClientOptions { Endpoint = endpoint })
+    .GetResponsesClient()
+    .AsIChatClient(deploymentName)
     .AsBuilder()
     .WithPurview(browserCredential, new PurviewSettings("My Sample App"))
     .Build();
@@ -81,6 +82,17 @@ The plugin requires the following Graph permissions:
 - ProtectionScopes.Compute.All : [userProtectionScopeContainer](https://learn.microsoft.com/en-us/graph/api/userprotectionscopecontainer-compute)
 - Content.Process.All : [processContent](https://learn.microsoft.com/en-us/graph/api/userdatasecurityandgovernance-processcontent)
 - ContentActivity.Write : [contentActivity](https://learn.microsoft.com/en-us/graph/api/activitiescontainer-post-contentactivities)
+
+The Entra app must be configured as a public client application with a localhost redirect URI so
+`InteractiveBrowserCredential` can complete the delegated user sign-in. These permissions require tenant
+administrator consent.
+
+The client ID alone is not enough for a live Purview policy test. The tenant must also:
+
+1. Have Microsoft Purview entitlement and consumptive billing enabled.
+2. Register the Entra app as an integrated AI app in **Purview > Settings > AI app and agent locations**.
+3. Configure a DLP or data collection policy that applies to the signed-in user and the app.
+4. Turn the policy on. A policy in test mode does not produce an enforced block.
 
 Authentication with user tokens is preferred. When the configured credential resolves to a user token, that token's user id is used for Purview policy evaluation. If authenticating with app tokens, the token does not contain an end-user principal, so the agent-framework caller will need to provide an entra user id for each `ChatMessage` sent to the agent/client. This user id can be set using the `SetUserId` extension method, or by setting the `"userId"` field of the `AdditionalProperties` dictionary.
 
@@ -182,9 +194,9 @@ var settings = new PurviewSettings("My Sample App")
 Use the agent middleware when you already have / want the full agent pipeline:
 
 ``` csharp
-AIAgent agent = new AzureOpenAIClient(
-    new Uri(endpoint),
-    new AzureCliCredential())
+AIAgent agent = new OpenAIClient(
+    new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+    new OpenAIClientOptions { Endpoint = endpoint })
     .GetChatClient(deploymentName)
     .AsAIAgent("You are a helpful assistant.")
     .AsBuilder()
@@ -195,11 +207,11 @@ AIAgent agent = new AzureOpenAIClient(
 Use the chat middleware when you attach directly to a chat client (e.g. minimal agent shell or custom orchestration):
 
 ``` csharp
-IChatClient client = new AzureOpenAIClient(
-    new Uri(endpoint),
-    new AzureCliCredential())
-    .GetResponsesClient(deploymentName)
-    .AsIChatClient()
+IChatClient client = new OpenAIClient(
+    new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+    new OpenAIClientOptions { Endpoint = endpoint })
+    .GetResponsesClient()
+    .AsIChatClient(deploymentName)
     .AsBuilder()
     .WithPurview(browserCredential, new PurviewSettings("Agent Framework Test App"))
     .Build();
@@ -261,3 +273,39 @@ catch (PurviewException e)
     this._logger.LogError(e, "Purview middleware threw an exception.")
 }
 ```
+
+## Security Considerations
+
+### Identity is a trusted input
+
+Purview evaluates DLP policy **for a specific user**. The identity this integration resolves therefore
+decides *which* policy is applied, and it is resolved in this order:
+
+1. The user id from the configured `TokenCredential`'s token, when the credential resolves to a user.
+2. The `userId` argument passed to the processor.
+3. `ChatMessage.AdditionalProperties["userId"]`.
+4. `ChatMessage.AuthorName`, when it is a GUID.
+
+Only source 1 is verified. Sources 2-4 are supplied by the hosting application, so **a host must not
+populate them from data that has crossed a trust boundary**. If an end user, an upstream service or a
+model response can influence `AdditionalProperties["userId"]` or `AuthorName`, that party can select a
+different user's DLP policy - typically one with weaker rules - and evade enforcement. Where identity
+must come from a request, derive it from a validated token on the server, never from the request body.
+Prefer a user-delegated credential (source 1) whenever possible.
+
+`PurviewAppLocation` in `PurviewSettings` is trusted in the same way: it selects which policy locations
+apply and must be configured by the host, not by the caller.
+
+### Fail-closed behaviour
+
+Policy evaluation fails closed. If no user id can be resolved, or the tenant or app location cannot be
+determined, `PurviewRequestException` is thrown rather than letting content through unevaluated. Use
+`IgnoreExceptions` if you deliberately want availability over enforcement - but understand that it
+disables enforcement for every error, not just transient ones.
+
+### What is evaluated
+
+Every content item on a message is submitted for evaluation, not just its text: `DataContent` is sent
+as Purview binary content, and `FunctionCallContent`, `FunctionResultContent` and other structured
+content are serialized to text. Only `UsageContent` is skipped, because it carries token counts rather
+than user data.

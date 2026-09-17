@@ -10,7 +10,8 @@ using Microsoft.Shared.DiagnosticIds;
 namespace Microsoft.Agents.AI.Hosting.A2A;
 
 /// <summary>
-/// Specifies how the A2A hosting layer determines whether to run <see cref="AIAgent"/> in background or not.
+/// Specifies which A2A protocol artifact the hosting layer returns for a run of an <see cref="AIAgent"/>:
+/// an <c>AgentMessage</c> or an <c>AgentTask</c>.
 /// </summary>
 [Experimental(DiagnosticIds.Experiments.AIResponseContinuations)]
 public sealed class AgentRunMode : IEquatable<AgentRunMode>
@@ -20,48 +21,46 @@ public sealed class AgentRunMode : IEquatable<AgentRunMode>
     private const string DynamicValue = "dynamic";
 
     private readonly string _value;
-    private readonly Func<A2ARunDecisionContext, CancellationToken, ValueTask<bool>>? _runInBackground;
+    private readonly Func<A2ARunDecisionContext, CancellationToken, ValueTask<bool>>? _returnTask;
 
-    private AgentRunMode(string value, Func<A2ARunDecisionContext, CancellationToken, ValueTask<bool>>? runInBackground = null)
+    private AgentRunMode(string value, Func<A2ARunDecisionContext, CancellationToken, ValueTask<bool>>? returnTask = null)
     {
         this._value = value;
-        this._runInBackground = runInBackground;
+        this._returnTask = returnTask;
     }
 
     /// <summary>
-    /// Disallows the background responses from the agent. Is equivalent to configuring <see cref="AgentRunOptions.AllowBackgroundResponses"/> as <c>false</c>.
-    /// In the A2A protocol terminology will make responses be returned as <c>AgentMessage</c>.
+    /// Returns the agent response as an <c>AgentMessage</c>. The updates produced by the agent are aggregated
+    /// into a single message.
     /// </summary>
-    public static AgentRunMode DisallowBackground => new(MessageValue);
+    public static AgentRunMode ReturnMessage => new(MessageValue);
 
     /// <summary>
-    /// Allows the background responses from the agent. Is equivalent to configuring <see cref="AgentRunOptions.AllowBackgroundResponses"/> as <c>true</c>.
-    /// In the A2A protocol terminology will make responses be returned as <c>AgentTask</c> if the agent supports background responses, and as <c>AgentMessage</c> otherwise.
+    /// Returns the agent response as an <c>AgentTask</c>, allowing the caller to track its lifecycle and to
+    /// receive the result incrementally.
     /// </summary>
-    public static AgentRunMode AllowBackgroundIfSupported => new(TaskValue);
+    public static AgentRunMode ReturnTask => new(TaskValue);
 
     /// <summary>
-    /// The agent run mode is decided by the supplied <paramref name="runInBackground"/> delegate.
-    /// The delegate receives an <see cref="A2ARunDecisionContext"/> with the incoming
-    /// message and returns a boolean specifying whether to run the agent in background mode.
-    /// <see langword="true"/> indicates that the agent should run in background mode and return an
-    /// <c>AgentTask</c> if the agent supports background mode; otherwise, it returns an <c>AgentMessage</c>
-    /// if the mode is not supported. <see langword="false"/> indicates that the agent should run in
-    /// non-background mode and return an <c>AgentMessage</c>.
+    /// Defers the choice between an <c>AgentMessage</c> and an <c>AgentTask</c> to the supplied
+    /// <paramref name="returnTask"/> delegate, which is invoked for each new-message request. The delegate receives
+    /// an <see cref="A2ARunDecisionContext"/> describing the incoming request and returns <see langword="true"/> to
+    /// return an <c>AgentTask</c>, or <see langword="false"/> to return an <c>AgentMessage</c>. Continuations of an
+    /// existing task remain task responses and do not invoke the delegate.
     /// </summary>
-    /// <param name="runInBackground">
-    /// An async delegate that decides whether the response should be wrapped in an <c>AgentTask</c>.
+    /// <param name="returnTask">
+    /// An async delegate that decides whether a new-message response is returned as an <c>AgentTask</c>.
     /// </param>
-    public static AgentRunMode AllowBackgroundWhen(Func<A2ARunDecisionContext, CancellationToken, ValueTask<bool>> runInBackground)
+    public static AgentRunMode ReturnTaskWhen(Func<A2ARunDecisionContext, CancellationToken, ValueTask<bool>> returnTask)
     {
-        ArgumentNullException.ThrowIfNull(runInBackground);
-        return new(DynamicValue, runInBackground);
+        ArgumentNullException.ThrowIfNull(returnTask);
+        return new(DynamicValue, returnTask);
     }
 
     /// <summary>
     /// Determines whether the agent response should be returned as an <c>AgentTask</c>.
     /// </summary>
-    internal ValueTask<bool> ShouldRunInBackgroundAsync(A2ARunDecisionContext context, CancellationToken cancellationToken)
+    internal ValueTask<bool> ShouldReturnTaskAsync(A2ARunDecisionContext context, CancellationToken cancellationToken)
     {
         if (string.Equals(this._value, MessageValue, StringComparison.OrdinalIgnoreCase))
         {
@@ -74,9 +73,9 @@ public sealed class AgentRunMode : IEquatable<AgentRunMode>
         }
 
         // Dynamic: delegate to custom callback.
-        if (this._runInBackground is not null)
+        if (this._returnTask is not null)
         {
-            return this._runInBackground(context, cancellationToken);
+            return this._returnTask(context, cancellationToken);
         }
 
         // No delegate provided — fall back to "message" behavior.
@@ -87,7 +86,7 @@ public sealed class AgentRunMode : IEquatable<AgentRunMode>
     public bool Equals(AgentRunMode? other) =>
         other is not null
         && string.Equals(this._value, other._value, StringComparison.OrdinalIgnoreCase)
-        && ReferenceEquals(this._runInBackground, other._runInBackground);
+        && ReferenceEquals(this._returnTask, other._returnTask);
 
     /// <inheritdoc/>
     public override bool Equals(object? obj) => this.Equals(obj as AgentRunMode);
@@ -95,7 +94,7 @@ public sealed class AgentRunMode : IEquatable<AgentRunMode>
     /// <inheritdoc/>
     public override int GetHashCode() => HashCode.Combine(
         StringComparer.OrdinalIgnoreCase.GetHashCode(this._value),
-        RuntimeHelpers.GetHashCode(this._runInBackground));
+        RuntimeHelpers.GetHashCode(this._returnTask));
 
     /// <inheritdoc/>
     public override string ToString() => this._value;

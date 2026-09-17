@@ -24,7 +24,7 @@ async def main() -> None:
     Creates a task for the chat request, waits briefly, then cancels it to show proper cleanup.
 
     Configuration:
-    - FOUNDRY_PROJECT_ENDPOINT: Azure AI Foundry project endpoint URL
+    - FOUNDRY_PROJECT_ENDPOINT: Microsoft Foundry project endpoint URL
     - FOUNDRY_MODEL: Model deployment name (e.g. gpt-4o)
     - Authentication: Run `az login` to authenticate via AzureCliCredential
     """

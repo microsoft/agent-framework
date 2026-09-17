@@ -10,7 +10,7 @@ from typing import Annotated, Any, Literal
 
 from agent_framework import Agent, FunctionInvocationContext, function_middleware, tool
 from agent_framework.foundry import FoundryChatClient
-from agent_framework_monty import MontyCodeActProvider
+from agent_framework.monty import MontyCodeActProvider
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -26,12 +26,13 @@ generic `call_tool(...)` fallback.
 a Rust-based Python interpreter, so it runs cross-platform with no
 hypervisor/WASM backend dependency.
 
-Note: `agent-framework-monty` is an alpha package and is not yet part of
-`agent-framework[all]`. Install it explicitly with:
+`agent-framework-monty` is a beta package included in `agent-framework[all]`.
+Install the main package with:
 
-    pip install agent-framework agent-framework-monty --pre
+    pip install agent-framework-monty agent-framework-foundry --pre
 
-It is imported as `agent_framework_monty` (no lazy-loading namespace yet).
+It can be imported directly as `agent_framework_monty` or through the
+`agent_framework.monty` lazy-loading namespace.
 """
 
 load_dotenv()

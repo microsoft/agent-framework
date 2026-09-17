@@ -23,7 +23,7 @@ written file is easy to spot.
 
 | Variable | Description |
 |---|---|
-| `FOUNDRY_PROJECT_ENDPOINT` | Your Azure AI Foundry project endpoint. |
+| `FOUNDRY_PROJECT_ENDPOINT` | Your Microsoft Foundry project endpoint. |
 | `FOUNDRY_MODEL` | Chat model deployment name (e.g. `gpt-4o`). |
 
 Run `az login` before executing the sample so `AzureCliCredential` can

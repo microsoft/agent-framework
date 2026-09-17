@@ -52,6 +52,16 @@ Check every item that applies. For the breaking-change item:
   the checklist already cover validation status.
 - Do **not** remove or reorder the template's headings.
 
+### Stable specifications
+
+For Python function-calling loop changes, read
+[`docs/specs/004-python-function-calling-loop.md`](../../../docs/specs/004-python-function-calling-loop.md)
+and validate the PR against it. Do not edit that specification by default. It
+is a stable cross-package contract, not a per-PR changelog. A specification
+change is warranted only when the PR intentionally changes normative behavior,
+the scenario inventory, an acknowledged coverage gap, or the authoritative
+scenario-to-test mapping; keep any such edit to the smallest affected sections.
+
 ### Creating the PR
 Open new PRs as **drafts** until they are ready for review. Example:
 
@@ -74,9 +84,12 @@ code before the user has reviewed the plan**:
    approval or adjustments before implementing anything.
 4. **Implement.** Make the agreed changes.
 5. **Reply to every comment.** Add a reply to **all** comments explaining how it
-   was addressed (or the agreed outcome) — leave none unanswered.
-6. **Resolve resolved threads.** Mark a review thread as resolved only when the
-   comment has actually been addressed.
+   was addressed, preferably citing the commit containing the change. If the
+   feedback was not addressed, explain why. Leave no comment unanswered.
+6. **Resolve completed threads yourself.** After replying and completing any
+   necessary discussion, resolve the review thread. Do not wait for the reviewer
+   or a maintainer to resolve it. Leave a thread open only while it has an
+   unanswered question or active discussion.
 
 ### Useful commands
 

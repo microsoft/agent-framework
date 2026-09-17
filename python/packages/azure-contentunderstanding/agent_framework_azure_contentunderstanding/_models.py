@@ -107,7 +107,7 @@ class FileSearchConfig:
         vector_store_id: str,
         file_search_tool: Any,
     ) -> FileSearchConfig:
-        """Create a config for Azure AI Foundry (``FoundryChatClient``).
+        """Create a config for Microsoft Foundry (``FoundryChatClient``).
 
         Args:
             client: The OpenAI-compatible client from ``FoundryChatClient.client``.

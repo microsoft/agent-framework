@@ -37,7 +37,7 @@ Purpose:
 - Illustrate how to transform one agent's structured result into a new AgentExecutorRequest for a downstream agent.
 
 Prerequisites:
-- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_PROJECT_ENDPOINT must be your Microsoft Foundry Agent Service (V2) project endpoint.
 - You understand the basics of WorkflowBuilder, executors, and events in this framework.
 - You know the concept of edge conditions and how they gate routes using a predicate function.
 - Azure OpenAI access is configured for FoundryChatClient. You should be logged in with Azure CLI (AzureCliCredential)

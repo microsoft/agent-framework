@@ -16,12 +16,14 @@ from agent_framework import (
     Message,
     SupportsChatGetResponse,
     TodoFileStore,
-    TodoInput,
     TodoItem,
     TodoProvider,
     TodoSessionStore,
     TodoStore,
 )
+from agent_framework._harness._todo import TodoInput
+
+from .test_filesystem import COLLIDING_IDENTIFIERS
 
 
 def _tool_by_name(tools: list[object], name: str) -> object:
@@ -366,12 +368,61 @@ async def test_todo_provider_serializes_concurrent_mutations(
     assert {item["id"] for item in payload if item["is_complete"]} == {1, 2, 3, 4, 5}
 
 
-def test_todo_harness_classes_are_marked_experimental() -> None:
-    """Todo harness public classes should expose HARNESS experimental metadata."""
-    assert TodoStore.__feature_id__ == ExperimentalFeature.HARNESS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
-    assert TodoItem.__feature_id__ == ExperimentalFeature.HARNESS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
-    assert TodoInput.__feature_id__ == ExperimentalFeature.HARNESS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
-    assert TodoSessionStore.__feature_id__ == ExperimentalFeature.HARNESS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+def test_todo_harness_graduated_classes_are_not_experimental() -> None:
+    """Graduated todo harness types should carry no experimental metadata; TodoFileStore stays experimental."""
+    for graduated in (TodoStore, TodoItem, TodoInput, TodoSessionStore, TodoProvider):
+        assert not hasattr(graduated, "__feature_id__")
+    assert TodoProvider.__doc__ is not None
+    assert ".. warning:: Experimental" not in TodoProvider.__doc__
+
+    # TodoFileStore remains opt-in and experimental.
     assert TodoFileStore.__feature_id__ == ExperimentalFeature.HARNESS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
-    assert TodoProvider.__feature_id__ == ExperimentalFeature.HARNESS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
-    assert ".. warning:: Experimental" in TodoProvider.__doc__  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
+    assert TodoFileStore.__doc__ is not None
+    assert ".. warning:: Experimental" in TodoFileStore.__doc__
+
+
+def test_todo_file_store_derives_distinct_directories_for_colliding_owner_ids(tmp_path: Path) -> None:
+    """Owner IDs that a path normalizer would fold together stay separate.
+
+    ``TodoFileStore`` shares the storage-key derivation with the session store,
+    the memory store, and the file-memory provider, so it is held to the same
+    injectivity contract.
+    """
+    store = TodoFileStore(tmp_path, owner_state_key="owner_id")
+    paths: dict[str, Path] = {}
+    for owner_id in COLLIDING_IDENTIFIERS:
+        session = AgentSession(session_id="session-1")
+        session.state["owner_id"] = owner_id
+        paths[owner_id] = store._get_state_path(session, source_id="todo")  # pyright: ignore[reportPrivateUsage]
+
+    assert len(set(paths.values())) == len(COLLIDING_IDENTIFIERS), paths
+    assert len({str(path).lower() for path in paths.values()}) == len(COLLIDING_IDENTIFIERS), paths
+    for path in paths.values():
+        assert path.is_relative_to(tmp_path.resolve())
+
+
+def test_todo_file_store_encodes_non_ascii_owner_ids(tmp_path: Path) -> None:
+    """Non-ASCII IDs are encoded, not used verbatim.
+
+    A literal non-ASCII directory name is folded onto a single entry by macOS
+    APFS/HFS+, so the NFC and NFD spellings of one word would otherwise share a
+    directory despite being byte-distinct.
+    """
+    store = TodoFileStore(tmp_path, owner_state_key="owner_id")
+    paths: list[Path] = []
+    for owner_id in ("caf\u00e9", "cafe\u0301"):
+        session = AgentSession(session_id="session-1")
+        session.state["owner_id"] = owner_id
+        path = store._get_state_path(session, source_id="todo")  # pyright: ignore[reportPrivateUsage]
+        assert path.parent.parent.name.isascii()
+        paths.append(path)
+
+    assert paths[0] != paths[1]
+
+
+def test_todo_file_store_encodes_windows_reserved_stems_with_an_extension(tmp_path: Path) -> None:
+    """``CON.txt`` still resolves to the reserved console device on Windows."""
+    session = AgentSession(session_id="CON.txt")
+    store = TodoFileStore(tmp_path)
+    path = store._get_state_path(session, source_id="todo")  # pyright: ignore[reportPrivateUsage]
+    assert path.parent.name.startswith("~todo-")

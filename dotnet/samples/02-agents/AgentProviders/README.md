@@ -44,6 +44,12 @@ See the README.md for each sample for the prerequisites for that sample.
 | --- | --- |
 | [Custom Implementation](./custom/Agent_With_CustomImplementation/) | Create an AIAgent with a custom implementation |
 
+### [Dapr](./dapr/)
+
+| Sample | Description |
+| --- | --- |
+| [Agent with Dapr](./dapr/Agent_With_Dapr/) | Create an AIAgent using Dapr's Conversation building block as the inference backend |
+
 ### [Foundry](./foundry/)
 
 See [foundry/README.md](./foundry/README.md) for the full list of Foundry agent samples,
@@ -54,6 +60,7 @@ covering basics, function tools, structured output, middleware, MCP, code interp
 | Sample | Description |
 | --- | --- |
 | [GitHub Copilot](./github-copilot/Agent_With_GitHubCopilot/) | Create an AIAgent using GitHub Copilot SDK |
+| [GitHub Copilot BYOK](./github-copilot/Agent_With_GitHubCopilot_BYOK/) | Route GitHub Copilot agent requests through your own endpoint (Bring Your Own Key) |
 
 ### [Google Gemini](./google-gemini/)
 

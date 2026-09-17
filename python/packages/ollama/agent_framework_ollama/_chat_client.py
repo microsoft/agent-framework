@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
+import uuid
 from collections.abc import (
     AsyncIterable,
     Awaitable,
@@ -23,6 +24,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    FinishReason,
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
     FunctionTool,
@@ -31,6 +33,7 @@ from agent_framework import (
     UsageDetails,
 )
 from agent_framework._settings import load_settings
+from agent_framework._telemetry import mark_feature_used
 from agent_framework.exceptions import (
     ChatClientException,
     ChatClientInvalidRequestException,
@@ -42,6 +45,8 @@ from ollama import AsyncClient
 from ollama._types import ChatResponse as OllamaChatResponse
 from ollama._types import Message as OllamaMessage
 from pydantic import BaseModel
+
+from ._feature_usage import FeatureIndex
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
@@ -356,6 +361,7 @@ class OllamaChatClient(
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
                 validated_options = await self._validate_options(options)
                 options_dict = self._prepare_options(messages, validated_options)
+                mark_feature_used(FeatureIndex.OLLAMA)
                 try:
                     response_object: AsyncIterable[OllamaChatResponse] = await self.client.chat(  # type: ignore[misc]
                         stream=True,
@@ -374,6 +380,7 @@ class OllamaChatClient(
         async def _get_response() -> ChatResponse:
             validated_options = await self._validate_options(options)
             options_dict = self._prepare_options(messages, validated_options)
+            mark_feature_used(FeatureIndex.OLLAMA)
             try:
                 response: OllamaChatResponse = await self.client.chat(  # type: ignore[misc]
                     stream=False,
@@ -524,7 +531,10 @@ class OllamaChatClient(
                     tool_text = "\n".join(text_parts) if text_parts else ""
                 else:
                     tool_text = str(item.result) if item.result is not None else ""
-                messages.append(OllamaMessage(role="tool", content=tool_text, tool_name=item.call_id))
+
+                # Get the tool name directly from the content item.
+                tool_name = getattr(item, "name", "") or ""
+                messages.append(OllamaMessage(role="tool", content=tool_text, tool_name=tool_name))
         return messages
 
     def _parse_contents_from_ollama(self, response: OllamaChatResponse) -> list[Content]:
@@ -537,6 +547,11 @@ class OllamaChatClient(
             tool_calls = self._parse_tool_calls_from_ollama(response.message.tool_calls)
             contents.extend(tool_calls)
         return contents
+
+    def _get_finish_reason_from_ollama(self, response: OllamaChatResponse) -> FinishReason | None:
+        if response.message.tool_calls:
+            return FinishReason("tool_calls")
+        return FinishReason(response.done_reason) if response.done_reason else None
 
     def _parse_streaming_response_from_ollama(self, response: OllamaChatResponse) -> ChatResponseUpdate:
         contents = self._parse_contents_from_ollama(response)
@@ -557,7 +572,7 @@ class OllamaChatClient(
             )
             if usage_details:
                 contents.append(Content.from_usage(usage_details, raw_representation=response))
-            finish_reason = response.done_reason if response.done_reason in ("stop", "length") else None
+            finish_reason = self._get_finish_reason_from_ollama(response)
         return ChatResponseUpdate(
             contents=contents,
             role="assistant",
@@ -586,7 +601,7 @@ class OllamaChatClient(
                 if isinstance(value, int)
             }
         )
-        finish_reason = response.done_reason if response.done_reason in ("stop", "length") else None
+        finish_reason = self._get_finish_reason_from_ollama(response)
 
         return ChatResponse(
             messages=[Message(role="assistant", contents=contents)],
@@ -600,10 +615,15 @@ class OllamaChatClient(
     def _parse_tool_calls_from_ollama(self, tool_calls: Sequence[OllamaMessage.ToolCall]) -> list[Content]:
         resp: list[Content] = []
         for tool in tool_calls:
+            name = tool.function.name
+            args = tool.function.arguments if isinstance(tool.function.arguments, dict) else {}
+
+            unique_call_id = str(uuid.uuid4())
+
             fcc = Content.from_function_call(
-                call_id=tool.function.name,  # Use name of function as call ID since Ollama doesn't provide a call ID
-                name=tool.function.name,
-                arguments=tool.function.arguments if isinstance(tool.function.arguments, dict) else "",
+                call_id=unique_call_id,
+                name=name,
+                arguments=args,
                 raw_representation=tool.function,
             )
             resp.append(fcc)

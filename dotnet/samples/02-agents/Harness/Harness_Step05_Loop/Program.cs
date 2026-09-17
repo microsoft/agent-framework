@@ -174,9 +174,9 @@ async Task ApprovalLoopAsync()
         {
             AutoApprovalRules =
             [
-                functionCall =>
+                context =>
                 {
-                    Console.WriteLine($"  Auto-approving: {functionCall.Name}");
+                    Console.WriteLine($"  Auto-approving: {context.FunctionCallContent.Name}");
                     return ValueTask.FromResult(true);
                 },
             ],
@@ -252,7 +252,6 @@ AIAgent CreateLeanHarnessAgent(
         DisableAgentModeProvider = true,
         DisableTodoProvider = disableTodoProvider,
         DisableFileMemory = true,
-        DisableFileAccess = true,
         DisableWebSearch = true,
         ToolApprovalAgentOptions = toolApprovalAgentOptions,
         ChatOptions = new ChatOptions

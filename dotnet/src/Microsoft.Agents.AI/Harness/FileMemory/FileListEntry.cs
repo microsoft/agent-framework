@@ -1,8 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Diagnostics.CodeAnalysis;
 using System.Text.Json.Serialization;
-using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI;
 
@@ -10,7 +8,6 @@ namespace Microsoft.Agents.AI;
 /// Represents a file entry returned by the <see cref="FileMemoryProvider"/> list (ls) tool,
 /// containing the file name, its entry type, and an optional description.
 /// </summary>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class FileListEntry
 {
     /// <summary>

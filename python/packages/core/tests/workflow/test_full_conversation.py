@@ -27,7 +27,6 @@ from agent_framework import (
     executor,
     handler,
 )
-from agent_framework.orchestrations import SequentialBuilder
 
 
 class _SimpleAgent(BaseAgent):
@@ -254,6 +253,9 @@ class _CaptureAgent(BaseAgent):
 
 
 async def test_sequential_adapter_uses_full_conversation() -> None:
+    pytest.importorskip("agent_framework_orchestrations")
+    from agent_framework.orchestrations import SequentialBuilder
+
     # Arrange: two streaming agents; the second records what it receives
     a1 = _CaptureAgent(id="agent1", name="A1", reply_text="A1 reply")
     a2 = _CaptureAgent(id="agent2", name="A2", reply_text="A2 reply")
@@ -273,6 +275,9 @@ async def test_sequential_adapter_uses_full_conversation() -> None:
 
 
 async def test_sequential_handoff_preserves_function_call_for_non_reasoning_model() -> None:
+    pytest.importorskip("agent_framework_orchestrations")
+    from agent_framework.orchestrations import SequentialBuilder
+
     # Arrange: non-reasoning agent emits function_call + function_result + summary
     first = _ToolHistoryAgent(
         id="tool_history_agent",

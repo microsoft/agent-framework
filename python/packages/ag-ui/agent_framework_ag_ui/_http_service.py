@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import AsyncIterable, Mapping, Sequence
+from http.cookiejar import CookieJar, DefaultCookiePolicy
 from typing import Any, cast
 
 import httpx
@@ -33,6 +34,9 @@ def _serialize_available_interrupts(available_interrupts: Sequence[Any] | None) 
         return None
     serialized: list[dict[str, Any]] = []
     for interrupt in available_interrupts:
+        if isinstance(interrupt, Interrupt):
+            serialized.append(cast(dict[str, Any], interrupt.model_dump(by_alias=True, exclude_none=True)))
+            continue
         if isinstance(interrupt, Mapping) and "reason" not in interrupt:
             interrupt = dict(interrupt)
             interrupt_type = interrupt.pop("type", None)
@@ -48,6 +52,9 @@ def _serialize_available_interrupts(available_interrupts: Sequence[Any] | None) 
 
 def _serialize_resume_entry(entry: Any) -> dict[str, Any]:
     """Serialize one typed or legacy resume entry to canonical AG-UI JSON."""
+    if isinstance(entry, ResumeEntry):
+        return cast(dict[str, Any], entry.model_dump(by_alias=True, exclude_none=True))
+
     model_dump = getattr(entry, "model_dump", None)
     if callable(model_dump):
         entry = model_dump(by_alias=True, exclude_none=True)
@@ -145,12 +152,22 @@ class AGUIHttpService:
 
         Args:
             endpoint: AG-UI server endpoint URL (e.g., "http://localhost:8888/")
-            http_client: Optional httpx AsyncClient. If None, creates a new one.
+            http_client: Optional httpx AsyncClient. If None, creates a client that does not
+                persist response cookies. Supplied clients retain their cookie behavior and
+                remain caller-owned; scope cookie-based authentication to a single authenticated
+                principal rather than sharing it across users.
             timeout: Request timeout in seconds (default: 60.0)
         """
         self.endpoint = endpoint.rstrip("/")
         self._owns_client = http_client is None
-        self.http_client = http_client or httpx.AsyncClient(timeout=timeout)
+        if http_client is not None:
+            self.http_client = http_client
+        else:
+            # An empty domain allowlist prevents response cookies from persisting across runs.
+            self.http_client = httpx.AsyncClient(
+                timeout=timeout,
+                cookies=CookieJar(policy=DefaultCookiePolicy(allowed_domains=[])),
+            )
 
     async def post_run(
         self,

@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 """Foundry-based weather agent for Agent Framework Debug UI.
 
-This agent uses Azure AI Foundry with Azure CLI authentication.
+This agent uses Microsoft Foundry with Azure CLI authentication.
 Make sure to run 'az login' before starting devui.
 """
 
@@ -57,7 +57,7 @@ agent = Agent(
         credential=AzureCliCredential(),
     ),
     instructions="""
-    You are a weather assistant using Azure AI Foundry models. You can provide
+    You are a weather assistant using Microsoft Foundry models. You can provide
     current weather information and forecasts for any location. Always be helpful
     and provide detailed weather information when asked.
     """,

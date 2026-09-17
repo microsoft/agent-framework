@@ -3,9 +3,6 @@
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using Microsoft.Agents.AI.Compaction;
-#if NET
-using Microsoft.Agents.AI.Tools.Shell;
-#endif
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.DiagnosticIds;
 
@@ -14,7 +11,6 @@ namespace Microsoft.Agents.AI;
 /// <summary>
 /// Represents configuration options for a <see cref="HarnessAgent"/>.
 /// </summary>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class HarnessAgentOptions
 {
     /// <summary>
@@ -46,6 +42,7 @@ public sealed class HarnessAgentOptions
     /// <see langword="true"/>.
     /// </para>
     /// </remarks>
+    [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
     public int? MaxContextWindowTokens { get; set; }
 
     /// <summary>
@@ -62,6 +59,7 @@ public sealed class HarnessAgentOptions
     /// is provided and <see cref="DisableCompaction"/> is <see langword="false"/>.
     /// </para>
     /// </remarks>
+    [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
     public int? MaxOutputTokens { get; set; }
 
     /// <summary>
@@ -81,6 +79,7 @@ public sealed class HarnessAgentOptions
     /// This property is ignored when <see cref="DisableCompaction"/> is <see langword="true"/>.
     /// </para>
     /// </remarks>
+    [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
     public CompactionStrategy? CompactionStrategy { get; set; }
 
     /// <summary>
@@ -92,6 +91,7 @@ public sealed class HarnessAgentOptions
     /// <see cref="CompactionProvider"/> is added to the chat client pipeline, and the default
     /// <see cref="InMemoryChatHistoryProvider"/> is configured without a chat reducer.
     /// </remarks>
+    [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
     public bool DisableCompaction { get; set; }
 
     /// <summary>
@@ -162,6 +162,7 @@ public sealed class HarnessAgentOptions
     /// as a single-shot agent.
     /// </para>
     /// </remarks>
+    [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
     public IEnumerable<LoopEvaluator>? LoopEvaluators { get; set; }
 
     /// <summary>
@@ -171,6 +172,7 @@ public sealed class HarnessAgentOptions
     /// When <see langword="null"/>, the <see cref="LoopAgent"/> uses its default settings. This property is ignored
     /// when <see cref="LoopEvaluators"/> is <see langword="null"/> or empty.
     /// </remarks>
+    [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
     public LoopAgentOptions? LoopAgentOptions { get; set; }
 
     /// <summary>
@@ -217,6 +219,19 @@ public sealed class HarnessAgentOptions
     public bool DisableApprovalNotRequiredFunctionBypassing { get; set; }
 
     /// <summary>
+    /// Gets or sets a value indicating whether binding inbound tool-approval responses to the
+    /// model-originated approval requests that the framework surfaced is disabled.
+    /// </summary>
+    /// <remarks>
+    /// When <see langword="false"/> (the default), the underlying chat client pipeline includes the decorator
+    /// added by <see cref="ChatClientBuilderExtensions.UseApprovalResponseBinding"/> as the outermost decorator
+    /// above the function invocation middleware. It records each surfaced approval request and, on the next
+    /// request, binds every approval response to its recorded request so an approved call matches exactly what
+    /// was surfaced for approval.
+    /// </remarks>
+    public bool DisableApprovalResponseBinding { get; set; }
+
+    /// <summary>
     /// Gets or sets a value indicating whether the <see cref="FileMemoryProvider"/> is disabled.
     /// </summary>
     /// <remarks>
@@ -234,27 +249,30 @@ public sealed class HarnessAgentOptions
     /// a default <see cref="FileSystemAgentFileStore"/> is created.
     /// This property is ignored when <see cref="DisableFileMemory"/> is <see langword="true"/>.
     /// </remarks>
+    [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
     public AgentFileStore? FileMemoryStore { get; set; }
 
     /// <summary>
-    /// Gets or sets a value indicating whether the <see cref="FileAccessProvider"/> is disabled.
+    /// Gets or sets the <see cref="AgentFileStore"/> that enables the <see cref="FileAccessProvider"/>.
     /// </summary>
     /// <remarks>
-    /// When <see langword="false"/> (the default), a <see cref="FileAccessProvider"/> is included in the
-    /// agent's context providers, using either <see cref="FileAccessStore"/> or a default
-    /// <see cref="FileSystemAgentFileStore"/> rooted at <c>{cwd}/working</c>.
+    /// File access is opt-in. When <see langword="null"/> (the default), no <see cref="FileAccessProvider"/>
+    /// is added and the agent has no file access tools. When set, a <see cref="FileAccessProvider"/> is
+    /// included in the agent's context providers, backed by the supplied store and configured with
+    /// <see cref="FileAccessProviderOptions"/> when provided.
     /// </remarks>
-    public bool DisableFileAccess { get; set; }
+    [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
+    public AgentFileStore? FileAccessStore { get; set; }
 
     /// <summary>
-    /// Gets or sets a custom <see cref="AgentFileStore"/> for the <see cref="FileAccessProvider"/>.
+    /// Gets or sets the <see cref="FileAccessProviderOptions"/> used to configure the <see cref="FileAccessProvider"/>.
     /// </summary>
     /// <remarks>
-    /// When <see langword="null"/> and <see cref="DisableFileAccess"/> is <see langword="false"/>,
-    /// a default <see cref="FileSystemAgentFileStore"/> is created.
-    /// This property is ignored when <see cref="DisableFileAccess"/> is <see langword="true"/>.
+    /// This property is only used when <see cref="FileAccessStore"/> is set (file access is opt-in).
+    /// When <see langword="null"/>, the provider uses its default options.
     /// </remarks>
-    public AgentFileStore? FileAccessStore { get; set; }
+    [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
+    public FileAccessProviderOptions? FileAccessProviderOptions { get; set; }
 
     /// <summary>
     /// Gets or sets a value indicating whether the <see cref="HostedWebSearchTool"/> is disabled.
@@ -348,6 +366,7 @@ public sealed class HarnessAgentOptions
     /// (case-insensitive). If these requirements are not met, <see cref="BackgroundAgentsProvider"/> will throw
     /// an <see cref="System.ArgumentException"/> during construction.
     /// </remarks>
+    [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
     public IEnumerable<AIAgent>? BackgroundAgents { get; set; }
 
     /// <summary>
@@ -357,67 +376,6 @@ public sealed class HarnessAgentOptions
     /// Use this to customize instructions or agent list formatting for the background agents feature.
     /// This property is ignored when <see cref="BackgroundAgents"/> is <see langword="null"/> or empty.
     /// </remarks>
+    [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
     public BackgroundAgentsProviderOptions? BackgroundAgentsProviderOptions { get; set; }
-
-#if NET
-    /// <summary>
-    /// Gets or sets the shell executor used to enable shell tool and environment probing via <see cref="ShellEnvironmentProvider"/>.
-    /// </summary>
-    /// <remarks>
-    /// When non-null, a <see cref="ShellEnvironmentProvider"/> is automatically included in the agent's context
-    /// providers (injecting OS/shell/CWD information into the system prompt), and the executor's
-    /// <see cref="ShellExecutor.AsAIFunction"/> is registered as a callable tool.
-    /// When <see langword="null"/> (the default), no shell features are enabled.
-    /// </remarks>
-    public ShellExecutor? ShellExecutor { get; set; }
-
-    /// <summary>
-    /// Gets or sets the name of the shell execution tool exposed to the model.
-    /// </summary>
-    /// <remarks>
-    /// When <see langword="null"/> (the default), the shell executor's default tool name (<c>run_shell</c>) is used.
-    /// This property is ignored when <see cref="ShellExecutor"/> is <see langword="null"/>.
-    /// </remarks>
-    public string? ShellToolName { get; set; }
-
-    /// <summary>
-    /// Gets or sets the description of the shell execution tool shown to the model.
-    /// </summary>
-    /// <remarks>
-    /// When <see langword="null"/> (the default), the shell executor's built-in description is used.
-    /// This property is ignored when <see cref="ShellExecutor"/> is <see langword="null"/>.
-    /// </remarks>
-    public string? ShellToolDescription { get; set; }
-
-    /// <summary>
-    /// Gets or sets a value indicating whether approval is disabled for the shell execution tool.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// When <see langword="false"/> (the default), the shell tool is wrapped in an <see cref="ApprovalRequiredAIFunction"/>
-    /// so every command requires explicit approval before executing. When <see langword="true"/>, the tool can be invoked
-    /// without approval. This property is ignored when <see cref="ShellExecutor"/> is <see langword="null"/>.
-    /// </para>
-    /// <para>
-    /// Setting this to <see langword="true"/> also requires the underlying <see cref="ShellExecutor"/> to permit
-    /// unapproved use. The inverse of this value is forwarded as the <c>requireApproval</c> argument to
-    /// <see cref="ShellExecutor.AsAIFunction"/>, and some executors enforce their own security boundary:
-    /// <see cref="LocalShellExecutor"/> throws an <see cref="System.InvalidOperationException"/> unless it was
-    /// constructed with <see cref="LocalShellExecutorOptions.AcknowledgeUnsafe"/> set to <see langword="true"/>,
-    /// because running unapproved commands directly on the host is inherently unsafe. Sandboxed executors such as
-    /// <see cref="DockerShellExecutor"/> impose no such requirement.
-    /// </para>
-    /// </remarks>
-    public bool DisableShellToolApproval { get; set; }
-
-    /// <summary>
-    /// Gets or sets optional configuration for the <see cref="ShellEnvironmentProvider"/>.
-    /// </summary>
-    /// <remarks>
-    /// Use this to customize which tools are probed, the probe timeout, shell family override,
-    /// or the instructions formatter.
-    /// This property is ignored when <see cref="ShellExecutor"/> is <see langword="null"/>.
-    /// </remarks>
-    public ShellEnvironmentProviderOptions? ShellEnvironmentProviderOptions { get; set; }
-#endif
 }

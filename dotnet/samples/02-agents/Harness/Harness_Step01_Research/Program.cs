@@ -85,7 +85,6 @@ AIAgent agent =
         MaxOutputTokens = MaxOutputTokens,
         Name = "ResearchAgent",
         Description = "A research assistant that plans and executes research tasks.",
-        DisableFileAccess = true,                           // If enabled, this would allow the agent to read/write files in a working directory
         OpenTelemetrySourceName = TracingSourceName,        // Use our custom source name so spans are captured by the TracerProvider above.
         FileMemoryStore = new FileSystemAgentFileStore(     // Configure the file memory provider to store files in a local folder called "agent-files".
             Path.Combine(AppContext.BaseDirectory, "agent-files")),

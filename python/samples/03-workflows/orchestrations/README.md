@@ -2,13 +2,7 @@
 
 ## Installation
 
-The orchestrations package is included when you install `agent-framework` (which pulls in all optional packages):
-
-```bash
-pip install agent-framework
-```
-
-Or install the orchestrations package directly:
+Install the orchestrations package directly:
 
 ```bash
 pip install agent-framework-orchestrations
@@ -77,6 +71,7 @@ from agent_framework.orchestrations import (
 | Magentic Workflow            | [magentic.py](./magentic.py)                                             | Orchestrate multiple agents with a Magentic manager and streaming     |
 | Magentic + Human Plan Review | [magentic_human_plan_review.py](./magentic_human_plan_review.py)       | Human reviews or updates the plan before execution                    |
 | Magentic + Checkpoint Resume | [magentic_checkpoint.py](./magentic_checkpoint.py)                     | Resume Magentic orchestration from saved checkpoints                  |
+| Magentic + Custom Manager Prompts | [magentic_custom_prompts.py](./magentic_custom_prompts.py)       | Override the manager's planning, ledger, and final answer prompts     |
 | Magentic Orchestration as Agent | [magentic_workflow_as_agent.py](../agents/magentic_workflow_as_agent.py)    | Build a MagenticBuilder workflow and reuse it as an agent             |
 
 ## Tips
@@ -139,7 +134,7 @@ patterns like Sequential, Concurrent, Handoff, GroupChat, and Magentic.
 
 Orchestration samples that use `FoundryChatClient` expect:
 
-- `FOUNDRY_PROJECT_ENDPOINT` (Azure AI Foundry Agent Service (V2) project endpoint)
+- `FOUNDRY_PROJECT_ENDPOINT` (Microsoft Foundry Agent Service (V2) project endpoint)
 - `FOUNDRY_MODEL` (model deployment name)
 
 These values are passed directly into the client constructor via `os.getenv()` in sample code.

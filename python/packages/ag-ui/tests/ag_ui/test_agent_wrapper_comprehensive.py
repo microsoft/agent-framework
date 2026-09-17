@@ -7,8 +7,105 @@ from collections.abc import AsyncIterator, MutableSequence
 from typing import Any
 
 import pytest
-from agent_framework import Agent, ChatOptions, ChatResponseUpdate, Content, Message
+from ag_ui.core import RunErrorEvent, ToolCallResultEvent
+from agent_framework import (
+    Agent,
+    ChatOptions,
+    ChatResponseUpdate,
+    Content,
+    ContextProvider,
+    FunctionInvocationContext,
+    Message,
+    tool,
+)
 from pydantic import BaseModel
+
+from agent_framework_ag_ui._approval_lifecycle import ApprovalExecutionOwner
+
+
+def _approval_request_id(events: list[Any]) -> str:
+    event = next(
+        event
+        for event in events
+        if getattr(event, "type", None) == "CUSTOM" and getattr(event, "name", None) == "function_approval_request"
+    )
+    return str(event.value["id"])
+
+
+async def test_approval_resume_with_context_provider_preserves_function_invocation_kwargs(
+    streaming_chat_client_stub: Any,
+) -> None:
+    """Context-provider preparation and runtime tool kwargs survive an AG-UI resume."""
+    from agent_framework.ag_ui import AgentFrameworkAgent
+
+    observed_kwargs: list[dict[str, Any]] = []
+    phase = "pause"
+
+    class NoOpContextProvider(ContextProvider):
+        pass
+
+    @tool(name="sensitive_action", approval_mode="always_require")
+    def sensitive_action(context: FunctionInvocationContext) -> str:
+        observed_kwargs.append(dict(context.kwargs))
+        return "executed"
+
+    async def stream_fn(
+        messages: MutableSequence[Message],
+        options: ChatOptions,
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del messages, options, kwargs
+        if phase == "pause":
+            yield ChatResponseUpdate(
+                contents=[
+                    Content.from_function_call(
+                        name="sensitive_action",
+                        call_id="call-sensitive",
+                        arguments="{}",
+                    )
+                ]
+            )
+            return
+        yield ChatResponseUpdate(contents=[Content.from_text(text="Done")])
+
+    wrapper = AgentFrameworkAgent(
+        agent=Agent(
+            client=streaming_chat_client_stub(stream_fn),
+            name="test_agent",
+            instructions="Test",
+            tools=[sensitive_action],
+            context_providers=[NoOpContextProvider("context")],
+        )
+    )
+    runtime_kwargs = {"user_id": "user-123"}
+    thread_id = "context-provider-runtime-kwargs"
+    pause_events = [
+        event
+        async for event in wrapper.run(
+            {"thread_id": thread_id, "messages": [{"role": "user", "content": "do it"}]},
+            function_invocation_kwargs=runtime_kwargs,
+        )
+    ]
+    approval_id = _approval_request_id(pause_events)
+
+    phase = "resume"
+    resume_events = [
+        event
+        async for event in wrapper.run(
+            {
+                "thread_id": thread_id,
+                "messages": [],
+                "resume": [{"interruptId": approval_id, "status": "resolved", "payload": {"accepted": True}}],
+            },
+            function_invocation_kwargs=runtime_kwargs,
+        )
+    ]
+
+    assert observed_kwargs[0]["user_id"] == runtime_kwargs["user_id"]
+    assert set(observed_kwargs[0]) == {"session", "user_id"}
+    assert [
+        (event.tool_call_id, event.content) for event in resume_events if isinstance(event, ToolCallResultEvent)
+    ] == [("call-sensitive", "executed")]
 
 
 async def test_agent_initialization_basic(streaming_chat_client_stub):
@@ -710,7 +807,11 @@ async def test_agent_with_use_service_session_is_true(streaming_chat_client_stub
         )
 
     agent = Agent(client=streaming_chat_client_stub(stream_fn))
-    wrapper = AgentFrameworkAgent(agent=agent, use_service_session=True)
+    wrapper = AgentFrameworkAgent(
+        agent=agent,
+        use_service_session=True,
+        service_session_id_from_thread_id=True,
+    )
 
     input_data = {"messages": [{"role": "user", "content": "Hi"}], "thread_id": "conv_123456"}
 
@@ -788,6 +889,8 @@ async def test_function_approval_mode_executes_tool(streaming_chat_client_stub):
     ]
     assert len(approval_events) == 1, "Expected one approval request event"
 
+    approval_id = _approval_request_id(events1)
+
     # --- Turn 2: Client approves → tool executes ---
     async def stream_fn_turn2(
         messages: MutableSequence[Message], options: ChatOptions, **kwargs: Any
@@ -806,7 +909,7 @@ async def test_function_approval_mode_executes_tool(streaming_chat_client_stub):
     input_data: dict[str, Any] = {
         "thread_id": thread_id,
         "messages": [],
-        "resume": [{"interruptId": "call_get_datetime_123", "status": "resolved", "payload": {"accepted": True}}],
+        "resume": [{"interruptId": approval_id, "status": "resolved", "payload": {"accepted": True}}],
     }
 
     events2: list[Any] = []
@@ -819,20 +922,24 @@ async def test_function_approval_mode_executes_tool(streaming_chat_client_stub):
     assert len(run_started) == 1
     assert len(run_finished) == 1
 
-    # Verify that a FunctionResultContent was created and sent to the agent
-    tool_result_found = False
-    for msg in messages_received:
-        for content in msg.contents:
-            if content.type == "function_result":
-                tool_result_found = True
-                assert content.call_id == "call_get_datetime_123"
-                assert content.result == "2025/12/01 12:00:00"
-                break
-
-    assert tool_result_found, (
-        "FunctionResultContent should be included in messages sent to agent. "
-        "This is required for the model to see the approved tool execution result."
+    result_events = [event for event in events2 if event.type == "TOOL_CALL_RESULT"]
+    assert len(result_events) == 1
+    assert result_events[0].tool_call_id == "call_get_datetime_123"
+    assert result_events[0].content == "2025/12/01 12:00:00"
+    assert not any(
+        event.type in {"TOOL_CALL_START", "TOOL_CALL_ARGS", "TOOL_CALL_END"}
+        and getattr(event, "tool_call_id", None) == "call_get_datetime_123"
+        for event in events2
     )
+
+    replayable_results = [
+        content
+        for message in messages_received
+        for content in message.contents
+        if content.type == "function_result" and content.call_id == "call_get_datetime_123"
+    ]
+    assert len(replayable_results) == 1
+    assert replayable_results[0].result == "2025/12/01 12:00:00"
 
 
 async def test_function_approval_mode_rejection(streaming_chat_client_stub):
@@ -868,8 +975,14 @@ async def test_function_approval_mode_rejection(streaming_chat_client_stub):
 
     thread_id = "thread-rejection-test"
 
-    # Pre-populate the pending approval as if Turn 1 had emitted the request.
-    wrapper._pending_approvals[(thread_id, "call_delete_123")] = "delete_all_data"
+    wrapper._approval_state_store.register(
+        owner=ApprovalExecutionOwner.LOCAL,
+        thread_ids=[thread_id],
+        name="delete_all_data",
+        arguments="{}",
+        request_id="call_delete_123",
+        interrupt_id="call_delete_123",
+    )
 
     input_data: dict[str, Any] = {
         "thread_id": thread_id,
@@ -1041,7 +1154,8 @@ async def test_approval_replay_is_blocked(streaming_chat_client_stub):
         if getattr(e, "type", None) == "CUSTOM" and getattr(e, "name", None) == "function_approval_request"
     ]
     assert len(approval_events) == 1, "Expected one approval request event"
-    assert any("call_sens_001" in k for k in wrapper._pending_approvals)
+    approval_id = _approval_request_id(events1)
+    assert wrapper._approval_state_store.lifecycle.pending_occurrence(thread_id=thread_id, interrupt_id=approval_id)
 
     # --- Turn 2: legitimate approval ---
     async def stream_fn_post_approval(
@@ -1055,13 +1169,13 @@ async def test_approval_replay_is_blocked(streaming_chat_client_stub):
         instructions="Test",
         tools=[sensitive_action],
     )
-    # Reuse the same wrapper (same _pending_approvals) with a new agent for Turn 2
+    # Reuse the same wrapper with its server-owned Approval State for Turn 2.
     wrapper.agent = agent2
 
     turn2_input: dict[str, Any] = {
         "thread_id": thread_id,
         "messages": [],
-        "resume": [{"interruptId": "call_sens_001", "status": "resolved", "payload": {"accepted": True}}],
+        "resume": [{"interruptId": approval_id, "status": "resolved", "payload": {"accepted": True}}],
     }
 
     events2: list[Any] = []
@@ -1069,7 +1183,7 @@ async def test_approval_replay_is_blocked(streaming_chat_client_stub):
         events2.append(event)
 
     assert call_count == 1, "Tool should have been executed once"
-    assert not any("call_sens_001" in k for k in wrapper._pending_approvals), "Pending approval should be consumed"
+    assert not wrapper._approval_state_store.lifecycle.pending_occurrence(thread_id=thread_id, interrupt_id=approval_id)
 
     # --- Turn 3: replay attempt with the same approval ID ---
     call_count = 0  # reset
@@ -1077,7 +1191,7 @@ async def test_approval_replay_is_blocked(streaming_chat_client_stub):
     turn3_input: dict[str, Any] = {
         "thread_id": thread_id,
         "messages": [],
-        "resume": [{"interruptId": "call_sens_001", "status": "resolved", "payload": {"accepted": True}}],
+        "resume": [{"interruptId": approval_id, "status": "resolved", "payload": {"accepted": True}}],
     }
 
     events3: list[Any] = []
@@ -1085,6 +1199,128 @@ async def test_approval_replay_is_blocked(streaming_chat_client_stub):
         events3.append(event)
 
     assert call_count == 0, "Replay of consumed approval should not execute the tool"
+
+
+@pytest.mark.parametrize(
+    "resume_thread_id",
+    [
+        pytest.param("client-thread", id="client-thread"),
+        pytest.param("provider-conversation", id="provider-conversation"),
+    ],
+)
+async def test_approval_resolves_with_client_or_provider_thread_id(
+    streaming_chat_client_stub: Any,
+    resume_thread_id: str,
+) -> None:
+    """A stateful provider approval remains resolvable by either advertised thread identity."""
+    from agent_framework import tool
+    from agent_framework.ag_ui import AgentFrameworkAgent
+
+    execution_count = 0
+
+    @tool(
+        name="sensitive_action",
+        description="A sensitive action requiring approval",
+        approval_mode="always_require",
+    )
+    def sensitive_action() -> str:
+        nonlocal execution_count
+        execution_count += 1
+        return "executed"
+
+    async def approval_stream(
+        messages: MutableSequence[Message], options: ChatOptions, **kwargs: Any
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        yield ChatResponseUpdate(
+            contents=[
+                Content.from_function_call(
+                    name="sensitive_action",
+                    call_id="call_sensitive",
+                    arguments="{}",
+                )
+            ],
+            conversation_id="provider-conversation",
+        )
+
+    wrapper = AgentFrameworkAgent(
+        agent=Agent(
+            client=streaming_chat_client_stub(approval_stream),
+            name="test_agent",
+            instructions="Test",
+            tools=[sensitive_action],
+        )
+    )
+
+    approval_events = [
+        event
+        async for event in wrapper.run(
+            {"thread_id": "client-thread", "messages": [{"role": "user", "content": "do it"}]}
+        )
+    ]
+    approval_id = _approval_request_id(approval_events)
+
+    assert wrapper._approval_state_store.lifecycle.pending_occurrence(
+        thread_id="client-thread", interrupt_id=approval_id
+    )
+    assert wrapper._approval_state_store.lifecycle.pending_occurrence(
+        thread_id="provider-conversation", interrupt_id=approval_id
+    )
+
+    async def completion_stream(
+        messages: MutableSequence[Message], options: ChatOptions, **kwargs: Any
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        yield ChatResponseUpdate(contents=[Content.from_text(text="Done")])
+
+    wrapper.agent = Agent(
+        client=streaming_chat_client_stub(completion_stream),
+        name="test_agent",
+        instructions="Test",
+        tools=[sensitive_action],
+    )
+
+    def approval_input(thread_id: str) -> dict[str, Any]:
+        return {
+            "thread_id": thread_id,
+            "messages": [],
+            "resume": [{"interruptId": approval_id, "status": "resolved", "payload": {"accepted": True}}],
+        }
+
+    async for _ in wrapper.run(approval_input(resume_thread_id)):
+        pass
+
+    assert execution_count == 1
+    assert not wrapper._approval_state_store.lifecycle.pending_occurrence(
+        thread_id="client-thread", interrupt_id=approval_id
+    )
+    assert not wrapper._approval_state_store.lifecycle.pending_occurrence(
+        thread_id="provider-conversation", interrupt_id=approval_id
+    )
+
+    replay_thread_id = "provider-conversation" if resume_thread_id == "client-thread" else "client-thread"
+    retry_events = [event async for event in wrapper.run(approval_input(replay_thread_id))]
+
+    assert execution_count == 1
+    retry_results = [event for event in retry_events if isinstance(event, ToolCallResultEvent)]
+    assert len(retry_results) == 1
+    assert retry_results[0].tool_call_id == "call_sensitive"
+    assert retry_results[0].content == "executed"
+    assert not any(event.type == "RUN_ERROR" for event in retry_events)
+
+    conflicting_input = approval_input(replay_thread_id)
+    conflicting_input["resume"][0]["payload"]["accepted"] = False
+    conflicting_events = [event async for event in wrapper.run(conflicting_input)]
+
+    assert execution_count == 1
+    assert any(
+        isinstance(event, RunErrorEvent) and event.code == "APPROVAL_RESUME_INVALID" for event in conflicting_events
+    )
+
+    changed_input = approval_input(replay_thread_id)
+    changed_input["resume"][0]["payload"]["forged"] = True
+    changed_events = [event async for event in wrapper.run(changed_input)]
+
+    assert execution_count == 1
+    assert any(isinstance(event, RunErrorEvent) and event.code == "APPROVAL_RESUME_INVALID" for event in changed_events)
 
 
 async def test_approval_function_name_mismatch_is_blocked(streaming_chat_client_stub):
@@ -1142,7 +1378,9 @@ async def test_approval_function_name_mismatch_is_blocked(streaming_chat_client_
     async for event in wrapper.run({"thread_id": thread_id, "messages": [{"role": "user", "content": "do safe"}]}):
         events1.append(event)
 
-    assert any("call_safe_001" in k for k in wrapper._pending_approvals)
+    approval_id = _approval_request_id(events1)
+
+    assert wrapper._approval_state_store.lifecycle.pending_occurrence(thread_id=thread_id, interrupt_id=approval_id)
 
     # Turn 2: try to approve with a different function name (function name spoofing)
     async def stream_fn_post(
@@ -1165,7 +1403,7 @@ async def test_approval_function_name_mismatch_is_blocked(streaming_chat_client_
                 "content": "approve",
                 "function_approvals": [
                     {
-                        "id": "call_safe_001",
+                        "id": approval_id,
                         "call_id": "call_safe_001",
                         "name": "dangerous_action",  # Mismatch!
                         "approved": True,
@@ -1181,7 +1419,7 @@ async def test_approval_function_name_mismatch_is_blocked(streaming_chat_client_
         events2.append(event)
 
     assert not tool_executed, "Function name spoofing should be blocked"
-    assert any("call_safe_001" in k for k in wrapper._pending_approvals), (
+    assert wrapper._approval_state_store.lifecycle.pending_occurrence(thread_id=thread_id, interrupt_id=approval_id), (
         "Pending approval should be preserved after mismatch for legitimate retry"
     )
 
@@ -1380,7 +1618,9 @@ async def test_approval_argument_mismatch_is_blocked(streaming_chat_client_stub)
     async for event in wrapper.run({"thread_id": thread_id, "messages": [{"role": "user", "content": "update"}]}):
         events1.append(event)
 
-    assert any("call_update_001" in k for k in wrapper._pending_approvals)
+    approval_id = _approval_request_id(events1)
+
+    assert wrapper._approval_state_store.lifecycle.pending_occurrence(thread_id=thread_id, interrupt_id=approval_id)
 
     async def stream_fn_post(
         messages: MutableSequence[Message], options: ChatOptions, **kwargs: Any
@@ -1402,7 +1642,7 @@ async def test_approval_argument_mismatch_is_blocked(streaming_chat_client_stub)
                 "content": "approve",
                 "function_approvals": [
                     {
-                        "id": "call_update_001",
+                        "id": approval_id,
                         "call_id": "call_update_001",
                         "name": "update_record",
                         "approved": True,
@@ -1418,7 +1658,7 @@ async def test_approval_argument_mismatch_is_blocked(streaming_chat_client_stub)
         events2.append(event)
 
     assert executed_args == []
-    assert any("call_update_001" in k for k in wrapper._pending_approvals), (
+    assert wrapper._approval_state_store.lifecycle.pending_occurrence(thread_id=thread_id, interrupt_id=approval_id), (
         "Pending approval should be preserved after argument mismatch for legitimate retry"
     )
 

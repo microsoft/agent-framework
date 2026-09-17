@@ -3,8 +3,8 @@
 Monty-backed CodeAct integrations for Microsoft Agent Framework.
 
 > [!WARNING]
-> This package is in **alpha**. APIs may change without notice. It is not part of
-> `agent-framework[all]` yet; install it explicitly with `--pre`.
+> This package is in **beta**. APIs may change before its stable release. It is
+> included in `agent-framework[all]`.
 
 ## Installation
 
@@ -28,7 +28,7 @@ available inside the Monty interpreter as **typed async functions** (e.g.
 
 ```python
 from agent_framework import Agent, tool
-from agent_framework_monty import MontyCodeActProvider
+from agent_framework.monty import MontyCodeActProvider
 
 
 @tool
@@ -61,7 +61,7 @@ tools on the same agent).
 
 ```python
 from agent_framework import Agent, tool
-from agent_framework_monty import MontyExecuteCodeTool
+from agent_framework.monty import MontyExecuteCodeTool
 
 
 @tool
@@ -105,12 +105,20 @@ agent = Agent(
 )
 ```
 
+### Host tool lifetime
+
+Registered `FunctionTool` instances retain their invocation and exception counters
+across `execute_code` calls and provider runs. Their `max_invocations` and
+`max_invocation_exceptions` limits use the same counters as direct invocations of
+those instances. A provider's run-scoped snapshot captures tool membership; it
+does not reset host tool counters.
+
 ### File mounts and resource limits
 
 Mount host directories into the sandbox and cap execution resources:
 
 ```python
-from agent_framework_monty import FileMount, MontyCodeActProvider
+from agent_framework.monty import FileMount, MontyCodeActProvider
 
 codeact = MontyCodeActProvider(
     tools=[compute],
@@ -145,8 +153,8 @@ codeact = MontyCodeActProvider(
   nothing is captured). `read-only` mounts reject writes.
 - **`resource_limits`** is forwarded straight to Monty's
   [`ResourceLimits`](https://github.com/pydantic/monty) TypedDict
-  (`max_allocations`, `max_duration_secs`, `max_memory`, `gc_interval`,
-  `max_recursion_depth`).
+  (`max_duration_secs`, `max_memory`, `gc_interval`, `max_recursion_depth`,
+  `max_suspensions`).
 
 ## DSL inside `execute_code`
 
@@ -174,6 +182,5 @@ Available primitives:
 - Code is type-checked against tool signatures via
   [ty](https://docs.astral.sh/ty/) before execution, so wrong argument types
   surface as a clear error before any host tool runs.
-- The alpha package is **not** part of `agent-framework[all]` yet, so it must
-  be installed explicitly. Once promoted to beta it will be reachable via the
-  lazy-loading namespace `agent_framework.monty`.
+- The beta package is part of `agent-framework[all]` and is reachable through
+  the lazy-loading namespace `agent_framework.monty`.

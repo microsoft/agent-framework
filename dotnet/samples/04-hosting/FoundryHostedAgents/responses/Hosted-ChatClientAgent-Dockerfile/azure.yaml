@@ -1,0 +1,44 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+
+name: hosted-chat-client-agent-docker
+services:
+    ai-project:
+        host: azure.ai.project
+    hosted-chat-client-agent-docker:
+        project: .
+        host: azure.ai.agent
+        # `docker` selects the container build path: Foundry builds the Dockerfile in this folder
+        # instead of restoring a plain source folder. There is no codeConfiguration block here,
+        # which is what tells the tooling this is a container deploy rather than a source deploy.
+        language: docker
+        docker:
+            # azd builds the image in Azure Container Registry by default. Set this to false to
+            # build on your own machine instead, which requires Docker Desktop.
+            remoteBuild: true
+        uses:
+            - ai-project
+        # ${AZURE_AI_MODEL_DEPLOYMENT_NAME} reads the model deployment `azd ai agent init` recorded
+        # in the active azd environment. Without it the container falls back to the default model
+        # name hardcoded in Program.cs, which may not exist in the target project.
+        #
+        # The listen port is not set here: the Dockerfile already sets ASPNETCORE_URLS.
+        env:
+            AZURE_AI_MODEL_DEPLOYMENT_NAME: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
+        container:
+            resources:
+                cpu: "0.5"
+                memory: 1Gi
+        description: |
+            A simple general-purpose AI assistant hosted as a Foundry Hosted Agent, deployed as a container image.
+        kind: hosted
+        metadata:
+            tags:
+                - AI Agent Hosting
+                - Azure AI AgentServer
+                - Responses Protocol
+                - Streaming
+                - Agent Framework
+        name: hosted-chat-client-agent-docker
+        protocols:
+            - protocol: responses
+              version: 2.0.0

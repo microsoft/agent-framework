@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -19,9 +20,11 @@ from agent_framework._feature_stage import (
     ExperimentalFeature,
     experimental,
 )
+from agent_framework._telemetry import mark_feature_used
 from agent_framework.exceptions import AgentException
 from dotenv import load_dotenv
 
+from ._feature_usage import FeatureIndex
 from ._models import (
     AnonymousConnection,
     ApiKeyConnection,
@@ -336,7 +339,7 @@ class AgentFactory:
             yaml_path = Path(yaml_path)
         if not yaml_path.exists():
             raise DeclarativeLoaderError(f"YAML file not found at path: {yaml_path}")
-        with open(yaml_path) as f:
+        with open(yaml_path, encoding="utf-8") as f:
             yaml_str = f.read()
         return self.create_agent_from_yaml(yaml_str)
 
@@ -471,13 +474,15 @@ class AgentFactory:
         if output_schema := prompt_agent.outputSchema:
             chat_options["response_format"] = output_schema.to_json_schema()
         # Step 3: Create the agent instance
-        return Agent(
+        agent = Agent(
             client=client,
             name=prompt_agent.name,
             description=prompt_agent.description,
             instructions=prompt_agent.instructions,
             default_options=chat_options,  # type: ignore[arg-type]
         )
+        mark_feature_used(FeatureIndex.DECLARATIVE_AGENT)
+        return agent
 
     async def create_agent_from_yaml_path_async(self, yaml_path: str | Path) -> Agent:
         """Async version: Create a Agent from a YAML file path.
@@ -504,9 +509,10 @@ class AgentFactory:
         """
         if not isinstance(yaml_path, Path):
             yaml_path = Path(yaml_path)
-        if not yaml_path.exists():
-            raise DeclarativeLoaderError(f"YAML file not found at path: {yaml_path}")
-        yaml_str = yaml_path.read_text()
+        try:
+            yaml_str = await asyncio.to_thread(yaml_path.read_text, encoding="utf-8")
+        except FileNotFoundError as exc:
+            raise DeclarativeLoaderError(f"YAML file not found at path: {yaml_path}") from exc
         return await self.create_agent_from_yaml_async(yaml_str)
 
     async def create_agent_from_yaml_async(self, yaml_str: str) -> Agent:
@@ -582,13 +588,15 @@ class AgentFactory:
             chat_options["tools"] = tools
         if output_schema := prompt_agent.outputSchema:
             chat_options["response_format"] = output_schema.to_json_schema()
-        return Agent(
+        agent = Agent(
             client=client,
             name=prompt_agent.name,
             description=prompt_agent.description,
             instructions=prompt_agent.instructions,
             default_options=chat_options,  # type: ignore[arg-type]
         )
+        mark_feature_used(FeatureIndex.DECLARATIVE_AGENT)
+        return agent
 
     async def _create_agent_with_provider(self, prompt_agent: PromptAgent, mapping: ProviderTypeMapping) -> Agent:
         """Create an Agent through a provider object that exposes ``create_agent``.

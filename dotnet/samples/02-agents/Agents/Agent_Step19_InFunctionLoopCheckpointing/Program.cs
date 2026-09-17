@@ -67,7 +67,7 @@ static string GetTime([Description("The city name.")] string city) =>
 // asking for alternative destinations. The model will process this injected message on the next
 // service call — even though the parent FunctionInvokingChatClient loop would otherwise stop.
 [Description("Check current travel advisories for a city.")]
-static string CheckTravelAdvisory([Description("The city name.")] string city)
+static async Task<string> CheckTravelAdvisory([Description("The city name.")] string city)
 {
     // Simulated travel advisory data.
     var advisory = city.ToUpperInvariant() switch
@@ -85,9 +85,13 @@ static string CheckTravelAdvisory([Description("The city name.")] string city)
     // When an advisory is found, inject a follow-up question so the model automatically
     // suggests alternatives without the user needing to ask.
     var runContext = AIAgent.CurrentRunContext!;
-    runContext.Agent.GetService<MessageInjectingChatClient>()?.EnqueueMessages(
-        runContext.Session!,
-        [new ChatMessage(ChatRole.User, $"Given the travel advisory for {city}, what alternative cities would you recommend instead?")]);
+    var injector = runContext.Agent.GetService<MessageInjectingChatClient>();
+    if (injector is not null)
+    {
+        await injector.EnqueueMessagesAsync(
+            runContext.Session!,
+            [new ChatMessage(ChatRole.User, $"Given the travel advisory for {city}, what alternative cities would you recommend instead?")]);
+    }
 
     return advisory;
 }

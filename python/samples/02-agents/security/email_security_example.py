@@ -204,7 +204,11 @@ async def send_email(
 
 @tool(
     description="Fetch emails from the inbox. Returns a list of email objects.",
-    # No tool-level source_integrity needed - labels are per-item in additional_properties
+    additional_properties={
+        # The local inbox connector is trusted to classify internal senders.
+        # Per-item labels below may downgrade external messages to UNTRUSTED.
+        "source_integrity": "trusted",
+    },
 )
 async def fetch_emails(
     count: int = Field(default=5, description="Number of emails to fetch"),
@@ -217,8 +221,8 @@ async def fetch_emails(
     """
     emails = SAMPLE_EMAILS[:count]
 
-    # Return emails as list[Content] with per-item security labels in additional_properties.
-    # This ensures FunctionTool.invoke() preserves per-item labels for tier-1 propagation.
+    # Per-item labels are restriction-only. External messages downgrade the
+    # locally trusted fallback; internal messages preserve it.
     result: list[Content] = []
     for email in emails:
         email_text = json.dumps({
@@ -384,7 +388,7 @@ async def run_scenarios(agent, config):
     print()
     print(
         "User request: 'Use send_email to email colleague@company.com with subject "
-        "\"Inbox summary\" and include a summary of the emails you just reviewed in the body.'"
+        '"Inbox summary" and include a summary of the emails you just reviewed in the body.\''
     )
     print()
     print("Expected behavior:")
@@ -409,8 +413,8 @@ async def run_scenarios(agent, config):
     print(f"\n📋 Agent Response:\n{'-' * 40}")
     print(response.text)
 
-    # Check audit log for any blocked attempts
-    audit_log = config.get_audit_log()
+    # Security state, including the audit log, is stored per session.
+    audit_log = config.get_audit_log(session)
     if audit_log:
         print("\n" + "=" * 70)
         print("SECURITY AUDIT LOG - Policy Violations")

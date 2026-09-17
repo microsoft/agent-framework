@@ -17,7 +17,7 @@ This sample demonstrates:
    ``EvalResults.assert_dimension_score_at_least(...)`` for CI quality gates.
 
 Starting condition / prerequisites:
-- An Azure AI Foundry project with a deployed model.
+- A Microsoft Foundry project with a deployed model.
 - A registered Foundry agent (PromptAgent or HostedAgent) in that project.
   This is the agent the rubric is meant to evaluate.
 - A rubric evaluator already created in the Foundry portal against that

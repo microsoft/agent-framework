@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 import asyncio
+import logging
 import threading
 from typing import Annotated, Any, Literal, get_args, get_origin
 from unittest.mock import Mock
@@ -17,8 +18,10 @@ from agent_framework import (
 )
 from agent_framework._middleware import FunctionInvocationContext
 from agent_framework._tools import (
+    _auto_invoke_function,
     _parse_annotation,
     _parse_inputs,
+    normalize_function_invocation_configuration,
 )
 from agent_framework.observability import OtelAttr
 
@@ -149,6 +152,59 @@ async def test_tool_decorator_with_json_schema_invoke_missing_required():
 
     with pytest.raises(TypeError, match="Missing required argument"):
         await search.invoke(arguments={})
+
+
+async def test_invoke_preserves_explicit_null_argument():
+    """A required nullable argument the model sets to null must reach the function.
+
+    Regression for #5934: exclude_none dropped the explicit null, so the required
+    ``unit`` went missing and the invocation failed.
+    """
+
+    @tool
+    def get_weather(location: str, unit: Literal["C", "F"] | None) -> str:
+        return f"{location}:{unit}"
+
+    result = await get_weather.invoke(arguments={"location": "Seattle", "unit": None})
+    assert isinstance(result, list)
+    assert result[0].text == "Seattle:None"
+
+
+async def test_invoke_omitted_optional_uses_function_default():
+    """An omitted optional argument still falls back to the function's own default."""
+
+    @tool
+    def get_weather(location: str, unit: str = "C") -> str:
+        return f"{location}:{unit}"
+
+    result = await get_weather.invoke(arguments={"location": "Seattle"})
+    assert result[0].text == "Seattle:C"
+
+
+async def test_auto_invoke_preserves_explicit_null_argument():
+    """The auto function-calling path must preserve an explicit null argument too.
+
+    Regression for #5934: ``FunctionTool.invoke`` was fixed, but ``_auto_invoke_function``
+    (the path a model's ``function_call`` actually takes) still ran ``exclude_none`` and
+    dropped the required ``unit``, so the invocation failed with a missing argument.
+    """
+
+    @tool
+    def get_weather(location: str, unit: Literal["C", "F"] | None) -> str:
+        return f"{location}:{unit}"
+
+    function_call = Content.from_function_call(
+        call_id="call-1",
+        name=get_weather.name,
+        arguments='{"location": "Seattle", "unit": null}',
+    )
+    result = await _auto_invoke_function(
+        function_call,
+        config=normalize_function_invocation_configuration(None),
+        tool_map={get_weather.name: get_weather},
+    )
+    assert result.type == "function_result"
+    assert result.result == "Seattle:None"
 
 
 async def test_tool_decorator_with_json_schema_invoke_invalid_type():
@@ -286,6 +342,72 @@ async def test_tool_decorator_with_async():
         "type": "object",
     }
     assert (await async_test_tool(1, 2)) == 3
+
+
+async def test_async_tool_exception_limit_counts_awaited_failures() -> None:
+    """Async tool failures count toward the configured exception limit."""
+    from agent_framework.exceptions import ToolException
+
+    @tool(name="failing_async_tool", max_invocation_exceptions=1)
+    async def failing_async_tool() -> str:
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await failing_async_tool.invoke(skip_parsing=True)
+
+    assert failing_async_tool.invocation_count == 1
+    assert failing_async_tool.invocation_exception_count == 1
+
+    with pytest.raises(ToolException, match="maximum exception limit"):
+        await failing_async_tool.invoke(skip_parsing=True)
+
+    assert failing_async_tool.invocation_count == 1
+    assert failing_async_tool.invocation_exception_count == 1
+
+
+async def test_direct_async_tool_exception_limit_counts_awaited_failures() -> None:
+    """Direct async tool calls count failures toward the configured exception limit."""
+    from agent_framework.exceptions import ToolException
+
+    @tool(name="failing_direct_async_tool", max_invocation_exceptions=1)
+    async def failing_direct_async_tool() -> str:
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await failing_direct_async_tool()
+
+    assert failing_direct_async_tool.invocation_count == 1
+    assert failing_direct_async_tool.invocation_exception_count == 1
+
+    with pytest.raises(ToolException, match="maximum exception limit"):
+        await failing_direct_async_tool()
+
+    assert failing_direct_async_tool.invocation_count == 1
+    assert failing_direct_async_tool.invocation_exception_count == 1
+
+
+async def test_sync_awaitable_tool_exception_limit_counts_awaited_failures() -> None:
+    """Sync tools returning awaitables count failures during async invocation."""
+    from agent_framework.exceptions import ToolException
+
+    @tool(name="failing_sync_awaitable_tool", max_invocation_exceptions=1)
+    def failing_sync_awaitable_tool() -> Any:
+        async def fail_later() -> str:
+            raise RuntimeError("boom")
+
+        return fail_later()
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await failing_sync_awaitable_tool.invoke(skip_parsing=True)
+
+    assert failing_sync_awaitable_tool.invocation_count == 1
+    assert failing_sync_awaitable_tool.invocation_exception_count == 1
+
+    with pytest.raises(ToolException, match="maximum exception limit"):
+        await failing_sync_awaitable_tool.invoke(skip_parsing=True)
+
+    assert failing_sync_awaitable_tool.invocation_count == 1
+    assert failing_sync_awaitable_tool.invocation_exception_count == 1
 
 
 def test_tool_decorator_in_class():
@@ -597,6 +719,35 @@ async def test_tool_invoke_telemetry_sensitive_disabled(span_exporter: InMemoryS
     assert attributes[OtelAttr.TOOL_CALL_ID] == "test_call_id"
 
 
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_tool_invoke_telemetry_omits_tool_call_attrs_under_baseline_semconv(span_exporter: InMemorySpanExporter):
+    """gen_ai.tool.call.arguments/result were introduced above v1.36.0; omit them under the baseline semconv."""
+    import agent_framework.observability as observability
+
+    observability.OBSERVABILITY_SETTINGS.otel_semconv_stability_opt_in = ""
+
+    @tool(
+        name="telemetry_test_tool",
+        description="A test tool for telemetry",
+    )
+    def telemetry_test_tool(x: int, y: int) -> int:
+        """A function that adds two numbers for telemetry testing."""
+        return x + y
+
+    span_exporter.clear()
+    result = await telemetry_test_tool.invoke(x=1, y=2, tool_call_id="test_call_id")
+
+    assert isinstance(result, list)
+    assert result[0].text == "3"
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.attributes is not None
+    assert OtelAttr.TOOL_ARGUMENTS not in span.attributes
+    assert OtelAttr.TOOL_RESULT not in span.attributes
+
+
 async def test_tool_invoke_rejects_unexpected_runtime_kwargs() -> None:
     """Ensure invoke() requires runtime data to flow through FunctionInvocationContext."""
 
@@ -650,7 +801,9 @@ async def test_tool_invoke_telemetry_with_pydantic_args(span_exporter: InMemoryS
     assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"x": 5, "y": 10}'  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
 
-async def test_tool_invoke_telemetry_with_exception(span_exporter: InMemorySpanExporter):
+async def test_tool_invoke_telemetry_with_exception(
+    span_exporter: InMemorySpanExporter, caplog: pytest.LogCaptureFixture
+):
     """Test the tool invoke method with telemetry when an exception occurs."""
 
     @tool(
@@ -667,6 +820,8 @@ async def test_tool_invoke_telemetry_with_exception(span_exporter: InMemorySpanE
     # Call invoke and expect exception
     with pytest.raises(ValueError, match="Test exception for telemetry"):
         await exception_test_tool.invoke(x=1, y=2, tool_call_id="exception_call")
+    assert "Function failed. Error: Test exception for telemetry" in caplog.text
+    assert "result parser failed" not in caplog.text
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
     span = spans[0]
@@ -1375,6 +1530,111 @@ async def test_invoke_sync_tool_can_stay_on_event_loop() -> None:
     assert tool_thread_ids == [event_loop_thread_id]
 
 
+@pytest.mark.parametrize(
+    ("enable_instrumentation", "enable_sensitive_data"),
+    [(False, False), (True, False), (True, True)],
+    indirect=True,
+)
+async def test_invoke_result_parser_exception_propagates(
+    span_exporter: InMemorySpanExporter,
+    enable_instrumentation: bool,
+    enable_sensitive_data: bool,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from agent_framework.exceptions import ToolException
+
+    error = ValueError("Unsupported result")
+    parser = Mock(side_effect=error)
+    raw_result = {"value": "unparsed-value"}
+
+    @tool(result_parser=parser, max_invocation_exceptions=1)
+    def make_result() -> dict[str, str]:
+        return raw_result
+
+    histogram = Mock()
+    make_result._invocation_duration_histogram = histogram
+    with caplog.at_level(logging.DEBUG, logger="agent_framework"), pytest.raises(ValueError) as exc_info:
+        await make_result.invoke()
+
+    assert exc_info.value is error
+    parser.assert_called_once_with(raw_result)
+    assert make_result.invocation_count == 1
+    assert make_result.invocation_exception_count == 1
+    with pytest.raises(ToolException, match="maximum exception limit"):
+        await make_result.invoke()
+    parser.assert_called_once_with(raw_result)
+    assert make_result.invocation_count == 1
+    assert make_result.invocation_exception_count == 1
+    parser_errors = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "agent_framework"
+        and record.levelno == logging.ERROR
+        and "result parser failed" in record.getMessage()
+    ]
+    expected_parser_error = "Function make_result: result parser failed."
+    if enable_sensitive_data:
+        expected_parser_error += " Error: Unsupported result"
+    assert parser_errors == [expected_parser_error]
+    assert "succeeded" not in caplog.text
+    assert "unparsed-value" not in caplog.text
+    spans = span_exporter.get_finished_spans()
+    if enable_instrumentation:
+        assert len(spans) == 2
+        assert spans[0].status.status_code == trace.StatusCode.ERROR
+        assert spans[0].attributes is not None
+        assert spans[0].attributes[OtelAttr.ERROR_TYPE] == "ValueError"
+        assert OtelAttr.TOOL_RESULT not in spans[0].attributes
+        assert bool(spans[0].events) is enable_sensitive_data
+        assert ("Unsupported result" in (spans[0].status.description or "")) is enable_sensitive_data
+        assert spans[1].attributes is not None
+        assert spans[1].attributes[OtelAttr.ERROR_TYPE] == "ToolException"
+        assert histogram.record.call_count == 2
+        assert histogram.record.call_args_list[0].kwargs["attributes"][OtelAttr.ERROR_TYPE] == "ValueError"
+    else:
+        assert not spans
+        histogram.record.assert_not_called()
+
+
+@pytest.mark.parametrize("enable_instrumentation", [False, True], indirect=True)
+@pytest.mark.parametrize("return_content", [False, True])
+async def test_invoke_result_parser_success(span_exporter: InMemorySpanExporter, return_content: bool) -> None:
+    parsed = [Content.from_text("parsed-value")] if return_content else "parsed-value"
+    parser = Mock(return_value=parsed)
+
+    @tool(result_parser=parser)
+    def make_result() -> dict[str, str]:
+        return {"value": "unparsed-value"}
+
+    result = await make_result.invoke()
+
+    assert len(result) == 1
+    assert result[0].text == "parsed-value"
+    parser.assert_called_once_with({"value": "unparsed-value"})
+    if return_content:
+        assert result is parsed
+    for span in span_exporter.get_finished_spans():
+        assert span.attributes is not None
+        assert span.attributes[OtelAttr.TOOL_RESULT] == "parsed-value"
+
+
+@pytest.mark.parametrize("enable_instrumentation", [False, True], indirect=True)
+@pytest.mark.usefixtures("span_exporter")
+async def test_invoke_default_result_parser_failure_keeps_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    @tool
+    def make_result() -> dict[str, int]:
+        return {"value": 1}
+
+    monkeypatch.setattr(FunctionTool, "parse_result", Mock(side_effect=ValueError("Cannot convert result")))
+
+    result = await make_result.invoke()
+
+    assert len(result) == 1
+    assert result[0].text == "{'value': 1}"
+
+
+@pytest.mark.parametrize("enable_instrumentation", [False, True], indirect=True)
+@pytest.mark.usefixtures("span_exporter")
 async def test_invoke_skip_parsing_bypasses_configured_result_parser() -> None:
     """The tool's own result_parser is bypassed when skip_parsing=True is requested."""
     parser_calls: list[Any] = []
@@ -1398,6 +1658,8 @@ async def test_invoke_skip_parsing_bypasses_configured_result_parser() -> None:
     assert parsed[0].text == "PARSED"
 
 
+@pytest.mark.parametrize("enable_instrumentation", [False, True], indirect=True)
+@pytest.mark.usefixtures("span_exporter")
 async def test_constructor_skip_parsing_sentinel_returns_raw_by_default() -> None:
     """Constructing a tool with result_parser=SKIP_PARSING makes invoke return the raw value."""
 

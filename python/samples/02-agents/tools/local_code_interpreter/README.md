@@ -16,7 +16,7 @@ management), see
 ## Installation
 
 ```bash
-pip install agent-framework agent-framework-hyperlight --pre
+pip install agent-framework-hyperlight agent-framework-foundry --pre
 ```
 
 > The Hyperlight Wasm backend is currently published only for `linux/x86_64` and
@@ -25,7 +25,7 @@ pip install agent-framework agent-framework-hyperlight --pre
 
 ## Prerequisites
 
-- An Azure AI Foundry project endpoint (`FOUNDRY_PROJECT_ENDPOINT`)
+- A Microsoft Foundry project endpoint (`FOUNDRY_PROJECT_ENDPOINT`)
 - A deployed model (`FOUNDRY_MODEL`)
 - Azure CLI authenticated (`az login`)
 
