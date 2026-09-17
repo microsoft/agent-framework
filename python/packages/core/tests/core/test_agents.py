@@ -2394,6 +2394,102 @@ async def test_as_tool_resumes_two_simultaneous_nested_approvals_together() -> N
     assert second_response.text == "Amsterdam: sunny with clear skies."
 
 
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("propagate_session", [False, True])
+async def test_as_tool_resumes_consecutive_nested_approvals(stream: bool, propagate_session: bool) -> None:
+    """A resumed child can surface and complete another approval round."""
+    first_calls = 0
+    second_calls = 0
+
+    @tool(name="first_detail", approval_mode="always_require")
+    def first_detail() -> str:
+        nonlocal first_calls
+        first_calls += 1
+        return "first"
+
+    @tool(name="second_detail", approval_mode="always_require")
+    def second_detail() -> str:
+        nonlocal second_calls
+        second_calls += 1
+        return "second"
+
+    inner_client = MockBaseChatClient()
+    outer_client = MockBaseChatClient()
+    inner_agent = Agent(client=inner_client, name="worker", tools=[first_detail, second_detail])
+    outer_agent = Agent(
+        client=outer_client,
+        name="coordinator",
+        tools=[
+            inner_agent.as_tool(
+                name="worker_tool",
+                approval_mode="never_require",
+                propagate_session=propagate_session,
+            )
+        ],
+    )
+    session = AgentSession()
+
+    async def run_outer(run_input: str | Message) -> AgentResponse:
+        if stream:
+            return await outer_agent.run(run_input, session=session, stream=True).get_final_response()
+        return await outer_agent.run(run_input, session=session, stream=False)
+
+    outer_call = Content.from_function_call(call_id="outer-call", name="worker_tool", arguments='{"task": "details"}')
+    if stream:
+        outer_client.streaming_responses = [[ChatResponseUpdate(role="assistant", contents=[outer_call])]]
+    else:
+        outer_client.run_responses = [ChatResponse(messages=Message(role="assistant", contents=[outer_call]))]
+    inner_client.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                role="assistant",
+                contents=[Content.from_function_call(call_id="first-call", name="first_detail", arguments="{}")],
+            )
+        ]
+    ]
+
+    first_response = await run_outer("Get details")
+    first_request = first_response.user_input_requests[0]
+
+    inner_client.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                role="assistant",
+                contents=[Content.from_function_call(call_id="second-call", name="second_detail", arguments="{}")],
+            )
+        ]
+    ]
+    second_response = await run_outer(
+        Message(role="user", contents=[first_request.to_function_approval_response(True)])
+    )
+
+    assert first_calls == 1
+    assert second_calls == 0
+    assert len(second_response.user_input_requests) == 1
+    second_request = second_response.user_input_requests[0]
+    assert second_request.function_call is not None
+    assert second_request.function_call.name == "second_detail"
+
+    inner_client.streaming_responses = [
+        [ChatResponseUpdate(role="assistant", contents=[Content.from_text("Both details are ready.")])]
+    ]
+    if stream:
+        outer_client.streaming_responses = [
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("Done.")])]
+        ]
+    else:
+        outer_client.run_responses = [ChatResponse(messages=Message(role="assistant", contents=["Done."]))]
+
+    final_response = await run_outer(
+        Message(role="user", contents=[second_request.to_function_approval_response(True)])
+    )
+
+    assert first_calls == 1
+    assert second_calls == 1
+    assert not final_response.user_input_requests
+    assert final_response.text == "Done."
+
+
 async def test_chat_agent_as_mcp_server_basic(client: SupportsChatGetResponse) -> None:
     """Test basic as_mcp_server functionality."""
     agent = Agent(client=client, name="TestAgent", description="Test agent for MCP")

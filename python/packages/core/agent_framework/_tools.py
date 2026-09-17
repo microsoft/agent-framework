@@ -2095,7 +2095,24 @@ async def _try_resume_nested_tool_approval_group(
             new_stack = [*remaining_stack, {"name": owner_name, "call_id": owner_call_id, "arguments": owner_arguments}]
             item.additional_properties = dict(item.additional_properties)
             item.additional_properties[_NESTED_TOOL_APPROVAL_OWNER_STACK_KEY] = new_stack
-        raise UserInputRequiredException(contents=repropagated) from exc
+            _append_nested_owner_to_already_approved_requests(
+                invocation_session,
+                {item.id} if item.id else set(),
+                new_stack,
+            )
+        if not repropagated:
+            raise
+        result_groups = [
+            [
+                Content.from_function_result(
+                    call_id=inner_call_id,
+                    result="Nested approval response processed; further approval is required.",
+                )
+            ]
+            for inner_call_id in inner_call_ids
+        ]
+        result_groups[0].extend(repropagated)
+        return result_groups
 
     # Plain pairing/inner-keyed entries, not routed through middleware themselves: the owner's
     # own tool call already ran the full (middleware-inclusive) path above; these just give
@@ -2966,8 +2983,23 @@ def _get_tool_approval_state(invocation_session: AgentSession | None, *, create:
     if isinstance(raw_state, dict):
         state = cast(dict[str, Any], raw_state)
         if state.get(_TOOL_APPROVAL_STATE_VERSION_KEY) != _TOOL_APPROVAL_STATE_VERSION:
-            state.clear()
+            discarded_keys = (
+                _PENDING_APPROVAL_REQUESTS_KEY,
+                _ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY,
+                _PENDING_MIXED_PAUSE_BATCH_KEY,
+                "queued_approval_requests",
+                "collected_approval_responses",
+            )
+            discarded_pending_state = False
+            for key in discarded_keys:
+                if state.pop(key, None) is not None:
+                    discarded_pending_state = True
             state[_TOOL_APPROVAL_STATE_VERSION_KEY] = _TOOL_APPROVAL_STATE_VERSION
+            if discarded_pending_state:
+                logger.warning(
+                    "Discarded unversioned pending approval state because it cannot be resumed with trusted nested "
+                    "ownership; rerun the paused operation to issue a new approval request."
+                )
         return state
     from ._harness._tool_approval import ToolApprovalState
 

@@ -764,11 +764,16 @@ def test_occurrence_aware_legacy_request_id_rebounds_to_occurrence_id() -> None:
     assert messages[0].contents[0].function_call.call_id == "provider-call"
 
 
-def test_unversioned_serialized_pending_approval_must_be_reissued() -> None:
+def test_unversioned_serialized_pending_approval_must_be_reissued(caplog: pytest.LogCaptureFixture) -> None:
     from agent_framework._tools import _bind_approval_responses_to_pending_requests, _load_pending_approval_requests
 
     session = AgentSession(session_id="approval-binding-legacy")
     session.state["tool_approval"] = {
+        "rules": [{"function_name": "safe_read"}],
+        "queued_approval_requests": [{"type": "function_approval_request"}],
+        "collected_approval_responses": [{"type": "function_approval_response"}],
+        "already_approved_approval_request_groups": [{"approval_request_ids": ["legacy-call"]}],
+        "pending_mixed_pause_batch": {"items": []},
         "pending_approval_requests": [
             {
                 "type": "function_approval_request",
@@ -781,7 +786,7 @@ def test_unversioned_serialized_pending_approval_must_be_reissued() -> None:
                 },
                 "user_input_request": True,
             }
-        ]
+        ],
     }
     response = Content.from_function_approval_response(
         approved=True,
@@ -796,7 +801,52 @@ def test_unversioned_serialized_pending_approval_must_be_reissued() -> None:
 
     assert messages == []
     assert _load_pending_approval_requests(session) == {}
-    assert session.state["tool_approval"] == {"state_version": 1}
+    assert session.state["tool_approval"] == {
+        "rules": [{"function_name": "safe_read"}],
+        "state_version": 1,
+    }
+    assert "rerun the paused operation" in caplog.text
+
+
+def test_versioned_legacy_pending_approval_retains_consume_once_compatibility() -> None:
+    from agent_framework._tools import _bind_approval_responses_to_pending_requests, _load_pending_approval_requests
+
+    session = AgentSession(session_id="approval-binding-versioned-legacy")
+    session.state["tool_approval"] = {
+        "state_version": 1,
+        "pending_approval_requests": [
+            {
+                "type": "function_approval_request",
+                "id": "legacy-call",
+                "function_call": {
+                    "type": "function_call",
+                    "call_id": "legacy-call",
+                    "name": "guarded_write",
+                    "arguments": {"value": "stored"},
+                },
+                "user_input_request": True,
+            }
+        ],
+    }
+    response = Content.from_function_approval_response(
+        approved=True,
+        id="legacy-call",
+        function_call=Content.from_function_call(
+            call_id="legacy-call",
+            name="guarded_write",
+            arguments={"value": "client"},
+        ),
+    )
+    messages = [Message(role="user", contents=[response])]
+
+    with pytest.warns(FutureWarning, match="legacy stored approval.*Content.id"):
+        _bind_approval_responses_to_pending_requests(messages, session)
+
+    rebound = messages[0].contents[0]
+    assert rebound.function_call is not None
+    assert rebound.function_call.id is None
+    assert rebound.function_call.parse_arguments() == {"value": "stored"}
+    assert _load_pending_approval_requests(session) == {}
 
 
 def test_hosted_approval_keeps_provider_issued_request_id() -> None:

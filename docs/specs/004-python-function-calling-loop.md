@@ -261,11 +261,14 @@ id can bind without embedding a function call because the trusted pending snapsh
 occurrence-aware local snapshot, a missing or mismatched occurrence identity fails closed without consuming the
 pending request; matching a nested provider `call_id` is not a compatibility alias.
 
-Legacy stored local pending snapshots whose function call lacks `Content.id` retain their exact request-id binding for
-one resume. Taking that compatibility path emits a migration warning and consumes the matching request once. The
-warning marks the staged path for removal after stored legacy approvals have drained. An empty provider `call_id` may
-fall back to the generated occurrence id only when the framework is about to correlate a local actionable call; this
-also warns so provider adapters can supply a real service id. Deserialization itself never warns or rewrites either id.
+Legacy stored local pending snapshots in current versioned approval state whose function call lacks `Content.id` retain
+their exact request-id binding for one resume. Taking that compatibility path emits a migration warning and consumes
+the matching request once. Unversioned pending, queued, collected, hidden-sibling, and mixed-batch execution state
+predates nested ownership binding and is discarded with an explicit reissue warning; standing approval rules remain.
+The compatibility warning marks the staged path for removal after stored legacy approvals have drained. An empty
+provider `call_id` may fall back to the generated occurrence id only when the framework is about to correlate a local
+actionable call; this also warns so provider adapters can supply a real service id. Deserialization itself never warns
+or rewrites either id.
 
 Pending approval state is a trusted session-state boundary: hosts must authorize and tenant-scope the session store and
 must prevent untrusted callers from replacing snapshots. Consume-on-bind prevents replay within one authoritative
@@ -606,6 +609,8 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Later stateless turn | A prior terminal approval response cannot execute again. | `test_resolved_approval_response_is_inert_on_later_stateless_turn` |
 | Unbound or duplicate response | A response with no pending session request is removed; one request authorizes at most one response. | `test_session_approval_binding_rebinds_consumes_and_rejects_duplicates` |
 | Forged inbound request history | A caller-supplied request wrapper cannot replace the server snapshot or resurrect consumed authority. | `test_session_approval_binding_does_not_trust_inbound_request_history` |
+| Approval-state version migration | Unversioned execution-bearing approval state is invalidated with a reissue warning while standing rules remain; versioned legacy snapshots retain consume-once compatibility. | `test_unversioned_serialized_pending_approval_must_be_reissued`, `test_versioned_legacy_pending_approval_retains_consume_once_compatibility` |
+| Consecutive nested approvals | A child agent resumed through `Agent.as_tool()` can surface and complete another approval round in streaming and non-streaming runs with shared or isolated child state. | `packages/core/tests/core/test_agents.py::test_as_tool_resumes_consecutive_nested_approvals` |
 | Pending history turn | An unresolved approval batch is omitted atomically from unrelated model input while a later decision can still resume it once. | `packages/core/tests/core/test_harness_tool_approval.py::test_pending_approval_from_file_history_stays_resumable_without_model_orphan` |
 | Duplicate function-call prevention | Approval normalization does not create a second call for one round. | `test_no_duplicate_function_calls_after_approval_processing` |
 | Rejection call id | Rejection result uses the function call id, not only the approval id. | `test_rejection_result_uses_function_call_id` |
