@@ -170,6 +170,15 @@ class RawFoundryEmbeddingClient(
         env_file_encoding: str | None = None,
     ) -> None:
         """Initialize a raw Foundry embedding client."""
+        if project_endpoint is not None:
+            project_endpoint = project_endpoint.strip() or None
+        if endpoint is not None:
+            endpoint = endpoint.strip() or None
+        if (isinstance(api_key, str) and not api_key.strip()) or (
+            isinstance(api_key, SecretString) and not api_key.get_secret_value().strip()
+        ):
+            api_key = None
+
         explicit_project_source = project_client is not None or project_endpoint is not None
         explicit_inference_source = any(value is not None for value in (endpoint, api_key, text_client, image_client))
         if explicit_project_source and explicit_inference_source:

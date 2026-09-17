@@ -368,6 +368,27 @@ class TestRawFoundryEmbeddingClient:
                 endpoint="https://test.inference.ai.azure.com",
             )
 
+    @pytest.mark.parametrize(("endpoint", "api_key"), [("", ""), ("   ", "   ")])
+    def test_blank_explicit_models_values_do_not_conflict_with_project_client(
+        self,
+        endpoint: str,
+        api_key: str,
+    ) -> None:
+        """Blank explicit Models settings are absent when selecting project mode."""
+        openai_client = _make_openai_client()
+        project_client = MagicMock()
+        project_client.get_openai_client.return_value = openai_client
+
+        client = RawFoundryEmbeddingClient(
+            model="text-embedding-3-small",
+            project_client=project_client,
+            endpoint=endpoint,
+            api_key=api_key,
+        )
+
+        assert client.project_client is project_client
+        project_client.get_openai_client.assert_called_once_with()
+
     def test_legacy_models_endpoint_wins_when_both_env_endpoints_are_set(self) -> None:
         """Existing inference configuration remains preferred when both endpoints come from env."""
         with (
