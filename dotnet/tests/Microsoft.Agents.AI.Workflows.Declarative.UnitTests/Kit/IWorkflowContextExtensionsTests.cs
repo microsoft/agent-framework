@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Collections;
+using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
@@ -159,6 +161,37 @@ public sealed class IWorkflowContextExtensionsTests
 
         // Assert
         context.VerifyAll();
+    }
+
+    [Fact]
+    public async Task GeneratedForeachPattern_WithSensitiveCollection_PreservesItemSensitivityAsync()
+    {
+        // Arrange
+        WorkflowFormulaState state = new(RecalcEngineFactory.Create());
+        state.Set(
+            "SensitiveItems",
+            FormulaValue.NewTable(
+                RecordType.Empty(),
+                FormulaValue.NewRecordFromFields(new NamedValue("Value", FormulaValue.New("first"))),
+                FormulaValue.NewRecordFromFields(new NamedValue("Value", FormulaValue.New("second")))),
+            VariableScopeNames.Environment,
+            SensitivityLevel.Sensitive);
+        state.Bind();
+        DeclarativeWorkflowContext context = new(new Mock<IWorkflowContext>().Object, state);
+
+        // Act
+        EvaluationResult<object?> evaluatedValue = await context.EvaluateValueWithSensitivityAsync<object>("Env.SensitiveItems");
+        IEnumerable values = Assert.IsAssignableFrom<IEnumerable>(evaluatedValue.Value);
+        object? firstValue = values.Cast<object?>().First();
+        await context.QueueStateUpdateWithSensitivityAsync(
+            key: "LoopValue",
+            value: new EvaluationResult<object?>(firstValue, evaluatedValue.Sensitivity),
+            scopeName: VariableScopeNames.Local);
+
+        // Assert
+        Assert.Equal(SensitivityLevel.Sensitive, evaluatedValue.Sensitivity);
+        Assert.NotNull(state.Get("LoopValue").ToObject());
+        Assert.Equal(SensitivityLevel.Sensitive, state.GetSensitivity("LoopValue"));
     }
 
     [Fact]
