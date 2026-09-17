@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 import asyncio
+import logging
 import threading
 from typing import Annotated, Any, Literal, get_args, get_origin
 from unittest.mock import Mock
@@ -800,7 +801,9 @@ async def test_tool_invoke_telemetry_with_pydantic_args(span_exporter: InMemoryS
     assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"x": 5, "y": 10}'  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
 
-async def test_tool_invoke_telemetry_with_exception(span_exporter: InMemorySpanExporter):
+async def test_tool_invoke_telemetry_with_exception(
+    span_exporter: InMemorySpanExporter, caplog: pytest.LogCaptureFixture
+):
     """Test the tool invoke method with telemetry when an exception occurs."""
 
     @tool(
@@ -817,6 +820,8 @@ async def test_tool_invoke_telemetry_with_exception(span_exporter: InMemorySpanE
     # Call invoke and expect exception
     with pytest.raises(ValueError, match="Test exception for telemetry"):
         await exception_test_tool.invoke(x=1, y=2, tool_call_id="exception_call")
+    assert "Function failed. Error: Test exception for telemetry" in caplog.text
+    assert "result parser failed" not in caplog.text
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
     span = spans[0]
@@ -1525,6 +1530,111 @@ async def test_invoke_sync_tool_can_stay_on_event_loop() -> None:
     assert tool_thread_ids == [event_loop_thread_id]
 
 
+@pytest.mark.parametrize(
+    ("enable_instrumentation", "enable_sensitive_data"),
+    [(False, False), (True, False), (True, True)],
+    indirect=True,
+)
+async def test_invoke_result_parser_exception_propagates(
+    span_exporter: InMemorySpanExporter,
+    enable_instrumentation: bool,
+    enable_sensitive_data: bool,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from agent_framework.exceptions import ToolException
+
+    error = ValueError("Unsupported result")
+    parser = Mock(side_effect=error)
+    raw_result = {"value": "unparsed-value"}
+
+    @tool(result_parser=parser, max_invocation_exceptions=1)
+    def make_result() -> dict[str, str]:
+        return raw_result
+
+    histogram = Mock()
+    make_result._invocation_duration_histogram = histogram
+    with caplog.at_level(logging.DEBUG, logger="agent_framework"), pytest.raises(ValueError) as exc_info:
+        await make_result.invoke()
+
+    assert exc_info.value is error
+    parser.assert_called_once_with(raw_result)
+    assert make_result.invocation_count == 1
+    assert make_result.invocation_exception_count == 1
+    with pytest.raises(ToolException, match="maximum exception limit"):
+        await make_result.invoke()
+    parser.assert_called_once_with(raw_result)
+    assert make_result.invocation_count == 1
+    assert make_result.invocation_exception_count == 1
+    parser_errors = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "agent_framework"
+        and record.levelno == logging.ERROR
+        and "result parser failed" in record.getMessage()
+    ]
+    expected_parser_error = "Function make_result: result parser failed."
+    if enable_sensitive_data:
+        expected_parser_error += " Error: Unsupported result"
+    assert parser_errors == [expected_parser_error]
+    assert "succeeded" not in caplog.text
+    assert "unparsed-value" not in caplog.text
+    spans = span_exporter.get_finished_spans()
+    if enable_instrumentation:
+        assert len(spans) == 2
+        assert spans[0].status.status_code == trace.StatusCode.ERROR
+        assert spans[0].attributes is not None
+        assert spans[0].attributes[OtelAttr.ERROR_TYPE] == "ValueError"
+        assert OtelAttr.TOOL_RESULT not in spans[0].attributes
+        assert bool(spans[0].events) is enable_sensitive_data
+        assert ("Unsupported result" in (spans[0].status.description or "")) is enable_sensitive_data
+        assert spans[1].attributes is not None
+        assert spans[1].attributes[OtelAttr.ERROR_TYPE] == "ToolException"
+        assert histogram.record.call_count == 2
+        assert histogram.record.call_args_list[0].kwargs["attributes"][OtelAttr.ERROR_TYPE] == "ValueError"
+    else:
+        assert not spans
+        histogram.record.assert_not_called()
+
+
+@pytest.mark.parametrize("enable_instrumentation", [False, True], indirect=True)
+@pytest.mark.parametrize("return_content", [False, True])
+async def test_invoke_result_parser_success(span_exporter: InMemorySpanExporter, return_content: bool) -> None:
+    parsed = [Content.from_text("parsed-value")] if return_content else "parsed-value"
+    parser = Mock(return_value=parsed)
+
+    @tool(result_parser=parser)
+    def make_result() -> dict[str, str]:
+        return {"value": "unparsed-value"}
+
+    result = await make_result.invoke()
+
+    assert len(result) == 1
+    assert result[0].text == "parsed-value"
+    parser.assert_called_once_with({"value": "unparsed-value"})
+    if return_content:
+        assert result is parsed
+    for span in span_exporter.get_finished_spans():
+        assert span.attributes is not None
+        assert span.attributes[OtelAttr.TOOL_RESULT] == "parsed-value"
+
+
+@pytest.mark.parametrize("enable_instrumentation", [False, True], indirect=True)
+@pytest.mark.usefixtures("span_exporter")
+async def test_invoke_default_result_parser_failure_keeps_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    @tool
+    def make_result() -> dict[str, int]:
+        return {"value": 1}
+
+    monkeypatch.setattr(FunctionTool, "parse_result", Mock(side_effect=ValueError("Cannot convert result")))
+
+    result = await make_result.invoke()
+
+    assert len(result) == 1
+    assert result[0].text == "{'value': 1}"
+
+
+@pytest.mark.parametrize("enable_instrumentation", [False, True], indirect=True)
+@pytest.mark.usefixtures("span_exporter")
 async def test_invoke_skip_parsing_bypasses_configured_result_parser() -> None:
     """The tool's own result_parser is bypassed when skip_parsing=True is requested."""
     parser_calls: list[Any] = []
@@ -1548,6 +1658,8 @@ async def test_invoke_skip_parsing_bypasses_configured_result_parser() -> None:
     assert parsed[0].text == "PARSED"
 
 
+@pytest.mark.parametrize("enable_instrumentation", [False, True], indirect=True)
+@pytest.mark.usefixtures("span_exporter")
 async def test_constructor_skip_parsing_sentinel_returns_raw_by_default() -> None:
     """Constructing a tool with result_parser=SKIP_PARSING makes invoke return the raw value."""
 
