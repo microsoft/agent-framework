@@ -3209,6 +3209,8 @@ def _stateless_mixed_pause_batch_status(
     latest_host_by_occurrence: dict[tuple[str, str], int] = {}
     latest_host_by_call: dict[str, int] = {}
     latest_idless_host_by_call: dict[str, int] = {}
+    host_request_counts: dict[tuple[int, str], int] = {}
+    owned_host_result_counts: dict[tuple[int, str], int] = {}
     matched_host_result_ids: set[int] = set()
     host_result_batch_indices: dict[int, int] = {}
     next_batch_index = 0
@@ -3229,6 +3231,8 @@ def _stateless_mixed_pause_batch_status(
                 if function_call is not None and function_call.call_id is not None:
                     latest_approval_by_call[function_call.call_id] = batch_index
             elif item.get("kind") == "host" and request.call_id is not None:
+                batch_call = (batch_index, request.call_id)
+                host_request_counts[batch_call] = host_request_counts.get(batch_call, 0) + 1
                 latest_host_by_call[request.call_id] = batch_index
                 if request.id is None:
                     latest_idless_host_by_call[request.call_id] = batch_index
@@ -3243,6 +3247,8 @@ def _stateless_mixed_pause_batch_status(
             next_batch_index += 1
 
         owner_candidates: list[tuple[int, str]] = []
+        approval_batch_index: int | None = None
+        host_batch_index: int | None = None
         if content.type == "function_approval_response":
             identities = {
                 str(identity)
@@ -3258,7 +3264,8 @@ def _stateless_mixed_pause_batch_status(
                 if (batch_index := latest_approval_by_identity.get(identity)) is not None
             )
         elif content.call_id is not None:
-            if (approval_batch_index := latest_approval_by_call.get(content.call_id)) is not None:
+            approval_batch_index = latest_approval_by_call.get(content.call_id)
+            if approval_batch_index is not None:
                 owner_candidates.append((approval_batch_index, "approval"))
             if content.id is None:
                 host_batch_index = latest_host_by_call.get(content.call_id)
@@ -3283,10 +3290,25 @@ def _stateless_mixed_pause_batch_status(
             owner_candidates,
             key=lambda candidate: (candidate[0], candidate[1] == "host"),
         )
+        if (
+            content.type == "function_result"
+            and content.call_id is not None
+            and owner_kind == "host"
+            and approval_batch_index == owner_batch_index
+            and host_batch_index == owner_batch_index
+            and (
+                content.id is None or latest_host_by_occurrence.get((content.call_id, content.id)) != owner_batch_index
+            )
+            and owned_host_result_counts.get((owner_batch_index, content.call_id), 0)
+            >= host_request_counts.get((owner_batch_index, content.call_id), 0)
+        ):
+            owner_kind = "approval"
         responses_by_batch[owner_batch_index].append(content)
         if owner_kind == "host":
             matched_host_result_ids.add(id(content))
             host_result_batch_indices[id(content)] = owner_batch_index
+            batch_call = (owner_batch_index, cast(str, content.call_id))
+            owned_host_result_counts[batch_call] = owned_host_result_counts.get(batch_call, 0) + 1
 
     pending_approval_response_ids = {
         id(response)
