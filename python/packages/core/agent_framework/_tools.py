@@ -4151,10 +4151,10 @@ async def _resolve_approval_responses(
             if matching_index is not None:
                 ordered_responses.append(remaining_responses.pop(matching_index))
 
-        ordered_response_ids = {id(response) for response in ordered_responses}
-        if ordered_response_ids:
+        batch_response_ids = {id(response) for response in batch_responses}
+        if batch_response_ids:
             for message in prepared_messages:
-                message.contents = [content for content in message.contents if id(content) not in ordered_response_ids]
+                message.contents = [content for content in message.contents if id(content) not in batch_response_ids]
             prepared_messages[:] = [message for message in prepared_messages if message.contents]
             prepared_messages.append(Message(role="user", contents=ordered_responses))
 
