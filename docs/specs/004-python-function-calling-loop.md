@@ -195,6 +195,12 @@ response is rejected. Correlation is scoped to the active mixed batch so complet
 remain unchanged. `ToolApprovalMiddleware` may resolve approval requests through standing or automatic policies, but
 it preserves non-approval user-input requests and does not split manual approvals away from their Host-owned siblings.
 
+Fully executable calls run concurrently by default. When
+`FunctionInvocationConfiguration["allow_concurrent_invocation"]` is `False`, the layer instead starts each call only
+after the preceding call has completed, preserving model order. A middleware termination result prevents later calls
+from starting; the layer emits synthetic skipped results for that unstarted suffix so every call remains paired with a
+terminal result.
+
 ### Reasoning-bound function-call groups
 
 Some hosted services bind reasoning content or an opaque reasoning signature to the function call that follows it.

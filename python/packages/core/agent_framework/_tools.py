@@ -1696,6 +1696,9 @@ class FunctionInvocationConfiguration(TypedDict, total=False):
       sessions are always bounded, even if individual approval steps are slow.
     - ``max_consecutive_errors_per_request``: How many consecutive errors
       before abandoning the tool loop for this request.
+    - ``allow_concurrent_invocation``: Whether executable calls from one model
+      response may run concurrently. Set to ``False`` to execute them in model
+      order. Defaults to ``True``.
     - ``terminate_on_unknown_calls``: Whether to raise an error when the model
       requests a function that is not in the tool map.
     - ``additional_tools``: Extra tools available during execution but not
@@ -1735,6 +1738,7 @@ class FunctionInvocationConfiguration(TypedDict, total=False):
     terminate_on_unknown_calls: bool
     additional_tools: Sequence[FunctionTool]
     include_detailed_errors: bool
+    allow_concurrent_invocation: bool
 
 
 def normalize_function_invocation_configuration(
@@ -1749,6 +1753,7 @@ def normalize_function_invocation_configuration(
         "terminate_on_unknown_calls": False,
         "additional_tools": [],
         "include_detailed_errors": False,
+        "allow_concurrent_invocation": True,
     }
     if config:
         normalized.update(config)
@@ -2386,11 +2391,10 @@ async def _try_execute_function_call_groups(
                 declaration_only_calls.append(_as_user_input_pause(function_call))
         return [[function_call] for function_call in declaration_only_calls], False
 
-    # Only a fully executable batch reaches this point; run calls concurrently but retain per-call result groups.
-    # Create each task inside a copied context so the active agent span is
-    # preserved for every parallel tool invocation.
-    execution_tasks = [
-        contextvars.copy_context().run(
+    # Only a fully executable batch reaches this point. Each call gets its own
+    # task so context changes made by one tool cannot leak into another.
+    def create_execution_task(function_call: Content) -> asyncio.Task[tuple[list[Content], bool]]:
+        return contextvars.copy_context().run(
             asyncio.create_task,
             _execute_single_function_call(
                 function_call,
@@ -2403,22 +2407,41 @@ async def _try_execute_function_call_groups(
                 host_payload_budget=host_payload_budget,
             ),
         )
-        for function_call in function_calls
-    ]
-    try:
-        execution_results = await asyncio.gather(*execution_tasks)
-    except BaseException:
-        # A loud escape from one call (e.g. MiddlewareFailure aborting the run
-        # fail-closed) fails the whole batch: cancel in-flight siblings and wait for
-        # them so no new tool work starts after the loop is abandoned. Cancellation
-        # is cooperative — a synchronous tool body already running in a worker thread
-        # (asyncio.to_thread) cannot be interrupted and may complete its side effects,
-        # but its result is discarded with the batch and never reaches the transcript,
-        # the model, or history.
-        for task in execution_tasks:
-            task.cancel()
-        await asyncio.gather(*execution_tasks, return_exceptions=True)
-        raise
+
+    execution_results: list[tuple[list[Content], bool]] = []
+    if config.get("allow_concurrent_invocation", True):
+        execution_tasks = [create_execution_task(function_call) for function_call in function_calls]
+        try:
+            execution_results = await asyncio.gather(*execution_tasks)
+        except BaseException:
+            # A loud escape from one call (e.g. MiddlewareFailure aborting the run
+            # fail-closed) fails the whole batch: cancel in-flight siblings and wait for
+            # them so no new tool work starts after the loop is abandoned. Cancellation
+            # is cooperative — a synchronous tool body already running in a worker thread
+            # (asyncio.to_thread) cannot be interrupted and may complete its side effects,
+            # but its result is discarded with the batch and never reaches the transcript,
+            # the model, or history.
+            for task in execution_tasks:
+                task.cancel()
+            await asyncio.gather(*execution_tasks, return_exceptions=True)
+            raise
+    else:
+        for index, function_call in enumerate(function_calls):
+            result = await create_execution_task(function_call)
+            execution_results.append(result)
+            if result[1]:
+                for skipped_call in function_calls[index + 1 :]:
+                    source_call = _underlying_function_call(skipped_call)
+                    execution_results.append((
+                        [
+                            Content.from_function_result(
+                                call_id=source_call.call_id,  # type: ignore[arg-type]
+                                result="Skipped: a prior tool call in this batch requested termination.",
+                            )
+                        ],
+                        False,
+                    ))
+                break
 
     should_terminate = any(terminate for _, terminate in execution_results)
     return [result_contents for result_contents, _ in execution_results], should_terminate
