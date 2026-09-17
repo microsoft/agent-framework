@@ -3142,6 +3142,7 @@ def _stateless_mixed_pause_batch_status(
     batch_items: list[dict[str, Any]] = []
     batch_kinds: set[str] = set()
     last_request_index = -1
+    content_index = -1
 
     def answers_current_batch(content: Content) -> bool:
         if content.type not in {"function_approval_response", "function_result"}:
@@ -3172,22 +3173,35 @@ def _stateless_mixed_pause_batch_status(
                 return True
         return False
 
-    for content_index, content in enumerate(flattened_contents):
-        if batch_items and answers_current_batch(content):
-            request_batches.append((last_request_index, batch_items, batch_kinds))
-            batch_items = []
-            batch_kinds = set()
-        if content.type == "function_approval_request":
-            kind = "approval"
-        elif content.type == "function_call" and content.user_input_request:
-            kind = "host"
-        else:
-            continue
-        last_request_index = content_index
-        batch_kinds.add(kind)
-        batch_items.append({"kind": kind, "request": content.to_dict()})
-    if batch_items:
+    def finish_current_batch() -> None:
+        nonlocal batch_items, batch_kinds
+        if not batch_items:
+            return
         request_batches.append((last_request_index, batch_items, batch_kinds))
+        batch_items = []
+        batch_kinds = set()
+
+    for message in messages:
+        if (
+            message.role == "user"
+            and batch_items
+            and not any(answers_current_batch(content) for content in message.contents)
+        ):
+            finish_current_batch()
+        for content in message.contents:
+            content_index += 1
+            if batch_items and answers_current_batch(content):
+                finish_current_batch()
+            if content.type == "function_approval_request":
+                kind = "approval"
+            elif content.type == "function_call" and content.user_input_request:
+                kind = "host"
+            else:
+                continue
+            last_request_index = content_index
+            batch_kinds.add(kind)
+            batch_items.append({"kind": kind, "request": content.to_dict()})
+    finish_current_batch()
 
     for batch_end, items, kinds in reversed(request_batches):
         if kinds != {"approval", "host"}:

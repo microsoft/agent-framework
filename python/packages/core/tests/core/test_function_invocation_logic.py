@@ -3521,9 +3521,11 @@ async def test_stateless_split_mixed_batch_rejects_incomplete_replay_before_exec
     assert calls == 0
 
 
-@pytest.mark.parametrize("metadata_role", ["tool", "user"])
-def test_stateless_mixed_batch_across_message_roles_requires_complete_responses(metadata_role: str) -> None:
-    """Intervening message roles do not split a mixed batch or change response order."""
+@pytest.mark.parametrize("metadata_role", ["assistant", "tool"])
+def test_stateless_mixed_batch_across_non_user_message_roles_requires_complete_responses(
+    metadata_role: str,
+) -> None:
+    """Intervening non-user message roles do not split a mixed batch or change response order."""
     from agent_framework._tools import _stateless_mixed_pause_batch_status
 
     approval_call = Content.from_function_call(
@@ -3572,6 +3574,60 @@ def test_stateless_mixed_batch_across_message_roles_requires_complete_responses(
         "function_result",
     ]
     assert host_result_ids == {id(complete_messages[-1].contents[1])}
+
+
+async def test_stateless_abandoned_approval_does_not_join_later_host_request(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Standalone pauses separated by a user turn do not form a synthetic mixed batch."""
+    from agent_framework import FunctionTool
+
+    calls = 0
+
+    @tool(name="approval_func", approval_mode="always_require")
+    def approval_func() -> str:
+        nonlocal calls
+        calls += 1
+        return "approved"
+
+    approval_call = Content.from_function_call(
+        call_id="approval",
+        name="approval_func",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    host_request = Content.from_function_call(
+        call_id="host",
+        name="host_func",
+        arguments={},
+        id="host-occurrence",
+    )
+    host_request.user_input_request = True
+    host_result = Content.from_function_result(call_id="host", result="host result")
+    host_result.id = "host-occurrence"
+    host_func = FunctionTool(name="host_func", func=None, description="Handled by the caller")
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+    messages = [
+        Message(role="assistant", contents=[approval_request]),
+        Message(role="user", contents=["unrelated follow-up"]),
+        Message(role="assistant", contents=[host_request]),
+        Message(role="user", contents=[host_result]),
+    ]
+
+    response = await chat_client_base.get_response(
+        messages,
+        options={"tools": [approval_func, host_func]},
+    )
+
+    assert response.text == "done"
+    assert calls == 0
+    assert chat_client_base.call_count == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
 
 async def test_later_standalone_request_does_not_hide_incomplete_stateless_mixed_batch(
