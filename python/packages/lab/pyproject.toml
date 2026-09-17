@@ -58,7 +58,7 @@ math = [
 [dependency-groups]
 dev = [
     "agent-framework-openai>=1.14.2,<2",
-    "uv==0.12.9",
+    "uv==0.12.12",
     "ruff==0.16.6",
     "pytest==9.1.1",
     "pytest-asyncio==1.4.0",
