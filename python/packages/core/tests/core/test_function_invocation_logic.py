@@ -3688,6 +3688,64 @@ async def test_stateless_separated_pauses_with_reused_call_id_are_order_independ
     assert chat_client_base.call_count == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
 
+@pytest.mark.parametrize("approval_response_first", [True, False], ids=["approval-first", "host-first"])
+async def test_exact_older_host_result_does_not_consume_newer_reused_call_approval(
+    chat_client_base: SupportsChatGetResponse,
+    approval_response_first: bool,
+) -> None:
+    """An exact Host occurrence remains authoritative over a newer call-ID-only approval candidate."""
+    from agent_framework import FunctionTool
+
+    calls = 0
+
+    @tool(name="approval_func", approval_mode="always_require")
+    def approval_func() -> str:
+        nonlocal calls
+        calls += 1
+        return "approved"
+
+    host_request = Content.from_function_call(
+        call_id="shared",
+        name="host_func",
+        arguments={},
+        id="host-occurrence",
+    )
+    host_request.user_input_request = True
+    approval_call = Content.from_function_call(
+        call_id="shared",
+        name="approval_func",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    approval_response = approval_request.to_function_approval_response(approved=True)
+    host_result = Content.from_function_result(call_id="shared", result="host result")
+    host_result.id = "host-occurrence"
+    responses = [approval_response, host_result] if approval_response_first else [host_result, approval_response]
+    host_func = FunctionTool(name="host_func", func=None, description="Handled by the caller")
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+    messages = [
+        Message(role="assistant", contents=[host_request]),
+        Message(role="user", contents=["unrelated follow-up"]),
+        Message(role="assistant", contents=[approval_request]),
+        Message(role="user", contents=responses),
+    ]
+
+    response = await chat_client_base.get_response(
+        messages,
+        options={"tools": [approval_func, host_func]},
+    )
+
+    assert response.text == "done"
+    assert calls == 1
+    assert chat_client_base.call_count == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+
 async def test_later_standalone_request_does_not_hide_incomplete_stateless_mixed_batch(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:
@@ -3927,6 +3985,83 @@ def test_historical_stateless_host_result_does_not_capture_later_reused_call_app
         ("function_result", None, "old-host-occurrence", "old host result"),
         ("function_call", "approval_func", "approval-occurrence", None),
         ("function_result", None, None, "approved result"),
+    ]
+
+
+def test_excluded_host_result_closes_own_occurrence_before_reused_call_approval() -> None:
+    """Excluded Host results close only Host calls before later approval normalization."""
+    from agent_framework._tools import (
+        _collect_approval_responses,
+        _replace_approval_contents_with_results,
+        _stateless_mixed_pause_batch_status,
+    )
+
+    earlier_call = Content.from_function_call(
+        call_id="earlier",
+        name="earlier_func",
+        arguments={},
+        id="earlier-occurrence",
+    )
+    earlier_request = Content.from_function_approval_request(
+        id="earlier-occurrence",
+        function_call=earlier_call,
+    )
+    host_request = Content.from_function_call(
+        call_id="shared",
+        name="host_func",
+        arguments={},
+        id="host-occurrence",
+    )
+    host_request.user_input_request = True
+    host_result = Content.from_function_result(call_id="shared", result="host result")
+    host_result.id = "host-occurrence"
+    later_call = Content.from_function_call(
+        call_id="shared",
+        name="later_func",
+        arguments={},
+        id="later-occurrence",
+    )
+    later_request = Content.from_function_approval_request(
+        id="later-occurrence",
+        function_call=later_call,
+    )
+    messages = [
+        Message(role="assistant", contents=[earlier_request]),
+        Message(role="user", contents=[earlier_request.to_function_approval_response(approved=True)]),
+        Message(role="assistant", contents=[host_request]),
+        Message(role="user", contents=[host_result]),
+        Message(role="assistant", contents=[later_request]),
+        Message(role="user", contents=[later_request.to_function_approval_response(approved=True)]),
+    ]
+
+    incomplete, active_host_result_ids = _stateless_mixed_pause_batch_status(messages)
+    pending_responses = _collect_approval_responses(
+        messages,
+        non_approval_result_ids=active_host_result_ids,
+    )
+    earlier_result = Content.from_function_result(call_id="earlier", result="earlier result")
+    later_result = Content.from_function_result(call_id="shared", result="later result")
+    _replace_approval_contents_with_results(
+        messages,
+        pending_responses,
+        [[earlier_result], [later_result]],
+        non_approval_result_ids=active_host_result_ids,
+    )
+
+    assert incomplete is False
+    assert list(pending_responses) == ["earlier-occurrence", "later-occurrence"]
+    assert [
+        (content.type, content.name, content.id, content.result)
+        for message in messages
+        for content in message.contents
+        if content.type in {"function_call", "function_result"}
+    ] == [
+        ("function_call", "earlier_func", "earlier-occurrence", None),
+        ("function_result", None, None, "earlier result"),
+        ("function_call", "host_func", "host-occurrence", None),
+        ("function_result", None, "host-occurrence", "host result"),
+        ("function_call", "later_func", "later-occurrence", None),
+        ("function_result", None, None, "later result"),
     ]
 
 

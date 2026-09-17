@@ -3212,7 +3212,7 @@ def _stateless_mixed_pause_batch_status(
     host_request_counts: dict[tuple[int, str], int] = {}
     owned_host_result_counts: dict[tuple[int, str], int] = {}
     matched_host_result_ids: set[int] = set()
-    host_result_batch_indices: dict[int, int] = {}
+    host_result_content_indices: dict[int, int] = {}
     next_batch_index = 0
 
     def register_request_batch(batch_index: int) -> None:
@@ -3249,6 +3249,7 @@ def _stateless_mixed_pause_batch_status(
         owner_candidates: list[tuple[int, str]] = []
         approval_batch_index: int | None = None
         host_batch_index: int | None = None
+        exact_host_batch_index: int | None = None
         if content.type == "function_approval_response":
             identities = {
                 str(identity)
@@ -3270,11 +3271,12 @@ def _stateless_mixed_pause_batch_status(
             if content.id is None:
                 host_batch_index = latest_host_by_call.get(content.call_id)
             else:
+                exact_host_batch_index = latest_host_by_occurrence.get((content.call_id, content.id))
                 host_batch_index = max(
                     (
                         batch_index
                         for batch_index in (
-                            latest_host_by_occurrence.get((content.call_id, content.id)),
+                            exact_host_batch_index,
                             latest_idless_host_by_call.get(content.call_id),
                         )
                         if batch_index is not None
@@ -3286,10 +3288,13 @@ def _stateless_mixed_pause_batch_status(
 
         if not owner_candidates:
             continue
-        owner_batch_index, owner_kind = max(
-            owner_candidates,
-            key=lambda candidate: (candidate[0], candidate[1] == "host"),
-        )
+        if exact_host_batch_index is not None:
+            owner_batch_index, owner_kind = exact_host_batch_index, "host"
+        else:
+            owner_batch_index, owner_kind = max(
+                owner_candidates,
+                key=lambda candidate: (candidate[0], candidate[1] == "host"),
+            )
         if (
             content.type == "function_result"
             and content.call_id is not None
@@ -3306,7 +3311,7 @@ def _stateless_mixed_pause_batch_status(
         responses_by_batch[owner_batch_index].append(content)
         if owner_kind == "host":
             matched_host_result_ids.add(id(content))
-            host_result_batch_indices[id(content)] = owner_batch_index
+            host_result_content_indices[id(content)] = response_index
             batch_call = (owner_batch_index, cast(str, content.call_id))
             owned_host_result_counts[batch_call] = owned_host_result_counts.get(batch_call, 0) + 1
 
@@ -3322,11 +3327,14 @@ def _stateless_mixed_pause_batch_status(
         for batch_index, responses in enumerate(responses_by_batch)
         if any(id(response) in pending_approval_response_ids for response in responses)
     }
-    first_pending_approval_batch = min(pending_approval_batch_indices, default=None)
+    first_pending_approval_content_index = min(
+        (request_batches[batch_index][0] for batch_index in pending_approval_batch_indices),
+        default=None,
+    )
     active_host_result_ids = {
         result_id
-        for result_id, batch_index in host_result_batch_indices.items()
-        if first_pending_approval_batch is not None and batch_index >= first_pending_approval_batch
+        for result_id, response_index in host_result_content_indices.items()
+        if first_pending_approval_content_index is not None and response_index > first_pending_approval_content_index
     }
     for batch_index in range(len(request_batches) - 1, -1, -1):
         _, items, kinds = request_batches[batch_index]
@@ -3624,10 +3632,36 @@ def _replace_approval_contents_with_results(
         for occurrence in occurrences_by_call_id.get(call_id, []):
             if occurrence.closed:
                 continue
-            if require_unbound and occurrence.approval_id is not None:
+            if require_unbound and (occurrence.approval_id is not None or occurrence.function_call.user_input_request):
                 continue
             return occurrence
         return None
+
+    def find_open_host_occurrence(result: Content) -> _ApprovalCallOccurrence | None:
+        if result.call_id is None:
+            return None
+        occurrences = occurrences_by_call_id.get(result.call_id, [])
+        if result.id is not None:
+            exact = next(
+                (
+                    occurrence
+                    for occurrence in occurrences
+                    if not occurrence.closed
+                    and occurrence.function_call.user_input_request
+                    and occurrence.function_call.id == result.id
+                ),
+                None,
+            )
+            if exact is not None:
+                return exact
+        return next(
+            (
+                occurrence
+                for occurrence in occurrences
+                if not occurrence.closed and occurrence.function_call.user_input_request
+            ),
+            None,
+        )
 
     def find_approval_occurrence(approval_id: str) -> _ApprovalCallOccurrence | None:
         for occurrence in occurrences_by_approval_id.get(approval_id, []):
@@ -3729,6 +3763,8 @@ def _replace_approval_contents_with_results(
                 if content.call_id is None:
                     continue
                 if non_approval_result_ids is not None and id(content) in non_approval_result_ids:
+                    if occurrence := find_open_host_occurrence(content):
+                        occurrence.closed = True
                     continue
                 occurrence = find_open_occurrence(content.call_id)
                 if occurrence is None:
