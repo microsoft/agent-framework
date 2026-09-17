@@ -14,6 +14,9 @@ from agent_framework import (
     GeneratedEmbeddings,
     VectorStoreCollectionDefinition,
     VectorStoreField,
+    create_delete_tool,
+    create_get_tool,
+    create_upsert_tool,
     register_vectorstoremodel,
     vectorstoremodel,
 )
@@ -373,6 +376,41 @@ async def test_generated_object_id_dict_crud_and_projection(mongo_mocks, cursor_
     assert native_collection.find.call_args.kwargs["projection"] == {"vector": 0}
     await collection.delete(keys)
     native_collection.delete_many.assert_awaited_once_with({"_id": {"$in": keys}})
+
+
+async def test_object_id_keys_round_trip_through_crud_tools(mongo_mocks, cursor_factory):
+    client, _, native_collection = mongo_mocks
+    definition = VectorStoreCollectionDefinition([
+        VectorStoreField("key", name="id", type_="ObjectId", is_auto_generated=True),
+        VectorStoreField("data", name="text", type_="str"),
+    ])
+    collection = MongoDBCollection(
+        dict,
+        definition=definition,
+        collection_name="tool_objects",
+        async_client=client,
+        database_name="vectors",
+    )
+    upsert_tool = create_upsert_tool(collection, generate_vectors=False)
+    get_tool = create_get_tool(collection)
+    delete_tool = create_delete_tool(collection)
+
+    schema = upsert_tool.parameters()["properties"]["records"]["items"]
+    assert schema["properties"]["id"] == {"type": "string", "pattern": "^[0-9a-fA-F]{24}$"}
+    assert schema["required"] == ["text"]
+
+    upserted = await upsert_tool.invoke(arguments={"records": [{"text": "hello"}]}, skip_parsing=True)
+    key = upserted["keys"][0]
+    assert isinstance(key, str) and ObjectId.is_valid(key)
+
+    native_collection.find.return_value = cursor_factory([{"_id": ObjectId(key), "text": "hello"}])
+    assert await get_tool.invoke(arguments={"keys": [key]}, skip_parsing=True) == {
+        "records": [{"id": key, "text": "hello"}]
+    }
+    assert native_collection.find.call_args.args[0] == {"_id": {"$in": [ObjectId(key)]}}
+
+    await delete_tool.invoke(arguments={"keys": [key]}, skip_parsing=True)
+    native_collection.delete_many.assert_awaited_with({"_id": {"$in": [ObjectId(key)]}})
 
 
 async def test_typed_object_id_requires_and_supports_custom_codec(mongo_mocks, cursor_factory):

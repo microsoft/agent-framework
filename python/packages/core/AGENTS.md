@@ -94,7 +94,8 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
     recursively; removing the whole tree means no filter. Paging parameters do not support null omission.
 - **`BaseVectorCollection`** - Base class for collection lifecycle and msgspec-backed record CRUD operations;
   upserts generate embeddings by default, retrieval excludes vectors by default, and filtered retrieval is an
-  alternate mode to key lookup
+  alternate mode to key lookup. Agent-facing CRUD tools use its `key_json_schema`, `key_from_json`, and
+  `key_to_json` hooks so connectors can preserve native key identity at JSON boundaries.
 - **Embedding generation selection** - `generate_vectors=True` regenerates every vector field, `False` preserves all
   values, and a list or tuple of logical vector field names generates only those fields so connectors can combine
   local, precomputed, and provider-side vectorization
@@ -112,6 +113,17 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
   filter execution, score thresholds (including provider-defined/default metrics), and paging. Use native backend
   execution where available, otherwise an explicit connector-local fallback or reject unsupported options
 - **`create_vector_search_tool`** - Creates an agent tool from any `SupportsVectorSearch` implementation
+- **`create_upsert_tool` / `create_get_tool` / `create_delete_tool`** - Create agent tools for collection CRUD;
+  upsert and delete require approval by default, while get does not. Auto-generated keys are omitted from upsert
+  input only when the record is a dictionary or the typed model declares a key default. Connector partial-write
+  errors propagate because the collection contract cannot report unknown committed subsets.
+- **`VectorStoreHistoryProvider`** - Stores full scoped conversation history in a provider-owned collection;
+  optional embeddings enable session-scoped history search and optional compaction affects only loaded context.
+  Embedding-enabled history requires an explicit collection name; physical retention, large-history paging, and
+  concurrent clear semantics remain backing-store guarantees.
+- **`VectorCollectionContextProvider`** - Adds instructions and configurable CRUD/search tools for a caller-owned
+  collection. Callers explicitly provide a best-effort logical scope filter (or `None`); it is not a security
+  boundary. Independently configured additional search tools retain their own filters.
 - **`InMemoryCollection` / `InMemoryStore`** - Dependency-free, process-local development and test implementation;
   cosine scoring scales finite inputs, all metrics reject non-finite scores, and unsupported distance functions
   fail before record scanning. Hamming scores/thresholds use the fraction of unequal dimensions, not a count.

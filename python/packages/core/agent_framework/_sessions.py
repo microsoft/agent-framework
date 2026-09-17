@@ -52,6 +52,7 @@ from ._types import (
     Content,
     Message,
     ResponseStream,
+    _append_instructions,  # pyright: ignore[reportPrivateUsage]
     _build_agent_response_from_chat_response,  # pyright: ignore[reportPrivateUsage]
     normalize_messages,
 )
@@ -1527,9 +1528,10 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
 
     This middleware runs around each model call when
     ``require_per_service_call_history_persistence`` is enabled. It loads history providers
-    before the model call, persists them after the model call, and uses a local
-    sentinel conversation id so the function loop follows the existing
-    service-managed branch without forwarding that sentinel to the leaf client.
+    before the model call, carries their messages, tools, and instructions into
+    the function loop, persists them after the model call, and uses a local sentinel
+    conversation id so the function loop follows the existing service-managed
+    branch without forwarding that sentinel to the leaf client.
     """
 
     def __init__(
@@ -1556,6 +1558,8 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
         self._session = session
         self._providers = list(providers)
         self._service_stores_history = service_stores_history
+        self._merged_provider_tool_names: set[str] = set()
+        self._merged_provider_instructions: set[str] = set()
 
     async def _prepare_service_call_context(self, messages: Sequence[Message]) -> SessionContext:
         """Create a per-call SessionContext and load history providers into it."""
@@ -1608,10 +1612,55 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
         if context.options is None:
             return
 
-        mutable_options = dict(context.options)
+        mutable_options = context.options if isinstance(context.options, dict) else dict(context.options)
         if is_local_history_conversation_id(cast(str | None, mutable_options.get("conversation_id"))):
             mutable_options.pop("conversation_id", None)
         context.options = mutable_options
+
+    def _merge_provider_context(self, context: ChatContext, service_call_context: SessionContext) -> None:
+        """Merge per-call provider tools and instructions into the function-loop options."""
+        if not service_call_context.tools and not service_call_context.instructions:
+            return
+        if context.options is None:
+            mutable_options: dict[str, Any] = {}
+            context.options = mutable_options
+        elif isinstance(context.options, dict):
+            mutable_options = context.options
+        else:
+            mutable_options = dict(context.options)
+            context.options = mutable_options
+
+        if service_call_context.tools:
+            from ._tools import _get_tool_name, normalize_tools  # pyright: ignore[reportPrivateUsage]
+
+            existing_value = mutable_options.get("tools")
+            if existing_value is None:
+                tools: list[Any] = []
+            elif isinstance(existing_value, Sequence) and not isinstance(existing_value, (str, bytes, bytearray)):
+                tools = list(cast(Sequence[Any], existing_value))
+            else:
+                tools = [existing_value]
+            previously_merged_names = set(self._merged_provider_tool_names)
+            newly_merged_names: set[str] = set()
+            for tool in normalize_tools(service_call_context.tools):
+                tool_name = _get_tool_name(tool)
+                if isinstance(tool_name, str) and tool_name in previously_merged_names:
+                    continue
+                tools.append(tool)
+                if isinstance(tool_name, str):
+                    newly_merged_names.add(tool_name)
+            self._merged_provider_tool_names.update(newly_merged_names)
+            mutable_options["tools"] = tools
+
+        new_instructions = [
+            instruction
+            for instruction in service_call_context.instructions
+            if instruction not in self._merged_provider_instructions
+        ]
+        if new_instructions:
+            addition = "\n".join(new_instructions)
+            mutable_options["instructions"] = _append_instructions(mutable_options.get("instructions"), addition)
+            self._merged_provider_instructions.update(new_instructions)
 
     async def _finalize_response(
         self,
@@ -1678,6 +1727,7 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
         # outgoing messages from the loaded local history and strip the local sentinel.
         if not self._service_stores_history:
             context.messages = service_call_context.get_messages(include_input=True)
+            self._merge_provider_context(context, service_call_context)
             self._strip_local_conversation_id(context)
 
         await call_next()

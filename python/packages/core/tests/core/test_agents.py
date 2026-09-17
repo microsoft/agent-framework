@@ -27,9 +27,12 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     ContextProvider,
+    Embedding,
     FunctionTool,
+    GeneratedEmbeddings,
     HistoryProvider,
     InMemoryHistoryProvider,
+    InMemoryStore,
     Message,
     MessageInjectionMiddleware,
     ResponseStream,
@@ -40,6 +43,7 @@ from agent_framework import (
     SupportsChatGetResponse,
     ToolResultCompactionStrategy,
     TruncationStrategy,
+    VectorStoreHistoryProvider,
     chat_middleware,
     enqueue_messages,
     tool,
@@ -514,6 +518,72 @@ async def test_chat_agent_persists_history_per_service_call(
     assert provider_state["save_call_count"] == 2
     assert stored_messages[-1].text == "It is sunny in Seattle."
     assert session.service_session_id is None
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_vector_history_search_tool_is_available_with_per_service_call_persistence(
+    chat_client_base: MockBaseChatClient,
+    stream: bool,
+) -> None:
+    async def get_embeddings(values: Sequence[Any], *, options: Any = None) -> GeneratedEmbeddings[list[float]]:
+        return GeneratedEmbeddings([Embedding(vector=[1.0, 0.0]) for _ in values], options=options)
+
+    embedding_client = MagicMock()
+    embedding_client.get_embeddings = AsyncMock(side_effect=get_embeddings)
+    provider = VectorStoreHistoryProvider(
+        InMemoryStore(),
+        application_id="app",
+        collection_name="per_service_call_history",
+        embedding_generator=embedding_client,
+        embedding_options={"dimensions": 2},
+        include_search_tool=True,
+    )
+    function_call = Content.from_function_call(
+        call_id="search_call",
+        name="search_history",
+        arguments={"query": "earlier detail"},
+    )
+    if stream:
+        chat_client_base.streaming_responses = [
+            [ChatResponseUpdate(contents=[function_call], role="assistant", finish_reason="tool_calls")],
+            [ChatResponseUpdate(contents=[Content.from_text("done")], role="assistant", finish_reason="stop")],
+        ]
+    else:
+        chat_client_base.run_responses = [
+            ChatResponse(messages=Message(role="assistant", contents=[function_call])),
+            ChatResponse(messages=Message(role="assistant", contents=["done"])),
+        ]
+
+    captured_tool_names: list[list[str]] = []
+    captured_instructions: list[Any] = []
+    original_inner = chat_client_base._inner_get_response
+
+    def capture_inner(
+        *, messages: MutableSequence[Message], stream: bool, options: dict[str, Any], **kwargs: Any
+    ) -> Any:
+        captured_tool_names.append([tool.name for tool in options.get("tools", [])])
+        captured_instructions.append(options.get("instructions"))
+        return original_inner(messages=messages, stream=stream, options=options, **kwargs)
+
+    agent = Agent(
+        client=chat_client_base,
+        context_providers=[provider],
+        require_per_service_call_history_persistence=True,
+    )
+    session = agent.create_session()
+
+    with patch.object(chat_client_base, "_inner_get_response", side_effect=capture_inner):
+        if stream:
+            text = "".join([update.text or "" async for update in agent.run("question", session=session, stream=True)])
+        else:
+            text = (await agent.run("question", session=session)).text
+
+    assert text == "done"
+    assert captured_tool_names == [["search_history"], ["search_history"]]
+    assert all(
+        isinstance(instructions, str) and instructions.count("Use search_history") == 1
+        for instructions in captured_instructions
+    )
 
 
 async def test_message_injection_persists_each_injected_service_call(
