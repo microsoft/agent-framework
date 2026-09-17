@@ -54,8 +54,12 @@ usability is the portable default while invalidation is provider-specific protoc
 `FunctionInvocationLayer` remains independent of `finish_reason`: a newly completed actionable call proceeds when
 argument preparation and schema validation succeed. A provider that knows partial response output was invalidated
 raises `ResponseInvalidatedException`; any local function calls from that response must not execute. The layer
-abandons that current iteration, clears request budget state, restores the last valid continuation, avoids successful
-response persistence and local function side effects, and re-raises the same exception.
+abandons that current iteration, ordinarily clears request budget state, restores the last valid continuation, avoids
+successful response persistence and local function side effects from the invalid response, and re-raises the same exception.
+If the invalidated call was instead delivering results from an already completed mixed approval/Host batch, the layer
+retains that serializable provider outbox and its charged budget. A retry replays the stored Host and local results
+without recovering approval authority or executing the local side effect again; only a successful provider response
+clears the outbox.
 
 Anthropic applies the signal only to local actionable `tool_use` blocks. A valid stream has closed local blocks, a
 terminal `stop_reason` of `tool_use`, and `message_stop`. Non-tool terminal reasons, an open block at `message_stop`,
