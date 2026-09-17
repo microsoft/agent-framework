@@ -29,7 +29,7 @@ from agent_framework._vector_filters import FilterExpression
 from agent_framework._vectors import EmbeddingClient, SearchType, Vector
 from agent_framework.exceptions import IntegrationInvalidResponseException
 from bson import BSON, ObjectId
-from bson.errors import InvalidDocument
+from bson.errors import InvalidDocument, InvalidId
 from bson.regex import Regex
 from pymongo import AsyncMongoClient, ReplaceOne
 from pymongo.asynchronous.collection import AsyncCollection
@@ -674,6 +674,31 @@ class MongoDBCollection(
                     raise NotImplementedError(
                         f"MongoDB vector filter indexes do not support declared type '{field.type_}'."
                     )
+
+    def key_json_schema(self) -> Mapping[str, Any]:
+        """Return a JSON string schema for MongoDB ObjectId keys."""
+        if self.definition.key_field.type_ == "ObjectId":
+            return {"type": "string", "pattern": "^[0-9a-fA-F]{24}$"}
+        return super().key_json_schema()
+
+    def key_from_json(self, value: Any) -> KeyT:
+        """Convert a JSON string to a MongoDB ObjectId key."""
+        if self.definition.key_field.type_ == "ObjectId":
+            if not isinstance(value, str):
+                raise TypeError("MongoDB ObjectId keys must be JSON strings.")
+            try:
+                return cast(KeyT, ObjectId(value))
+            except InvalidId as exc:
+                raise ValueError("MongoDB ObjectId key must contain 24 hexadecimal characters.") from exc
+        return super().key_from_json(value)
+
+    def key_to_json(self, key: KeyT) -> Any:
+        """Convert a MongoDB ObjectId key to a JSON string."""
+        if self.definition.key_field.type_ == "ObjectId":
+            if not isinstance(key, ObjectId):
+                raise TypeError("MongoDB collection key must be an ObjectId.")
+            return str(key)
+        return super().key_to_json(key)
 
     async def __aexit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None:
         """Close a connector-owned client on context exit."""
