@@ -525,6 +525,12 @@ class AgentFrameworkWorkflow:
         (``forwarded_props: {"checkpoint_id": ...}``), which restores the persisted
         workflow state instead of starting a fresh turn.
 
+        Resume also works when storage lives only on the resolved workflow
+        (``WorkflowBuilder(checkpoint_storage=...)``) and this wrapper / endpoint omits
+        ``checkpoint_storage``, so emitted pause ids remain round-trippable for hosts that
+        expose the workflow through ``AgentFrameworkWorkflow`` or
+        ``add_agent_framework_fastapi_endpoint`` without duplicating storage configuration.
+
         Note:
             Checkpointing (the ``agent_framework`` workflow checkpoint mechanism) is
             independent from AG-UI Thread Snapshot persistence (``snapshot_store``).
@@ -547,11 +553,6 @@ class AgentFrameworkWorkflow:
 
         checkpoint_storage = self.checkpoint_storage
         checkpoint_id = _checkpoint_id_from_input(input_data)
-        if checkpoint_id is not None and checkpoint_storage is None:
-            raise ValueError(
-                "Resuming from a checkpoint requires checkpoint_storage to be configured on "
-                "AgentFrameworkWorkflow (or the AG-UI endpoint)."
-            )
 
         supplied_thread_id = input_data.get("thread_id") or input_data.get("threadId")
         request_owner = (snapshot_scope, str(supplied_thread_id) if supplied_thread_id is not None else None)
@@ -561,6 +562,15 @@ class AgentFrameworkWorkflow:
             if interrupt.get("id") is not None
         }
         workflow = self._resolve_workflow(thread_id, snapshot_scope)
+        # Prefer wrapper/endpoint storage; otherwise allow builder/runtime storage on the
+        # resolved workflow so pause ids emitted without AG-UI storage still resume.
+        if checkpoint_id is not None and checkpoint_storage is None:
+            if not workflow._runner.context.has_checkpointing():  # pyright: ignore[reportPrivateUsage]
+                raise ValueError(
+                    "Resuming from a checkpoint requires checkpoint_storage to be configured on "
+                    "AgentFrameworkWorkflow (or the AG-UI endpoint), or WorkflowBuilder "
+                    "checkpoint storage on the workflow instance."
+                )
         live_pending_events = await _pending_request_events(self.workflow) if self.workflow is not None else {}
         if self.workflow is not None and checkpoint_id is None:
             for request_event in live_pending_events.values():
@@ -572,9 +582,14 @@ class AgentFrameworkWorkflow:
                         code="WORKFLOW_RESUME_NOT_FOUND",
                     )
                     return
-        if checkpoint_id is not None and checkpoint_storage is not None:
+        if checkpoint_id is not None:
             try:
-                checkpoint = await checkpoint_storage.load(checkpoint_id)
+                if checkpoint_storage is not None:
+                    checkpoint = await checkpoint_storage.load(checkpoint_id)
+                else:
+                    checkpoint = await workflow._runner.context.load_checkpoint(checkpoint_id)  # pyright: ignore[reportPrivateUsage]
+                    if checkpoint is None:
+                        raise LookupError(f"checkpoint '{checkpoint_id}' was not found")
             except Exception as exc:
                 yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
                 yield RunErrorEvent(
