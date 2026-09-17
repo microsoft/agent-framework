@@ -36,6 +36,19 @@ from agent_framework.monty import (
 - `file_mounts` — sequence of `FileMountInput` (str shorthand,
   `(host_path, mount_path)` tuple, or `FileMount`)
 - `resource_limits` — Monty `ResourceLimits` TypedDict
+- `tool_description_format` — keyword-only
+  `Literal["compact", "json"] | Mapping[str, Literal["compact", "json"]] = "compact"`.
+  Selects parameter documentation in both the description and instructions.
+  Compact includes scalar types, required/optional status, descriptions, enums,
+  and defaults; schemas that cannot be represented faithfully fall back to full
+  JSON Schema with an explanatory note. `"json"` always includes the full schema.
+  Mappings use exact, case-sensitive tool names, with compact for missing names;
+  mappings are copied on construction and per-run snapshots, retaining inactive
+  names for dynamic registration. Unsupported choices raise `ValueError`; invalid
+  input types (including `None`), non-string keys, and non-string choices raise
+  `TypeError`. Serializable state stores the configured string or mapping as
+  `tool_description_format`. This affects documentation only, not type checking
+  or invocation.
 
 Tool-management methods on both classes: `add_tools`, `get_tools`,
 `remove_tool`, `clear_tools`. Mount-management methods: `add_file_mounts`,

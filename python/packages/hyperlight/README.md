@@ -118,6 +118,40 @@ codeact = HyperlightCodeActProvider(
 )
 ```
 
+### Sandbox tool parameter descriptions
+
+Both `HyperlightExecuteCodeTool` and `HyperlightCodeActProvider` accept the
+keyword-only `tool_description_format` option. The default, `"compact"`, includes
+each parameter's scalar type, required/optional status, description, enum values,
+and default when present. Use `"json"` to include the complete JSON Schema:
+
+```python
+execute_code = HyperlightExecuteCodeTool(
+    tools=[compute],
+    tool_description_format="json",
+)
+
+codeact = HyperlightCodeActProvider(
+    tools=[compute],
+    tool_description_format={"compute": "json", "send_email": "compact"},
+)
+```
+
+A string applies to every registered tool. A mapping selects formats by exact,
+case-sensitive tool name; missing names use `"compact"`. Mappings are copied at
+construction and when creating run-scoped tools, and entries for unregistered
+tools are retained for later registration.
+
+Compact mode automatically falls back to full JSON Schema, with an explanatory
+note, when a schema cannot be represented faithfully (for example, nested objects,
+arrays, references, or additional constraints). No schema details are discarded.
+Only `"compact"` and `"json"` are accepted; `None` is not supported.
+
+This option affects `HyperlightExecuteCodeTool.description`, or the injected
+run tool's `.description` when using `HyperlightCodeActProvider`. It does not
+change the short CodeAct instructions, the `execute_code` input schema, sandbox
+execution, or runtime caching.
+
 ### Output attachment limits
 
 Files written under `/output` are returned as inline data attachments. Hyperlight

@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 import asyncio
+import copy
 import logging
 import threading
 from typing import Annotated, Any, Literal, get_args, get_origin
@@ -19,6 +20,7 @@ from agent_framework import (
 from agent_framework._middleware import FunctionInvocationContext
 from agent_framework._tools import (
     _auto_invoke_function,
+    _format_tool_parameters,
     _parse_annotation,
     _parse_inputs,
     normalize_function_invocation_configuration,
@@ -26,6 +28,158 @@ from agent_framework._tools import (
 from agent_framework.observability import OtelAttr
 
 # region FunctionTool and tool decorator tests
+
+
+def test_format_tool_parameters_compact_preserves_scalar_metadata():
+    schema = {
+        "type": "object",
+        "title": "InventoryInput",
+        "properties": {
+            "partNumber": {"type": "string", "description": "Part identifier", "title": "Part Number"},
+            "units": {"type": "integer", "default": 1},
+            "currency": {"type": "string", "enum": ["EUR", "USD"], "default": "EUR"},
+            "price": {"type": "number"},
+            "available": {"type": "boolean", "default": False},
+            "empty": {"type": "null", "default": None},
+        },
+        "required": ["partNumber", "empty"],
+    }
+    original = copy.deepcopy(schema)
+
+    effective_format, parameters = _format_tool_parameters(schema, parameter_format="compact")
+
+    assert effective_format == "compact"
+    assert parameters == {
+        "partNumber": {"type": "string", "required": True, "description": "Part identifier"},
+        "units": {"type": "integer", "required": False, "default": 1},
+        "currency": {"type": "string", "required": False, "enum": ["EUR", "USD"], "default": "EUR"},
+        "price": {"type": "number", "required": False},
+        "available": {"type": "boolean", "required": False, "default": False},
+        "empty": {"type": "null", "required": True, "default": None},
+    }
+    parameters["currency"]["enum"].append("GBP")
+    assert schema == original
+
+
+@pytest.mark.parametrize("required", [[], ["value"]])
+def test_format_tool_parameters_does_not_infer_requiredness_from_defaults(required):
+    schema = {
+        "type": "object",
+        "properties": {"value": {"type": "string", "default": "default"}},
+        "required": required,
+    }
+
+    effective_format, parameters = _format_tool_parameters(schema, parameter_format="compact")
+
+    assert effective_format == "compact"
+    assert parameters["value"]["required"] == ("value" in required)
+    assert parameters["value"]["default"] == "default"
+
+
+@pytest.mark.parametrize(
+    "schema",
+    [
+        {"type": "object", "properties": {}},
+        {"type": "object", "properties": {}, "required": [], "title": "EmptyInput"},
+    ],
+)
+def test_format_tool_parameters_empty_object(schema):
+    assert _format_tool_parameters(schema, parameter_format="compact") == ("compact", {})
+
+
+@pytest.mark.parametrize(
+    "property_schema",
+    [
+        {"type": "object", "properties": {"nested": {"type": "string"}}, "required": ["nested"]},
+        {"type": "array", "items": {"type": "integer"}},
+        {"$ref": "#/$defs/Address"},
+        {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        {"type": ["string", "null"]},
+        {"type": "string", "minLength": 1},
+        {"type": "number", "minimum": 0},
+        {"type": "integer", "exclusiveMaximum": 10},
+        {"type": "string", "pattern": "^[A-Z]+$"},
+        {"type": "string", "format": "date-time"},
+        {"type": "string", "const": "fixed"},
+        {"type": "string", "x-custom-keyword": {"constraint": "custom"}},
+        {"type": "string", "allOf": [{"maxLength": 10}]},
+        {"description": "An unconstrained parameter"},
+        True,
+        False,
+    ],
+)
+def test_format_tool_parameters_compact_falls_back_for_rich_properties(property_schema):
+    schema = {"type": "object", "properties": {"value": property_schema}, "required": ["value"]}
+
+    effective_format, parameters = _format_tool_parameters(schema, parameter_format="compact")
+
+    assert effective_format == "json"
+    assert parameters == schema
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"additionalProperties": False},
+        {"additionalProperties": {"type": "string"}},
+        {"$defs": {"Address": {"type": "string"}}},
+        {"oneOf": [{"required": ["value"]}, {"required": ["other"]}]},
+        {"dependentRequired": {"value": ["other"]}},
+        {"patternProperties": {"^x-": {"type": "integer"}}},
+        {"minProperties": 1},
+        {"x-custom-keyword": "preserve"},
+        {"required": ["unlisted"]},
+        {"required": "value"},
+        {"required": [1]},
+        {"properties": []},
+        {"properties": {1: {"type": "string"}}},
+        {"properties": {"value": {"type": "string", "required": True}}},
+        {"type": "array"},
+    ],
+)
+def test_format_tool_parameters_compact_falls_back_for_root_constraints(extra):
+    schema = {"type": "object", "properties": {"value": {"type": "string"}}, **extra}
+
+    effective_format, parameters = _format_tool_parameters(schema, parameter_format="compact")
+
+    assert effective_format == "json"
+    assert parameters == schema
+
+
+@pytest.mark.parametrize("parameter_format", ["compact", "json"])
+def test_format_tool_parameters_full_schema_result_is_detached(parameter_format):
+    schema = {
+        "type": "object",
+        "properties": {"value": {"$ref": "#/$defs/Value"}},
+        "$defs": {"Value": {"type": "string", "enum": ["one", "two"]}},
+        "required": ["value"],
+        "additionalProperties": False,
+    }
+    original = copy.deepcopy(schema)
+
+    effective_format, parameters = _format_tool_parameters(schema, parameter_format=parameter_format)
+
+    assert effective_format == "json"
+    assert parameters == original
+    parameters["$defs"]["Value"]["enum"].append("three")
+    assert schema == original
+
+
+def test_format_tool_parameters_json_preserves_simple_schema():
+    schema = {"type": "object", "properties": {"value": {"type": "string", "title": "Value"}}}
+
+    assert _format_tool_parameters(schema, parameter_format="json") == ("json", schema)
+
+
+@pytest.mark.parametrize("schema", [{}, {"properties": {"value": {"type": "string"}}}])
+def test_format_tool_parameters_does_not_treat_unconstrained_schema_as_empty(schema):
+    assert _format_tool_parameters(schema, parameter_format="compact") == ("json", schema)
+
+
+@pytest.mark.parametrize("parameter_format", ["other", "", None])
+def test_format_tool_parameters_rejects_unknown_format(parameter_format):
+    with pytest.raises(ValueError, match="parameter_format"):
+        _format_tool_parameters({"type": "object", "properties": {}}, parameter_format=parameter_format)
 
 
 def test_tool_decorator():

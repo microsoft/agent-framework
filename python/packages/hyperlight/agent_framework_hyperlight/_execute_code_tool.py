@@ -10,14 +10,14 @@ import shutil
 import stat
 import threading
 import time
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from copy import copy
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from tempfile import TemporaryDirectory
-from typing import Any, Protocol, TypeGuard, TypeVar, cast
+from typing import Any, Literal, Protocol, TypeGuard, TypeVar, cast
 from urllib.parse import urlparse
 
 from agent_framework import Content, FunctionTool
@@ -1505,13 +1505,43 @@ class _SandboxRegistry(SandboxRuntime):
         )
 
 
+def _normalize_tool_description_format(
+    value: object,
+) -> Literal["compact", "json"] | dict[str, Literal["compact", "json"]]:
+    if isinstance(value, str):
+        if value not in ("compact", "json"):
+            raise ValueError("tool_description_format must be 'compact' or 'json'.")
+        return value
+    if not isinstance(value, Mapping):
+        raise TypeError("tool_description_format must be 'compact', 'json', or a mapping of tool names to formats.")
+
+    result: dict[str, Literal["compact", "json"]] = {}
+    for name, parameter_format in cast(Mapping[object, object], value).items():
+        if not isinstance(name, str):
+            raise TypeError("tool_description_format mapping keys must be tool name strings.")
+        if not isinstance(parameter_format, str):
+            raise TypeError(f"tool_description_format for {name!r} must be a string: 'compact' or 'json'.")
+        if parameter_format not in ("compact", "json"):
+            raise ValueError(f"tool_description_format for {name!r} must be 'compact' or 'json'.")
+        result[name] = parameter_format
+    return result
+
+
 class HyperlightExecuteCodeTool(FunctionTool):
-    """Execute Python code inside a Hyperlight sandbox."""
+    """Execute Python code inside a Hyperlight sandbox.
+
+    Keyword Args:
+        tool_description_format: Parameter documentation in ``.description``: ``"compact"`` (default)
+            or ``"json"``, globally or mapped by exact, case-sensitive tool name. Missing names use
+            compact format. Schemas that cannot be represented faithfully in compact form use JSON Schema.
+            Mappings are copied, including entries for tools registered later.
+    """
 
     def __init__(
         self,
         *,
         tools: FunctionTool | Callable[..., Any] | Sequence[FunctionTool | Callable[..., Any]] | None = None,
+        tool_description_format: Literal["compact", "json"] | Mapping[str, Literal["compact", "json"]] = "compact",
         approval_mode: ApprovalMode | None = None,
         workspace_root: str | Path | None = None,
         file_mounts: FileMountInput | Sequence[FileMountInput] | None = None,
@@ -1524,6 +1554,7 @@ class HyperlightExecuteCodeTool(FunctionTool):
         module_path: str | None = None,
         _registry: SandboxRuntime | None = None,
     ) -> None:
+        normalized_description_format = _normalize_tool_description_format(tool_description_format)
         max_output_files = _validate_positive_integer(name="max_output_files", value=max_output_files)
         max_output_file_bytes = _validate_positive_integer(name="max_output_file_bytes", value=max_output_file_bytes)
         max_output_total_bytes = _validate_positive_integer(name="max_output_total_bytes", value=max_output_total_bytes)
@@ -1535,6 +1566,9 @@ class HyperlightExecuteCodeTool(FunctionTool):
             input_model=EXECUTE_CODE_INPUT_SCHEMA,
         )
         self._state_lock = threading.RLock()
+        self._tool_description_format: Literal["compact", "json"] | dict[str, Literal["compact", "json"]] = (
+            normalized_description_format
+        )
         self._registry = _registry or _SandboxRegistry()
         self._default_approval_mode: ApprovalMode = approval_mode or "never_require"
         self._workspace_root = _resolve_workspace_root(workspace_root)
@@ -1571,6 +1605,7 @@ class HyperlightExecuteCodeTool(FunctionTool):
                 workspace_enabled=self._workspace_root is not None,
                 mounted_paths=[_display_mount_path(mount.mount_path) for mount in self._file_mounts.values()],
                 allowed_domains=allowed_domains,
+                tool_description_format=self._tool_description_format,
             )
 
     @description.setter
@@ -1692,6 +1727,7 @@ class HyperlightExecuteCodeTool(FunctionTool):
 
         return HyperlightExecuteCodeTool(
             tools=self.get_tools(),
+            tool_description_format=self._tool_description_format,
             approval_mode=self._default_approval_mode,
             workspace_root=self._workspace_root,
             file_mounts=file_mounts or None,
@@ -1717,6 +1753,11 @@ class HyperlightExecuteCodeTool(FunctionTool):
             "max_output_file_bytes": config.max_output_file_bytes,
             "max_output_total_bytes": config.max_output_total_bytes,
             "tool_names": [tool_obj.name for tool_obj in config.tools],
+            "tool_description_format": (
+                dict(self._tool_description_format)
+                if isinstance(self._tool_description_format, dict)
+                else self._tool_description_format
+            ),
             "filesystem_enabled": config.filesystem_enabled,
             "workspace_root": str(config.workspace_root) if config.workspace_root is not None else None,
             "file_mounts": [

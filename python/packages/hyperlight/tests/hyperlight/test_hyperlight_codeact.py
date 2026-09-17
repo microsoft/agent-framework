@@ -17,10 +17,12 @@ import sys
 import threading
 import time
 from collections.abc import Awaitable, Callable, Coroutine, Generator, Mapping, Sequence
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, cast
+from types import MappingProxyType
+from typing import Any, Literal, cast
 from unittest.mock import patch
 
 import pytest
@@ -1878,6 +1880,222 @@ def test_execute_code_tool_description_contains_call_tool_guidance(tmp_path: Pat
     assert "api.example.com" in description
     assert "GET, POST" in description
     assert "github.com" in description
+
+
+@pytest.fixture
+def documented_tool() -> FunctionTool:
+    return FunctionTool(
+        name="lookup",
+        description="Look up an item.",
+        func=lambda **kwargs: kwargs,
+        input_model={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search text"},
+                "limit": {"type": "integer", "description": "Maximum results", "default": 10},
+                "order": {"type": "string", "enum": ["ascending", "descending"], "default": "ascending"},
+            },
+            "required": ["query"],
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    "mode",
+    ["compact", {}, {"lookup": "compact"}, {"LOOKUP": "json"}, MappingProxyType({"inactive": "json"})],
+)
+def test_description_format_compact_preserves_parameter_metadata(documented_tool: FunctionTool, mode: Any) -> None:
+    execute_code = HyperlightExecuteCodeTool(
+        tools=[documented_tool], tool_description_format=mode, _registry=_FakeRuntime()
+    )
+    description = execute_code.description
+
+    assert "- `lookup`: Look up an item." in description
+    assert "- `query` (string, required): Search text" in description
+    assert "- `limit` (integer, optional): Maximum results Default: 10." in description
+    expected_order = '- `order` (string, optional) Allowed values: ["ascending", "descending"]. Default: "ascending".'
+    assert expected_order in description
+    assert "Parameters (JSON Schema)" not in description
+    assert execute_code.to_dict()["description"] == description
+    assert execute_code.parameters() == execute_code_module.EXECUTE_CODE_INPUT_SCHEMA
+
+
+@pytest.mark.parametrize("mode", ["json", {"lookup": "json"}])
+@pytest.mark.parametrize("rich_schema", [False, True])
+def test_description_format_json_preserves_full_schema(
+    documented_tool: FunctionTool, mode: Any, rich_schema: bool
+) -> None:
+    schema = deepcopy(documented_tool.parameters())
+    if rich_schema:
+        schema["additionalProperties"] = False
+        schema["properties"]["filters"] = {"type": "array", "items": {"type": "integer", "minimum": 1}}
+    registered_tool = FunctionTool(name="lookup", description="", func=lambda **kwargs: kwargs, input_model=schema)
+    original_schema = deepcopy(registered_tool.parameters())
+    execute_code = HyperlightExecuteCodeTool(
+        tools=[registered_tool], tool_description_format=mode, _registry=_FakeRuntime()
+    )
+
+    description = execute_code.description
+    rendered_schema = json.loads(description.split("```json\n", 1)[1].split("\n```", 1)[0])
+    assert rendered_schema == original_schema
+    assert "Parameters (JSON Schema)" in description
+    assert "cannot be represented faithfully" not in description
+    assert registered_tool.parameters() == original_schema
+    assert execute_code.to_dict()["description"] == description
+
+
+def test_description_format_rich_schema_falls_back_without_mutation() -> None:
+    schema = {
+        "type": "object",
+        "properties": {
+            "record": {
+                "type": "object",
+                "properties": {"ids": {"type": "array", "items": {"type": "integer"}}},
+                "required": ["ids"],
+            }
+        },
+        "required": ["record"],
+        "additionalProperties": False,
+    }
+    original_schema = deepcopy(schema)
+    registered_tool = FunctionTool(name="nested", description="", func=lambda **kwargs: kwargs, input_model=schema)
+    execute_code = HyperlightExecuteCodeTool(tools=[registered_tool], _registry=_FakeRuntime())
+
+    description = execute_code.description
+    assert (
+        "Using JSON Schema because the parameter schema cannot be represented faithfully in compact form."
+        in description
+    )
+    rendered_schema = json.loads(description.split("```json\n", 1)[1].split("\n```", 1)[0])
+    assert rendered_schema == registered_tool.parameters() == original_schema
+    assert schema == original_schema
+    assert execute_code.to_dict()["description"] == description
+    assert execute_code.build_serializable_state()["tool_description_format"] == "compact"
+
+
+def test_description_format_mixed_mapping_and_dynamic_registration(documented_tool: FunctionTool) -> None:
+    modes: dict[str, Literal["compact", "json"]] = {"lookup": "json", "compute": "compact", "future": "json"}
+    execute_code = HyperlightExecuteCodeTool(tools=[compute], tool_description_format=modes, _registry=_FakeRuntime())
+    run_tool = execute_code.create_run_tool()
+    assert execute_code._tool_description_format is not modes
+    assert run_tool._tool_description_format is not execute_code._tool_description_format
+    modes["lookup"] = "compact"
+    execute_code.add_tools([documented_tool, dangerous_compute])
+
+    description = execute_code.description
+    assert description.count("Parameters (JSON Schema)") == 1
+    assert "- `a` (integer, required)" in description
+    assert "- `dangerous_compute`: No description provided." in description
+    assert "lookup" not in run_tool.description
+    run_tool.add_tools(documented_tool)
+    assert "Parameters (JSON Schema)" in run_tool.description
+    execute_code.remove_tool("lookup")
+    execute_code.add_tools(documented_tool)
+    assert "Parameters (JSON Schema)" in execute_code.description
+    state = execute_code.build_serializable_state()
+    assert state["tool_description_format"] == {"lookup": "json", "compute": "compact", "future": "json"}
+    state["tool_description_format"]["lookup"] = "compact"
+    assert "Parameters (JSON Schema)" in execute_code.description
+    assert json.loads(json.dumps(run_tool.build_serializable_state()))["tool_description_format"]["future"] == "json"
+
+
+@pytest.mark.parametrize("mode", ["compact", "json", {"compute": "json", "future": "compact"}])
+async def test_description_format_provider_run_state_and_snapshot(mode: Any) -> None:
+    provider = HyperlightCodeActProvider(tools=[compute], tool_description_format=mode, _registry=_FakeRuntime())
+    expected_mode = deepcopy(mode)
+    if isinstance(mode, dict):
+        mode["compute"] = "compact"
+    context = _FakeSessionContext()
+    state: dict[str, Any] = {}
+
+    await provider.before_run(agent=object(), session=None, context=cast(Any, context), state=state)
+    run_tool = context.tools[0][1][0]
+    assert isinstance(run_tool, HyperlightExecuteCodeTool)
+    assert state[provider.source_id]["tool_description_format"] == expected_mode
+    assert run_tool.build_serializable_state() == state[provider.source_id]
+    assert run_tool.to_dict()["description"] == run_tool.description
+    assert ("Parameters (JSON Schema)" in run_tool.description) == (expected_mode != "compact")
+    assert "Parameters (JSON Schema)" not in context.instructions[0][1]
+    assert "compute" not in context.instructions[0][1]
+    assert run_tool._tool_description_format == provider._execute_code_tool._tool_description_format
+    if isinstance(expected_mode, dict):
+        assert run_tool._tool_description_format is not provider._execute_code_tool._tool_description_format
+    provider.clear_tools()
+    assert "- `compute`:" in run_tool.description
+    assert "No tools are currently registered" in provider._execute_code_tool.description
+    json.dumps(state)
+
+
+@pytest.mark.parametrize(
+    ("mode", "error_type"),
+    [
+        ("verbose", ValueError),
+        ("JSON", ValueError),
+        (" compact", ValueError),
+        ({"inactive": "verbose"}, ValueError),
+        (None, TypeError),
+        (1, TypeError),
+        (["compact"], TypeError),
+        ({1: "json"}, TypeError),
+        ({"compute": None}, TypeError),
+        ({"inactive": 1}, TypeError),
+    ],
+)
+@pytest.mark.parametrize("entry_point", [HyperlightExecuteCodeTool, HyperlightCodeActProvider])
+def test_description_format_rejects_invalid_inputs(mode: Any, error_type: type[Exception], entry_point: Any) -> None:
+    with pytest.raises(error_type, match="tool_description_format"):
+        entry_point(tool_description_format=mode, _registry=_FakeRuntime())
+
+
+def test_description_format_defaults_no_tools_and_zero_parameters() -> None:
+    execute_code = HyperlightExecuteCodeTool(_registry=_FakeRuntime())
+    assert "- No tools are currently registered inside the sandbox." in execute_code.description
+    assert execute_code.build_serializable_state()["tool_description_format"] == "compact"
+
+    execute_code.add_tools(
+        FunctionTool(name="noop", description="", func=lambda: None, input_model={"type": "object", "properties": {}})
+    )
+    assert "- `noop`: No description provided.\n  Parameters: none." in execute_code.description
+    assert "call_tool(name, **kwargs)" in execute_code.description
+    assert "arguments only. Do not pass a dict or any other positional arguments" in execute_code.description
+    assert "Filesystem access is unavailable" in execute_code.description
+    assert "Outbound network access is unavailable" in execute_code.description
+
+
+async def test_description_format_does_not_change_runtime_config_or_input_schema() -> None:
+    runtime = _FakeRuntime()
+    compact_tool = HyperlightExecuteCodeTool(tools=[compute], _registry=runtime)
+    json_tool = HyperlightExecuteCodeTool(tools=[compute], tool_description_format="json", _registry=runtime)
+    for execute_code in (compact_tool, json_tool):
+        result = await execute_code.invoke(arguments={"code": "print(42)"})
+        assert result[0].text == "ok"
+        assert execute_code.parameters() == execute_code_module.EXECUTE_CODE_INPUT_SCHEMA
+    compact_config, compact_code = runtime.calls[0]
+    json_config, json_code = runtime.calls[1]
+    assert compact_config == json_config
+    assert compact_config.cache_key() == json_config.cache_key()
+    assert not hasattr(compact_config, "tool_description_format")
+    assert compact_code == json_code == "print(42)"
+    assert compact_tool.build_instructions(tools_visible_to_model=False) == json_tool.build_instructions(
+        tools_visible_to_model=False
+    )
+
+
+async def test_description_format_reuses_sandbox_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    _FakeSandbox.instances.clear()
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandbox)
+    registry = execute_code_module._SandboxRegistry()
+    compact_tool = HyperlightExecuteCodeTool(tools=[compute], _registry=registry)
+    json_tool = HyperlightExecuteCodeTool(tools=[compute], tool_description_format="json", _registry=registry)
+
+    try:
+        for execute_code in (compact_tool, json_tool):
+            await execute_code.invoke(arguments={"code": "None"})
+        assert len(_FakeSandbox.instances) == 1
+        assert set(_FakeSandbox.instances[0].registered_tools) == {"compute"}
+        assert _FakeSandbox.instances[0].restore_calls == ["snapshot", "snapshot"]
+    finally:
+        registry.close()
 
 
 async def test_execute_code_tool_executes_with_structured_content(monkeypatch: pytest.MonkeyPatch) -> None:

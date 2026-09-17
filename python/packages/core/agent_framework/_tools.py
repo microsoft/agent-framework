@@ -400,6 +400,62 @@ def _annotation_includes_function_invocation_context(annotation: Any) -> bool:
     )
 
 
+def _format_tool_parameters(  # pyright: ignore[reportUnusedFunction]
+    parameters: dict[str, Any],
+    *,
+    parameter_format: Literal["compact", "json"],
+) -> tuple[Literal["compact", "json"], dict[str, Any]]:
+    """Return the effective format and detached parameter data for tool descriptions.
+
+    Compact data maps parameter names to scalar type, requiredness, and optional
+    description, enum, and default metadata. Schemas with unrepresented constraints
+    retain their full JSON Schema so callers can explain the fallback to the model.
+    """
+    if parameter_format not in ("compact", "json"):
+        raise ValueError("parameter_format must be 'compact' or 'json'.")
+
+    if parameter_format == "json":
+        return "json", copy.deepcopy(parameters)
+
+    properties = parameters.get("properties")
+    required = parameters.get("required", [])
+    if (
+        parameters.get("type") != "object"
+        or parameters.keys() - {"type", "properties", "required", "title", "description"}
+        or not isinstance(properties, dict)
+        or not isinstance(required, list)
+    ):
+        return "json", copy.deepcopy(parameters)
+
+    property_schemas = cast(dict[object, Any], properties)
+    required_names = cast(list[object], required)
+    if not all(isinstance(name, str) and name in property_schemas for name in required_names):
+        return "json", copy.deepcopy(parameters)
+
+    compact: dict[str, Any] = {}
+    for name, property_schema in property_schemas.items():
+        if not isinstance(name, str) or not isinstance(property_schema, dict):
+            return "json", copy.deepcopy(parameters)
+
+        schema = cast(dict[str, Any], property_schema)
+        if schema.get("type") not in ("string", "integer", "number", "boolean", "null") or schema.keys() - {
+            "type",
+            "title",
+            "description",
+            "enum",
+            "default",
+        }:
+            return "json", copy.deepcopy(parameters)
+
+        compact[name] = {
+            "type": schema["type"],
+            "required": name in required_names,
+            **{key: copy.deepcopy(schema[key]) for key in ("description", "enum", "default") if key in schema},
+        }
+
+    return "compact", compact
+
+
 ClassT = TypeVar("ClassT", bound="SerializationMixin")
 
 
