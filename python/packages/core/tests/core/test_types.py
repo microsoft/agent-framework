@@ -4203,7 +4203,9 @@ class TestResponseStreamCleanupHooks:
             finally:
                 events.append("iterator")
 
-        stream = ResponseStream(updates(), cleanup_hooks=[lambda: events.append("cleanup")])
+        stream: ResponseStream[ChatResponseUpdate, Sequence[ChatResponseUpdate]] = ResponseStream(
+            updates(), cleanup_hooks=[lambda: events.append("cleanup")]
+        )
         await anext(stream)
 
         await stream.aclose()
@@ -4222,7 +4224,9 @@ class TestResponseStreamCleanupHooks:
             finally:
                 events.append("iterator")
 
-        inner = ResponseStream(updates(), cleanup_hooks=[lambda: events.append("inner")])
+        inner: ResponseStream[ChatResponseUpdate, Sequence[ChatResponseUpdate]] = ResponseStream(
+            updates(), cleanup_hooks=[lambda: events.append("inner")]
+        )
         outer = inner.map(lambda update: update, _combine_updates).with_cleanup_hook(lambda: events.append("outer"))
         await anext(outer)
 
