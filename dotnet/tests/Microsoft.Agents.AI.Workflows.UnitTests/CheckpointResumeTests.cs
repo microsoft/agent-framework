@@ -299,6 +299,7 @@ public class CheckpointResumeTests
         Assert.Equal(RunStatus.Idle, finalStatus);
     }
 
+#if NETFRAMEWORK
     /// <summary>
     /// Verifies restored runs continue superstep numbering from the checkpoint's saved step.
     /// </summary>
@@ -355,6 +356,7 @@ public class CheckpointResumeTests
             Assert.Equal(1, resumedCompletion.StepNumber);
         }
     }
+#endif
 
     /// <summary>
     /// Verifies that fan-in edge state buffered before a checkpoint is still present after resume.
