@@ -167,8 +167,8 @@ public sealed class IWorkflowContextExtensionsTests
         // Arrange
         Mock<IWorkflowContext> context = new(MockBehavior.Loose);
         context
-            .Setup(c => c.ReadStateAsync<object>("TestValue", VariableScopeNames.Local, default))
-            .Returns(new ValueTask<object?>("42"));
+            .Setup(c => c.ReadStateAsync<PortableValue>("TestValue", VariableScopeNames.Local, default))
+            .Returns(new ValueTask<PortableValue?>(new PortableValue("42")));
         context
             .Setup(c => c.ReadStateAsync<SensitivityLevel>("TestValue", WorkflowFormulaState.GetSensitivityScopeName(VariableScopeNames.Local), default))
             .Returns(new ValueTask<SensitivityLevel>(SensitivityLevel.Sensitive));
