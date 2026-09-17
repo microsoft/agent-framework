@@ -757,15 +757,23 @@ _OPAQUE_REASONING_KEYS: Final[frozenset[str]] = frozenset({"encrypted_content"})
 def _strip_opaque_reasoning_payload(value: Any) -> Any:
     """Recursively drop opaque reasoning members, keeping clear-text payloads."""
     if isinstance(value, dict):
-        filtered = {
-            key: _strip_opaque_reasoning_payload(item)
-            for key, item in value.items()
-            if key not in _OPAQUE_REASONING_KEYS
-        }
+        entries = cast("dict[Any, Any]", value)
+        filtered: dict[Any, Any] = {}
+        for key, item in entries.items():
+            if key in _OPAQUE_REASONING_KEYS:
+                continue
+            stripped = _strip_opaque_reasoning_payload(item)
+            if stripped is not None:
+                filtered[key] = stripped
         return filtered or None
     if isinstance(value, list):
-        filtered = [item for item in (_strip_opaque_reasoning_payload(item) for item in value) if item is not None]
-        return filtered or None
+        entries = cast("list[Any]", value)
+        kept = [
+            stripped
+            for stripped in (_strip_opaque_reasoning_payload(entry) for entry in entries)
+            if stripped is not None
+        ]
+        return kept or None
     return value
 
 
@@ -801,8 +809,9 @@ def _serialize_content(content: Content) -> dict[str, Any]:
         payload.pop("protected_data", None)
     additional_properties = payload.get("additional_properties")
     if isinstance(additional_properties, dict) and "encrypted_content" in additional_properties:
+        typed_properties = cast("dict[str, Any]", additional_properties)
         payload["additional_properties"] = {
-            key: value for key, value in additional_properties.items() if key != "encrypted_content"
+            key: value for key, value in typed_properties.items() if key != "encrypted_content"
         }
     return payload
 

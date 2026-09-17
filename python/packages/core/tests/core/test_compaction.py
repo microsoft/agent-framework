@@ -500,8 +500,14 @@ def test_annotate_message_groups_token_counts_keep_clear_text_reasoning_details(
 
     # The opaque encrypted member is excluded while the clear-text reasoning
     # the provider replays stays counted.
-    assert _token_count(with_message) == _token_count(summary_only_message)
-    assert _token_count(with_message) > _token_count(bare_message)
+    with_count = _token_count(with_message)
+    summary_count = _token_count(summary_only_message)
+    bare_count = _token_count(bare_message)
+    assert with_count is not None
+    assert summary_count is not None
+    assert bare_count is not None
+    assert with_count == summary_count
+    assert with_count > bare_count
 
 
 def test_annotate_token_counts_recomputes_counts_from_stale_serialization_basis() -> None:
