@@ -15,6 +15,7 @@ import json
 from collections.abc import AsyncIterator, Iterator
 from contextlib import contextmanager
 from itertools import product
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -94,6 +95,47 @@ class _FakeAgent:
         session_id: str | None = None,
     ) -> AgentSession:
         return AgentSession(service_session_id=service_session_id, session_id=session_id)
+
+
+class _ContextAgent(_FakeAgent):
+    def __init__(
+        self,
+        events: list[str],
+        *,
+        response: AgentResponse | None = None,
+        stream_updates: list[AgentResponseUpdate] | None = None,
+    ) -> None:
+        super().__init__(response=response, stream_updates=stream_updates)
+        self._events = events
+
+    async def __aenter__(self) -> _ContextAgent:
+        self._events.append("enter")
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        self._events.append("exit")
+
+    def run(
+        self,
+        messages: Any = None,
+        *,
+        stream: bool = False,
+        session: AgentSession | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        self._events.append("run")
+        result = super().run(messages, stream=stream, session=session, **kwargs)
+        if not stream:
+            return result
+
+        async def _gen() -> AsyncIterator[AgentResponseUpdate]:
+            try:
+                async for update in result:
+                    yield update
+            finally:
+                self._events.append("stream_close")
+
+        return _gen()
 
 
 def _make_agent(
@@ -232,6 +274,47 @@ class TestPartitionKey:
 
 
 class TestHandleInvoke:
+    async def test_instance_context_lifetime_remains_caller_owned(self) -> None:
+        events: list[str] = []
+        response = AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("ok")])])
+        server = InvocationsHostServer(_ContextAgent(events, response=response))
+
+        with _request_context(session_id="sess-1"):
+            await server._handle_invoke(_make_request({"message": "one"}))  # pyright: ignore[reportPrivateUsage]
+
+        assert events == ["run"]
+
+    async def test_factory_agent_context_lifetime_non_streaming(self) -> None:
+        events: list[str] = []
+        response = AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("ok")])])
+        server = InvocationsHostServer(lambda: _ContextAgent(events, response=response))
+
+        with _request_context(session_id="sess-1"):
+            result = await server._handle_invoke(_make_request({"message": "one"}))  # pyright: ignore[reportPrivateUsage]
+
+        assert bytes(result.body).decode() == "ok"
+        assert events == ["enter", "run", "exit"]
+
+    async def test_factory_agent_context_lifetime_until_stream_closes(self) -> None:
+        events: list[str] = []
+        updates = [
+            AgentResponseUpdate(contents=[Content.from_text("one")]),
+            AgentResponseUpdate(contents=[Content.from_text("two")]),
+        ]
+        server = InvocationsHostServer(lambda: _ContextAgent(events, stream_updates=updates))
+
+        with _request_context(session_id="sess-1"):
+            response = await server._handle_invoke(  # pyright: ignore[reportPrivateUsage]
+                _make_request({"message": "one", "stream": True})
+            )
+
+        assert isinstance(response, StreamingResponse)
+        iterator = cast(Any, response.body_iterator)
+        assert await anext(iterator) == "one"
+        await iterator.aclose()
+
+        assert events == ["enter", "run", "stream_close", "exit"]
+
     async def test_agent_callable_is_resolved_for_each_request(self) -> None:
         agents: list[_FakeAgent] = []
 
