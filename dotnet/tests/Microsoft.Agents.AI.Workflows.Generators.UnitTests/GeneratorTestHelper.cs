@@ -8,7 +8,6 @@ using System.Linq;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
-using FluentAssertions;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 
@@ -60,10 +59,10 @@ public static class GeneratorTestHelper
     {
         var result = RunGenerator(source);
 
-        result.RunResult.GeneratedTrees.Should().HaveCount(1, "expected exactly one generated file");
+        Assert.Single(result.RunResult.GeneratedTrees);
 
         var generatedSource = result.RunResult.GeneratedTrees[0].ToString();
-        generatedSource.Should().Contain(expectedGeneratedSource);
+        Assert.Contains(expectedGeneratedSource, generatedSource);
     }
 
     /// <summary>
@@ -72,7 +71,7 @@ public static class GeneratorTestHelper
     public static void AssertGeneratesNoSource(string source)
     {
         var result = RunGenerator(source);
-        result.RunResult.GeneratedTrees.Should().BeEmpty("expected no generated files");
+        Assert.Empty(result.RunResult.GeneratedTrees);
     }
 
     /// <summary>
@@ -83,8 +82,7 @@ public static class GeneratorTestHelper
         var result = RunGenerator(source);
 
         var generatorDiagnostics = result.RunResult.Diagnostics;
-        generatorDiagnostics.Should().Contain(d => d.Id == diagnosticId,
-            $"expected diagnostic {diagnosticId} to be produced");
+        Assert.Contains(generatorDiagnostics, d => d.Id == diagnosticId);
     }
 
     /// <summary>
@@ -98,7 +96,7 @@ public static class GeneratorTestHelper
             .Where(d => d.Severity == DiagnosticSeverity.Error)
             .ToList();
 
-        errors.Should().BeEmpty("compilation should succeed without errors");
+        Assert.Empty(errors ?? []);
     }
 
     private static ImmutableArray<MetadataReference> GetMetadataReferences()

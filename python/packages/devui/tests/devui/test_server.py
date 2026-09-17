@@ -4,24 +4,31 @@
 
 import asyncio
 import inspect
+import json
 import logging
 import sys
 import tempfile
+from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
+from agent_framework import AgentResponseUpdate, Content
 from conftest import MockAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
 from fastapi.testclient import TestClient
 
 import agent_framework_devui
 from agent_framework_devui import DevServer
+from agent_framework_devui._discovery import EntityDiscovery
+from agent_framework_devui._executor import AgentFrameworkExecutor
+from agent_framework_devui._mapper import MessageMapper
 from agent_framework_devui._utils import (
     extract_executor_message_types,
     parse_input_for_type,
     select_primary_input_type,
 )
-from agent_framework_devui.models._openai_custom import AgentFrameworkRequest
+from agent_framework_devui.models._openai_custom import AgentFailedEvent, AgentFrameworkRequest
 
 
 class _StubExecutor:
@@ -32,6 +39,27 @@ class _StubExecutor:
             self.input_types = list(input_types)
         if handlers is not None:
             self._handlers = dict(handlers)
+
+
+class _FailedStreamingExecutor(AgentFrameworkExecutor):
+    """Executor stub that emits text before a terminal failure."""
+
+    def __init__(self) -> None:
+        discovery = MagicMock(spec=EntityDiscovery)
+        discovery.get_entity_info.return_value = MagicMock()
+        super().__init__(discovery, MessageMapper())
+
+    async def execute_entity(
+        self, entity_id: str, request: AgentFrameworkRequest
+    ) -> AsyncGenerator[AgentResponseUpdate | AgentFailedEvent]:
+        _ = entity_id, request
+        yield AgentResponseUpdate(
+            contents=[Content.from_text(text="Partial output")],
+            role="assistant",
+            message_id="partial_message",
+            response_id="partial_response",
+        )
+        yield AgentFailedEvent(error=RuntimeError("failed after output"))
 
 
 # Note: test_entities_dir fixture is provided by conftest.py
@@ -106,6 +134,25 @@ async def test_server_execution_streaming(test_entities_dir):
             break
 
     assert event_count > 0
+
+
+async def test_stream_execution_emits_one_failed_terminal_event_with_partial_output():
+    """Failed streams retain prior output and never emit a completion event."""
+    server = DevServer(auth_enabled=False)
+    executor = _FailedStreamingExecutor()
+    request = AgentFrameworkRequest(input="hello", stream=True, metadata={"entity_id": "failed"})
+
+    chunks = [chunk async for chunk in server._stream_execution(executor, request)]
+    payloads = [json.loads(chunk.removeprefix("data: ").strip()) for chunk in chunks if chunk != "data: [DONE]\n\n"]
+    terminal_events = [
+        payload for payload in payloads if payload.get("type") in {"response.failed", "response.completed"}
+    ]
+
+    assert [event["type"] for event in terminal_events] == ["response.failed"]
+    failed_response = terminal_events[0]["response"]
+    assert failed_response["status"] == "failed"
+    assert failed_response["error"]["message"] == "failed after output"
+    assert failed_response["output"][0]["content"][0]["text"] == "Partial output"
 
 
 def test_configuration():

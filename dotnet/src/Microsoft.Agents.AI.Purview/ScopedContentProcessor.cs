@@ -195,21 +195,22 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
 
         ProtectionScopesResponse? cacheResponse = await this._cacheProvider.GetAsync<ProtectionScopesCacheKey, ProtectionScopesResponse>(cacheKey, cancellationToken).ConfigureAwait(false);
 
-        if (cacheResponse != null)
+        if (cacheResponse == null)
         {
-            return await this.ProcessWithCachedScopesAsync(pcRequest, cacheResponse, cacheKey, cancellationToken).ConfigureAwait(false);
+            pcRequest.ProcessInline = true;
+            try
+            {
+                this._channelHandler.QueueJob(new ScopeRetrievalJob(psRequest, cacheKey, pcRequest));
+            }
+            catch (PurviewJobException)
+            {
+                // QueueJob logs admission failures. Scope refresh is best effort.
+            }
+
+            return await this.CallProcessContentAsync(pcRequest, cacheKey, dlpActions: null, cancellationToken).ConfigureAwait(false);
         }
 
-        try
-        {
-            this._channelHandler.QueueJob(new ScopeRetrievalJob(psRequest, cacheKey, pcRequest));
-        }
-        catch (PurviewJobException)
-        {
-            // QueueJob already logs failures. Scope warmup is best effort; don't block ProcessContent.
-        }
-
-        return await this.CallProcessContentAsync(pcRequest, cacheKey, dlpActions: null, cancellationToken).ConfigureAwait(false);
+        return await this.ProcessWithCachedScopesAsync(pcRequest, cacheResponse, cacheKey, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>

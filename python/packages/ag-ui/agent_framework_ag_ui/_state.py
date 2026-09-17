@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Deterministic tool-driven AG-UI state updates and display payloads.
+"""AG-UI state carrier and deterministic tool-result state helpers.
 
 Tools wired into the :mod:`agent_framework_ag_ui` endpoint can push a
 deterministic state update or a per-call tool result display payload by
@@ -23,8 +23,11 @@ from agent_framework import Content
 
 from ._utils import make_json_safe
 
-__all__ = ["TOOL_RESULT_DISPLAY_KEY", "TOOL_RESULT_STATE_KEY", "state_update"]
+__all__ = ["STATE_CARRIER_KEY", "TOOL_RESULT_DISPLAY_KEY", "TOOL_RESULT_STATE_KEY", "state_carrier", "state_update"]
 
+
+STATE_CARRIER_KEY = "__ag_ui_state_carrier__"
+"""Reserved ``Content.additional_properties`` key marking an AG-UI request state carrier."""
 
 TOOL_RESULT_STATE_KEY = "__ag_ui_tool_result_state__"
 """Reserved ``Content.additional_properties`` key used to carry a tool-driven
@@ -38,6 +41,44 @@ _UNSET = object()
 
 def _serialize_tool_result(value: Any) -> str:  # noqa: ANN401
     return value if isinstance(value, str) else json.dumps(make_json_safe(value))
+
+
+def state_carrier(state: Mapping[str, Any]) -> Content:
+    """Build a dedicated message carrier for ``AGUIChatClient`` request state.
+
+    Add the returned content as the only content in a user message. The client
+    recognizes its explicit marker anywhere in client-controlled history, moves
+    the most recent carrier's JSON object into the AG-UI request's ``state``
+    field, and does not send carriers as chat messages. Ordinary
+    ``application/json`` content without this marker remains a document input.
+
+    Example:
+        .. code-block:: python
+
+            from agent_framework import Message
+            from agent_framework_ag_ui import state_carrier
+
+            messages = [
+                Message(role="user", contents=["Update the dashboard"]),
+                Message(role="user", contents=[state_carrier({"selected_tab": "sales"})]),
+            ]
+
+    Args:
+        state: JSON-compatible mapping to send as AG-UI shared state.
+
+    Returns:
+        A JSON ``Content`` marked as an AG-UI request state carrier.
+
+    Raises:
+        TypeError: If ``state`` is not a mapping.
+    """
+    if not isinstance(state, Mapping):
+        raise TypeError(f"state_carrier() 'state' must be a Mapping, got {type(state).__name__}")
+    return Content.from_data(
+        json.dumps(make_json_safe(dict(state))).encode("utf-8"),
+        media_type="application/json",
+        additional_properties={STATE_CARRIER_KEY: True},
+    )
 
 
 def state_update(

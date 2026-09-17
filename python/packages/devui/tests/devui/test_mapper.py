@@ -30,6 +30,7 @@ from conftest import (  # pyrefly: ignore[missing-import] # pyright: ignore[repo
     create_executor_failed_event,
     create_executor_invoked_event,
 )  # pyrefly: ignore[missing-import]
+from openai.types.responses import ResponseOutputRefusal, ResponseOutputText
 
 from agent_framework_devui._mapper import MessageMapper
 from agent_framework_devui.models._openai_custom import (
@@ -119,6 +120,73 @@ async def test_text_content_mapping(mapper: MessageMapper, test_request: AgentFr
     # Check text delta
     assert events[2].type == "response.output_text.delta"
     assert events[2].delta == "Hello, clean test!"
+
+
+async def test_marked_refusal_text_mapping(mapper: MessageMapper, test_request: AgentFrameworkRequest) -> None:
+    content = Content.from_text(
+        "I cannot help.",
+        additional_properties={"model_output_kind": "refusal"},
+    )
+    update = create_test_agent_update([content])
+
+    events = await mapper.convert_event(update, test_request)
+
+    assert [event.type for event in events] == [
+        "response.output_item.added",
+        "response.content_part.added",
+        "response.refusal.delta",
+    ]
+    assert events[1].part.type == "refusal"
+    assert events[2].delta == "I cannot help."
+
+
+async def test_marked_refusal_text_aggregation(mapper: MessageMapper, test_request: AgentFrameworkRequest) -> None:
+    update = create_test_agent_update([
+        Content.from_text(
+            "I cannot help.",
+            additional_properties={"model_output_kind": "refusal"},
+        )
+    ])
+
+    events = await mapper.convert_event(update, test_request)
+    response = await mapper.aggregate_to_response(events, test_request)
+
+    messages = [item for item in response.output if item.type == "message"]
+    assert len(messages) == 1
+    assert len(messages[0].content) == 1
+    assert messages[0].content[0].type == "refusal"
+    assert messages[0].content[0].refusal == "I cannot help."
+
+
+async def test_mixed_text_and_refusal_keep_separate_content_indexes(
+    mapper: MessageMapper,
+    test_request: AgentFrameworkRequest,
+) -> None:
+    update = create_test_agent_update([
+        Content.from_text("Partial answer."),
+        Content.from_text(
+            "I cannot continue.",
+            additional_properties={"model_output_kind": "refusal"},
+        ),
+    ])
+
+    events = await mapper.convert_event(update, test_request)
+    response = await mapper.aggregate_to_response(events, test_request)
+
+    part_events = [event for event in events if event.type == "response.content_part.added"]
+    assert [(event.content_index, event.part.type) for event in part_events] == [
+        (0, "output_text"),
+        (1, "refusal"),
+    ]
+    messages = [item for item in response.output if item.type == "message"]
+    assert len(messages) == 1
+    assert [content.type for content in messages[0].content] == ["output_text", "refusal"]
+    output_text = messages[0].content[0]
+    refusal = messages[0].content[1]
+    assert isinstance(output_text, ResponseOutputText)
+    assert isinstance(refusal, ResponseOutputRefusal)
+    assert output_text.text == "Partial answer."
+    assert refusal.refusal == "I cannot continue."
 
 
 async def test_function_call_mapping(mapper: MessageMapper, test_request: AgentFrameworkRequest) -> None:
@@ -295,6 +363,13 @@ async def test_zero_usage_content_does_not_use_estimate(
     assert response.usage.total_tokens == 0
 
 
+async def test_missing_usage_is_not_estimated(mapper: MessageMapper, test_request: AgentFrameworkRequest) -> None:
+    """Completed responses omit usage when the framework reported none."""
+    response = await mapper.aggregate_to_response([], test_request)
+
+    assert response.usage is None
+
+
 # =============================================================================
 # Agent Lifecycle Event Tests
 # =============================================================================
@@ -327,6 +402,89 @@ async def test_agent_lifecycle_events(mapper: MessageMapper, test_request: Agent
     assert events[0].type == "response.failed"
     assert events[0].response.status == "failed"
     assert events[0].response.error.message == "Test error"
+
+
+async def test_response_id_is_stable_across_lifecycle_and_aggregation(mapper: MessageMapper) -> None:
+    """The server tracking ID remains the OpenAI response ID for the full lifecycle."""
+    request = AgentFrameworkRequest(
+        model="devui",
+        input="hello",
+        extra_body={"response_id": "resp_tracking_123"},
+    )
+
+    started_events = await mapper.convert_event(AgentStartedEvent(), request)
+    failed_events = await mapper.convert_event(AgentFailedEvent(error=RuntimeError("failed")), request)
+    response = await mapper.aggregate_to_response([*started_events, *failed_events], request)
+
+    assert [event.response.id for event in started_events] == ["resp_tracking_123", "resp_tracking_123"]
+    assert failed_events[0].response.id == "resp_tracking_123"
+    assert response.id == "resp_tracking_123"
+    assert response.status == "failed"
+    assert response.output == []
+
+
+async def test_failed_response_retains_partial_output(
+    mapper: MessageMapper, test_request: AgentFrameworkRequest
+) -> None:
+    """A failed response includes text emitted before the failure."""
+    partial_events = await mapper.convert_event(
+        create_test_agent_update([Content.from_text(text="Partial output")]),
+        test_request,
+    )
+    failed_events = await mapper.convert_event(
+        AgentFailedEvent(error=RuntimeError("failed after output")),
+        test_request,
+    )
+
+    response = await mapper.aggregate_to_response([*partial_events, *failed_events], test_request)
+
+    assert response.status == "failed"
+    assert response.error is not None
+    assert response.error.message == "failed after output"
+    assert response.output_text == "Partial output"
+
+
+async def test_failed_response_retains_populated_message_output_item(
+    mapper: MessageMapper, test_request: AgentFrameworkRequest
+) -> None:
+    """A failed workflow response retains complete message output items."""
+    output_events = await mapper.convert_event(
+        WorkflowEvent("output", executor_id="final_executor", data="Partial workflow output"),
+        test_request,
+    )
+    failed_events = await mapper.convert_event(
+        AgentFailedEvent(error=RuntimeError("failed after workflow output")),
+        test_request,
+    )
+
+    response = await mapper.aggregate_to_response([*output_events, *failed_events], test_request)
+
+    assert response.status == "failed"
+    assert response.error is not None
+    assert response.error.message == "failed after workflow output"
+    assert response.output_text == "Partial workflow output"
+
+
+async def test_aggregation_preserves_delta_and_complete_message_order(
+    mapper: MessageMapper, test_request: AgentFrameworkRequest
+) -> None:
+    """Delta-built and complete messages retain their first-seen order."""
+    delta_events = await mapper.convert_event(
+        create_test_agent_update([Content.from_text(text="First")]),
+        test_request,
+    )
+    complete_events = await mapper.convert_event(
+        WorkflowEvent("output", executor_id="final_executor", data="Second"),
+        test_request,
+    )
+
+    response = await mapper.aggregate_to_response([*delta_events, *complete_events], test_request)
+
+    assert response.output_text == "FirstSecond"
+    assert [item.id for item in response.output if item.type == "message"] == [
+        delta_events[0].item.id,
+        complete_events[0].item.id,
+    ]
 
 
 async def test_agent_run_response_mapping(mapper: MessageMapper, test_request: AgentFrameworkRequest) -> None:

@@ -15,8 +15,9 @@ public class TurnToken
     /// Initializes a new instance of the <see cref="TurnToken"/> class.
     /// </summary>
     /// <param name="emitEvents">Whether to raise agent run events for the receiving executor.</param>
+    // Retained for binary compatibility with existing callers.
     [JsonConstructor]
-    public TurnToken(bool? emitEvents = null)
+    public TurnToken(bool? emitEvents)
     {
         this.EmitEvents = emitEvents;
     }
@@ -26,7 +27,7 @@ public class TurnToken
     /// </summary>
     /// <param name="emitEvents">Whether to raise agent run events for the receiving executor.</param>
     /// <param name="runOptions">Options to pass to agents invoked during this turn.</param>
-    public TurnToken(bool? emitEvents, AgentRunOptions? runOptions)
+    public TurnToken(bool? emitEvents = null, AgentRunOptions? runOptions = null)
         : this(emitEvents)
     {
         this.RunOptions = runOptions;

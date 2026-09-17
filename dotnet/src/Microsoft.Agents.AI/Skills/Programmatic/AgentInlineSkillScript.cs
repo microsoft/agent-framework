@@ -99,7 +99,8 @@ internal sealed class AgentInlineSkillScript : AgentSkillScript
         if (arguments.Value.ValueKind != JsonValueKind.Object)
         {
             throw new InvalidOperationException(
-                $"Inline skill scripts expect arguments as a JSON object but received a JSON element of kind '{arguments.Value.ValueKind}'.");
+                $"Inline skill scripts expect arguments as a JSON object but received a JSON element of kind '{arguments.Value.ValueKind}'. " +
+                "Configure a custom argument marshaler on the skill to handle other argument formats.");
         }
 
         var dict = new Dictionary<string, object?>();

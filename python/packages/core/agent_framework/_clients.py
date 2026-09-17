@@ -96,6 +96,10 @@ class SupportsChatGetResponse(Protocol[OptionsContraT]):
         Protocols use structural subtyping (duck typing). Classes don't need
         to explicitly inherit from this protocol to be considered compatible.
 
+        Implementing this protocol does not by itself guarantee that an instance
+        can be reused across concurrent calls. Check the concrete client's
+        concurrency contract before sharing it.
+
     Examples:
         .. code-block:: python
 
@@ -578,7 +582,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         default_options: OptionsCoT | Mapping[str, Any] | None = None,
         context_providers: Sequence[Any] | None = None,
-        middleware: MiddlewareTypes | Sequence[MiddlewareTypes] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         require_per_service_call_history_persistence: bool = False,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,

@@ -9,7 +9,6 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.InProc;
 using Microsoft.Agents.AI.Workflows.Sample;
 using Microsoft.Agents.AI.Workflows.Specialized;
@@ -81,10 +80,10 @@ public class HandoffOrchestrationTests
         FieldInfo field = typeof(HandoffWorkflowBuilder).BaseType!.GetField("_targets", BindingFlags.Instance | BindingFlags.NonPublic)!;
         Dictionary<AIAgent, HashSet<HandoffTarget>>? targets = field.GetValue(handoffs) as Dictionary<AIAgent, HashSet<HandoffTarget>>;
 
-        targets.Should().NotBeNull();
+        Assert.NotNull(targets);
 
         HandoffTarget target = targets[agent].Single();
-        target.Reason.Should().Be("instructions");
+        Assert.Equal("instructions", target.Reason);
     }
 
     [Fact]
@@ -348,14 +347,14 @@ public class HandoffOrchestrationTests
         AgentResponse streamingResponse = streamingUpdates.ToAgentResponse();
 
         // Assert
-        GetMessageSequence(nonStreamingResponse.Messages).Should().Equal(expected);
-        GetMessageSequence(streamingResponse.Messages).Should().Equal(expected);
+        Assert.Equal(expected, GetMessageSequence(nonStreamingResponse.Messages));
+        Assert.Equal(expected, GetMessageSequence(streamingResponse.Messages));
 
         WorkflowSession nonStreamingWorkflowSession = Assert.IsType<WorkflowSession>(nonStreamingSession);
         WorkflowSession streamingWorkflowSession = Assert.IsType<WorkflowSession>(streamingSession);
 
-        GetMessageSequence(nonStreamingWorkflowSession.ChatHistoryProvider.GetAllMessages(nonStreamingWorkflowSession).Skip(1)).Should().Equal(expected);
-        GetMessageSequence(streamingWorkflowSession.ChatHistoryProvider.GetAllMessages(streamingWorkflowSession).Skip(1)).Should().Equal(expected);
+        Assert.Equal(expected, GetMessageSequence(nonStreamingWorkflowSession.ChatHistoryProvider.GetAllMessages(nonStreamingWorkflowSession).Skip(1)));
+        Assert.Equal(expected, GetMessageSequence(streamingWorkflowSession.ChatHistoryProvider.GetAllMessages(streamingWorkflowSession).Skip(1)));
     }
 
     [Fact]
@@ -388,17 +387,18 @@ public class HandoffOrchestrationTests
         _ = await workflowAgent.RunAsync("Hello", options: runOptions);
 
         // Assert
-        ChatClientAgentRunOptions firstAgentOptions = firstAgent.RecordedRunOptions.Should().ContainSingle()
-            .Which.Should().BeOfType<ChatClientAgentRunOptions>().Subject;
-        firstAgentOptions.Should().NotBeSameAs(runOptions);
-        firstAgentOptions.AdditionalProperties.Should().ContainKey("test-property").WhoseValue.Should().Be("test-value");
-        firstAgentOptions.ChatClientFactory.Should().BeSameAs(chatClientFactory);
-        firstAgentOptions.ChatOptions.Should().NotBeNull();
-        firstAgentOptions.ChatOptions!.ModelId.Should().Be("test-model");
-        firstAgentOptions.ChatOptions.Instructions.Should().EndWith("Caller instructions");
-        firstAgentOptions.ChatOptions.Tools.Should().Contain(callerTool);
-        firstAgentOptions.ChatOptions.Tools.Should().Contain(tool => tool.Name.StartsWith(HandoffWorkflowBuilder.FunctionPrefix, StringComparison.Ordinal));
-        secondAgent.RecordedRunOptions.Should().ContainSingle().Which.Should().BeSameAs(runOptions);
+        ChatClientAgentRunOptions firstAgentOptions = Assert.IsType<ChatClientAgentRunOptions>(Assert.Single(firstAgent.RecordedRunOptions));
+        Assert.NotSame(runOptions, firstAgentOptions);
+        Assert.NotNull(firstAgentOptions.AdditionalProperties);
+        Assert.Equal("test-value", firstAgentOptions.AdditionalProperties["test-property"]);
+        Assert.Same(chatClientFactory, firstAgentOptions.ChatClientFactory);
+        Assert.NotNull(firstAgentOptions.ChatOptions);
+        Assert.Equal("test-model", firstAgentOptions.ChatOptions!.ModelId);
+        Assert.EndsWith("Caller instructions", firstAgentOptions.ChatOptions.Instructions);
+        Assert.NotNull(firstAgentOptions.ChatOptions.Tools);
+        Assert.Contains(callerTool, firstAgentOptions.ChatOptions.Tools);
+        Assert.Contains(firstAgentOptions.ChatOptions.Tools, tool => tool.Name.StartsWith(HandoffWorkflowBuilder.FunctionPrefix, StringComparison.Ordinal));
+        Assert.Same(runOptions, Assert.Single(secondAgent.RecordedRunOptions));
     }
 
     [Fact]
@@ -446,13 +446,16 @@ public class HandoffOrchestrationTests
         AgentResponse response = await hostAgent.RunAsync("abc");
 
         // Assert
-        initialAgentInvocationCount.Should().Be(2);
-        GetMessageSequence(response.Messages).Should().Equal(
-            "call:call1",
-            "result:call1",
-            "call:call2",
-            "result:call2",
-            "text:Final response");
+        Assert.Equal(2, initialAgentInvocationCount);
+        Assert.Equal(
+            [
+                "call:call1",
+                "result:call1",
+                "call:call2",
+                "result:call2",
+                "text:Final response",
+            ],
+            GetMessageSequence(response.Messages));
     }
 
     [Fact]
@@ -719,14 +722,13 @@ public class HandoffOrchestrationTests
         Assert.Null(result);
         Assert.NotNull(requests);
 
-        requests.Should().HaveCount(1);
+        Assert.Single(requests);
         ExternalRequest request = requests[0].Request;
 
-        ToolApprovalRequestContent approvalRequest =
-            request.Data.As<ToolApprovalRequestContent>().Should().NotBeNull()
-                                                              .And.Subject.As<ToolApprovalRequestContent>();
+        ToolApprovalRequestContent? approvalRequest = request.Data.As<ToolApprovalRequestContent>();
+        Assert.NotNull(approvalRequest);
 
-        approvalRequest.ToolCall.CallId.Should().Be(SomeOtherFunctionCallId);
+        Assert.Equal(SomeOtherFunctionCallId, approvalRequest.ToolCall.CallId);
 
         ExternalResponse response = request.CreateResponse(approvalRequest.CreateResponse(false, "Denied"));
 
@@ -838,14 +840,14 @@ public class HandoffOrchestrationTests
         Assert.Null(result);
         Assert.NotNull(requests);
 
-        requests.Should().HaveCount(1);
+        Assert.Single(requests);
         ExternalRequest request = requests[0].Request;
 
-        FunctionCallContent functionCall = request.Data.As<FunctionCallContent>().Should().NotBeNull()
-                                                                                 .And.Subject.As<FunctionCallContent>();
+        FunctionCallContent? functionCall = request.Data.As<FunctionCallContent>();
+        Assert.NotNull(functionCall);
 
-        functionCall.CallId.Should().Be(SomeOtherFunctionCallId);
-        functionCall.Name.Should().Be(SomeOtherFunctionName);
+        Assert.Equal(SomeOtherFunctionCallId, functionCall.CallId);
+        Assert.Equal(SomeOtherFunctionName, functionCall.Name);
 
         ExternalResponse response = request.CreateResponse(new FunctionResultContent(functionCall.CallId, true));
 
@@ -1091,7 +1093,7 @@ public class HandoffOrchestrationTests
             }
 
             // If there are still unmatched calls, we have an error
-            callResolver.UnmatchedCalls.Should().BeEmpty();
+            Assert.Empty(callResolver.UnmatchedCalls ?? []);
 
             // Now we can invoke the inner response factory to generate the response
             ChatResponse response = innerResponseFactory(incomingMessages, options);

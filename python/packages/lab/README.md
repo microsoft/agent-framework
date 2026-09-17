@@ -24,6 +24,7 @@ one of the following categories:
 ```
 agent-framework-lab/
 ├── pyproject.toml          # Single package configuration for agent-framework-lab
+├── uv.lock                 # Standalone Lab dependency resolution
 ├── README.md               # This file
 ├── LICENSE                 # License file
 ├── namespace/              # Centralized namespace package files
@@ -64,24 +65,45 @@ from agent_framework.lab.gaia import GAIA
 
 ## Running Tests Locally
 
-For machine-safe local runs, prefer package-scoped commands first:
+Lab is excluded from the root Python uv workspace so its experimental dependencies do not constrain released
+packages. It resolves released Core and provider distributions by default. Create its environment and run its checks
+from this directory:
 
 ```bash
-uv run --directory packages/lab poe test
-uv run --directory packages/lab pytest -q -m "not integration"
-```
-
-When you need to run lab tests from the repository root, scope the root task to the lab package:
-
-```bash
-uv run poe test -P lab
+cd python/packages/lab
+uv sync --all-extras --all-groups
+uv run poe test
+uv run poe pyright
 ```
 
 Lightning observability tests intentionally exercise heavier tracing paths and are marked as `resource_intensive`:
 
 ```bash
-uv run --directory packages/lab pytest lightning/tests/test_lightning.py -m "resource_intensive" -q
+uv run pytest lightning/tests/test_lightning.py -m "resource_intensive" -q
 ```
+
+Lab-only dependency changes update this directory's `uv.lock`, not the root Python workspace lock.
+
+### Depending on new framework APIs
+
+Lab cannot consume unreleased APIs directly from the root workspace. For a change that spans Lab and another Agent
+Framework package:
+
+1. Merge and release the Core or provider change first.
+2. Update the relevant dependency floor in this `pyproject.toml` after that release is available.
+3. Refresh the Lab lock with `uv lock --upgrade-package <distribution-name>`.
+4. Implement and validate the Lab change against the published dependency.
+
+For example, release `agent-framework-openai` before using a new OpenAI adapter API from Lab, then update the Lab
+dependency and run:
+
+```bash
+uv lock --upgrade-package agent-framework-openai
+uv sync --all-extras --all-groups
+```
+
+Do not add local-path or root-workspace source overrides as a shortcut. Those overrides would make root package
+metadata changes affect the Lab lock and reintroduce the dependency coupling this standalone project avoids.
 
 ## Should I consume Lab Modules?
 

@@ -220,7 +220,7 @@ internal class AIAgentHostExecutor : ChatProtocolExecutor
                                   runOptions: null,
                                   cancellationToken);
 
-    protected override ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, TurnToken turnToken, CancellationToken cancellationToken = default)
+    protected override ValueTask TakeTurnWithTokenAsync(List<ChatMessage> messages, IWorkflowContext context, TurnToken turnToken, CancellationToken cancellationToken = default)
         => this.ContinueTurnAsync(messages,
                                   context,
                                   turnToken.ShouldEmitStreamingEvents(this._options.EmitAgentUpdateEvents),

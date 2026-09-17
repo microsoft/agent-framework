@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using FluentAssertions;
 
 namespace Microsoft.Agents.AI.Mcp.UnitTests;
 
@@ -14,11 +13,11 @@ public class McpTaskOptionsTests
         McpTaskOptions options = new();
 
         // Assert
-        options.CancelRemoteTaskOnLocalCancellation.Should().BeTrue();
-        options.MaxConsecutiveStuckPolls.Should().Be(60);
-        options.MaxTotalInputRequests.Should().Be(100);
-        options.RemoteCancellationTimeout.Should().Be(TimeSpan.FromSeconds(5));
-        options.MinimumPollingInterval.Should().Be(TimeSpan.FromMilliseconds(10));
-        options.MaximumPollingInterval.Should().Be(TimeSpan.FromMilliseconds(uint.MaxValue - 1L));
+        Assert.True(options.CancelRemoteTaskOnLocalCancellation);
+        Assert.Equal(60, options.MaxConsecutiveStuckPolls);
+        Assert.Equal(100, options.MaxTotalInputRequests);
+        Assert.Equal(TimeSpan.FromSeconds(5), options.RemoteCancellationTimeout);
+        Assert.Equal(TimeSpan.FromMilliseconds(10), options.MinimumPollingInterval);
+        Assert.Equal(TimeSpan.FromMilliseconds(uint.MaxValue - 1L), options.MaximumPollingInterval);
     }
 }

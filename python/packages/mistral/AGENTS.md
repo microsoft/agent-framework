@@ -4,8 +4,8 @@ Integration with Mistral AI for chat completions and embedding generation.
 
 ## Implementation Notes
 
-- Talks to the Mistral REST API directly over `httpx`; the official `mistralai` SDK is not used
-  because its pinned OpenTelemetry requirements conflict with the rest of the framework.
+- Uses the official `mistralai` SDK for chat completion and embedding requests.
+- Framework message, option, response, and exception translation stays in this package.
 
 ## Main Classes
 

@@ -20,6 +20,7 @@ Status is grouped into these buckets:
 | `agent-framework-anthropic` | `python/packages/anthropic` | `beta` |
 | `agent-framework-azure-contentunderstanding` | `python/packages/azure-contentunderstanding` | `beta` |
 | `agent-framework-azure-ai-search` | `python/packages/azure-ai-search` | `beta` |
+| `agent-framework-azure-documentdb` | `python/packages/azure-documentdb` | `alpha` |
 | `agent-framework-azure-cosmos` | `python/packages/azure-cosmos` | `beta` |
 | `agent-framework-azure-cosmos-memory` | `python/packages/azure-cosmos-memory` | `alpha` |
 | `agent-framework-bedrock` | `python/packages/bedrock` | `beta` |
@@ -43,11 +44,14 @@ Status is grouped into these buckets:
 | `agent-framework-lab` | `python/packages/lab` | `beta` |
 | `agent-framework-mem0` | `python/packages/mem0` | `beta` |
 | `agent-framework-mistral` | `python/packages/mistral` | `beta` |
+| `agent-framework-mongodb` | `python/packages/mongodb` | `alpha` |
 | `agent-framework-monty` | `python/packages/monty` | `beta` |
 | `agent-framework-ollama` | `python/packages/ollama` | `beta` |
 | `agent-framework-openai` | `python/packages/openai` | `released` |
 | `agent-framework-orchestrations` | `python/packages/orchestrations` | `released` |
+| `agent-framework-postgres` | `python/packages/postgres` | `alpha` |
 | `agent-framework-purview` | `python/packages/purview` | `beta` |
+| `agent-framework-qdrant` | `python/packages/qdrant` | `alpha` |
 | `agent-framework-redis` | `python/packages/redis` | `beta` |
 | `agent-framework-tools` | `python/packages/tools` | `beta` |
 
@@ -70,9 +74,8 @@ listed below.
   `create_agent_hooks_middleware_from_emitter` from `agent_framework/_agent_hooks.py`,
   the AGENT-HOOKS-0.1 enforcement middleware bundle, and the `MiddlewareBundle`
   container from `agent_framework/_middleware.py` that both factories produce
-  (`MiddlewareBundle` itself needs no extra). Requires the opt-in
-  `agent-framework-core[agent-hooks]` extra (`agent-hooks-sdk`), which is deliberately
-  not part of `agent-framework-core[all]`. Known limitation: service-side (hosted) tool
+  (`MiddlewareBundle` itself needs no optional dependency). Requires installing the
+  `agent-hooks-sdk` package separately. Known limitation: service-side (hosted) tool
   execution never passes through the framework's function-invocation seam, so the
   `pre_tool_call`/`post_tool_call` points cannot intercept it; hosted tool calls and
   outputs are surfaced in the `post_model_call` content projection instead.

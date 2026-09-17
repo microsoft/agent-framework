@@ -5,7 +5,6 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
-using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
@@ -103,14 +102,14 @@ public sealed class FileSystemJsonCheckpointStoreTests
         long fileSizeBeforeDispose = indexFile.Length;
 
         // Data should already be on disk (file size > 0) before we dispose
-        fileSizeBeforeDispose.Should().BeGreaterThan(0, "index.jsonl should be flushed to disk after CreateCheckpointAsync");
+        Assert.True(fileSizeBeforeDispose > 0);
 
         // Dispose to release file lock before final verification
         store.Dispose();
 
         string[] lines = File.ReadAllLines(indexPath);
-        lines.Should().HaveCount(1);
-        lines[0].Should().Contain(checkpoint.CheckpointId);
+        Assert.Single(lines);
+        Assert.Contains(checkpoint.CheckpointId, lines[0]);
     }
 
     private async ValueTask Run_EscapeRootFolderTestAsync(string escapingPath)
@@ -123,21 +122,21 @@ public sealed class FileSystemJsonCheckpointStoreTests
 
         // Check that the naive path is actually outside the temp directory to validate the test is meaningful
         FileInfo naiveCheckpointFile = new(naivePath);
-        tempDirectory.IsParentOf(naiveCheckpointFile).Should().BeFalse("The naive path should be outside the root folder to validate that escaping is necessary.");
+        Assert.False(tempDirectory.IsParentOf(naiveCheckpointFile));
 
         // Act
         CheckpointInfo checkpointInfo = await store.CreateCheckpointAsync(escapingPath, TestData);
 
         // Assert
         string naivePathWithCheckpointId = Path.Combine(tempDirectory.DirectoryInfo.FullName, $"{escapingPath}_{checkpointInfo.CheckpointId}.json");
-        new FileInfo(naivePathWithCheckpointId).Exists.Should().BeFalse("The naive path should not be used to save a checkpoint file.");
+        Assert.False(new FileInfo(naivePathWithCheckpointId).Exists);
 
         string actualFileName = store.GetFileNameForCheckpoint(escapingPath, checkpointInfo);
         string actualFilePath = Path.Combine(tempDirectory.DirectoryInfo.FullName, actualFileName);
         FileInfo actualFile = new(actualFilePath);
 
-        tempDirectory.IsParentOf(actualFile).Should().BeTrue("The actual checkpoint should be saved inside the root folder.");
-        actualFile.Exists.Should().BeTrue("The actual path should be used to save a checkpoint file.");
+        Assert.True(tempDirectory.IsParentOf(actualFile));
+        Assert.True(actualFile.Exists);
     }
 
     [Fact]
@@ -187,7 +186,7 @@ public sealed class FileSystemJsonCheckpointStoreTests
         CheckpointInfo[] index = (await reopenedStore.RetrieveIndexAsync(sessionId)).ToArray();
 
         // Assert: the load path dedupes, so the checkpoint appears exactly once.
-        index.Should().ContainSingle().Which.Should().Be(checkpoint);
+        Assert.Equal(checkpoint, Assert.Single(index));
     }
 
     [Fact]
@@ -206,8 +205,8 @@ public sealed class FileSystemJsonCheckpointStoreTests
         CheckpointInfo[] index = (await store.RetrieveIndexAsync(sessionId)).ToArray();
 
         // Assert: no duplicates, and commit order preserved.
-        index.Should().OnlyHaveUniqueItems();
-        index.Should().Equal(first, second, third);
+        Assert.Equal(index.Length, index.Distinct().Count());
+        Assert.Equal([first, second, third], index);
     }
 
     private const string InvalidPathCharsWin32 = "\\/:*?\"<>|";
@@ -226,8 +225,8 @@ public sealed class FileSystemJsonCheckpointStoreTests
 
         string runId = $"prefix_{invalidChars}_suffix";
 
-        Func<Task> createCheckpointAction = async () => await store.CreateCheckpointAsync(runId, TestData);
-        await createCheckpointAction.Should().NotThrowAsync();
+        async Task createCheckpointActionAsync() => await store.CreateCheckpointAsync(runId, TestData);
+        Assert.Null(await Record.ExceptionAsync(createCheckpointActionAsync));
     }
 
     [Fact]
@@ -245,8 +244,8 @@ public sealed class FileSystemJsonCheckpointStoreTests
         JsonElement retrieved = await store.RetrieveCheckpointAsync(sessionId, checkpoint);
 
         // Assert
-        retrieved.GetProperty("name").GetString().Should().Be("test");
-        retrieved.GetProperty("value").GetInt32().Should().Be(42);
+        Assert.Equal("test", retrieved.GetProperty("name").GetString());
+        Assert.Equal(42, retrieved.GetProperty("value").GetInt32());
     }
 
     [Fact]
@@ -268,16 +267,16 @@ public sealed class FileSystemJsonCheckpointStoreTests
             CheckpointInfo[] firstSessionIndex = (await store.RetrieveIndexAsync(firstSessionId)).ToArray();
 
             // Assert
-            firstSessionIndex.Should().ContainSingle().Which.Should().Be(firstCheckpoint);
-            firstSessionIndex.Should().NotContain(secondCheckpoint);
+            Assert.Equal(firstCheckpoint, Assert.Single(firstSessionIndex));
+            Assert.DoesNotContain(secondCheckpoint, firstSessionIndex);
         }
 
         using (FileSystemJsonCheckpointStore reopenedStore = new(tempDirectory))
         {
             CheckpointInfo[] secondSessionIndex = (await reopenedStore.RetrieveIndexAsync(secondSessionId)).ToArray();
 
-            secondSessionIndex.Should().ContainSingle().Which.Should().Be(secondCheckpoint);
-            secondSessionIndex.Should().NotContain(firstCheckpoint);
+            Assert.Equal(secondCheckpoint, Assert.Single(secondSessionIndex));
+            Assert.DoesNotContain(firstCheckpoint, secondSessionIndex);
         }
     }
 
@@ -301,18 +300,18 @@ public sealed class FileSystemJsonCheckpointStoreTests
             CheckpointInfo[] childIndex = (await store.RetrieveIndexAsync(sessionId, parentCheckpoint)).ToArray();
 
             // Assert
-            childIndex.Should().ContainSingle().Which.Should().Be(childCheckpoint);
-            childIndex.Should().NotContain(parentCheckpoint);
-            childIndex.Should().NotContain(unrelatedCheckpoint);
+            Assert.Equal(childCheckpoint, Assert.Single(childIndex));
+            Assert.DoesNotContain(parentCheckpoint, childIndex);
+            Assert.DoesNotContain(unrelatedCheckpoint, childIndex);
         }
 
         using (FileSystemJsonCheckpointStore reopenedStore = new(tempDirectory))
         {
             CheckpointInfo[] childIndex = (await reopenedStore.RetrieveIndexAsync(sessionId, parentCheckpoint)).ToArray();
 
-            childIndex.Should().ContainSingle().Which.Should().Be(childCheckpoint);
-            childIndex.Should().NotContain(parentCheckpoint);
-            childIndex.Should().NotContain(unrelatedCheckpoint);
+            Assert.Equal(childCheckpoint, Assert.Single(childIndex));
+            Assert.DoesNotContain(parentCheckpoint, childIndex);
+            Assert.DoesNotContain(unrelatedCheckpoint, childIndex);
         }
     }
 
@@ -342,7 +341,7 @@ public sealed class FileSystemJsonCheckpointStoreTests
         CheckpointInfo[] childIndex = (await reopenedStore.RetrieveIndexAsync(sessionId, parentCheckpoint)).ToArray();
 
         // Assert
-        childIndex.Should().ContainSingle().Which.Should().Be(childCheckpoint);
+        Assert.Equal(childCheckpoint, Assert.Single(childIndex));
     }
 
     [Fact]
@@ -373,6 +372,6 @@ public sealed class FileSystemJsonCheckpointStoreTests
         CheckpointInfo[] childIndex = (await reopenedStore.RetrieveIndexAsync(sessionId, unrelatedCheckpoint)).ToArray();
 
         // Assert
-        childIndex.Should().ContainSingle().Which.Should().Be(childCheckpoint);
+        Assert.Equal(childCheckpoint, Assert.Single(childIndex));
     }
 }

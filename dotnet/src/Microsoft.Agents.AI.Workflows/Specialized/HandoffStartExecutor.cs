@@ -68,9 +68,9 @@ internal sealed class HandoffStartExecutor(bool returnToPrevious) : ChatProtocol
         base.ConfigureProtocol(protocolBuilder).SendsMessage<HandoffState>();
 
     protected override ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, bool? emitEvents, CancellationToken cancellationToken = default)
-        => this.TakeTurnAsync(messages, context, new TurnToken(emitEvents), cancellationToken);
+        => this.TakeTurnWithTokenAsync(messages, context, new TurnToken(emitEvents), cancellationToken);
 
-    protected override ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, TurnToken turnToken, CancellationToken cancellationToken = default)
+    protected override ValueTask TakeTurnWithTokenAsync(List<ChatMessage> messages, IWorkflowContext context, TurnToken turnToken, CancellationToken cancellationToken = default)
     {
         return context.InvokeWithStateAsync(
             async (HandoffSharedState? sharedState, IWorkflowContext context, CancellationToken cancellationToken) =>

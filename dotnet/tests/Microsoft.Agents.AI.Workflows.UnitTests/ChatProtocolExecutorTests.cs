@@ -6,7 +6,6 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.InProc;
 using Microsoft.Extensions.AI;
@@ -29,6 +28,9 @@ public class ChatProtocolExecutorTests
         {
         }
 
+        public ValueTask InvokeLegacyTurnAsync(List<ChatMessage> messages, IWorkflowContext context)
+            => this.TakeTurnAsync(messages, context, null);
+
         protected override async ValueTask TakeTurnAsync(
             List<ChatMessage> messages,
             IWorkflowContext context,
@@ -42,14 +44,14 @@ public class ChatProtocolExecutorTests
             await context.SendMessageAsync(messages, cancellationToken: cancellationToken);
         }
 
-        protected override ValueTask TakeTurnAsync(
+        protected override ValueTask TakeTurnWithTokenAsync(
             List<ChatMessage> messages,
             IWorkflowContext context,
             TurnToken turnToken,
             CancellationToken cancellationToken = default)
         {
             this.ReceivedTurnToken = turnToken;
-            return base.TakeTurnAsync(messages, context, turnToken, cancellationToken);
+            return base.TakeTurnWithTokenAsync(messages, context, turnToken, cancellationToken);
         }
     }
 
@@ -61,7 +63,7 @@ public class ChatProtocolExecutorTests
         ProtocolDescriptor protocol = executor.DescribeProtocol();
 
         // Act & Assert
-        protocol.Should().Match<ProtocolDescriptor>(protocol => protocol.IsChatProtocol());
+        Assert.True(protocol.IsChatProtocol());
     }
 
     [Fact]
@@ -82,10 +84,26 @@ public class ChatProtocolExecutorTests
         await executor.TakeTurnAsync(new TurnToken(emitEvents: false), context);
 
         // Assert
-        executor.ReceivedMessages.Should().HaveCount(2);
-        executor.ReceivedMessages[0].Text.Should().Be("Hello");
-        executor.ReceivedMessages[1].Text.Should().Be("World");
-        executor.TurnCount.Should().Be(1);
+        Assert.Equal(2, executor.ReceivedMessages.Count);
+        Assert.Equal("Hello", executor.ReceivedMessages[0].Text);
+        Assert.Equal("World", executor.ReceivedMessages[1].Text);
+        Assert.Equal(1, executor.TurnCount);
+    }
+
+    [Fact]
+    public async Task ChatProtocolExecutor_LegacyNullEmitEventsCallRemainsUnambiguousAsync()
+    {
+        // Arrange
+        TestChatProtocolExecutor executor = new();
+        TestWorkflowContext context = new(executor.Id);
+        ChatMessage message = new(ChatRole.User, "Hello");
+
+        // Act
+        await executor.InvokeLegacyTurnAsync([message], context);
+
+        // Assert
+        Assert.Same(message, Assert.Single(executor.ReceivedMessages));
+        Assert.Equal(1, executor.TurnCount);
     }
 
     [Fact]
@@ -101,9 +119,9 @@ public class ChatProtocolExecutorTests
         await executor.TakeTurnAsync(turnToken, context);
 
         // Assert
-        executor.ReceivedTurnToken.Should().BeSameAs(turnToken);
-        executor.ReceivedTurnToken!.RunOptions.Should().BeSameAs(runOptions);
-        context.SentMessages.OfType<TurnToken>().Should().ContainSingle().Which.Should().BeSameAs(turnToken);
+        Assert.Same(turnToken, executor.ReceivedTurnToken);
+        Assert.Same(runOptions, executor.ReceivedTurnToken!.RunOptions);
+        Assert.Same(turnToken, Assert.Single(context.SentMessages.OfType<TurnToken>()));
     }
 
     [Theory]
@@ -141,16 +159,16 @@ public class ChatProtocolExecutorTests
 
         WorkflowSessionCheckpointRecovery recovery = session.GetService<WorkflowSessionCheckpointRecovery>()
             ?? throw new InvalidOperationException("Workflow checkpoint recovery was not available.");
-        recovery.TryPrepare(checkpoint.CheckpointId).Should().BeTrue();
+        Assert.True(recovery.TryPrepare(checkpoint.CheckpointId));
 
         // Act
         _ = await workflowAgent.RunStreamingAsync([], session, recoveryRunOptions).ToListAsync();
 
         // Assert
-        firstExecutor.ReceivedTurnToken.Should().NotBeNull();
-        firstExecutor.ReceivedTurnToken!.RunOptions.Should().BeSameAs(firstRunOptions);
-        secondExecutor.ReceivedTurnToken.Should().NotBeNull();
-        secondExecutor.ReceivedTurnToken!.RunOptions.Should().BeSameAs(recoveryRunOptions);
+        Assert.NotNull(firstExecutor.ReceivedTurnToken);
+        Assert.Same(firstRunOptions, firstExecutor.ReceivedTurnToken!.RunOptions);
+        Assert.NotNull(secondExecutor.ReceivedTurnToken);
+        Assert.Same(recoveryRunOptions, secondExecutor.ReceivedTurnToken!.RunOptions);
     }
 
     [Fact]
@@ -168,10 +186,10 @@ public class ChatProtocolExecutorTests
         TurnToken? deserialized = JsonSerializer.Deserialize<TurnToken>(json);
 
         // Assert
-        json.Should().NotContain(nameof(TurnToken.RunOptions));
-        deserialized.Should().NotBeNull();
-        deserialized!.EmitEvents.Should().BeFalse();
-        deserialized.RunOptions.Should().BeNull();
+        Assert.DoesNotContain(nameof(TurnToken.RunOptions), json);
+        Assert.NotNull(deserialized);
+        Assert.False(deserialized!.EmitEvents);
+        Assert.Null(deserialized.RunOptions);
     }
 
     [Fact]
@@ -193,11 +211,11 @@ public class ChatProtocolExecutorTests
         await executor.TakeTurnAsync(new TurnToken(emitEvents: false), context);
 
         // Assert
-        executor.ReceivedMessages.Should().HaveCount(3);
-        executor.ReceivedMessages[0].Role.Should().Be(ChatRole.System);
-        executor.ReceivedMessages[1].Role.Should().Be(ChatRole.User);
-        executor.ReceivedMessages[2].Role.Should().Be(ChatRole.Assistant);
-        executor.TurnCount.Should().Be(1);
+        Assert.Equal(3, executor.ReceivedMessages.Count);
+        Assert.Equal(ChatRole.System, executor.ReceivedMessages[0].Role);
+        Assert.Equal(ChatRole.User, executor.ReceivedMessages[1].Role);
+        Assert.Equal(ChatRole.Assistant, executor.ReceivedMessages[2].Role);
+        Assert.Equal(1, executor.TurnCount);
     }
 
     [Fact]
@@ -214,9 +232,9 @@ public class ChatProtocolExecutorTests
         await executor.TakeTurnAsync(new TurnToken(emitEvents: false), context);
 
         // Assert
-        executor.ReceivedMessages.Should().HaveCount(1);
-        executor.ReceivedMessages[0].Text.Should().Be("Single message");
-        executor.TurnCount.Should().Be(1);
+        Assert.Single(executor.ReceivedMessages);
+        Assert.Equal("Single message", executor.ReceivedMessages[0].Text);
+        Assert.Equal(1, executor.TurnCount);
     }
 
     [Fact]
@@ -236,9 +254,9 @@ public class ChatProtocolExecutorTests
 
         await executor.TakeTurnAsync(new TurnToken(emitEvents: false), context);
 
-        executor.ReceivedMessages.Should().HaveCount(4);
-        executor.ReceivedMessages.Select(m => m.Text).Should().Equal("Message 1", "Message 2", "Message 3", "Message 4");
-        executor.TurnCount.Should().Be(1);
+        Assert.Equal(4, executor.ReceivedMessages.Count);
+        Assert.Equal(["Message 1", "Message 2", "Message 3", "Message 4"], executor.ReceivedMessages.Select(m => m.Text));
+        Assert.Equal(1, executor.TurnCount);
 
         executor.ReceivedMessages.Clear();
 
@@ -249,9 +267,9 @@ public class ChatProtocolExecutorTests
         }, new TypeId(typeof(List<ChatMessage>)), context);
         await executor.TakeTurnAsync(new TurnToken(emitEvents: false), context);
 
-        executor.ReceivedMessages.Should().HaveCount(1);
-        executor.ReceivedMessages[0].Text.Should().Be("Second batch");
-        executor.TurnCount.Should().Be(2);
+        Assert.Single(executor.ReceivedMessages);
+        Assert.Equal("Second batch", executor.ReceivedMessages[0].Text);
+        Assert.Equal(2, executor.TurnCount);
     }
 
     [Fact]
@@ -267,9 +285,9 @@ public class ChatProtocolExecutorTests
         await executor.ExecuteCoreAsync("String message", new TypeId(typeof(string)), context);
         await executor.TakeTurnAsync(new TurnToken(emitEvents: false), context);
 
-        executor.ReceivedMessages.Should().HaveCount(1);
-        executor.ReceivedMessages[0].Role.Should().Be(ChatRole.User);
-        executor.ReceivedMessages[0].Text.Should().Be("String message");
+        Assert.Single(executor.ReceivedMessages);
+        Assert.Equal(ChatRole.User, executor.ReceivedMessages[0].Role);
+        Assert.Equal("String message", executor.ReceivedMessages[0].Text);
     }
 
     [Fact]
@@ -282,8 +300,8 @@ public class ChatProtocolExecutorTests
         await executor.ExecuteCoreAsync(Array.Empty<ChatMessage>(), new TypeId(typeof(ChatMessage[])), context);
         await executor.TakeTurnAsync(new TurnToken(emitEvents: false), context);
 
-        executor.ReceivedMessages.Should().BeEmpty();
-        executor.TurnCount.Should().Be(1);
+        Assert.Empty(executor.ReceivedMessages);
+        Assert.Equal(1, executor.TurnCount);
     }
 
     [Theory]
@@ -300,8 +318,8 @@ public class ChatProtocolExecutorTests
         await executor.ExecuteCoreAsync(messagesToSend, new TypeId(collectionType), context);
         await executor.TakeTurnAsync(new TurnToken(emitEvents: false), context);
 
-        executor.ReceivedMessages.Should().HaveCount(1);
-        executor.ReceivedMessages[0].Text.Should().Be("Test message");
+        Assert.Single(executor.ReceivedMessages);
+        Assert.Equal("Test message", executor.ReceivedMessages[0].Text);
     }
 
     [Fact]
@@ -313,15 +331,15 @@ public class ChatProtocolExecutorTests
         await executor.ExecuteCoreAsync(new List<ChatMessage> { new(ChatRole.User, "Turn 1") }, new TypeId(typeof(List<ChatMessage>)), context);
         await executor.TakeTurnAsync(new TurnToken(emitEvents: false), context);
 
-        executor.ReceivedMessages.Should().HaveCount(1);
+        Assert.Single(executor.ReceivedMessages);
 
         await executor.ExecuteCoreAsync(new ChatMessage(ChatRole.User, "Turn 2"), new TypeId(typeof(ChatMessage)), context);
         await executor.TakeTurnAsync(new TurnToken(emitEvents: false), context);
 
-        executor.ReceivedMessages.Should().HaveCount(2);
-        executor.ReceivedMessages[0].Text.Should().Be("Turn 1");
-        executor.ReceivedMessages[1].Text.Should().Be("Turn 2");
-        executor.TurnCount.Should().Be(2);
+        Assert.Equal(2, executor.ReceivedMessages.Count);
+        Assert.Equal("Turn 1", executor.ReceivedMessages[0].Text);
+        Assert.Equal("Turn 2", executor.ReceivedMessages[1].Text);
+        Assert.Equal(2, executor.TurnCount);
     }
 
     [Fact]
@@ -335,8 +353,8 @@ public class ChatProtocolExecutorTests
         await executor.ExecuteCoreAsync(initialMessages, new TypeId(typeof(List<ChatMessage>)), context);
         await executor.TakeTurnAsync(new TurnToken(emitEvents: false), context);
 
-        executor.ReceivedMessages.Should().NotBeEmpty();
-        executor.ReceivedMessages.Should().HaveCount(1);
-        executor.ReceivedMessages[0].Text.Should().Be("Kick off the workflow");
+        Assert.NotEmpty(executor.ReceivedMessages);
+        Assert.Single(executor.ReceivedMessages);
+        Assert.Equal("Kick off the workflow", executor.ReceivedMessages[0].Text);
     }
 }

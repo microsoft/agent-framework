@@ -350,11 +350,22 @@ class ShellSession:
             return (
                 "& {"
                 " $__af_rc = 0;"
+                # $LASTEXITCODE is a session-wide automatic variable that only
+                # native (external) processes update, so a value left by an
+                # earlier command is still there when a cmdlet-only command
+                # runs. Snapshot it instead of clearing it: the variable stays
+                # readable by the user's own commands, which persistent mode is
+                # meant to preserve, and a value that differs afterwards can
+                # only have been written by this command.
+                " $__af_last = $LASTEXITCODE;"
                 " try {"
                 f"   $__af_cmd = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{encoded}'));"
                 "   Invoke-Expression $__af_cmd;"
-                "   if ($LASTEXITCODE -ne $null) { $__af_rc = $LASTEXITCODE }"
-                "   elseif (-not $?) { $__af_rc = 1 }"
+                # $? has to be read on the very next statement: anything else
+                # in between overwrites it.
+                "   $__af_ok = $?;"
+                "   if ($LASTEXITCODE -ne $__af_last) { $__af_rc = $LASTEXITCODE }"
+                "   elseif (-not $__af_ok) { $__af_rc = 1 }"
                 " } catch {"
                 "   [Console]::Error.WriteLine($_.ToString());"
                 "   $__af_rc = 1"

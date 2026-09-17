@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.Execution;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
@@ -90,8 +89,8 @@ public class StateKeyObjectTests
 
         static void ValidateMatch(UpdateKey key, ScopeId scope, bool expectedStrict, bool expectedLoose)
         {
-            key.IsMatchingScope(scope, strict: true).Should().Be(expectedStrict);
-            key.IsMatchingScope(scope, strict: false).Should().Be(expectedLoose);
+            Assert.Equal(expectedStrict, key.IsMatchingScope(scope, strict: true));
+            Assert.Equal(expectedLoose, key.IsMatchingScope(scope, strict: false));
         }
     }
 }

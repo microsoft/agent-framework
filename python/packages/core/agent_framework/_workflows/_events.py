@@ -6,8 +6,8 @@ import builtins
 import sys
 import traceback as _traceback
 import warnings
-from collections.abc import Generator, Mapping
-from contextlib import contextmanager
+from collections.abc import Callable, Generator, Mapping
+from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass
 from enum import Enum
@@ -46,13 +46,36 @@ def _current_event_origin() -> WorkflowEventSource:
 
 
 @contextmanager
-def _framework_event_origin() -> Generator[None]:  # pyright: ignore[reportUnusedFunction]
-    """Temporarily mark subsequently created events as originating from the framework (internal)."""
+def _framework_event_origin() -> Generator[None]:
+    """Temporarily mark subsequently created events as originating from the framework (internal).
+
+    Callers must not ``yield`` from an async generator while this manager is active.
+    Async-generator finalization can inject ``GeneratorExit`` from a different
+    ``Context`` than the one that created the token (for example when an abandoned
+    ``ResponseStream`` is garbage-collected), and ``ContextVar.reset`` then raises.
+    """
     token = _event_origin_context.set(WorkflowEventSource.FRAMEWORK)
     try:
         yield
     finally:
-        _event_origin_context.reset(token)
+        with suppress(ValueError):
+            # Token may have been created in a different Context when an
+            # abandoned ResponseStream is garbage-collected. Leave the var
+            # as-is rather than raising during generator/GC cleanup.
+            _event_origin_context.reset(token)
+
+
+def _framework_event(  # pyright: ignore[reportUnusedFunction]
+    factory: Callable[..., WorkflowEvent[Any]], *args: Any, **kwargs: Any
+) -> WorkflowEvent[Any]:
+    """Build a framework-origin event and return it after resetting the origin token.
+
+    Callers can ``yield`` the result without holding ``_framework_event_origin()``
+    across an async-generator yield, which would leak the ContextVar token if the
+    stream is abandoned and finalized from a different Context.
+    """
+    with _framework_event_origin():
+        return factory(*args, **kwargs)
 
 
 class WorkflowRunState(str, Enum):

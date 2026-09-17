@@ -32,6 +32,7 @@ from .models import (
     InputTokensDetails,
     OpenAIResponse,
     OutputTokensDetails,
+    ResponseCompletedEvent,
     ResponseErrorEvent,
     ResponseFunctionCallArgumentsDeltaEvent,
     ResponseFunctionResultComplete,
@@ -41,8 +42,10 @@ from .models import (
     ResponseOutputImage,
     ResponseOutputItemAddedEvent,
     ResponseOutputMessage,
+    ResponseOutputRefusal,
     ResponseOutputText,
     ResponseReasoningTextDeltaEvent,
+    ResponseRefusalDeltaEvent,
     ResponseStreamEvent,
     ResponseTextDeltaEvent,
     ResponseTraceEventComplete,
@@ -51,6 +54,8 @@ from .models import (
 )
 
 logger = logging.getLogger(__name__)
+_MODEL_OUTPUT_KIND_KEY = "model_output_kind"
+_MODEL_OUTPUT_REFUSAL = "refusal"
 
 # Type alias for all possible event types
 EventType = Union[
@@ -81,6 +86,16 @@ def _workflow_output_metadata(event_type: Any, executor_id: Any) -> dict[str, An
         "workflow_output_kind": "terminal" if event_type == "output" else "intermediate",
         "executor_id": executor_id,
     }
+
+
+def _is_refusal_text_content(content: Content) -> bool:
+    return content.type == "text" and content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY) == _MODEL_OUTPUT_REFUSAL
+
+
+def _message_content_part(content: Content) -> ResponseOutputText | ResponseOutputRefusal:
+    if _is_refusal_text_content(content):
+        return ResponseOutputRefusal(type="refusal", refusal="")
+    return ResponseOutputText(type="output_text", text="", annotations=[])
 
 
 def _response_usage(usage_details: UsageDetails) -> ResponseUsage:
@@ -280,12 +295,23 @@ class MessageMapper:
         Returns:
             Final aggregated OpenAI response
         """
+        context = self._get_or_create_context(request)
         try:
+            failed_response = next(
+                (
+                    event.response
+                    for event in events
+                    if getattr(event, "type", None) == "response.failed"
+                    and isinstance(getattr(event, "response", None), Response)
+                ),
+                None,
+            )
             # Collect output items in order
             output_items: list[Any] = []
 
-            # Track text content parts per message (keyed by item_id)
-            text_parts_by_message: dict[str, list[str]] = {}
+            # Track text-bearing content parts per message and content index.
+            content_parts_by_message: dict[str, dict[int, dict[str, Any]]] = {}
+            message_order: list[str] = []
 
             # Track function calls (keyed by call_id) to accumulate arguments
             function_calls: dict[str, dict[str, Any]] = {}
@@ -293,15 +319,27 @@ class MessageMapper:
             # Track function results (keyed by call_id)
             function_results: dict[str, dict[str, Any]] = {}
 
+            # Track complete message items that do not use the text-delta lifecycle.
+            complete_messages: dict[str, ResponseOutputMessage] = {}
+
             for event in events:
                 event_type = getattr(event, "type", None)
 
-                # Handle text deltas - accumulate text per message
-                if event_type == "response.output_text.delta":
+                # Handle text/refusal deltas - accumulate each content part independently.
+                if event_type in {"response.output_text.delta", "response.refusal.delta"}:
                     item_id = getattr(event, "item_id", "default")
-                    if item_id not in text_parts_by_message:
-                        text_parts_by_message[item_id] = []
-                    text_parts_by_message[item_id].append(event.delta)
+                    content_index = getattr(event, "content_index", 0)
+                    parts = content_parts_by_message.setdefault(item_id, {})
+                    part = parts.setdefault(
+                        content_index,
+                        {
+                            "type": "refusal" if event_type == "response.refusal.delta" else "output_text",
+                            "deltas": [],
+                        },
+                    )
+                    if item_id not in message_order:
+                        message_order.append(item_id)
+                    part["deltas"].append(event.delta)
 
                 # Handle output_item.added events (function_call, message, etc.)
                 elif event_type == "response.output_item.added":
@@ -342,8 +380,11 @@ class MessageMapper:
 
                         # Other output items (message, etc.) - track for later
                         elif item_type == "message":
-                            # Messages will be built from text_parts_by_message
-                            pass
+                            if isinstance(item, ResponseOutputMessage):
+                                if item.id not in message_order:
+                                    message_order.append(item.id)
+                                if item.content:
+                                    complete_messages[item.id] = item
 
                 # Handle function call arguments delta - accumulate arguments
                 elif event_type == "response.function_call_arguments.delta":
@@ -377,28 +418,39 @@ class MessageMapper:
             # but we don't include them in the Response output
             _ = function_results  # Acknowledge but don't use
 
-            # Build final text message from accumulated deltas
-            # Combine all text parts (usually there's just one message)
-            all_text_parts: list[str] = []
-            for _item_id, parts in text_parts_by_message.items():
-                all_text_parts.extend(parts)
-
-            full_content = "".join(all_text_parts)
-
-            # Only add message if there's text content
-            if full_content:
-                response_output_text = ResponseOutputText(type="output_text", text=full_content, annotations=[])
+            # Build messages in first-seen order. Workflow output messages can
+            # arrive complete, while agent messages use an empty item plus deltas.
+            for item_id in message_order:
+                if complete_message := complete_messages.get(item_id):
+                    output_items.append(complete_message)
+                    continue
+                response_contents: list[ResponseOutputText | ResponseOutputRefusal] = []
+                for part in (
+                    content_parts_by_message.get(item_id, {}).get(index, {})
+                    for index in sorted(content_parts_by_message.get(item_id, {}))
+                ):
+                    full_content = "".join(part.get("deltas", []))
+                    if not full_content:
+                        continue
+                    if part.get("type") == "refusal":
+                        response_contents.append(ResponseOutputRefusal(type="refusal", refusal=full_content))
+                    else:
+                        response_contents.append(
+                            ResponseOutputText(type="output_text", text=full_content, annotations=[])
+                        )
+                if not response_contents:
+                    continue
                 response_output_message = ResponseOutputMessage(
                     type="message",
                     role="assistant",
-                    content=[response_output_text],
-                    id=f"msg_{uuid.uuid4().hex[:8]}",
+                    content=response_contents,
+                    id=item_id if item_id != "default" else f"msg_{uuid.uuid4().hex[:8]}",
                     status="completed",
                 )
                 output_items.append(response_output_message)
 
             # If no output items at all, create an empty message
-            if not output_items:
+            if not output_items and failed_response is None:
                 response_output_text = ResponseOutputText(type="output_text", text="", annotations=[])
                 response_output_message = ResponseOutputMessage(
                     type="message",
@@ -413,26 +465,16 @@ class MessageMapper:
             request_id = str(id(request))
             usage_data = self._usage_accumulator.pop(request_id, None)
 
-            if usage_data is not None:
-                usage = _response_usage(usage_data)
-            else:
-                # Fallback: estimate if no usage was tracked
-                input_token_count = len(str(request.input)) // 4 if request.input else 0
-                output_token_count = len(full_content) // 4
-                usage = _response_usage(
-                    UsageDetails(
-                        input_token_count=input_token_count,
-                        output_token_count=output_token_count,
-                        total_token_count=input_token_count + output_token_count,
-                    )
-                )
+            usage = _response_usage(usage_data) if usage_data is not None else None
 
             return OpenAIResponse(
-                id=f"resp_{uuid.uuid4().hex[:12]}",
+                id=context["response_id"],
                 object="response",
                 created_at=datetime.now().timestamp(),
                 model=request.model or "devui",
                 output=output_items,
+                status=failed_response.status if failed_response is not None else "completed",
+                error=failed_response.error if failed_response is not None else None,
                 usage=usage,
                 parallel_tool_calls=False,
                 tool_choice="none",
@@ -441,13 +483,42 @@ class MessageMapper:
 
         except Exception as e:
             logger.exception(f"Error aggregating response: {e}")
-            return await self._create_error_response(str(e), request)
+            return await self._create_error_response(str(e), request, context["response_id"])
         finally:
             # Cleanup: Remove context after aggregation to prevent memory leak
             # This handles the common case where streaming completes successfully
             request_key = id(request)
             if self._conversion_contexts.pop(request_key, None):
                 logger.debug(f"Cleaned up context for request {request_key} after aggregation")
+            self._usage_accumulator.pop(str(request_key), None)
+
+    async def finalize_stream(
+        self, events: Sequence[Any], request: AgentFrameworkRequest
+    ) -> ResponseCompletedEvent | ResponseFailedEvent:
+        """Create the single terminal event for a mapped response stream."""
+        final_response = await self.aggregate_to_response(events, request)
+
+        last_sequence_number = 0
+        for event in reversed(events):
+            if getattr(event, "type", None) == "response.failed":
+                continue
+            sequence_number = getattr(event, "sequence_number", None)
+            if isinstance(sequence_number, int):
+                last_sequence_number = sequence_number
+                break
+
+        if final_response.status == "failed":
+            return ResponseFailedEvent(
+                type="response.failed",
+                response=final_response,
+                sequence_number=last_sequence_number + 1,
+            )
+
+        return ResponseCompletedEvent(
+            type="response.completed",
+            response=final_response,
+            sequence_number=last_sequence_number + 1,
+        )
 
     def _get_or_create_context(self, request: AgentFrameworkRequest) -> dict[str, Any]:
         """Get or create conversion context for this request.
@@ -468,8 +539,13 @@ class MessageMapper:
                 evicted_key, _ = self._conversion_contexts.popitem(last=False)
                 logger.debug(f"Evicted oldest context (key={evicted_key}) - at max capacity ({self._max_contexts})")
 
+            response_id = request.extra_body.get("response_id") if request.extra_body else None
+            if not isinstance(response_id, str) or not response_id:
+                response_id = f"resp_{uuid.uuid4().hex[:12]}"
+
             self._conversion_contexts[request_key] = {
                 "sequence_counter": 0,
+                "response_id": response_id,
                 "item_id": f"msg_{uuid.uuid4().hex[:8]}",
                 "content_index": 0,
                 "output_index": 0,
@@ -655,8 +731,8 @@ class MessageMapper:
             if not hasattr(update, "contents") or not update.contents:
                 return events
 
-            # Check if we're streaming text content
-            has_text_content = any(content.type == "text" for content in update.contents)
+            first_text_content = next((content for content in update.contents if content.type == "text"), None)
+            has_text_content = first_text_content is not None
 
             # Check if we're in an executor context with an existing item
             executor_id = context.get("current_executor_id")
@@ -667,6 +743,7 @@ class MessageMapper:
                 current_metadata = context.get("current_message_workflow_metadata")
                 if current_metadata != workflow_metadata:
                     context.pop("current_message_id", None)
+                    context.pop("current_message_content_type", None)
                     context["current_message_workflow_metadata"] = workflow_metadata
 
             # If we have an executor item, use it for deltas instead of creating a message
@@ -701,6 +778,9 @@ class MessageMapper:
 
                 # Add content part for text
                 context["content_index"] = 0
+                context["current_message_content_type"] = (
+                    "refusal" if _is_refusal_text_content(first_text_content) else "output_text"
+                )
                 events.append(
                     ResponseContentPartAddedEvent(
                         type="response.content_part.added",
@@ -708,7 +788,7 @@ class MessageMapper:
                         content_index=context["content_index"],
                         item_id=message_id,
                         sequence_number=self._next_sequence(context),
-                        part=ResponseOutputText(type="output_text", text="", annotations=[]),
+                        part=_message_content_part(first_text_content),
                     )
                 )
 
@@ -716,16 +796,39 @@ class MessageMapper:
             for content in update.contents:
                 # Special handling for TextContent to use proper delta events
                 if content.type == "text" and "current_message_id" in context:
-                    # Stream text content via proper delta events
-                    delta_event = ResponseTextDeltaEvent(
-                        type="response.output_text.delta",
-                        output_index=context["output_index"],
-                        content_index=context.get("content_index", 0),
-                        item_id=context["current_message_id"],
-                        delta=content.text,
-                        logprobs=[],  # We don't have logprobs from Agent Framework
-                        sequence_number=self._next_sequence(context),
-                    )
+                    requested_content_type = "refusal" if _is_refusal_text_content(content) else "output_text"
+                    if context.get("current_message_content_type") != requested_content_type:
+                        context["content_index"] = context.get("content_index", 0) + 1
+                        context["current_message_content_type"] = requested_content_type
+                        events.append(
+                            ResponseContentPartAddedEvent(
+                                type="response.content_part.added",
+                                output_index=context["output_index"],
+                                content_index=context["content_index"],
+                                item_id=context["current_message_id"],
+                                sequence_number=self._next_sequence(context),
+                                part=_message_content_part(content),
+                            )
+                        )
+                    if _is_refusal_text_content(content):
+                        delta_event = ResponseRefusalDeltaEvent(
+                            type="response.refusal.delta",
+                            output_index=context["output_index"],
+                            content_index=context.get("content_index", 0),
+                            item_id=context["current_message_id"],
+                            delta=content.text,
+                            sequence_number=self._next_sequence(context),
+                        )
+                    else:
+                        delta_event = ResponseTextDeltaEvent(
+                            type="response.output_text.delta",
+                            output_index=context["output_index"],
+                            content_index=context.get("content_index", 0),
+                            item_id=context["current_message_id"],
+                            delta=content.text,
+                            logprobs=[],  # We don't have logprobs from Agent Framework
+                            sequence_number=self._next_sequence(context),
+                        )
                     if workflow_metadata is not None:
                         cast(Any, delta_event).metadata = workflow_metadata
                     events.append(delta_event)
@@ -818,12 +921,9 @@ class MessageMapper:
             model = request_obj.model if request_obj and request_obj.model else "devui"
 
             if isinstance(event, AgentStartedEvent):
-                execution_id = f"agent_{uuid4().hex[:12]}"
-                context["execution_id"] = execution_id
-
                 # Create Response object
                 response_obj = Response(
-                    id=f"resp_{execution_id}",
+                    id=context["response_id"],
                     object="response",
                     created_at=float(time.time()),
                     model=model,
@@ -850,15 +950,13 @@ class MessageMapper:
                 return []
 
             if isinstance(event, AgentFailedEvent):
-                execution_id = context.get("execution_id", f"agent_{uuid4().hex[:12]}")
-
                 # Create error object
                 response_error = ResponseError(
                     message=str(event.error) if event.error else "Unknown error", code="server_error"
                 )
 
                 response_obj = Response(
-                    id=f"resp_{execution_id}",
+                    id=context["response_id"],
                     object="response",
                     created_at=float(time.time()),
                     model=model,
@@ -899,9 +997,6 @@ class MessageMapper:
 
             # Response-level events - construct proper OpenAI objects
             if event_type == "started":
-                workflow_id = getattr(event, "workflow_id", str(uuid4()))
-                context["workflow_id"] = workflow_id
-
                 # Import Response type for proper construction
                 from openai.types.responses import Response
 
@@ -914,7 +1009,7 @@ class MessageMapper:
 
                 # Create a full Response object with all required fields
                 response_obj = Response(
-                    id=f"resp_{workflow_id}",
+                    id=context["response_id"],
                     object="response",
                     created_at=float(time.time()),
                     model=model,
@@ -1030,7 +1125,6 @@ class MessageMapper:
                 return []
 
             if event_type == "failed":
-                workflow_id = context.get("workflow_id", str(uuid4()))
                 # failed event (type='failed') uses 'details' field (WorkflowErrorDetails), not 'error'
                 # This matches executor_failed event which also uses 'details'
                 details = getattr(event, "details", None)
@@ -1059,7 +1153,7 @@ class MessageMapper:
 
                 # Create a full Response object for failed state
                 response_obj = Response(
-                    id=f"resp_{workflow_id}",
+                    id=context["response_id"],
                     object="response",
                     created_at=float(time.time()),
                     model=model,
@@ -1310,8 +1404,19 @@ class MessageMapper:
 
     # Content type mappers - implementing our comprehensive mapping plan
 
-    async def _map_text_content(self, content: Any, context: dict[str, Any]) -> ResponseTextDeltaEvent:
+    async def _map_text_content(
+        self, content: Any, context: dict[str, Any]
+    ) -> ResponseTextDeltaEvent | ResponseRefusalDeltaEvent:
         """Map TextContent to ResponseTextDeltaEvent."""
+        if _is_refusal_text_content(content):
+            return ResponseRefusalDeltaEvent(
+                type="response.refusal.delta",
+                delta=content.text,
+                item_id=context["item_id"],
+                output_index=context["output_index"],
+                content_index=context["content_index"],
+                sequence_number=self._next_sequence(context),
+            )
         return self._create_text_delta_event(content.text, context)
 
     async def _map_reasoning_content(self, content: Any, context: dict[str, Any]) -> ResponseReasoningTextDeltaEvent:
@@ -1793,6 +1898,9 @@ class MessageMapper:
             "request_id": getattr(content, "id", "unknown"),
             "function_call": {
                 "id": getattr(content.function_call, "call_id", "") if hasattr(content, "function_call") else "",
+                "occurrence_id": (
+                    getattr(content.function_call, "id", None) if hasattr(content, "function_call") else None
+                ),
                 "name": getattr(content.function_call, "name", "") if hasattr(content, "function_call") else "",
                 "arguments": arguments,
             },
@@ -1854,27 +1962,19 @@ class MessageMapper:
         text = f"Warning: Unknown content type: {content_type}\n"
         return self._create_text_delta_event(text, context)
 
-    async def _create_error_response(self, error_message: str, request: AgentFrameworkRequest) -> OpenAIResponse:
+    async def _create_error_response(
+        self, error_message: str, request: AgentFrameworkRequest, response_id: str
+    ) -> OpenAIResponse:
         """Create error response."""
-        error_text = f"Error: {error_message}"
-
-        response_output_text = ResponseOutputText(type="output_text", text=error_text, annotations=[])
-
-        response_output_message = ResponseOutputMessage(
-            type="message",
-            role="assistant",
-            content=[response_output_text],
-            id=f"msg_{uuid.uuid4().hex[:8]}",
-            status="completed",
-        )
-
         return OpenAIResponse(
-            id=f"resp_{uuid.uuid4().hex[:12]}",
+            id=response_id,
             object="response",
             created_at=datetime.now().timestamp(),
             model=request.model or "devui",
-            output=[response_output_message],
-            usage=_response_usage(UsageDetails()),
+            output=[],
+            status="failed",
+            error=ResponseError(message=error_message, code="server_error"),
+            usage=None,
             parallel_tool_calls=False,
             tool_choice="none",
             tools=[],

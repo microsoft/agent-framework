@@ -2,7 +2,6 @@
 
 using System;
 using System.Linq;
-using FluentAssertions;
 
 namespace Microsoft.Agents.AI.Workflows.Generators.UnitTests;
 
@@ -36,11 +35,11 @@ public class ExecutorRouteGeneratorTests
 
         var result = GeneratorTestHelper.RunGenerator(source);
 
-        result.RunResult.GeneratedTrees.Should().HaveCount(1);
+        Assert.Single(result.RunResult.GeneratedTrees);
 
         var generated = result.RunResult.GeneratedTrees[0];
 
-        generated.Should().AddHandler("this.HandleMessage", "string");
+        SyntaxTreeAssert.AddHandler(generated, "this.HandleMessage", "string");
     }
 
     [Fact]
@@ -67,10 +66,10 @@ public class ExecutorRouteGeneratorTests
 
         var result = GeneratorTestHelper.RunGenerator(source);
 
-        result.RunResult.GeneratedTrees.Should().HaveCount(1);
+        Assert.Single(result.RunResult.GeneratedTrees);
 
         var generated = result.RunResult.GeneratedTrees[0].ToString();
-        generated.Should().Contain(".AddHandler<string>(this.HandleMessageAsync)");
+        Assert.Contains(".AddHandler<string>(this.HandleMessageAsync)", generated);
     }
 
     [Fact]
@@ -97,10 +96,10 @@ public class ExecutorRouteGeneratorTests
 
         var result = GeneratorTestHelper.RunGenerator(source);
 
-        result.RunResult.GeneratedTrees.Should().HaveCount(1);
+        Assert.Single(result.RunResult.GeneratedTrees);
 
         var generated = result.RunResult.GeneratedTrees[0].ToString();
-        generated.Should().Contain(".AddHandler<string, int>(this.HandleMessageAsync)");
+        Assert.Contains(".AddHandler<string, int>(this.HandleMessageAsync)", generated);
     }
 
     [Fact]
@@ -127,10 +126,10 @@ public class ExecutorRouteGeneratorTests
 
         var result = GeneratorTestHelper.RunGenerator(source);
 
-        result.RunResult.GeneratedTrees.Should().HaveCount(1);
+        Assert.Single(result.RunResult.GeneratedTrees);
 
         var generated = result.RunResult.GeneratedTrees[0].ToString();
-        generated.Should().Contain(".AddHandler<string>(this.HandleMessageAsync)");
+        Assert.Contains(".AddHandler<string>(this.HandleMessageAsync)", generated);
     }
 
     #endregion
@@ -167,12 +166,12 @@ public class ExecutorRouteGeneratorTests
 
         var result = GeneratorTestHelper.RunGenerator(source);
 
-        result.RunResult.GeneratedTrees.Should().HaveCount(1);
+        Assert.Single(result.RunResult.GeneratedTrees);
 
         var generated = result.RunResult.GeneratedTrees[0].ToString();
-        generated.Should().Contain(".AddHandler<string>(this.HandleString)");
-        generated.Should().Contain(".AddHandler<int>(this.HandleInt)");
-        generated.Should().Contain(".AddHandler<double, string>(this.HandleDoubleAsync)");
+        Assert.Contains(".AddHandler<string>(this.HandleString)", generated);
+        Assert.Contains(".AddHandler<int>(this.HandleInt)", generated);
+        Assert.Contains(".AddHandler<double, string>(this.HandleDoubleAsync)", generated);
     }
 
     #endregion
@@ -203,11 +202,11 @@ public class ExecutorRouteGeneratorTests
 
         var result = GeneratorTestHelper.RunGenerator(source);
 
-        result.RunResult.GeneratedTrees.Should().HaveCount(1);
+        Assert.Single(result.RunResult.GeneratedTrees);
 
         var generated = result.RunResult.GeneratedTrees[0];
 
-        generated.Should().RegisterYieldedOutputType("global::TestNamespace.OutputMessage");
+        SyntaxTreeAssert.RegisterYieldedOutputType(generated, "global::TestNamespace.OutputMessage");
     }
 
     [Fact]
@@ -234,10 +233,10 @@ public class ExecutorRouteGeneratorTests
 
         var result = GeneratorTestHelper.RunGenerator(source);
 
-        result.RunResult.GeneratedTrees.Should().HaveCount(1);
+        Assert.Single(result.RunResult.GeneratedTrees);
 
         var generated = result.RunResult.GeneratedTrees[0];
-        generated.Should().RegisterSentMessageType("global::TestNamespace.SendMessage");
+        SyntaxTreeAssert.RegisterSentMessageType(generated, "global::TestNamespace.SendMessage");
     }
 
     [Fact]
@@ -265,10 +264,10 @@ public class ExecutorRouteGeneratorTests
 
         var result = GeneratorTestHelper.RunGenerator(source);
 
-        result.RunResult.GeneratedTrees.Should().HaveCount(1);
+        Assert.Single(result.RunResult.GeneratedTrees);
 
         var generated = result.RunResult.GeneratedTrees[0];
-        generated.Should().RegisterSentMessageType("global::TestNamespace.BroadcastMessage");
+        SyntaxTreeAssert.RegisterSentMessageType(generated, "global::TestNamespace.BroadcastMessage");
     }
 
     [Fact]
@@ -296,10 +295,10 @@ public class ExecutorRouteGeneratorTests
 
         var result = GeneratorTestHelper.RunGenerator(source);
 
-        result.RunResult.GeneratedTrees.Should().HaveCount(1);
+        Assert.Single(result.RunResult.GeneratedTrees);
 
         var generated = result.RunResult.GeneratedTrees[0];
-        generated.Should().RegisterYieldedOutputType("global::TestNamespace.YieldedMessage");
+        SyntaxTreeAssert.RegisterYieldedOutputType(generated, "global::TestNamespace.YieldedMessage");
     }
 
     #endregion
@@ -330,13 +329,13 @@ public class ExecutorRouteGeneratorTests
 
         var result = GeneratorTestHelper.RunGenerator(source);
 
-        result.RunResult.GeneratedTrees.Should().HaveCount(1);
-        result.RunResult.Diagnostics.Should().BeEmpty();
+        Assert.Single(result.RunResult.GeneratedTrees);
+        Assert.Empty(result.RunResult.Diagnostics);
 
         var generated = result.RunResult.GeneratedTrees[0];
 
-        generated.Should().HaveHierarchy("OuterClass", "TestExecutor")
-                      .And.AddHandler("this.HandleMessage", "string");
+        SyntaxTreeAssert.HaveHierarchy(generated, "OuterClass", "TestExecutor");
+        SyntaxTreeAssert.AddHandler(generated, "this.HandleMessage", "string");
     }
 
     [Fact]
@@ -366,13 +365,13 @@ public class ExecutorRouteGeneratorTests
 
         var result = GeneratorTestHelper.RunGenerator(source);
 
-        result.RunResult.GeneratedTrees.Should().HaveCount(1);
-        result.RunResult.Diagnostics.Should().BeEmpty();
+        Assert.Single(result.RunResult.GeneratedTrees);
+        Assert.Empty(result.RunResult.Diagnostics);
 
         var generated = result.RunResult.GeneratedTrees[0];
 
-        generated.Should().HaveHierarchy("Outer", "Inner", "TestExecutor")
-                      .And.AddHandler("this.HandleMessage", "string");
+        SyntaxTreeAssert.HaveHierarchy(generated, "Outer", "Inner", "TestExecutor");
+        SyntaxTreeAssert.AddHandler(generated, "this.HandleMessage", "string");
     }
 
     [Fact]
@@ -405,13 +404,13 @@ public class ExecutorRouteGeneratorTests
 
         var result = GeneratorTestHelper.RunGenerator(source);
 
-        result.RunResult.GeneratedTrees.Should().HaveCount(1);
-        result.RunResult.Diagnostics.Should().BeEmpty();
+        Assert.Single(result.RunResult.GeneratedTrees);
+        Assert.Empty(result.RunResult.Diagnostics);
 
         var generated = result.RunResult.GeneratedTrees[0];
 
-        generated.Should().HaveHierarchy("Level1", "Level2", "Level3", "TestExecutor")
-                      .And.AddHandler("this.HandleMessage", "int");
+        SyntaxTreeAssert.HaveHierarchy(generated, "Level1", "Level2", "Level3", "TestExecutor");
+        SyntaxTreeAssert.AddHandler(generated, "this.HandleMessage", "int");
     }
 
     [Fact]
@@ -436,14 +435,14 @@ public class ExecutorRouteGeneratorTests
 
         var result = GeneratorTestHelper.RunGenerator(source);
 
-        result.RunResult.GeneratedTrees.Should().HaveCount(1);
-        result.RunResult.Diagnostics.Should().BeEmpty();
+        Assert.Single(result.RunResult.GeneratedTrees);
+        Assert.Empty(result.RunResult.Diagnostics);
 
         var generated = result.RunResult.GeneratedTrees[0];
 
-        generated.Should().NotHaveNamespace()
-                      .And.HaveHierarchy("OuterClass", "TestExecutor")
-                      .And.AddHandler("this.HandleMessage", "string");
+        SyntaxTreeAssert.NotHaveNamespace(generated);
+        SyntaxTreeAssert.HaveHierarchy(generated, "OuterClass", "TestExecutor");
+        SyntaxTreeAssert.AddHandler(generated, "this.HandleMessage", "string");
     }
 
     [Fact]
@@ -479,15 +478,14 @@ public class ExecutorRouteGeneratorTests
         var result = GeneratorTestHelper.RunGenerator(source);
 
         // No generator diagnostics
-        result.RunResult.Diagnostics.Should().BeEmpty();
+        Assert.Empty(result.RunResult.Diagnostics);
 
         // Check that the combined compilation (source + generated) has no errors
         var compilationDiagnostics = result.OutputCompilation.GetDiagnostics()
             .Where(d => d.Severity == CodeAnalysis.DiagnosticSeverity.Error)
             .ToList();
 
-        compilationDiagnostics.Should().BeEmpty(
-            "generated code for nested classes should compile without errors");
+        Assert.Empty(compilationDiagnostics ?? []);
     }
 
     [Fact]
@@ -517,7 +515,7 @@ public class ExecutorRouteGeneratorTests
 
         var result = GeneratorTestHelper.RunGenerator(source);
 
-        result.RunResult.GeneratedTrees.Should().HaveCount(1);
+        Assert.Single(result.RunResult.GeneratedTrees);
 
         var generated = result.RunResult.GeneratedTrees[0].ToString();
 
@@ -525,7 +523,7 @@ public class ExecutorRouteGeneratorTests
         var openBraces = generated.Count(c => c == '{');
         var closeBraces = generated.Count(c => c == '}');
 
-        openBraces.Should().Be(closeBraces, "generated code should have balanced braces");
+        Assert.Equal(closeBraces, openBraces);
 
         // For Outer.Inner.TestExecutor, we expect:
         // - 1 for Outer class
@@ -533,7 +531,7 @@ public class ExecutorRouteGeneratorTests
         // - 1 for TestExecutor class
         // - 1 for ConfigureProtocol method
         // = 4 pairs minimum
-        openBraces.Should().BeGreaterThanOrEqualTo(4, "should have braces for all nested classes and method");
+        Assert.True(openBraces >= 4);
     }
 
     #endregion
@@ -585,22 +583,21 @@ public class ExecutorRouteGeneratorTests
         var result = GeneratorTestHelper.RunGenerator(file1, file2);
 
         // Should generate one file for the executor
-        result.RunResult.GeneratedTrees.Should().HaveCount(1);
-        result.RunResult.Diagnostics.Should().BeEmpty();
+        Assert.Single(result.RunResult.GeneratedTrees);
+        Assert.Empty(result.RunResult.Diagnostics);
 
         var generated = result.RunResult.GeneratedTrees[0];
 
         // Should have both handlers registered
-        generated.Should().AddHandler("this.HandleString", "string")
-                      .And.AddHandler("this.HandleIntAsync", "int");
+        SyntaxTreeAssert.AddHandler(generated, "this.HandleString", "string");
+        SyntaxTreeAssert.AddHandler(generated, "this.HandleIntAsync", "int");
 
         // Verify the generated code compiles with all three partials combined
         var compilationErrors = result.OutputCompilation.GetDiagnostics()
             .Where(d => d.Severity == CodeAnalysis.DiagnosticSeverity.Error)
             .ToList();
 
-        compilationErrors.Should().BeEmpty(
-            "generated partial should compile correctly with the other partial files");
+        Assert.Empty(compilationErrors ?? []);
     }
 
     [Fact]
@@ -640,14 +637,14 @@ public class ExecutorRouteGeneratorTests
 
         var result = GeneratorTestHelper.RunGenerator(file1, file2);
 
-        result.RunResult.GeneratedTrees.Should().HaveCount(1);
-        result.RunResult.Diagnostics.Should().BeEmpty();
+        Assert.Single(result.RunResult.GeneratedTrees);
+        Assert.Empty(result.RunResult.Diagnostics);
 
         var generated = result.RunResult.GeneratedTrees[0];
 
         // Both handlers from different files should be registered
-        generated.Should().AddHandler("this.HandleFromFile1", "string")
-                      .And.AddHandler("this.HandleFromFile2", "int");
+        SyntaxTreeAssert.AddHandler(generated, "this.HandleFromFile1", "string");
+        SyntaxTreeAssert.AddHandler(generated, "this.HandleFromFile2", "int");
     }
 
     [Fact]
@@ -691,16 +688,16 @@ public class ExecutorRouteGeneratorTests
 
         var result = GeneratorTestHelper.RunGenerator(file1, file2);
 
-        result.RunResult.GeneratedTrees.Should().HaveCount(1);
-        result.RunResult.Diagnostics.Should().BeEmpty();
+        Assert.Single(result.RunResult.GeneratedTrees);
+        Assert.Empty(result.RunResult.Diagnostics);
 
         var generated = result.RunResult.GeneratedTrees[0];
 
         // Verify SendsMessage and YieldsOutput from both partials are combined correctly
-        generated.Should().RegisterSentMessageType("string")
-                      .And.RegisterSentMessageType("int")
-                      .And.RegisterYieldedOutputType("string")
-                      .And.RegisterYieldedOutputType("int");
+        SyntaxTreeAssert.RegisterSentMessageType(generated, "string");
+        SyntaxTreeAssert.RegisterSentMessageType(generated, "int");
+        SyntaxTreeAssert.RegisterYieldedOutputType(generated, "string");
+        SyntaxTreeAssert.RegisterYieldedOutputType(generated, "int");
     }
 
     #endregion
@@ -729,11 +726,10 @@ public class ExecutorRouteGeneratorTests
         var result = GeneratorTestHelper.RunGenerator(source);
 
         // Should produce MAFGENWF003 diagnostic
-        result.RunResult.Diagnostics.Should().Contain(d => d.Id == "MAFGENWF003");
+        Assert.Contains(result.RunResult.Diagnostics, d => d.Id == "MAFGENWF003");
 
         // Should NOT generate any source (to avoid CS0260)
-        result.RunResult.GeneratedTrees.Should().BeEmpty(
-            "non-partial classes should not have source generated to avoid CS0260 compiler error");
+        Assert.Empty(result.RunResult.GeneratedTrees);
     }
 
     [Fact]
@@ -755,7 +751,7 @@ public class ExecutorRouteGeneratorTests
 
         var result = GeneratorTestHelper.RunGenerator(source);
 
-        result.RunResult.Diagnostics.Should().Contain(d => d.Id == "MAFGENWF004");
+        Assert.Contains(result.RunResult.Diagnostics, d => d.Id == "MAFGENWF004");
     }
 
     [Fact]
@@ -779,7 +775,7 @@ public class ExecutorRouteGeneratorTests
 
         var result = GeneratorTestHelper.RunGenerator(source);
 
-        result.RunResult.Diagnostics.Should().Contain(d => d.Id == "MAFGENWF007");
+        Assert.Contains(result.RunResult.Diagnostics, d => d.Id == "MAFGENWF007");
     }
 
     [Fact]
@@ -803,7 +799,7 @@ public class ExecutorRouteGeneratorTests
 
         var result = GeneratorTestHelper.RunGenerator(source);
 
-        result.RunResult.Diagnostics.Should().Contain(d => d.Id == "MAFGENWF005");
+        Assert.Contains(result.RunResult.Diagnostics, d => d.Id == "MAFGENWF005");
     }
 
     [Fact]
@@ -827,7 +823,7 @@ public class ExecutorRouteGeneratorTests
 
         var result = GeneratorTestHelper.RunGenerator(source);
 
-        result.RunResult.Diagnostics.Should().Contain(d => d.Id == "MAFGENWF001");
+        Assert.Contains(result.RunResult.Diagnostics, d => d.Id == "MAFGENWF001");
     }
 
     #endregion
@@ -861,8 +857,8 @@ public class ExecutorRouteGeneratorTests
         var result = GeneratorTestHelper.RunGenerator(source);
 
         // Should produce diagnostic but not generate code
-        result.RunResult.Diagnostics.Should().Contain(d => d.Id == "MAFGENWF006");
-        result.RunResult.GeneratedTrees.Should().BeEmpty();
+        Assert.Contains(result.RunResult.Diagnostics, d => d.Id == "MAFGENWF006");
+        Assert.Empty(result.RunResult.GeneratedTrees);
     }
 
     [Fact]
@@ -885,7 +881,7 @@ public class ExecutorRouteGeneratorTests
 
         var result = GeneratorTestHelper.RunGenerator(source);
 
-        result.RunResult.GeneratedTrees.Should().BeEmpty();
+        Assert.Empty(result.RunResult.GeneratedTrees);
     }
 
     #endregion
@@ -918,13 +914,13 @@ public class ExecutorRouteGeneratorTests
 
         var result = GeneratorTestHelper.RunGenerator(source);
 
-        result.RunResult.GeneratedTrees.Should().HaveCount(1);
+        Assert.Single(result.RunResult.GeneratedTrees);
 
         var generated = result.RunResult.GeneratedTrees[0];
 
-        generated.Should().RegisterSentMessageType("global::TestNamespace.MessageA")
-                      .And.RegisterSentMessageType("global::TestNamespace.MessageB")
-                      .And.RegisterSentMessageType("global::TestNamespace.MessageC");
+        SyntaxTreeAssert.RegisterSentMessageType(generated, "global::TestNamespace.MessageA");
+        SyntaxTreeAssert.RegisterSentMessageType(generated, "global::TestNamespace.MessageB");
+        SyntaxTreeAssert.RegisterSentMessageType(generated, "global::TestNamespace.MessageC");
     }
 
     [Theory]
@@ -951,12 +947,11 @@ public class ExecutorRouteGeneratorTests
 
         var result = GeneratorTestHelper.RunGenerator(source);
 
-        result.RunResult.Diagnostics.Should().ContainSingle();
+        Assert.Single(result.RunResult.Diagnostics);
         var diagnostic = result.RunResult.Diagnostics.Single();
-        diagnostic.Id.Should().Be("MAFGENWF008");
-        diagnostic.GetMessage().Should().Be(
-            "Class 'TestExecutor' uses [SendsMessage] or [YieldsOutput] but is not declared as partial");
-        result.RunResult.GeneratedTrees.Should().BeEmpty();
+        Assert.Equal("MAFGENWF008", diagnostic.Id);
+        Assert.Equal("Class 'TestExecutor' uses [SendsMessage] or [YieldsOutput] but is not declared as partial", diagnostic.GetMessage());
+        Assert.Empty(result.RunResult.GeneratedTrees);
     }
 
     [Fact]
@@ -988,12 +983,11 @@ public class ExecutorRouteGeneratorTests
 
         var result = GeneratorTestHelper.RunGenerator(source);
 
-        result.RunResult.Diagnostics.Should().ContainSingle();
+        Assert.Single(result.RunResult.Diagnostics);
         var diagnostic = result.RunResult.Diagnostics.Single();
-        diagnostic.Id.Should().Be("MAFGENWF008");
-        diagnostic.GetMessage().Should().Be(
-            "Class 'CompletionExecutor' uses [SendsMessage] or [YieldsOutput] but is not declared as partial");
-        result.RunResult.GeneratedTrees.Should().BeEmpty();
+        Assert.Equal("MAFGENWF008", diagnostic.Id);
+        Assert.Equal("Class 'CompletionExecutor' uses [SendsMessage] or [YieldsOutput] but is not declared as partial", diagnostic.GetMessage());
+        Assert.Empty(result.RunResult.GeneratedTrees);
     }
 
     [Theory]
@@ -1019,12 +1013,11 @@ public class ExecutorRouteGeneratorTests
 
         var result = GeneratorTestHelper.RunGenerator(source);
 
-        result.RunResult.Diagnostics.Should().ContainSingle();
+        Assert.Single(result.RunResult.Diagnostics);
         var diagnostic = result.RunResult.Diagnostics.Single();
-        diagnostic.Id.Should().Be("MAFGENWF009");
-        diagnostic.GetMessage().Should().Be(
-            "Class 'NotAnExecutor' uses [SendsMessage] or [YieldsOutput] but does not derive from Executor");
-        result.RunResult.GeneratedTrees.Should().BeEmpty();
+        Assert.Equal("MAFGENWF009", diagnostic.Id);
+        Assert.Equal("Class 'NotAnExecutor' uses [SendsMessage] or [YieldsOutput] but does not derive from Executor", diagnostic.GetMessage());
+        Assert.Empty(result.RunResult.GeneratedTrees);
     }
 
     [Fact]
@@ -1052,15 +1045,15 @@ public class ExecutorRouteGeneratorTests
 
         var result = GeneratorTestHelper.RunGenerator(source);
 
-        result.RunResult.GeneratedTrees.Should().HaveCount(1);
-        result.RunResult.Diagnostics.Should().BeEmpty();
+        Assert.Single(result.RunResult.GeneratedTrees);
+        Assert.Empty(result.RunResult.Diagnostics);
 
         var generated = result.RunResult.GeneratedTrees[0];
 
         // Verify partial declarations are present
-        generated.Should().HaveHierarchy("OuterClass", "TestExecutor")
+        SyntaxTreeAssert.HaveHierarchy(generated, "OuterClass", "TestExecutor");
         // Verify protocol types are generated
-                      .And.RegisterSentMessageType("global::TestNamespace.BroadcastMessage");
+        SyntaxTreeAssert.RegisterSentMessageType(generated, "global::TestNamespace.BroadcastMessage");
     }
 
     [Fact]
@@ -1085,12 +1078,12 @@ public class ExecutorRouteGeneratorTests
 
         var result = GeneratorTestHelper.RunGenerator(source);
 
-        result.RunResult.GeneratedTrees.Should().HaveCount(1);
+        Assert.Single(result.RunResult.GeneratedTrees);
 
         var generated = result.RunResult.GeneratedTrees[0];
 
-        generated.Should().HaveHierarchy("GenericExecutor<T>")
-                      .And.RegisterSentMessageType("global::TestNamespace.BroadcastMessage");
+        SyntaxTreeAssert.HaveHierarchy(generated, "GenericExecutor<T>");
+        SyntaxTreeAssert.RegisterSentMessageType(generated, "global::TestNamespace.BroadcastMessage");
     }
 
     [Fact]
@@ -1123,17 +1116,16 @@ public class ExecutorRouteGeneratorTests
 
         var result = GeneratorTestHelper.RunGenerator(source);
 
-        result.RunResult.GeneratedTrees.Should().HaveCount(1);
-        result.RunResult.Diagnostics.Should().BeEmpty();
+        Assert.Single(result.RunResult.GeneratedTrees);
+        Assert.Empty(result.RunResult.Diagnostics);
 
         var generated = result.RunResult.GeneratedTrees[0].ToString();
 
         // Base class Executor<T> overrides ConfigureProtocol, so the generated override
         // must chain to base to preserve the inherited handler registration.
-        generated.Should().Contain("return base.ConfigureProtocol(protocolBuilder)",
-            because: "Executor<T> overrides ConfigureProtocol, so base must be called to preserve its handler registration");
-        generated.Should().Contain(".SendsMessage<global::TestNamespace.FeedbackResult>()");
-        generated.Should().Contain(".YieldsOutput<string>()");
+        Assert.Contains("return base.ConfigureProtocol(protocolBuilder)", generated);
+        Assert.Contains(".SendsMessage<global::TestNamespace.FeedbackResult>()", generated);
+        Assert.Contains(".YieldsOutput<string>()", generated);
     }
 
     [Fact]
@@ -1161,15 +1153,14 @@ public class ExecutorRouteGeneratorTests
 
         var result = GeneratorTestHelper.RunGenerator(source);
 
-        result.RunResult.GeneratedTrees.Should().HaveCount(1);
-        result.RunResult.Diagnostics.Should().BeEmpty();
+        Assert.Single(result.RunResult.GeneratedTrees);
+        Assert.Empty(result.RunResult.Diagnostics);
 
         var generated = result.RunResult.GeneratedTrees[0].ToString();
 
         // Executor's ConfigureProtocol is abstract — no base call needed.
-        generated.Should().Contain("return protocolBuilder",
-            because: "Executor base class has no non-abstract ConfigureProtocol, so no base call is needed");
-        generated.Should().NotContain("base.ConfigureProtocol");
+        Assert.Contains("return protocolBuilder", generated);
+        Assert.DoesNotContain("base.ConfigureProtocol", generated);
     }
 
     #endregion
@@ -1197,12 +1188,12 @@ public class ExecutorRouteGeneratorTests
 
         var result = GeneratorTestHelper.RunGenerator(source);
 
-        result.RunResult.GeneratedTrees.Should().HaveCount(1);
+        Assert.Single(result.RunResult.GeneratedTrees);
 
         var generated = result.RunResult.GeneratedTrees[0];
 
-        generated.Should().HaveHierarchy("GenericExecutor<T>")
-                      .And.AddHandler("this.HandleMessage", "T");
+        SyntaxTreeAssert.HaveHierarchy(generated, "GenericExecutor<T>");
+        SyntaxTreeAssert.AddHandler(generated, "this.HandleMessage", "T");
     }
 
     #endregion

@@ -20,8 +20,13 @@ from agent_framework import (
     WorkflowRunState,
 )
 from agent_framework._workflows._agent_executor import AgentExecutorResponse
+from agent_framework._workflows._agent_utils import prepare_executor_run_kwargs
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
-from agent_framework._workflows._const import GLOBAL_KWARGS_KEY
+from agent_framework._workflows._const import (
+    GLOBAL_KWARGS_KEY,
+    RAW_CLIENT_KWARGS_KEY,
+    RAW_FUNCTION_INVOCATION_KWARGS_KEY,
+)
 
 
 class _CountingAgent(BaseAgent):
@@ -330,6 +335,34 @@ async def test_prepare_agent_run_args_returns_none_when_no_kwargs() -> None:
     assert ci_kwargs is None
 
 
+async def test_prepare_executor_run_kwargs_resolves_channels_and_removes_internal_state() -> None:
+    """Executor-ready kwargs preserve options without leaking raw-routing snapshots."""
+    raw = {
+        "function_invocation_kwargs": {GLOBAL_KWARGS_KEY: {"legacy": True}},
+        "client_kwargs": {GLOBAL_KWARGS_KEY: {"legacy": True}},
+        RAW_FUNCTION_INVOCATION_KWARGS_KEY: {"agent": {"raw": True}},
+        RAW_CLIENT_KWARGS_KEY: {"agent": {"raw": True}},
+        "options": {"temperature": 0.5},
+    }
+    resolved = {
+        "function_invocation_kwargs": {
+            "global_kwargs": {"shared": "G"},
+            "executor_kwargs": {"agent": {"specific": "A"}},
+        },
+        "client_kwargs": {"executor_kwargs": {"other": {"ignored": True}}},
+    }
+
+    actual = prepare_executor_run_kwargs("agent", raw, resolved)
+
+    assert actual == {
+        "function_invocation_kwargs": {"shared": "G", "specific": "A"},
+        "options": {"temperature": 0.5},
+    }
+    assert prepare_executor_run_kwargs("agent", raw, {}) == {"options": {"temperature": 0.5}}
+    with pytest.raises(TypeError, match="Resolved workflow run kwargs state must be a dict"):
+        prepare_executor_run_kwargs("agent", raw, "invalid")
+
+
 class _NonCopyableRaw:
     """Simulates an LLM SDK response object that cannot be deep-copied (e.g., proto/gRPC)."""
 
@@ -622,15 +655,15 @@ async def test_resolve_executor_kwargs_returns_none_for_none_input() -> None:
     assert result is None
 
 
-async def test_resolve_executor_kwargs_prefers_executor_id_over_global() -> None:
-    """_resolve_executor_kwargs prefers executor-specific entry over __global__."""
+async def test_resolve_executor_kwargs_merges_executor_id_over_global() -> None:
+    """_resolve_executor_kwargs merges executor-specific entries over __global__."""
     agent = _CountingAgent(id="a", name="A")
     executor = AgentExecutor(agent, id="exec_a")
 
     # Dict has both a per-executor entry and a global entry
     resolved = {"exec_a": {"specific": True}, GLOBAL_KWARGS_KEY: {"global": True}}
     result = executor._resolve_executor_kwargs(resolved)  # pyright: ignore[reportPrivateUsage]
-    assert result == {"specific": True}
+    assert result == {"global": True, "specific": True}
 
 
 async def test_prepare_agent_run_args_extracts_function_invocation_kwargs() -> None:
@@ -689,16 +722,15 @@ async def test_prepare_agent_run_args_per_executor_no_match() -> None:
     assert fi_kwargs is None
 
 
-async def test_resolve_executor_kwargs_empty_per_executor_does_not_fallback_to_global() -> None:
-    """An explicit empty per-executor dict should not fall through to global kwargs."""
+async def test_resolve_executor_kwargs_empty_per_executor_keeps_global_kwargs() -> None:
+    """An explicit empty per-executor dict keeps the global kwargs."""
     agent = _CountingAgent(id="a", name="A")
     executor = AgentExecutor(agent, id="exec_a")
 
-    # Per-executor entry for exec_a is empty, but global has values.
-    # The empty dict should be honoured (no fallback to global).
+    # Per-executor entry for exec_a is empty, so only global values apply.
     resolved = {"exec_a": {}, GLOBAL_KWARGS_KEY: {"global_key": "global_val"}}  # type: ignore[var-annotated]
     result = executor._resolve_executor_kwargs(resolved)  # pyright: ignore[reportPrivateUsage]
-    assert result == {}
+    assert result == {"global_key": "global_val"}
 
 
 # region Tool approval emission

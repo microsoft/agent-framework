@@ -8,10 +8,6 @@ namespace Microsoft.Agents.AI.Purview.Models.Jobs;
 /// <summary>
 /// Class representing a job that refreshes the protection scopes cache in the background.
 /// </summary>
-/// <remarks>
-/// Used by the parallel protection scopes retrieval path to warm the cache without blocking the
-/// foreground ProcessContent call.
-/// </remarks>
 internal sealed class ScopeRetrievalJob : BackgroundJobBase
 {
     /// <summary>

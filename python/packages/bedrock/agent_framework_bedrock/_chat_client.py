@@ -240,9 +240,9 @@ class BedrockChatClient(
         *,
         region: str | None = None,
         model: str | None = None,
-        access_key: str | None = None,
-        secret_key: str | None = None,
-        session_token: str | None = None,
+        access_key: str | SecretString | None = None,
+        secret_key: str | SecretString | None = None,
+        session_token: str | SecretString | None = None,
         client: BaseClient | None = None,
         boto3_session: Boto3Session | None = None,
         additional_properties: dict[str, Any] | None = None,
@@ -572,24 +572,13 @@ class BedrockChatClient(
                     tool_result_blocks = self._convert_tool_result_to_blocks(tool_result_text)
                 else:
                     tool_result_blocks = self._convert_tool_result_to_blocks(content.result)
-                tool_result_block = {
+                return {
                     "toolResult": {
                         "toolUseId": content.call_id,
                         "content": tool_result_blocks,
-                        "status": "error" if content.exception else "success",
+                        "status": "error" if content.exception is not None else "success",
                     }
                 }
-                if content.exception:
-                    tool_result = tool_result_block["toolResult"]
-                    existing_content = tool_result.get("content")
-                    content_list: list[dict[str, Any]]
-                    if isinstance(existing_content, list):
-                        content_list = existing_content
-                    else:
-                        content_list = []
-                        tool_result["content"] = content_list
-                    content_list.append({"text": str(content.exception)})
-                return tool_result_block
             case _:
                 # Bedrock does not support other content types at this time
                 pass

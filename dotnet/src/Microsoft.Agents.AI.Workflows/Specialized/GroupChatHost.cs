@@ -43,9 +43,9 @@ internal sealed class GroupChatHost(
         => base.ConfigureProtocol(protocolBuilder).YieldsOutput<List<ChatMessage>>();
 
     protected override async ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, bool? emitEvents, CancellationToken cancellationToken = default)
-        => await this.TakeTurnAsync(messages, context, new TurnToken(emitEvents), cancellationToken).ConfigureAwait(false);
+        => await this.TakeTurnWithTokenAsync(messages, context, new TurnToken(emitEvents), cancellationToken).ConfigureAwait(false);
 
-    protected override async ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, TurnToken turnToken, CancellationToken cancellationToken = default)
+    protected override async ValueTask TakeTurnWithTokenAsync(List<ChatMessage> messages, IWorkflowContext context, TurnToken turnToken, CancellationToken cancellationToken = default)
     {
         AgentRunOptions? runOptions = context.GetAgentRunOptions(turnToken.RunOptions);
         if (!ReferenceEquals(runOptions, turnToken.RunOptions))

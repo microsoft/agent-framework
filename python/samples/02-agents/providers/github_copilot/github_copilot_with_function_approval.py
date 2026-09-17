@@ -35,6 +35,7 @@ from agent_framework.github import GitHubCopilotAgent, GitHubCopilotOptions
 from copilot.generated.rpc import PermissionDecisionReject
 from copilot.session import (
     PermissionHandler,
+    PermissionInvocation,
     PermissionRequestResult,
     PreToolUseHookInput,
     PreToolUseHookOutput,
@@ -63,13 +64,13 @@ def get_weather_detail(location: Annotated[str, "The city and state, e.g. San Fr
     )
 
 
-def approve_all_requests(request: PermissionRequest, context: dict[str, str]) -> PermissionRequestResult:
+def approve_all_requests(request: PermissionRequest, context: PermissionInvocation) -> PermissionRequestResult:
     """Permission handler that approves every request, including the gated tool."""
     print(f"\n  [Permission requested: {request.kind}] -> approved")
     return PermissionHandler.approve_all(request, context)
 
 
-def deny_all_requests(request: PermissionRequest, _context: dict[str, str]) -> PermissionRequestResult:
+def deny_all_requests(request: PermissionRequest, _context: PermissionInvocation) -> PermissionRequestResult:
     """Permission handler that denies every request."""
     print(f"\n  [Permission requested: {request.kind}] -> denied")
     return PermissionDecisionReject(feedback="Denied by the operator's policy.")

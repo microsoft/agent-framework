@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import agent_framework._telemetry as telemetry
 import pytest
-from agent_framework import SupportsGetEmbeddings
+from agent_framework import SecretString, SupportsGetEmbeddings
 from agent_framework._telemetry import get_feature_token
 from agent_framework.exceptions import SettingNotFoundError
 from openai.types import CreateEmbeddingResponse
@@ -50,6 +50,17 @@ def test_openai_construction_with_explicit_params() -> None:
     )
     assert client.model == "text-embedding-3-small"
     assert isinstance(client, SupportsGetEmbeddings)
+
+
+def test_public_openai_embedding_client_accepts_secret_string() -> None:
+    client = OpenAIEmbeddingClient(
+        model="text-embedding-3-small",
+        api_key=SecretString("test-key"),
+    )
+
+    assert client.client is not None
+    assert type(client.client.api_key) is str
+    assert client.client.api_key == "test-key"
 
 
 def test_raw_openai_embedding_client_init_uses_explicit_parameters() -> None:
@@ -107,6 +118,21 @@ async def test_openai_get_embeddings(openai_unit_test_env: dict[str, str]) -> No
     assert result[1].vector == [0.4, 0.5, 0.6]
     assert result[0].model == "text-embedding-3-small"
     assert result[0].dimensions == 3
+
+
+async def test_openai_get_embeddings_honors_response_indexes(openai_unit_test_env: dict[str, str]) -> None:
+    mock_response = _make_openai_response(
+        embeddings=[[0.1, 0.2], [0.3, 0.4]],
+    )
+    mock_response.data.reverse()
+    client = OpenAIEmbeddingClient()
+    client.client = MagicMock()
+    client.client.embeddings = MagicMock()
+    client.client.embeddings.create = AsyncMock(return_value=mock_response)
+
+    result = await client.get_embeddings(["first", "second"])
+
+    assert [embedding.vector for embedding in result] == [[0.1, 0.2], [0.3, 0.4]]
 
 
 async def test_embedding_request_marks_openai_feature(

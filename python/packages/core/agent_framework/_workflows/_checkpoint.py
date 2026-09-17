@@ -7,12 +7,13 @@ import copy
 import json
 import logging
 import os
+import threading
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, TypeAlias
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol, TypeAlias
 
 from ..exceptions import WorkflowCheckpointException
 
@@ -52,10 +53,11 @@ class WorkflowCheckpoint:
             allows chaining checkpoints together to form a history of workflow states.
         timestamp: ISO 8601 timestamp when checkpoint was created
         messages: Messages exchanged between executors
-        state: Committed workflow state including user data and executor states.
-            This contains only committed state; pending state changes are not
-            included in checkpoints. Executor states are stored under the
-            reserved key '_executor_state'.
+        state: Committed workflow state including user data, executor states, and
+            edge runner delivery state. This contains only committed state; pending
+            state changes are not included in checkpoints. Executor states are stored
+            under the reserved key '_executor_state', and edge runner state, such as
+            partially filled fan-in buffers, under '_edge_state'.
         pending_request_info_events: Any pending request info events that have not
             yet been processed at the time of checkpointing. This allows the workflow
             to resume with the correct pending events after a restore.
@@ -271,6 +273,11 @@ class FileCheckpointStorage:
         )
     """
 
+    _DELETE_LOCK_STRIPE_COUNT: ClassVar[int] = 64
+    _DELETE_LOCKS: ClassVar[tuple[threading.Lock, ...]] = tuple(
+        threading.Lock() for _ in range(_DELETE_LOCK_STRIPE_COUNT)
+    )
+
     def __init__(
         self,
         storage_path: str | Path,
@@ -311,6 +318,11 @@ class FileCheckpointStorage:
             raise WorkflowCheckpointException(f"Invalid checkpoint ID: {checkpoint_id}")
         return file_path
 
+    @classmethod
+    def _delete_lock(cls, file_path: Path) -> threading.Lock:
+        """Return the process-local deletion lock for a checkpoint file."""
+        return cls._DELETE_LOCKS[hash(file_path) % cls._DELETE_LOCK_STRIPE_COUNT]
+
     async def save(self, checkpoint: WorkflowCheckpoint) -> CheckpointID:
         """Save a checkpoint and return its ID.
 
@@ -319,16 +331,30 @@ class FileCheckpointStorage:
 
         Returns:
             The unique ID of the saved checkpoint.
+
+        Raises:
+            WorkflowCheckpointException: If the checkpoint cannot be encoded or would
+                fail to decode under this storage's ``allowed_checkpoint_types``.
         """
-        from ._checkpoint_encoding import encode_checkpoint_value
+        from ._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
 
         file_path = self._validate_file_path(checkpoint.checkpoint_id)
         checkpoint_dict = checkpoint.to_dict()
-        encoded_checkpoint = encode_checkpoint_value(checkpoint_dict)
+        # Fail at save time if encoding or restore validation fails (#8181).
+        try:
+            encoded_checkpoint = encode_checkpoint_value(checkpoint_dict)
+            decode_checkpoint_value(encoded_checkpoint, allowed_types=self._allowed_types)
+        except WorkflowCheckpointException:
+            raise
+        except Exception as ex:
+            raise WorkflowCheckpointException(
+                f"Checkpoint {checkpoint.checkpoint_id} cannot be encoded or restored under "
+                "this storage's allowed types; refusing to save."
+            ) from ex
 
         def _write_atomic() -> None:
             tmp_path = file_path.with_suffix(".json.tmp")
-            with open(tmp_path, "w") as f:
+            with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(encoded_checkpoint, f, indent=2, ensure_ascii=False)
             os.replace(tmp_path, file_path)
 
@@ -356,10 +382,19 @@ class FileCheckpointStorage:
             raise WorkflowCheckpointException(f"No checkpoint found with ID {checkpoint_id}")
 
         def _read() -> dict[str, Any]:
-            with open(file_path) as f:
+            with open(file_path, encoding="utf-8") as f:
                 return json.load(f)
 
-        encoded_checkpoint = await asyncio.to_thread(_read)
+        try:
+            encoded_checkpoint = await asyncio.to_thread(_read)
+        except UnicodeDecodeError as ex:
+            raise WorkflowCheckpointException(
+                f"Checkpoint file for {checkpoint_id} is not valid UTF-8 and cannot be loaded."
+            ) from ex
+        except json.JSONDecodeError as ex:
+            raise WorkflowCheckpointException(
+                f"Checkpoint file for {checkpoint_id} is not valid JSON and cannot be loaded."
+            ) from ex
 
         from ._checkpoint_encoding import decode_checkpoint_value
 
@@ -385,7 +420,7 @@ class FileCheckpointStorage:
             checkpoints: list[WorkflowCheckpoint] = []
             for file_path in self.storage_path.glob("*.json"):
                 try:
-                    with open(file_path) as f:
+                    with open(file_path, encoding="utf-8") as f:
                         encoded_checkpoint = json.load(f)
                         from ._checkpoint_encoding import decode_checkpoint_value
 
@@ -411,13 +446,16 @@ class FileCheckpointStorage:
             True if the checkpoint was successfully deleted, False if no checkpoint with the given ID exists.
         """
         file_path = self._validate_file_path(checkpoint_id)
+        file_lock = self._delete_lock(file_path)
 
         def _delete() -> bool:
-            if file_path.exists():
-                file_path.unlink()
-                logger.info(f"Deleted checkpoint {checkpoint_id} from {file_path}")
-                return True
-            return False
+            with file_lock:
+                try:
+                    file_path.unlink()
+                except FileNotFoundError:
+                    return False
+            logger.info(f"Deleted checkpoint {checkpoint_id} from {file_path}")
+            return True
 
         return await asyncio.to_thread(_delete)
 
@@ -445,18 +483,8 @@ class FileCheckpointStorage:
 
         Returns:
             A list of checkpoint IDs for the specified workflow name.
+            Only includes checkpoints that can be decoded under this storage's
+            allowed types (aligned with :meth:`list_checkpoints`, #8181).
         """
-
-        def _list_ids() -> list[CheckpointID]:
-            checkpoint_ids: list[CheckpointID] = []
-            for file_path in self.storage_path.glob("*.json"):
-                try:
-                    with open(file_path) as f:
-                        data = json.load(f)
-                    if data.get("workflow_name") == workflow_name:
-                        checkpoint_ids.append(data.get("checkpoint_id", file_path.stem))
-                except Exception as e:
-                    logger.warning(f"Failed to read checkpoint file {file_path}: {e}")
-            return checkpoint_ids
-
-        return await asyncio.to_thread(_list_ids)
+        checkpoints = await self.list_checkpoints(workflow_name=workflow_name)
+        return [checkpoint.checkpoint_id for checkpoint in checkpoints]

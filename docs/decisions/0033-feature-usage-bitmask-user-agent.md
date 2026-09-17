@@ -532,7 +532,7 @@ Sources: botocore [`useragent.py`](https://github.com/boto/botocore/blob/develop
 openai-python [`_base_client.py` `platform_headers()`](https://github.com/openai/openai-python/blob/main/src/openai/_base_client.py);
 anthropic-sdk-python [`_base_client.py`](https://github.com/anthropics/anthropic-sdk-python/blob/main/src/anthropic/_base_client.py);
 azure-core [`_universal.py` `UserAgentPolicy`](https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/core/azure-core/azure/core/pipeline/policies/_universal.py);
-google-api-core [`client_info.py`](https://github.com/googleapis/python-api-core/blob/main/google/api_core/client_info.py);
+google-api-core [`client_info.py`](https://github.com/googleapis/google-cloud-python/blob/main/packages/google-api-core/google/api_core/client_info.py);
 langsmith-sdk [`client.py`](https://github.com/langchain-ai/langsmith-sdk/blob/main/python/langsmith/client.py) /
 [`utils.py`](https://github.com/langchain-ai/langsmith-sdk/blob/main/python/langsmith/utils.py);
 huggingface_hub [`constants.py`](https://github.com/huggingface/huggingface_hub/blob/main/src/huggingface_hub/constants.py).

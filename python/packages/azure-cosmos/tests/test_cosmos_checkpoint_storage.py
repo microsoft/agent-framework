@@ -11,6 +11,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from agent_framework._settings import SecretString
 from agent_framework._workflows._checkpoint import WorkflowCheckpoint
 from agent_framework._workflows._checkpoint_encoding import encode_checkpoint_value
 from agent_framework.exceptions import SettingNotFoundError, WorkflowCheckpointException
@@ -129,17 +130,18 @@ async def test_init_missing_required_settings_raises(monkeypatch: pytest.MonkeyP
         CosmosCheckpointStorage()
 
 
+@pytest.mark.parametrize(
+    "credential", [None, "key-123", SecretString("key-123"), MagicMock()], ids=["env", "str", "secret", "token"]
+)
 async def test_init_constructs_client_with_credential(
-    monkeypatch: pytest.MonkeyPatch, mock_cosmos_client: MagicMock
+    monkeypatch: pytest.MonkeyPatch,
+    mock_cosmos_client: MagicMock,
+    credential: str | SecretString | MagicMock | None,
 ) -> None:
-    """Uses key-based auth when a key string is provided, otherwise falls back to Azure credential (RBAC)."""
+    """Unwrap explicit and environment keys while preserving Azure token credentials."""
     mock_factory = MagicMock(return_value=mock_cosmos_client)
     monkeypatch.setattr(checkpoint_storage_module, "CosmosClient", mock_factory)
-    monkeypatch.delenv("AZURE_COSMOS_KEY", raising=False)
-
-    # Simulate real-world pattern: use key if available, else RBAC credential
-    cosmos_key = os.getenv("AZURE_COSMOS_KEY")
-    credential: Any = cosmos_key if cosmos_key else MagicMock()  # MagicMock simulates DefaultAzureCredential()
+    monkeypatch.setenv("AZURE_COSMOS_KEY", "env-key")
 
     CosmosCheckpointStorage(
         endpoint="https://account.documents.azure.com:443/",
@@ -151,7 +153,11 @@ async def test_init_constructs_client_with_credential(
     mock_factory.assert_called_once()
     kwargs = mock_factory.call_args.kwargs
     assert kwargs["url"] == "https://account.documents.azure.com:443/"
-    assert kwargs["credential"] is credential
+    if isinstance(credential, MagicMock):
+        assert kwargs["credential"] is credential
+    else:
+        assert type(kwargs["credential"]) is str
+        assert kwargs["credential"] == ("env-key" if credential is None else "key-123")
 
 
 async def test_init_creates_database_and_container(mock_cosmos_client: MagicMock) -> None:

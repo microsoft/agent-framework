@@ -3,7 +3,6 @@
 using System;
 using System.Diagnostics.CodeAnalysis;
 using System.Threading.Tasks;
-using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Extensions.AI;
 
@@ -24,13 +23,13 @@ public class PortableValueTests
     [InlineData(3.14)]
     public async Task Test_PortableValueRoundtripAsync<T>(T value)
     {
-        value.Should().NotBeNull();
+        Assert.NotNull(value);
 
         PortableValue portableValue = new(value);
 
-        portableValue.Is<Never>(out _).Should().BeFalse();
-        portableValue.Is(out T? returnedValue).Should().BeTrue();
-        returnedValue.Should().Be(value);
+        Assert.False(portableValue.Is<Never>(out _));
+        Assert.True(portableValue.Is(out T? returnedValue));
+        Assert.Equal(value, returnedValue);
     }
 
     [Fact]
@@ -40,9 +39,9 @@ public class PortableValueTests
 
         PortableValue portableValue = new(value);
 
-        portableValue.Is<Never>(out _).Should().BeFalse();
-        portableValue.Is(out ChatMessage? returnedValue).Should().BeTrue();
-        returnedValue.Should().Be(value);
+        Assert.False(portableValue.Is<Never>(out _));
+        Assert.True(portableValue.Is(out ChatMessage? returnedValue));
+        Assert.Equal(value, returnedValue);
     }
 
     [Theory]
@@ -52,20 +51,19 @@ public class PortableValueTests
     [InlineData(3.14)]
     public async Task Test_DelayedSerializationRoundtripAsync<T>(T value)
     {
-        value.Should().NotBeNull();
+        Assert.NotNull(value);
 
         TestDelayedDeserialization<T> delayed = new(value);
         PortableValue portableValue = new(delayed);
 
-        portableValue.Is<Never>(out _).Should().BeFalse();
-        portableValue.Is(out object? obj).Should().BeTrue();
-        obj.Should().NotBeOfType<T>();
-        obj.Should().BeOfType<PortableValue>()
-                .And.Subject.As<PortableValue>()
-                            .As<T>().Should().Be(value);
+        Assert.False(portableValue.Is<Never>(out _));
+        Assert.True(portableValue.Is(out object? obj));
+        Assert.False(obj is T);
+        PortableValue nestedPortableValue = Assert.IsType<PortableValue>(obj);
+        Assert.Equal(value, nestedPortableValue.As<T>());
 
-        portableValue.Is(out T? returnedValue).Should().BeTrue();
-        returnedValue.Should().Be(value);
+        Assert.True(portableValue.Is(out T? returnedValue));
+        Assert.Equal(value, returnedValue);
     }
 
     [Fact]
@@ -76,15 +74,14 @@ public class PortableValueTests
         TestDelayedDeserialization<ChatMessage> delayed = new(value);
         PortableValue portableValue = new(delayed);
 
-        portableValue.Is<Never>(out _).Should().BeFalse();
-        portableValue.Is(out object? obj).Should().BeTrue();
-        obj.Should().NotBeOfType<ChatMessage>();
-        obj.Should().BeOfType<PortableValue>()
-                .And.Subject.As<PortableValue>()
-                            .As<ChatMessage>().Should().Be(value);
+        Assert.False(portableValue.Is<Never>(out _));
+        Assert.True(portableValue.Is(out object? obj));
+        Assert.False(obj is ChatMessage);
+        PortableValue nestedPortableValue = Assert.IsType<PortableValue>(obj);
+        Assert.Equal(value, nestedPortableValue.As<ChatMessage>());
 
-        portableValue.Is(out ChatMessage? returnedValue).Should().BeTrue();
-        returnedValue.Should().Be(value);
+        Assert.True(portableValue.Is(out ChatMessage? returnedValue));
+        Assert.Equal(value, returnedValue);
     }
 
     private sealed class TestDelayedDeserialization<T> : IDelayedDeserialization

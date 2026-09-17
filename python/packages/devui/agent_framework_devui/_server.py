@@ -1227,19 +1227,17 @@ class DevServer:
     ) -> AsyncGenerator[str]:
         """Stream execution directly through executor."""
         try:
-            # Collect events for final response.completed event
-            events: list[Any] = []
-
             # Get conversation_id for trace storage
             conversation_getter = getattr(request, "_get_conversation_id", None)
             conversation_id = conversation_getter() if callable(conversation_getter) else None
 
             # Stream all events
             async for event in executor.execute_streaming(request):
-                events.append(event)
+                event_type_value = getattr(event, "type", None)
+                event_type = event_type_value if isinstance(event_type_value, str) else None
 
                 # Store trace events for context inspection (persisted with conversation)
-                if conversation_id and hasattr(event, "type") and event.type == "response.trace.completed":
+                if conversation_id and event_type == "response.trace.completed":
                     try:
                         trace_data = event.data if hasattr(event, "data") else None
                         if trace_data and isinstance(conversation_id, str):
@@ -1263,28 +1261,6 @@ class DevServer:
                 else:
                     payload = json.dumps(str(event))
                 yield f"data: {payload}\n\n"
-
-            # Aggregate to final response and emit response.completed event (OpenAI standard)
-            from .models import ResponseCompletedEvent
-
-            final_response = await executor.message_mapper.aggregate_to_response(events, request)
-
-            # The sequence number for response.completed should be the next number after all events
-            # The last event in the list should have the highest sequence number so far
-            # We need to increment from that
-            last_seq = 0
-            for event in reversed(events):
-                sequence_number = getattr(event, "sequence_number", None)
-                if isinstance(sequence_number, int):
-                    last_seq = sequence_number
-                    break
-
-            completed_event = ResponseCompletedEvent(
-                type="response.completed",
-                response=final_response,
-                sequence_number=last_seq + 1,
-            )
-            yield f"data: {completed_event.model_dump_json()}\n\n"
 
             # Send final done event
             yield "data: [DONE]\n\n"

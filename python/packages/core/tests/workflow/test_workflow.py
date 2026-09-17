@@ -21,6 +21,7 @@ from agent_framework import (
     Content,
     Executor,
     FileCheckpointStorage,
+    InMemoryCheckpointStorage,
     InProcRunnerContext,
     Message,
     ResponseStream,
@@ -108,6 +109,24 @@ class MockExecutorRequestApproval(Executor):
             await ctx.yield_output(data)
         else:
             await ctx.send_message(NumberMessage(data=data))
+
+
+def test_coerce_request_info_response_converts_content() -> None:
+    """Request responses should use the shared Content conversion path."""
+    from agent_framework._workflows._workflow import _coerce_request_info_response
+
+    response = _coerce_request_info_response("hello", Content, "content")
+
+    assert isinstance(response, Content)
+    assert response.text == "hello"
+
+
+def test_coerce_request_info_response_rejects_mismatched_type() -> None:
+    """Request responses that cannot be validated should report their request ID."""
+    from agent_framework._workflows._workflow import _coerce_request_info_response
+
+    with pytest.raises(ValueError, match="Response type mismatch for request ID typed"):
+        _coerce_request_info_response("not-an-int", int, "typed")
 
 
 async def test_fresh_message_while_pending_advances_state_without_abandoning_requests(
@@ -514,6 +533,36 @@ async def test_workflow_run_stream_from_checkpoint_with_responses(
         assert next(event for event in events if event.type == "request_info" and event.request_id == "request_123")
 
         assert len(events) > 0  # Just ensure we processed some events
+
+
+async def test_cancel_pending_requests_restores_checkpoint_before_cancellation() -> None:
+    """Cold cancellation restores persisted pending state before removing the request."""
+    storage = InMemoryCheckpointStorage()
+
+    def build_workflow() -> Any:
+        return WorkflowBuilder(
+            name="cold-core-cancellation",
+            start_executor=MockExecutorRequestApproval(id="approver"),
+            checkpoint_storage=storage,
+        ).build()
+
+    first_workflow = build_workflow()
+    paused = await first_workflow.run(NumberMessage(data=7))
+    [request] = paused.get_request_info_events()
+    checkpoints = await storage.list_checkpoints(workflow_name=first_workflow.name)
+    pending_checkpoints = [checkpoint for checkpoint in checkpoints if checkpoint.pending_request_info_events]
+    assert pending_checkpoints
+    checkpoint_id = max(pending_checkpoints, key=lambda checkpoint: checkpoint.timestamp).checkpoint_id
+
+    fresh_workflow = build_workflow()
+    cancelled = await fresh_workflow.cancel_pending_requests(
+        [request.request_id],
+        checkpoint_id=checkpoint_id,
+        checkpoint_storage=storage,
+    )
+
+    assert cancelled.get_request_info_events() == []
+    assert cancelled.get_final_state() is WorkflowRunState.IDLE
 
 
 @dataclass
