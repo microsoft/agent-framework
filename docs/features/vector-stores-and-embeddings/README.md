@@ -511,6 +511,10 @@ Each connector follows the AF package structure:
    - `create_get_tool(...)` → tool for retrieving records by key
    - `create_delete_tool(...)` → tool for deleting records
    - Upsert and delete require approval by default; get is read-only by default
+   - Collection key hooks provide JSON schemas and JSON/native conversion for UUID and connector-native keys
+   - Auto-generated keys are optional only when the record model can represent an omitted key
+   - Connector errors propagate without inventing partial-success results; retry behavior follows the collection's
+     documented stable-key versus generated-key contract
 
 10. **Generic vector providers**:
     - `VectorStoreHistoryProvider` takes a store because it owns the history model and collection. Every operation

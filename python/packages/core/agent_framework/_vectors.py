@@ -1145,6 +1145,70 @@ class BaseVectorCollection(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
     async def __aexit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None:
         """Exit the collection context manager."""
 
+    def key_json_schema(self) -> Mapping[str, Any]:
+        """Return the JSON schema used for agent-tool key arguments.
+
+        Connectors with native key types should override this together with
+        :meth:`key_from_json` and :meth:`key_to_json`.
+
+        Returns:
+            A JSON schema for one key.
+
+        Raises:
+            NotImplementedError: If the declared key type has no portable default mapping.
+        """
+        key_type = self.definition.key_field.type_
+        if key_type == "str":
+            return {"type": "string"}
+        if key_type == "int":
+            return {"type": "integer"}
+        if key_type == "float":
+            return {"type": "number"}
+        if key_type == "bool":
+            return {"type": "boolean"}
+        if key_type == "UUID":
+            return {"type": "string", "format": "uuid"}
+        raise NotImplementedError(
+            f"Key type '{key_type or 'unknown'}' has no portable JSON schema. "
+            "Use a connector override or a custom tool."
+        )
+
+    def key_from_json(self, value: Any) -> KeyT:
+        """Convert one JSON-compatible tool argument to a collection key."""
+        key_type = self.definition.key_field.type_
+        if key_type == "str" and isinstance(value, str):
+            return cast(KeyT, value)
+        if key_type == "int" and isinstance(value, int) and not isinstance(value, bool):
+            return cast(KeyT, value)
+        if key_type == "float" and isinstance(value, int | float) and not isinstance(value, bool):
+            return cast(KeyT, float(value))
+        if key_type == "bool" and isinstance(value, bool):
+            return cast(KeyT, value)
+        if key_type == "UUID" and isinstance(value, str):
+            try:
+                return cast(KeyT, str(uuid.UUID(value)))
+            except ValueError as exc:
+                raise ValueError("Key must be a valid UUID string.") from exc
+        raise TypeError(f"Key value must match the declared '{key_type or 'unknown'}' key type.")
+
+    def key_to_json(self, key: KeyT) -> Any:
+        """Convert one collection key to a JSON-compatible tool result."""
+        key_type = self.definition.key_field.type_
+        if key_type == "str" and isinstance(key, str):
+            return key
+        if key_type == "int" and isinstance(key, int) and not isinstance(key, bool):
+            return key
+        if key_type == "float" and isinstance(key, int | float) and not isinstance(key, bool):
+            return float(key)
+        if key_type == "bool" and isinstance(key, bool):
+            return key
+        if key_type == "UUID" and isinstance(key, uuid.UUID | str):
+            try:
+                return str(uuid.UUID(str(key)))
+            except ValueError as exc:
+                raise ValueError("Collection key must be a valid UUID.") from exc
+        raise TypeError(f"Collection key must match the declared '{key_type or 'unknown'}' key type.")
+
     @abstractmethod
     async def ensure_collection_exists(
         self,
@@ -1898,11 +1962,20 @@ def _vector_tool_field_schema(field: VectorStoreField) -> dict[str, Any]:
 
 
 def _vector_tool_record_schema(collection: BaseVectorCollection[Any, Any]) -> dict[str, Any]:
-    properties = {field.name: _vector_tool_field_schema(field) for field in collection.definition.fields}
+    properties = {
+        field.name: (
+            dict(collection.key_json_schema()) if field.field_type == "key" else _vector_tool_field_schema(field)
+        )
+        for field in collection.definition.fields
+    }
     required = [
         field.name
         for field in collection.definition.fields
-        if not (field.field_type == "key" and field.is_auto_generated)
+        if not (
+            field.field_type == "key"
+            and field.is_auto_generated
+            and (collection.record_type is dict or _has_default(collection.record_type, field.name))
+        )
         and (collection.record_type is dict or not _has_default(collection.record_type, field.name))
     ]
     return {
@@ -1914,7 +1987,7 @@ def _vector_tool_record_schema(collection: BaseVectorCollection[Any, Any]) -> di
 
 
 def _vector_tool_key_schema(collection: BaseVectorCollection[Any, Any]) -> dict[str, Any]:
-    return _vector_tool_field_schema(collection.definition.key_field)
+    return dict(collection.key_json_schema())
 
 
 def _resolve_filter_record_value(
@@ -2071,6 +2144,9 @@ def _decode_vector_tool_records(
         if not isinstance(record, Mapping):
             raise TypeError("Each record must be a mapping.")
         logical_record = dict(cast(Mapping[str, Any], record))
+        key_name = collection.definition.key_name
+        if key_name in logical_record:
+            logical_record[key_name] = collection.key_from_json(logical_record[key_name])
         if collection.record_type is dict:
             decoded.append(cast(ModelT, logical_record))
             continue
@@ -2087,16 +2163,20 @@ def _encode_vector_tool_record(
     include_vectors: bool,
 ) -> dict[str, Any]:
     if collection.record_type is dict:
-        source = _VectorStoreRecordHandler._to_builtin_mapping(  # pyright: ignore[reportPrivateUsage]
-            record
-        )
+        encoded_record = dict(cast(Mapping[str, Any], record))
     else:
         registration = _VECTOR_MODEL_REGISTRY.get(collection.record_type)
         if registration is None:
             raise RuntimeError(f"Vector model {collection.record_type.__name__!r} is not registered.")
-        source = _VectorStoreRecordHandler._to_builtin_mapping(  # pyright: ignore[reportPrivateUsage]
-            registration.encoder(record)
-        )
+        encoded_record = dict(registration.encoder(record))
+
+    key_field = collection.definition.key_field
+    key_name = key_field.name if key_field.name in encoded_record else key_field.storage_name or key_field.name
+    if key_name in encoded_record:
+        encoded_record[key_name] = collection.key_to_json(encoded_record[key_name])
+    source = _VectorStoreRecordHandler._to_builtin_mapping(  # pyright: ignore[reportPrivateUsage]
+        encoded_record
+    )
 
     result: dict[str, Any] = {}
     for field in collection.definition.fields:
@@ -2124,6 +2204,12 @@ def create_upsert_tool(
     max_batch_size: int = _DEFAULT_VECTOR_TOOL_MAX_BATCH_SIZE,
 ) -> FunctionTool:
     """Create an agent-usable tool that upserts vector collection records.
+
+    This tool preserves the collection's partial-persistence contract. If a
+    connector raises after committing part of a batch, no partial key list is
+    available through the collection abstraction, so the error propagates.
+    Retrying stable application-provided keys is normally idempotent; retrying
+    store-generated keys may create duplicates.
 
     Args:
         collection: The vector collection CRUD capability invoked by the tool.
@@ -2163,7 +2249,7 @@ def create_upsert_tool(
                 indexes = ", ".join(str(index) for index in invalid_indexes)
                 raise ValueError(f"records at indexes {indexes} do not satisfy the configured scope filter.")
         keys = await collection.upsert(decoded, generate_vectors=generate_vectors)
-        return {"keys": list(keys)}
+        return {"keys": [collection.key_to_json(key) for key in keys]}
 
     return FunctionTool(
         name=name,
@@ -2217,10 +2303,10 @@ def create_get_tool(
     configured_filter = _prepare_vector_tool_filter(collection, filter)
 
     async def get_tool(keys: Any) -> dict[str, Any] | list[Content]:
-        validated_keys = cast(
-            list[KeyT],
-            _validate_vector_tool_sequence(keys, name="keys", max_batch_size=max_batch_size),
-        )
+        validated_keys = [
+            collection.key_from_json(key)
+            for key in _validate_vector_tool_sequence(keys, name="keys", max_batch_size=max_batch_size)
+        ]
         records = (
             await collection.get(validated_keys, include_vectors=include_vectors)
             if configured_filter is None
@@ -2297,10 +2383,10 @@ def create_delete_tool(
     configured_filter = _prepare_vector_tool_filter(collection, filter)
 
     async def delete_tool(keys: Any) -> dict[str, Any]:
-        validated_keys = cast(
-            list[KeyT],
-            _validate_vector_tool_sequence(keys, name="keys", max_batch_size=max_batch_size),
-        )
+        validated_keys = [
+            collection.key_from_json(key)
+            for key in _validate_vector_tool_sequence(keys, name="keys", max_batch_size=max_batch_size)
+        ]
         keys_to_delete = validated_keys
         if configured_filter is not None:
             records = await collection.get(
@@ -2318,7 +2404,7 @@ def create_delete_tool(
             ]
         if keys_to_delete:
             await collection.delete(keys_to_delete)
-        return {"processed_keys": keys_to_delete}
+        return {"processed_keys": [collection.key_to_json(key) for key in keys_to_delete]}
 
     return FunctionTool(
         name=name,
@@ -2688,7 +2774,8 @@ class VectorStoreHistoryProvider(HistoryProvider):
                 embedding generator is supplied, this mapping must include positive
                 integer ``dimensions`` for the collection definition.
             compaction_strategy: Optional strategy applied after loading history and
-                before adding it to model context.
+                before adding it to model context. Custom strategies are responsible
+                for preserving complete reasoning/function-call/result groups.
             compaction_tokenizer: Optional tokenizer used by compaction.
             include_search_tool: Whether to add a scoped full-history search tool.
             search_approval_mode: Approval mode for the optional history search tool.

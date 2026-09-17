@@ -11,6 +11,7 @@ from dataclasses import FrozenInstanceError, dataclass, field
 from decimal import Decimal
 from typing import Annotated, Any, ClassVar, Literal, cast
 from unittest.mock import patch
+from uuid import UUID, uuid4
 
 import msgspec
 import pytest
@@ -2578,6 +2579,101 @@ async def test_vector_crud_tools_round_trip_records() -> None:
     deleted = await delete_tool.invoke(arguments={"keys": ["one"]}, skip_parsing=True)
     assert deleted == {"processed_keys": ["one"]}
     assert await get_tool.invoke(arguments={"keys": ["one"]}, skip_parsing=True) == {"records": []}
+
+
+async def test_vector_crud_tools_support_auto_generated_keys_when_model_can_omit_them() -> None:
+    definition = VectorStoreCollectionDefinition(
+        [
+            VectorStoreField("key", name="id", type_="str", is_auto_generated=True),
+            VectorStoreField("data", name="text", type_="str"),
+        ],
+        collection_name="auto_dict",
+    )
+    collection: InMemoryCollection[str, dict[str, Any]] = InMemoryCollection(dict, definition=definition)
+    await collection.ensure_collection_exists()
+    upsert_tool = create_upsert_tool(collection, generate_vectors=False)
+
+    record_schema = upsert_tool.parameters()["properties"]["records"]["items"]
+    assert record_schema["properties"]["id"] == {"type": "string"}
+    assert record_schema["required"] == ["text"]
+
+    result = await upsert_tool.invoke(arguments={"records": [{"text": "generated"}]}, skip_parsing=True)
+    assert len(result["keys"]) == 1
+    assert isinstance(result["keys"][0], str)
+
+
+def test_vector_upsert_tool_requires_auto_key_when_typed_model_has_no_default() -> None:
+    @vectorstoremodel(collection_name="required_auto_key")
+    @dataclass
+    class RequiredAutoKey:
+        id: Annotated[str, VectorStoreField("key", is_auto_generated=True)]
+        text: Annotated[str, VectorStoreField("data")]
+
+    collection: InMemoryCollection[str, RequiredAutoKey] = InMemoryCollection(RequiredAutoKey)
+
+    record_schema = create_upsert_tool(collection).parameters()["properties"]["records"]["items"]
+
+    assert record_schema["required"] == ["id", "text"]
+
+
+async def test_vector_upsert_tool_omits_auto_key_when_typed_model_has_default() -> None:
+    @vectorstoremodel(collection_name="default_auto_key")
+    @dataclass
+    class DefaultAutoKey:
+        text: Annotated[str, VectorStoreField("data")]
+        id: Annotated[str | None, VectorStoreField("key", is_auto_generated=True)] = None
+
+    collection: InMemoryCollection[str, DefaultAutoKey] = InMemoryCollection(DefaultAutoKey)
+    await collection.ensure_collection_exists()
+    tool = create_upsert_tool(collection, generate_vectors=False)
+
+    record_schema = tool.parameters()["properties"]["records"]["items"]
+    result = await tool.invoke(arguments={"records": [{"text": "generated"}]}, skip_parsing=True)
+
+    assert record_schema["required"] == ["text"]
+    assert len(result["keys"]) == 1
+
+
+async def test_vector_crud_tools_round_trip_uuid_keys_as_json_strings() -> None:
+    @vectorstoremodel(collection_name="uuid_records")
+    @dataclass
+    class UUIDRecord:
+        id: Annotated[UUID, VectorStoreField("key")]
+        text: Annotated[str, VectorStoreField("data")]
+
+    collection: InMemoryCollection[UUID, UUIDRecord] = InMemoryCollection(UUIDRecord)
+    await collection.ensure_collection_exists()
+    record_id = uuid4()
+    upsert_tool = create_upsert_tool(collection, generate_vectors=False)
+    get_tool = create_get_tool(collection)
+
+    upserted = await upsert_tool.invoke(
+        arguments={"records": [{"id": str(record_id), "text": "uuid"}]},
+        skip_parsing=True,
+    )
+    fetched = await get_tool.invoke(arguments={"keys": [str(record_id)]}, skip_parsing=True)
+
+    assert upsert_tool.parameters()["properties"]["records"]["items"]["properties"]["id"] == {
+        "type": "string",
+        "format": "uuid",
+    }
+    assert upserted == {"keys": [str(record_id)]}
+    assert fetched == {"records": [{"id": str(record_id), "text": "uuid"}]}
+
+
+def test_vector_crud_tools_reject_unknown_native_key_schema() -> None:
+    definition = VectorStoreCollectionDefinition([
+        VectorStoreField("key", name="id", type_="native"),
+        VectorStoreField("data", name="text", type_="str"),
+    ])
+    collection: InMemoryCollection[Any, dict[str, Any]] = InMemoryCollection(
+        dict,
+        definition=definition,
+        collection_name="native_keys",
+    )
+
+    with pytest.raises(NotImplementedError, match="no portable JSON schema"):
+        create_get_tool(collection)
 
 
 @pytest.mark.parametrize("factory", [create_upsert_tool, create_get_tool, create_delete_tool])
