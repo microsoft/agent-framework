@@ -2394,6 +2394,125 @@ async def test_as_tool_resumes_two_simultaneous_nested_approvals_together() -> N
     assert second_response.text == "Amsterdam: sunny with clear skies."
 
 
+async def test_as_tool_resumes_partial_approve_and_reject_in_one_simultaneous_group() -> None:
+    """Approving one and rejecting another simultaneous nested approval, in one message.
+
+    A grouped resume must not treat the whole group as a single decision: each response
+    keeps its own approve/reject outcome, so a rejected sibling in the same batch as an
+    approved one must never execute, while the approved one still does.
+    """
+    calls = {"p": 0, "q": 0}
+
+    @tool(name="tool_p", approval_mode="always_require")
+    def tool_p() -> str:
+        calls["p"] += 1
+        return "p"
+
+    @tool(name="tool_q", approval_mode="always_require")
+    def tool_q() -> str:
+        calls["q"] += 1
+        return "q"
+
+    inner_client = MockBaseChatClient()
+    outer_client = MockBaseChatClient()
+    inner_agent = Agent(client=inner_client, name="worker", tools=[tool_p, tool_q])
+    outer_agent = Agent(
+        client=outer_client,
+        name="coordinator",
+        tools=[inner_agent.as_tool(name="worker_tool", approval_mode="never_require", propagate_session=False)],
+    )
+    session = AgentSession()
+
+    outer_call = Content.from_function_call(call_id="outer-call", name="worker_tool", arguments='{"task": "pq"}')
+    outer_client.run_responses = [ChatResponse(messages=Message(role="assistant", contents=[outer_call]))]
+    p_call = Content.from_function_call(call_id="p-call", name="tool_p", arguments="{}")
+    q_call = Content.from_function_call(call_id="q-call", name="tool_q", arguments="{}")
+    inner_client.streaming_responses = [[ChatResponseUpdate(role="assistant", contents=[p_call, q_call])]]
+
+    first_response = await outer_agent.run("do pq", session=session)
+    assert len(first_response.user_input_requests) == 2
+    p_request = next(
+        r
+        for r in first_response.user_input_requests
+        if r.function_call is not None and r.function_call.name == "tool_p"
+    )
+    q_request = next(
+        r
+        for r in first_response.user_input_requests
+        if r.function_call is not None and r.function_call.name == "tool_q"
+    )
+
+    inner_client.streaming_responses = [
+        [ChatResponseUpdate(role="assistant", contents=[Content.from_text("p ran, q was rejected")])]
+    ]
+    outer_client.run_responses = [
+        ChatResponse(messages=Message(role="assistant", contents=["Final: p ran, q rejected."]))
+    ]
+    responses = [p_request.to_function_approval_response(True), q_request.to_function_approval_response(False)]
+    final_response = await outer_agent.run(Message(role="user", contents=responses), session=session)
+
+    assert calls == {"p": 1, "q": 0}, "the rejected sibling must never execute even though its approved sibling does"
+    assert not final_response.user_input_requests
+    assert final_response.text == "Final: p ran, q rejected."
+
+
+async def test_as_tool_resumes_three_simultaneous_nested_approvals_together() -> None:
+    """Three (not just two) simultaneous nested approvals answered in one turn.
+
+    Generalizes test_as_tool_resumes_two_simultaneous_nested_approvals_together to a
+    larger group, since the owner-placeholder attachment logic is index-based ([-1]) and
+    should not regress for groups larger than two.
+    """
+    calls = {"p": 0, "q": 0, "r": 0}
+
+    @tool(name="tool_p", approval_mode="always_require")
+    def tool_p() -> str:
+        calls["p"] += 1
+        return "p"
+
+    @tool(name="tool_q", approval_mode="always_require")
+    def tool_q() -> str:
+        calls["q"] += 1
+        return "q"
+
+    @tool(name="tool_r", approval_mode="always_require")
+    def tool_r() -> str:
+        calls["r"] += 1
+        return "r"
+
+    inner_client = MockBaseChatClient()
+    outer_client = MockBaseChatClient()
+    inner_agent = Agent(client=inner_client, name="worker", tools=[tool_p, tool_q, tool_r])
+    outer_agent = Agent(
+        client=outer_client,
+        name="coordinator",
+        tools=[inner_agent.as_tool(name="worker_tool", approval_mode="never_require", propagate_session=False)],
+    )
+    session = AgentSession()
+
+    outer_call = Content.from_function_call(call_id="outer-call", name="worker_tool", arguments='{"task": "pqr"}')
+    outer_client.run_responses = [ChatResponse(messages=Message(role="assistant", contents=[outer_call]))]
+    p_call = Content.from_function_call(call_id="p-call", name="tool_p", arguments="{}")
+    q_call = Content.from_function_call(call_id="q-call", name="tool_q", arguments="{}")
+    r_call = Content.from_function_call(call_id="r-call", name="tool_r", arguments="{}")
+    inner_client.streaming_responses = [[ChatResponseUpdate(role="assistant", contents=[p_call, q_call, r_call])]]
+
+    first_response = await outer_agent.run("do pqr", session=session)
+    assert calls == {"p": 0, "q": 0, "r": 0}
+    assert len(first_response.user_input_requests) == 3
+
+    inner_client.streaming_responses = [
+        [ChatResponseUpdate(role="assistant", contents=[Content.from_text("all three done")])]
+    ]
+    outer_client.run_responses = [ChatResponse(messages=Message(role="assistant", contents=["Final answer."]))]
+    approval_responses = [request.to_function_approval_response(True) for request in first_response.user_input_requests]
+    final_response = await outer_agent.run(Message(role="user", contents=approval_responses), session=session)
+
+    assert calls == {"p": 1, "q": 1, "r": 1}, "each of the three tools must execute exactly once"
+    assert not final_response.user_input_requests
+    assert final_response.text == "Final answer."
+
+
 @pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.parametrize("propagate_session", [False, True])
 async def test_as_tool_resumes_consecutive_nested_approvals(stream: bool, propagate_session: bool) -> None:
@@ -2433,6 +2552,26 @@ async def test_as_tool_resumes_consecutive_nested_approvals(stream: bool, propag
         if stream:
             return await outer_agent.run(run_input, session=session, stream=True).get_final_response()
         return await outer_agent.run(run_input, session=session, stream=False)
+
+    # Capture what actually gets sent to the outer model on each run: a real provider
+    # rejects a transcript where an assistant turn's tool call has no matching result
+    # before the next assistant turn, or where the same call gets more than one result.
+    sent_batches: list[list[Message]] = []
+    original_get_non_streaming = outer_client._get_non_streaming_response
+    original_get_streaming = outer_client._get_streaming_response
+
+    async def capturing_non_streaming(
+        *, messages: MutableSequence[Message], options: dict[str, Any], **kwargs: Any
+    ) -> ChatResponse:
+        sent_batches.append(list(messages))
+        return await original_get_non_streaming(messages=messages, options=options, **kwargs)
+
+    def capturing_streaming(*, messages: MutableSequence[Message], options: dict[str, Any], **kwargs: Any) -> Any:
+        sent_batches.append(list(messages))
+        return original_get_streaming(messages=messages, options=options, **kwargs)
+
+    outer_client._get_non_streaming_response = capturing_non_streaming  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+    outer_client._get_streaming_response = capturing_streaming  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
 
     outer_call = Content.from_function_call(call_id="outer-call", name="worker_tool", arguments='{"task": "details"}')
     if stream:
@@ -2488,6 +2627,492 @@ async def test_as_tool_resumes_consecutive_nested_approvals(stream: bool, propag
     assert second_calls == 1
     assert not final_response.user_input_requests
     assert final_response.text == "Done."
+
+    # Regression coverage for the transcript-well-formedness gap raised in review: a
+    # function_result must never be orphaned (no function_call anywhere earlier for the
+    # same call id), and every function_call issued anywhere in the sent transcript must
+    # eventually get a function_result. This intentionally does not also assert exactly-once
+    # call/result pairing or strict per-turn ordering across every round: this scenario's
+    # multi-round history persistence has a separate, pre-existing duplication issue
+    # (present identically with or without this change, confirmed by re-running against the
+    # unmodified code) that is out of scope here and needs its own investigation.
+    third_run_messages = sent_batches[-1]
+    called_ids: set[str] = set()
+    resulted_ids: set[str] = set()
+    for message in third_run_messages:
+        for content in message.contents:
+            if content.type == "function_call" and content.call_id is not None:
+                called_ids.add(content.call_id)
+            elif content.type == "function_result" and content.call_id is not None:
+                resulted_ids.add(content.call_id)
+    orphaned_results = resulted_ids - called_ids
+    assert not orphaned_results, f"function_result(s) for {orphaned_results} have no matching function_call anywhere"
+    unresolved_calls = called_ids - resulted_ids
+    assert not unresolved_calls, f"function_call(s) for {unresolved_calls} never received a function_result"
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_as_tool_resumes_three_consecutive_nested_approvals(stream: bool) -> None:
+    """A chain of three consecutive approval rounds must not duplicate the owner's result.
+
+    Regression test: the owner's own call gets an interim placeholder result the first
+    time a later round leaves it behind (see test_as_tool_resumes_consecutive_nested_approvals),
+    but a chain of three or more rounds hits that "still pending" branch more than once. An
+    earlier version of the fix re-emitted the placeholder on every intermediate round instead
+    of only the first, producing two function_result entries for the same owner call id.
+    """
+    calls = {"a": 0, "b": 0, "c": 0}
+
+    @tool(name="tool_a", approval_mode="always_require")
+    def tool_a() -> str:
+        calls["a"] += 1
+        return "a"
+
+    @tool(name="tool_b", approval_mode="always_require")
+    def tool_b() -> str:
+        calls["b"] += 1
+        return "b"
+
+    @tool(name="tool_c", approval_mode="always_require")
+    def tool_c() -> str:
+        calls["c"] += 1
+        return "c"
+
+    inner_client = MockBaseChatClient()
+    outer_client = MockBaseChatClient()
+    inner_agent = Agent(client=inner_client, name="worker", tools=[tool_a, tool_b, tool_c])
+    outer_agent = Agent(
+        client=outer_client,
+        name="coordinator",
+        tools=[inner_agent.as_tool(name="worker_tool", approval_mode="never_require", propagate_session=False)],
+    )
+    session = AgentSession()
+
+    async def run_outer(run_input: str | Message) -> AgentResponse:
+        if stream:
+            return await outer_agent.run(run_input, session=session, stream=True).get_final_response()
+        return await outer_agent.run(run_input, session=session, stream=False)
+
+    sent_batches: list[list[Message]] = []
+    if stream:
+        original_get_response: Any = outer_client._get_streaming_response
+
+        def capturing_response(*, messages: MutableSequence[Message], options: dict[str, Any], **kwargs: Any) -> Any:
+            sent_batches.append(list(messages))
+            return original_get_response(messages=messages, options=options, **kwargs)
+
+        outer_client._get_streaming_response = capturing_response  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+    else:
+        original_get_response = outer_client._get_non_streaming_response
+
+        async def capturing_response(  # type: ignore[misc]
+            *, messages: MutableSequence[Message], options: dict[str, Any], **kwargs: Any
+        ) -> ChatResponse:
+            sent_batches.append(list(messages))
+            return await original_get_response(messages=messages, options=options, **kwargs)
+
+        outer_client._get_non_streaming_response = capturing_response  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+
+    outer_call = Content.from_function_call(call_id="outer-call", name="worker_tool", arguments='{"task": "abc"}')
+    if stream:
+        outer_client.streaming_responses = [[ChatResponseUpdate(role="assistant", contents=[outer_call])]]
+    else:
+        outer_client.run_responses = [ChatResponse(messages=Message(role="assistant", contents=[outer_call]))]
+    inner_client.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                role="assistant", contents=[Content.from_function_call(call_id="a-call", name="tool_a", arguments="{}")]
+            )
+        ]
+    ]
+    first_response = await run_outer("do abc")
+    first_request = first_response.user_input_requests[0]
+
+    inner_client.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                role="assistant", contents=[Content.from_function_call(call_id="b-call", name="tool_b", arguments="{}")]
+            )
+        ]
+    ]
+    second_response = await run_outer(
+        Message(role="user", contents=[first_request.to_function_approval_response(True)])
+    )
+    second_request = second_response.user_input_requests[0]
+
+    inner_client.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                role="assistant", contents=[Content.from_function_call(call_id="c-call", name="tool_c", arguments="{}")]
+            )
+        ]
+    ]
+    third_response = await run_outer(
+        Message(role="user", contents=[second_request.to_function_approval_response(True)])
+    )
+    third_request = third_response.user_input_requests[0]
+
+    inner_client.streaming_responses = [
+        [ChatResponseUpdate(role="assistant", contents=[Content.from_text("all done")])]
+    ]
+    if stream:
+        outer_client.streaming_responses = [
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("Final answer.")])]
+        ]
+    else:
+        outer_client.run_responses = [ChatResponse(messages=Message(role="assistant", contents=["Final answer."]))]
+    final_response = await run_outer(Message(role="user", contents=[third_request.to_function_approval_response(True)]))
+
+    assert calls == {"a": 1, "b": 1, "c": 1}
+    assert not final_response.user_input_requests
+    assert final_response.text == "Final answer."
+
+    last_batch_contents = [content for message in sent_batches[-1] for content in message.contents]
+    result_call_ids = [content.call_id for content in last_batch_contents if content.type == "function_result"]
+    duplicate_ids = {call_id for call_id in result_call_ids if result_call_ids.count(call_id) > 1}
+    assert not duplicate_ids, f"call id(s) {duplicate_ids} received more than one function_result"
+    assert result_call_ids.count("outer-call") == 1, "the owner's own call must get exactly one result, not zero or two"
+
+
+async def test_as_tool_resumes_consecutive_approvals_at_deepest_level_of_three() -> None:
+    """A three-level as_tool() chain whose deepest agent needs two sequential approvals.
+
+    Combines two things only tested separately elsewhere: multi-level ownership routing
+    (test_as_tool_resumes_nested_tool_approval_three_levels) and a consecutive approval
+    round at a single level (test_as_tool_resumes_consecutive_nested_approvals). The stack
+    must survive being routed through two hops unchanged across both approval rounds, and
+    the owner-placeholder bookkeeping at each level must not collide (top and mid keep
+    separate child sessions, so a shared dict key would only be a problem if they resolved
+    to the same session).
+    """
+    calls = {"x": 0, "y": 0}
+
+    @tool(name="tool_x", approval_mode="always_require")
+    def tool_x() -> str:
+        calls["x"] += 1
+        return "x"
+
+    @tool(name="tool_y", approval_mode="always_require")
+    def tool_y() -> str:
+        calls["y"] += 1
+        return "y"
+
+    leaf_client = MockBaseChatClient()
+    mid_client = MockBaseChatClient()
+    top_client = MockBaseChatClient()
+
+    leaf_agent = Agent(client=leaf_client, name="leaf", tools=[tool_x, tool_y])
+    mid_agent = Agent(
+        client=mid_client,
+        name="mid",
+        tools=[leaf_agent.as_tool(name="leaf_tool", approval_mode="never_require", propagate_session=False)],
+    )
+    top_agent = Agent(
+        client=top_client,
+        name="top",
+        tools=[mid_agent.as_tool(name="mid_tool", approval_mode="never_require", propagate_session=False)],
+    )
+
+    session = AgentSession()
+
+    sent_batches: list[list[Message]] = []
+    original_get_non_streaming = top_client._get_non_streaming_response
+
+    async def capturing_non_streaming(
+        *, messages: MutableSequence[Message], options: dict[str, Any], **kwargs: Any
+    ) -> ChatResponse:
+        sent_batches.append(list(messages))
+        return await original_get_non_streaming(messages=messages, options=options, **kwargs)
+
+    top_client._get_non_streaming_response = capturing_non_streaming  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+
+    top_call = Content.from_function_call(call_id="top-call", name="mid_tool", arguments='{"task": "abc"}')
+    top_client.run_responses = [ChatResponse(messages=Message(role="assistant", contents=[top_call]))]
+    mid_call = Content.from_function_call(call_id="mid-call", name="leaf_tool", arguments='{"task": "abc"}')
+    mid_client.streaming_responses = [[ChatResponseUpdate(role="assistant", contents=[mid_call])]]
+    leaf_client.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                role="assistant", contents=[Content.from_function_call(call_id="x-call", name="tool_x", arguments="{}")]
+            )
+        ]
+    ]
+
+    first_response = await top_agent.run("do abc", session=session)
+    assert calls == {"x": 0, "y": 0}
+    first_request = first_response.user_input_requests[0]
+    first_stack = first_request.additional_properties.get("__af_nested_approval_owner_stack")
+    assert first_stack == [
+        {"name": "leaf_tool", "call_id": "mid-call", "arguments": {"task": "abc"}},
+        {"name": "mid_tool", "call_id": "top-call", "arguments": {"task": "abc"}},
+    ]
+
+    leaf_client.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                role="assistant", contents=[Content.from_function_call(call_id="y-call", name="tool_y", arguments="{}")]
+            )
+        ]
+    ]
+    second_response = await top_agent.run(
+        Message(role="user", contents=[first_request.to_function_approval_response(True)]), session=session
+    )
+    assert calls == {"x": 1, "y": 0}
+    assert len(second_response.user_input_requests) == 1
+    second_request = second_response.user_input_requests[0]
+    second_stack = second_request.additional_properties.get("__af_nested_approval_owner_stack")
+    assert second_stack == first_stack, "the stack must survive unchanged into the second approval round"
+
+    leaf_client.streaming_responses = [
+        [ChatResponseUpdate(role="assistant", contents=[Content.from_text("leaf done")])]
+    ]
+    mid_client.streaming_responses = [[ChatResponseUpdate(role="assistant", contents=[Content.from_text("mid done")])]]
+    top_client.run_responses = [ChatResponse(messages=Message(role="assistant", contents=["Top final answer."]))]
+
+    final_response = await top_agent.run(
+        Message(role="user", contents=[second_request.to_function_approval_response(True)]), session=session
+    )
+
+    assert calls == {"x": 1, "y": 1}
+    assert not final_response.user_input_requests
+    assert final_response.text == "Top final answer."
+
+    last_batch_contents = [content for message in sent_batches[-1] for content in message.contents]
+    called_ids = {content.call_id for content in last_batch_contents if content.type == "function_call"}
+    resulted_ids = {content.call_id for content in last_batch_contents if content.type == "function_result"}
+    result_call_ids = [content.call_id for content in last_batch_contents if content.type == "function_result"]
+    assert called_ids == resulted_ids, "every call in the top model's transcript must get exactly one matching result"
+    assert not any(result_call_ids.count(call_id) > 1 for call_id in result_call_ids), (
+        "no call id got more than one result"
+    )
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_as_tool_resumes_simultaneous_approvals_followed_by_further_pause(stream: bool) -> None:
+    """Two simultaneous approvals resolved together, then a further sequential pause.
+
+    Regression test: when a grouped (simultaneous) resume also reveals a new pending
+    request, each response in the group is spliced independently at its own original
+    position in the message, in order. Attaching the owner's placeholder and the new
+    pending request to the *first* response's result group (rather than the *last*)
+    put them ahead of a later response in that same group positionally, splitting that
+    later response's own result into a separate message after the new pending request's
+    turn -- exactly the malformed-transcript pattern this whole fix exists to prevent.
+    """
+    calls = {"p": 0, "q": 0, "r": 0}
+
+    @tool(name="tool_p", approval_mode="always_require")
+    def tool_p() -> str:
+        calls["p"] += 1
+        return "p"
+
+    @tool(name="tool_q", approval_mode="always_require")
+    def tool_q() -> str:
+        calls["q"] += 1
+        return "q"
+
+    @tool(name="tool_r", approval_mode="always_require")
+    def tool_r() -> str:
+        calls["r"] += 1
+        return "r"
+
+    inner_client = MockBaseChatClient()
+    outer_client = MockBaseChatClient()
+    inner_agent = Agent(client=inner_client, name="worker", tools=[tool_p, tool_q, tool_r])
+    outer_agent = Agent(
+        client=outer_client,
+        name="coordinator",
+        tools=[inner_agent.as_tool(name="worker_tool", approval_mode="never_require", propagate_session=False)],
+    )
+    session = AgentSession()
+
+    async def run_outer(run_input: str | Message) -> AgentResponse:
+        if stream:
+            return await outer_agent.run(run_input, session=session, stream=True).get_final_response()
+        return await outer_agent.run(run_input, session=session, stream=False)
+
+    sent_batches: list[list[Message]] = []
+    if stream:
+        original_get_response: Any = outer_client._get_streaming_response
+
+        def capturing_response(*, messages: MutableSequence[Message], options: dict[str, Any], **kwargs: Any) -> Any:
+            sent_batches.append(list(messages))
+            return original_get_response(messages=messages, options=options, **kwargs)
+
+        outer_client._get_streaming_response = capturing_response  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+    else:
+        original_get_response = outer_client._get_non_streaming_response
+
+        async def capturing_response(  # type: ignore[misc]
+            *, messages: MutableSequence[Message], options: dict[str, Any], **kwargs: Any
+        ) -> ChatResponse:
+            sent_batches.append(list(messages))
+            return await original_get_response(messages=messages, options=options, **kwargs)
+
+        outer_client._get_non_streaming_response = capturing_response  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+
+    outer_call = Content.from_function_call(call_id="outer-call", name="worker_tool", arguments='{"task": "pqr"}')
+    if stream:
+        outer_client.streaming_responses = [[ChatResponseUpdate(role="assistant", contents=[outer_call])]]
+    else:
+        outer_client.run_responses = [ChatResponse(messages=Message(role="assistant", contents=[outer_call]))]
+    p_call = Content.from_function_call(call_id="p-call", name="tool_p", arguments="{}")
+    q_call = Content.from_function_call(call_id="q-call", name="tool_q", arguments="{}")
+    inner_client.streaming_responses = [[ChatResponseUpdate(role="assistant", contents=[p_call, q_call])]]
+
+    first_response = await run_outer("do pqr")
+    assert calls == {"p": 0, "q": 0, "r": 0}
+    assert len(first_response.user_input_requests) == 2
+
+    r_call = Content.from_function_call(call_id="r-call", name="tool_r", arguments="{}")
+    inner_client.streaming_responses = [[ChatResponseUpdate(role="assistant", contents=[r_call])]]
+    approval_responses = [request.to_function_approval_response(True) for request in first_response.user_input_requests]
+    second_response = await run_outer(Message(role="user", contents=approval_responses))
+    assert calls == {"p": 1, "q": 1, "r": 0}
+    assert len(second_response.user_input_requests) == 1
+    third_request = second_response.user_input_requests[0]
+
+    inner_client.streaming_responses = [
+        [ChatResponseUpdate(role="assistant", contents=[Content.from_text("all done")])]
+    ]
+    if stream:
+        outer_client.streaming_responses = [
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("Final answer.")])]
+        ]
+    else:
+        outer_client.run_responses = [ChatResponse(messages=Message(role="assistant", contents=["Final answer."]))]
+    final_response = await run_outer(Message(role="user", contents=[third_request.to_function_approval_response(True)]))
+
+    assert calls == {"p": 1, "q": 1, "r": 1}
+    assert not final_response.user_input_requests
+    assert final_response.text == "Final answer."
+
+    # Every call issued in a given assistant turn must get its result before the next
+    # assistant turn begins -- not just "somewhere later in the transcript".
+    last_batch = sent_batches[-1]
+    pending_call_ids: set[str] = set()
+    for message in last_batch:
+        result_ids = {c.call_id for c in message.contents if c.type == "function_result" and c.call_id is not None}
+        for call_id in result_ids:
+            assert call_id in pending_call_ids, (
+                f"function_result for {call_id!r} arrived with no preceding pending call"
+            )
+            pending_call_ids.discard(call_id)
+        new_ids = {c.call_id for c in message.contents if c.type == "function_call" and c.call_id is not None}
+        assert not pending_call_ids or not new_ids, (
+            f"assistant turn introduces {new_ids} while {pending_call_ids} from an earlier turn are still unresolved"
+        )
+        pending_call_ids |= new_ids
+    assert not pending_call_ids, f"call id(s) {pending_call_ids} never received a function_result"
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_as_tool_resumes_nested_pause_discovered_via_hidden_mixed_batch_sibling(stream: bool) -> None:
+    """A nested pause discovered while resuming a hidden mixed-batch sibling must surface.
+
+    Regression test for a severe gap: when an ordinary approval-gated tool and a
+    never_require Agent.as_tool() wrapper are requested in the same turn, the mixed-batch
+    mechanism defers the wrapper's own call as a "hidden sibling" (never_require, so it
+    doesn't need visible approval itself) until the ordinary tool's approval resolves. Only
+    then does the wrapper actually run for the first time -- and if its sub-agent needs
+    approval for one of its own tools, that pause must still surface as a new pending
+    request. It was instead silently dropped: the produced function_approval_request is
+    keyed (via its own embedded function_call) by the *nested* call's id, but the response
+    actually being resolved is for the *wrapper's* call id -- a value with no other
+    relationship to it -- so _replace_approval_contents_with_results found no match and the
+    pending request vanished. The outer agent then proceeded to a final answer as if
+    everything had completed, while the nested tool never actually ran.
+    """
+    calls = {"direct": 0, "nested": 0}
+
+    @tool(name="direct_tool", approval_mode="always_require")
+    def direct_tool() -> str:
+        calls["direct"] += 1
+        return "direct"
+
+    @tool(name="nested_tool", approval_mode="always_require")
+    def nested_tool() -> str:
+        calls["nested"] += 1
+        return "nested"
+
+    inner_client = MockBaseChatClient()
+    outer_client = MockBaseChatClient()
+    inner_agent = Agent(client=inner_client, name="worker", tools=[nested_tool])
+    outer_agent = Agent(
+        client=outer_client,
+        name="coordinator",
+        tools=[
+            direct_tool,
+            inner_agent.as_tool(name="worker_tool", approval_mode="never_require", propagate_session=False),
+        ],
+    )
+    session = AgentSession()
+
+    async def run_outer(run_input: str | Message) -> AgentResponse:
+        if stream:
+            return await outer_agent.run(run_input, session=session, stream=True).get_final_response()
+        return await outer_agent.run(run_input, session=session, stream=False)
+
+    direct_call = Content.from_function_call(call_id="direct-call", name="direct_tool", arguments="{}")
+    wrapper_call = Content.from_function_call(call_id="wrapper-call", name="worker_tool", arguments='{"task": "x"}')
+    if stream:
+        outer_client.streaming_responses = [
+            [ChatResponseUpdate(role="assistant", contents=[direct_call, wrapper_call])]
+        ]
+    else:
+        outer_client.run_responses = [
+            ChatResponse(messages=Message(role="assistant", contents=[direct_call, wrapper_call]))
+        ]
+    inner_client.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                role="assistant",
+                contents=[Content.from_function_call(call_id="nested-call", name="nested_tool", arguments="{}")],
+            )
+        ]
+    ]
+
+    first_response = await run_outer("do both")
+    assert calls == {"direct": 0, "nested": 0}
+    # The wrapper's own call is never_require, so only direct_tool's approval is visible;
+    # the wrapper's call is deferred as a hidden mixed-batch sibling until it resolves.
+    assert len(first_response.user_input_requests) == 1
+    assert first_response.user_input_requests[0].function_call is not None
+    assert first_response.user_input_requests[0].function_call.name == "direct_tool"
+    assert inner_client.call_count == 0, "the wrapper must not run yet while direct_tool's approval is outstanding"
+
+    second_response = await run_outer(
+        Message(role="user", contents=[first_response.user_input_requests[0].to_function_approval_response(True)])
+    )
+
+    assert calls == {"direct": 1, "nested": 0}
+    assert inner_client.call_count == 1, "the hidden sibling must run now that direct_tool's approval resolved"
+    assert len(second_response.user_input_requests) == 1, (
+        "nested_tool's approval must surface as a new pending request, not vanish silently"
+    )
+    nested_request = second_response.user_input_requests[0]
+    assert nested_request.function_call is not None
+    assert nested_request.function_call.name == "nested_tool"
+    assert nested_request.additional_properties.get("__af_nested_approval_owner_stack") == [
+        {"name": "worker_tool", "call_id": "wrapper-call", "arguments": {"task": "x"}}
+    ]
+
+    inner_client.streaming_responses = [
+        [ChatResponseUpdate(role="assistant", contents=[Content.from_text("nested done")])]
+    ]
+    if stream:
+        outer_client.streaming_responses = [
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("Both done.")])]
+        ]
+    else:
+        outer_client.run_responses = [ChatResponse(messages=Message(role="assistant", contents=["Both done."]))]
+    final_response = await run_outer(
+        Message(role="user", contents=[nested_request.to_function_approval_response(True)])
+    )
+
+    assert calls == {"direct": 1, "nested": 1}
+    assert not final_response.user_input_requests
+    assert final_response.text == "Both done."
 
 
 async def test_chat_agent_as_mcp_server_basic(client: SupportsChatGetResponse) -> None:

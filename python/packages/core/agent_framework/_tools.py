@@ -139,6 +139,13 @@ _NESTED_TOOL_APPROVAL_OWNER_STACK_KEY: Final[str] = "__af_nested_approval_owner_
 # the stable call_id of the owning tool call, read by Agent.as_tool()'s wrapper.
 _NESTED_APPROVAL_RESPONSE_CONTEXT_KEY: Final[str] = "_nested_approval_response"
 _NESTED_APPROVAL_OWNER_CALL_ID_CONTEXT_KEY: Final[str] = "_nested_approval_owner_call_id"
+# Session-state key tracking which owner call ids have already been given an interim
+# placeholder function_result (see _try_resume_nested_tool_approval_group). Once one is
+# emitted -- needed the first time the owner's own turn is left behind by a later,
+# still-unresolved round -- the final completion must not emit a second, duplicate one
+# for the same call id; nothing else ever removes or supersedes a function_result once
+# it lands in history.
+_NESTED_OWNER_PLACEHOLDER_EMITTED_STATE_KEY: Final[str] = "_af_nested_owner_placeholder_emitted"
 _FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT: Final[str] = (
     "Function invocation limit reached before a final answer could be produced."
 )
@@ -2111,20 +2118,52 @@ async def _try_resume_nested_tool_approval_group(
             ]
             for inner_call_id in inner_call_ids
         ]
-        result_groups[0].extend(repropagated)
+        # The owner's own call is still pending too -- it was issued in the same
+        # assistant turn as (what unwraps to) the inner call(s) just resolved above,
+        # so it needs its own placeholder result in this same round, immediately
+        # after that turn. Deferring it to whichever round finally succeeds would
+        # leave it dangling behind a later, unrelated assistant turn in between. Only
+        # the *first* intermediate pause needs to do this: a chain of three or more
+        # consecutive approvals hits this branch on every round but one, and emitting
+        # another placeholder on each would duplicate the owner's result -- nothing
+        # ever removes or supersedes one once it's in history.
+        already_paired = bool(
+            invocation_session is not None
+            and invocation_session.state.get(_NESTED_OWNER_PLACEHOLDER_EMITTED_STATE_KEY, {}).get(owner_call_id)
+        )
+        if not already_paired:
+            result_groups[-1].append(
+                Content.from_function_result(
+                    call_id=owner_call_id,
+                    result="Nested approval response processed; further approval is required.",
+                )
+            )
+            if invocation_session is not None:
+                emitted = invocation_session.state.setdefault(_NESTED_OWNER_PLACEHOLDER_EMITTED_STATE_KEY, {})
+                emitted[owner_call_id] = True
+        result_groups[-1].extend(repropagated)
         return result_groups
 
     # Plain pairing/inner-keyed entries, not routed through middleware themselves: the owner's
     # own tool call already ran the full (middleware-inclusive) path above; these just give
     # each response's still-unresolved slot in the transcript a matching result, using the
-    # same content, so a real provider doesn't see any of them left dangling.
+    # same content, so a real provider doesn't see any of them left dangling. Skip the pairing
+    # entry if an earlier round already placed one for this owner call (see the exception
+    # branch above) -- a second one would be a duplicate function_result for the same call id,
+    # since nothing ever removes or supersedes the first once it's in history.
+    already_paired = bool(
+        invocation_session is not None
+        and invocation_session.state.get(_NESTED_OWNER_PLACEHOLDER_EMITTED_STATE_KEY, {}).get(owner_call_id)
+    )
     result_groups: list[list[Content]] = []
     for index, inner_call_id in enumerate(inner_call_ids):
         resumed_result = getattr(owner_result, "result", None)
         group = [Content.from_function_result(call_id=inner_call_id, result=resumed_result)]
-        if index == 0:
+        if index == 0 and not already_paired:
             group.append(Content.from_function_result(call_id=owner_call_id, result=resumed_result))
         result_groups.append(group)
+    if already_paired and invocation_session is not None:
+        invocation_session.state.get(_NESTED_OWNER_PLACEHOLDER_EMITTED_STATE_KEY, {}).pop(owner_call_id, None)
     return result_groups
 
 
@@ -3889,6 +3928,17 @@ def _replace_approval_contents_with_results(
     )
 
     result_groups_by_call_id: dict[str, deque[list[Content]]] = {}
+    # Fallback index for a result group produced by resolving a *different* call than the
+    # one that ends up needing to match it: when a hidden mixed-batch sibling (e.g. an
+    # Agent.as_tool() wrapper resolved via the "already approved" path, not a fresh model
+    # turn) itself raises a nested pause, the produced function_approval_request is keyed
+    # by the *nested* call's own id (so a later approval of that nested call can still find
+    # it normally), but the function_approval_response actually being resolved here is for
+    # the *wrapper's* call id -- a different value with no other relationship between them.
+    # _execute_single_function_call tags such a request with the owning call's id in
+    # _NESTED_TOOL_APPROVAL_OWNER_STACK_KEY; index groups by that too so this response can
+    # still find its result instead of the new pending request silently vanishing.
+    result_groups_by_owner_call_id: dict[str, deque[list[Content]]] = {}
     for result_group in approved_function_result_groups:
         call_id = next(
             (
@@ -3907,6 +3957,13 @@ def _replace_approval_contents_with_results(
         )
         if call_id is not None:
             result_groups_by_call_id.setdefault(call_id, deque()).append(result_group)
+        for result in result_group:
+            owner_stack = _nested_owner_stack(result)
+            if owner_stack is None:
+                continue
+            owner_call_id = owner_stack[-1].get("call_id")
+            if isinstance(owner_call_id, str):
+                result_groups_by_owner_call_id.setdefault(owner_call_id, deque()).append(result_group)
 
     occurrences_by_call_id: dict[str, list[_ApprovalCallOccurrence]] = {}
     occurrences_by_approval_id: dict[str, list[_ApprovalCallOccurrence]] = {}
@@ -3980,7 +4037,9 @@ def _replace_approval_contents_with_results(
                     occurrence = find_open_occurrence(call_id)
                 replacements: list[Content] | None
                 if _is_approval_granted(content.approved) or _nested_owner_stack(content) is not None:
-                    call_result_groups = result_groups_by_call_id.get(call_id)
+                    call_result_groups = result_groups_by_call_id.get(call_id) or result_groups_by_owner_call_id.get(
+                        call_id
+                    )
                     replacements = call_result_groups.popleft() if call_result_groups else None
                 else:
                     replacements = [

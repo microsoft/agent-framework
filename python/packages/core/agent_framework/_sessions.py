@@ -910,19 +910,60 @@ def _approval_controls_to_keep(messages: Sequence[Message]) -> set[int]:
 
 
 def _filter_approval_control_messages(messages: Sequence[Message]) -> list[Message]:
-    """Remove resolved approval controls while preserving pending occurrences."""
+    """Remove resolved approval controls while preserving pending occurrences.
+
+    A resolved ``function_approval_request`` created for a nested ``Agent.as_tool()``
+    approval (tagged with ``_NESTED_TOOL_APPROVAL_OWNER_STACK_KEY``; see
+    ``_try_resume_nested_tool_approval_group`` in ``_tools.py``) is replaced by its
+    embedded ``function_call`` rather than deleted outright, unless that call already has
+    a plain ``function_call`` sibling in the same message (the ordinary single-level case,
+    where the model's own call and the approval marker are separate sibling contents from
+    the start). Without this, a nested approval's call -- which, unlike a single-level
+    one, exists *only* inside the request wrapper -- disappears from history entirely once
+    resolved, orphaning whatever result later resolves it and leaving the owning call with
+    no visible call of its own for a real provider to pair against on a later turn.
+
+    This unwrap is deliberately scoped to nested-approval requests specifically, rather
+    than applied to any resolved request: other approval flows can resolve a request by
+    *superseding* it (e.g. a replacement approval request for changed arguments, which
+    reuses the original's call id but never gives that original occurrence its own
+    result), and reviving a superseded request as a phantom call nothing ever asked for
+    would be its own bug.
+
+    A resolved ``function_approval_response`` is simply dropped: its decision is already
+    reflected by whatever result resolved it.
+    """
+    # Matches _tools._NESTED_TOOL_APPROVAL_OWNER_STACK_KEY. Duplicated as a literal rather
+    # than imported to avoid a module cycle (_tools imports session helpers locally).
+    nested_owner_stack_key = "__af_nested_approval_owner_stack"
     controls_to_keep = _approval_controls_to_keep(messages)
     filtered_messages: list[Message] = []
     for message in messages:
-        filtered_contents = [
-            content
+        sibling_call_ids = {
+            content.call_id
             for content in message.contents
-            if content.type not in {"function_approval_request", "function_approval_response"}
-            or id(content) in controls_to_keep
-        ]
+            if content.type == "function_call" and content.call_id is not None
+        }
+        filtered_contents: list[Content] = []
+        changed = False
+        for content in message.contents:
+            if content.type not in {"function_approval_request", "function_approval_response"}:
+                filtered_contents.append(content)
+                continue
+            if id(content) in controls_to_keep:
+                filtered_contents.append(content)
+                continue
+            changed = True
+            if (
+                content.type == "function_approval_request"
+                and content.function_call is not None
+                and content.function_call.call_id not in sibling_call_ids
+                and content.additional_properties.get(nested_owner_stack_key) is not None
+            ):
+                filtered_contents.append(content.function_call)
         if not filtered_contents:
             continue
-        if len(filtered_contents) == len(message.contents):
+        if not changed:
             filtered_messages.append(message)
             continue
         filtered_message = copy.copy(message)
