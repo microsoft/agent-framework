@@ -550,6 +550,13 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         self._agent_init_lock = asyncio.Lock()
 
         self.shutdown_handler(self._cleanup_agent)
+        # Give the cached backing session stores an explicit async owner: closing
+        # the server closes each cached store's pooled pipeline + owned credential
+        # rather than leaving that to loop collection. Registered only when the
+        # provider exposes ``aclose`` so custom providers stay opt-in.
+        session_provider_aclose = getattr(self._session_storage_provider, "aclose", None)
+        if callable(session_provider_aclose):
+            self.shutdown_handler(session_provider_aclose)
         self.response_handler(self._handle_response)
 
         mark_feature_used(FeatureIndex.FOUNDRY_HOSTING)

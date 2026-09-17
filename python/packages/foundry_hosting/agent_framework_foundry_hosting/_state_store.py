@@ -2,6 +2,7 @@
 
 
 import asyncio
+import logging
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import ClassVar, Generic, Protocol, TypeVar
@@ -17,6 +18,8 @@ from agent_framework import (
 )
 from azure.ai.agentserver.core import AgentConfig, FoundryAgentRequestContext
 from azure.ai.agentserver.core.storage import FoundryStateStore, FoundryStorageConflictError
+
+logger = logging.getLogger(__name__)
 
 StoreT = TypeVar("StoreT")
 
@@ -367,7 +370,8 @@ class FoundryAgentSessionStore(SessionStore):
         # The shared store is intentionally NOT entered as an ``async with``
         # context manager: its ``__aexit__`` calls ``aclose()``, which would
         # close the pooled pipeline + owned credential and defeat the cache. It
-        # stays open for the life of its event loop and is reclaimed with it.
+        # stays open for reuse and is closed explicitly at server shutdown via
+        # ``aclose_loop_cache`` (or reclaimed with its loop if never registered).
         store = await self._get_store()
         item = await store.get_item(session_id, call_id=self.platform_context.call_id)
         if item is None:
@@ -382,6 +386,34 @@ class FoundryAgentSessionStore(SessionStore):
         store = await self._get_store()
         await store.delete_item(session_id, call_id=self.platform_context.call_id)
 
+    @classmethod
+    async def aclose_loop_cache(cls) -> None:
+        """Close every cached backing store on the current event loop.
+
+        The per-loop cache keeps each ``FoundryStateStore`` open for reuse and
+        otherwise relies on the loop being collected to reclaim it. Registered as
+        a host-server shutdown handler (see ``AgentSessionStoreProvider.aclose``)
+        so the owning server explicitly awaits closure of every store's pooled
+        pipeline and owned credential at shutdown instead of leaving it to GC.
+        Idempotent: the cache is drained under its lock, so a second call is a
+        no-op.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        cache: _SessionStoreLoopCache | None = getattr(loop, cls._LOOP_CACHE_ATTR, None)
+        if cache is None:
+            return
+        async with cache.lock:
+            stores = list(cache.stores.values())
+            cache.stores.clear()
+        for store in stores:
+            try:
+                await store.aclose()
+            except Exception:  # pragma: no cover - best-effort cleanup at shutdown
+                logger.debug("Failed to close a cached session state store during shutdown.", exc_info=True)
+
 
 class AgentSessionStoreProvider(StoreProvider[SessionStore]):
     """Provide agent session store for the active hosting environment.
@@ -392,6 +424,16 @@ class AgentSessionStoreProvider(StoreProvider[SessionStore]):
     def get_store(self, *, config: AgentConfig, platform_context: FoundryAgentRequestContext) -> SessionStore:
         """Get agent session store for the requested hosting environment."""
         return FoundryAgentSessionStore(platform_context)
+
+    async def aclose(self) -> None:
+        """Release the backing stores cached by ``FoundryAgentSessionStore``.
+
+        Registered by the host server as a shutdown handler so server shutdown
+        closes each cached store's pooled pipeline and owned credential. The
+        per-loop cache otherwise stays open for reuse and relies on loop
+        collection; this gives those resources an explicit async owner.
+        """
+        await FoundryAgentSessionStore.aclose_loop_cache()
 
 
 # endregion Agent session persistence

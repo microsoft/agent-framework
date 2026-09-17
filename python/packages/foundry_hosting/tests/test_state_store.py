@@ -592,3 +592,27 @@ async def test_agent_session_store_subclass_scope_is_isolated() -> None:
     assert get_or_create.await_count == 2
     base_store.get_item.assert_awaited_once()
     other_store.get_item.assert_awaited_once()
+
+
+async def test_provider_aclose_closes_and_drops_cached_stores() -> None:
+    store = _store()
+    store.get_item = AsyncMock(return_value=None)
+    store.aclose = AsyncMock()
+    provider = AgentSessionStoreProvider()
+    session_store = provider.get_store(config=_config(is_hosted=True), platform_context=_platform_context())
+
+    with patch(
+        "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+        new=AsyncMock(return_value=store),
+    ) as get_or_create:
+        await session_store.get("s1")
+        # Shutdown must close the cached store's pooled pipeline + owned credential.
+        await provider.aclose()
+        store.aclose.assert_awaited_once()
+        # A second shutdown is a no-op (cache already drained).
+        await provider.aclose()
+        store.aclose.assert_awaited_once()
+        # The drained cache resolves a fresh backing store on the next request.
+        await session_store.get("s2")
+
+    assert get_or_create.await_count == 2
