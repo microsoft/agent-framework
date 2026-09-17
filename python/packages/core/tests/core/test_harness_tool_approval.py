@@ -1557,6 +1557,57 @@ async def test_mixed_batch_hides_already_approved_request_until_approval_replay(
     assert execution_order == ["lookup_work_items", "add_comment"]
 
 
+async def test_sequential_approval_replay_preserves_model_order_when_responses_are_reversed(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    """Sequential approval replay should follow model order rather than caller response order."""
+    execution_order: list[str] = []
+
+    @tool(name="first_write", approval_mode="always_require")
+    def first_write() -> str:
+        execution_order.append("first_write")
+        return "first"
+
+    @tool(name="second_write", approval_mode="always_require")
+    def second_write() -> str:
+        execution_order.append("second_write")
+        return "second"
+
+    agent = Agent(client=chat_client_base, tools=[first_write, second_write])
+    chat_client_base.function_invocation_configuration["allow_concurrent_invocation"] = False
+    session = AgentSession(session_id="reversed-approval-order")
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="call_first", name="first_write", arguments="{}"),
+                    Content.from_function_call(call_id="call_second", name="second_write", arguments="{}"),
+                ],
+            )
+        )
+    ]
+
+    first_response = await agent.run("write in order", session=session)
+    requests = _approval_requests(first_response.messages)
+    assert [_function_call(request).name for request in requests] == ["first_write", "second_write"]
+
+    chat_client_base.run_responses = [ChatResponse(messages=Message(role="assistant", contents=["complete"]))]
+    final_response = await agent.run(
+        Message(
+            role="user",
+            contents=[
+                requests[1].to_function_approval_response(approved=True),
+                requests[0].to_function_approval_response(approved=True),
+            ],
+        ),
+        session=session,
+    )
+
+    assert final_response.text == "complete"
+    assert execution_order == ["first_write", "second_write"]
+
+
 async def test_mixed_batch_accepts_restored_tool_approval_state(
     chat_client_base: MockBaseChatClient,
 ) -> None:

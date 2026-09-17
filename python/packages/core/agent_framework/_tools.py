@@ -2890,9 +2890,7 @@ def _store_already_approved_approval_requests(
     *,
     approval_request_order: Sequence[str] | None = None,
 ) -> None:
-    """Store hidden already-approved requests keyed by the visible approvals that resume the batch."""
-    if not already_approved_requests:
-        return
+    """Store approval order and hidden safe requests keyed by the visible approvals that resume the batch."""
     state = _get_tool_approval_state(invocation_session)
     if state is None:
         return
@@ -2918,7 +2916,7 @@ def _pop_already_approved_approval_responses(
     invocation_session: AgentSession | None,
     approval_response_ids: set[str],
 ) -> tuple[list[Content], list[str]]:
-    """Pop already-approved requests for the visible approval ids being answered."""
+    """Pop the stored order and hidden safe requests for the approval ids being answered."""
     if not approval_response_ids:
         return [], []
     state = _get_tool_approval_state(invocation_session)
@@ -4097,6 +4095,7 @@ async def _resolve_approval_responses(
     )
     if already_approved_responses:
         prepared_messages.append(Message(role="user", contents=already_approved_responses))
+    if approval_request_order:
         responses_by_id: dict[str, Content] = {}
         for message in prepared_messages:
             retained_contents: list[Content] = []
