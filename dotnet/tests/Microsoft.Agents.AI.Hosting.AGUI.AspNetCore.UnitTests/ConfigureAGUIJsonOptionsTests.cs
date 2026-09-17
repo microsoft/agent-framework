@@ -32,6 +32,19 @@ public sealed class ConfigureAGUIJsonOptionsTests
         Assert.Null(Record.Exception(() => options.GetTypeInfo(typeof(ChatMessage))));
     }
 
+    [Fact]
+    public void AddAGUIServer_ConfiguresJsonOptions_OmitsOptionalFieldsWithNoValue()
+    {
+        JsonSerializerOptions options = BuildConfiguredSerializerOptions();
+
+        string json = JsonSerializer.Serialize<BaseEvent>(new RunStartedEvent { ThreadId = "thread", RunId = "run" }, options);
+
+        // AG-UI receivers declare the optional event fields as optional, not nullable, so writing them
+        // as explicit nulls fails validation client-side. The configured options must omit them.
+        json.Should().NotContain("null");
+        json.Should().Be("""{"type":"RUN_STARTED","threadId":"thread","runId":"run"}""");
+    }
+
     private static JsonSerializerOptions BuildConfiguredSerializerOptions()
     {
         ServiceCollection services = new();
