@@ -38,6 +38,14 @@ namespace Microsoft.Agents.AI;
 /// </list>
 /// </para>
 /// <para>
+/// The authority for an approval is always the state the framework itself recorded when it surfaced the request.
+/// An approval request that merely appears in the caller-supplied message history is never, by itself, proof
+/// that the framework asked a human to approve it; without this rule a caller could supply a fabricated request
+/// together with its own approval and authorize an arbitrary tool call. A host that cannot record approval
+/// requests server-side therefore cannot resume an approval, and should disable approval-response binding
+/// altogether rather than rely on the history it replays.
+/// </para>
+/// <para>
 /// This decorator operates within the context of a running <see cref="AIAgent"/> with an active
 /// <see cref="AgentRunContext.Session"/>. When invoked without an ambient run context or session (for example when
 /// the chat client is used directly outside of an agent run), the decorator becomes a no-op: it passes the request
@@ -63,9 +71,7 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
     /// <param name="loggerFactory">An optional <see cref="ILoggerFactory"/> used to create a logger for diagnostics.</param>
     public ApprovalResponseBindingChatClient(IChatClient innerClient, ILoggerFactory? loggerFactory = null)
         : base(innerClient)
-    {
-        this._logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<ApprovalResponseBindingChatClient>();
-    }
+        => this._logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<ApprovalResponseBindingChatClient>();
 
     /// <inheritdoc/>
     public override async Task<ChatResponse> GetResponseAsync(
@@ -78,7 +84,7 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
             return await base.GetResponseAsync(messages, options, cancellationToken).ConfigureAwait(false);
         }
 
-        messages = this.ValidateInboundApprovalResponses(messages, session);
+        messages = this.ValidateInboundApprovalResponses(messages, options, session);
 
         var response = await base.GetResponseAsync(messages, options, cancellationToken).ConfigureAwait(false);
 
@@ -103,7 +109,7 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
             yield break;
         }
 
-        messages = this.ValidateInboundApprovalResponses(messages, session);
+        messages = this.ValidateInboundApprovalResponses(messages, options, session);
 
         List<ToolApprovalRequestContent>? emitted = null;
 
@@ -157,36 +163,51 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
     /// <summary>
     /// Rewrites the inbound messages so that each <see cref="ToolApprovalResponseContent"/> is bound to a known
     /// <see cref="ToolApprovalRequestContent"/>, with its tool call rebound to the request's call when it differs.
-    /// A response with no known request is removed so a forged approval cannot drive execution. Approval requests
-    /// are left untouched: a request present in the message history is itself the pairing authority.
+    /// A response with no known request is removed so that a forged approval cannot drive execution.
     /// </summary>
-    private IEnumerable<ChatMessage> ValidateInboundApprovalResponses(IEnumerable<ChatMessage> messages, AgentSession session)
+    /// <remarks>
+    /// Approval requests are never removed. They are legitimate model context, but they are not the authority
+    /// that an approval was requested, so they are forwarded unchanged whether or not a response was bound to
+    /// them. Dropping a response therefore leaves its request unanswered, and the run fails downstream in the
+    /// function invocation middleware. That is deliberate: a payload whose approval was rejected surfaces as an
+    /// error instead of silently continuing as though the call had never been requested.
+    /// </remarks>
+    private IEnumerable<ChatMessage> ValidateInboundApprovalResponses(IEnumerable<ChatMessage> messages, ChatOptions? options, AgentSession session)
     {
         var messageList = messages as IList<ChatMessage> ?? new List<ChatMessage>(messages);
 
-        // Known requests come from two places:
-        //  1. Requests recorded when the framework surfaced them on a previous turn (covers callers that echo
-        //     only the response without replaying the original request).
-        //  2. Requests already present in the current message history (covers replayed history and approvals
-        //     generated internally, such as the mixed server/client tool invocation used by AG-UI hosting).
-        // A response is honored only when its request id is known, and it is rebound to the known request's call.
+        // Known requests come from the state the framework recorded when it surfaced them on a previous turn.
+        // This is the only authority: the caller controls the inbound messages, so a request appearing there
+        // proves nothing about whether a human was ever asked to approve it. A response is honored only when
+        // its request id is known, and it is rebound to the known request's call.
         var knownRequests = LoadPendingApprovalRequestLookup(session);
 
-        // Pending state only needs to bridge a single turn; consume it now.
+        // Pending state only needs to bridge a single turn; consume it now. Tool-call results must be supplied
+        // as a complete set, so an approval batch is always answered in one turn and nothing is left to carry over.
         if (knownRequests.Count > 0)
         {
             session.StateBag.TryRemoveValue(StateBagKey);
         }
+
+        // Tool calls that already carry a result in the inbound messages. The approval gate guards execution, and
+        // a call whose result is already present will not be executed again, so its approval is settled history
+        // rather than a pending authorization. Validating it would serve no purpose and would reject every host
+        // that replays a completed conversation.
+        //
+        // This relies on an invariant that FunctionInvokingChatClient enforces itself: it gathers the call ids of
+        // every FunctionResultContent in the messages and skips any approval response whose call id is in that
+        // set, so such a response can never reach invocation. A caller that fabricates a result in order to reach
+        // the exemption below therefore also guarantees the call will not run.
+        HashSet<string>? settledCallIds = null;
 
         bool hasResponse = false;
         foreach (var message in messageList)
         {
             foreach (var content in message.Contents)
             {
-                if (content is ToolApprovalRequestContent request)
+                if (content is FunctionResultContent functionResult)
                 {
-                    // History requests are authoritative for pairing; record them as known.
-                    knownRequests[request.RequestId] = request;
+                    (settledCallIds ??= new HashSet<string>(StringComparer.Ordinal)).Add(functionResult.CallId);
                 }
                 else if (content is ToolApprovalResponseContent)
                 {
@@ -201,13 +222,18 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
             return messageList;
         }
 
+        // Tools this turn that carry no approval requirement. FunctionInvokingChatClient surfaces an approval
+        // request for every call in a response as soon as one tool requires approval, so a response can arrive
+        // for a tool that no human was ever meant to be asked about. Those are not what this gate protects.
+        var approvalNotRequiredToolNames = ApprovalRequirement.GetApprovalNotRequiredToolNames(this, options);
+
         // Copy-on-write: only allocate a new message list once a message is actually modified.
         List<ChatMessage>? result = null;
 
         for (int i = 0; i < messageList.Count; i++)
         {
             var message = messageList[i];
-            var mutableContentsBuffer = this.BindApprovalResponses(message, knownRequests);
+            var mutableContentsBuffer = this.BindApprovalResponses(message, knownRequests, settledCallIds, approvalNotRequiredToolNames);
 
             if (mutableContentsBuffer is null)
             {
@@ -242,9 +268,14 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
     /// Binds the <see cref="ToolApprovalResponseContent"/> items of a single message against the known requests.
     /// Returns <see langword="null"/> when the message needs no change, or the rewritten content list (which may be
     /// empty, indicating the message should be dropped) when a change is required. Non-response content, including
-    /// approval requests, is preserved.
+    /// approval requests, is preserved. Responses whose tool call appears in <paramref name="settledCallIds"/> are
+    /// left untouched, because a call that already has a result cannot be executed by this response.
     /// </summary>
-    private List<AIContent>? BindApprovalResponses(ChatMessage message, Dictionary<string, ToolApprovalRequestContent> knownRequests)
+    private List<AIContent>? BindApprovalResponses(
+        ChatMessage message,
+        Dictionary<string, ToolApprovalRequestContent> knownRequests,
+        HashSet<string>? settledCallIds,
+        HashSet<string> approvalNotRequiredToolNames)
     {
         var contents = message.Contents;
         List<AIContent>? mutableContentsBuffer = null;
@@ -255,6 +286,15 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
 
             if (content is not ToolApprovalResponseContent response)
             {
+                AppendUnchanged(mutableContentsBuffer, content);
+                continue;
+            }
+
+            if (response.ToolCall is { CallId: { } responseCallId } && settledCallIds?.Contains(responseCallId) == true)
+            {
+                // Settled: a result for this call is already present, so this response is a record of a decision
+                // that has already been carried out, not an authorization for work still to come. Leave it exactly
+                // as supplied. It cannot cause execution, so there is nothing here for the gate to protect.
                 AppendUnchanged(mutableContentsBuffer, content);
                 continue;
             }
@@ -280,9 +320,20 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
                     });
                 }
             }
+            else if (ApprovalRequirement.IsApprovalNotRequired(response.ToolCall, approvalNotRequiredToolNames))
+            {
+                // The response is for a known tool that requires no approval, so it does not represent human
+                // consent and there is no consent for a forged response to fabricate: the framework invokes such
+                // a tool without asking anyone. It only appears as an approval at all because
+                // FunctionInvokingChatClient converts every call in a response once any one of them needs
+                // approval, and ApprovalNotRequiredFunctionBypassingChatClient auto-approves exactly these.
+                // Dropping it would block ordinary tool calling whenever that bypassing cannot use the session.
+                AppendUnchanged(mutableContentsBuffer, content);
+            }
             else
             {
-                // No known request corresponds to this response; drop it so a forged approval cannot execute.
+                // No known request corresponds to this response and the tool does require approval; drop it so a
+                // forged approval cannot execute.
                 LogIgnoredUnboundResponse(this._logger, response.RequestId);
                 mutableContentsBuffer = PrepareMutableContentsBuffer(mutableContentsBuffer, contents, j);
             }
@@ -416,26 +467,57 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
     /// <summary>
     /// Merges newly surfaced approval requests into the recorded pending set, de-duplicating by request id.
     /// </summary>
+    /// <remarks>
+    /// A request id is not guaranteed to be unique: <see cref="FunctionInvokingChatClient"/> composes it as
+    /// <c>"ficc_{CallId}"</c>, so a provider that reuses a call id produces a collision. Re-surfacing the same
+    /// call under a known id is harmless and ignored, but if a <em>different</em> call appears under an id that
+    /// is already pending there is no way to tell which call a human's answer refers to. That case fails closed:
+    /// the id is poisoned and no approval is honored for it, so consent can never be redirected onto a call the
+    /// human did not see.
+    /// </remarks>
     private void MergePendingApprovalRequests(List<ToolApprovalRequestContent> emitted, AgentSession session)
     {
         var pendingRequests = LoadPendingApprovalRequests(session);
 
-        var known = new HashSet<string>(StringComparer.Ordinal);
+        var known = new Dictionary<string, ToolApprovalRequestContent>(StringComparer.Ordinal);
         foreach (var request in pendingRequests)
         {
-            known.Add(request.RequestId);
+            known[request.RequestId] = request;
         }
 
+        HashSet<string>? ambiguousRequestIds = null;
         bool changed = false;
+
         foreach (var request in emitted)
         {
-            if (known.Add(request.RequestId))
+            if (ambiguousRequestIds?.Contains(request.RequestId) == true)
+            {
+                continue;
+            }
+
+            if (!known.TryGetValue(request.RequestId, out var existing))
             {
                 // Store a snapshot so a later mutation of the caller-visible instance cannot change
                 // the recorded tool call used to bind the response.
-                pendingRequests.Add(SnapshotRequest(request));
+                var snapshot = SnapshotRequest(request);
+                known[request.RequestId] = snapshot;
+                pendingRequests.Add(snapshot);
                 changed = true;
+                continue;
             }
+
+            if (ToolCallsEquivalent(request.ToolCall, existing.ToolCall))
+            {
+                // The same request surfaced again; the recorded snapshot already covers it.
+                continue;
+            }
+
+            // Collision between two different calls under one request id: neither can be bound safely.
+            LogAmbiguousRequestId(this._logger, request.RequestId);
+            (ambiguousRequestIds ??= new HashSet<string>(StringComparer.Ordinal)).Add(request.RequestId);
+            known.Remove(request.RequestId);
+            pendingRequests.RemoveAll(pending => string.Equals(pending.RequestId, request.RequestId, StringComparison.Ordinal));
+            changed = true;
         }
 
         if (changed)
@@ -484,6 +566,9 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
     [LoggerMessage(LogLevel.Warning, "ApprovalResponseBindingChatClient was invoked without an active agent run context or session. Approval-response binding is skipped. Invoke the chat client through AIAgent.RunAsync or AIAgent.RunStreamingAsync to enable binding.")]
     private static partial void LogValidationSkipped(ILogger logger);
 
-    [LoggerMessage(LogLevel.Warning, "Ignored a ToolApprovalResponseContent with request id '{RequestId}' that does not correspond to a model-originated approval request surfaced by the framework.")]
+    [LoggerMessage(LogLevel.Warning, "Ignored a ToolApprovalResponseContent with request id '{RequestId}' that does not correspond to a model-originated approval request surfaced by the framework. Approval requests present only in the caller-supplied chat history are deliberately not trusted for pairing. If this agent legitimately resumes approvals, register an AgentSessionStore so the approval request is recorded server-side when it is surfaced.")]
     private static partial void LogIgnoredUnboundResponse(ILogger logger, string requestId);
+
+    [LoggerMessage(LogLevel.Warning, "Two different tool calls were surfaced for approval under request id '{RequestId}'. The request id is ambiguous, so no approval will be honored for it and the affected tool calls must be requested again.")]
+    private static partial void LogAmbiguousRequestId(ILogger logger, string requestId);
 }

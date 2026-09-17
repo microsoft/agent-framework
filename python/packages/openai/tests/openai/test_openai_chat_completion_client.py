@@ -211,28 +211,45 @@ def test_serialize_with_org_id(openai_unit_test_env: dict[str, str]) -> None:
     assert "User-Agent" not in dumped_settings.get("default_headers", {})
 
 
+@pytest.mark.parametrize(
+    ("inner_code", "expected_code"),
+    [
+        ("ResponsibleAIPolicyViolation", "ResponsibleAIPolicyViolation"),
+        ("ContentFiltered", "ContentFiltered"),
+        ("FutureContentFilterCode", "Unknown"),
+    ],
+)
+@pytest.mark.parametrize("stream", [False, True])
 async def test_content_filter_exception_handling(
     openai_unit_test_env: dict[str, str],
+    inner_code: str,
+    expected_code: str,
+    stream: bool,
 ) -> None:
     """Test that content filter errors are properly handled."""
     client = OpenAIChatCompletionClient()
     messages = [Message(role="user", contents=["test message"])]
 
     # Create a mock BadRequestError with content_filter code
-    mock_response = MagicMock()
     mock_error = BadRequestError(
         message="Content filter error",
-        response=mock_response,
-        body={"error": {"code": "content_filter"}},
+        response=MagicMock(status_code=400),
+        body={"code": "content_filter", "innererror": {"code": inner_code}},
     )
-    mock_error.code = "content_filter"
 
     # Mock the client to raise the content filter error
     with (
         patch.object(client.client.chat.completions, "create", side_effect=mock_error),
-        pytest.raises(OpenAIContentFilterException),
+        pytest.raises(OpenAIContentFilterException) as exc_info,
     ):
-        await client._inner_get_response(messages=messages, options={})  # type: ignore
+        if stream:
+            async for _ in client.get_response(messages=messages, stream=True):
+                pass
+        else:
+            await client.get_response(messages=messages)
+
+    assert exc_info.value.content_filter_code.value == expected_code
+    assert exc_info.value.__cause__ is mock_error
 
 
 def test_unsupported_tool_handling(openai_unit_test_env: dict[str, str]) -> None:
@@ -1129,6 +1146,113 @@ def test_prepare_message_with_text_reasoning_before_function_call(
     assert "tool_calls" in prepared[0]
     assert prepared[0]["tool_calls"][0]["function"]["name"] == "get_weather"
     assert prepared[0]["role"] == "assistant"
+
+
+def test_prepare_message_with_text_and_function_call_keeps_single_assistant_message(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Text, tool calls and reasoning from one assistant turn are sent as one assistant message.
+
+    Regression test for https://github.com/microsoft/agent-framework/issues/8382
+    Providers such as DeepSeek (thinking mode) reject the follow-up request when the turn is split
+    into a text-only assistant message and a tool-call assistant message, because the reasoning
+    field then only travels with the second one.
+    """
+    client = OpenAIChatCompletionClient()
+
+    mock_reasoning_data = {"effort": "medium", "summary": "Deciding to call a function"}
+    message = Message(
+        role="assistant",
+        contents=[
+            Content.from_text(text="I'll check the weather in New York City for you."),
+            Content.from_function_call(call_id="call_abc", name="get_weather", arguments='{"city": "NYC"}'),
+            Content.from_text_reasoning(text=None, protected_data=json.dumps(mock_reasoning_data)),
+        ],
+    )
+
+    prepared = client._prepare_message_for_openai(message)
+
+    assert prepared == [
+        {
+            "role": "assistant",
+            "content": "I'll check the weather in New York City for you.",
+            "tool_calls": [
+                {
+                    "id": "call_abc",
+                    "type": "function",
+                    "function": {"name": "get_weather", "arguments": '{"city": "NYC"}'},
+                }
+            ],
+            "reasoning_details": mock_reasoning_data,
+        }
+    ]
+
+
+def test_prepare_message_with_function_call_before_text_keeps_single_assistant_message(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Streaming can coalesce tool calls ahead of text; the turn is still one assistant message."""
+    client = OpenAIChatCompletionClient()
+
+    message = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_call(call_id="call_abc", name="get_weather", arguments='{"city": "NYC"}'),
+            Content.from_text(text="Checking the weather now."),
+        ],
+    )
+
+    prepared = client._prepare_message_for_openai(message)
+
+    assert len(prepared) == 1
+    assert prepared[0]["content"] == "Checking the weather now."
+    assert [call["id"] for call in prepared[0]["tool_calls"]] == ["call_abc"]
+
+
+def test_prepare_message_with_parallel_function_calls_after_text_keeps_single_assistant_message(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Parallel tool calls following text all attach to the same assistant message."""
+    client = OpenAIChatCompletionClient()
+
+    message = Message(
+        role="assistant",
+        contents=[
+            Content.from_text(text="Looking both up."),
+            Content.from_function_call(call_id="call_1", name="get_weather", arguments='{"city": "NYC"}'),
+            Content.from_function_call(call_id="call_2", name="get_weather", arguments='{"city": "LA"}'),
+        ],
+    )
+
+    prepared = client._prepare_message_for_openai(message)
+
+    assert len(prepared) == 1
+    assert prepared[0]["content"] == "Looking both up."
+    assert [call["id"] for call in prepared[0]["tool_calls"]] == ["call_1", "call_2"]
+
+
+def test_prepare_message_with_image_between_text_and_function_call_stays_separate(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Only plain text and tool calls merge; other content keeps its own message and is not merged across."""
+    client = OpenAIChatCompletionClient()
+
+    message = Message(
+        role="assistant",
+        contents=[
+            Content.from_text(text="First."),
+            Content.from_uri(uri="https://example.com/image.png", media_type="image/png"),
+            Content.from_function_call(call_id="call_2", name="get_weather", arguments="{}"),
+        ],
+    )
+
+    prepared = client._prepare_message_for_openai(message)
+
+    assert len(prepared) == 3
+    assert prepared[0] == {"role": "assistant", "content": "First."}
+    assert prepared[1]["content"][0]["type"] == "image_url"
+    assert "content" not in prepared[2]
+    assert [call["id"] for call in prepared[2]["tool_calls"]] == ["call_2"]
 
 
 def test_function_approval_content_is_skipped_in_preparation(
@@ -3053,6 +3177,83 @@ def test_hooks_roundtrip_vllm_reasoning(openai_unit_test_env: dict[str, str]) ->
     assert len(prepared) == 1
     assert prepared[0]["content"] == "42."
     assert prepared[0]["reasoning"] == "Because reasons."
+
+
+def test_hooks_roundtrip_reasoning_content_with_text_and_function_call_keeps_single_assistant_message(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """End-to-end: DeepSeek-style ``reasoning_content`` next to text and a tool call stays on one message.
+
+    Regression test for https://github.com/microsoft/agent-framework/issues/8382
+    """
+    from openai.types.chat.chat_completion_message_tool_call import ChatCompletionMessageToolCall, Function
+
+    def deepseek_parser(message: Any, contents: list[Content]) -> list[Content]:
+        reasoning_content = getattr(message, "reasoning_content", None)
+        if isinstance(reasoning_content, str) and reasoning_content:
+            return [*contents, Content.from_text_reasoning(protected_data=json.dumps(reasoning_content))]
+        return contents
+
+    def deepseek_preparer(message: Message, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        for prepared_message in messages:
+            if "reasoning_details" in prepared_message:
+                prepared_message["reasoning_content"] = prepared_message.pop("reasoning_details")
+        return messages
+
+    client = OpenAIChatCompletionClient(response_parser=deepseek_parser, message_preparer=deepseek_preparer)
+    message = ChatCompletionMessage.model_construct(
+        role="assistant",
+        content="I'll check the weather in New York City for you.",
+        tool_calls=[
+            ChatCompletionMessageToolCall(
+                id="call_repro_0001",
+                type="function",
+                function=Function(name="get_weather", arguments='{"location": "New York City"}'),
+            )
+        ],
+        reasoning_content="The user wants the weather, so I should call get_weather.",
+    )
+
+    parsed = client._parse_response_from_openai(_make_chat_completion(message, model="deepseek-flash"), {})
+    prepared = client._prepare_message_for_openai(parsed.messages[0])
+
+    # One assistant message carries content, tool_calls and the echoed reasoning field, so the
+    # provider sees the reasoning on the message that also carries the content.
+    assert prepared == [
+        {
+            "role": "assistant",
+            "content": "I'll check the weather in New York City for you.",
+            "tool_calls": [
+                {
+                    "id": "call_repro_0001",
+                    "type": "function",
+                    "function": {"name": "get_weather", "arguments": '{"location": "New York City"}'},
+                }
+            ],
+            "reasoning_content": "The user wants the weather, so I should call get_weather.",
+        }
+    ]
+
+
+def test_message_preparer_hook_reasoning_text_before_function_call_is_not_swallowed(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Hook-surfaced reasoning text keeps its own dict, so a preparer can still correlate and remove it."""
+    client = OpenAIChatCompletionClient(message_preparer=_vllm_reasoning_preparer)
+    reasoning = Content.from_text_reasoning(
+        text="Need the tool.", additional_properties={_VLLM_REASONING_FIELD_KEY: "reasoning"}
+    )
+    message = Message(
+        role="assistant",
+        contents=[reasoning, Content.from_function_call(call_id="call_1", name="get_weather", arguments="{}")],
+    )
+
+    prepared = client._prepare_message_for_openai(message)
+
+    assert len(prepared) == 1
+    assert "content" not in prepared[0]
+    assert [call["id"] for call in prepared[0]["tool_calls"]] == ["call_1"]
+    assert prepared[0]["reasoning"] == "Need the tool."
 
 
 def test_no_hooks_keeps_default_behavior(openai_unit_test_env: dict[str, str]) -> None:
