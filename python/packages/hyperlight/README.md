@@ -147,6 +147,10 @@ note, when a schema cannot be represented faithfully (for example, nested object
 arrays, references, or additional constraints). No schema details are discarded.
 Only `"compact"` and `"json"` are accepted; `None` is not supported.
 
+Tool parameter schemas are model-visible metadata, just as they are for direct
+function calling. Do not put credentials, tenant identifiers, or other secrets in
+parameter descriptions, enum values, defaults, or custom schema fields.
+
 This option affects `HyperlightExecuteCodeTool.description`, or the injected
 run tool's `.description` when using `HyperlightCodeActProvider`. It does not
 change the short CodeAct instructions, the `execute_code` input schema, sandbox

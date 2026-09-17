@@ -131,6 +131,10 @@ Only `"compact"`, `"json"`, or mappings from string names to these values are
 accepted: unsupported choices raise `ValueError`; `None`, invalid input types,
 non-string mapping keys, and non-string choices raise `TypeError`.
 
+Tool parameter schemas are model-visible metadata, just as they are for direct
+function calling. Do not put credentials, tenant identifiers, or other secrets in
+parameter descriptions, enum values, defaults, or custom schema fields.
+
 ### Host tool lifetime
 
 Registered `FunctionTool` instances retain their invocation and exception counters
