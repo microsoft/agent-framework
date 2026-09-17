@@ -121,8 +121,7 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
             throw new ArgumentException("Request method must be provided.", nameof(request));
         }
 
-        HttpRequestInfo currentRequest = request;
-        Uri currentUri = CreateAbsoluteUri(ResolveRequestUri(request));
+        HttpRequestInfo currentRequest = CreateCanonicalRequestInfo(request, out Uri currentUri);
 
         using CancellationTokenSource? timeoutCts = request.Timeout is { } timeout && timeout > TimeSpan.Zero
             ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
@@ -304,6 +303,21 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
         }
 
         return uri;
+    }
+
+    private static HttpRequestInfo CreateCanonicalRequestInfo(HttpRequestInfo request, out Uri uri)
+    {
+        uri = CreateAbsoluteUri(ResolveRequestUri(request));
+        return new HttpRequestInfo
+        {
+            Method = request.Method,
+            Url = uri.ToString(),
+            Headers = request.Headers,
+            BodyContentType = request.BodyContentType,
+            Body = request.Body,
+            Timeout = request.Timeout,
+            ConnectionName = request.ConnectionName,
+        };
     }
 
     private static bool TryCreateRedirectRequest(

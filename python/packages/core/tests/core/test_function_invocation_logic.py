@@ -8,6 +8,7 @@ import threading
 import warnings
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from typing import Any, Literal
+from unittest.mock import Mock
 
 import pytest
 from pydantic import BaseModel, field_validator
@@ -3299,6 +3300,241 @@ async def test_function_invocation_config_terminate_on_unknown_calls_true(chat_c
     assert exec_counter == 0
 
 
+@pytest.mark.parametrize("unknown_first", [True, False], ids=["unknown-first", "unknown-last"])
+async def test_mixed_batch_fatal_unknown_precedes_every_pause(
+    chat_client_base: SupportsChatGetResponse,
+    unknown_first: bool,
+) -> None:
+    """A fatal unknown call must abort the complete batch before approval or execution."""
+    from agent_framework import FunctionTool
+
+    approval_calls = 0
+    safe_calls = 0
+
+    @tool(name="approval_func", approval_mode="always_require")
+    def approval_func() -> str:
+        nonlocal approval_calls
+        approval_calls += 1
+        return "approved"
+
+    @tool(name="safe_func", approval_mode="never_require")
+    def safe_func() -> str:
+        nonlocal safe_calls
+        safe_calls += 1
+        return "safe"
+
+    host_func = FunctionTool(name="host_func", func=None, description="Handled by the caller")
+    unknown_call = Content.from_function_call(call_id="unknown", name="unknown_func", arguments={})
+    known_calls = [
+        Content.from_function_call(call_id="host", name="host_func", arguments={}),
+        Content.from_function_call(call_id="approval", name="approval_func", arguments={}),
+        Content.from_function_call(call_id="safe", name="safe_func", arguments={}),
+    ]
+    contents = [unknown_call, *known_calls] if unknown_first else [*known_calls, unknown_call]
+    chat_client_base.function_invocation_configuration["terminate_on_unknown_calls"] = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=contents)),
+    ]
+
+    with pytest.raises(KeyError, match='Requested function "unknown_func" not found'):
+        await chat_client_base.get_response(
+            [Message(role="user", contents=["hello"])],
+            options={"tool_choice": "auto", "tools": [host_func, approval_func, safe_func]},
+        )
+
+    assert approval_calls == safe_calls == 0
+
+
+@pytest.mark.parametrize("approval_first", [True, False], ids=["approval-first", "host-first"])
+async def test_mixed_batch_returns_approval_and_host_pause_in_model_order(approval_first: bool) -> None:
+    """Approval and Host-owned calls should pause together without executing."""
+    from agent_framework import FunctionTool
+    from agent_framework._tools import _try_execute_function_call_groups
+
+    approval_calls = 0
+
+    @tool(name="approval_func", approval_mode="always_require")
+    def approval_func() -> str:
+        nonlocal approval_calls
+        approval_calls += 1
+        return "approved"
+
+    host_func = FunctionTool(name="host_func", func=None, description="Handled by the caller")
+    approval_call = Content.from_function_call(
+        call_id="approval",
+        name="approval_func",
+        arguments={},
+        id="approval-occurrence",
+    )
+    host_call = Content.from_function_call(
+        call_id="host",
+        name="host_func",
+        arguments={},
+        id="host-occurrence",
+    )
+    calls = [approval_call, host_call] if approval_first else [host_call, approval_call]
+
+    result_groups, should_terminate = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=calls,
+        tools=[approval_func, host_func],
+        config={},
+        invocation_session=AgentSession(),
+    )
+
+    results = [content for group in result_groups for content in group]
+    expected_types = (
+        ["function_approval_request", "function_call"]
+        if approval_first
+        else ["function_call", "function_approval_request"]
+    )
+    assert [content.type for content in results] == expected_types
+    assert next(content for content in results if content.type == "function_call").user_input_request is True
+    assert approval_calls == 0
+    assert should_terminate is False
+
+
+async def test_mixed_batch_requires_complete_responses_before_execution(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """A partial mixed response must fail closed; a complete response executes once."""
+    from agent_framework import FunctionTool
+
+    approval_arguments: list[str] = []
+
+    @tool(name="approval_func", approval_mode="always_require")
+    def approval_func(value: str) -> str:
+        approval_arguments.append(value)
+        return f"approved {value}"
+
+    host_func = FunctionTool(name="host_func", func=None, description="Handled by the caller")
+    agent = Agent(client=chat_client_base, tools=[approval_func, host_func])
+    session = AgentSession()
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="host", name="host_func", arguments={}),
+                    Content.from_function_call(
+                        call_id="approval",
+                        name="approval_func",
+                        arguments={"value": "expected"},
+                    ),
+                ],
+            )
+        ),
+    ]
+
+    first_response = await agent.run("run both", session=session)
+    approval_request = next(
+        content
+        for message in first_response.messages
+        for content in message.contents
+        if content.type == "function_approval_request"
+    )
+    host_request = next(
+        content
+        for message in first_response.messages
+        for content in message.contents
+        if content.type == "function_call" and content.user_input_request
+    )
+
+    partial_response = await agent.run(
+        approval_request.to_function_approval_response(approved=True),
+        session=session,
+    )
+    assert partial_response.messages == []
+    assert approval_arguments == []
+
+    session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+    assert host_request.call_id is not None
+    host_result = Content.from_function_result(call_id=host_request.call_id, result="host result")
+    host_result.id = host_request.id
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+    final_response = await agent.run(
+        host_result,
+        session=session,
+    )
+
+    assert final_response.text == "done"
+    assert approval_arguments == ["expected"]
+
+
+def test_active_mixed_pause_ignores_historical_host_requests() -> None:
+    """Only the session-recorded mixed batch participates in response correlation."""
+    from agent_framework._tools import (
+        _stage_pending_mixed_pause_responses,
+        _store_pending_approval_requests,
+        _store_pending_mixed_pause_batch,
+    )
+
+    session = AgentSession()
+    approval_call = Content.from_function_call(
+        call_id="current-approval",
+        name="guarded",
+        arguments={},
+        id="current-approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="current-approval-occurrence",
+        function_call=approval_call,
+    )
+    host_request = Content.from_function_call(
+        call_id="current-host",
+        name="host",
+        arguments={},
+        id="current-host-occurrence",
+    )
+    host_request.user_input_request = True
+    _store_pending_approval_requests(session, [approval_request])
+    _store_pending_mixed_pause_batch(session, [[approval_request], [host_request]])
+
+    completed_old_host = Content.from_function_call(
+        call_id="old-completed",
+        name="old_host",
+        arguments={},
+        id="old-completed-occurrence",
+    )
+    completed_old_host.user_input_request = True
+    completed_old_result = Content.from_function_result(call_id="old-completed", result="old result")
+    completed_old_result.id = "old-completed-occurrence"
+    abandoned_old_host = Content.from_function_call(
+        call_id="old-abandoned",
+        name="old_host",
+        arguments={},
+        id="old-abandoned-occurrence",
+    )
+    abandoned_old_host.user_input_request = True
+    host_result = Content.from_function_result(call_id="current-host", result="current result")
+    host_result.id = "current-host-occurrence"
+    messages = [
+        Message(role="assistant", contents=[completed_old_host, abandoned_old_host]),
+        Message(role="tool", contents=[completed_old_result]),
+        Message(
+            role="user",
+            contents=[
+                approval_request.to_function_approval_response(approved=True),
+                host_result,
+            ],
+        ),
+    ]
+
+    incomplete, completed, host_result_ids = _stage_pending_mixed_pause_responses(messages, session)
+
+    assert incomplete is False
+    assert completed is True
+    assert messages[0].contents == [completed_old_host, abandoned_old_host]
+    assert messages[1].contents == [completed_old_result]
+    assert [(content.type, content.id) for content in messages[-1].contents] == [
+        ("function_approval_response", "current-approval-occurrence"),
+        ("function_result", "current-host-occurrence"),
+    ]
+    assert host_result_ids == {id(messages[-1].contents[-1])}
+
+
 async def test_function_invocation_config_additional_tools(chat_client_base: SupportsChatGetResponse):
     """Test that additional_tools are available but treated as declaration_only."""
     exec_counter_visible = 0
@@ -3348,6 +3584,97 @@ async def test_function_invocation_config_additional_tools(chat_client_base: Sup
         if content.type == "function_call" and content.name == "hidden_function"
     ]
     assert len(function_calls) >= 1
+
+
+@pytest.mark.parametrize(
+    ("enable_instrumentation", "enable_sensitive_data"),
+    [(False, False), (True, False), (True, True)],
+    indirect=True,
+)
+@pytest.mark.usefixtures("span_exporter")
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("include_detailed_errors", [False, True])
+async def test_function_invocation_result_parser_failure(
+    chat_client_base: SupportsChatGetResponse,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    stream: bool,
+    include_detailed_errors: bool,
+    enable_sensitive_data: bool,
+) -> None:
+    parser = Mock(side_effect=ValueError(f"Unsupported result: {_PRIVATE_ERROR_DETAIL}"))
+
+    @tool(result_parser=parser)
+    def make_result() -> dict[str, str]:
+        return {"value": "unparsed-value"}
+
+    call = Content.from_function_call(call_id="1", name="make_result", arguments="{}")
+    monkeypatch.setattr(
+        chat_client_base,
+        "run_responses",
+        [
+            ChatResponse(messages=Message(role="assistant", contents=[call])),
+            ChatResponse(messages=Message(role="assistant", contents=["done"])),
+        ],
+    )
+    monkeypatch.setattr(
+        chat_client_base,
+        "streaming_responses",
+        [
+            [ChatResponseUpdate(role="assistant", contents=[call])],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")])],
+        ],
+    )
+    monkeypatch.setitem(
+        chat_client_base.function_invocation_configuration,  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        "include_detailed_errors",
+        include_detailed_errors,
+    )
+    provider = Mock(wraps=chat_client_base._inner_get_response)  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    monkeypatch.setattr(chat_client_base, "_inner_get_response", provider)
+    messages = [Message(role="user", contents=["hello"])]
+    options: ChatOptions = {"tools": [make_result]}
+
+    if stream:
+        response_stream = chat_client_base.get_response(messages, options=options, stream=True)
+        updates = [update async for update in response_stream]
+        assert "unparsed-value" not in json.dumps([update.to_dict() for update in updates])
+        response = await response_stream.get_final_response()
+    else:
+        response = await chat_client_base.get_response(messages, options=options)
+
+    results = [content for msg in response.messages for content in msg.contents if content.type == "function_result"]
+    assert len(results) == 1
+    assert results[0].call_id == "1"
+    assert results[0].exception is not None
+    assert "Unsupported result" in results[0].exception
+    expected_result = "Error: Function failed."
+    if include_detailed_errors:
+        expected_result += f" Exception: Unsupported result: {_PRIVATE_ERROR_DETAIL}"
+    assert results[0].result == expected_result
+    serialized_response = json.dumps(response.to_dict())
+    assert (_PRIVATE_ERROR_DETAIL in serialized_response) is include_detailed_errors
+    assert "unparsed-value" not in json.dumps(response.to_dict())
+    assert response.messages[-1].text == "done"
+    assert provider.call_count == 2
+    provider_messages = provider.call_args.kwargs["messages"]
+    provider_results = [
+        content for msg in provider_messages for content in msg.contents if content.type == "function_result"
+    ]
+    assert len(provider_results) == 1
+    assert provider_results[0].result == results[0].result
+    assert "unparsed-value" not in json.dumps([msg.to_dict() for msg in provider_messages])
+    parser.assert_called_once_with({"value": "unparsed-value"})
+    assert make_result.invocation_count == 1
+    execution_warnings = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "agent_framework"
+        and record.levelno == logging.WARNING
+        and "raised an exception; returning an error result" in record.getMessage()
+    ]
+    assert len(execution_warnings) == 1
+    assert (_PRIVATE_ERROR_DETAIL in execution_warnings[0]) is enable_sensitive_data
 
 
 async def test_function_invocation_config_include_detailed_errors_false(chat_client_base: SupportsChatGetResponse):

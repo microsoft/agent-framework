@@ -187,6 +187,14 @@ sequenceDiagram
 The terminal result is caller-visible in both modes. The private normalized message copy is model-visible. The
 original caller input and earlier response remain unchanged.
 
+Before acting on a model function-call batch, the loop classifies every actionable call. A configured fatal unknown
+call aborts the complete batch before approval state changes or execution. Otherwise approval-required and Host-owned
+calls are returned together in model order, while session-backed executable siblings remain deferred. An incomplete
+session-backed mixed approval/Host response remains pending without executing a deferred call; a stateless incomplete
+response is rejected. Correlation is scoped to the active mixed batch so completed or abandoned historical Host calls
+remain unchanged. `ToolApprovalMiddleware` may resolve approval requests through standing or automatic policies, but
+it preserves non-approval user-input requests and does not split manual approvals away from their Host-owned siblings.
+
 ### Reasoning-bound function-call groups
 
 Some hosted services bind reasoning content or an opaque reasoning signature to the function call that follows it.
@@ -386,6 +394,9 @@ that manually replay messages own the equivalent rule: do not resend an approval
   while the original field remains directly available to trusted local code. Remote protocol serializers use the
   marker only for status and use the channel-visible `result` or `items` for output text. `include_detailed_errors=False` keeps the channel-visible
   result generic; enabling it explicitly may place diagnostic text in the result for that configured channel.
+- An ordinary exception raised by a custom `FunctionTool.result_parser` follows the same terminal tool-error
+  contract, including `include_detailed_errors`; the raw return value does not replace the failed custom conversion.
+  Default parsing retains its string fallback, and explicit skip-parsing behavior is unchanged.
 - Parallel calls retain model order in the returned transcript.
 - `call_id` remains the provider/service correlation id; a locally actionable `function_call` also carries a stable
   Agent Framework occurrence identity in `Content.id`.
@@ -516,6 +527,9 @@ that manually replay messages own the equivalent rule: do not resend an approval
   same turn.
 - A trusted terminal result consumes the corresponding approval authority in explicit stateless replay; a result in a
   server-registered pending occurrence cannot consume that authority before local execution.
+- Non-streaming runs that exclude tool groups through in-run compaction return the inserted summary messages in the
+  final response transcript, each positioned before the group it replaces, so history loaded with `skip_excluded`
+  keeps the summarized content; summaries of caller-owned input messages stay out of the returned transcript.
 
 ## Scenario-to-test matrix
 
@@ -537,6 +551,7 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Declaration-only call | The call is surfaced as user input and is not executed; streaming arguments appear once while finalized request metadata remains available. | `test_declaration_only_tool`, `test_streaming_declaration_only_tool_preserves_metadata_without_duplicate_arguments` |
 | Function invocation disabled | The client bypasses the invocation loop without losing invocation kwargs. | `test_function_invocation_config_enabled_false`, `test_function_invocation_config_enabled_false_preserves_invocation_kwargs`, `test_streaming_function_invocation_config_enabled_false` |
 | Runtime tool changes | Added tools become available on the next iteration and retain approval behavior. | `test_add_tools_available_next_iteration`, `test_add_tools_with_approval_required_tool` |
+| In-run compaction summaries | Summaries inserted for tool groups excluded by in-run compaction are returned in the final non-streaming response transcript before the group they replace, so history loaded with `skip_excluded` keeps the summarized content; summaries of caller-owned input messages are not added. | `packages/core/tests/core/test_clients.py::test_function_loop_returns_compaction_summaries_in_final_response`, `test_function_loop_returns_compaction_summaries_when_iteration_budget_exhausted`, `test_function_loop_reconciles_nested_compaction_summaries`, `test_function_loop_returns_compacted_transcript_on_early_terminal_exit`, `packages/core/tests/core/test_agents.py::test_agent_run_returns_and_persists_compaction_summaries` |
 
 ### Approval pause and resume
 
@@ -595,6 +610,8 @@ that manually replay messages own the equivalent rule: do not resend an approval
 
 | Scenario | Required invariant | Primary regression test |
 |---|---|---|
+| Fatal call mixed with pauses | Complete-batch classification raises before approval or execution, independent of call order. | `packages/core/tests/core/test_function_invocation_logic.py::test_mixed_batch_fatal_unknown_precedes_every_pause` |
+| Approval and Host-owned calls | Both pause types are returned in model order; a session-backed partial response remains pending across serialization; historical Host calls do not participate; a complete response executes the exact approved arguments once. | `test_mixed_batch_returns_approval_and_host_pause_in_model_order`, `test_mixed_batch_requires_complete_responses_before_execution`, `test_active_mixed_pause_ignores_historical_host_requests` |
 | Safe and approval-required calls in one batch | Hidden safe calls replay only with the matching visible approval. | `packages/core/tests/core/test_harness_tool_approval.py::test_mixed_batch_hides_already_approved_request_until_approval_replay` |
 | Restored approval state | Serialized `ToolApprovalState` restores mixed-batch behavior. | `test_mixed_batch_accepts_restored_tool_approval_state` |
 | Unrelated turn before approval | Hidden calls do not execute on an unrelated turn. | `test_hidden_mixed_batch_requests_do_not_replay_on_unrelated_turn` |
@@ -602,6 +619,7 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Queued approvals | One unresolved approval is surfaced per run without premature execution. | `test_tool_approval_middleware_queues_multiple_approval_requests`, `test_tool_approval_middleware_queues_streamed_approval_requests` |
 | Middleware state plus hidden core state | State saves do not discard hidden mixed-batch calls. | `test_tool_approval_middleware_preserves_hidden_mixed_batch_requests` |
 | Auto-approval callback | Callback receives the original function call and executes the approved set once. | `test_tool_approval_middleware_auto_approval_rule_receives_function_call` |
+| Approval policy with Host-owned sibling | Reordering the same calls has the same outcome; auto-approved and safe calls remain deferred until Host input arrives; manual approvals stay in the mixed batch; an approved Host tool returns to Host-owned handling before local execution. | `test_tool_approval_middleware_mixed_batch_is_order_independent`, `test_tool_approval_middleware_auto_approves_with_host_pause_and_cached_safe_call`, `test_tool_approval_middleware_keeps_manual_approvals_together_with_host_pause`, `test_tool_approval_middleware_policy_approval_reclassifies_host_tool` |
 | Shared call budget | Auto-approved re-entry does not reset `max_function_calls`, and every executed approval group counts even when it pauses for input. | `test_tool_approval_middleware_auto_approved_loops_share_function_call_budget`, `test_approval_resume_user_input_counts_toward_function_call_budget` |
 | Standing tool rule | Tool-level approval applies only to later matching tools. | `test_tool_approval_middleware_always_approve_tool_rule` |
 | Forged standing rule | An unbound or substituted hosted response cannot create a standing middleware approval rule for caller-selected metadata. | `test_tool_approval_middleware_drops_forged_standing_approval`, `test_tool_approval_middleware_rebinds_hosted_standing_approval` |
@@ -623,6 +641,7 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Rejected execution | Rejection is a normal terminal result, not an exception to the caller. | `test_unapproved_tool_execution_raises_exception` |
 | Approved tool exception | Generic and detailed error modes preserve one result and one execution. | `test_approved_function_call_with_error_without_detailed_errors`, `test_approved_function_call_with_error_with_detailed_errors` |
 | Tool exception diagnostics | Internal diagnostics remain available to trusted local code, serialization preserves only a fixed failure marker, and explicit detailed-error configuration affects only the channel-visible result. | `packages/core/tests/core/test_types.py::test_function_result_exception_is_internal_by_default`, `packages/core/tests/core/test_function_invocation_logic.py::test_function_invocation_config_include_detailed_errors_false`, `test_function_invocation_config_include_detailed_errors_true`, `test_streaming_function_invocation_config_include_detailed_errors_false`, `test_streaming_function_invocation_config_include_detailed_errors_true` |
+| Custom result-parser exception | Failed custom conversion produces one tool-error result rather than the raw return value, in both response modes and with observability enabled or disabled; detailed-error configuration is preserved. | `packages/core/tests/core/test_function_invocation_logic.py::test_function_invocation_result_parser_failure`, `packages/core/tests/core/test_tools.py::test_invoke_result_parser_exception_propagates` |
 | Approved validation error | Validation failure returns one result without invoking the function body. | `test_approved_function_call_with_validation_error` |
 | Pre-validation middleware repair | Schema-compatible calls retain normalized middleware arguments without duplicate validation. Prepared-value reuse does not require validator outputs to be copyable, and unchanged NaNs remain stable. Identity-only opaque values may be reused for ordinary execution, but security authority rejects them before downstream middleware or the tool body because in-place mutation cannot be detected safely. When provisional validation fails, function middleware observes raw parsed arguments, may repair them before final validation, and the body receives normalized values; short-circuiting skips final validation and execution. Repair after security middleware fails closed using recursive type-aware, float-bit-exact comparison, including invalid and short-circuited mutations. Security inspects exact normalized values, and validation errors after hidden-value resolution do not disclose resolved values or mapping keys, including validator `TypeError` paths. | `test_function_middleware_keeps_normalized_arguments_for_valid_calls`, `test_prepared_arguments_support_noncopyable_validator_output`, `test_nan_prepared_and_approval_snapshots_are_stable`, `test_function_middleware_repairs_raw_arguments_before_validation`, `test_function_middleware_can_short_circuit_before_argument_validation`, `test_invalid_arguments_produced_by_middleware_keep_argument_error_contract`, `packages/core/tests/test_security.py::TestVariableArgumentPolicy::test_security_rejects_opaque_mutable_validator_output`, `test_argument_mutation_after_security_middleware_fails_closed`, `test_security_snapshot_accepts_unchanged_nan`, `test_argument_mutation_after_security_short_circuit_fails_closed`, `test_security_policy_observes_custom_validator_transform_once`, `test_hidden_argument_validation_error_does_not_disclose_resolved_value`, `test_hidden_mapping_key_is_not_disclosed_by_validation_error`, `test_hidden_value_is_not_disclosed_by_validator_type_error`, `test_hidden_argument_can_be_normalized_after_security_check` |
 | Approved middleware repair | Approval binds to the normalized middleware-entry representation, so ordinary Pydantic coercion still completes in one approval round. A changed approval-bound call executes zero times under the old grant, returns a persisted occurrence-bound replacement request in both response modes, and executes once only after the replacement is approved. Recursive type-aware, float-bit-exact comparison treats booleans and numbers, and positive and negative zero, as distinct while keeping unchanged NaNs stable. Opaque mutable normalized values fail closed before approval authority is established. The same replacement rule applies when middleware short-circuits instead of calling the tool. Security expansion preserves approval-visible placeholders. | `test_approved_coercing_arguments_execute_without_replacement`, `test_approved_argument_repair_requires_replacement_approval`, `test_approved_argument_repair_short_circuit_requires_replacement_approval`, `test_approval_snapshot_distinguishes_exact_values`, `test_approval_rejects_opaque_mutable_validator_output`, `packages/core/tests/test_security.py::TestVariableArgumentPolicy::test_hidden_argument_resolution_does_not_require_reapproval` |
@@ -738,3 +757,4 @@ Before accepting an update, reviewers must confirm:
 - #6963 / #7095 — opaque reasoning-signature replay
 - #6074 / #7233 — reasoning-paired tool-call replay
 - #6450 / #6794 — provider message and tool-result serialization
+- #8099 — in-run compaction summaries in the returned transcript
