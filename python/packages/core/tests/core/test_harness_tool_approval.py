@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import warnings
 from collections.abc import Awaitable, Callable, MutableSequence
@@ -17,16 +18,22 @@ from pydantic import create_model
 from agent_framework import (
     DEFAULT_TOOL_APPROVAL_SOURCE_ID,
     Agent,
+    AgentResponse,
+    AgentResponseUpdate,
     AgentSession,
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    ContextProvider,
     FileHistoryProvider,
     FunctionInvocationContext,
     FunctionMiddleware,
     FunctionTool,
     InMemoryHistoryProvider,
     Message,
+    ResponseStream,
+    SessionContext,
+    SupportsAgentRun,
     ToolApprovalMiddleware,
     ToolApprovalState,
     create_always_approve_tool_response,
@@ -35,6 +42,8 @@ from agent_framework import (
 )
 from agent_framework._feature_stage import ExperimentalWarning
 from agent_framework.security import (
+    PRINCIPAL_METADATA_KEY,
+    ConfidentialityLabel,
     ContentLabel,
     IntegrityLabel,
     LabelTrackingFunctionMiddleware,
@@ -126,6 +135,136 @@ async def test_manual_fides_no_session_preserves_standard_tool_approval(
         ("tool", ["function_result", "function_result"]),
         ("assistant", ["text"]),
     ]
+
+
+async def test_sessionless_approval_resume_with_context_provider_uses_message_authority(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    """A framework-created context-provider session must not become approval authority."""
+    calls: list[str] = []
+
+    class NoOpContextProvider(ContextProvider):
+        pass
+
+    @tool(name="approved_tool", approval_mode="always_require")
+    def approved_tool() -> str:
+        calls.append("approved")
+        return "approved"
+
+    agent = Agent(
+        client=chat_client_base,
+        tools=[approved_tool],
+        context_providers=[NoOpContextProvider("context")],
+    )
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="approved-call",
+                        name="approved_tool",
+                        arguments="{}",
+                        id="approved-occurrence",
+                    )
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+
+    first = await agent.run("request approval")
+    approval_request = first.user_input_requests[0]
+    resumed = await agent.run([
+        Message(role="user", contents=["request approval"]),
+        *first.messages,
+        Message(role="user", contents=[approval_request.to_function_approval_response(True)]),
+    ])
+
+    assert calls == ["approved"]
+    assert [(message.role, [content.type for content in message.contents]) for message in resumed.messages] == [
+        ("tool", ["function_result"]),
+        ("assistant", ["text"]),
+    ]
+
+
+async def test_framework_created_session_becomes_authoritative_when_reused_by_caller(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    """A retained framework session must fail closed when later supplied explicitly."""
+    calls: list[int] = []
+    retained_sessions: list[AgentSession] = []
+
+    class RetainingContextProvider(ContextProvider):
+        async def before_run(
+            self,
+            *,
+            agent: SupportsAgentRun,
+            session: AgentSession,
+            context: SessionContext,
+            state: dict[str, Any],
+        ) -> None:
+            del agent, context, state
+            retained_sessions.append(session)
+
+    @tool(name="approved_tool", approval_mode="always_require")
+    def approved_tool(value: int) -> str:
+        calls.append(value)
+        return "approved"
+
+    agent = Agent(
+        client=chat_client_base,
+        tools=[approved_tool],
+        context_providers=[RetainingContextProvider("context")],
+    )
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="approved-call",
+                        name="approved_tool",
+                        arguments={"value": 1},
+                        id="approved-occurrence",
+                    )
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+
+    first = await agent.run("request approval")
+    assert calls == []
+    assert "tool_approval" not in retained_sessions[0].state
+    approval_request = first.user_input_requests[0]
+    original_call = _function_call(approval_request)
+    assert original_call.call_id is not None
+    assert original_call.name is not None
+    assert approval_request.id is not None
+    tampered_call = Content.from_function_call(
+        call_id=original_call.call_id,
+        name=original_call.name,
+        arguments={"value": 999},
+        id=original_call.id,
+    )
+    tampered_response = Content.from_function_approval_response(
+        approved=True,
+        id=approval_request.id,
+        function_call=tampered_call,
+    )
+
+    await agent.run(
+        [
+            Message(role="user", contents=["request approval"]),
+            *first.messages,
+            Message(role="user", contents=[tampered_response]),
+        ],
+        session=retained_sessions[0],
+    )
+
+    assert calls == []
+    assert retained_sessions[1] is retained_sessions[0]
 
 
 class _StringApprovalValue(str, Enum):
@@ -492,6 +631,116 @@ async def test_changed_hidden_snapshot_requires_visible_second_approval(
     assert [content.type for content in model_contents].count("function_call") == 1
     assert [content.type for content in model_contents].count("function_result") == 1
     assert not any(content.type.startswith("function_approval_") for content in model_contents)
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])
+async def test_principal_change_requires_visible_second_approval(
+    chat_client_base: MockBaseChatClient,
+    streaming: bool,
+) -> None:
+    """A principal change persists one replacement request before execution."""
+    received: list[str] = []
+
+    def principals(user_id: str) -> list[dict[str, str]]:
+        return [{"tenant_id": "tenant-a", "user_id": user_id}]
+
+    @tool(
+        name="identity_sink",
+        additional_properties={
+            "max_allowed_confidentiality": "user_identity",
+            PRINCIPAL_METADATA_KEY: principals("user-c"),
+        },
+    )
+    def identity_sink(value: str) -> str:
+        received.append(value)
+        return "sent"
+
+    tracker = LabelTrackingFunctionMiddleware()
+    policy = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+    session = AgentSession(session_id=f"principal-change-{streaming}")
+    tracker._scope_for_session(session).context_label = ContentLabel(
+        confidentiality=ConfidentialityLabel.USER_IDENTITY,
+        metadata={PRINCIPAL_METADATA_KEY: principals("user-a")},
+    )
+    agent = Agent(
+        client=chat_client_base,
+        tools=[identity_sink],
+        middleware=[tracker, policy],
+        context_providers=[InMemoryHistoryProvider()],
+    )
+    function_call = Content.from_function_call(
+        call_id="principal-call",
+        name="identity_sink",
+        arguments={"value": "payload"},
+        id="principal-occurrence",
+    )
+
+    if streaming:
+        chat_client_base.streaming_responses = [
+            [ChatResponseUpdate(role="assistant", contents=[function_call])],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")])],
+        ]
+        first_stream = agent.run("send identity data", stream=True, session=session)
+        _ = [update async for update in first_stream]
+        first = await first_stream.get_final_response()
+    else:
+        chat_client_base.run_responses = [
+            ChatResponse(messages=Message(role="assistant", contents=[function_call])),
+            ChatResponse(messages=Message(role="assistant", contents=["done"])),
+        ]
+        first = await agent.run("send identity data", session=session)
+
+    original_request = first.user_input_requests[0]
+    tracker._scope_for_session(session).context_label = ContentLabel(
+        confidentiality=ConfidentialityLabel.USER_IDENTITY,
+        metadata={PRINCIPAL_METADATA_KEY: principals("user-b")},
+    )
+
+    if streaming:
+        stale_stream = agent.run(
+            original_request.to_function_approval_response(True),
+            stream=True,
+            session=session,
+        )
+        stale_updates = [update async for update in stale_stream]
+        stale = await stale_stream.get_final_response()
+        assert [(update.role, [content.type for content in update.contents]) for update in stale_updates] == [
+            ("assistant", ["function_approval_request"]),
+        ]
+    else:
+        stale = await agent.run(original_request.to_function_approval_response(True), session=session)
+
+    assert received == []
+    assert chat_client_base.call_count == 1
+    replacement = stale.user_input_requests[0]
+    assert replacement.id != original_request.id
+    assert replacement.function_call is not None
+    assert original_request.function_call is not None
+    assert replacement.function_call.id == original_request.function_call.id
+    pending = session.state["tool_approval"]["pending_approval_requests"]
+    assert [snapshot["id"] for snapshot in pending] == [replacement.id]
+
+    if streaming:
+        approved_stream = agent.run(
+            replacement.to_function_approval_response(True),
+            stream=True,
+            session=session,
+        )
+        approved_updates = [update async for update in approved_stream]
+        approved = await approved_stream.get_final_response()
+        assert [(update.role, [content.type for content in update.contents]) for update in approved_updates] == [
+            ("tool", ["function_result"]),
+            ("assistant", ["text"]),
+        ]
+    else:
+        approved = await agent.run(replacement.to_function_approval_response(True), session=session)
+
+    assert received == ["payload"]
+    assert chat_client_base.call_count == 2
+    assert [(message.role, [content.type for content in message.contents]) for message in approved.messages] == [
+        ("tool", ["function_result"]),
+        ("assistant", ["text"]),
+    ]
 
 
 async def test_replacement_approval_preserves_unanswered_reused_call_id_sibling(
@@ -1814,6 +2063,352 @@ async def test_tool_approval_middleware_auto_approval_rule_receives_function_cal
     assert final_response.text == "done"
     assert auto_calls == 1
     assert manual_calls == 1
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])
+async def test_tool_approval_middleware_auto_approves_with_host_pause_and_cached_safe_call(
+    chat_client_base: MockBaseChatClient,
+    streaming: bool,
+) -> None:
+    """Policy approval should remain cached while a Host-owned sibling is resolved."""
+    from agent_framework import FunctionTool
+
+    safe_calls = 0
+    approval_calls = 0
+
+    @tool(name="safe_read", approval_mode="never_require")
+    def safe_read() -> str:
+        nonlocal safe_calls
+        safe_calls += 1
+        return "safe"
+
+    @tool(name="guarded_write", approval_mode="always_require")
+    def guarded_write() -> str:
+        nonlocal approval_calls
+        approval_calls += 1
+        return "written"
+
+    host_tool = FunctionTool(name="host_read", func=None, description="Handled by the caller")
+    agent = Agent(
+        client=chat_client_base,
+        tools=[safe_read, guarded_write, host_tool],
+        middleware=[
+            ToolApprovalMiddleware(auto_approval_rules=[lambda function_call: function_call.name == "guarded_write"])
+        ],
+    )
+    session = AgentSession(session_id="mixed-policy-host")
+    calls = [
+        Content.from_function_call(call_id="host", name="host_read", arguments={}),
+        Content.from_function_call(call_id="safe", name="safe_read", arguments={}),
+        Content.from_function_call(call_id="guarded", name="guarded_write", arguments={}),
+    ]
+    if streaming:
+        chat_client_base.streaming_responses = [[ChatResponseUpdate(role="assistant", contents=calls)]]
+    else:
+        chat_client_base.run_responses = [ChatResponse(messages=Message(role="assistant", contents=calls))]
+
+    async def run(value: str | Content) -> AgentResponse:
+        if not streaming:
+            return await agent.run(value, session=session)
+        response_stream = agent.run(value, session=session, stream=True)
+        _ = [update async for update in response_stream]
+        return await response_stream.get_final_response()
+
+    first_response = await run("run mixed batch")
+
+    assert _approval_requests(first_response.messages) == []
+    host_request = next(
+        content
+        for content in first_response.user_input_requests
+        if content.type == "function_call" and content.name == "host_read"
+    )
+    assert safe_calls == approval_calls == 0
+
+    unrelated_response = await run("unrelated turn")
+    assert unrelated_response.messages == []
+    assert safe_calls == approval_calls == 0
+
+    assert host_request.call_id is not None
+    host_result = Content.from_function_result(call_id=host_request.call_id, result="host result")
+    host_result.id = host_request.id
+    if streaming:
+        chat_client_base.streaming_responses = [
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")])]
+        ]
+    else:
+        chat_client_base.run_responses = [ChatResponse(messages=Message(role="assistant", contents=["done"]))]
+    final_response = await run(host_result)
+
+    assert final_response.text == "done"
+    assert safe_calls == approval_calls == 1
+
+
+@pytest.mark.parametrize("approval_first", [True, False], ids=["approval-first", "host-first"])
+async def test_tool_approval_middleware_mixed_batch_is_order_independent(
+    chat_client_base: MockBaseChatClient,
+    approval_first: bool,
+) -> None:
+    """Reordering the same approval and Host calls should produce the same outcome."""
+    approval_calls = 0
+
+    @tool(name="guarded_write", approval_mode="always_require")
+    def guarded_write(value: str) -> str:
+        nonlocal approval_calls
+        approval_calls += 1
+        return value
+
+    host_tool = FunctionTool(name="host_read", func=None, description="Handled by the caller")
+    agent = Agent(
+        client=chat_client_base,
+        tools=[guarded_write, host_tool],
+        middleware=[
+            ToolApprovalMiddleware(auto_approval_rules=[lambda function_call: function_call.name == "guarded_write"])
+        ],
+    )
+    session = AgentSession(session_id=f"mixed-order-{approval_first}")
+    approval_call = Content.from_function_call(
+        call_id="approval",
+        name="guarded_write",
+        arguments={"value": "approved"},
+    )
+    host_call = Content.from_function_call(call_id="host", name="host_read", arguments={})
+    calls = [approval_call, host_call] if approval_first else [host_call, approval_call]
+    chat_client_base.run_responses = [ChatResponse(messages=Message(role="assistant", contents=calls))]
+
+    first_response = await agent.run("run mixed batch", session=session)
+
+    assert _approval_requests(first_response.messages) == []
+    host_request = first_response.user_input_requests[0]
+    assert (host_request.type, host_request.name) == ("function_call", "host_read")
+    assert approval_calls == 0
+
+    assert host_request.call_id is not None
+    host_result = Content.from_function_result(call_id=host_request.call_id, result="host result")
+    host_result.id = host_request.id
+    chat_client_base.run_responses = [ChatResponse(messages=Message(role="assistant", contents=["done"]))]
+    final_response = await agent.run(host_result, session=session)
+
+    assert final_response.text == "done"
+    assert approval_calls == 1
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])
+async def test_tool_approval_middleware_keeps_manual_approvals_together_with_host_pause(
+    chat_client_base: MockBaseChatClient,
+    streaming: bool,
+) -> None:
+    """A Host-owned sibling prevents manual approvals from being split into separate batches."""
+    from agent_framework import FunctionTool
+
+    @tool(name="first_guarded", approval_mode="always_require")
+    def first_guarded() -> str:
+        return "first"
+
+    @tool(name="second_guarded", approval_mode="always_require")
+    def second_guarded() -> str:
+        return "second"
+
+    host_tool = FunctionTool(name="host_read", func=None, description="Handled by the caller")
+    agent = Agent(
+        client=chat_client_base,
+        tools=[first_guarded, host_tool, second_guarded],
+        middleware=[ToolApprovalMiddleware()],
+    )
+    session = AgentSession(session_id="mixed-manual-host")
+    calls = [
+        Content.from_function_call(call_id="first", name="first_guarded", arguments={}),
+        Content.from_function_call(call_id="host", name="host_read", arguments={}),
+        Content.from_function_call(call_id="second", name="second_guarded", arguments={}),
+    ]
+    response_updates: list[AgentResponseUpdate] = []
+    if streaming:
+        chat_client_base.streaming_responses = [[ChatResponseUpdate(role="assistant", contents=calls)]]
+        response_stream = agent.run("run mixed batch", session=session, stream=True)
+        response_updates = [update async for update in response_stream]
+        response = await response_stream.get_final_response()
+    else:
+        chat_client_base.run_responses = [ChatResponse(messages=Message(role="assistant", contents=calls))]
+        response = await agent.run("run mixed batch", session=session)
+
+    if streaming:
+        assert [
+            _function_call(content).name if content.type == "function_approval_request" else content.name
+            for update in response_updates
+            for content in update.user_input_requests
+        ] == ["first_guarded", "host_read", "second_guarded"]
+    response_request_names = [
+        _function_call(content).name if content.type == "function_approval_request" else content.name
+        for content in response.user_input_requests
+    ]
+    if streaming:
+        assert set(response_request_names) == {"first_guarded", "host_read", "second_guarded"}
+    else:
+        assert response_request_names == ["first_guarded", "host_read", "second_guarded"]
+    state = session.state[DEFAULT_TOOL_APPROVAL_SOURCE_ID]
+    assert isinstance(state, dict)
+    assert state["queued_approval_requests"] == []
+
+
+@pytest.mark.parametrize("approval_first", [True, False], ids=["approval-first", "host-first"])
+async def test_tool_approval_middleware_preserves_split_streamed_mixed_batch_order(
+    chat_client_base: MockBaseChatClient,
+    approval_first: bool,
+) -> None:
+    """Separately streamed approval and Host pauses remain one ordered batch."""
+    from agent_framework import FunctionTool
+    from agent_framework._middleware import AgentContext
+
+    @tool(name="guarded", approval_mode="always_require")
+    def guarded() -> str:
+        return "guarded"
+
+    host_tool = FunctionTool(name="host_read", func=None, description="Handled by the caller")
+    agent = Agent(client=chat_client_base, tools=[guarded, host_tool])
+    approval_call = Content.from_function_call(call_id="guarded", name="guarded", arguments={})
+    approval_request = Content.from_function_approval_request(id="guarded", function_call=approval_call)
+    host_request = Content.from_function_call(call_id="host", name="host_read", arguments={})
+    host_request.user_input_request = True
+    ordered_requests = [approval_request, host_request] if approval_first else [host_request, approval_request]
+    context = AgentContext(
+        agent=agent,
+        messages=[],
+        session=AgentSession(),
+        stream=True,
+    )
+    middleware = ToolApprovalMiddleware()
+    state = ToolApprovalState()
+
+    async def inner_stream():
+        for request in ordered_requests:
+            yield AgentResponseUpdate(role="assistant", contents=[request])
+
+    async def call_next() -> None:
+        context.result = ResponseStream(inner_stream(), finalizer=AgentResponse.from_updates)
+
+    response_stream = middleware._process_stream(  # pyright: ignore[reportPrivateUsage]
+        context,
+        call_next,
+        state,
+    )
+    updates = [update async for update in response_stream]
+
+    assert [content for update in updates for content in update.user_input_requests] == ordered_requests
+    assert state.queued_approval_requests == []
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])
+async def test_tool_approval_middleware_policy_approval_reclassifies_host_tool(
+    chat_client_base: MockBaseChatClient,
+    streaming: bool,
+) -> None:
+    """A policy-approved Host tool should request Host input instead of local execution."""
+    host_tool = FunctionTool(
+        name="guarded_host",
+        func=None,
+        description="Handled by the caller",
+        approval_mode="always_require",
+    )
+    agent = Agent(
+        client=chat_client_base,
+        tools=[host_tool],
+        middleware=[
+            ToolApprovalMiddleware(auto_approval_rules=[lambda function_call: function_call.name == "guarded_host"])
+        ],
+    )
+    session = AgentSession(session_id="guarded-host")
+    function_call = Content.from_function_call(call_id="host", name="guarded_host", arguments={})
+    if streaming:
+        chat_client_base.streaming_responses = [[ChatResponseUpdate(role="assistant", contents=[function_call])]]
+        response_stream = agent.run("run Host tool", session=session, stream=True)
+        _ = [update async for update in response_stream]
+        response = await response_stream.get_final_response()
+    else:
+        chat_client_base.run_responses = [ChatResponse(messages=Message(role="assistant", contents=[function_call]))]
+        response = await agent.run("run Host tool", session=session)
+
+    assert _approval_requests(response.messages) == []
+    assert [(content.type, content.name) for content in response.user_input_requests] == [
+        ("function_call", "guarded_host")
+    ]
+
+
+async def test_tool_approval_middleware_streams_standalone_user_input_immediately(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    """A standalone user-input request must not wait for the inner stream to finish."""
+    from agent_framework._middleware import AgentContext
+
+    release_stream = asyncio.Event()
+    request = Content.from_oauth_consent_request(consent_link="https://example.com/consent")
+    context = AgentContext(
+        agent=Agent(client=chat_client_base),
+        messages=[],
+        session=AgentSession(),
+        stream=True,
+    )
+    middleware = ToolApprovalMiddleware()
+
+    async def inner_stream():
+        yield AgentResponseUpdate(role="assistant", contents=[request])
+        await release_stream.wait()
+
+    async def call_next() -> None:
+        context.result = ResponseStream(inner_stream(), finalizer=AgentResponse.from_updates)
+
+    response_stream = middleware._process_stream(  # pyright: ignore[reportPrivateUsage]
+        context,
+        call_next,
+        ToolApprovalState(),
+    )
+    iterator = response_stream.__aiter__()
+    first_update = await asyncio.wait_for(anext(iterator), timeout=1)
+
+    assert first_update.user_input_requests == [request]
+    release_stream.set()
+    assert [update async for update in iterator] == []
+
+
+async def test_tool_approval_middleware_emits_mixed_update_metadata_once(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    """Approval filtering must not duplicate terminal or provider metadata."""
+    from agent_framework._middleware import AgentContext
+
+    function_call = Content.from_function_call(call_id="guarded", name="guarded", arguments={})
+    approval_request = Content.from_function_approval_request(id="guarded", function_call=function_call)
+    raw_marker = object()
+    context = AgentContext(
+        agent=Agent(client=chat_client_base),
+        messages=[],
+        session=AgentSession(),
+        stream=True,
+    )
+    middleware = ToolApprovalMiddleware()
+
+    async def inner_stream():
+        yield AgentResponseUpdate(
+            role="assistant",
+            contents=[Content.from_text("note"), approval_request],
+            finish_reason="tool_calls",
+            continuation_token={},
+            raw_representation=raw_marker,
+        )
+
+    async def call_next() -> None:
+        context.result = ResponseStream(inner_stream(), finalizer=AgentResponse.from_updates)
+
+    response_stream = middleware._process_stream(  # pyright: ignore[reportPrivateUsage]
+        context,
+        call_next,
+        ToolApprovalState(),
+    )
+    updates = [update async for update in response_stream]
+
+    assert len(updates) == 1
+    assert [content.type for content in updates[0].contents] == ["text", "function_approval_request"]
+    assert updates[0].finish_reason == "tool_calls"
+    assert updates[0].continuation_token == {}
+    assert updates[0].raw_representation is raw_marker
 
 
 async def test_tool_approval_middleware_auto_approved_loops_share_function_call_budget(

@@ -105,6 +105,14 @@ agent = Agent(
 )
 ```
 
+### Host tool lifetime
+
+Registered `FunctionTool` instances retain their invocation and exception counters
+across `execute_code` calls and provider runs. Their `max_invocations` and
+`max_invocation_exceptions` limits use the same counters as direct invocations of
+those instances. A provider's run-scoped snapshot captures tool membership; it
+does not reset host tool counters.
+
 ### File mounts and resource limits
 
 Mount host directories into the sandbox and cap execution resources:

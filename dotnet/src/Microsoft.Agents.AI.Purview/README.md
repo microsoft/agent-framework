@@ -273,3 +273,39 @@ catch (PurviewException e)
     this._logger.LogError(e, "Purview middleware threw an exception.")
 }
 ```
+
+## Security Considerations
+
+### Identity is a trusted input
+
+Purview evaluates DLP policy **for a specific user**. The identity this integration resolves therefore
+decides *which* policy is applied, and it is resolved in this order:
+
+1. The user id from the configured `TokenCredential`'s token, when the credential resolves to a user.
+2. The `userId` argument passed to the processor.
+3. `ChatMessage.AdditionalProperties["userId"]`.
+4. `ChatMessage.AuthorName`, when it is a GUID.
+
+Only source 1 is verified. Sources 2-4 are supplied by the hosting application, so **a host must not
+populate them from data that has crossed a trust boundary**. If an end user, an upstream service or a
+model response can influence `AdditionalProperties["userId"]` or `AuthorName`, that party can select a
+different user's DLP policy - typically one with weaker rules - and evade enforcement. Where identity
+must come from a request, derive it from a validated token on the server, never from the request body.
+Prefer a user-delegated credential (source 1) whenever possible.
+
+`PurviewAppLocation` in `PurviewSettings` is trusted in the same way: it selects which policy locations
+apply and must be configured by the host, not by the caller.
+
+### Fail-closed behaviour
+
+Policy evaluation fails closed. If no user id can be resolved, or the tenant or app location cannot be
+determined, `PurviewRequestException` is thrown rather than letting content through unevaluated. Use
+`IgnoreExceptions` if you deliberately want availability over enforcement - but understand that it
+disables enforcement for every error, not just transient ones.
+
+### What is evaluated
+
+Every content item on a message is submitted for evaluation, not just its text: `DataContent` is sent
+as Purview binary content, and `FunctionCallContent`, `FunctionResultContent` and other structured
+content are serialized to text. Only `UsageContent` is skipped, because it carries token counts rather
+than user data.

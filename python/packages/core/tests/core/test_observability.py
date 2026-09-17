@@ -1914,6 +1914,137 @@ def test_enable_instrumentation_explicit_param_overrides_env(monkeypatch):
     assert observability.OBSERVABILITY_SETTINGS.enable_sensitive_data is False
 
 
+@pytest.mark.parametrize("message_events", [False, True])
+def test_enable_instrumentation_message_events_overrides_env(monkeypatch, message_events: bool) -> None:
+    import agent_framework.observability as observability
+
+    monkeypatch.setenv("ENABLE_MESSAGE_EVENTS", str(not message_events))
+    monkeypatch.setenv("ENABLE_SENSITIVE_DATA", "false")
+    settings = observability.ObservabilitySettings(enable_instrumentation=False)
+    monkeypatch.setattr(observability, "OBSERVABILITY_SETTINGS", settings)
+    assert settings.enable_message_events is not message_events
+
+    observability.enable_instrumentation(enable_message_events=message_events)
+
+    assert settings.enable_instrumentation is True
+    assert settings.enable_message_events is message_events
+    assert settings.enable_sensitive_data is False
+
+
+@pytest.mark.parametrize("message_events", [False, True])
+@pytest.mark.parametrize("source", ["environment", "providers", "instrumentation"])
+def test_enable_instrumentation_preserves_message_events(monkeypatch, message_events: bool, source: str) -> None:
+    import agent_framework.observability as observability
+
+    monkeypatch.setenv("ENABLE_MESSAGE_EVENTS", str(message_events if source == "environment" else not message_events))
+    settings = observability.ObservabilitySettings()
+    monkeypatch.setattr(observability, "OBSERVABILITY_SETTINGS", settings)
+    if source == "providers":
+        with patch.object(settings, "_configure"):
+            observability.configure_otel_providers(enable_message_events=message_events)
+    elif source == "instrumentation":
+        observability.enable_instrumentation(enable_message_events=message_events)
+
+    for env_value in [str(not message_events), None]:
+        if env_value is None:
+            monkeypatch.delenv("ENABLE_MESSAGE_EVENTS")
+        else:
+            monkeypatch.setenv("ENABLE_MESSAGE_EVENTS", env_value)
+        observability.enable_instrumentation()
+        assert settings.enable_message_events is message_events
+        observability.enable_instrumentation(enable_message_events=None)
+        assert settings.enable_message_events is message_events
+
+
+@pytest.mark.parametrize("current_value", [False, True])
+@pytest.mark.parametrize("message_events", [False, True, None])
+@pytest.mark.parametrize("force", [False, True])
+def test_enable_instrumentation_message_events_respects_sticky_disable(
+    monkeypatch, current_value: bool, message_events: bool | None, force: bool
+) -> None:
+    import agent_framework.observability as observability
+
+    settings = observability.ObservabilitySettings(enable_message_events=current_value)
+    monkeypatch.setattr(observability, "OBSERVABILITY_SETTINGS", settings)
+    observability.disable_instrumentation()
+
+    observability.enable_instrumentation(enable_message_events=message_events, enable_sensitive_data=True, force=force)
+
+    assert settings.enable_instrumentation is force
+    assert settings.enable_sensitive_data is force
+    assert settings.is_user_disabled is not force
+    expected = message_events if force and message_events is not None else current_value
+    assert settings.enable_message_events is expected
+
+
+@pytest.mark.parametrize("is_setup", [False, True])
+def test_enable_instrumentation_message_events_preserves_providers(
+    monkeypatch, span_exporter, log_record_exporter, is_setup: bool
+) -> None:
+    from opentelemetry import metrics, trace
+    from opentelemetry._logs import get_logger_provider
+
+    import agent_framework.observability as observability
+
+    settings = observability.OBSERVABILITY_SETTINGS
+    monkeypatch.setattr(settings, "enable_console_exporters", True)
+    monkeypatch.setattr(settings, "_executed_setup", is_setup)
+    providers = (trace.get_tracer_provider(), get_logger_provider(), metrics.get_meter_provider())
+    with patch.object(settings, "_configure") as configure:
+        for message_events in [False, True, None]:
+            observability.enable_instrumentation(enable_message_events=message_events)
+            assert settings.is_setup is is_setup
+            assert settings.enable_console_exporters is True
+            assert trace.get_tracer_provider() is providers[0]
+            assert get_logger_provider() is providers[1]
+            assert metrics.get_meter_provider() is providers[2]
+        configure.assert_not_called()
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("message_events", [False, True])
+@pytest.mark.parametrize("enable_sensitive_data", [False, True], indirect=True)
+@pytest.mark.parametrize("semconv", ["", "gen_ai_latest_experimental"])
+async def test_enable_instrumentation_controls_message_event_emission(
+    mock_chat_client,
+    span_exporter: InMemorySpanExporter,
+    log_record_exporter,
+    enable_sensitive_data: bool,
+    stream: bool,
+    message_events: bool,
+    semconv: str,
+) -> None:
+    import agent_framework.observability as observability
+
+    observability.OBSERVABILITY_SETTINGS.otel_semconv_stability_opt_in = semconv
+    observability.enable_instrumentation(enable_message_events=message_events)
+    client = mock_chat_client()
+    messages = [Message("user", ["Test message"])]
+    if stream:
+        response_stream = client.get_response(messages=messages, options={"model": "Test"}, stream=True)
+        async for _ in response_stream:
+            pass
+        await response_stream.get_final_response()
+    else:
+        await client.get_response(messages=messages, options={"model": "Test"})
+
+    records = [record.log_record for record in log_record_exporter.get_finished_logs()]
+    expected_events = []
+    if message_events and enable_sensitive_data:
+        expected_events = [OtelAttr.USER_MESSAGE.value]
+        if stream:
+            expected_events.append(OtelAttr.CHOICE.value)
+    assert [record.event_name for record in records] == expected_events
+    if records:
+        assert records[0].body == {"content": "Test message"}
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    attributes = spans[0].attributes or {}
+    assert (OtelAttr.INPUT_MESSAGES in attributes) is (enable_sensitive_data and bool(semconv))
+    assert (OtelAttr.OUTPUT_MESSAGES in attributes) is (enable_sensitive_data and bool(semconv))
+
+
 def test_enable_instrumentation_does_not_touch_console_exporters(monkeypatch):
     """Test enable_instrumentation does not modify enable_console_exporters (it is an exporter concern)."""
     import importlib
@@ -5721,6 +5852,254 @@ def test_capture_response_with_error_type(span_exporter: InMemorySpanExporter):
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
     assert spans[0].attributes.get(OtelAttr.ERROR_TYPE) == "ValueError"  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+
+
+def test_filter_metric_attributes() -> None:
+    """_filter_metric_attributes preserves only the allowed GenAI metric attributes."""
+    from agent_framework.observability import OtelAttr, _filter_metric_attributes
+
+    attributes = {
+        OtelAttr.OPERATION: "chat",
+        OtelAttr.PROVIDER_NAME: "test_provider",
+        OtelAttr.SYSTEM: "test_system",
+        OtelAttr.REQUEST_MODEL: "gpt-4o",
+        OtelAttr.RESPONSE_MODEL: "gpt-4o-mini",
+        OtelAttr.ADDRESS: "127.0.0.1",
+        OtelAttr.PORT: 8000,
+        "custom_attribute": "ignored",
+        OtelAttr.CONVERSATION_ID: "conv-123",
+    }
+    filtered = _filter_metric_attributes(attributes)
+    assert filtered == {
+        OtelAttr.OPERATION: "chat",
+        OtelAttr.PROVIDER_NAME: "test_provider",
+        OtelAttr.SYSTEM: "test_system",
+        OtelAttr.REQUEST_MODEL: "gpt-4o",
+        OtelAttr.RESPONSE_MODEL: "gpt-4o-mini",
+        OtelAttr.ADDRESS: "127.0.0.1",
+        OtelAttr.PORT: 8000,
+    }
+
+
+def test_capture_operation_error_keeps_only_metric_attributes() -> None:
+    """The error record carries the metric attribute set plus error.type, nothing else."""
+    from agent_framework.observability import _capture_operation_error
+
+    histogram = Mock()
+    _capture_operation_error(
+        attributes={
+            OtelAttr.OPERATION: OtelAttr.CHAT_COMPLETION_OPERATION,
+            OtelAttr.REQUEST_MODEL: "test-model",
+            OtelAttr.CONVERSATION_ID: "conv-1",
+        },
+        exception=TimeoutError("slow"),
+        operation_duration_histogram=histogram,
+        duration=0.25,
+    )
+
+    histogram.record.assert_called_once_with(
+        0.25,
+        attributes={
+            OtelAttr.OPERATION: OtelAttr.CHAT_COMPLETION_OPERATION,
+            OtelAttr.REQUEST_MODEL: "test-model",
+            OtelAttr.ERROR_TYPE: "TimeoutError",
+        },
+    )
+
+
+def test_capture_operation_error_without_histogram_or_duration() -> None:
+    """No histogram or no duration means nothing is recorded."""
+    from agent_framework.observability import _capture_operation_error
+
+    histogram = Mock()
+    _capture_operation_error(attributes={}, exception=ValueError("x"), operation_duration_histogram=histogram)
+    _capture_operation_error(attributes={}, exception=ValueError("x"), duration=1.0)
+    histogram.record.assert_not_called()
+
+
+async def test_chat_client_records_duration_on_error(
+    mock_chat_client: Any, span_exporter: InMemorySpanExporter
+) -> None:
+    """A failed non-streaming call records gen_ai.client.operation.duration with error.type."""
+
+    class FailingChatClient(mock_chat_client):  # type: ignore[misc, valid-type]
+        async def _get_non_streaming_response(self, **kwargs: Any) -> ChatResponse:
+            raise ValueError("boom")
+
+    client = FailingChatClient()
+    histogram = Mock()
+    client.duration_histogram = histogram
+    span_exporter.clear()
+
+    with pytest.raises(ValueError, match="boom"):
+        await client.get_response(messages=[Message(role="user", contents=["hi"])], options={"model": "Test"})
+
+    histogram.record.assert_called_once()
+    duration, kwargs = histogram.record.call_args[0][0], histogram.record.call_args[1]
+    assert duration >= 0
+    attributes = kwargs["attributes"]
+    assert attributes[OtelAttr.ERROR_TYPE] == "ValueError"
+    assert attributes[OtelAttr.REQUEST_MODEL] == "Test"
+    assert attributes[OtelAttr.OPERATION] == OtelAttr.CHAT_COMPLETION_OPERATION
+
+
+async def test_chat_client_records_duration_on_streaming_error(
+    mock_chat_client: Any, span_exporter: InMemorySpanExporter
+) -> None:
+    """A stream that fails mid-iteration also records the duration metric with error.type."""
+
+    class FailingStreamChatClient(mock_chat_client):  # type: ignore[misc, valid-type]
+        def _get_streaming_response(self, **kwargs: Any) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+            async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                yield ChatResponseUpdate(contents=[Content.from_text("Hello")], role="assistant")
+                raise RuntimeError("stream broke")
+
+            return ResponseStream(_stream(), finalizer=lambda updates: ChatResponse.from_updates(updates))
+
+    client = FailingStreamChatClient()
+    histogram = Mock()
+    client.duration_histogram = histogram
+    span_exporter.clear()
+
+    with pytest.raises(RuntimeError, match="stream broke"):
+        async for _ in client.get_response(
+            messages=[Message(role="user", contents=["hi"])], stream=True, options={"model": "Test"}
+        ):
+            pass
+
+    histogram.record.assert_called_once()
+    attributes = histogram.record.call_args[1]["attributes"]
+    assert attributes[OtelAttr.ERROR_TYPE] == "RuntimeError"
+    assert attributes[OtelAttr.REQUEST_MODEL] == "Test"
+
+
+async def test_chat_client_records_duration_when_stream_setup_fails(
+    mock_chat_client: Any, span_exporter: InMemorySpanExporter
+) -> None:
+    """A stream that fails before it is built records the duration metric with error.type."""
+
+    class FailingSetupChatClient(mock_chat_client):  # type: ignore[misc, valid-type]
+        def _get_streaming_response(self, **kwargs: Any) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+            raise RuntimeError("setup broke")
+
+    client = FailingSetupChatClient()
+    histogram = Mock()
+    client.duration_histogram = histogram
+    span_exporter.clear()
+
+    with pytest.raises(RuntimeError, match="setup broke"):
+        async for _ in client.get_response(
+            messages=[Message(role="user", contents=["hi"])], stream=True, options={"model": "Test"}
+        ):
+            pass
+
+    histogram.record.assert_called_once()
+    duration, kwargs = histogram.record.call_args[0][0], histogram.record.call_args[1]
+    assert duration >= 0
+    attributes = kwargs["attributes"]
+    assert attributes[OtelAttr.ERROR_TYPE] == "RuntimeError"
+    assert attributes[OtelAttr.REQUEST_MODEL] == "Test"
+    assert attributes[OtelAttr.OPERATION] == OtelAttr.CHAT_COMPLETION_OPERATION
+
+
+async def test_chat_client_records_duration_when_stream_finalizer_fails(
+    mock_chat_client: Any, span_exporter: InMemorySpanExporter
+) -> None:
+    """A stream whose finalizer raises records the duration metric with error.type."""
+
+    class FailingFinalizerChatClient(mock_chat_client):  # type: ignore[misc, valid-type]
+        def _get_streaming_response(self, **kwargs: Any) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+            async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                yield ChatResponseUpdate(contents=[Content.from_text("Hello")], role="assistant")
+
+            def _broken_finalizer(updates: Any) -> ChatResponse:
+                raise ValueError("finalizer failed")
+
+            return ResponseStream(_stream(), finalizer=_broken_finalizer)
+
+    client = FailingFinalizerChatClient()
+    histogram = Mock()
+    client.duration_histogram = histogram
+    span_exporter.clear()
+
+    with pytest.raises(ValueError, match="finalizer failed"):
+        stream = client.get_response(
+            messages=[Message(role="user", contents=["hi"])], stream=True, options={"model": "Test"}
+        )
+        async for _ in stream:
+            pass
+
+    histogram.record.assert_called_once()
+    duration, kwargs = histogram.record.call_args[0][0], histogram.record.call_args[1]
+    assert duration >= 0
+    attributes = kwargs["attributes"]
+    assert attributes[OtelAttr.ERROR_TYPE] == "ValueError"
+    assert attributes[OtelAttr.REQUEST_MODEL] == "Test"
+    assert attributes[OtelAttr.OPERATION] == OtelAttr.CHAT_COMPLETION_OPERATION
+
+
+async def test_chat_client_records_duration_when_stream_result_hook_fails(
+    mock_chat_client: Any, span_exporter: InMemorySpanExporter
+) -> None:
+    """A stream whose result hook raises records the duration metric with error.type."""
+
+    def _broken_result_hook(response: ChatResponse) -> ChatResponse:
+        raise RuntimeError("result hook failed")
+
+    client = mock_chat_client()
+    histogram = Mock()
+    client.duration_histogram = histogram
+    span_exporter.clear()
+
+    with pytest.raises(RuntimeError, match="result hook failed"):
+        stream = client.get_response(
+            messages=[Message(role="user", contents=["hi"])], stream=True, options={"model": "Test"}
+        )
+        stream.with_result_hook(_broken_result_hook)
+        async for _ in stream:
+            pass
+
+    histogram.record.assert_called_once()
+    duration, kwargs = histogram.record.call_args[0][0], histogram.record.call_args[1]
+    assert duration >= 0
+    attributes = kwargs["attributes"]
+    assert attributes[OtelAttr.ERROR_TYPE] == "RuntimeError"
+    assert attributes[OtelAttr.REQUEST_MODEL] == "Test"
+    assert attributes[OtelAttr.OPERATION] == OtelAttr.CHAT_COMPLETION_OPERATION
+
+
+async def test_embedding_client_records_duration_on_error(span_exporter: InMemorySpanExporter) -> None:
+    """A failed embedding call records gen_ai.client.operation.duration with error.type."""
+    from agent_framework import BaseEmbeddingClient, GeneratedEmbeddings
+    from agent_framework.observability import EmbeddingTelemetryLayer
+
+    class RawFailingEmbeddingClient(BaseEmbeddingClient[str, list[float], Any]):  # type: ignore[type-arg]
+        async def get_embeddings(
+            self, values: Sequence[str], *, options: Any = None
+        ) -> GeneratedEmbeddings[list[float], Any]:
+            raise ValueError("embed boom")
+
+    class FailingEmbeddingClient(EmbeddingTelemetryLayer, RawFailingEmbeddingClient):  # type: ignore[misc]
+        OTEL_PROVIDER_NAME = "test"
+
+        def service_url(self) -> str:
+            return "https://test.example.com"
+
+    client = FailingEmbeddingClient()
+    histogram = Mock()
+    client.duration_histogram = histogram
+    span_exporter.clear()
+
+    with pytest.raises(ValueError, match="embed boom"):
+        await client.get_embeddings(["hi"], options={"model": "test-embed"})
+
+    histogram.record.assert_called_once()
+    duration, kwargs = histogram.record.call_args[0][0], histogram.record.call_args[1]
+    assert duration >= 0
+    attributes = kwargs["attributes"]
+    assert attributes[OtelAttr.ERROR_TYPE] == "ValueError"
+    assert attributes[OtelAttr.REQUEST_MODEL] == "test-embed"
+    assert attributes[OtelAttr.OPERATION] == OtelAttr.EMBEDDING_OPERATION
 
 
 def test_backfill_request_model_when_unknown(span_exporter: InMemorySpanExporter):
