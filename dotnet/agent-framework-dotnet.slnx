@@ -641,6 +641,7 @@
     <Project Path="src/Microsoft.Agents.AI/Microsoft.Agents.AI.csproj" />
   </Folder>
   <Folder Name="/Tests/">
+    <Project Path="tests/Harness.Shared.Console.UnitTests/Harness.Shared.Console.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Hosting.OpenAI.IntegrationTests/Microsoft.Agents.AI.Hosting.OpenAI.IntegrationTests.csproj" />
   </Folder>
   <Folder Name="/Tests/IntegrationTests/">
