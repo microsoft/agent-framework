@@ -525,6 +525,583 @@ class TestTryParseSkillDocument:
         assert result is not None
         assert result.name == "test-skill"
 
+    @pytest.mark.parametrize("newline", ("\n", "\r\n"))
+    def test_yaml_escaped_names_and_scalar_aliases(self, newline: str, caplog: pytest.LogCaptureFixture) -> None:
+        content = (
+            '---\n"\\u006eame": test-skill\n"\\x64escription": &text "Read\\nfiles"\n'
+            'license: *text\n"\\U0000006detadata":\n  "author": First\n'
+            '  "\\u0061uthor": Second\n  Author: Separate\n  version: 1.0\n---\nBody.'
+        ).replace("\n", newline)
+
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+
+        assert result is not None
+        assert result.name == "test-skill"
+        assert result.description == "Read\nfiles"
+        assert result.license == "Read\nfiles"
+        assert result.metadata == {"author": "First", "Author": "Separate", "version": "1.0"}
+        assert len(caplog.records) == 1
+        assert "duplicate metadata key 'author'" in caplog.text
+
+    @pytest.mark.parametrize("field", ("name", "description", "license", "compatibility", "metadata", "allowed-tools"))
+    @pytest.mark.parametrize(("escape", "width"), (("x", 2), ("u", 4), ("U", 8)))
+    @pytest.mark.parametrize("uppercase", (False, True))
+    def test_escaped_root_names_obey_validation(
+        self, field: str, escape: str, width: int, uppercase: bool, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        spelling = field.upper() if uppercase else field
+        encoded = f'"\\{escape}{ord(spelling[0]):0{width}x}{spelling[1:]}"'
+        fields = {
+            "name": "test-skill",
+            "description": "Read files",
+            "license": "MIT",
+            "compatibility": "Any runtime",
+            "metadata": "{}",
+            "allowed-tools": "read",
+        }
+        content = "---\n" + "".join(f"{key}: {value}\n" for key, value in fields.items())
+        content += f"{encoded}: {fields[field]}\n---\nBody."
+
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+
+        assert result is None
+        expected = "incorrectly cased frontmatter field" if uppercase else "duplicate frontmatter field"
+        assert expected in caplog.text
+
+    def test_flow_mapping_preserves_duplicate_metadata(self, caplog: pytest.LogCaptureFixture) -> None:
+        content = (
+            "---\n{name: test-skill, description: Read files, "
+            "metadata: {author: First, author: Second, Author: Separate, enabled: true}}\n---\nBody."
+        )
+
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+
+        assert result is not None
+        assert result.metadata == {"author": "First", "Author": "Separate", "enabled": "true"}
+        assert len(caplog.records) == 1
+        assert "duplicate metadata key 'author'" in caplog.text
+
+    def test_flow_mapping_duplicate_root_rejected(self, caplog: pytest.LogCaptureFixture) -> None:
+        content = '---\n{name: test-skill, description: First, "\\x64escription": Second}\n---\nBody.'
+
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+
+        assert result is None
+        assert "duplicate frontmatter field 'description'" in caplog.text
+
+    def test_aliased_root_key_duplicate_rejected(self, caplog: pytest.LogCaptureFixture) -> None:
+        content = "---\nname: test-skill\n? &key description\n: First\n? *key\n: Second\n---\nBody."
+
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+
+        assert result is None
+        assert "duplicate frontmatter field 'description'" in caplog.text
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        (
+            ("true", "true"),
+            ("0123", "0123"),
+            ("1.20", "1.20"),
+            ("2026-01-02", "2026-01-02"),
+            ("!!str null", "null"),
+            ('"\\u00e9"', "\u00e9"),
+            ('"\\U0001F600"', "\U0001f600"),
+        ),
+    )
+    def test_yaml_scalar_types_remain_text(self, value: str, expected: str) -> None:
+        content = (
+            f"---\nname: test-skill\ndescription: {value}\nlicense: {value}\ncompatibility: {value}\n"
+            f"allowed-tools: {value}\nmetadata:\n  value: {value}\n  true: boolean key\n  1: numeric key\n---\nBody."
+        )
+
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+
+        assert result is not None
+        assert result.description == expected
+        assert result.license == expected
+        assert result.compatibility == expected
+        assert result.allowed_tools == expected
+        assert result.metadata == {"value": expected, "true": "boolean key", "1": "numeric key"}
+
+    def test_unknown_root_values_are_not_constructed(self, caplog: pytest.LogCaptureFixture) -> None:
+        content = (
+            "---\nname: test-skill\ndescription: Read files\n"
+            "unknown: !!python/object/apply:builtins.str [ignored]\n"
+            "unknown: &recursive {self: *recursive}\n---\nBody."
+        )
+
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+
+        assert result is not None
+        assert result.description == "Read files"
+        assert not caplog.records
+
+    def test_root_merge_key_rejected(self, caplog: pytest.LogCaptureFixture) -> None:
+        content = "---\nname: test-skill\ndescription: Read files\n<<: {description: Override}\n---\nBody."
+
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+
+        assert result is None
+        assert "invalid frontmatter property name" in caplog.text
+
+    def test_metadata_merge_key_is_skipped(self, caplog: pytest.LogCaptureFixture) -> None:
+        content = (
+            "---\nname: test-skill\ndescription: Read files\n"
+            "metadata: {<<: {author: Ignored}, author: First}\n---\nBody."
+        )
+
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+
+        assert result is not None
+        assert result.metadata == {"author": "First"}
+        assert len(caplog.records) == 1
+        assert "invalid metadata key; skipping entry" in caplog.text
+
+    @pytest.mark.parametrize("value", ("", "null", "~"))
+    def test_yaml_null_optional_fields_remain_unset(self, value: str, caplog: pytest.LogCaptureFixture) -> None:
+        content = (
+            "---\nname: test-skill\ndescription: Read files\n"
+            f"metadata: {value}\nlicense: {value}\ncompatibility: {value}\nallowed-tools: {value}\n---\nBody."
+        )
+
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+
+        assert result is not None
+        assert result.metadata is None
+        assert result.license is None
+        assert result.compatibility is None
+        assert result.allowed_tools is None
+        assert not caplog.records
+
+    @pytest.mark.parametrize("value", ("[First, Second]", "text", "42", "!!null {key: value}"))
+    def test_invalid_metadata_mapping_only_warns(self, value: str, caplog: pytest.LogCaptureFixture) -> None:
+        content = f"---\nname: test-skill\ndescription: Read files\nmetadata: {value}\n---\nBody."
+
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+
+        assert result is not None
+        assert result.metadata is None
+        assert len(caplog.records) == 1
+        assert caplog.records[0].levelname == "WARNING"
+        assert "invalid metadata; expected a mapping" in caplog.text
+
+    def test_invalid_metadata_entries_are_skipped(self, caplog: pytest.LogCaptureFixture) -> None:
+        content = (
+            "---\nname: test-skill\ndescription: Read files\nmetadata:\n"
+            "  valid: Keep\n  mapping: {key: value}\n  sequence: [First, Second]\n  missing:\n"
+            "  tagged: !!python/name:builtins.str text\n  ? [complex, key]\n  : value\n"
+            "  author: {invalid: value}\n  author: First valid\n---\nBody."
+        )
+
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+
+        assert result is not None
+        assert result.metadata == {"valid": "Keep", "author": "First valid"}
+        assert len(caplog.records) == 6
+        assert all(record.levelname == "WARNING" for record in caplog.records)
+        assert all("skipping entry" in record.getMessage() for record in caplog.records)
+
+    def test_recursive_metadata_alias_is_skipped(self, caplog: pytest.LogCaptureFixture) -> None:
+        content = (
+            "---\nname: test-skill\ndescription: Read files\n"
+            "metadata: &metadata {recursive: *metadata, author: First}\n---\nBody."
+        )
+
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+
+        assert result is not None
+        assert result.metadata == {"author": "First"}
+        assert len(caplog.records) == 1
+        assert "invalid metadata value for 'recursive'" in caplog.text
+
+    @pytest.mark.parametrize("escape", ("\\uD800", "\\uDFFF", "\\uD83D\\uDE00"))
+    @pytest.mark.parametrize("invalid_key", (False, True))
+    def test_metadata_surrogates_are_skipped(
+        self, escape: str, invalid_key: bool, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        entry = f'"{escape}": Ignored' if invalid_key else f'author: "{escape}"'
+        content = f"---\nname: test-skill\ndescription: Read files\nmetadata:\n  {entry}\n  author: First valid\n---"
+
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+
+        assert result is not None
+        assert result.metadata == {"author": "First valid"}
+        assert len(caplog.records) == 1
+        assert caplog.records[0].levelname == "WARNING"
+        assert ("invalid metadata key" if invalid_key else "invalid metadata value") in caplog.text
+
+    @pytest.mark.parametrize("field", ("name", "description", "license", "compatibility", "allowed-tools"))
+    @pytest.mark.parametrize(
+        "value",
+        (
+            "[First, Second]",
+            "{key: value}",
+            "!!null [value]",
+            "!!python/name:builtins.str text",
+            '"\\uD800"',
+            '"\\uDFFF"',
+            '"\\uD83D\\uDE00"',
+        ),
+    )
+    def test_non_text_root_values_rejected(self, field: str, value: str, caplog: pytest.LogCaptureFixture) -> None:
+        fields = {"name": "test-skill", "description": "Read files", field: value}
+        content = "---\n" + "".join(f"{key}: {item}\n" for key, item in fields.items()) + "---\nBody."
+
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+
+        assert result is None
+        assert f"invalid '{field}' value; expected a text scalar" in caplog.text
+
+    @pytest.mark.parametrize("header", ("", "null", "[]", "plain text", "!!python/object/apply:builtins.str [text]"))
+    def test_non_mapping_frontmatter_rejected(self, header: str, caplog: pytest.LogCaptureFixture) -> None:
+        result = FileSkillsSource._extract_frontmatter(f"---\n{header}\n---\nBody.", "test.md")
+
+        assert result is None
+        assert "must contain a YAML frontmatter mapping" in caplog.text
+
+    @pytest.mark.parametrize(
+        "fields",
+        (
+            "metadata: [unterminated",
+            'license: "\\q"',
+            'license: "\\U00110000"',
+            'license: "\\UFFFFFFFF"',
+            "license: *missing",
+            "description: \tvalue",
+        ),
+    )
+    def test_invalid_yaml_rejected(self, fields: str, caplog: pytest.LogCaptureFixture) -> None:
+        content = f"---\nname: test-skill\ndescription: Read files\n{fields}\n---\nBody."
+
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+
+        assert result is None
+        assert "invalid YAML frontmatter" in caplog.text
+
+    @pytest.mark.parametrize("key", ("[complex, key]", '"\\uD800"', '"\\uDFFF"'))
+    def test_invalid_root_property_name_rejected(self, key: str, caplog: pytest.LogCaptureFixture) -> None:
+        content = f"---\nname: test-skill\ndescription: Read files\n? {key}\n: value\n---\nBody."
+
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+
+        assert result is None
+        assert "invalid frontmatter property name" in caplog.text
+
+    def test_excessive_yaml_nesting_rejected(self, caplog: pytest.LogCaptureFixture) -> None:
+        content = "---\nname: test-skill\ndescription: Read files\nunknown: " + "[" * 2000 + "]" * 2000 + "\n---"
+
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+
+        assert result is None
+        assert "invalid YAML frontmatter" in caplog.text
+
+    @pytest.mark.parametrize(
+        "field",
+        ("name", "description", "license", "compatibility", "metadata", "allowed-tools"),
+    )
+    def test_duplicate_recognized_field_rejected(self, field: str) -> None:
+        if field == "name":
+            fields = "name: test-skill\nname: test-skill\ndescription: A test skill."
+        elif field == "description":
+            fields = "name: test-skill\ndescription: A test skill.\ndescription: A second description."
+        elif field == "metadata":
+            fields = (
+                "name: test-skill\ndescription: A test skill.\nmetadata:\n  author: first\nmetadata:\n  version: 1.0"
+            )
+        else:
+            fields = f"name: test-skill\ndescription: A test skill.\n{field}: first\n{field}: second"
+
+        result = FileSkillsSource._extract_frontmatter(f"---\n{fields}\n---\nBody.", "test.md")
+
+        assert result is None
+
+    @pytest.mark.parametrize(
+        ("field", "incorrect_casing"),
+        (
+            ("name", "Name"),
+            ("description", "Description"),
+            ("license", "License"),
+            ("compatibility", "Compatibility"),
+            ("metadata", "Metadata"),
+            ("allowed-tools", "Allowed-Tools"),
+        ),
+    )
+    def test_incorrectly_cased_recognized_field_rejected(self, field: str, incorrect_casing: str) -> None:
+        if field == "name":
+            fields = f"{incorrect_casing}: test-skill\ndescription: A test skill."
+        elif field == "description":
+            fields = f"name: test-skill\n{incorrect_casing}: A test skill."
+        elif field == "metadata":
+            fields = f"name: test-skill\ndescription: A test skill.\n{incorrect_casing}:\n  author: test"
+        else:
+            fields = f"name: test-skill\ndescription: A test skill.\n{incorrect_casing}: value"
+
+        result = FileSkillsSource._extract_frontmatter(f"---\n{fields}\n---\nBody.", "test.md")
+
+        assert result is None
+
+    @pytest.mark.parametrize("field", ("name", "description", "license", "compatibility", "metadata", "allowed-tools"))
+    @pytest.mark.parametrize("quote", ("'", '"'))
+    @pytest.mark.parametrize("layout", ("uppercase", "before", "after", "both", "mixed", "empty-first", "empty-last"))
+    @pytest.mark.parametrize("newline", ("\n", "\r\n"))
+    def test_conflicting_quoted_fields_rejected(
+        self,
+        field: str,
+        quote: str,
+        layout: str,
+        newline: str,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        values = {
+            "name": "test-skill",
+            "description": "Read files",
+            "license": "MIT",
+            "compatibility": "Any runtime",
+            "metadata": "\n  author: First",
+            "allowed-tools": "read",
+        }
+        fields = "\n".join(f"{key}: {value}" for key, value in values.items() if key != field)
+        quoted_key = f"{quote}{field}{quote}"
+        quoted_field = f"{quoted_key}: {values[field]}"
+        bare_field = f"{field}: {values[field]}"
+        other_quote = '"' if quote == "'" else "'"
+        declarations = {
+            "uppercase": f"{quote}{field.upper()}{quote}: {values[field]}",
+            "before": f"{quoted_field}\n{bare_field}",
+            "after": f"{bare_field}\n{quoted_field}",
+            "both": f"{quoted_field}\n{quoted_field}",
+            "mixed": f"{quoted_field}\n{other_quote}{field}{other_quote}: {values[field]}",
+            "empty-first": f"{quoted_key}:\n{bare_field}",
+            "empty-last": f"{bare_field}\n{quoted_key}:",
+        }
+        content = f"---\n{fields}\n{declarations[layout]}\n---\nBody.".replace("\n", newline)
+
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+
+        assert result is None
+        diagnostic = (
+            f"incorrectly cased frontmatter field '{field.upper()}'; expected '{field}'"
+            if layout == "uppercase"
+            else f"duplicate frontmatter field '{field}'"
+        )
+        assert diagnostic in caplog.text
+
+    @pytest.mark.parametrize("quote", ("'", '"'))
+    @pytest.mark.parametrize("newline", ("\n", "\r\n"))
+    def test_quoted_empty_optional_fields_remain_unset(self, quote: str, newline: str) -> None:
+        content = (
+            f"---\n{quote}metadata{quote}:\n{quote}name{quote}: test-skill\n"
+            f"{quote}description{quote}: Read files\n{quote}license{quote}:\n"
+            f"{quote}compatibility{quote}:\n{quote}allowed-tools{quote}:\n---\nBody."
+        ).replace("\n", newline)
+
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+
+        assert result is not None
+        assert result.name == "test-skill"
+        assert result.description == "Read files"
+        assert result.metadata is None
+        assert result.license is None
+        assert result.compatibility is None
+        assert result.allowed_tools is None
+
+    @pytest.mark.parametrize("newline", ("\n", "\r\n"))
+    @pytest.mark.parametrize("field", ("metadata", "license", "compatibility", "allowed-tools", "vendor-option"))
+    def test_empty_inline_value_does_not_consume_next_field(self, field: str, newline: str) -> None:
+        content = newline.join((
+            "---",
+            f"{field}:  ",
+            "name: test-skill",
+            "description: A test skill.",
+            "---",
+            "Body.",
+        ))
+
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+
+        assert result is not None
+        assert result.name == "test-skill"
+        assert result.description == "A test skill."
+        assert result.license is None
+        assert result.compatibility is None
+        assert result.allowed_tools is None
+
+    @pytest.mark.parametrize("newline", ("\n", "\r\n"))
+    @pytest.mark.parametrize("field", ("license", "compatibility", "allowed-tools"))
+    def test_empty_optional_scalar_at_end_remains_none(self, field: str, newline: str) -> None:
+        content = f"---\nname: test-skill\ndescription: Read files\n{field}:  \n---\nBody.".replace("\n", newline)
+
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+
+        assert result is not None
+        assert result.description == "Read files"
+        assert result.license is None
+        assert result.compatibility is None
+        assert result.allowed_tools is None
+
+    @pytest.mark.parametrize("newline", ("\n", "\r\n"))
+    @pytest.mark.parametrize(
+        "fields",
+        (
+            "name:",
+            "description:",
+            "metadata:\nmetadata:",
+            "license:\nlicense: MIT",
+            "license: MIT\nlicense:",
+            "compatibility:\ncompatibility: Any runtime",
+            "allowed-tools:\nallowed-tools: read",
+            "Metadata:",
+            "allowed-tools: read\nALLOWED-TOOLS:",
+        ),
+    )
+    def test_empty_inline_value_does_not_bypass_key_validation(self, fields: str, newline: str) -> None:
+        content = f"---\n{fields}\nname: test-skill\ndescription: A test skill.\n---\nBody.".replace("\n", newline)
+
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+
+        assert result is None
+
+    @pytest.mark.parametrize("first_value", ("First", "'First'", '"First"', "|-\n  First", ">-\n  First"))
+    @pytest.mark.parametrize("second_value", ("Second", "'Second'", '"Second"', "|-\n  Second", ">-\n  Second"))
+    @pytest.mark.parametrize("second_key", ("description", "Description", "DESCRIPTION"))
+    def test_duplicate_and_cased_fields_across_scalar_formats(
+        self, first_value: str, second_value: str, second_key: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        content = (
+            f"---\nname: test-skill\ndescription: {first_value}\n{second_key}: {second_value}\nlicense: MIT\n---\nBody."
+        )
+
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+
+        assert result is None
+        diagnostic = (
+            "duplicate frontmatter field 'description'"
+            if second_key == "description"
+            else f"incorrectly cased frontmatter field '{second_key}'; expected 'description'"
+        )
+        assert diagnostic in caplog.text
+
+    @pytest.mark.parametrize("newline", ("\n", "\r\n"))
+    @pytest.mark.parametrize(
+        ("key", "first_value", "second_value", "expected"),
+        (
+            ("author", "First", "Second", "First"),
+            ("Author", "'First'", '"Second"', "First"),
+            ("author", '"First"', "'Second'", "First"),
+            ("author", "Same", "Same", "Same"),
+            ("author", "''", "Second", ""),
+            ("author", '""', "Second", ""),
+            ("author", '"  First  "', "Second", "  First  "),
+            ("author", "0", "Second", "0"),
+            ("description", "First", "Second", "First"),
+            ("metadata", "First", "Second", "First"),
+            ("vendor-key", "First", "Second", "First"),
+            ("vendor_key", "First", "Second", "First"),
+            ("author", "\n    'First'", "Second", "First"),
+            ("author", "First", '\n    "Second"', "First"),
+            ("author", '"author: First"', "Second", "author: First"),
+            ("author", "First\n  # author: Not a field", "Second", "First"),
+            ("author", "|-\n    First\n    paragraph", "Second", "First\nparagraph"),
+            ("author", "First", ">-\n    Second\n    paragraph", "First"),
+            ("author", ">\n    First\n    paragraph", "|\n    Second\n    paragraph", "First paragraph\n"),
+        ),
+    )
+    def test_duplicate_metadata_keeps_first_value_and_warns(
+        self,
+        newline: str,
+        key: str,
+        first_value: str,
+        second_value: str,
+        expected: str,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        content = (
+            "---\nname: test-skill\ndescription: Read files\nmetadata:\n"
+            f"  {key}: {first_value}\n  other: Preserved\n  {key}: {second_value}\n"
+            f"  {key}: Third\n  tail: Retained\nlicense: MIT\n---\nBody."
+        ).replace("\n", newline)
+
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+
+        assert result is not None
+        assert result.description == "Read files"
+        assert result.license == "MIT"
+        assert result.metadata == {key: expected, "other": "Preserved", "tail": "Retained"}
+        assert [(record.levelname, record.getMessage()) for record in caplog.records] == [
+            ("WARNING", f"SKILL.md at 'test.md' contains duplicate metadata key '{key}'; keeping the first value")
+        ] * 2
+
+    @pytest.mark.parametrize("newline", ("\n", "\r\n"))
+    @pytest.mark.parametrize(
+        ("first_key", "second_key"),
+        (
+            ("author", "Author"),
+            ("Author", "author"),
+            ("author", "AUTHOR"),
+            ("description", "Description"),
+            ("metadata", "Metadata"),
+            ("vendor-key", "Vendor-Key"),
+        ),
+    )
+    def test_metadata_keys_are_case_sensitive(
+        self, newline: str, first_key: str, second_key: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        content = (
+            "---\nname: test-skill\ndescription: Read files\nmetadata:\n"
+            f"  {first_key}: First\n  {second_key}: Second\n---\nBody."
+        ).replace("\n", newline)
+
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+
+        assert result is not None
+        assert result.description == "Read files"
+        assert result.metadata == {first_key: "First", second_key: "Second"}
+        assert not caplog.records
+
+    def test_nested_metadata_keeps_first_value_and_unknown_fields_are_ignored(self) -> None:
+        content = (
+            "---\nname: test-skill\ndescription: Read files\n"
+            "# description: Not a field\n"
+            "metadata:\n  author: First\n  author: Second\n  Description: Nested text\n"
+            "  \"description\": Nested quoted text\n  'metadata': Nested metadata value\n"
+            "vendor-option: First\nvendor-option: Second\n"
+            '\'vendor-option\': Third\n"VENDOR-OPTION": Fourth\n---\n"description": Body text'
+        )
+
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+
+        assert result is not None
+        assert result.description == "Read files"
+        assert result.metadata == {
+            "author": "First",
+            "Description": "Nested text",
+            "description": "Nested quoted text",
+            "metadata": "Nested metadata value",
+        }
+
+    @pytest.mark.parametrize("value", ("''", '""'))
+    def test_empty_quoted_optional_values_are_empty_strings(self, value: str) -> None:
+        content = (
+            f"---\nname: test-skill\ndescription: Read files\n"
+            f"license: {value}\ncompatibility: {value}\nallowed-tools: {value}\n---\nBody."
+        )
+
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+
+        assert result is not None
+        assert result.license == ""
+        assert result.compatibility == ""
+        assert result.allowed_tools == ""
+
+    @pytest.mark.parametrize("value", ("|", "|-", "|+", ">", ">-", ">+"))
+    def test_empty_block_before_another_field_rejected(self, value: str) -> None:
+        content = f"---\nname: test-skill\ndescription: {value}\n\nlicense: MIT\n---\nBody."
+
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+
+        assert result is None
+
 
 # ---------------------------------------------------------------------------
 # Tests: skill discovery and loading
@@ -534,11 +1111,211 @@ class TestTryParseSkillDocument:
 class TestDiscoverAndLoadSkills:
     """Tests for file skill discovery via FileSkillsSource.get_skills()."""
 
+    @pytest.mark.parametrize(
+        ("fields", "loads"),
+        (
+            (
+                (
+                    '"\\x64escription": "Read\\nfiles"\n'
+                    'metadata: {author: First, "\\u0061uthor": Ignored, invalid: [item]}'
+                ),
+                True,
+            ),
+            ('description: Read files\n"\\x64escription": Second', False),
+            ('"\\x44escription": Read files', False),
+            ("description: Read files\nmetadata: [unterminated", False),
+            ('description: "\\U00110000"', False),
+            ('description: "\\UFFFFFFFF"', False),
+            ('description: "\\uD800"', False),
+            ('description: "\\uDFFF"', False),
+        ),
+    )
+    async def test_file_yaml_decoding_and_validation(
+        self, tmp_path: Path, fields: str, loads: bool, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        skill_dir = tmp_path / "test-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(f"---\nname: test-skill\n{fields}\n---\nBody.", encoding="utf-8")
+
+        skills = await _discover_file_skills_for_test([str(tmp_path)])
+
+        if loads:
+            assert len(skills) == 1
+            assert skills["test-skill"].frontmatter.description == "Read\nfiles"
+            assert skills["test-skill"].frontmatter.metadata == {"author": "First"}
+            assert len(caplog.records) == 2
+            assert all(record.levelname == "WARNING" for record in caplog.records)
+        else:
+            assert skills == {}
+            assert any(record.levelname == "ERROR" for record in caplog.records)
+
+    @pytest.mark.parametrize("metadata_first", (False, True))
+    @pytest.mark.parametrize("duplicate_metadata", (False, True))
+    @pytest.mark.parametrize("quote", ("", "'", '"'))
+    @pytest.mark.parametrize("newline", ("\n", "\r\n"))
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        (
+            ("Read files", "Read files"),
+            ("'Read files'", "Read files"),
+            ('"Read files"', "Read files"),
+            ('"  Read files  "', "  Read files  "),
+            ('"Use #tags: safely"', "Use #tags: safely"),
+            ("\"Use 'quotes' safely\"", "Use 'quotes' safely"),
+            ("'Use \"quotes\" safely'", 'Use "quotes" safely'),
+            ('"| not a block"', "| not a block"),
+            ("\n  Read files", "Read files"),
+            ("\n\n  'Read files'", "Read files"),
+            ("\n  >-\n    Read\n    files", "Read files"),
+            ("|\n  Read\n  files", "Read\nfiles\n"),
+            ("|-\n  Read\n  files", "Read\nfiles"),
+            ("|+\n  Read\n  files", "Read\nfiles\n"),
+            (">\n  Read\n  files", "Read files\n"),
+            (">-\n  Read\n  files", "Read files"),
+            (">+\n  Read\n  files", "Read files\n"),
+            ("|-\n\n  Read\n  files", "\nRead\nfiles"),
+            ("|-\n  Read\n\n  files", "Read\n\nfiles"),
+            ("|-\n  Read\n    indented\n  files", "Read\n  indented\nfiles"),
+            ("|-\n  description: text\n  Description: text", "description: text\nDescription: text"),
+            ("|-\n  \"description\": text\n  'allowed-tools': text", "\"description\": text\n'allowed-tools': text"),
+            ("Read files # comment", "Read files"),
+            ('"Read\\nfiles"', "Read\nfiles"),
+            ("Read\n  files", "Read files"),
+            ("|2-\n  Read\n  files", "Read\nfiles"),
+            (">2-\n  Read\n  files", "Read files"),
+        ),
+    )
+    async def test_yaml_scalar_formats(
+        self,
+        tmp_path: Path,
+        newline: str,
+        value: str,
+        expected: str,
+        metadata_first: bool,
+        duplicate_metadata: bool,
+        quote: str,
+    ) -> None:
+        fields = (
+            f"{quote}name{quote}: test-skill\n{quote}description{quote}: {value}\n"
+            f"{quote}license{quote}: 'MIT'\n{quote}compatibility{quote}: Any runtime\n"
+            f"{quote}allowed-tools{quote}: read\n"
+        )
+        metadata = f"{quote}metadata{quote}:\n  author: test\n" + ("  author: Ignored\n" if duplicate_metadata else "")
+        content = "---\n" + (metadata + fields if metadata_first else fields + metadata) + "---\nBody."
+        skill_dir = tmp_path / "test-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_bytes(content.replace("\n", newline).encode())
+
+        skills = await _discover_file_skills_for_test([str(tmp_path)])
+
+        assert len(skills) == 1
+        frontmatter = skills["test-skill"].frontmatter
+        assert frontmatter.description == expected
+        assert frontmatter.license == "MIT"
+        assert frontmatter.compatibility == "Any runtime"
+        assert frontmatter.allowed_tools == "read"
+        assert frontmatter.metadata == {"author": "test"}
+
+    @pytest.mark.parametrize("newline", ("\n", "\r\n"))
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        (
+            ("First", "First"),
+            ("'First'", "First"),
+            ('"First"', "First"),
+            ('"  First  "', "  First  "),
+            ('"Use #tags: safely"', "Use #tags: safely"),
+            ("\"Use 'quotes' safely\"", "Use 'quotes' safely"),
+            ("'Use \"quotes\" safely'", 'Use "quotes" safely'),
+            ("''", ""),
+            ('""', ""),
+            ('"\\n"', "\n"),
+            ("'It''s fine'", "It's fine"),
+            ("\n    First", "First"),
+            ("\n    'First'", "First"),
+            ('\n    "First"', "First"),
+            ("First\n    Second", "First Second"),
+            ('"First\n    Second"', "First Second"),
+            ("'First\n    Second'", "First Second"),
+            ("|\n    First\n    Second", "First\nSecond\n"),
+            ("|-\n    First\n    Second", "First\nSecond"),
+            ("|+\n    First\n    Second", "First\nSecond\n"),
+            (">\n    First\n    Second", "First Second\n"),
+            (">-\n    First\n    Second", "First Second"),
+            (">+\n    First\n    Second", "First Second\n"),
+            ("\n    |-\n      First\n      Second", "First\nSecond"),
+        ),
+    )
+    async def test_yaml_metadata_scalar_formats(
+        self, tmp_path: Path, newline: str, value: str, expected: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        content = (
+            "---\nname: test-skill\ndescription: Read files\n"
+            f"metadata:\n  author: {value}\n  version: '1.0'\nlicense: MIT\n---\nBody."
+        )
+        skill_dir = tmp_path / "test-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_bytes(content.replace("\n", newline).encode())
+
+        skills = await _discover_file_skills_for_test([str(tmp_path)])
+
+        assert len(skills) == 1
+        skill = skills["test-skill"]
+        assert skill.frontmatter.description == "Read files"
+        assert skill.frontmatter.license == "MIT"
+        assert skill.frontmatter.metadata == {"author": expected, "version": "1.0"}
+        assert "Body." in await skill.get_content()
+        assert not caplog.records
+
     async def test_discovers_valid_skill(self, tmp_path: Path) -> None:
         _write_skill(tmp_path, "my-skill")
         skills = await _discover_file_skills_for_test([str(tmp_path)])
         assert "my-skill" in skills
         assert skills["my-skill"].frontmatter.name == "my-skill"
+
+    @pytest.mark.parametrize("newline", ("\n", "\r\n"))
+    @pytest.mark.parametrize(
+        "fields",
+        (
+            'allowed-tools: read\n"allowed-tools": other',
+            "'allowed-tools': other\nallowed-tools: read",
+            '"Description": Other text',
+            "metadata:\n  author: First\n'metadata':\n  author: Second",
+        ),
+    )
+    async def test_conflicting_quoted_root_field_prevents_discovery(
+        self, tmp_path: Path, fields: str, newline: str
+    ) -> None:
+        skill_dir = tmp_path / "test-skill"
+        skill_dir.mkdir()
+        content = f"---\nname: test-skill\ndescription: Read files\n{fields}\n---\nBody."
+        (skill_dir / "SKILL.md").write_bytes(content.replace("\n", newline).encode())
+
+        skills = await _discover_file_skills_for_test([str(tmp_path)])
+
+        assert not skills
+
+    @pytest.mark.parametrize("newline", ("\n", "\r\n"))
+    async def test_duplicate_metadata_does_not_prevent_discovery(
+        self, tmp_path: Path, newline: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        content = (
+            "---\nname: test-skill\ndescription: Read files\nmetadata:\n"
+            "  author: First\n  Author: Separate\n  author: Ignored\n  version: '1.0'\n---\nBody."
+        )
+        skill_dir = tmp_path / "test-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_bytes(content.replace("\n", newline).encode())
+
+        skills = await _discover_file_skills_for_test([str(tmp_path)])
+
+        assert len(skills) == 1
+        skill = skills["test-skill"]
+        assert skill.frontmatter.metadata == {"author": "First", "Author": "Separate", "version": "1.0"}
+        assert "Body." in await skill.get_content()
+        assert len(caplog.records) == 1
+        assert caplog.records[0].levelname == "WARNING"
+        assert "duplicate metadata key 'author'; keeping the first value" in caplog.text
 
     async def test_discovers_nested_skills(self, tmp_path: Path) -> None:
         skills_dir = tmp_path / "skills"
@@ -2515,11 +3292,21 @@ class TestExtractFrontmatterBlockScalars:
         assert result is not None
         assert result.description == "Line one\nLine two\n"
 
+    @pytest.mark.parametrize(("indicator", "expected"), (("|-", "Read"), ("|", "Read\n"), ("|+", "Read\n\n\n")))
+    @pytest.mark.parametrize("newline", ("\n", "\r\n"))
+    def test_terminal_block_chomping_preserves_yaml_content(self, indicator: str, expected: str, newline: str) -> None:
+        content = f"---\nname: test-skill\ndescription: {indicator}\n  Read\n\n\n---\nBody.".replace("\n", newline)
+
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+
+        assert result is not None
+        assert result.description == expected
+
     def test_folded_block_scalar(self) -> None:
         content = "---\nname: test-skill\ndescription: >\n  This is a multi-line\n  description block\n---\nBody."
         result = FileSkillsSource._extract_frontmatter(content, "test.md")
         assert result is not None
-        assert result.description == "This is a multi-line description block"
+        assert result.description == "This is a multi-line description block\n"
 
     def test_literal_strip_chomping(self) -> None:
         content = "---\nname: test-skill\ndescription: |-\n  No trailing newline\n---\nBody."
@@ -2583,14 +3370,14 @@ class TestExtractFrontmatterBlockScalars:
         assert result.description == (
             "Coding standards, conventions, and patterns for developing Python code in the "
             "Agent Framework repository. Use this when writing or modifying Python source "
-            "files in the python/ directory."
+            "files in the python/ directory.\n"
         )
 
     def test_block_scalar_with_other_fields_after(self) -> None:
         content = "---\nname: test-skill\ndescription: >\n  A folded\n  description\nlicense: MIT\n---\nBody."
         result = FileSkillsSource._extract_frontmatter(content, "test.md")
         assert result is not None
-        assert result.description == "A folded description"
+        assert result.description == "A folded description\n"
         assert result.license == "MIT"
 
     def test_plain_value_unchanged(self) -> None:
@@ -2623,14 +3410,14 @@ class TestExtractFrontmatterBlockScalars:
         )
         result = FileSkillsSource._extract_frontmatter(content, "test.md")
         assert result is not None
-        assert result.license == "Custom license spanning multiple lines"
+        assert result.license == "Custom license spanning multiple lines\n"
 
-    def test_block_scalar_tab_indentation(self) -> None:
-        """Tab characters should count as indentation for block scalar continuation lines."""
+    def test_block_scalar_tab_indentation_rejected(self, caplog: pytest.LogCaptureFixture) -> None:
+        """YAML indentation must use spaces."""
         content = "---\nname: test-skill\ndescription: |\n\tTab-indented line one\n\tTab-indented line two\n---\nBody."
         result = FileSkillsSource._extract_frontmatter(content, "test.md")
-        assert result is not None
-        assert result.description == "Tab-indented line one\nTab-indented line two\n"
+        assert result is None
+        assert "invalid YAML frontmatter" in caplog.text
 
     def test_block_scalar_blank_line_within_block(self) -> None:
         """Blank lines within a block scalar should be preserved as paragraph separators."""
