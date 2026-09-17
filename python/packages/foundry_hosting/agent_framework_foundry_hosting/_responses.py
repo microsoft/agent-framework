@@ -65,6 +65,7 @@ from azure.ai.agentserver.responses.models import (
     OutputItem,
     OutputItemReasoningItem,
     OutputMessageContent,
+    ResponseIncompleteReason,
     ResponseStreamEvent,
     ResponseUsage,
     ResponseUsageInputTokensDetails,
@@ -797,8 +798,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             for event in tracker.close():
                 yield event
 
-            if tracker.oauth_consent_requested:
-                yield response_event_stream.emit_incomplete(usage=tracker.usage)
+            incomplete_reason = tracker.incomplete_reason
+            if tracker.oauth_consent_requested or incomplete_reason is not None:
+                yield response_event_stream.emit_incomplete(reason=incomplete_reason, usage=tracker.usage)
             else:
                 yield response_event_stream.emit_completed(usage=tracker.usage)
         except Exception as ex:
@@ -964,6 +966,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             )
             async with aclosing(agent_stream):
                 async for update in agent_stream:
+                    tracker.record_finish_reason(update.finish_reason)
                     for content in update.contents:
                         async for event in tracker.handle(
                             content, message_id=update.message_id, approval_storage=approval_storage
@@ -1187,6 +1190,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                             )
                             yield response_event_stream.checkpoint()
 
+                    tracker.record_finish_reason(update.finish_reason)
                     for content in update.contents:
                         async for event in tracker.handle(
                             content, message_id=update.message_id, approval_storage=approval_storage
@@ -1291,6 +1295,10 @@ class _OutputItemTracker:
         self._mcp_builder: OutputItemMcpCallBuilder | None = None
         self._outstanding_function_calls: dict[str, str | None] = {}
         self._oauth_consent_requests: set[tuple[str, str]] = set()
+        # Set when an agent update reports the model stopped early (content filter, token
+        # limit); the response then ends as ``incomplete`` instead of ``completed`` so callers
+        # can tell a cut-short turn from a successful one.
+        self._incomplete_reason: ResponseIncompleteReason | None = None
         for item in stream.response.get("output", []):
             if not isinstance(item, Mapping):
                 continue
@@ -1328,6 +1336,24 @@ class _OutputItemTracker:
     def oauth_consent_requested(self) -> bool:
         """Return whether this response emitted an OAuth consent request."""
         return bool(self._oauth_consent_requests)
+
+    @property
+    def incomplete_reason(self) -> ResponseIncompleteReason | None:
+        """Return why the turn was cut short, if any update reported a truncating finish reason."""
+        return self._incomplete_reason
+
+    def record_finish_reason(self, finish_reason: str | None) -> None:
+        """Note the finish reason of an agent update.
+
+        Only finish reasons that mean the model stopped early are retained, mapped onto the
+        Responses ``incomplete_details.reason`` vocabulary. A content filter is kept in
+        preference to a token limit if both are seen during a multi-step turn, since it is the
+        more actionable signal for the caller.
+        """
+        if finish_reason == "content_filter":
+            self._incomplete_reason = ResponseIncompleteReason.CONTENT_FILTER
+        elif finish_reason == "length" and self._incomplete_reason is None:
+            self._incomplete_reason = ResponseIncompleteReason.MAX_OUTPUT_TOKENS
 
     async def handle(
         self,
