@@ -3,11 +3,15 @@
 import asyncio
 import json
 import logging
+import math
+import threading
 import warnings
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from typing import Any, Literal
+from unittest.mock import Mock
 
 import pytest
+from pydantic import BaseModel, field_validator
 
 from agent_framework import (
     Agent,
@@ -17,6 +21,7 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     Message,
+    ResponseInvalidatedException,
     ResponseStream,
     SupportsChatGetResponse,
     chat_middleware,
@@ -32,11 +37,18 @@ from agent_framework._compaction import (
     annotate_message_groups,
     included_token_count,
 )
-from agent_framework._middleware import FunctionInvocationContext, FunctionMiddleware, MiddlewareTermination
+from agent_framework._middleware import (
+    FunctionInvocationContext,
+    FunctionMiddleware,
+    FunctionMiddlewarePipeline,
+    MiddlewareFailure,
+    MiddlewareTermination,
+)
 
 _EXPECTED_FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT = (
     "Function invocation limit reached before a final answer could be produced."
 )
+_PRIVATE_ERROR_DETAIL = "test-token-value at /srv/private/tool.py"
 
 
 def _group_id(message: Message) -> str | None:
@@ -989,6 +1001,430 @@ async def test_base_client_with_function_calling(chat_client_base: SupportsChatG
     assert response.messages[1].contents[0].result == "Processed value1"
     assert response.messages[2].role == "assistant"
     assert response.messages[2].text == "done"
+
+
+async def test_function_call_with_length_finish_reason_executes_and_continues(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Usable function arguments remain actionable regardless of the enclosing finish reason."""
+    executions: list[str] = []
+
+    @tool(name="lookup", approval_mode="never_require")
+    def lookup(value: str) -> str:
+        executions.append(value)
+        return f"found {value}"
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[Content.from_function_call(call_id="call-1", name="lookup", arguments={"value": "a"})],
+            ),
+            finish_reason="length",
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"]), finish_reason="stop"),
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["look up a"])],
+        options={"tools": [lookup]},
+    )
+
+    assert executions == ["a"]
+    assert chat_client_base.call_count == 2  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert [message.role for message in response.messages] == ["assistant", "tool", "assistant"]
+    assert response.messages[1].contents[0].result == "found a"
+    assert response.text == "done"
+
+
+async def test_streamed_function_call_with_length_finish_reason_executes_and_continues(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Streaming uses argument validity, not the enclosing finish reason, to decide execution."""
+    executions: list[str] = []
+
+    @tool(name="lookup", approval_mode="never_require")
+    def lookup(value: str) -> str:
+        executions.append(value)
+        return f"found {value}"
+
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        [
+            ChatResponseUpdate(
+                role="assistant",
+                contents=[Content.from_function_call(call_id="call-1", name="lookup", arguments={"value": "a"})],
+                finish_reason="length",
+            )
+        ],
+        [ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")], finish_reason="stop")],
+    ]
+
+    stream = chat_client_base.get_response(
+        [Message(role="user", contents=["look up a"])],
+        options={"tools": [lookup]},
+        stream=True,
+    )
+    updates = [update async for update in stream]
+    response = await stream.get_final_response()
+
+    assert executions == ["a"]
+    assert chat_client_base.call_count == 2  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert [content.type for update in updates for content in update.contents] == [
+        "function_call",
+        "function_result",
+        "text",
+    ]
+    assert response.text == "done"
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non_streaming", "streaming"])
+async def test_response_invalidation_short_circuits_current_iteration(
+    chat_client_base: SupportsChatGetResponse,
+    streaming: bool,
+) -> None:
+    """Provider invalidation propagates without creating any local function side effect."""
+    from agent_framework._sessions import AgentSession
+    from agent_framework._tools import _FUNCTION_INVOCATION_BUDGET_STATE_KEY
+
+    middleware_calls = 0
+    tool_calls = 0
+    provider_calls = 0
+    invalidated = ResponseInvalidatedException("provider invalidated partial response output")
+
+    class TrackingMiddleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            nonlocal middleware_calls
+            middleware_calls += 1
+            await call_next()
+
+    @tool(name="guarded", approval_mode="always_require")
+    def guarded(value: str) -> str:
+        nonlocal tool_calls
+        tool_calls += 1
+        return value
+
+    session = AgentSession()
+    session.service_session_id = "existing-session"
+    budget_state: dict[str, Any] = {"attempt_count": 0, "total_function_calls": 2}
+    session.state[_FUNCTION_INVOCATION_BUDGET_STATE_KEY] = budget_state
+    yielded: list[ChatResponseUpdate] = []
+
+    if streaming:
+
+        def invalid_stream(**kwargs: Any) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+            del kwargs
+
+            async def updates() -> AsyncIterable[ChatResponseUpdate]:
+                nonlocal provider_calls
+                provider_calls += 1
+                yield ChatResponseUpdate(
+                    role="assistant",
+                    contents=[
+                        Content.from_function_call(
+                            call_id="invalid-call",
+                            name="guarded",
+                            arguments={"value": "x"},
+                        )
+                    ],
+                )
+                raise invalidated
+
+            return ResponseStream(updates(), finalizer=ChatResponse.from_updates)
+
+        chat_client_base._get_streaming_response = invalid_stream  # type: ignore[attr-defined, method-assign]  # ty: ignore[unresolved-attribute]
+        response_stream = chat_client_base.get_response(
+            [Message(role="user", contents=["run"])],
+            options={"tools": [guarded]},
+            stream=True,
+            client_kwargs={
+                "middleware": [TrackingMiddleware()],
+                "session": session,
+                _FUNCTION_INVOCATION_BUDGET_STATE_KEY: budget_state,
+            },
+        )
+        with pytest.raises(ResponseInvalidatedException) as exc_info:
+            async for update in response_stream:
+                yielded.append(update)
+    else:
+
+        async def invalid_response(**kwargs: Any) -> ChatResponse:
+            nonlocal provider_calls
+            del kwargs
+            provider_calls += 1
+            raise invalidated
+
+        chat_client_base._get_non_streaming_response = invalid_response  # type: ignore[attr-defined, method-assign]  # ty: ignore[unresolved-attribute]
+        with pytest.raises(ResponseInvalidatedException) as exc_info:
+            await chat_client_base.get_response(
+                [Message(role="user", contents=["run"])],
+                options={"tools": [guarded]},
+                client_kwargs={
+                    "middleware": [TrackingMiddleware()],
+                    "session": session,
+                    _FUNCTION_INVOCATION_BUDGET_STATE_KEY: budget_state,
+                },
+            )
+
+    assert exc_info.value is invalidated
+    assert provider_calls == 1
+    assert middleware_calls == 0
+    assert tool_calls == 0
+    assert budget_state == {}
+    assert _FUNCTION_INVOCATION_BUDGET_STATE_KEY not in session.state
+    assert session.service_session_id == "existing-session"
+    assert not any(
+        content.type in {"function_approval_request", "function_result"}
+        for update in yielded
+        for content in update.contents
+    )
+    if streaming:
+        assert [content.type for update in yielded for content in update.contents] == ["function_call"]
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non_streaming", "streaming"])
+async def test_response_invalidation_restores_structured_continuation_snapshot(
+    chat_client_base: SupportsChatGetResponse,
+    streaming: bool,
+) -> None:
+    """Cleanup restores a copy when a provider mutates structured continuation state in place."""
+    from agent_framework._sessions import AgentSession
+
+    original_service_session_id = {"conversation_id": "valid", "metadata": {"generation": 1}}
+    session = AgentSession(service_session_id=original_service_session_id)
+    invalidated = ResponseInvalidatedException("provider invalidated partial response output")
+
+    def mutate_continuation() -> None:
+        service_session_id = session.service_session_id
+        assert isinstance(service_session_id, dict)
+        service_session_id["conversation_id"] = "invalid"
+        metadata = service_session_id["metadata"]
+        assert isinstance(metadata, dict)
+        metadata["generation"] = 2
+
+    if streaming:
+
+        def invalid_stream(**kwargs: Any) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+            del kwargs
+
+            async def updates() -> AsyncIterable[ChatResponseUpdate]:
+                mutate_continuation()
+                raise invalidated
+                yield  # pragma: no cover
+
+            return ResponseStream(updates(), finalizer=ChatResponse.from_updates)
+
+        chat_client_base._get_streaming_response = invalid_stream  # type: ignore[attr-defined, method-assign]  # ty: ignore[unresolved-attribute]
+        stream = chat_client_base.get_response(
+            [Message(role="user", contents=["run"])],
+            options={"tools": []},
+            stream=True,
+            client_kwargs={"session": session},
+        )
+        with pytest.raises(ResponseInvalidatedException):
+            async for _ in stream:
+                pass
+    else:
+
+        async def invalid_response(**kwargs: Any) -> ChatResponse:
+            del kwargs
+            mutate_continuation()
+            raise invalidated
+
+        chat_client_base._get_non_streaming_response = invalid_response  # type: ignore[attr-defined, method-assign]  # ty: ignore[unresolved-attribute]
+        with pytest.raises(ResponseInvalidatedException):
+            await chat_client_base.get_response(
+                [Message(role="user", contents=["run"])],
+                options={"tools": []},
+                client_kwargs={"session": session},
+            )
+
+    assert session.service_session_id == {"conversation_id": "valid", "metadata": {"generation": 1}}
+    assert session.service_session_id is not original_service_session_id
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non_streaming", "streaming"])
+async def test_invalidated_response_is_not_persisted(
+    chat_client_base: SupportsChatGetResponse,
+    streaming: bool,
+) -> None:
+    """Per-service-call history never success-persists invalidated calls or partial results."""
+    from agent_framework import InMemoryHistoryProvider
+    from agent_framework._sessions import AgentSession
+
+    provider = InMemoryHistoryProvider()
+    session = AgentSession()
+    seed = Message(role="assistant", contents=["existing history"])
+    session.state[provider.source_id] = {"messages": [seed]}
+    invalidated = ResponseInvalidatedException("provider invalidated partial response output")
+    tool_calls = 0
+
+    @tool(name="local_tool", approval_mode="never_require")
+    def local_tool() -> str:
+        nonlocal tool_calls
+        tool_calls += 1
+        return "result"
+
+    if streaming:
+
+        class InvalidRawUpdate:
+            conversation_id = "invalid-session"
+
+        def invalid_stream(**kwargs: Any) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+            del kwargs
+
+            async def updates() -> AsyncIterable[ChatResponseUpdate]:
+                yield ChatResponseUpdate(
+                    role="assistant",
+                    contents=[Content.from_function_call(call_id="invalid-call", name="local_tool", arguments={})],
+                    raw_representation=InvalidRawUpdate(),
+                )
+                raise invalidated
+
+            return ResponseStream(updates(), finalizer=ChatResponse.from_updates)
+
+        chat_client_base._get_streaming_response = invalid_stream  # type: ignore[attr-defined, method-assign]  # ty: ignore[unresolved-attribute]
+    else:
+
+        async def invalid_response(**kwargs: Any) -> ChatResponse:
+            del kwargs
+            raise invalidated
+
+        chat_client_base._get_non_streaming_response = invalid_response  # type: ignore[attr-defined, method-assign]  # ty: ignore[unresolved-attribute]
+
+    agent = Agent(
+        client=chat_client_base,
+        tools=[local_tool],
+        context_providers=[provider],
+        require_per_service_call_history_persistence=True,
+    )
+
+    if streaming:
+        stream = agent.run("run", session=session, stream=True)
+        with pytest.raises(ResponseInvalidatedException) as exc_info:
+            async for _ in stream:
+                pass
+        with pytest.raises(ResponseInvalidatedException) as final_exc_info:
+            await stream.get_final_response()
+        assert final_exc_info.value is invalidated
+    else:
+        with pytest.raises(ResponseInvalidatedException) as exc_info:
+            await agent.run("run", session=session)
+
+    assert exc_info.value is invalidated
+    assert tool_calls == 0
+    assert session.state[provider.source_id]["messages"] == [seed]
+    assert session.service_session_id is None
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non_streaming", "streaming"])
+async def test_invalidated_final_no_tool_response_preserves_prior_continuation(
+    chat_client_base: SupportsChatGetResponse,
+    streaming: bool,
+) -> None:
+    """Providers can invalidate unexpected local calls returned after tools were disabled."""
+    from agent_framework._sessions import AgentSession
+    from agent_framework._tools import _FUNCTION_INVOCATION_BUDGET_STATE_KEY
+
+    tool_calls = 0
+    provider_calls = 0
+    invalidated = ResponseInvalidatedException("provider invalidated partial response output")
+
+    @tool(name="local_tool", approval_mode="never_require")
+    def local_tool() -> str:
+        nonlocal tool_calls
+        tool_calls += 1
+        return "result"
+
+    function_call = Content.from_function_call(call_id="valid-call", name="local_tool", arguments={})
+    session = AgentSession()
+    session.service_session_id = "starting-continuation"
+    budget_state: dict[str, Any] = {"attempt_count": 0}
+    session.state[_FUNCTION_INVOCATION_BUDGET_STATE_KEY] = budget_state
+    chat_client_base.function_invocation_configuration["max_iterations"] = 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    if streaming:
+
+        def scripted_stream(
+            *,
+            options: dict[str, Any],
+            **kwargs: Any,
+        ) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+            nonlocal provider_calls
+            del kwargs
+            provider_calls += 1
+
+            async def updates() -> AsyncIterable[ChatResponseUpdate]:
+                if provider_calls == 1:
+                    yield ChatResponseUpdate(
+                        role="assistant",
+                        contents=[function_call],
+                        finish_reason="tool_calls",
+                        conversation_id="valid-continuation",
+                    )
+                    return
+                assert options["tool_choice"] == "none"
+                yield ChatResponseUpdate(
+                    role="assistant",
+                    contents=[Content.from_function_call(call_id="invalid-call", name="local_tool", arguments={})],
+                    conversation_id="invalid-continuation",
+                )
+                raise invalidated
+
+            return ResponseStream(updates(), finalizer=ChatResponse.from_updates)
+
+        chat_client_base._get_streaming_response = scripted_stream  # type: ignore[attr-defined, method-assign]  # ty: ignore[unresolved-attribute]
+        stream = chat_client_base.get_response(
+            [Message(role="user", contents=["run"])],
+            options={"tools": [local_tool]},
+            stream=True,
+            client_kwargs={
+                "session": session,
+                _FUNCTION_INVOCATION_BUDGET_STATE_KEY: budget_state,
+            },
+        )
+        with pytest.raises(ResponseInvalidatedException) as exc_info:
+            async for _ in stream:
+                pass
+    else:
+
+        async def scripted_response(
+            *,
+            options: dict[str, Any],
+            **kwargs: Any,
+        ) -> ChatResponse:
+            nonlocal provider_calls
+            del kwargs
+            provider_calls += 1
+            if provider_calls == 1:
+                return ChatResponse(
+                    messages=Message(role="assistant", contents=[function_call]),
+                    finish_reason="tool_calls",
+                    conversation_id="valid-continuation",
+                )
+            assert options["tool_choice"] == "none"
+            raise invalidated
+
+        chat_client_base._get_non_streaming_response = scripted_response  # type: ignore[attr-defined, method-assign]  # ty: ignore[unresolved-attribute]
+        with pytest.raises(ResponseInvalidatedException) as exc_info:
+            await chat_client_base.get_response(
+                [Message(role="user", contents=["run"])],
+                options={"tools": [local_tool]},
+                client_kwargs={
+                    "session": session,
+                    _FUNCTION_INVOCATION_BUDGET_STATE_KEY: budget_state,
+                },
+            )
+
+    assert exc_info.value is invalidated
+    assert provider_calls == 2
+    assert tool_calls == 1
+    assert budget_state == {}
+    assert _FUNCTION_INVOCATION_BUDGET_STATE_KEY not in session.state
+    assert session.service_session_id == "valid-continuation"
 
 
 async def test_base_client_with_function_calling_string_input(chat_client_base: SupportsChatGetResponse):
@@ -2864,6 +3300,478 @@ async def test_function_invocation_config_terminate_on_unknown_calls_true(chat_c
     assert exec_counter == 0
 
 
+@pytest.mark.parametrize("unknown_first", [True, False], ids=["unknown-first", "unknown-last"])
+async def test_mixed_batch_fatal_unknown_precedes_every_pause(
+    chat_client_base: SupportsChatGetResponse,
+    unknown_first: bool,
+) -> None:
+    """A fatal unknown call must abort the complete batch before approval or execution."""
+    from agent_framework import FunctionTool
+
+    approval_calls = 0
+    safe_calls = 0
+
+    @tool(name="approval_func", approval_mode="always_require")
+    def approval_func() -> str:
+        nonlocal approval_calls
+        approval_calls += 1
+        return "approved"
+
+    @tool(name="safe_func", approval_mode="never_require")
+    def safe_func() -> str:
+        nonlocal safe_calls
+        safe_calls += 1
+        return "safe"
+
+    host_func = FunctionTool(name="host_func", func=None, description="Handled by the caller")
+    unknown_call = Content.from_function_call(call_id="unknown", name="unknown_func", arguments={})
+    known_calls = [
+        Content.from_function_call(call_id="host", name="host_func", arguments={}),
+        Content.from_function_call(call_id="approval", name="approval_func", arguments={}),
+        Content.from_function_call(call_id="safe", name="safe_func", arguments={}),
+    ]
+    contents = [unknown_call, *known_calls] if unknown_first else [*known_calls, unknown_call]
+    chat_client_base.function_invocation_configuration["terminate_on_unknown_calls"] = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=contents)),
+    ]
+
+    with pytest.raises(KeyError, match='Requested function "unknown_func" not found'):
+        await chat_client_base.get_response(
+            [Message(role="user", contents=["hello"])],
+            options={"tool_choice": "auto", "tools": [host_func, approval_func, safe_func]},
+        )
+
+    assert approval_calls == safe_calls == 0
+
+
+@pytest.mark.parametrize("approval_first", [True, False], ids=["approval-first", "host-first"])
+async def test_mixed_batch_returns_approval_and_host_pause_in_model_order(approval_first: bool) -> None:
+    """Approval and Host-owned calls should pause together without executing."""
+    from agent_framework import FunctionTool
+    from agent_framework._tools import _try_execute_function_call_groups
+
+    approval_calls = 0
+
+    @tool(name="approval_func", approval_mode="always_require")
+    def approval_func() -> str:
+        nonlocal approval_calls
+        approval_calls += 1
+        return "approved"
+
+    host_func = FunctionTool(name="host_func", func=None, description="Handled by the caller")
+    approval_call = Content.from_function_call(
+        call_id="approval",
+        name="approval_func",
+        arguments={},
+        id="approval-occurrence",
+    )
+    host_call = Content.from_function_call(
+        call_id="host",
+        name="host_func",
+        arguments={},
+        id="host-occurrence",
+    )
+    calls = [approval_call, host_call] if approval_first else [host_call, approval_call]
+
+    result_groups, should_terminate = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=calls,
+        tools=[approval_func, host_func],
+        config={},
+        invocation_session=AgentSession(),
+    )
+
+    results = [content for group in result_groups for content in group]
+    expected_types = (
+        ["function_approval_request", "function_call"]
+        if approval_first
+        else ["function_call", "function_approval_request"]
+    )
+    assert [content.type for content in results] == expected_types
+    assert next(content for content in results if content.type == "function_call").user_input_request is True
+    assert approval_calls == 0
+    assert should_terminate is False
+
+
+async def test_mixed_batch_requires_complete_responses_before_execution(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """A partial mixed response must fail closed; a complete response executes once."""
+    from agent_framework import FunctionTool
+
+    approval_arguments: list[str] = []
+
+    @tool(name="approval_func", approval_mode="always_require")
+    def approval_func(value: str) -> str:
+        approval_arguments.append(value)
+        return f"approved {value}"
+
+    host_func = FunctionTool(name="host_func", func=None, description="Handled by the caller")
+    agent = Agent(client=chat_client_base, tools=[approval_func, host_func])
+    session = AgentSession()
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="host", name="host_func", arguments={}),
+                    Content.from_function_call(
+                        call_id="approval",
+                        name="approval_func",
+                        arguments={"value": "expected"},
+                    ),
+                ],
+            )
+        ),
+    ]
+
+    first_response = await agent.run("run both", session=session)
+    approval_request = next(
+        content
+        for message in first_response.messages
+        for content in message.contents
+        if content.type == "function_approval_request"
+    )
+    host_request = next(
+        content
+        for message in first_response.messages
+        for content in message.contents
+        if content.type == "function_call" and content.user_input_request
+    )
+
+    partial_response = await agent.run(
+        approval_request.to_function_approval_response(approved=True),
+        session=session,
+    )
+    assert partial_response.messages == []
+    assert approval_arguments == []
+
+    session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+    assert host_request.call_id is not None
+    host_result = Content.from_function_result(call_id=host_request.call_id, result="host result")
+    host_result.id = host_request.id
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+    final_response = await agent.run(
+        host_result,
+        session=session,
+    )
+
+    assert final_response.text == "done"
+    assert approval_arguments == ["expected"]
+
+
+@pytest.mark.parametrize("include_approval_response", [False, True], ids=["zero-responses", "approval-only"])
+async def test_stateless_split_mixed_batch_rejects_incomplete_replay_before_execution(
+    chat_client_base: SupportsChatGetResponse,
+    include_approval_response: bool,
+) -> None:
+    """A split stateless mixed batch cannot execute until every response arrives."""
+    from agent_framework import FunctionTool
+
+    calls = 0
+
+    @tool(name="approval_func", approval_mode="always_require")
+    def approval_func() -> str:
+        nonlocal calls
+        calls += 1
+        return "approved"
+
+    approval_call = Content.from_function_call(
+        call_id="approval",
+        name="approval_func",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    host_request = Content.from_function_call(
+        call_id="host",
+        name="host_func",
+        arguments={},
+        id="host-occurrence",
+    )
+    host_request.user_input_request = True
+    host_func = FunctionTool(name="host_func", func=None, description="Handled by the caller")
+    replay_contents = (
+        [approval_request.to_function_approval_response(approved=True)]
+        if include_approval_response
+        else [Content.from_text("unrelated follow-up")]
+    )
+    messages = [
+        Message(role="assistant", contents=[approval_request]),
+        Message(role="tool", contents=[Content.from_text("provider metadata")]),
+        Message(role="assistant", contents=[host_request]),
+        Message(role="user", contents=replay_contents),
+    ]
+
+    with pytest.raises(
+        RuntimeError,
+        match="A mixed function-call batch requires responses for every approval and Host-owned request",
+    ):
+        await chat_client_base.get_response(
+            messages,
+            options={"tools": [approval_func, host_func]},
+        )
+
+    assert calls == 0
+
+
+@pytest.mark.parametrize("metadata_role", ["tool", "user"])
+def test_stateless_mixed_batch_across_message_roles_requires_complete_responses(metadata_role: str) -> None:
+    """Intervening message roles do not split a mixed batch or change response order."""
+    from agent_framework._tools import _stateless_mixed_pause_batch_status
+
+    approval_call = Content.from_function_call(
+        call_id="approval",
+        name="approval_func",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    host_request = Content.from_function_call(
+        call_id="host",
+        name="host_func",
+        arguments={},
+        id="host-occurrence",
+    )
+    host_request.user_input_request = True
+    approval_response = approval_request.to_function_approval_response(approved=True)
+    partial_messages = [
+        Message(role="assistant", contents=[approval_request]),
+        Message(role=metadata_role, contents=[Content.from_text("provider metadata")]),
+        Message(role="assistant", contents=[host_request]),
+        Message(role="user", contents=[approval_response]),
+    ]
+
+    incomplete, _ = _stateless_mixed_pause_batch_status(partial_messages)
+
+    assert incomplete is True
+
+    host_result = Content.from_function_result(call_id="host", result="host result")
+    host_result.id = "host-occurrence"
+    complete_messages = [
+        Message(role="assistant", contents=[approval_request]),
+        Message(role=metadata_role, contents=[Content.from_text("provider metadata")]),
+        Message(role="assistant", contents=[host_request]),
+        Message(role="user", contents=[host_result, approval_response]),
+    ]
+
+    incomplete, host_result_ids = _stateless_mixed_pause_batch_status(complete_messages)
+
+    assert incomplete is False
+    assert [content.type for content in complete_messages[-1].contents] == [
+        "function_approval_response",
+        "function_result",
+    ]
+    assert host_result_ids == {id(complete_messages[-1].contents[1])}
+
+
+async def test_later_standalone_request_does_not_hide_incomplete_stateless_mixed_batch(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """A newer standalone request cannot let an older mixed approval execute early."""
+    from agent_framework import FunctionTool
+
+    calls = 0
+
+    @tool(name="approval_func", approval_mode="always_require")
+    def approval_func() -> str:
+        nonlocal calls
+        calls += 1
+        return "approved"
+
+    approval_call = Content.from_function_call(
+        call_id="approval",
+        name="approval_func",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    host_request = Content.from_function_call(
+        call_id="host",
+        name="host_func",
+        arguments={},
+        id="host-occurrence",
+    )
+    host_request.user_input_request = True
+    later_call = Content.from_function_call(
+        call_id="later",
+        name="approval_func",
+        arguments={},
+        id="later-occurrence",
+    )
+    later_request = Content.from_function_approval_request(
+        id="later-occurrence",
+        function_call=later_call,
+    )
+    host_func = FunctionTool(name="host_func", func=None, description="Handled by the caller")
+    messages = [
+        Message(role="user", contents=["run mixed"]),
+        Message(role="assistant", contents=[approval_request, host_request]),
+        Message(role="user", contents=[approval_request.to_function_approval_response(approved=True)]),
+        Message(role="assistant", contents=[later_request]),
+        Message(role="user", contents=["unrelated follow-up"]),
+    ]
+
+    with pytest.raises(
+        RuntimeError,
+        match="A mixed function-call batch requires responses for every approval and Host-owned request",
+    ):
+        await chat_client_base.get_response(
+            messages,
+            options={"tools": [approval_func, host_func]},
+        )
+
+    assert calls == 0
+
+
+async def test_completed_split_stateless_mixed_batch_is_inert_on_later_turn(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """A terminal result prevents completed split mixed approvals from replaying."""
+    from agent_framework import FunctionTool
+
+    calls = 0
+
+    @tool(name="approval_func", approval_mode="always_require")
+    def approval_func() -> str:
+        nonlocal calls
+        calls += 1
+        return "approved"
+
+    approval_call = Content.from_function_call(
+        call_id="approval",
+        name="approval_func",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    host_request = Content.from_function_call(
+        call_id="host",
+        name="host_func",
+        arguments={},
+        id="host-occurrence",
+    )
+    host_request.user_input_request = True
+    host_result = Content.from_function_result(call_id="host", result="host result")
+    host_result.id = "host-occurrence"
+    approval_result = Content.from_function_result(call_id="approval", result="approved")
+    host_func = FunctionTool(name="host_func", func=None, description="Handled by the caller")
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=["later response"])),
+    ]
+    messages = [
+        Message(role="user", contents=["run mixed"]),
+        Message(role="assistant", contents=[approval_request]),
+        Message(role="tool", contents=[Content.from_text("provider metadata")]),
+        Message(role="assistant", contents=[host_request]),
+        Message(
+            role="user",
+            contents=[
+                approval_request.to_function_approval_response(approved=True),
+                host_result,
+            ],
+        ),
+        Message(role="tool", contents=[approval_result]),
+        Message(role="assistant", contents=["done"]),
+        Message(role="user", contents=["later"]),
+    ]
+
+    response = await chat_client_base.get_response(
+        messages,
+        options={"tools": [approval_func, host_func]},
+    )
+
+    assert response.text == "later response"
+    assert calls == 0
+
+
+def test_active_mixed_pause_ignores_historical_host_requests() -> None:
+    """Only the session-recorded mixed batch participates in response correlation."""
+    from agent_framework._tools import (
+        _stage_pending_mixed_pause_responses,
+        _store_pending_approval_requests,
+        _store_pending_mixed_pause_batch,
+    )
+
+    session = AgentSession()
+    approval_call = Content.from_function_call(
+        call_id="current-approval",
+        name="guarded",
+        arguments={},
+        id="current-approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="current-approval-occurrence",
+        function_call=approval_call,
+    )
+    host_request = Content.from_function_call(
+        call_id="current-host",
+        name="host",
+        arguments={},
+        id="current-host-occurrence",
+    )
+    host_request.user_input_request = True
+    _store_pending_approval_requests(session, [approval_request])
+    _store_pending_mixed_pause_batch(session, [[approval_request], [host_request]])
+
+    completed_old_host = Content.from_function_call(
+        call_id="old-completed",
+        name="old_host",
+        arguments={},
+        id="old-completed-occurrence",
+    )
+    completed_old_host.user_input_request = True
+    completed_old_result = Content.from_function_result(call_id="old-completed", result="old result")
+    completed_old_result.id = "old-completed-occurrence"
+    abandoned_old_host = Content.from_function_call(
+        call_id="old-abandoned",
+        name="old_host",
+        arguments={},
+        id="old-abandoned-occurrence",
+    )
+    abandoned_old_host.user_input_request = True
+    host_result = Content.from_function_result(call_id="current-host", result="current result")
+    host_result.id = "current-host-occurrence"
+    messages = [
+        Message(role="assistant", contents=[completed_old_host, abandoned_old_host]),
+        Message(role="tool", contents=[completed_old_result]),
+        Message(
+            role="user",
+            contents=[
+                approval_request.to_function_approval_response(approved=True),
+                host_result,
+            ],
+        ),
+    ]
+
+    incomplete, completed, host_result_ids = _stage_pending_mixed_pause_responses(messages, session)
+
+    assert incomplete is False
+    assert completed is True
+    assert messages[0].contents == [completed_old_host, abandoned_old_host]
+    assert messages[1].contents == [completed_old_result]
+    assert [(content.type, content.id) for content in messages[-1].contents] == [
+        ("function_approval_response", "current-approval-occurrence"),
+        ("function_result", "current-host-occurrence"),
+    ]
+    assert host_result_ids == {id(messages[-1].contents[-1])}
+
+
 async def test_function_invocation_config_additional_tools(chat_client_base: SupportsChatGetResponse):
     """Test that additional_tools are available but treated as declaration_only."""
     exec_counter_visible = 0
@@ -2915,12 +3823,103 @@ async def test_function_invocation_config_additional_tools(chat_client_base: Sup
     assert len(function_calls) >= 1
 
 
+@pytest.mark.parametrize(
+    ("enable_instrumentation", "enable_sensitive_data"),
+    [(False, False), (True, False), (True, True)],
+    indirect=True,
+)
+@pytest.mark.usefixtures("span_exporter")
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("include_detailed_errors", [False, True])
+async def test_function_invocation_result_parser_failure(
+    chat_client_base: SupportsChatGetResponse,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    stream: bool,
+    include_detailed_errors: bool,
+    enable_sensitive_data: bool,
+) -> None:
+    parser = Mock(side_effect=ValueError(f"Unsupported result: {_PRIVATE_ERROR_DETAIL}"))
+
+    @tool(result_parser=parser)
+    def make_result() -> dict[str, str]:
+        return {"value": "unparsed-value"}
+
+    call = Content.from_function_call(call_id="1", name="make_result", arguments="{}")
+    monkeypatch.setattr(
+        chat_client_base,
+        "run_responses",
+        [
+            ChatResponse(messages=Message(role="assistant", contents=[call])),
+            ChatResponse(messages=Message(role="assistant", contents=["done"])),
+        ],
+    )
+    monkeypatch.setattr(
+        chat_client_base,
+        "streaming_responses",
+        [
+            [ChatResponseUpdate(role="assistant", contents=[call])],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")])],
+        ],
+    )
+    monkeypatch.setitem(
+        chat_client_base.function_invocation_configuration,  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        "include_detailed_errors",
+        include_detailed_errors,
+    )
+    provider = Mock(wraps=chat_client_base._inner_get_response)  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    monkeypatch.setattr(chat_client_base, "_inner_get_response", provider)
+    messages = [Message(role="user", contents=["hello"])]
+    options: ChatOptions = {"tools": [make_result]}
+
+    if stream:
+        response_stream = chat_client_base.get_response(messages, options=options, stream=True)
+        updates = [update async for update in response_stream]
+        assert "unparsed-value" not in json.dumps([update.to_dict() for update in updates])
+        response = await response_stream.get_final_response()
+    else:
+        response = await chat_client_base.get_response(messages, options=options)
+
+    results = [content for msg in response.messages for content in msg.contents if content.type == "function_result"]
+    assert len(results) == 1
+    assert results[0].call_id == "1"
+    assert results[0].exception is not None
+    assert "Unsupported result" in results[0].exception
+    expected_result = "Error: Function failed."
+    if include_detailed_errors:
+        expected_result += f" Exception: Unsupported result: {_PRIVATE_ERROR_DETAIL}"
+    assert results[0].result == expected_result
+    serialized_response = json.dumps(response.to_dict())
+    assert (_PRIVATE_ERROR_DETAIL in serialized_response) is include_detailed_errors
+    assert "unparsed-value" not in json.dumps(response.to_dict())
+    assert response.messages[-1].text == "done"
+    assert provider.call_count == 2
+    provider_messages = provider.call_args.kwargs["messages"]
+    provider_results = [
+        content for msg in provider_messages for content in msg.contents if content.type == "function_result"
+    ]
+    assert len(provider_results) == 1
+    assert provider_results[0].result == results[0].result
+    assert "unparsed-value" not in json.dumps([msg.to_dict() for msg in provider_messages])
+    parser.assert_called_once_with({"value": "unparsed-value"})
+    assert make_result.invocation_count == 1
+    execution_warnings = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "agent_framework"
+        and record.levelno == logging.WARNING
+        and "raised an exception; returning an error result" in record.getMessage()
+    ]
+    assert len(execution_warnings) == 1
+    assert (_PRIVATE_ERROR_DETAIL in execution_warnings[0]) is enable_sensitive_data
+
+
 async def test_function_invocation_config_include_detailed_errors_false(chat_client_base: SupportsChatGetResponse):
     """Test that include_detailed_errors=False returns generic error messages."""
 
     @tool(name="error_function", approval_mode="never_require")
     def error_func(arg1: str) -> str:
-        raise ValueError("Specific error message that should not appear")
+        raise ValueError(f"Specific error message that should not appear: {_PRIVATE_ERROR_DETAIL}")
 
     chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
@@ -2949,6 +3948,8 @@ async def test_function_invocation_config_include_detailed_errors_false(chat_cli
     assert error_result.exception is not None
     assert "Specific error message" not in error_result.result
     assert "Error:" in error_result.result  # Generic error prefix
+    assert _PRIVATE_ERROR_DETAIL in error_result.exception
+    assert _PRIVATE_ERROR_DETAIL not in json.dumps(response.to_dict())
 
 
 async def test_function_invocation_config_include_detailed_errors_true(chat_client_base: SupportsChatGetResponse):
@@ -2956,7 +3957,7 @@ async def test_function_invocation_config_include_detailed_errors_true(chat_clie
 
     @tool(name="error_function", approval_mode="never_require")
     def error_func(arg1: str) -> str:
-        raise ValueError("Specific error message that should appear")
+        raise ValueError(f"Specific error message that should appear: {_PRIVATE_ERROR_DETAIL}")
 
     chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
@@ -2986,6 +3987,7 @@ async def test_function_invocation_config_include_detailed_errors_true(chat_clie
     assert "Specific error message that should appear" in error_result.result
     # The error format includes "Function failed. Exception:" prefix
     assert "Exception:" in error_result.result
+    assert _PRIVATE_ERROR_DETAIL in json.dumps(response.to_dict())
 
 
 async def test_function_invocation_config_validation_max_iterations():
@@ -3120,6 +4122,679 @@ async def test_argument_validation_error_without_detailed_errors(chat_client_bas
     assert error_result.exception is not None
     assert "Argument parsing failed" in error_result.result
     assert "Exception:" not in error_result.result  # No detailed error
+
+
+async def test_function_middleware_repairs_raw_arguments_before_validation(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Function middleware can repair provider arguments before final validation."""
+    observed_arguments: list[dict[str, Any]] = []
+    executed_arguments: list[int] = []
+
+    class RepairArgumentsMiddleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            assert isinstance(context.arguments, dict)
+            observed_arguments.append(dict(context.arguments))
+            context.arguments["count"] = int(context.arguments.pop("count_text"))
+            await call_next()
+            assert context.arguments == {"count": 3}
+
+    @tool(name="count_items", approval_mode="never_require")
+    def count_items(count: int) -> str:
+        executed_arguments.append(count)
+        return str(count)
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="repair-1",
+                        name="count_items",
+                        arguments='{"count_text": "3"}',
+                    )
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+
+    await chat_client_base.get_response(
+        [Message(role="user", contents=["count"])],
+        options={"tools": [count_items]},
+        client_kwargs={"middleware": [RepairArgumentsMiddleware()]},
+    )
+
+    assert observed_arguments == [{"count_text": "3"}]
+    assert executed_arguments == [3]
+
+
+async def test_function_middleware_keeps_normalized_arguments_for_valid_calls(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Valid calls preserve the existing normalized middleware argument contract."""
+    validation_count = 0
+    observed_arguments: list[dict[str, Any]] = []
+
+    class CountArgs(BaseModel):
+        count: int
+
+        @field_validator("count")
+        @classmethod
+        def track_validation(cls, value: int) -> int:
+            nonlocal validation_count
+            validation_count += 1
+            return value
+
+    class ObserveArgumentsMiddleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            assert isinstance(context.arguments, dict)
+            observed_arguments.append(dict(context.arguments))
+            await call_next()
+
+    @tool(name="count_items", schema=CountArgs, approval_mode="never_require")
+    def count_items(count: int) -> str:
+        return str(count)
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="valid-1", name="count_items", arguments='{"count": "3"}')
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+
+    await chat_client_base.get_response(
+        [Message(role="user", contents=["count"])],
+        options={"tools": [count_items]},
+        client_kwargs={"middleware": [ObserveArgumentsMiddleware()]},
+    )
+
+    assert observed_arguments == [{"count": 3}]
+    assert validation_count == 1
+
+
+async def test_approved_coercing_arguments_execute_without_replacement() -> None:
+    """Approval binds to the normalized middleware-entry representation."""
+    from agent_framework._tools import _auto_invoke_function, normalize_function_invocation_configuration
+
+    class CountArgs(BaseModel):
+        count: int
+
+    class PassthroughMiddleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            assert context.arguments == {"count": 3}
+            await call_next()
+
+    received: list[int] = []
+
+    @tool(name="approved_count", schema=CountArgs, approval_mode="always_require")
+    def approved_count(count: int) -> str:
+        received.append(count)
+        return str(count)
+
+    function_call = Content.from_function_call(
+        call_id="approved-coercion",
+        id="approved-coercion-occurrence",
+        name=approved_count.name,
+        arguments={"count": "3"},
+    )
+    approval_response = Content.from_function_approval_request(
+        id="approved-coercion-occurrence",
+        function_call=function_call,
+    ).to_function_approval_response(approved=True)
+
+    result = await _auto_invoke_function(
+        approval_response,
+        config=normalize_function_invocation_configuration(None),
+        tool_map={approved_count.name: approved_count},
+        middleware_pipeline=FunctionMiddlewarePipeline(PassthroughMiddleware()),
+    )
+
+    assert result.type == "function_result"
+    assert result.result == "3"
+    assert received == [3]
+
+
+async def test_prepared_arguments_support_noncopyable_validator_output() -> None:
+    """Prepared argument reuse does not require validator outputs to be deepcopyable."""
+    from agent_framework._tools import _auto_invoke_function, normalize_function_invocation_configuration
+
+    validation_count = 0
+    received: list[Any] = []
+
+    class LockArgs(BaseModel):
+        value: Any
+
+        @field_validator("value")
+        @classmethod
+        def create_lock(cls, value: Any) -> Any:
+            nonlocal validation_count
+            validation_count += 1
+            return threading.Lock() if value == "lock" else value
+
+    class PassthroughMiddleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            await call_next()
+
+    @tool(name="lock_tool", schema=LockArgs, approval_mode="never_require")
+    def lock_tool(value: Any) -> str:
+        received.append(value)
+        return "locked" if value.locked() else "unlocked"
+
+    result = await _auto_invoke_function(
+        Content.from_function_call(call_id="noncopyable", name=lock_tool.name, arguments={"value": "lock"}),
+        config=normalize_function_invocation_configuration(None),
+        tool_map={lock_tool.name: lock_tool},
+        middleware_pipeline=FunctionMiddlewarePipeline(PassthroughMiddleware()),
+    )
+
+    assert result.type == "function_result"
+    assert result.result == "unlocked"
+    assert len(received) == 1
+    assert validation_count == 1
+
+
+async def test_approval_rejects_opaque_mutable_validator_output() -> None:
+    """Approval fails closed when normalized arguments cannot be safely snapshotted."""
+    from agent_framework._tools import _auto_invoke_function, normalize_function_invocation_configuration
+
+    middleware_called = False
+    tool_called = False
+
+    class MutableValue:
+        def __init__(self) -> None:
+            self.value = "initial"
+
+    class MutableArgs(BaseModel):
+        value: Any
+
+        @field_validator("value")
+        @classmethod
+        def create_mutable_value(cls, value: Any) -> Any:
+            return MutableValue() if value == "mutable" else value
+
+    class MutatingMiddleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            nonlocal middleware_called
+            middleware_called = True
+            assert isinstance(context.arguments, dict)
+            context.arguments["value"].value = "changed"
+            await call_next()
+
+    @tool(name="opaque_approval_tool", schema=MutableArgs, approval_mode="always_require")
+    def opaque_approval_tool(value: Any) -> str:
+        nonlocal tool_called
+        tool_called = True
+        return value.value
+
+    function_call = Content.from_function_call(
+        call_id="opaque-approval",
+        id="opaque-approval-occurrence",
+        name=opaque_approval_tool.name,
+        arguments={"value": "mutable"},
+    )
+    approval_response = Content.from_function_approval_request(
+        id="opaque-approval-occurrence",
+        function_call=function_call,
+    ).to_function_approval_response(approved=True)
+
+    with pytest.raises(MiddlewareFailure, match="Cannot safely bind approval to opaque mutable function arguments"):
+        await _auto_invoke_function(
+            approval_response,
+            config=normalize_function_invocation_configuration(None),
+            tool_map={opaque_approval_tool.name: opaque_approval_tool},
+            middleware_pipeline=FunctionMiddlewarePipeline(MutatingMiddleware()),
+        )
+
+    assert not middleware_called
+    assert not tool_called
+
+
+async def test_nan_prepared_and_approval_snapshots_are_stable() -> None:
+    """An unchanged NaN survives prepared and approval snapshot comparison."""
+    from agent_framework._tools import _auto_invoke_function, normalize_function_invocation_configuration
+
+    validation_count = 0
+    received: list[float] = []
+
+    class FloatArgs(BaseModel):
+        value: float
+
+        @field_validator("value")
+        @classmethod
+        def track_validation(cls, value: float) -> float:
+            nonlocal validation_count
+            validation_count += 1
+            return value
+
+    class PassthroughMiddleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            assert isinstance(context.arguments, dict)
+            assert math.isnan(context.arguments["value"])
+            await call_next()
+
+    @tool(name="nan_tool", schema=FloatArgs, approval_mode="always_require")
+    def nan_tool(value: float) -> str:
+        received.append(value)
+        return "nan"
+
+    function_call = Content.from_function_call(
+        call_id="nan-call",
+        id="nan-occurrence",
+        name=nan_tool.name,
+        arguments={"value": "NaN"},
+    )
+    approval_response = Content.from_function_approval_request(
+        id="nan-occurrence",
+        function_call=function_call,
+    ).to_function_approval_response(approved=True)
+
+    result = await _auto_invoke_function(
+        approval_response,
+        config=normalize_function_invocation_configuration(None),
+        tool_map={nan_tool.name: nan_tool},
+        middleware_pipeline=FunctionMiddlewarePipeline(PassthroughMiddleware()),
+    )
+
+    assert result.type == "function_result"
+    assert result.result == "nan"
+    assert len(received) == 1 and math.isnan(received[0])
+    assert validation_count == 1
+
+
+async def test_function_middleware_can_short_circuit_before_argument_validation(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """A middleware result can handle an invalid call without invoking validation or the tool."""
+    executions = 0
+
+    class ShortCircuitMiddleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            del call_next
+            assert context.arguments == {"wrong_name": "not-an-int"}
+            context.result = "handled by middleware"
+
+    @tool(name="strict_tool", approval_mode="never_require")
+    def strict_tool(count: int) -> str:
+        nonlocal executions
+        executions += 1
+        return str(count)
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="short-circuit-1",
+                        name="strict_tool",
+                        arguments='{"wrong_name": "not-an-int"}',
+                    )
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["count"])],
+        options={"tools": [strict_tool]},
+        client_kwargs={"middleware": [ShortCircuitMiddleware()]},
+    )
+
+    assert executions == 0
+    result = next(
+        content for message in response.messages for content in message.contents if content.type == "function_result"
+    )
+    assert result.result == "handled by middleware"
+
+
+async def test_invalid_arguments_produced_by_middleware_keep_argument_error_contract(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Final validation still rejects invalid middleware output before the tool body."""
+    executions = 0
+
+    class InvalidRepairMiddleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            context.arguments = {"count": "not-an-int"}
+            await call_next()
+
+    @tool(name="strict_tool", approval_mode="never_require")
+    def strict_tool(count: int) -> str:
+        nonlocal executions
+        executions += 1
+        return str(count)
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="invalid-repair-1", name="strict_tool", arguments='{"count": 1}')
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["count"])],
+        options={"tools": [strict_tool]},
+        client_kwargs={"middleware": [InvalidRepairMiddleware()]},
+    )
+
+    assert executions == 0
+    result = next(
+        content for message in response.messages for content in message.contents if content.type == "function_result"
+    )
+    assert result.result == "Error: Argument parsing failed."
+    assert result.exception is not None
+
+
+async def test_middleware_type_error_remains_function_error(chat_client_base: SupportsChatGetResponse) -> None:
+    """A middleware TypeError is not misclassified as an argument-validation failure."""
+
+    class FailingMiddleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            del context, call_next
+            raise TypeError("middleware failed")
+
+    @tool(name="strict_tool", approval_mode="never_require")
+    def strict_tool(count: int) -> str:
+        return str(count)
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="middleware-error-1", name="strict_tool", arguments='{"count": 1}'
+                    )
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["count"])],
+        options={"tools": [strict_tool]},
+        client_kwargs={"middleware": [FailingMiddleware()]},
+    )
+
+    result = next(
+        content for message in response.messages for content in message.contents if content.type == "function_result"
+    )
+    assert result.result == "Error: Function failed."
+    assert result.exception == "middleware failed"
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non_streaming", "streaming"])
+async def test_approved_argument_repair_requires_replacement_approval(
+    chat_client_base: SupportsChatGetResponse,
+    streaming: bool,
+) -> None:
+    """Middleware cannot silently execute repaired arguments under an approval for a different call."""
+    executions: list[int] = []
+
+    class RepairArgumentsMiddleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            assert isinstance(context.arguments, dict)
+            if "count_text" in context.arguments:
+                context.arguments = {"count": int(context.arguments["count_text"])}
+            await call_next()
+
+    @tool(name="approved_count", approval_mode="always_require")
+    def approved_count(count: int) -> str:
+        executions.append(count)
+        return str(count)
+
+    function_call = Content.from_function_call(
+        call_id="approved-repair-1",
+        name="approved_count",
+        arguments='{"count_text": "3"}',
+    )
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [ChatResponseUpdate(role="assistant", contents=[function_call])],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")])],
+        ]
+    else:
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            ChatResponse(messages=Message(role="assistant", contents=[function_call])),
+            ChatResponse(messages=Message(role="assistant", contents=["done"])),
+        ]
+
+    agent = Agent(
+        client=chat_client_base,
+        tools=[approved_count],
+        middleware=[RepairArgumentsMiddleware()],
+    )
+    session = agent.create_session()
+
+    async def run(value: str | Message):
+        if not streaming:
+            return await agent.run(value, session=session)
+        stream = agent.run(value, session=session, stream=True)
+        async for _ in stream:
+            pass
+        return await stream.get_final_response()
+
+    first_response = await run("count")
+    first_request = next(
+        content
+        for message in first_response.messages
+        for content in message.contents
+        if content.type == "function_approval_request"
+    )
+    replacement_response = await run(
+        Message(role="user", contents=[first_request.to_function_approval_response(approved=True)])
+    )
+    replacement_request = next(
+        content
+        for message in replacement_response.messages
+        for content in message.contents
+        if content.type == "function_approval_request"
+    )
+
+    assert executions == []
+    assert replacement_request.id != first_request.id
+    assert replacement_request.additional_properties["_replacement_approval_request"] is True
+    assert replacement_request.function_call is not None
+    assert first_request.function_call is not None
+    assert replacement_request.function_call.id == first_request.function_call.id
+    assert replacement_request.function_call.parse_arguments() == {"count": 3}
+
+    final_response = await run(
+        Message(role="user", contents=[replacement_request.to_function_approval_response(approved=True)])
+    )
+
+    assert executions == [3]
+    assert final_response.text == "done"
+
+
+async def test_approved_argument_repair_short_circuit_requires_replacement_approval(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Short-circuiting middleware cannot return under stale argument approval."""
+    executions = 0
+
+    class RepairAndShortCircuitMiddleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            del call_next
+            assert isinstance(context.arguments, dict)
+            if "count_text" in context.arguments:
+                context.arguments = {"count": int(context.arguments["count_text"])}
+            context.result = "handled by middleware"
+
+    @tool(name="approved_short_circuit", approval_mode="always_require")
+    def approved_short_circuit(count: int) -> str:
+        nonlocal executions
+        executions += 1
+        return str(count)
+
+    function_call = Content.from_function_call(
+        call_id="approved-short-circuit-1",
+        name="approved_short_circuit",
+        arguments='{"count_text": "3"}',
+    )
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=[function_call])),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+    agent = Agent(
+        client=chat_client_base,
+        tools=[approved_short_circuit],
+        middleware=[RepairAndShortCircuitMiddleware()],
+    )
+    session = agent.create_session()
+
+    first_response = await agent.run("count", session=session)
+    first_request = next(
+        content
+        for message in first_response.messages
+        for content in message.contents
+        if content.type == "function_approval_request"
+    )
+    replacement_response = await agent.run(
+        Message(role="user", contents=[first_request.to_function_approval_response(approved=True)]),
+        session=session,
+    )
+    replacement_request = next(
+        content
+        for message in replacement_response.messages
+        for content in message.contents
+        if content.type == "function_approval_request"
+    )
+
+    assert executions == 0
+    assert replacement_request.function_call is not None
+    assert replacement_request.function_call.parse_arguments() == {"count": 3}
+
+    final_response = await agent.run(
+        Message(role="user", contents=[replacement_request.to_function_approval_response(approved=True)]),
+        session=session,
+    )
+
+    assert executions == 0
+    assert final_response.text == "done"
+    result = next(
+        content
+        for message in final_response.messages
+        for content in message.contents
+        if content.type == "function_result"
+    )
+    assert result.result == "handled by middleware"
+
+
+@pytest.mark.parametrize(
+    ("approved_value", "changed_value"),
+    [(True, 1), (-0.0, 0.0)],
+    ids=["boolean-to-integer", "negative-zero-to-positive-zero"],
+)
+async def test_approval_snapshot_distinguishes_exact_values(
+    approved_value: Any,
+    changed_value: Any,
+) -> None:
+    """A type or floating-point bit change requires replacement approval."""
+    from agent_framework._tools import _auto_invoke_function, normalize_function_invocation_configuration
+
+    class ChangeTypeMiddleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            context.arguments = {"value": changed_value}
+            await call_next()
+
+    @tool(name="typed_value", approval_mode="always_require")
+    def typed_value(value: Any) -> str:
+        return f"{type(value).__name__}:{value}"
+
+    function_call = Content.from_function_call(
+        call_id="typed-approval",
+        id="typed-approval-occurrence",
+        name=typed_value.name,
+        arguments={"value": approved_value},
+    )
+    approval_response = Content.from_function_approval_request(
+        id="typed-approval-occurrence",
+        function_call=function_call,
+    ).to_function_approval_response(approved=True)
+
+    with pytest.raises(MiddlewareTermination) as exc_info:
+        await _auto_invoke_function(
+            approval_response,
+            config=normalize_function_invocation_configuration(None),
+            tool_map={typed_value.name: typed_value},
+            middleware_pipeline=FunctionMiddlewarePipeline(ChangeTypeMiddleware()),
+        )
+
+    replacement = exc_info.value.result
+    assert isinstance(replacement, Content)
+    assert replacement.type == "function_approval_request"
+    assert replacement.function_call is not None
+    replacement_arguments = replacement.function_call.parse_arguments()
+    assert replacement_arguments is not None
+    replacement_value = replacement_arguments["value"]
+    if isinstance(changed_value, float):
+        assert isinstance(replacement_value, float)
+        assert math.copysign(1.0, replacement_value) == math.copysign(1.0, changed_value)
+    else:
+        assert replacement_value == changed_value
 
 
 async def test_hosted_tool_approval_response(chat_client_base: SupportsChatGetResponse):
@@ -5249,7 +6924,7 @@ async def test_streaming_function_invocation_config_include_detailed_errors_true
 
     @tool(name="error_function", approval_mode="never_require")
     def error_func(arg1: str) -> str:
-        raise ValueError("Specific error message that should appear")
+        raise ValueError(f"Specific error message that should appear: {_PRIVATE_ERROR_DETAIL}")
 
     chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         [
@@ -5282,6 +6957,7 @@ async def test_streaming_function_invocation_config_include_detailed_errors_true
     assert error_result.exception is not None
     assert "Specific error message that should appear" in error_result.result
     assert "Exception:" in error_result.result
+    assert _PRIVATE_ERROR_DETAIL in json.dumps([update.to_dict() for update in updates])
 
 
 async def test_streaming_function_invocation_config_include_detailed_errors_false(
@@ -5291,7 +6967,7 @@ async def test_streaming_function_invocation_config_include_detailed_errors_fals
 
     @tool(name="error_function", approval_mode="never_require")
     def error_func(arg1: str) -> str:
-        raise ValueError("Specific error message that should not appear")
+        raise ValueError(f"Specific error message that should not appear: {_PRIVATE_ERROR_DETAIL}")
 
     chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         [
@@ -5324,6 +7000,8 @@ async def test_streaming_function_invocation_config_include_detailed_errors_fals
     assert error_result.exception is not None
     assert "Specific error message" not in error_result.result
     assert "Error:" in error_result.result  # Generic error prefix
+    assert _PRIVATE_ERROR_DETAIL in error_result.exception
+    assert _PRIVATE_ERROR_DETAIL not in json.dumps([update.to_dict() for update in updates])
 
 
 async def test_streaming_argument_validation_error_with_detailed_errors(chat_client_base: SupportsChatGetResponse):

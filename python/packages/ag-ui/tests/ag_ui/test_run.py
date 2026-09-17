@@ -61,6 +61,17 @@ from agent_framework_ag_ui._run_common import (
 )
 
 
+def _open_tool_call(flow: FlowState, call_id: str, name: str = "tool") -> None:
+    """Register a tool call as started in this run so TOOL_CALL_END is eligible."""
+    entry = {
+        "id": call_id,
+        "type": "function",
+        "function": {"name": name, "arguments": "{}"},
+    }
+    flow.pending_tool_calls.append(entry)
+    flow.tool_calls_by_id[call_id] = entry
+
+
 def _message_role(message: object) -> object:
     if isinstance(message, dict):
         return cast(dict[str, object], message).get("role")
@@ -903,6 +914,7 @@ def test_emit_tool_result_closes_open_message():
     # Simulate an open text message (e.g., from Feature #4 tool-only detection)
     flow.message_id = "open-msg-123"
     flow.tool_call_id = "call_456"
+    _open_tool_call(flow, "call_456")
 
     content = Content.from_function_result(call_id="call_456", result="tool result")
 
@@ -2056,6 +2068,7 @@ class TestEmitMcpToolResult:
     def test_produces_end_and_result_events(self):
         """MCP tool result emits ToolCallEnd + ToolCallResult events."""
         flow = FlowState()
+        _open_tool_call(flow, "mcp_call_1", name="mcp_tool")
         content = Content.from_mcp_server_tool_result(
             call_id="mcp_call_1",
             output={"results": [{"title": "Weather", "url": "https://example.com"}]},
@@ -2097,6 +2110,7 @@ class TestEmitMcpToolResult:
     def test_serializes_non_string_output(self):
         """Non-string output is serialized to JSON."""
         flow = FlowState()
+        _open_tool_call(flow, "mcp_call_6", name="mcp_tool")
         content = Content.from_mcp_server_tool_result(
             call_id="mcp_call_6",
             output={"key": "value", "count": 42},
@@ -2111,6 +2125,7 @@ class TestEmitMcpToolResult:
     def test_output_none_falls_back_to_empty_string(self):
         """When output is None (default), the result content is an empty string."""
         flow = FlowState()
+        _open_tool_call(flow, "mcp_call_none", name="mcp_tool")
         content = Content(type="mcp_server_tool_result", call_id="mcp_call_none")
 
         events = _emit_mcp_tool_result(content, flow)
@@ -2281,6 +2296,7 @@ class TestEmitContentMcpRouting:
     def test_routes_mcp_server_tool_result(self):
         """_emit_content dispatches mcp_server_tool_result to _emit_mcp_tool_result."""
         flow = FlowState()
+        _open_tool_call(flow, "route_test_2", name="mcp_tool")
         content = Content.from_mcp_server_tool_result(
             call_id="route_test_2",
             output="result data",
@@ -2922,3 +2938,89 @@ async def test_stateless_snapshot_excludes_only_provider_service_session_state()
         {"client_value": "available"},
         {"private": "preserved", "client_value": "available"},
     ]
+
+
+async def test_reserved_service_session_keys_protected_without_agent_declaration():
+    """Reserved provider keys stay server-owned even if the agent declares nothing.
+
+    ``service_session_state_keys`` is resolved from the agent object AG-UI is handed, so an agent that does not
+    declare it, such as a wrapper that forgets to forward the attribute or an older provider package, would
+    otherwise silently fall back to accepting a client-supplied value. Reserving the key in
+    ``_RESERVED_SERVICE_SESSION_STATE_KEYS`` is the backstop that keeps those combinations safe.
+    """
+    from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
+
+    from agent_framework_ag_ui import AgentFrameworkAgent
+
+    stub = StubAgent()
+    assert not hasattr(stub, "service_session_state_keys")
+
+    observed_state: list[dict[str, Any]] = []
+    original_run = stub.run
+
+    def capture_state(*args: Any, **kwargs: Any) -> Any:
+        observed_state.append(dict(kwargs["session"].state))
+        return original_run(*args, **kwargs)
+
+    stub.run = capture_state  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+
+    agent = AgentFrameworkAgent(agent=stub)
+    _ = [
+        event
+        async for event in agent.run(
+            {
+                "thread_id": "frontend-thread",
+                "run_id": "attacker-run",
+                "messages": [{"role": "user", "content": "Hello"}],
+                "state": {
+                    "foundry_hosted_agent_session_id": "victim-sandbox",
+                    "client_value": "available",
+                },
+            }
+        )
+    ]
+
+    assert observed_state == [{"client_value": "available"}]
+
+
+async def test_request_state_cannot_assign_service_session_id():
+    """Chat history held by the provider is addressed by ``service_session_id``, never by client state.
+
+    ``AgentSession`` keeps ``service_session_id`` as its own attribute rather than a ``state`` entry, and only
+    trusted snapshot storage or a provider response may set it. This test locks in that boundary so a future
+    refactor cannot start sourcing conversation continuation from request Shared State.
+    """
+    from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
+
+    from agent_framework_ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
+
+    for use_service_session in (False, True):
+        stub = StubAgent()
+        observed: list[Any] = []
+        original_run = stub.run
+
+        def capture(*args: Any, **kwargs: Any) -> Any:
+            observed.append(kwargs["session"].service_session_id)
+            return original_run(*args, **kwargs)
+
+        stub.run = capture  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+
+        agent = AgentFrameworkAgent(
+            agent=stub,
+            use_service_session=use_service_session,
+            snapshot_store=InMemoryAGUIThreadSnapshotStore(),
+        )
+        _ = [
+            event
+            async for event in agent.run(
+                {
+                    "thread_id": "frontend-thread",
+                    "run_id": "attacker-run",
+                    "__ag_ui_snapshot_scope": "test",
+                    "messages": [{"role": "user", "content": "Hello"}],
+                    "state": {"__ag_ui_provider_service_session_id": "victim-conversation"},
+                }
+            )
+        ]
+
+        assert observed == [None], f"client state selected a conversation (use_service_session={use_service_session})"

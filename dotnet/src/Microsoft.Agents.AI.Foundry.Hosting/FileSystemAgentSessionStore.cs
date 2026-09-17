@@ -1,10 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Buffers;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
-using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -14,7 +12,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 
 /// <summary>
 /// Provides a file-system backed implementation of <see cref="AgentSessionStore"/> that persists
-/// the agent-framework's serialized <see cref="AgentSession"/> state for each (agent, conversation)
+/// the agent-framework's serialized <see cref="AgentSession"/> state for each agent and session key
 /// pair to disk. This complements Foundry storage (which owns conversation messages, agent
 /// definitions, and threads) — it is not a replacement for it.
 /// </summary>
@@ -33,7 +31,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// read-only and paths outside <c>$HOME</c> may be cleared between requests. Locally,
 /// sessions fall under <c>{cwd}/.checkpoints</c>. The session JSON produced when the agent
 /// serializes the session already contains the workflow's in-memory checkpoint manager
-/// state, so a single file per (agent, conversation) pair is sufficient to resume
+/// state, so a single file per agent and session key is sufficient to resume
 /// long-running workflows across process restarts.
 /// </para>
 /// <para>
@@ -147,15 +145,19 @@ public sealed class FileSystemAgentSessionStore : AgentSessionStore
     }
 
     /// <inheritdoc/>
-    public override async ValueTask SaveSessionAsync(AIAgent agent, string conversationId, AgentSession session, string? userId, CancellationToken cancellationToken = default)
+    public override async ValueTask SaveSessionAsync(
+        AIAgent agent,
+        AgentSessionStoreKey key,
+        AgentSession session,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(agent);
-        ArgumentException.ThrowIfNullOrWhiteSpace(conversationId);
+        ArgumentNullException.ThrowIfNull(key);
         ArgumentNullException.ThrowIfNull(session);
 
         JsonElement serialized = await agent.SerializeSessionAsync(session, cancellationToken: cancellationToken).ConfigureAwait(false);
 
-        string path = this.GetSessionPath(agent, conversationId, userId);
+        string path = this.GetSessionPath(agent, key);
 
         // Each save writes to its own temp file before atomically renaming over the
         // destination. Last writer wins for the final file, but no reader can observe
@@ -208,12 +210,15 @@ public sealed class FileSystemAgentSessionStore : AgentSessionStore
         $"(for example {nameof(InMemoryAgentSessionStore)}) via AddFoundryResponses(agent, agentSessionStore).";
 
     /// <inheritdoc/>
-    public override async ValueTask<AgentSession?> GetSessionAsync(AIAgent agent, string conversationId, string? userId, CancellationToken cancellationToken = default)
+    public override async ValueTask<AgentSession?> GetSessionAsync(
+        AIAgent agent,
+        AgentSessionStoreKey key,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(agent);
-        ArgumentException.ThrowIfNullOrWhiteSpace(conversationId);
+        ArgumentNullException.ThrowIfNull(key);
 
-        string path = this.GetSessionPath(agent, conversationId, userId);
+        string path = this.GetSessionPath(agent, key);
         if (!File.Exists(path))
         {
             return null;
@@ -231,40 +236,22 @@ public sealed class FileSystemAgentSessionStore : AgentSessionStore
         return await agent.DeserializeSessionAsync(element, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
-    private string GetSessionPath(AIAgent agent, string conversationId, string? userId)
+    private string GetSessionPath(AIAgent agent, AgentSessionStoreKey key)
     {
-        // Path layout uses self-describing, prefixed segments so every layer is unambiguous and a
-        // collapsed layout can never be confused with a different layer (e.g. a user id can never
-        // masquerade as an agent name):
+        // The stable key incorporates the session identifier and every partition without exposing
+        // those values in the filesystem:
         //
-        //   {root}/a-{agent}/u-{userId}/c-{conversationId}.json
+        //   {root}/a-{agent}/k-{stable-key}.json
         //
-        // - a-{agent}  buckets per hosted agent, because a single container hosts multiple keyed
-        //              agents that must not collide on the same conversationId. (agent.Id is NOT
-        //              used: it is regenerated on every startup for in-memory-defined agents.)
-        // - u-{userId} partitions per end user (x-agent-user-id) for multi-tenant isolation. Present
-        //              only when a user id was resolved; absent for local runs with no platform header.
-        // - c-{conv}   the conversation/context key. {conversationId} is HostedConversationKey.Resolve's
-        //              output (conversation_id, else the partition of previous_response_id / response id).
-        //
-        // The prefixes are constant literals applied AFTER sanitizing/validating each untrusted value,
-        // so they can never themselves introduce path traversal.
-        string dir = this.RootDirectory;
+        // Persistent storage requires the stable name or keyed registration carried by the hosted
+        // wrapper. Hashing it avoids case-insensitive and platform-specific directory collisions.
+        string agentIdentity = FoundryHostingAgent.GetSessionStorageIdentity(agent);
+        string agentKey = FoundryAgentSessionKeyEncoder.BuildAgentStorageKey(agentIdentity);
+        string sessionKey = FoundryAgentSessionKeyEncoder.BuildStorageKey(
+            FoundryAgentSessionKeyEncoder.BuildLogicalKey(agentIdentity, key));
+        string dir = Path.Combine(this.RootDirectory, "a-" + agentKey);
 
-        if (!string.IsNullOrEmpty(agent.Name))
-        {
-            dir = Path.Combine(dir, "a-" + Sanitize(agent.Name!));
-        }
-
-        if (!string.IsNullOrWhiteSpace(userId))
-        {
-            // The user id is the platform-injected, untrusted partition key. Reject (do not sanitize)
-            // anything that is not a single safe path component so a forged value cannot escape the root.
-            ValidatePathSegment(userId!, "user id");
-            dir = Path.Combine(dir, "u-" + Sanitize(userId!));
-        }
-
-        string path = Path.Combine(dir, "c-" + Sanitize(conversationId) + ".json");
+        string path = Path.Combine(dir, "k-" + sessionKey + ".json");
 
         // Defense in depth: regardless of per-segment handling, the fully-resolved path must remain
         // under the storage root. Reject anything that escapes (CWE-22).
@@ -281,127 +268,4 @@ public sealed class FileSystemAgentSessionStore : AgentSessionStore
 
         return path;
     }
-
-    /// <summary>
-    /// Validates that <paramref name="segment"/> is a single safe path component (CWE-22).
-    /// </summary>
-    /// <remarks>
-    /// The value originates from caller-controlled or platform-injected fields (such as the
-    /// <c>x-agent-user-id</c> partition key). It must be treated as an untrusted single path segment:
-    /// path separators, drive letters, parent references and similar would otherwise let the resulting
-    /// directory escape the configured storage root. We deliberately do not URL-decode the value (the
-    /// hosting layer never decodes these ids before joining them, so forms such as <c>%2e%2e</c> are
-    /// accepted as literal directory names), and we do not "sanitize" by stripping characters because
-    /// that can introduce collisions between distinct ids — a non-conforming value is rejected outright.
-    /// </remarks>
-    private static void ValidatePathSegment(string segment, string kind)
-    {
-        // Reject any value that is not a single safe path component. This covers POSIX/Windows
-        // separators, NUL bytes, drive letters, rooted paths, and all-dot segments (".", "..", "...").
-        if (segment.IndexOf('/') >= 0
-            || segment.IndexOf('\\') >= 0
-            || segment.IndexOf('\0') >= 0
-            || segment.Trim('.').Length == 0
-            || Path.IsPathRooted(segment)
-            || !string.IsNullOrEmpty(Path.GetPathRoot(segment)))
-        {
-            throw new InvalidOperationException($"Invalid {kind}: '{segment}'.");
-        }
-    }
-
-    private static string Sanitize(string value)
-    {
-        // Percent-encode every character that is invalid in a filename, plus '%' itself
-        // so the encoding is unambiguous. This is reversible and avoids the collision
-        // hazard of a lossy character substitution (e.g. "foo/bar" and "foo_bar" sharing
-        // a sanitized name).
-        char[] invalid = Path.GetInvalidFileNameChars();
-
-        int encodedLength = ComputeEncodedLength(value, invalid);
-
-        // stackalloc is bounded so an externally-controlled length cannot crash the
-        // hosting process with StackOverflowException.
-        const int StackLimit = 512;
-        string sanitized;
-        if (encodedLength <= StackLimit)
-        {
-            Span<char> buffer = stackalloc char[encodedLength];
-            SanitizeCore(value, invalid, buffer);
-            sanitized = new string(buffer);
-        }
-        else
-        {
-            char[] rented = ArrayPool<char>.Shared.Rent(encodedLength);
-            try
-            {
-                Span<char> buffer = rented.AsSpan(0, encodedLength);
-                SanitizeCore(value, invalid, buffer);
-                sanitized = new string(buffer);
-            }
-            finally
-            {
-                ArrayPool<char>.Shared.Return(rented);
-            }
-        }
-
-        // '.' and '..' are valid filename characters but resolve to current/parent
-        // directory when used as a bare path component. Windows additionally strips
-        // trailing dots from filenames, so a segment like "..." would survive on disk
-        // as "" and a partial-encode like "%2E.." would survive as "%2E". Encode every
-        // dot in any all-dot segment so the result has no special meaning to the OS.
-        if (sanitized.Length > 0 && IsAllDots(sanitized))
-        {
-            return string.Concat(Enumerable.Repeat("%2E", sanitized.Length));
-        }
-
-        return sanitized;
-    }
-
-    private static int ComputeEncodedLength(string value, char[] invalid)
-    {
-        int extra = 0;
-        for (int i = 0; i < value.Length; i++)
-        {
-            char c = value[i];
-            if (c == '%' || Array.IndexOf(invalid, c) >= 0)
-            {
-                extra += 2; // 1 char ('%' or invalid) becomes 3 chars ("%XX")
-            }
-        }
-        return value.Length + extra;
-    }
-
-    private static bool IsAllDots(string value)
-    {
-        for (int i = 0; i < value.Length; i++)
-        {
-            if (value[i] != '.')
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    private static void SanitizeCore(string value, char[] invalid, Span<char> buffer)
-    {
-        int j = 0;
-        for (int i = 0; i < value.Length; i++)
-        {
-            char c = value[i];
-            if (c == '%' || Array.IndexOf(invalid, c) >= 0)
-            {
-                buffer[j++] = '%';
-                buffer[j++] = HexChar((c >> 4) & 0xF);
-                buffer[j++] = HexChar(c & 0xF);
-            }
-            else
-            {
-                buffer[j++] = c;
-            }
-        }
-    }
-
-    private static char HexChar(int n) => (char)(n < 10 ? '0' + n : 'A' + n - 10);
 }

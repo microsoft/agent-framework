@@ -36,7 +36,20 @@ class AzureCosmosHistorySettings(TypedDict, total=False):
 
 
 class CosmosHistoryProvider(HistoryProvider):
-    """Azure Cosmos DB-backed history provider using HistoryProvider hooks."""
+    """Azure Cosmos DB-backed history provider using HistoryProvider hooks.
+
+    Providers using the same Cosmos DB account, database, and container with
+    identical ``source_id`` and non-empty ``session_id`` values access the same
+    persisted history for reads, writes, and clearing. This supports resuming
+    conversations across provider instances. ``session_id`` is the partition key;
+    ``source_id`` filters history within that partition.
+
+    These identifiers select stored history; they are not authentication or
+    authorization boundaries. Applications must bind them to authenticated and
+    authorized context and use distinct, trusted namespaces when isolation is
+    intended. Different identifiers prevent accidental overlap but do not restrict
+    a client whose Cosmos DB credentials already authorize access to that data.
+    """
 
     DEFAULT_SOURCE_ID: ClassVar[str] = "azure_cosmos_history"
     _BATCH_OPERATION_LIMIT: ClassVar[int] = 100
@@ -62,7 +75,8 @@ class CosmosHistoryProvider(HistoryProvider):
         """Initialize the Azure Cosmos DB history provider.
 
         Args:
-            source_id: Unique identifier for this provider instance.
+            source_id: Provider identifier used to scope stored history within a session.
+                Defaults to ``azure_cosmos_history`` and is shared across instances.
             load_messages: Whether to load messages before invocation.
             store_outputs: Whether to store response messages.
             store_inputs: Whether to store input messages.

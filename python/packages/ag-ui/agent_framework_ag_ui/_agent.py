@@ -3,7 +3,7 @@
 """AgentFrameworkAgent wrapper for AG-UI protocol."""
 
 import warnings
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Mapping
 from typing import Any, cast
 
 from ag_ui.core import BaseEvent
@@ -175,11 +175,14 @@ class AgentFrameworkAgent:
     async def run(
         self,
         input_data: dict[str, Any],
+        *,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
     ) -> AsyncGenerator[BaseEvent, None]:
         """Run the wrapped agent and yield AG-UI events.
 
         Args:
             input_data: The AG-UI run input containing messages, state, etc.
+            function_invocation_kwargs: Keyword arguments forwarded only to tool invocation.
 
         Yields:
             AG-UI events
@@ -190,5 +193,6 @@ class AgentFrameworkAgent:
             self.agent,
             self.config,
             approval_state_store=self._approval_state_store,
+            function_invocation_kwargs=function_invocation_kwargs,
         ):
             yield event

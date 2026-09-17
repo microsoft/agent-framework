@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
@@ -38,6 +39,7 @@ from agent_framework.exceptions import (
     ChatClientException,
     ChatClientInvalidAuthException,
     ChatClientInvalidRequestException,
+    ResponseInvalidatedException,
 )
 from agent_framework.observability import ChatTelemetryLayer
 from anthropic import APIError as AnthropicAPIError
@@ -599,15 +601,54 @@ class RawAnthropicClient(
                 # each message_delta carries the running total), so thread a per-stream
                 # accumulator to _process_stream_event to emit increments instead.
                 emitted_usage: dict[str, int] = {}
+                local_function_call_started = False
+                open_local_function_call_blocks: set[int] = set()
+                latest_stop_reason: str | None = None
+                message_stop_received = False
                 mark_feature_used(FeatureIndex.ANTHROPIC)
                 try:
                     async for chunk in await self.anthropic_client.beta.messages.create(**run_options, stream=True):
                         parsed_chunk = self._process_stream_event(chunk, emitted_usage, request_state=request_state)
+                        if chunk.type == "content_block_start" and parsed_chunk is not None:
+                            if any(
+                                content.type == "function_call" and not content.informational_only
+                                for content in parsed_chunk.contents
+                            ):
+                                local_function_call_started = True
+                                open_local_function_call_blocks.add(chunk.index)
+                        elif chunk.type == "content_block_stop":
+                            open_local_function_call_blocks.discard(chunk.index)
+                        elif chunk.type == "message_delta" and chunk.delta.stop_reason is not None:
+                            latest_stop_reason = chunk.delta.stop_reason
+                        elif chunk.type == "message_stop":
+                            message_stop_received = True
+                            if local_function_call_started and (
+                                open_local_function_call_blocks or latest_stop_reason != "tool_use"
+                            ):
+                                raise ResponseInvalidatedException(
+                                    "Anthropic invalidated partial response output; "
+                                    "local function calls must not execute."
+                                )
                         if parsed_chunk:
                             yield parsed_chunk
-                except AgentFrameworkException:
+                    if local_function_call_started and not message_stop_received:
+                        raise ResponseInvalidatedException(
+                            "Anthropic invalidated partial response output after the response ended without "
+                            "message_stop; local function calls must not execute."
+                        )
+                except asyncio.CancelledError:
+                    raise
+                except ResponseInvalidatedException:
                     raise
                 except Exception as ex:
+                    if local_function_call_started:
+                        raise ResponseInvalidatedException(
+                            "Anthropic invalidated partial response output after the response stream failed; "
+                            "local function calls must not execute.",
+                            inner_exception=ex,
+                        ) from ex
+                    if isinstance(ex, AgentFrameworkException):
+                        raise
                     raise _wrap_anthropic_error(ex) from ex
 
             return self._build_response_stream(_stream(), response_format=options.get("response_format"))
@@ -1157,12 +1198,20 @@ class RawAnthropicClient(
         Returns:
             A ChatResponse object containing the processed response.
         """
+        contents = self._parse_contents_from_anthropic(message.content, request_state=request_state)
+        if message.stop_reason != "tool_use" and any(
+            content.type == "function_call" and not content.informational_only for content in contents
+        ):
+            raise ResponseInvalidatedException(
+                "Anthropic invalidated partial response output; local function calls must not execute."
+            )
+
         return ChatResponse(
             response_id=message.id,
             messages=[
                 Message(
                     role="assistant",
-                    contents=self._parse_contents_from_anthropic(message.content, request_state=request_state),
+                    contents=contents,
                     raw_representation=message,
                 )
             ],

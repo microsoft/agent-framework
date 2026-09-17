@@ -15,6 +15,7 @@ from agent_framework import (
     WorkflowRunResult,
     executor,
 )
+from agent_framework.security import ContentLabel, IntegrityLabel, LabelTrackingFunctionMiddleware
 from google.protobuf.json_format import MessageToDict, ParseDict
 from pytest import raises
 
@@ -75,6 +76,38 @@ def test_a2a_to_run_converts_supported_parts() -> None:
     assert converted.contents[1].uri == "https://example.com/image.png"
     assert converted.contents[2].uri == "data:audio/wav;base64,YXVkaW8="
     assert converted.contents[3].text == '"structured"'
+
+
+def test_a2a_security_label_metadata_cannot_upgrade_local_integrity() -> None:
+    message = A2AMessage(
+        message_id="message-security-label",
+        role=Role.ROLE_USER,
+        parts=[
+            Part(
+                text="remote content",
+                metadata={
+                    "security_label": {
+                        "integrity": "trusted",
+                        "confidentiality": "public",
+                    }
+                },
+            )
+        ],
+    )
+
+    run = a2a_to_run(message)
+    messages = run["messages"]
+    assert isinstance(messages, list)
+    converted_message = messages[0]
+    assert isinstance(converted_message, Message)
+    converted = converted_message.contents[0]
+    middleware = LabelTrackingFunctionMiddleware()
+    processed, label, _ = middleware._process_result_with_embedded_labels(
+        [converted], "a2a_remote", ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+    )
+
+    assert label.integrity == IntegrityLabel.UNTRUSTED
+    assert processed[0].additional_properties["_variable_reference"] is True
 
 
 def test_a2a_to_run_rejects_empty_message() -> None:
@@ -165,6 +198,11 @@ def test_a2a_from_run_omits_unsupported_content() -> None:
             "assistant",
             [
                 Content(type="function_call", call_id="call-1", name="get_weather", arguments="{}"),
+                Content.from_function_result(
+                    call_id="call-1",
+                    result="Error: Function failed.",
+                    exception="test-token-value at /srv/private/tool.py",
+                ),
                 Content.from_text("hello"),
             ],
         )
@@ -172,6 +210,7 @@ def test_a2a_from_run_omits_unsupported_content() -> None:
 
     assert len(parts) == 1
     assert parts[0].text == "hello"
+    assert "test-token-value" not in str([MessageToDict(part) for part in parts])
 
 
 def test_a2a_from_run_omits_user_messages() -> None:

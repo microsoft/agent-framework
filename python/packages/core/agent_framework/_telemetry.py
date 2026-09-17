@@ -56,6 +56,8 @@ class FeatureIndex(IntEnum):
     CORE_SESSION_STORE = 17
     CORE_AGENT_HOOKS = 18
     CORE_VECTOR_STORES = 19
+    CORE_VECTOR_STORE_HISTORY_PROVIDER = 20
+    CORE_VECTOR_COLLECTION_CONTEXT_PROVIDER = 21
 
 
 # This environment variable is reserved by the Foundry hosting environment to

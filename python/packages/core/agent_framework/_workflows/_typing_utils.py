@@ -2,7 +2,7 @@
 
 import sys
 import typing
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import InitVar, is_dataclass
 from types import ModuleType, UnionType
 from typing import Any, Literal, TypeGuard, Union, cast, get_args, get_origin, get_type_hints
@@ -53,6 +53,21 @@ def contains_typevar(annotation: Any) -> bool:
         return True
 
     return any(contains_typevar(arg) for arg in get_args(annotation))
+
+
+def _resolve_function_annotations(  # pyright: ignore[reportUnusedFunction]
+    func: Callable[..., Any], params: Sequence[Any]
+) -> dict[str, Any]:
+    """Resolve function annotations and fall back to raw parameter annotations on failure.
+
+    ``typing.get_type_hints`` resolves postponed annotations, but a single unresolved
+    forward reference prevents it from returning any hints. Keeping the raw annotations
+    in that case lets the caller produce its normal, parameter-specific validation error.
+    """
+    try:
+        return get_type_hints(func)
+    except (NameError, AttributeError, RecursionError):
+        return {param.name: param.annotation for param in params}
 
 
 def is_chat_agent(agent: Any) -> TypeGuard[Agent]:
@@ -176,6 +191,14 @@ def is_instance_of(data: Any, target_type: type | UnionType | Any) -> bool:
     if origin is None:
         return isinstance(data, target_type)
 
+    # Case 1b: target_type is Literal[...]
+    # isinstance() cannot be used with Literal, so match by allowed values with
+    # strict member types, mirroring ``_matches_annotation``. Without this,
+    # executors whose handlers declare Literal message annotations crash at
+    # delivery time (Executor.can_handle/_find_handler call this directly).
+    if origin is Literal:
+        return any(type(data) is type(member) and data == member for member in args)
+
     # Case 2: target_type is Optional[T] or Union[T1, T2, ...]
     # Optional[T] is really just as Union[T, None]
     if origin is UnionType:
@@ -228,8 +251,6 @@ def is_instance_of(data: Any, target_type: type | UnionType | Any) -> bool:
 
 def _matches_annotation(data: Any, annotation: Any) -> bool:
     """Check an annotation that may not be runtime-checkable, treating unchecked ones as a match."""
-    if get_origin(annotation) is Literal:
-        return any(data == member and type(data) is type(member) for member in get_args(annotation))
     try:
         return is_instance_of(data, annotation)
     except TypeError:

@@ -13,8 +13,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import uuid
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Mapping, Sequence
 from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
@@ -85,6 +86,21 @@ from agent_framework_foundry_hosting._state_store import (
 )
 
 _OPENAI_HTTPX = cast(Any, import_module(DefaultAsyncHttpxClient.__mro__[1].__module__.partition(".")[0]))
+_PRIVATE_ERROR_DETAIL = "test-token-value at /srv/private/tool.py"
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _isolate_agentserver_state_root(tmp_path_factory: pytest.TempPathFactory) -> Generator[None]:
+    """Keep the real local state store, but prevent xdist workers sharing its files."""
+    previous_root = os.environ.get("AGENTSERVER_STATE_ROOT")
+    os.environ["AGENTSERVER_STATE_ROOT"] = str(tmp_path_factory.mktemp("agentserver-state"))
+    try:
+        yield
+    finally:
+        if previous_root is None:
+            os.environ.pop("AGENTSERVER_STATE_ROOT", None)
+        else:
+            os.environ["AGENTSERVER_STATE_ROOT"] = previous_root
 
 
 def _function_approval_store(request: Content) -> MagicMock:
@@ -1634,6 +1650,34 @@ class TestNonStreaming:
         assert "function_call_output" in types
         assert "message" in types
 
+    async def test_function_result_omits_internal_exception(self) -> None:
+        agent = _make_agent(
+            response=AgentResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[Content.from_function_call("call_1", "get_weather", arguments="{}")],
+                    ),
+                    Message(
+                        role="tool",
+                        contents=[
+                            Content.from_function_result(
+                                "call_1",
+                                result="Error: Function failed.",
+                                exception=_PRIVATE_ERROR_DETAIL,
+                            )
+                        ],
+                    ),
+                ]
+            )
+        )
+
+        resp = await _post(_make_server(agent), stream=False)
+
+        assert resp.status_code == 200
+        assert "Error: Function failed." in resp.text
+        assert _PRIVATE_ERROR_DETAIL not in resp.text
+
     @pytest.mark.parametrize(
         ("result", "expected_output"),
         [
@@ -2040,6 +2084,32 @@ class TestStreaming:
         args_done = [e for e in events if e["event"] == "response.function_call_arguments.done"]
         assert len(args_done) == 1
         assert args_done[0]["data"]["arguments"] == '{"q": "hello"}'
+
+    async def test_function_result_omits_internal_exception(self) -> None:
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    role="assistant",
+                    contents=[Content.from_function_call("call_1", "get_weather", arguments="{}")],
+                ),
+                AgentResponseUpdate(
+                    role="tool",
+                    contents=[
+                        Content.from_function_result(
+                            "call_1",
+                            result="Error: Function failed.",
+                            exception=_PRIVATE_ERROR_DETAIL,
+                        )
+                    ],
+                ),
+            ]
+        )
+
+        resp = await _post(_make_server(agent), stream=True)
+
+        assert resp.status_code == 200
+        assert "Error: Function failed." in resp.text
+        assert _PRIVATE_ERROR_DETAIL not in resp.text
 
     @pytest.mark.parametrize(("arguments", "expected_count"), [(None, 1), ("", 2)])
     async def test_declaration_only_metadata_replay_requires_none_arguments(
@@ -6113,6 +6183,164 @@ class TestResilientBackgroundCheckpointing:
 
         checkpoint_events = [e for e in events if isinstance(e, ResponseCheckpointEvent)]
         assert checkpoint_events, "expected at least one checkpoint event yielded for a resilient background run"
+
+
+# endregion
+
+
+# region Parallel pre-model reads (_load_request_messages)
+
+
+class TestParallelRequestReads:
+    """Covers the concurrent input/history read helper introduced to remove serial
+    latency from the request critical path (overlap, ordering, and no orphaned
+    storage reads when one side fails)."""
+
+    @staticmethod
+    def _identity_converters(monkeypatch: pytest.MonkeyPatch) -> None:
+        async def _passthrough(items: Any, *, approval_storage: Any = None) -> list[Any]:
+            del approval_storage
+            return list(items)
+
+        monkeypatch.setattr("agent_framework_foundry_hosting._responses._items_to_messages", _passthrough)
+        monkeypatch.setattr("agent_framework_foundry_hosting._responses._output_items_to_messages", _passthrough)
+
+    async def test_reads_overlap_and_preserve_order(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._identity_converters(monkeypatch)
+        server = _make_server(_make_agent())
+        server._uses_agent_server_history = True  # pyright: ignore[reportPrivateUsage]
+
+        history_msg = Message(role="assistant", contents=[Content.from_text("H")])
+        input_msg = Message(role="user", contents=[Content.from_text("I")])
+
+        input_started = asyncio.Event()
+        history_started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def get_input_items() -> list[Message]:
+            input_started.set()
+            await release.wait()
+            return [input_msg]
+
+        async def get_history() -> list[Message]:
+            history_started.set()
+            await release.wait()
+            return [history_msg]
+
+        context = MagicMock(spec=ResponseContext)
+        context.get_input_items = get_input_items
+        context.get_history = get_history
+
+        task = asyncio.ensure_future(server._load_request_messages(context, approval_storage=None))  # pyright: ignore[reportPrivateUsage]
+        try:
+            # Both reads must be in-flight before either is allowed to finish — proves they overlap.
+            await asyncio.wait_for(input_started.wait(), timeout=1)
+            await asyncio.wait_for(history_started.wait(), timeout=1)
+            release.set()
+            messages = await asyncio.wait_for(task, timeout=1)
+        finally:
+            release.set()
+
+        # History precedes input in the assembled model input, and the helper owns the ordering.
+        assert messages == [history_msg, input_msg]
+
+    async def test_history_read_skipped_without_agent_server_history(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._identity_converters(monkeypatch)
+        server = _make_server(_make_agent())
+        server._uses_agent_server_history = False  # pyright: ignore[reportPrivateUsage]
+
+        input_msg = Message(role="user", contents=[Content.from_text("I")])
+
+        async def get_input_items() -> list[Message]:
+            return [input_msg]
+
+        context = MagicMock(spec=ResponseContext)
+        context.get_input_items = get_input_items
+        context.get_history = AsyncMock()
+
+        messages = await server._load_request_messages(context, approval_storage=None)  # pyright: ignore[reportPrivateUsage]
+
+        assert messages == [input_msg]
+        context.get_history.assert_not_awaited()
+
+    async def test_failed_read_cancels_and_drains_sibling(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._identity_converters(monkeypatch)
+        server = _make_server(_make_agent())
+        server._uses_agent_server_history = True  # pyright: ignore[reportPrivateUsage]
+
+        sibling_cancelled = asyncio.Event()
+
+        async def get_input_items() -> list[Message]:
+            raise RuntimeError("input read boom")
+
+        async def get_history() -> list[Message]:
+            try:
+                await asyncio.sleep(3600)
+            except asyncio.CancelledError:
+                sibling_cancelled.set()
+                raise
+            return []
+
+        context = MagicMock(spec=ResponseContext)
+        context.get_input_items = get_input_items
+        context.get_history = get_history
+
+        with pytest.raises(RuntimeError, match="input read boom"):
+            await asyncio.wait_for(
+                server._load_request_messages(context, approval_storage=None),  # pyright: ignore[reportPrivateUsage]
+                timeout=2,
+            )
+
+        # The still-blocked history read must have been cancelled, not left orphaned.
+        await asyncio.wait_for(sibling_cancelled.wait(), timeout=1)
+
+    async def test_session_preparation_failure_cancels_pending_reads(self) -> None:
+        """If session preparation fails, the concurrently-launched read must be cancelled and
+        drained by `_handle_inner_agent`, not left running as an orphan after the request fails."""
+        input_started = asyncio.Event()
+        sibling_cancelled = asyncio.Event()
+
+        class _GetFailsOnceReadStarted(SessionStore):
+            async def get(self, session_id: str) -> AgentSession | None:
+                del session_id
+                # Fail session preparation only once the concurrent read is genuinely in-flight,
+                # so this proves the handler cancels a running read (not a not-yet-started task).
+                await input_started.wait()
+                raise RuntimeError("session prep boom")
+
+        server = _make_server(_make_agent(), session_store=_GetFailsOnceReadStarted())
+        request = CreateResponse(model="m", input="hi", stream=True)
+        # A previous_response_id makes session_load_id non-None so the failing get() is reached.
+        request["previous_response_id"] = "resp-x"
+        context = ResponseContext(response_id="response-1", mode_flags=MagicMock())
+
+        async def get_input_items(_self: Any) -> list[Any]:
+            input_started.set()
+            try:
+                await asyncio.sleep(3600)
+            except asyncio.CancelledError:
+                sibling_cancelled.set()
+                raise
+            return []
+
+        with (
+            patch.object(ResponseContext, "get_input_items", new=get_input_items),
+            patch.object(ResponseContext, "get_history", new=AsyncMock(return_value=[])),
+        ):
+            handler = cast(
+                AsyncGenerator[Any, None],
+                server._handle_response(request, context, asyncio.Event()),  # pyright: ignore[reportPrivateUsage]
+            )
+
+            async def _drain() -> list[Any]:
+                return [event async for event in handler]
+
+            events = await asyncio.wait_for(_drain(), timeout=2)
+
+        types = [event.get("type") for event in events if isinstance(event, Mapping)]
+        assert types[-1] == "response.failed"
+        # The in-flight input read must have been cancelled by the handler's cleanup, not orphaned.
+        await asyncio.wait_for(sibling_cancelled.wait(), timeout=1)
 
 
 # endregion

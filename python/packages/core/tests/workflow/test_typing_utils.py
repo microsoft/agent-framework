@@ -171,6 +171,30 @@ def test_union_types() -> None:
     assert not is_instance_of(5.0, int | str)
 
 
+def test_literal_types() -> None:
+    """Test Literal types match by allowed values without raising TypeError.
+
+    ``isinstance()`` cannot be used with ``typing.Literal``; matching must fall
+    back to value equality with strict member types (bool is not int, etc.).
+    """
+    assert is_instance_of("a", Literal["a", "b"])
+    assert is_instance_of("b", Literal["a", "b"])
+    assert not is_instance_of("c", Literal["a", "b"])
+    assert is_instance_of(1, Literal[1, 2])
+    # bool must not match an int literal member even though True == 1
+    assert not is_instance_of(True, Literal[1, 2])
+    # nested literals inside other containers keep working
+    assert is_instance_of(["a"], list[Literal["a", "b"]])
+    assert not is_instance_of(["c"], list[Literal["a", "b"]])
+
+    class Explosive:
+        def __eq__(self, other: object) -> bool:
+            raise RuntimeError("Equality should not be called when types differ")
+
+    # Strict type guard runs before equality, avoiding __eq__ on mismatched types
+    assert not is_instance_of(Explosive(), Literal["yes"])
+
+
 def test_list_types() -> None:
     """Test list types with various element types."""
     assert is_instance_of([], list)

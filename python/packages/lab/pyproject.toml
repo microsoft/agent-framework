@@ -59,7 +59,7 @@ math = [
 dev = [
     "agent-framework-openai>=1.14.2,<2",
     "uv==0.12.9",
-    "ruff==0.16.5",
+    "ruff==0.16.6",
     "pytest==9.1.1",
     "pytest-asyncio==1.4.0",
     "pytest-cov==7.1.0",

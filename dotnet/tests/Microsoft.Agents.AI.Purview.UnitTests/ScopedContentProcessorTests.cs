@@ -297,6 +297,175 @@ public sealed class ScopedContentProcessorTests
     }
 
     [Fact]
+    public void CheckApplicableScopes_MatchesUrlLocationHostCaseInsensitively()
+    {
+        // Arrange
+        ProcessContentRequest pcRequest = CreateProcessContentRequest();
+        pcRequest.ContentToProcess.ProtectedAppMetadata.ApplicationLocation =
+            new("microsoft.graph.policyLocationUrl", "HTTPS://Contoso.com/sites/marketing");
+        ProtectionScopesResponse psResponse = new()
+        {
+            Scopes =
+            [
+                new()
+                {
+                    Activities = ProtectionScopeActivities.UploadText,
+                    Locations = [new("#microsoft.graph.policyLocationUrl", "https://contoso.com/sites/marketing")],
+                    ExecutionMode = ExecutionMode.EvaluateInline
+                }
+            ]
+        };
+
+        // Act
+        (bool shouldProcess, _, _) = ScopedContentProcessor.CheckApplicableScopes(pcRequest, psResponse);
+
+        // Assert
+        Assert.True(shouldProcess);
+    }
+
+    [Fact]
+    public void CheckApplicableScopes_TreatsUrlLocationPathAsCaseSensitive()
+    {
+        // Arrange
+        ProcessContentRequest pcRequest = CreateProcessContentRequest();
+        pcRequest.ContentToProcess.ProtectedAppMetadata.ApplicationLocation =
+            new("microsoft.graph.policyLocationUrl", "https://contoso.com/sites/Marketing");
+        ProtectionScopesResponse psResponse = new()
+        {
+            Scopes =
+            [
+                new()
+                {
+                    Activities = ProtectionScopeActivities.UploadText,
+                    Locations = [new("#microsoft.graph.policyLocationUrl", "https://contoso.com/sites/marketing")],
+                    ExecutionMode = ExecutionMode.EvaluateInline
+                }
+            ]
+        };
+
+        // Act
+        (bool shouldProcess, List<DlpActionInfo> dlpActions, _) = ScopedContentProcessor.CheckApplicableScopes(pcRequest, psResponse);
+
+        // Assert
+        Assert.False(shouldProcess);
+        Assert.Empty(dlpActions);
+    }
+
+    [Fact]
+    public void CheckApplicableScopes_TreatsUrlLocationQueryAsCaseSensitive()
+    {
+        // Arrange
+        ProcessContentRequest pcRequest = CreateProcessContentRequest();
+        pcRequest.ContentToProcess.ProtectedAppMetadata.ApplicationLocation =
+            new("microsoft.graph.policyLocationUrl", "https://contoso.com?label=Secret");
+        ProtectionScopesResponse psResponse = new()
+        {
+            Scopes =
+            [
+                new()
+                {
+                    Activities = ProtectionScopeActivities.UploadText,
+                    Locations = [new("#microsoft.graph.policyLocationUrl", "https://contoso.com?label=secret")],
+                    ExecutionMode = ExecutionMode.EvaluateInline
+                }
+            ]
+        };
+
+        // Act
+        (bool shouldProcess, List<DlpActionInfo> dlpActions, _) = ScopedContentProcessor.CheckApplicableScopes(pcRequest, psResponse);
+
+        // Assert
+        Assert.False(shouldProcess);
+        Assert.Empty(dlpActions);
+    }
+
+    [Fact]
+    public void CheckApplicableScopes_TreatsUrlLocationFragmentAsCaseSensitive()
+    {
+        // Arrange
+        ProcessContentRequest pcRequest = CreateProcessContentRequest();
+        pcRequest.ContentToProcess.ProtectedAppMetadata.ApplicationLocation =
+            new("microsoft.graph.policyLocationUrl", "https://contoso.com#Section");
+        ProtectionScopesResponse psResponse = new()
+        {
+            Scopes =
+            [
+                new()
+                {
+                    Activities = ProtectionScopeActivities.UploadText,
+                    Locations = [new("#microsoft.graph.policyLocationUrl", "https://contoso.com#section")],
+                    ExecutionMode = ExecutionMode.EvaluateInline
+                }
+            ]
+        };
+
+        // Act
+        (bool shouldProcess, List<DlpActionInfo> dlpActions, _) = ScopedContentProcessor.CheckApplicableScopes(pcRequest, psResponse);
+
+        // Assert
+        Assert.False(shouldProcess);
+        Assert.Empty(dlpActions);
+    }
+
+    [Fact]
+    public void CheckApplicableScopes_TreatsUrlLocationUserInfoAsCaseSensitive()
+    {
+        // Arrange
+        ProcessContentRequest pcRequest = CreateProcessContentRequest();
+        pcRequest.ContentToProcess.ProtectedAppMetadata.ApplicationLocation =
+            new("microsoft.graph.policyLocationUrl", "https://alice:SecretPass@contoso.com/docs");
+        ProtectionScopesResponse psResponse = new()
+        {
+            Scopes =
+            [
+                new()
+                {
+                    Activities = ProtectionScopeActivities.UploadText,
+                    Locations = [new("#microsoft.graph.policyLocationUrl", "https://alice:secretpass@contoso.com/docs")],
+                    ExecutionMode = ExecutionMode.EvaluateInline
+                }
+            ]
+        };
+
+        // Act
+        (bool shouldProcess, List<DlpActionInfo> dlpActions, _) = ScopedContentProcessor.CheckApplicableScopes(pcRequest, psResponse);
+
+        // Assert
+        Assert.False(shouldProcess);
+        Assert.Empty(dlpActions);
+    }
+
+    [Fact]
+    public void CheckApplicableScopes_MatchesApplicationLocationCaseInsensitively()
+    {
+        // Arrange
+        ProcessContentRequest pcRequest = CreateProcessContentRequest();
+        pcRequest.ContentToProcess.ProtectedAppMetadata.ApplicationLocation =
+            new("microsoft.graph.policyLocationApplication", "A1B2C3D4-E5F6-4A5B-8C9D-0E1F2A3B4C5D");
+        ProtectionScopesResponse psResponse = new()
+        {
+            Scopes =
+            [
+                new()
+                {
+                    Activities = ProtectionScopeActivities.UploadText,
+                    Locations =
+                    [
+                        new("#microsoft.graph.policyLocationApplication", "a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d")
+                    ],
+                    ExecutionMode = ExecutionMode.EvaluateInline
+                }
+            ]
+        };
+
+        // Act
+        (bool shouldProcess, _, _) = ScopedContentProcessor.CheckApplicableScopes(pcRequest, psResponse);
+
+        // Assert
+        Assert.True(shouldProcess);
+    }
+
+    [Fact]
     public async Task ProcessMessagesAsync_UsesCachedProtectionScopes_WhenAvailableAsync()
     {
         // Arrange
@@ -993,9 +1162,286 @@ public sealed class ScopedContentProcessorTests
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    /// <summary>
+    /// Verifies every content item is submitted for evaluation in a separate request, not just <c>message.Text</c>.
+    /// Images, binary payloads and structured tool results are empty when flattened to text, which
+    /// would have them reach the model having only ever been classified as an empty string.
+    /// </summary>
+    [Fact]
+    public async Task ProcessMessagesAsync_WithMultipleContentItems_SubmitsEachInSeparateRequestAsync()
+    {
+        // Arrange
+        byte[] secret = [0x01, 0x02, 0x03, 0x04];
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.User,
+            [
+                new DataContent(secret, "application/octet-stream"),
+                new FunctionCallContent("call-1", "exfiltrate", new Dictionary<string, object?> { ["ssn"] = "123-45-6789" })
+            ])
+        };
+        var settings = CreateValidPurviewSettings();
+        var tokenInfo = new TokenInfo { TenantId = "tenant-123", UserId = "user-123", ClientId = "client-123" };
+
+        this._mockPurviewClient.Setup(x => x.GetUserInfoFromTokenAsync(It.IsAny<CancellationToken>(), null))
+            .ReturnsAsync(tokenInfo);
+        this._mockCacheProvider.Setup(x => x.GetAsync<ProtectionScopesCacheKey, ProtectionScopesResponse>(
+            It.IsAny<ProtectionScopesCacheKey>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateApplicableProtectionScopesResponse());
+
+        List<ProcessContentRequest> capturedRequests = [];
+        this._mockPurviewClient.Setup(x => x.ProcessContentAsync(
+            It.IsAny<ProcessContentRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<ProcessContentRequest, CancellationToken>((request, _) => capturedRequests.Add(request))
+            .ReturnsAsync(new ProcessContentResponse());
+
+        // Act
+        await this._processor.ProcessMessagesAsync(
+            messages, "session-123", Activity.UploadText, settings, "user-123", CancellationToken.None);
+
+        // Assert
+        Assert.Equal(2, capturedRequests.Count);
+        ProcessContentMetadataBase binaryEntry = Assert.Single(capturedRequests[0].ContentToProcess.ContentEntries);
+        ProcessContentMetadataBase functionCallEntry = Assert.Single(capturedRequests[1].ContentToProcess.ContentEntries);
+
+        PurviewBinaryContent binaryContent = Assert.IsType<PurviewBinaryContent>(binaryEntry.Content);
+        Assert.Equal(secret, binaryContent.Data);
+
+        PurviewTextContent functionCallContent = Assert.IsType<PurviewTextContent>(functionCallEntry.Content);
+        Assert.Contains("123-45-6789", functionCallContent.Data, StringComparison.Ordinal);
+
+        // Content entries must be individually addressable, not collapsed onto one identifier.
+        Assert.NotEqual(binaryEntry.Identifier, functionCallEntry.Identifier);
+    }
+
+    [Fact]
+    public async Task ProcessMessagesAsync_WithEmptyTextAndData_SkipsEmptyContentAsync()
+    {
+        // Arrange
+        byte[] emptyData = [];
+        List<ChatMessage> messages =
+        [
+            new(ChatRole.User,
+            [
+                new TextContent(string.Empty),
+                new DataContent(emptyData, "application/octet-stream")
+            ])
+        ];
+        PurviewSettings settings = CreateValidPurviewSettings();
+        TokenInfo tokenInfo = new() { TenantId = "tenant-123", UserId = "user-123", ClientId = "client-123" };
+
+        this._mockPurviewClient.Setup(x => x.GetUserInfoFromTokenAsync(It.IsAny<CancellationToken>(), null))
+            .ReturnsAsync(tokenInfo);
+
+        // Act
+        await this._processor.ProcessMessagesAsync(
+            messages, "session-123", Activity.UploadText, settings, "user-123", CancellationToken.None);
+
+        // Assert
+        this._mockPurviewClient.Verify(x => x.ProcessContentAsync(
+            It.IsAny<ProcessContentRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    /// <summary>
+    /// Verifies a block verdict known from an offline cached scope is still enforced. The offline
+    /// branch reports asynchronously, but discarding the scope's own policy actions would let a
+    /// known <c>restrictAccess</c> verdict go unenforced.
+    /// </summary>
+    [Fact]
+    public async Task ProcessMessagesAsync_WithOfflineScopeCarryingBlockAction_ReturnsShouldBlockTrueAsync()
+    {
+        // Arrange
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Test message")
+        };
+        var settings = CreateValidPurviewSettings();
+        var tokenInfo = new TokenInfo { TenantId = "tenant-123", UserId = "user-123", ClientId = "client-123" };
+
+        this._mockPurviewClient.Setup(x => x.GetUserInfoFromTokenAsync(It.IsAny<CancellationToken>(), null))
+            .ReturnsAsync(tokenInfo);
+
+        var psResponse = new ProtectionScopesResponse
+        {
+            Scopes =
+            [
+                new()
+                {
+                    Activities = ProtectionScopeActivities.UploadText,
+                    Locations =
+                    [
+                        new("microsoft.graph.policyLocationApplication", "app-123")
+                    ],
+                    ExecutionMode = ExecutionMode.EvaluateOffline,
+                    PolicyActions =
+                    [
+                        new() { Action = DlpAction.RestrictAccess, RestrictionAction = RestrictionAction.Block }
+                    ]
+                }
+            ]
+        };
+
+        this._mockCacheProvider.Setup(x => x.GetAsync<ProtectionScopesCacheKey, ProtectionScopesResponse>(
+            It.IsAny<ProtectionScopesCacheKey>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(psResponse);
+
+        // Act
+        var result = await this._processor.ProcessMessagesAsync(
+            messages, "session-123", Activity.UploadText, settings, "user-123", CancellationToken.None);
+
+        // Assert
+        Assert.True(result.shouldBlock);
+
+        // The offline report is still queued; enforcement is additional, not a replacement.
+        this._mockChannelHandler.Verify(x => x.QueueJob(It.IsAny<ProcessContentJob>()), Times.Once);
+    }
+
+    /// <summary>
+    /// Verifies a <c>restrictAccess</c> scope whose restriction mode does not block is not enforced as
+    /// a block. The action carries a separate <see cref="RestrictionAction"/> that may be
+    /// <see cref="RestrictionAction.Audit"/>, <see cref="RestrictionAction.Warn"/> or
+    /// <see cref="RestrictionAction.Allow"/>, none of which withhold the content.
+    /// </summary>
+    [Fact]
+    public async Task ProcessMessagesAsync_WithOfflineScopeCarryingAuditRestriction_ReturnsShouldBlockFalseAsync()
+    {
+        // Arrange
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Test message")
+        };
+        var settings = CreateValidPurviewSettings();
+        var tokenInfo = new TokenInfo { TenantId = "tenant-123", UserId = "user-123", ClientId = "client-123" };
+
+        this._mockPurviewClient.Setup(x => x.GetUserInfoFromTokenAsync(It.IsAny<CancellationToken>(), null))
+            .ReturnsAsync(tokenInfo);
+
+        var psResponse = new ProtectionScopesResponse
+        {
+            Scopes =
+            [
+                new()
+                {
+                    Activities = ProtectionScopeActivities.UploadText,
+                    Locations =
+                    [
+                        new("microsoft.graph.policyLocationApplication", "app-123")
+                    ],
+                    ExecutionMode = ExecutionMode.EvaluateOffline,
+                    PolicyActions =
+                    [
+                        new() { Action = DlpAction.RestrictAccess, RestrictionAction = RestrictionAction.Audit }
+                    ]
+                }
+            ]
+        };
+
+        this._mockCacheProvider.Setup(x => x.GetAsync<ProtectionScopesCacheKey, ProtectionScopesResponse>(
+            It.IsAny<ProtectionScopesCacheKey>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(psResponse);
+
+        // Act
+        var result = await this._processor.ProcessMessagesAsync(
+            messages, "session-123", Activity.UploadText, settings, "user-123", CancellationToken.None);
+
+        // Assert
+        Assert.False(result.shouldBlock);
+
+        // The offline report is still queued so the audit action is recorded.
+        this._mockChannelHandler.Verify(x => x.QueueJob(It.IsAny<ProcessContentJob>()), Times.Once);
+    }
+
+    /// <summary>
+    /// Verifies an unrecognised <see cref="ExecutionMode"/> is evaluated inline. The enum is
+    /// evolvable, so an unknown member must not be treated as permission to skip enforcement.
+    /// </summary>
+    [Fact]
+    public async Task ProcessMessagesAsync_WithUnknownExecutionMode_EvaluatesInlineAsync()
+    {
+        // Arrange
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Test message")
+        };
+        var settings = CreateValidPurviewSettings();
+        var tokenInfo = new TokenInfo { TenantId = "tenant-123", UserId = "user-123", ClientId = "client-123" };
+
+        this._mockPurviewClient.Setup(x => x.GetUserInfoFromTokenAsync(It.IsAny<CancellationToken>(), null))
+            .ReturnsAsync(tokenInfo);
+        this._mockCacheProvider.Setup(x => x.GetAsync<ProtectionScopesCacheKey, ProtectionScopesResponse>(
+            It.IsAny<ProtectionScopesCacheKey>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateApplicableProtectionScopesResponse((ExecutionMode)9999));
+
+        this._mockPurviewClient.Setup(x => x.ProcessContentAsync(
+            It.IsAny<ProcessContentRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProcessContentResponse
+            {
+                PolicyActions = [new() { Action = DlpAction.BlockAccess }]
+            });
+
+        // Act
+        var result = await this._processor.ProcessMessagesAsync(
+            messages, "session-123", Activity.UploadText, settings, "user-123", CancellationToken.None);
+
+        // Assert
+        Assert.True(result.shouldBlock);
+        this._mockPurviewClient.Verify(x => x.ProcessContentAsync(
+            It.IsAny<ProcessContentRequest>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// Verifies an <see cref="AIContent"/> subclass the abstractions do not declare still has its
+    /// payload evaluated. Serializing such a type through the polymorphic base type throws, and
+    /// substituting its type name would submit no payload at all for classification.
+    /// </summary>
+    [Fact]
+    public async Task ProcessMessagesAsync_WithUnknownContentSubclass_SubmitsPayloadForEvaluationAsync()
+    {
+        // Arrange
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.User, [new UnknownTestContent { Secret = "ssn 123-45-6789" }])
+        };
+        var settings = CreateValidPurviewSettings();
+        var tokenInfo = new TokenInfo { TenantId = "tenant-123", UserId = "user-123", ClientId = "client-123" };
+
+        this._mockPurviewClient.Setup(x => x.GetUserInfoFromTokenAsync(It.IsAny<CancellationToken>(), null))
+            .ReturnsAsync(tokenInfo);
+        this._mockCacheProvider.Setup(x => x.GetAsync<ProtectionScopesCacheKey, ProtectionScopesResponse>(
+            It.IsAny<ProtectionScopesCacheKey>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateApplicableProtectionScopesResponse());
+
+        ProcessContentRequest? capturedRequest = null;
+        this._mockPurviewClient.Setup(x => x.ProcessContentAsync(
+            It.IsAny<ProcessContentRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<ProcessContentRequest, CancellationToken>((request, _) => capturedRequest = request)
+            .ReturnsAsync(new ProcessContentResponse());
+
+        // Act
+        await this._processor.ProcessMessagesAsync(
+            messages, "session-123", Activity.UploadText, settings, "user-123", CancellationToken.None);
+
+        // Assert
+        Assert.NotNull(capturedRequest);
+        ProcessContentMetadataBase entry = Assert.Single(capturedRequest.ContentToProcess.ContentEntries);
+        PurviewTextContent content = Assert.IsType<PurviewTextContent>(entry.Content);
+
+        Assert.Contains("123-45-6789", content.Data, StringComparison.Ordinal);
+        Assert.NotEqual(nameof(UnknownTestContent), content.Data);
+    }
+
     #endregion
 
     #region Helper Methods
+
+    /// <summary>
+    /// Stands in for a third-party or future <see cref="AIContent"/> subclass that the abstractions do
+    /// not declare a polymorphic discriminator for.
+    /// </summary>
+    private sealed class UnknownTestContent : AIContent
+    {
+        public string Secret { get; set; } = string.Empty;
+    }
 
     private static ProtectionScopesRequest CreateProtectionScopesRequest()
     {
@@ -1054,7 +1500,7 @@ public sealed class ScopedContentProcessorTests
             Version = "1.0"
         };
         ContentToProcess contentToProcess = new(
-            [metadata],
+            metadata,
             activityMetadata,
             deviceMetadata,
             integratedAppMetadata,
