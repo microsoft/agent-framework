@@ -3504,6 +3504,7 @@ async def test_stateless_split_mixed_batch_rejects_incomplete_replay_before_exec
     )
     messages = [
         Message(role="assistant", contents=[approval_request]),
+        Message(role="tool", contents=[Content.from_text("provider metadata")]),
         Message(role="assistant", contents=[host_request]),
         Message(role="user", contents=replay_contents),
     ]
@@ -3520,8 +3521,9 @@ async def test_stateless_split_mixed_batch_rejects_incomplete_replay_before_exec
     assert calls == 0
 
 
-def test_stateless_mixed_batch_across_assistant_messages_requires_complete_responses() -> None:
-    """Split assistant messages remain one mixed batch and preserve response order."""
+@pytest.mark.parametrize("metadata_role", ["tool", "user"])
+def test_stateless_mixed_batch_across_message_roles_requires_complete_responses(metadata_role: str) -> None:
+    """Intervening message roles do not split a mixed batch or change response order."""
     from agent_framework._tools import _stateless_mixed_pause_batch_status
 
     approval_call = Content.from_function_call(
@@ -3544,6 +3546,7 @@ def test_stateless_mixed_batch_across_assistant_messages_requires_complete_respo
     approval_response = approval_request.to_function_approval_response(approved=True)
     partial_messages = [
         Message(role="assistant", contents=[approval_request]),
+        Message(role=metadata_role, contents=[Content.from_text("provider metadata")]),
         Message(role="assistant", contents=[host_request]),
         Message(role="user", contents=[approval_response]),
     ]
@@ -3556,6 +3559,7 @@ def test_stateless_mixed_batch_across_assistant_messages_requires_complete_respo
     host_result.id = "host-occurrence"
     complete_messages = [
         Message(role="assistant", contents=[approval_request]),
+        Message(role=metadata_role, contents=[Content.from_text("provider metadata")]),
         Message(role="assistant", contents=[host_request]),
         Message(role="user", contents=[host_result, approval_response]),
     ]
@@ -3568,6 +3572,132 @@ def test_stateless_mixed_batch_across_assistant_messages_requires_complete_respo
         "function_result",
     ]
     assert host_result_ids == {id(complete_messages[-1].contents[1])}
+
+
+async def test_later_standalone_request_does_not_hide_incomplete_stateless_mixed_batch(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """A newer standalone request cannot let an older mixed approval execute early."""
+    from agent_framework import FunctionTool
+
+    calls = 0
+
+    @tool(name="approval_func", approval_mode="always_require")
+    def approval_func() -> str:
+        nonlocal calls
+        calls += 1
+        return "approved"
+
+    approval_call = Content.from_function_call(
+        call_id="approval",
+        name="approval_func",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    host_request = Content.from_function_call(
+        call_id="host",
+        name="host_func",
+        arguments={},
+        id="host-occurrence",
+    )
+    host_request.user_input_request = True
+    later_call = Content.from_function_call(
+        call_id="later",
+        name="approval_func",
+        arguments={},
+        id="later-occurrence",
+    )
+    later_request = Content.from_function_approval_request(
+        id="later-occurrence",
+        function_call=later_call,
+    )
+    host_func = FunctionTool(name="host_func", func=None, description="Handled by the caller")
+    messages = [
+        Message(role="user", contents=["run mixed"]),
+        Message(role="assistant", contents=[approval_request, host_request]),
+        Message(role="user", contents=[approval_request.to_function_approval_response(approved=True)]),
+        Message(role="assistant", contents=[later_request]),
+        Message(role="user", contents=["unrelated follow-up"]),
+    ]
+
+    with pytest.raises(
+        RuntimeError,
+        match="A mixed function-call batch requires responses for every approval and Host-owned request",
+    ):
+        await chat_client_base.get_response(
+            messages,
+            options={"tools": [approval_func, host_func]},
+        )
+
+    assert calls == 0
+
+
+async def test_completed_split_stateless_mixed_batch_is_inert_on_later_turn(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """A terminal result prevents completed split mixed approvals from replaying."""
+    from agent_framework import FunctionTool
+
+    calls = 0
+
+    @tool(name="approval_func", approval_mode="always_require")
+    def approval_func() -> str:
+        nonlocal calls
+        calls += 1
+        return "approved"
+
+    approval_call = Content.from_function_call(
+        call_id="approval",
+        name="approval_func",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    host_request = Content.from_function_call(
+        call_id="host",
+        name="host_func",
+        arguments={},
+        id="host-occurrence",
+    )
+    host_request.user_input_request = True
+    host_result = Content.from_function_result(call_id="host", result="host result")
+    host_result.id = "host-occurrence"
+    approval_result = Content.from_function_result(call_id="approval", result="approved")
+    host_func = FunctionTool(name="host_func", func=None, description="Handled by the caller")
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=["later response"])),
+    ]
+    messages = [
+        Message(role="user", contents=["run mixed"]),
+        Message(role="assistant", contents=[approval_request]),
+        Message(role="tool", contents=[Content.from_text("provider metadata")]),
+        Message(role="assistant", contents=[host_request]),
+        Message(
+            role="user",
+            contents=[
+                approval_request.to_function_approval_response(approved=True),
+                host_result,
+            ],
+        ),
+        Message(role="tool", contents=[approval_result]),
+        Message(role="assistant", contents=["done"]),
+        Message(role="user", contents=["later"]),
+    ]
+
+    response = await chat_client_base.get_response(
+        messages,
+        options={"tools": [approval_func, host_func]},
+    )
+
+    assert response.text == "later response"
+    assert calls == 0
 
 
 def test_active_mixed_pause_ignores_historical_host_requests() -> None:

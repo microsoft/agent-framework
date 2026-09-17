@@ -3134,64 +3134,99 @@ def _stage_pending_mixed_pause_responses(
 def _stateless_mixed_pause_batch_status(
     messages: list[Message],
 ) -> tuple[bool, set[int]]:
-    """Validate the latest stateless mixed assistant batch and order its responses."""
+    """Validate the latest unresolved stateless mixed batch and order its responses."""
     from ._types import Message
 
-    latest_request_index: int | None = None
-    for index in range(len(messages) - 1, -1, -1):
-        if any(
-            content.type == "function_approval_request"
-            or (content.type == "function_call" and content.user_input_request)
-            for content in messages[index].contents
-        ):
-            latest_request_index = index
-            break
-    if latest_request_index is None:
-        return False, set()
+    flattened_contents = [content for message in messages for content in message.contents]
+    request_batches: list[tuple[int, list[dict[str, Any]], set[str]]] = []
+    batch_items: list[dict[str, Any]] = []
+    batch_kinds: set[str] = set()
+    last_request_index = -1
 
-    batch_start = latest_request_index
-    while batch_start > 0 and messages[batch_start - 1].role == "assistant":
-        batch_start -= 1
-    batch_end = latest_request_index
-    while batch_end + 1 < len(messages) and messages[batch_end + 1].role == "assistant":
-        batch_end += 1
-
-    items: list[dict[str, Any]] = []
-    kinds: set[str] = set()
-    for message in messages[batch_start : batch_end + 1]:
-        for content in message.contents:
-            if content.type == "function_approval_request":
-                kind = "approval"
-            elif content.type == "function_call" and content.user_input_request:
-                kind = "host"
-            else:
+    def answers_current_batch(content: Content) -> bool:
+        if content.type not in {"function_approval_response", "function_result"}:
+            return False
+        for item in batch_items:
+            request = _content_from_state(item.get("request"))
+            if request is None:
                 continue
-            kinds.add(kind)
-            items.append({"kind": kind, "request": content.to_dict()})
-    if kinds != {"approval", "host"}:
-        return False, set()
+            if item.get("kind") == "approval":
+                function_call = request.function_call
+                if content.type == "function_approval_response" and content.id in {
+                    request.id,
+                    function_call.id if function_call is not None else None,
+                }:
+                    return True
+                if (
+                    content.type == "function_result"
+                    and function_call is not None
+                    and content.call_id == function_call.call_id
+                ):
+                    return True
+            elif (
+                item.get("kind") == "host"
+                and content.type == "function_result"
+                and content.call_id == request.call_id
+                and (content.id is None or request.id is None or content.id == request.id)
+            ):
+                return True
+        return False
 
-    responses = [
-        content
-        for message in messages[batch_end + 1 :]
-        for content in message.contents
-        if content.type in {"function_approval_response", "function_result"}
-    ]
-    matched_response_ids, incomplete, ordered_responses, host_result_ids = _match_mixed_pause_responses(
-        items,
-        responses,
-    )
-    if incomplete:
-        return True, host_result_ids
+    for content_index, content in enumerate(flattened_contents):
+        if batch_items and answers_current_batch(content):
+            request_batches.append((last_request_index, batch_items, batch_kinds))
+            batch_items = []
+            batch_kinds = set()
+        if content.type == "function_approval_request":
+            kind = "approval"
+        elif content.type == "function_call" and content.user_input_request:
+            kind = "host"
+        else:
+            continue
+        last_request_index = content_index
+        batch_kinds.add(kind)
+        batch_items.append({"kind": kind, "request": content.to_dict()})
+    if batch_items:
+        request_batches.append((last_request_index, batch_items, batch_kinds))
 
-    filtered_messages: list[Message] = []
-    for message in messages:
-        message.contents = [content for content in message.contents if id(content) not in matched_response_ids]
-        if message.contents:
-            filtered_messages.append(message)
-    filtered_messages.append(Message(role="user", contents=ordered_responses))
-    messages[:] = filtered_messages
-    return False, host_result_ids
+    for batch_end, items, kinds in reversed(request_batches):
+        if kinds != {"approval", "host"}:
+            continue
+        responses = [
+            content
+            for content in flattened_contents[batch_end + 1 :]
+            if content.type in {"function_approval_response", "function_result"}
+        ]
+        matched_response_ids, incomplete, ordered_responses, host_result_ids = _match_mixed_pause_responses(
+            items,
+            responses,
+        )
+        if incomplete:
+            return True, host_result_ids
+
+        pending_approval_response_ids = {
+            id(response)
+            for response in _collect_approval_responses(
+                messages,
+                non_approval_result_ids={
+                    id(content)
+                    for content in responses
+                    if content.type == "function_result" and id(content) in matched_response_ids
+                },
+            ).values()
+        }
+        if matched_response_ids.isdisjoint(pending_approval_response_ids):
+            continue
+
+        filtered_messages: list[Message] = []
+        for message in messages:
+            message.contents = [content for content in message.contents if id(content) not in matched_response_ids]
+            if message.contents:
+                filtered_messages.append(message)
+        filtered_messages.append(Message(role="user", contents=ordered_responses))
+        messages[:] = filtered_messages
+        return False, host_result_ids
+    return False, set()
 
 
 def _collect_approval_responses(
