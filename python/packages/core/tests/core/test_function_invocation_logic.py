@@ -764,7 +764,7 @@ def test_occurrence_aware_legacy_request_id_rebounds_to_occurrence_id() -> None:
     assert messages[0].contents[0].function_call.call_id == "provider-call"
 
 
-def test_legacy_serialized_pending_approval_resumes_once_with_migration_warning() -> None:
+def test_unversioned_serialized_pending_approval_must_be_reissued() -> None:
     from agent_framework._tools import _bind_approval_responses_to_pending_requests, _load_pending_approval_requests
 
     session = AgentSession(session_id="approval-binding-legacy")
@@ -792,14 +792,11 @@ def test_legacy_serialized_pending_approval_resumes_once_with_migration_warning(
     )
     messages = [Message(role="user", contents=[response])]
 
-    with pytest.warns(FutureWarning, match="legacy stored approval.*Content.id"):
-        _bind_approval_responses_to_pending_requests(messages, session)
+    _bind_approval_responses_to_pending_requests(messages, session)
 
-    rebound = messages[0].contents[0]
-    assert rebound.function_call is not None
-    assert rebound.function_call.id is None
-    assert rebound.function_call.parse_arguments() == {"value": "stored"}
+    assert messages == []
     assert _load_pending_approval_requests(session) == {}
+    assert session.state["tool_approval"] == {"state_version": 1}
 
 
 def test_hosted_approval_keeps_provider_issued_request_id() -> None:

@@ -105,6 +105,8 @@ DEFAULT_MAX_ITERATIONS: Final[int] = 40
 DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST: Final[int] = 3
 SHELL_TOOL_KIND_VALUE: Final[str] = "shell"
 _TOOL_APPROVAL_STATE_KEY: Final[str] = "tool_approval"
+_TOOL_APPROVAL_STATE_VERSION_KEY: Final[str] = "state_version"
+_TOOL_APPROVAL_STATE_VERSION: Final[int] = 1
 _RUN_LOCAL_MIDDLEWARE_SESSION_ATTR: Final[str] = "_run_local_function_middleware_session"
 
 
@@ -2491,6 +2493,11 @@ async def _execute_single_function_call(
                 })
                 item.additional_properties = dict(item.additional_properties)
                 item.additional_properties[_NESTED_TOOL_APPROVAL_OWNER_STACK_KEY] = stack
+                _append_nested_owner_to_already_approved_requests(
+                    invocation_session,
+                    {item.id} if item.id else set(),
+                    stack,
+                )
         if propagated_contents:
             return propagated_contents, False
         return [
@@ -2601,9 +2608,12 @@ async def _try_execute_function_call_groups(
             ):
                 pause_groups.append([_as_user_input_pause(function_call)])
                 continue
+            approval_call = copy.copy(function_call)
+            approval_call.additional_properties = dict(function_call.additional_properties)
+            approval_call.additional_properties.pop(_NESTED_TOOL_APPROVAL_OWNER_STACK_KEY, None)
             approval_request = Content.from_function_approval_request(
                 id=function_call.id or function_call.call_id,  # type: ignore[arg-type]
-                function_call=function_call,
+                function_call=approval_call,
             )
             if tool_name is None:
                 visible_requests.append(approval_request)
@@ -2951,11 +2961,16 @@ def _get_tool_approval_state(invocation_session: AgentSession | None, *, create:
     authoritative_session = cast("AgentSession", invocation_session)
     raw_state = authoritative_session.state.get(_TOOL_APPROVAL_STATE_KEY)
     if isinstance(raw_state, dict):
-        return cast(dict[str, Any], raw_state)
+        state = cast(dict[str, Any], raw_state)
+        if state.get(_TOOL_APPROVAL_STATE_VERSION_KEY) != _TOOL_APPROVAL_STATE_VERSION:
+            state.clear()
+            state[_TOOL_APPROVAL_STATE_VERSION_KEY] = _TOOL_APPROVAL_STATE_VERSION
+        return state
     from ._harness._tool_approval import ToolApprovalState
 
     if isinstance(raw_state, ToolApprovalState):
         serialized_state = raw_state.to_dict(exclude={"type"})
+        serialized_state[_TOOL_APPROVAL_STATE_VERSION_KEY] = _TOOL_APPROVAL_STATE_VERSION
         authoritative_session.state[_TOOL_APPROVAL_STATE_KEY] = serialized_state
         return serialized_state
     if raw_state is not None:
@@ -2965,7 +2980,7 @@ def _get_tool_approval_state(invocation_session: AgentSession | None, *, create:
         )
     if not create:
         return None
-    new_state: dict[str, Any] = {}
+    new_state: dict[str, Any] = {_TOOL_APPROVAL_STATE_VERSION_KEY: _TOOL_APPROVAL_STATE_VERSION}
     authoritative_session.state[_TOOL_APPROVAL_STATE_KEY] = new_state
     return new_state
 
@@ -3125,6 +3140,11 @@ def _bind_approval_response_to_pending_request(
         return None
     rebound_id = occurrence_id if not is_hosted and occurrence_id is not None else response.id
     rebound_properties = copy.deepcopy(response.additional_properties)
+    trusted_owner_stack = request.additional_properties.get(_NESTED_TOOL_APPROVAL_OWNER_STACK_KEY)
+    if trusted_owner_stack is None:
+        rebound_properties.pop(_NESTED_TOOL_APPROVAL_OWNER_STACK_KEY, None)
+    else:
+        rebound_properties[_NESTED_TOOL_APPROVAL_OWNER_STACK_KEY] = copy.deepcopy(trusted_owner_stack)
     rebound_properties[_APPROVAL_REQUEST_ID_KEY] = request.id
     rebound = Content.from_function_approval_response(
         approved=_is_approval_granted(response.approved),
@@ -3174,6 +3194,30 @@ def _bind_approval_responses_to_pending_requests(
     messages[:] = filtered_messages
 
 
+def _restore_nested_approval_requests(  # pyright: ignore[reportUnusedFunction]
+    invocation_session: AgentSession,
+    approval_responses: Sequence[Content],
+) -> None:
+    """Restore a shared child's pending batch from server-bound nested responses."""
+    from ._types import Content
+
+    requests: list[Content] = []
+    for response in approval_responses:
+        if response.function_call is None or response.id is None:
+            raise ValueError("Nested approval response is missing its server-bound function call identity.")
+        request_id = response.additional_properties.get(_APPROVAL_REQUEST_ID_KEY, response.id)
+        if not isinstance(request_id, str):
+            raise ValueError("Nested approval response has an invalid server-bound request identity.")
+        requests.append(
+            Content.from_function_approval_request(
+                id=request_id,
+                function_call=copy.deepcopy(response.function_call),
+                additional_properties=copy.deepcopy(response.additional_properties),
+            )
+        )
+    _store_pending_approval_requests(invocation_session, requests)
+
+
 def _store_already_approved_approval_requests(
     invocation_session: AgentSession | None,
     visible_approval_requests: Sequence[Content],
@@ -3196,6 +3240,43 @@ def _store_already_approved_approval_requests(
         "approval_requests": [request.to_dict() for request in already_approved_requests],
     })
     state[_ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY] = pending_groups
+
+
+def _append_nested_owner_to_already_approved_requests(
+    invocation_session: AgentSession | None,
+    visible_approval_ids: set[str],
+    owner_stack: list[dict[str, Any]],
+) -> None:
+    """Give hidden siblings the same trusted nested owner as their visible approval."""
+    if not visible_approval_ids:
+        return
+    state = _get_tool_approval_state(invocation_session, create=False)
+    if state is None:
+        return
+    raw_groups = state.get(_ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY)
+    if not isinstance(raw_groups, list):
+        return
+
+    for raw_group in cast(list[Any], raw_groups):
+        if not isinstance(raw_group, dict):
+            continue
+        group = cast(dict[str, Any], raw_group)
+        raw_ids = group.get("approval_request_ids")
+        group_ids: set[str] = {str(item) for item in cast(list[Any], raw_ids)} if isinstance(raw_ids, list) else set()
+        if group_ids.isdisjoint(visible_approval_ids):
+            continue
+        raw_requests = group.get("approval_requests")
+        if not isinstance(raw_requests, list):
+            continue
+        tagged_requests: list[dict[str, Any]] = []
+        for raw_request in cast(list[Any], raw_requests):
+            request = _content_from_state(raw_request)
+            if request is None or request.type != "function_approval_request":
+                continue
+            request.additional_properties = dict(request.additional_properties)
+            request.additional_properties[_NESTED_TOOL_APPROVAL_OWNER_STACK_KEY] = copy.deepcopy(owner_stack)
+            tagged_requests.append(request.to_dict())
+        group["approval_requests"] = tagged_requests
 
 
 def _pop_already_approved_approval_responses(
@@ -3868,7 +3949,7 @@ def _replace_approval_contents_with_results(
                 if occurrence is None:
                     occurrence = find_open_occurrence(call_id)
                 replacements: list[Content] | None
-                if _is_approval_granted(content.approved):
+                if _is_approval_granted(content.approved) or _nested_owner_stack(content) is not None:
                     call_result_groups = result_groups_by_call_id.get(call_id)
                     replacements = call_result_groups.popleft() if call_result_groups else None
                 else:

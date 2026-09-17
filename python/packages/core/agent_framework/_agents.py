@@ -715,6 +715,10 @@ class BaseAgent(SerializationMixin):
 
             run_input: str | list[Message]
             if nested_approval_responses is not None and session is not None:
+                if propagate_session:
+                    from ._tools import _restore_nested_approval_requests  # pyright: ignore[reportPrivateUsage]
+
+                    _restore_nested_approval_requests(session, nested_approval_responses)
                 run_input = [Message("user", list(nested_approval_responses))]
             else:
                 run_input = str(kwargs.get(arg_name, ""))

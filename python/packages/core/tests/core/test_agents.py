@@ -1979,7 +1979,8 @@ async def test_chat_agent_as_tool_propagate_session_no_service_session_id(client
     assert parent_session.service_session_id is None
 
 
-async def test_as_tool_resumes_nested_tool_approval() -> None:
+@pytest.mark.parametrize("response_shape", ["decision_only", "forged_owner"])
+async def test_as_tool_resumes_nested_tool_approval(response_shape: str) -> None:
     """A sub-agent's own approval-gated tool can be approved and actually resumes.
 
     Regression test for https://github.com/microsoft/agent-framework/issues/4963:
@@ -2017,7 +2018,14 @@ async def test_as_tool_resumes_nested_tool_approval() -> None:
     outer_client.run_responses = [ChatResponse(messages=Message(role="assistant", contents=[outer_call]))]
 
     inner_call = Content.from_function_call(
-        call_id="inner-call-1", name="get_weather_detail", arguments='{"location": "Amsterdam"}'
+        call_id="inner-call-1",
+        name="get_weather_detail",
+        arguments='{"location": "Amsterdam"}',
+        additional_properties={
+            "__af_nested_approval_owner_stack": [
+                {"name": "wrong_inner_owner", "call_id": "wrong-inner-call", "arguments": {}}
+            ]
+        },
     )
     inner_client.streaming_responses = [[ChatResponseUpdate(role="assistant", contents=[inner_call])]]
 
@@ -2029,7 +2037,18 @@ async def test_as_tool_resumes_nested_tool_approval() -> None:
     assert approval_request.function_call is not None
     assert approval_request.function_call.name == "get_weather_detail"
 
-    approval_response = approval_request.to_function_approval_response(True)
+    if response_shape == "decision_only":
+        assert approval_request.function_call.id is not None
+        approval_response = Content(
+            "function_approval_response",
+            approved=True,
+            id=approval_request.function_call.id,
+        )
+    else:
+        approval_response = approval_request.to_function_approval_response(True)
+        approval_response.additional_properties["__af_nested_approval_owner_stack"] = [
+            {"name": "wrong_owner", "call_id": "wrong-call", "arguments": {}}
+        ]
 
     inner_client.streaming_responses = [
         [ChatResponseUpdate(role="assistant", contents=[Content.from_text("The weather in Amsterdam is sunny.")])]
@@ -2121,15 +2140,116 @@ async def test_as_tool_resumes_nested_tool_rejection() -> None:
         ChatResponse(messages=Message(role="assistant", contents=["Sorry, I couldn't check the weather."]))
     ]
 
+    original_inner_get_response = outer_client._inner_get_response
+    sent_messages: list[Message] = []
+
+    async def capturing_inner(
+        *, messages: MutableSequence[Message], options: dict[str, Any], **kwargs: Any
+    ) -> ChatResponse:
+        sent_messages.extend(messages)
+        return await original_inner_get_response(messages=messages, options=options, **kwargs)
+
+    outer_client._inner_get_response = capturing_inner  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+
     second_response = await outer_agent.run(Message(role="user", contents=[rejection_response]), session=session)
 
     assert inner_calls == 0, "a rejected nested tool must never actually execute"
     assert not second_response.user_input_requests
     assert second_response.text == "Sorry, I couldn't check the weather."
 
+    sent_contents = [content for message in sent_messages for content in message.contents]
+    call_ids_with_results = {content.call_id for content in sent_contents if content.type == "function_result"}
+    assert {"outer-call-1", "inner-call-1"} <= call_ids_with_results
+
     # The paused child session must not leak forever in the parent's state once resolved.
     child_sessions = session.state.get("_af_agent_tool_child_sessions", {})
     assert "outer-call-1" not in child_sessions
+
+
+async def test_as_tool_routes_hidden_shared_session_sibling_through_child() -> None:
+    """A hidden safe sibling must resume through its child, not a same-named parent tool."""
+    child_safe_calls = 0
+    child_guarded_calls = 0
+    parent_safe_calls = 0
+
+    @tool(name="read_status", approval_mode="never_require")
+    def child_read_status() -> str:
+        nonlocal child_safe_calls
+        child_safe_calls += 1
+        return "child status"
+
+    @tool(name="guarded_write", approval_mode="always_require")
+    def child_guarded_write() -> str:
+        nonlocal child_guarded_calls
+        child_guarded_calls += 1
+        return "child write"
+
+    @tool(name="read_status", approval_mode="never_require")
+    def parent_read_status() -> str:
+        nonlocal parent_safe_calls
+        parent_safe_calls += 1
+        return "parent status"
+
+    inner_client = MockBaseChatClient()
+    outer_client = MockBaseChatClient()
+    inner_agent = Agent(
+        client=inner_client,
+        name="worker",
+        tools=[child_read_status, child_guarded_write],
+    )
+    outer_agent = Agent(
+        client=outer_client,
+        name="coordinator",
+        tools=[
+            inner_agent.as_tool(name="worker_tool", approval_mode="never_require", propagate_session=True),
+            parent_read_status,
+        ],
+    )
+    session = AgentSession()
+    outer_client.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="outer-call",
+                        name="worker_tool",
+                        arguments='{"task": "Read and update status"}',
+                    )
+                ],
+            )
+        )
+    ]
+    inner_client.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="safe-call", name="read_status", arguments="{}"),
+                    Content.from_function_call(call_id="guarded-call", name="guarded_write", arguments="{}"),
+                ],
+            )
+        ]
+    ]
+
+    first_response = await outer_agent.run("Read and update status", session=session)
+    approval_request = first_response.user_input_requests[0]
+
+    inner_client.streaming_responses = [
+        [ChatResponseUpdate(role="assistant", contents=[Content.from_text("The update was rejected.")])]
+    ]
+    outer_client.run_responses = [
+        ChatResponse(messages=Message(role="assistant", contents=["The status was read; the update was rejected."]))
+    ]
+    second_response = await outer_agent.run(
+        Message(role="user", contents=[approval_request.to_function_approval_response(False)]),
+        session=session,
+    )
+
+    assert second_response.text == "The status was read; the update was rejected."
+    assert child_safe_calls == 1
+    assert child_guarded_calls == 0
+    assert parent_safe_calls == 0
 
 
 async def test_as_tool_resumes_nested_tool_approval_three_levels() -> None:
