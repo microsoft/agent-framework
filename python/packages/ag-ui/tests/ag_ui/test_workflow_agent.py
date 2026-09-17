@@ -260,7 +260,7 @@ async def test_workflow_run_reads_checkpoint_id_from_camelcase_forwarded_props()
 
 
 async def test_workflow_resume_without_checkpoint_storage_raises() -> None:
-    """Requesting a checkpoint resume without configured storage should fail loudly."""
+    """Requesting a checkpoint resume without any storage should fail loudly."""
     workflow = _build_multi_superstep_workflow()
     agent = AgentFrameworkWorkflow(workflow=workflow)
 
@@ -273,6 +273,39 @@ async def test_workflow_resume_without_checkpoint_storage_raises() -> None:
                 "forwarded_props": {"checkpoint_id": "some-checkpoint"},
             },
         )
+
+
+async def test_workflow_wrapper_resumes_builder_storage_without_agui_storage() -> None:
+    """Builder-owned storage must round-trip through AgentFrameworkWorkflow.run() without wrapper storage."""
+    storage = InMemoryCheckpointStorage()
+    workflow = _build_multi_superstep_workflow(storage)
+    # Host configures storage only on the builder; AG-UI wrapper / endpoint omit it.
+    agent = AgentFrameworkWorkflow(workflow=workflow)
+
+    first_events = await _run(
+        agent,
+        {"thread_id": "thread-builder-cp", "messages": [{"role": "user", "content": "start"}]},
+    )
+    assert "RUN_ERROR" not in [event.type for event in first_events]
+
+    checkpoints = sorted(
+        await storage.list_checkpoints(workflow_name=workflow.name),
+        key=lambda checkpoint: checkpoint.timestamp,
+    )
+    assert checkpoints, "expected the builder-storage run to create at least one checkpoint"
+    resume_checkpoint_id = checkpoints[0].checkpoint_id
+
+    resume_events = await _run(
+        agent,
+        {
+            "thread_id": "thread-builder-cp",
+            "messages": [],
+            "forwarded_props": {"checkpoint_id": resume_checkpoint_id},
+        },
+    )
+    resumed_types = [event.type for event in resume_events]
+    assert "RUN_FINISHED" in resumed_types
+    assert "RUN_ERROR" not in resumed_types
 
 
 async def test_workflow_run_without_checkpointing_is_unchanged() -> None:
