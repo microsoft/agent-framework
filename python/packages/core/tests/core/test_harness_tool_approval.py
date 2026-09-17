@@ -32,6 +32,8 @@ from agent_framework import (
     InMemoryHistoryProvider,
     Message,
     ResponseStream,
+    SessionContext,
+    SupportsAgentRun,
     ToolApprovalMiddleware,
     ToolApprovalState,
     create_always_approve_tool_response,
@@ -184,6 +186,82 @@ async def test_sessionless_approval_resume_with_context_provider_uses_message_au
         ("tool", ["function_result"]),
         ("assistant", ["text"]),
     ]
+
+
+async def test_framework_created_session_becomes_authoritative_when_reused_by_caller(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    """A retained framework session must fail closed when later supplied explicitly."""
+    calls: list[int] = []
+    retained_sessions: list[AgentSession] = []
+
+    class RetainingContextProvider(ContextProvider):
+        async def before_run(
+            self,
+            *,
+            agent: SupportsAgentRun,
+            session: AgentSession,
+            context: SessionContext,
+            state: dict[str, Any],
+        ) -> None:
+            del agent, context, state
+            retained_sessions.append(session)
+
+    @tool(name="approved_tool", approval_mode="always_require")
+    def approved_tool(value: int) -> str:
+        calls.append(value)
+        return "approved"
+
+    agent = Agent(
+        client=chat_client_base,
+        tools=[approved_tool],
+        context_providers=[RetainingContextProvider("context")],
+    )
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="approved-call",
+                        name="approved_tool",
+                        arguments={"value": 1},
+                        id="approved-occurrence",
+                    )
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+
+    first = await agent.run("request approval")
+    assert calls == []
+    assert "tool_approval" not in retained_sessions[0].state
+    approval_request = first.user_input_requests[0]
+    original_call = _function_call(approval_request)
+    tampered_call = Content.from_function_call(
+        call_id=original_call.call_id,
+        name=original_call.name,
+        arguments={"value": 999},
+        id=original_call.id,
+    )
+    tampered_response = Content.from_function_approval_response(
+        approved=True,
+        id=approval_request.id,
+        function_call=tampered_call,
+    )
+
+    await agent.run(
+        [
+            Message(role="user", contents=["request approval"]),
+            *first.messages,
+            Message(role="user", contents=[tampered_response]),
+        ],
+        session=retained_sessions[0],
+    )
+
+    assert calls == []
+    assert retained_sessions[1] is retained_sessions[0]
 
 
 class _StringApprovalValue(str, Enum):

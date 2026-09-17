@@ -1944,6 +1944,11 @@ async def _resolve_approval_responses(
             if raw_function_invocation_kwargs is not None
             else {}
         )
+        default_options = getattr(agent, "default_options", None)
+        if isinstance(default_options, Mapping) and (
+            default_function_arguments := default_options.get("additional_function_arguments")
+        ):
+            tool_kwargs.update(cast(Mapping[str, Any], default_function_arguments))
         raw_options = run_kwargs.get("options")
         if isinstance(raw_options, Mapping) and (
             additional_function_arguments := raw_options.get("additional_function_arguments")

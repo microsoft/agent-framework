@@ -105,15 +105,12 @@ DEFAULT_MAX_ITERATIONS: Final[int] = 40
 DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST: Final[int] = 3
 SHELL_TOOL_KIND_VALUE: Final[str] = "shell"
 _TOOL_APPROVAL_STATE_KEY: Final[str] = "tool_approval"
-_RUN_LOCAL_MIDDLEWARE_SESSION_ATTR: Final[str] = "_run_local_function_middleware_session"
+_APPROVAL_SESSION_IS_AUTHORITATIVE_KEY: Final[str] = "_approval_session_is_authoritative"
 
 
 def _has_authoritative_approval_session(invocation_session: AgentSession | None) -> bool:
     """Return whether approval state belongs to a caller-owned session."""
-    return (
-        invocation_session is not None
-        and getattr(invocation_session, _RUN_LOCAL_MIDDLEWARE_SESSION_ATTR, False) is not True
-    )
+    return invocation_session is not None
 
 
 _ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY: Final[str] = "already_approved_approval_request_groups"
@@ -2257,6 +2254,7 @@ async def _try_execute_function_call_groups(
     tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]],
     config: FunctionInvocationConfiguration,
     invocation_session: AgentSession | None = None,
+    approval_session_is_authoritative: bool = True,
     middleware_pipeline: FunctionMiddlewarePipeline | None = None,
     host_payload_budget: _FunctionResultPayloadBudget | None = None,
 ) -> tuple[list[list[Content]], bool]:
@@ -2268,6 +2266,7 @@ async def _try_execute_function_call_groups(
         tools: The tools available for execution.
         config: Configuration for function invocation.
         invocation_session: The agent session for this invocation, if any.
+        approval_session_is_authoritative: Whether the invocation session owns persistent approval state.
         middleware_pipeline: Optional middleware pipeline to apply during execution.
         host_payload_budget: Shared request budget for retained Host-only function result payloads.
 
@@ -2277,6 +2276,8 @@ async def _try_execute_function_call_groups(
         - True when function middleware requested loop termination.
     """
     from ._types import Content
+
+    approval_session = invocation_session if approval_session_is_authoritative else None
 
     # Normalize the batch to calls owned by this layer before making any control-flow decision.
     function_calls = [
@@ -2363,18 +2364,18 @@ async def _try_execute_function_call_groups(
                 visible_requests.append(approval_request)
                 pause_groups.append([approval_request])
                 continue
-            if not _has_authoritative_approval_session(invocation_session):
+            if not _has_authoritative_approval_session(approval_session):
                 visible_requests.append(approval_request)
                 pause_groups.append([approval_request])
                 continue
             already_approved_requests.append(approval_request)
         _store_already_approved_approval_requests(
-            invocation_session,
+            approval_session,
             visible_requests,
             already_approved_requests,
         )
-        _store_pending_approval_requests(invocation_session, visible_requests)
-        _store_pending_mixed_pause_batch(invocation_session, pause_groups)
+        _store_pending_approval_requests(approval_session, visible_requests)
+        _store_pending_mixed_pause_batch(approval_session, pause_groups)
         return pause_groups, False
     if has_declaration_only_call:
         # Declaration-only calls are returned as user input rather than executed locally.
@@ -2470,6 +2471,7 @@ async def _execute_function_calls(
     options: dict[str, Any] | None,
     config: FunctionInvocationConfiguration,
     invocation_session: AgentSession | None = None,
+    approval_session_is_authoritative: bool = True,
     middleware_pipeline: FunctionMiddlewarePipeline | None = None,
     host_payload_budget: _FunctionResultPayloadBudget | None = None,
 ) -> _FunctionExecutionBatch:
@@ -2481,6 +2483,7 @@ async def _execute_function_calls(
         function_calls=function_calls,
         tools=tools,
         invocation_session=invocation_session,
+        approval_session_is_authoritative=approval_session_is_authoritative,
         middleware_pipeline=middleware_pipeline,
         config=config,
         host_payload_budget=host_payload_budget,
@@ -4018,6 +4021,7 @@ async def _resolve_approval_responses(
     max_errors: int,
     execute_function_calls: _FunctionCallExecutor,
     invocation_session: AgentSession | None = None,
+    approval_session_is_authoritative: bool = True,
     middleware_pipeline: FunctionMiddlewarePipeline | None = None,
     settle_dangling_calls: Callable[[Sequence[Content]], Awaitable[None]] | None = None,
 ) -> _FunctionProcessingResult:
@@ -4031,11 +4035,12 @@ async def _resolve_approval_responses(
     from ._middleware import MiddlewareFailure
     from ._types import Message
 
+    approval_session = invocation_session if approval_session_is_authoritative else None
     completed_mixed_batch = False
-    if _has_authoritative_approval_session(invocation_session):
+    if _has_authoritative_approval_session(approval_session):
         incomplete_mixed_batch, completed_mixed_batch, host_result_ids = _stage_pending_mixed_pause_responses(
             prepared_messages,
-            invocation_session,
+            approval_session,
         )
         if incomplete_mixed_batch:
             return _FunctionProcessingResult(errors_in_a_row=errors_in_a_row, action="return")
@@ -4047,13 +4052,13 @@ async def _resolve_approval_responses(
             )
 
     active_pending_ids = (
-        set(_load_pending_approval_requests(invocation_session))
-        if _has_authoritative_approval_session(invocation_session)
+        set(_load_pending_approval_requests(approval_session))
+        if _has_authoritative_approval_session(approval_session)
         else None
     )
-    _bind_approval_responses_to_pending_requests(prepared_messages, invocation_session)
+    _bind_approval_responses_to_pending_requests(prepared_messages, approval_session)
     if completed_mixed_batch:
-        state = _get_tool_approval_state(invocation_session, create=False)
+        state = _get_tool_approval_state(approval_session, create=False)
         if state is not None:
             state.pop(_PENDING_MIXED_PAUSE_BATCH_KEY, None)
 
@@ -4066,7 +4071,7 @@ async def _resolve_approval_responses(
     }
 
     if already_approved_responses := _pop_already_approved_approval_responses(
-        invocation_session,
+        approval_session,
         explicit_approval_response_ids,
     ):
         prepared_messages.append(Message(role="user", contents=already_approved_responses))
@@ -4151,7 +4156,7 @@ async def _resolve_approval_responses(
         terminal_contents.extend(
             request for request_id, request in pending_by_id.items() if request_id not in surfaced_request_ids
         )
-        _store_pending_approval_requests(invocation_session, list(pending_by_id.values()))
+        _store_pending_approval_requests(approval_session, list(pending_by_id.values()))
 
     # 5. Return role-correct output and tell the outer loop whether to return, stop tools, or call the model.
     executed_function_count = len(execution_result_groups)
@@ -4182,8 +4187,10 @@ async def _process_model_function_calls(
     max_errors: int,
     execute_function_calls: _FunctionCallExecutor,
     invocation_session: AgentSession | None = None,
+    approval_session_is_authoritative: bool = True,
 ) -> _FunctionProcessingResult:
     """Execute function calls from a newly completed model response."""
+    approval_session = invocation_session if approval_session_is_authoritative else None
     approval_requests = [
         content
         for message in response.messages
@@ -4195,7 +4202,7 @@ async def _process_model_function_calls(
     function_calls = _extract_function_calls(response)
     if not (function_calls and tools):
         if approval_requests:
-            _store_pending_approval_requests(invocation_session, approval_requests)
+            _store_pending_approval_requests(approval_session, approval_requests)
         return _FunctionProcessingResult(errors_in_a_row=errors_in_a_row, action="return")
 
     # 2. Execute the batch once while preserving each call's result group.
@@ -4224,7 +4231,7 @@ async def _process_model_function_calls(
             if content.type == "function_approval_request"
         ]
         if returned_approval_requests:
-            _store_pending_approval_requests(invocation_session, returned_approval_requests)
+            _store_pending_approval_requests(approval_session, returned_approval_requests)
     return processing_result
 
 
@@ -4385,6 +4392,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         tokenizer: TokenizerProtocol | None,
         execute_function_calls: _FunctionCallExecutor,
         invocation_session: AgentSession | None,
+        approval_session_is_authoritative: bool,
         budget_state: dict[str, Any],
         max_errors: int,
         middleware_pipeline: FunctionMiddlewarePipeline | None = None,
@@ -4434,6 +4442,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             max_errors=max_errors,
             execute_function_calls=execute_function_calls,
             invocation_session=invocation_session,
+            approval_session_is_authoritative=approval_session_is_authoritative,
             middleware_pipeline=middleware_pipeline,
             settle_dangling_calls=settle_approval_replay_calls,
         )
@@ -4507,6 +4516,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     max_errors=max_errors,
                     execute_function_calls=execute_function_calls,
                     invocation_session=invocation_session,
+                    approval_session_is_authoritative=approval_session_is_authoritative,
                 )
             except MiddlewareFailure:
                 # Fail-closed abort: before propagating, settle the batch's calls on a
@@ -4598,6 +4608,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         tokenizer: TokenizerProtocol | None,
         execute_function_calls: _FunctionCallExecutor,
         invocation_session: AgentSession | None,
+        approval_session_is_authoritative: bool,
         budget_state: dict[str, Any],
         max_errors: int,
         middleware_pipeline: FunctionMiddlewarePipeline | None = None,
@@ -4644,6 +4655,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             max_errors=max_errors,
             execute_function_calls=execute_function_calls,
             invocation_session=invocation_session,
+            approval_session_is_authoritative=approval_session_is_authoritative,
             middleware_pipeline=middleware_pipeline,
             settle_dangling_calls=settle_approval_replay_calls,
         )
@@ -4777,6 +4789,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     max_errors=max_errors,
                     execute_function_calls=execute_function_calls,
                     invocation_session=invocation_session,
+                    approval_session_is_authoritative=approval_session_is_authoritative,
                 )
             except MiddlewareFailure:
                 # See the non-streaming loop: settle a service-managed conversation's
@@ -4969,9 +4982,12 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
 
         raw_session = request_kwargs.get("session")
         invocation_session = raw_session if isinstance(raw_session, _AgentSession) else None
+        approval_session_is_authoritative = (
+            request_kwargs.pop(_APPROVAL_SESSION_IS_AUTHORITATIVE_KEY, True) is not False
+        )
         if invocation_session is None and requires_session_state:
             invocation_session = _AgentSession()
-            setattr(invocation_session, _RUN_LOCAL_MIDDLEWARE_SESSION_ATTR, True)
+            approval_session_is_authoritative = False
 
         # Bind one executor with the run's custom arguments, middleware, configuration, and session.
         execute_function_calls = partial(
@@ -4979,6 +4995,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             custom_args=additional_function_arguments,
             config=self.function_invocation_configuration,
             invocation_session=invocation_session,
+            approval_session_is_authoritative=approval_session_is_authoritative,
             middleware_pipeline=function_middleware_pipeline,
             host_payload_budget=host_payload_budget,
         )
@@ -5018,6 +5035,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 tokenizer=tokenizer,
                 execute_function_calls=execute_function_calls,
                 invocation_session=invocation_session,
+                approval_session_is_authoritative=approval_session_is_authoritative,
                 budget_state=budget_state,
                 max_errors=max_errors,
                 middleware_pipeline=function_middleware_pipeline,
@@ -5041,6 +5059,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 tokenizer=tokenizer,
                 execute_function_calls=execute_function_calls,
                 invocation_session=invocation_session,
+                approval_session_is_authoritative=approval_session_is_authoritative,
                 budget_state=budget_state,
                 max_errors=max_errors,
                 middleware_pipeline=function_middleware_pipeline,

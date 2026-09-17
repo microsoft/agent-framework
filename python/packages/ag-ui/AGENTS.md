@@ -43,8 +43,8 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
   prepare providers or invoke the tools itself. `MiddlewareFailure` remains fatal.
 - Programmatic `AgentFrameworkAgent.run(...)` and `run_agent_stream(...)` calls accept
   `function_invocation_kwargs` and preserve that tool-runtime context across approval resume. Adapter-local execution
-  forwards only that mapping plus `options["additional_function_arguments"]` (with options taking precedence), not
-  unrelated AG-UI run kwargs.
+  merges only that mapping, the wrapped agent's default `additional_function_arguments`, and the current run options
+  (in increasing precedence), not unrelated AG-UI run kwargs.
 - Queued approvals follow the wrapped Agent's scheduling. With `ToolApprovalMiddleware`, collected decisions
   remain pending until that middleware releases the batch; AG-UI does not execute a tool ahead of it.
   Collected server-side grants do not require the client to submit the same approval again.

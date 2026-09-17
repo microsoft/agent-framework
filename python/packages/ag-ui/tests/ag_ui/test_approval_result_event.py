@@ -92,10 +92,14 @@ async def _run_custom_approval(
     tool: FunctionTool,
     *,
     function_invocation_kwargs: dict[str, Any] | None = None,
+    default_additional_function_arguments: dict[str, Any] | None = None,
 ) -> tuple[list[Any], StubAgent]:
     agent = StubAgent(
         updates=[AgentResponseUpdate(contents=[Content.from_text(text="Done.")], role="assistant")],
-        default_options={"tools": [tool]},
+        default_options={
+            "tools": [tool],
+            "additional_function_arguments": default_additional_function_arguments,
+        },
     )
     store = InMemoryAGUIApprovalStateStore()
     store.register(
@@ -139,8 +143,8 @@ async def test_approved_call_emits_one_live_result_under_original_identity() -> 
     assert [(event.tool_call_id, event.content) for event in results] == [("call-weather", "Sunny in Seattle")]
 
 
-async def test_approved_call_receives_only_function_invocation_kwargs() -> None:
-    """Static approval execution forwards only the documented tool-runtime kwargs."""
+async def test_approved_call_merges_function_invocation_kwargs_with_agent_defaults() -> None:
+    """Static approval execution uses normal runtime/default precedence without run-kwarg leakage."""
     observed_kwargs: list[dict[str, Any]] = []
 
     def inspect_context(context: FunctionInvocationContext) -> str:
@@ -149,12 +153,17 @@ async def test_approved_call_receives_only_function_invocation_kwargs() -> None:
 
     events, _ = await _run_custom_approval(
         FunctionTool(name="inspect_context", description="Inspect context", func=inspect_context),
-        function_invocation_kwargs={"user_id": "user-123"},
+        function_invocation_kwargs={"runtime_only": "runtime", "shared": "runtime"},
+        default_additional_function_arguments={"default_only": "default", "shared": "default"},
     )
 
     results = [event for event in events if isinstance(event, ToolCallResultEvent)]
-    assert observed_kwargs[0]["user_id"] == "user-123"
-    assert set(observed_kwargs[0]) == {"session", "user_id"}
+    assert observed_kwargs[0] == {
+        "default_only": "default",
+        "runtime_only": "runtime",
+        "session": observed_kwargs[0]["session"],
+        "shared": "default",
+    }
     assert [(event.tool_call_id, event.content) for event in results] == [("call-custom", "inspected")]
 
 
