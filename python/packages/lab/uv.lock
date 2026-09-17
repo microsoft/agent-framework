@@ -49,7 +49,7 @@ wheels = [
 
 [[package]]
 name = "agent-framework-core"
-version = "1.17.0"
+version = "1.18.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "msgspec" },
@@ -58,9 +58,9 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/1d/a6/a47518b61275a7b001d3acebae6857ad98b7d10303ef8d7c9b6546b1a450/agent_framework_core-1.17.0.tar.gz", hash = "sha256:c1b69ab7f496d1ec9ab5dcb0afc5a99e60e5c820f03f5a755a9104fd89d01394", size = 593864, upload-time = "2026-09-03T09:53:46.019Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/2e/6e/e0d661f1770bf3a6d70248c5964e684d2bb648b253d53f3dca315f393535/agent_framework_core-1.18.0.tar.gz", hash = "sha256:ef84e1ec570036b81a93a9e924bc4281380f6240ab9bddb8a2db7669282032b0", size = 652594, upload-time = "2026-09-10T09:29:19.938Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9c/cb/1fceefa6dc720774fc8180a8651045e583de550b946cc59c291684fcbbf6/agent_framework_core-1.17.0-py3-none-any.whl", hash = "sha256:75958ff692a38bf0c627aaa910bae6c4a89569dfec68e1e79eac8e206d88874d", size = 651715, upload-time = "2026-09-03T09:53:33.222Z" },
+    { url = "https://files.pythonhosted.org/packages/98/a6/10b844bf70bd174d32635e84a5cffa2ada1df1555266e00fc5c3a402d744/agent_framework_core-1.18.0-py3-none-any.whl", hash = "sha256:75f2fac5eed229c62f0665630cf1478eb45204bde41200a4c94dab57d441cc84", size = 712930, upload-time = "2026-09-10T09:28:54.632Z" },
 ]
 
 [[package]]
