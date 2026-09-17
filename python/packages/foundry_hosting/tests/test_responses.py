@@ -1570,6 +1570,122 @@ class TestAgentSessionPersistence:
 # endregion
 
 
+# region Deferred session persistence
+
+
+class _GatedSessionStore(SessionStore):
+    """In-memory session store whose ``set`` can be held open to observe deferral timing."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._data: dict[str, AgentSession] = {}
+        self.release = asyncio.Event()
+        self.set_started = asyncio.Event()
+        self.set_count = 0
+
+    async def set(self, session_id: str, session: AgentSession) -> None:
+        self.set_started.set()
+        self.set_count += 1
+        await self.release.wait()
+        self._data[session_id] = session
+
+    async def get(self, session_id: str) -> AgentSession | None:
+        return self._data.get(session_id)
+
+
+def _text_response_agent(text: str = "hi") -> MagicMock:
+    return _make_agent(response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text(text)])]))
+
+
+class TestDeferredSessionPersistence:
+    """``defer_session_persistence`` moves the tail session write off the response critical path."""
+
+    def test_defer_requires_agent_server_history(self) -> None:
+        agent = _make_agent()
+        with pytest.raises(RuntimeError, match="defer_session_persistence"):
+            ResponsesHostServer(
+                agent,
+                store=InMemoryResponseProvider(),
+                history_source="agent",
+                defer_session_persistence=True,
+            )
+
+    def test_default_does_not_defer(self) -> None:
+        server = _make_server(_make_agent(), session_store=SessionStore())
+        assert server._defer_session_writes is False  # pyright: ignore[reportPrivateUsage]
+
+    async def test_default_persists_before_completed(self) -> None:
+        store = SessionStore()
+        server = _make_server(_text_response_agent(), session_store=store)
+
+        resp = await _post(server, input_text="hi")
+
+        assert resp.json()["status"] == "completed"
+        # Synchronous default: the session is durable the moment the response completes,
+        # with no background write left pending.
+        assert await store.get(resp.json()["id"]) is not None
+        assert not server._pending_session_writes  # pyright: ignore[reportPrivateUsage]
+
+    async def test_deferred_write_does_not_block_response_and_drains_on_shutdown(self) -> None:
+        store = _GatedSessionStore()
+        server = _make_server(_text_response_agent(), session_store=store, defer_session_persistence=True)
+
+        resp = await _post(server, input_text="hi")
+
+        # The response completed even though the session write is still blocked inside ``set``.
+        assert resp.json()["status"] == "completed"
+        await asyncio.wait_for(store.set_started.wait(), timeout=1)
+        assert store._data == {}  # off the critical path: still pending, not yet durable
+
+        # Graceful shutdown drains the pending write, so it becomes durable.
+        store.release.set()
+        await server._cleanup_agent()  # pyright: ignore[reportPrivateUsage]
+        assert resp.json()["id"] in store._data
+        assert not server._pending_session_writes  # pyright: ignore[reportPrivateUsage]
+
+    async def test_deferred_write_read_your_writes_barrier(self) -> None:
+        store = _GatedSessionStore()
+        server = _make_server(_text_response_agent(), session_store=store, defer_session_persistence=True)
+
+        first = await _post(server, input_text="a")
+        await asyncio.wait_for(store.set_started.wait(), timeout=1)
+
+        # The first turn's persist is still blocked. The next turn for the same session must
+        # wait on it (read-your-writes barrier) before loading, so it cannot complete yet.
+        store.set_started.clear()
+        second_task = asyncio.ensure_future(_post(server, previous_response_id=first.json()["id"]))
+        await asyncio.sleep(0.05)
+        assert not second_task.done()
+
+        store.release.set()  # let the first (and subsequent) writes complete
+        second = await asyncio.wait_for(second_task, timeout=2)
+        assert second.json()["status"] == "completed"
+
+        await server._cleanup_agent()  # pyright: ignore[reportPrivateUsage]
+
+    async def test_failed_request_persists_session_synchronously(self) -> None:
+        store = SessionStore()
+        agent = _text_response_agent()
+
+        def run_failure(*args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+            del args, kwargs
+            return ResponseStream(_raising_updates("kaboom"), finalizer=AgentResponse.from_updates)
+
+        agent.run = MagicMock(side_effect=run_failure)
+        server = _make_server(agent, session_store=store, defer_session_persistence=True)
+
+        resp = await _post(server, input_text="hello")
+
+        # Failures are never deferred: the session is persisted synchronously on the failure
+        # path, so nothing is left pending after the response resolves.
+        assert resp.json()["status"] == "failed"
+        assert not server._pending_session_writes  # pyright: ignore[reportPrivateUsage]
+        assert await store.get(resp.json()["id"]) is not None
+
+
+# endregion
+
+
 # region Health Check
 
 
