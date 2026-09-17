@@ -425,6 +425,7 @@ async def test_workflow_snapshot_preserves_streamed_reasoning() -> None:
 async def test_workflow_hitl_resume_persists_user_text_in_thread_snapshot() -> None:
     """HITL resume with messages:[] must still record the user reply in the snapshot (#8160)."""
     from agent_framework import Message
+
     from agent_framework_ag_ui import InMemoryAGUIThreadSnapshotStore
     from agent_framework_ag_ui._snapshots import _SNAPSHOT_SCOPE_INPUT_KEY, AGUIThreadSnapshot
 
@@ -433,17 +434,17 @@ async def test_workflow_hitl_resume_persists_user_text_in_thread_snapshot() -> N
             super().__init__(id="message_request_executor")
 
         @handler
-        async def start(self, message: Any, ctx: WorkflowContext) -> None:
+        async def start(self, message: Any, ctx: WorkflowContext[Any, str]) -> None:
             del message
             await ctx.request_info({"prompt": "Need user follow-up"}, list[Message], request_id="handoff-user-input")
 
         @response_handler
         async def handle_user_input(
-            self, original_request: dict, response: list[Message], ctx: WorkflowContext
+            self, original_request: dict, response: list[Message], ctx: WorkflowContext[Any, str]
         ) -> None:
             del original_request
             user_text = response[0].text if response else ""
-            await ctx.yield_output(f"Captured response: {user_text}")  # type: ignore[arg-type]
+            await ctx.yield_output(f"Captured response: {user_text}")
 
     storage = InMemoryCheckpointStorage()
     workflow = WorkflowBuilder(start_executor=MessageRequestExecutor()).build()
@@ -514,6 +515,7 @@ async def test_workflow_hitl_resume_persists_user_text_in_thread_snapshot() -> N
 async def test_workflow_hitl_resume_keeps_repeated_yes_on_empty_messages() -> None:
     """A second HITL 'yes' with messages:[] must not be dropped as a content duplicate."""
     from agent_framework import Message
+
     from agent_framework_ag_ui import InMemoryAGUIThreadSnapshotStore
     from agent_framework_ag_ui._snapshots import _SNAPSHOT_SCOPE_INPUT_KEY, AGUIThreadSnapshot
 
@@ -522,17 +524,17 @@ async def test_workflow_hitl_resume_keeps_repeated_yes_on_empty_messages() -> No
             super().__init__(id="message_request_executor")
 
         @handler
-        async def start(self, message: Any, ctx: WorkflowContext) -> None:
+        async def start(self, message: Any, ctx: WorkflowContext[Any, str]) -> None:
             del message
             await ctx.request_info({"prompt": "Need user follow-up"}, list[Message], request_id="handoff-user-input")
 
         @response_handler
         async def handle_user_input(
-            self, original_request: dict, response: list[Message], ctx: WorkflowContext
+            self, original_request: dict, response: list[Message], ctx: WorkflowContext[Any, str]
         ) -> None:
             del original_request
             user_text = response[0].text if response else ""
-            await ctx.yield_output(f"Captured response: {user_text}")  # type: ignore[arg-type]
+            await ctx.yield_output(f"Captured response: {user_text}")
 
     storage = InMemoryCheckpointStorage()
     workflow = WorkflowBuilder(start_executor=MessageRequestExecutor()).build()
