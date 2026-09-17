@@ -13,7 +13,7 @@ updates:
     # production source, tests, and central package versions in scope so updates
     # can be opened again.
     exclude-paths:
-      - "dotnet/samples/**"
+      - "samples/**"
     schedule:
       interval: "cron"
       cronjob: "0 8 * * 4,0" # Every Thursday(4) and Sunday(0) at 8:00 UTC
