@@ -1914,6 +1914,37 @@ def test_enable_instrumentation_explicit_param_overrides_env(monkeypatch):
     assert observability.OBSERVABILITY_SETTINGS.enable_sensitive_data is False
 
 
+def test_enable_instrumentation_with_message_events(monkeypatch):
+    """Test enable_instrumentation function with explicit enable_message_events parameter."""
+    import importlib
+
+    monkeypatch.setenv("ENABLE_INSTRUMENTATION", "false")
+    monkeypatch.setenv("ENABLE_MESSAGE_EVENTS", "true")
+
+    observability = importlib.import_module("agent_framework.observability")
+    importlib.reload(observability)
+
+    observability.enable_instrumentation(enable_message_events=False)
+    assert observability.OBSERVABILITY_SETTINGS.enable_instrumentation is True
+    assert observability.OBSERVABILITY_SETTINGS.enable_message_events is False
+
+
+def test_enable_instrumentation_explicit_message_events_overrides_env(monkeypatch):
+    """Test that explicit enable_message_events parameter to enable_instrumentation overrides env var."""
+    import importlib
+
+    monkeypatch.setenv("ENABLE_INSTRUMENTATION", "false")
+    monkeypatch.setenv("ENABLE_MESSAGE_EVENTS", "false")
+
+    observability = importlib.import_module("agent_framework.observability")
+    importlib.reload(observability)
+
+    # Explicit True should override the env var False
+    observability.enable_instrumentation(enable_message_events=True)
+    assert observability.OBSERVABILITY_SETTINGS.enable_instrumentation is True
+    assert observability.OBSERVABILITY_SETTINGS.enable_message_events is True
+
+
 def test_enable_instrumentation_does_not_touch_console_exporters(monkeypatch):
     """Test enable_instrumentation does not modify enable_console_exporters (it is an exporter concern)."""
     import importlib
@@ -2251,6 +2282,24 @@ def test_enable_instrumentation_reads_env_sensitive_data(monkeypatch):
 
     assert observability.OBSERVABILITY_SETTINGS.enable_instrumentation is True
     assert observability.OBSERVABILITY_SETTINGS.enable_sensitive_data is True
+
+
+def test_enable_instrumentation_reads_env_message_events(monkeypatch):
+    """No-arg enable_instrumentation() re-reads ENABLE_MESSAGE_EVENTS from env at call time."""
+    import importlib
+
+    monkeypatch.setenv("ENABLE_INSTRUMENTATION", "false")
+    monkeypatch.setenv("ENABLE_MESSAGE_EVENTS", "true")
+
+    observability = importlib.import_module("agent_framework.observability")
+    importlib.reload(observability)
+
+    # Simulate load_dotenv() or runtime env change setting the env var after import
+    monkeypatch.setenv("ENABLE_MESSAGE_EVENTS", "false")
+    observability.enable_instrumentation()
+
+    assert observability.OBSERVABILITY_SETTINGS.enable_instrumentation is True
+    assert observability.OBSERVABILITY_SETTINGS.enable_message_events is False
 
 
 # region Test GenAI semconv stability opt-in
