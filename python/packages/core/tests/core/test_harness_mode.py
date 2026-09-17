@@ -379,6 +379,16 @@ def test_set_agent_mode_no_op_does_not_record_previous_mode() -> None:
     assert "previous_mode_for_notification" not in session.state[DEFAULT_MODE_SOURCE_ID]
 
 
+def test_set_agent_mode_can_skip_external_change_notification() -> None:
+    """Agent-invoked replacement tools should be able to avoid a redundant notification."""
+    session = AgentSession(session_id="session-1")
+    set_agent_mode(session, "plan")
+    set_agent_mode(session, "execute", notify=False)
+
+    assert get_agent_mode(session) == "execute"
+    assert "previous_mode_for_notification" not in session.state[DEFAULT_MODE_SOURCE_ID]
+
+
 async def test_agent_mode_provider_injects_user_message_after_external_change(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:

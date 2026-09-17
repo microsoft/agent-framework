@@ -71,7 +71,10 @@ Pass the configured provider through `create_harness_agent(mode_provider=...)`
 `update_mode`, through the existing `tools` argument. Keep that tool and your UI
 on the same session-backed state by using `get_agent_mode` and `set_agent_mode`
 with the provider's `source_id` and `available_modes`, and its `default_mode` when
-reading. Do not disable the entire provider with `disable_mode=True`.
+reading. A replacement tool should call `set_agent_mode(..., notify=False)`
+because the agent already observes the tool result; UI-driven changes retain the
+default `notify=True` so the agent sees the external change on its next run. Do
+not disable the entire provider with `disable_mode=True`.
 
 Built-in guidance only advertises enabled tools. Without the built-in setter,
 it defers approved transitions to the application's configured mode-change

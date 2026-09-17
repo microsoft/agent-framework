@@ -146,7 +146,11 @@ async def test_create_harness_agent_with_replacement_mode_tool() -> None:
     def update_mode(mode: str) -> str:
         """Update the application's mode."""
         return set_agent_mode(
-            session, mode, source_id=mode_provider.source_id, available_modes=mode_provider.available_modes
+            session,
+            mode,
+            source_id=mode_provider.source_id,
+            available_modes=mode_provider.available_modes,
+            notify=False,
         )
 
     agent = create_harness_agent(
@@ -175,11 +179,12 @@ async def test_create_harness_agent_with_replacement_mode_tool() -> None:
     await replacement.invoke(arguments={"mode": "execute"})
     assert get_agent_mode(session, source_id=mode_provider.source_id) == "execute"
 
-    _, updated_options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
+    updated_context, updated_options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
         session=session,
         input_messages=[Message(role="user", contents=["Continue"])],
     )
     assert "You are currently operating in the execute mode." in updated_options["instructions"]
+    assert updated_context.context_messages.get(mode_provider.source_id, []) == []
 
 
 def test_create_harness_agent_disable_file_memory() -> None:

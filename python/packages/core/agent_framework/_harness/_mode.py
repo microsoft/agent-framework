@@ -164,6 +164,7 @@ def set_agent_mode(
     *,
     source_id: str = DEFAULT_MODE_SOURCE_ID,
     available_modes: Sequence[str] | None = None,
+    notify: bool = True,
 ) -> str:
     """Set the current operating mode in session state.
 
@@ -180,6 +181,8 @@ def set_agent_mode(
     Keyword Args:
         source_id: Unique source ID for the provider state.
         available_modes: Supported modes to validate against. Defaults to the built-in modes.
+        notify: Whether to notify the agent about the mode change on its next run. Set to ``False`` when the
+            agent changes mode through a replacement tool and has already observed the tool result.
 
     Returns:
         The normalized mode string that was stored.
@@ -196,7 +199,7 @@ def set_agent_mode(
     # prior mode so the next ``before_run`` can inject a user message announcing the switch. Without
     # that injection, the model often anchors on the earlier ``set_mode`` tool call in the chat history
     # and keeps behaving as if it were still in that mode — system instructions alone are insufficient.
-    if isinstance(previous_mode, str) and previous_mode != normalized_mode:
+    if notify and isinstance(previous_mode, str) and previous_mode != normalized_mode:
         provider_state[_PREVIOUS_MODE_STATE_KEY] = previous_mode
     return normalized_mode
 
@@ -327,11 +330,13 @@ class AgentModeProvider(ContextProvider):
         @tool(name="mode_set", approval_mode="never_require")
         def mode_set(mode: str) -> str:
             """Switch the agent's operating mode."""
-            # The agent invoked the tool itself, so it knows the mode just changed — bypass
-            # ``set_agent_mode`` to avoid triggering a notification message on the next turn.
-            normalized_mode = _normalize_mode(mode, available_modes=self._mode_display_names)
-            tool_state = _get_mode_state(session, source_id=self.source_id)
-            tool_state["current_mode"] = normalized_mode
+            normalized_mode = set_agent_mode(
+                session,
+                mode,
+                source_id=self.source_id,
+                available_modes=self.available_modes,
+                notify=False,
+            )
             return json.dumps({"mode": normalized_mode, "message": f"Mode changed to '{normalized_mode}'."})
 
         @tool(name="mode_get", approval_mode="never_require")
