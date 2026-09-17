@@ -153,6 +153,11 @@ class TestInit:
         assert server._agent is not None  # pyright: ignore[reportPrivateUsage]
         assert server._sessions == {}  # pyright: ignore[reportPrivateUsage]
 
+    @pytest.mark.parametrize("agent", [None, 42])
+    def test_rejects_invalid_agent_source(self, agent: Any) -> None:
+        with pytest.raises(TypeError, match="agent must be an agent instance or a zero-argument callable"):
+            InvocationsHostServer(agent)
+
 
 # endregion
 

@@ -11,7 +11,7 @@ from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
 from typing_extensions import Any, AsyncGenerator
 
-from ._agent_source import resolve_agent
+from ._agent_source import resolve_agent, validate_agent_source
 from ._feature_usage import FeatureIndex
 
 
@@ -37,6 +37,7 @@ class InvocationsHostServer(InvocationAgentServerHost):
         The response from the host will be a JSON object with a "response" field containing
         the agent's response and a "session_id" field containing the session ID.
         """
+        validate_agent_source(agent)
         super().__init__(openapi_spec=openapi_spec, **kwargs)
 
         self._agent = agent

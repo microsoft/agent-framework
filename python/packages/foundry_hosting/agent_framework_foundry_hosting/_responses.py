@@ -34,6 +34,7 @@ from agent_framework import (
     InMemoryHistoryProvider,
     Message,
     RawAgent,
+    ResponseStream,
     SessionStore,
     SupportsAgentRun,
     UsageDetails,
@@ -82,7 +83,7 @@ from azure.ai.agentserver.responses.streaming._checkpoint import ResponseCheckpo
 from mcp import McpError
 from typing_extensions import Any
 
-from ._agent_source import is_agent, resolve_agent
+from ._agent_source import is_agent, resolve_agent, validate_agent_source
 from ._feature_usage import FeatureIndex
 from ._state_store import (
     AgentSessionStoreProvider,
@@ -211,9 +212,13 @@ class _SignalledIterator(Generic[_T]):
                     return
                 await self._queue.put(item)
         finally:
-            close = getattr(self._iterator, "aclose", None)
-            if close is not None:
-                await close()
+            iterator: AsyncIterator[_T] = self._iterator
+            if isinstance(iterator, ResponseStream):
+                await cast(ResponseStream[_T, Any], iterator).close()
+            else:
+                close = getattr(iterator, "aclose", None)
+                if close is not None:
+                    await close()
 
     async def __anext__(self) -> _T:
         if self._driver is None:
@@ -547,6 +552,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         """
         if history_source not in ("agent_server", "agent"):
             raise ValueError("history_source must be either 'agent_server' or 'agent'.")
+        validate_agent_source(agent)
 
         resolved_agent = agent if is_agent(agent) else None
         configuration = (
@@ -657,7 +663,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 configuration,
                 resources,
             )
-            async with aclosing(inner):
+            try:
                 async for event in inner:
                     if isinstance(event, Mapping) and event.get("type") in (
                         "response.completed",
@@ -667,6 +673,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         terminal_event = event
                     else:
                         yield event
+            finally:
+                await inner.aclose()
         if terminal_event is not None:
             yield terminal_event
 

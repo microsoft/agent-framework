@@ -3520,16 +3520,20 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
                     update = await update
             return await self._record_update(update)
 
-    async def aclose(self) -> None:
+    async def close(self) -> None:
         """Close the active iterator and run cleanup hooks.
 
         This method is idempotent and also closes nested ``ResponseStream`` wrappers.
         """
         try:
-            if self._iterator is not None:
-                close = getattr(self._iterator, "aclose", None)
-                if close is not None:
-                    await close()
+            iterator: AsyncIterator[UpdateT] | None = self._iterator
+            if iterator is not None:
+                if isinstance(iterator, ResponseStream):
+                    await cast(ResponseStream[UpdateT, Any], iterator).close()
+                else:
+                    close = getattr(iterator, "aclose", None)
+                    if close is not None:
+                        await close()
         finally:
             self._consumed = True
             await self._run_cleanup_hooks()

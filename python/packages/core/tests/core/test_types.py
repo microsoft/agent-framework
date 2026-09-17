@@ -4192,7 +4192,7 @@ class TestResponseStreamTransformHooks:
 class TestResponseStreamCleanupHooks:
     """Tests for cleanup hooks (after stream consumption, before finalizer)."""
 
-    async def test_aclose_closes_iterator_and_runs_cleanup_once(self) -> None:
+    async def test_close_closes_iterator_and_runs_cleanup_once(self) -> None:
         """Closing a partially consumed stream releases its iterator and cleanup hooks."""
         events: list[str] = []
 
@@ -4208,12 +4208,12 @@ class TestResponseStreamCleanupHooks:
         )
         await anext(stream)
 
-        await stream.aclose()
-        await stream.aclose()
+        await stream.close()
+        await stream.close()
 
         assert events == ["iterator", "cleanup"]
 
-    async def test_aclose_closes_wrapped_stream(self) -> None:
+    async def test_close_closes_wrapped_stream(self) -> None:
         """Closing a wrapper releases the concrete inner stream."""
         events: list[str] = []
 
@@ -4230,7 +4230,7 @@ class TestResponseStreamCleanupHooks:
         outer = inner.map(lambda update: update, _combine_updates).with_cleanup_hook(lambda: events.append("outer"))
         await anext(outer)
 
-        await outer.aclose()
+        await outer.close()
 
         assert events == ["iterator", "inner", "outer"]
 

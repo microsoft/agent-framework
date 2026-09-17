@@ -15,6 +15,14 @@ def is_agent(value: object) -> TypeGuard[SupportsAgentRun]:
     return hasattr(value, "run") and hasattr(value, "create_session")
 
 
+def validate_agent_source(source: object) -> None:
+    if is_agent(source):
+        return
+    if callable(source):
+        return
+    raise TypeError("agent must be an agent instance or a zero-argument callable that creates one.")
+
+
 async def resolve_agent(source: AgentSource) -> SupportsAgentRun:
     """Resolve an agent instance or request-scoped agent factory."""
     if is_agent(source):
