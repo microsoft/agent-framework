@@ -13,8 +13,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import uuid
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Mapping, Sequence
 from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
@@ -86,6 +87,20 @@ from agent_framework_foundry_hosting._state_store import (
 
 _OPENAI_HTTPX = cast(Any, import_module(DefaultAsyncHttpxClient.__mro__[1].__module__.partition(".")[0]))
 _PRIVATE_ERROR_DETAIL = "test-token-value at /srv/private/tool.py"
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _isolate_agentserver_state_root(tmp_path_factory: pytest.TempPathFactory) -> Generator[None]:
+    """Keep the real local state store, but prevent xdist workers sharing its files."""
+    previous_root = os.environ.get("AGENTSERVER_STATE_ROOT")
+    os.environ["AGENTSERVER_STATE_ROOT"] = str(tmp_path_factory.mktemp("agentserver-state"))
+    try:
+        yield
+    finally:
+        if previous_root is None:
+            os.environ.pop("AGENTSERVER_STATE_ROOT", None)
+        else:
+            os.environ["AGENTSERVER_STATE_ROOT"] = previous_root
 
 
 def _function_approval_store(request: Content) -> MagicMock:

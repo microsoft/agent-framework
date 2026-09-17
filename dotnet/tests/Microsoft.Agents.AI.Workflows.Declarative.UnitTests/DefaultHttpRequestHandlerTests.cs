@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Net.Http;
@@ -367,6 +368,62 @@ public sealed class DefaultHttpRequestHandlerTests
         Assert.Equivalent(s_setCookieValues, result.Headers!["Set-Cookie"]);
         // Content headers also flattened in.
         Assert.Contains("Content-Type", result.Headers!);
+    }
+
+    [Fact]
+    public async Task SendAsyncOwnedClientDoesNotForwardResponseCookiesToRedirectAsync()
+    {
+        // Arrange
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        await using CookieCaptureServer server = new();
+        await using DefaultHttpRequestHandler handler = new();
+        HttpRequestInfo request = new()
+        {
+            Method = "GET",
+            Url = server.SetCookieRedirectUrl,
+        };
+
+        // Act
+        HttpRequestResult result = await handler.SendAsync(request, cancellationToken);
+        IReadOnlyList<string> requests = await server.ReadRequestsAsync(TimeSpan.FromSeconds(5));
+
+        // Assert
+        Assert.Equal("no-cookie", result.Body);
+        Assert.Equal(2, requests.Count);
+        Assert.Contains("GET /set-cookie-redirect ", requests[0], StringComparison.Ordinal);
+        Assert.Contains("GET /read-cookie ", requests[1], StringComparison.Ordinal);
+        Assert.DoesNotContain("Cookie: backend-session=victim-session", requests[1], StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task SendAsyncOwnedClientDoesNotPersistResponseCookiesAcrossRequestsAsync()
+    {
+        // Arrange
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        await using CookieCaptureServer server = new();
+        await using DefaultHttpRequestHandler handler = new();
+        HttpRequestInfo victimRequest = new()
+        {
+            Method = "GET",
+            Url = server.SetCookieUrl,
+        };
+
+        HttpRequestInfo attackerRequest = new()
+        {
+            Method = "GET",
+            Url = server.ReadCookieUrl,
+        };
+
+        // Act
+        HttpRequestResult victimResult = await handler.SendAsync(victimRequest, cancellationToken);
+        HttpRequestResult attackerResult = await handler.SendAsync(attackerRequest, cancellationToken);
+        IReadOnlyList<string> requests = await server.ReadRequestsAsync(TimeSpan.FromSeconds(5));
+
+        // Assert
+        Assert.Equal("victim", victimResult.Body);
+        Assert.Equal("no-cookie", attackerResult.Body);
+        Assert.Equal(2, requests.Count);
+        Assert.DoesNotContain("Cookie: backend-session=victim-session", requests[1], StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -1166,6 +1223,134 @@ public sealed class DefaultHttpRequestHandlerTests
                 this.RequestBodies.Add(null);
             }
             return await this._responseFactory(request, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private sealed class CookieCaptureServer : IAsyncDisposable
+    {
+        private const int ExpectedRequestCount = 2;
+
+        private readonly TcpListener _listener;
+        private readonly Task<List<string>> _requestsTask;
+
+        public CookieCaptureServer()
+        {
+            this._listener = new TcpListener(IPAddress.Loopback, 0);
+            this._listener.Start();
+            int port = ((IPEndPoint)this._listener.LocalEndpoint).Port;
+            string baseUrl = $"http://127.0.0.1:{port}";
+            this.SetCookieUrl = $"{baseUrl}/set-cookie";
+            this.SetCookieRedirectUrl = $"{baseUrl}/set-cookie-redirect";
+            this.ReadCookieUrl = $"{baseUrl}/read-cookie";
+            this._requestsTask = Task.Run(this.AcceptRequests);
+        }
+
+        public string SetCookieUrl { get; }
+
+        public string SetCookieRedirectUrl { get; }
+
+        public string ReadCookieUrl { get; }
+
+        public async Task<IReadOnlyList<string>> ReadRequestsAsync(TimeSpan timeout)
+        {
+            Task completedTask = await Task.WhenAny(this._requestsTask, Task.Delay(timeout)).ConfigureAwait(false);
+            return completedTask == this._requestsTask
+                ? await this._requestsTask.ConfigureAwait(false)
+                : [];
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+#if NET
+            this._listener.Dispose();
+#else
+            this._listener.Stop();
+#endif
+            await this._requestsTask.ConfigureAwait(false);
+        }
+
+        private List<string> AcceptRequests()
+        {
+            List<string> requests = [];
+            for (int i = 0; i < ExpectedRequestCount; i++)
+            {
+                try
+                {
+                    using TcpClient client = this._listener.AcceptTcpClient();
+                    client.ReceiveTimeout = 1000;
+                    using NetworkStream stream = client.GetStream();
+                    string request = ReadRawRequest(stream);
+                    requests.Add(request);
+
+                    if (request.StartsWith("GET /set-cookie-redirect ", StringComparison.Ordinal))
+                    {
+                        WriteRedirectResponse(stream);
+                        continue;
+                    }
+
+                    string body = request.Contains("Cookie: backend-session=victim-session", StringComparison.OrdinalIgnoreCase)
+                        ? "cookie-present"
+                        : request.StartsWith("GET /set-cookie ", StringComparison.Ordinal)
+                            ? "victim"
+                            : "no-cookie";
+
+                    string setCookieHeader = request.StartsWith("GET /set-cookie ", StringComparison.Ordinal)
+                        ? "Set-Cookie: backend-session=victim-session; Path=/\r\n"
+                        : string.Empty;
+
+                    byte[] responseBytes = Encoding.ASCII.GetBytes(
+                        $"HTTP/1.1 200 OK\r\nContent-Length: {body.Length}\r\n{setCookieHeader}Connection: close\r\n\r\n{body}");
+                    stream.Write(responseBytes, 0, responseBytes.Length);
+                }
+                catch (SocketException exception)
+                {
+                    Trace.WriteLine($"Cookie capture server stopped accepting requests: {exception.Message}");
+                    break;
+                }
+                catch (ObjectDisposedException exception)
+                {
+                    Trace.WriteLine($"Cookie capture server listener was disposed: {exception.Message}");
+                    break;
+                }
+                catch (IOException exception)
+                {
+                    Trace.WriteLine($"Cookie capture server stream ended while handling a request: {exception.Message}");
+                    break;
+                }
+            }
+
+            return requests;
+        }
+
+        private static void WriteRedirectResponse(NetworkStream stream)
+        {
+            byte[] responseBytes = Encoding.ASCII.GetBytes(
+                "HTTP/1.1 307 Temporary Redirect\r\nLocation: /read-cookie\r\nSet-Cookie: backend-session=victim-session; Path=/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+            stream.Write(responseBytes, 0, responseBytes.Length);
+        }
+
+        private static string ReadRawRequest(NetworkStream stream)
+        {
+            using MemoryStream rawRequest = new();
+            byte[] buffer = new byte[1024];
+
+            while (true)
+            {
+                int bytesRead = stream.Read(buffer, 0, buffer.Length);
+                if (bytesRead == 0)
+                {
+                    break;
+                }
+
+                rawRequest.Write(buffer, 0, bytesRead);
+                string currentRequest = Encoding.ASCII.GetString(rawRequest.ToArray());
+                if (currentRequest.Contains("\r\n\r\n", StringComparison.Ordinal))
+                {
+                    return currentRequest;
+                }
+            }
+
+            return Encoding.ASCII.GetString(rawRequest.ToArray());
         }
     }
 
