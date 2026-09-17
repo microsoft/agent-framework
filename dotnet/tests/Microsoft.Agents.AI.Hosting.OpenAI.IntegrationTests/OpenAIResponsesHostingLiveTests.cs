@@ -38,7 +38,7 @@ public sealed class OpenAIResponsesHostingLiveTests
         // Act
         OpenAIResponsesRunRequest run = OpenAIResponses.ToAgentRunRequest(body);
         string sessionStoreId = OpenAIResponses.GetSessionStoreId(run) ?? OpenAIResponses.CreateResponseId();
-        AgentSession session = await sessionStore.GetSessionAsync(agent, sessionStoreId);
+        AgentSession session = await sessionStore.GetOrCreateSessionAsync(agent, new AgentSessionStoreKey(sessionStoreId));
         string responseId = OpenAIResponses.CreateResponseId();
         AgentResponse result = await agent.RunAsync(run.Messages, session, run.Options);
         JsonElement payload = OpenAIResponses.WriteResponse(result, responseId, responseId);
@@ -62,7 +62,7 @@ public sealed class OpenAIResponsesHostingLiveTests
         JsonElement secondBody = ParseBody($$"""{ "input": "What number did I ask you to remember?", "previous_response_id": "{{firstResponseId}}" }""");
         OpenAIResponsesRunRequest secondRun = OpenAIResponses.ToAgentRunRequest(secondBody);
         string secondSessionStoreId = OpenAIResponses.GetSessionStoreId(secondRun)!;
-        AgentSession session = await sessionStore.GetSessionAsync(agent, secondSessionStoreId);
+        AgentSession session = await sessionStore.GetOrCreateSessionAsync(agent, new AgentSessionStoreKey(secondSessionStoreId));
         AgentResponse secondResult = await agent.RunAsync(secondRun.Messages, session, secondRun.Options);
 
         // Assert: continuation succeeded and the model produced a textual answer.
@@ -75,10 +75,10 @@ public sealed class OpenAIResponsesHostingLiveTests
         JsonElement body = ParseBody(bodyJson);
         OpenAIResponsesRunRequest run = OpenAIResponses.ToAgentRunRequest(body);
         string sessionStoreId = OpenAIResponses.GetSessionStoreId(run) ?? OpenAIResponses.CreateResponseId();
-        AgentSession session = await sessionStore.GetSessionAsync(agent, sessionStoreId);
+        AgentSession session = await sessionStore.GetOrCreateSessionAsync(agent, new AgentSessionStoreKey(sessionStoreId));
         string responseId = OpenAIResponses.CreateResponseId();
         _ = await agent.RunAsync(run.Messages, session, run.Options);
-        await sessionStore.SaveSessionAsync(agent, responseId, session);
+        await sessionStore.SaveSessionAsync(agent, new AgentSessionStoreKey(responseId), session);
         return responseId;
     }
 

@@ -254,6 +254,23 @@ async def test_group_chat_builder_basic_flow() -> None:
     assert updates[0].author_name == "manager"
 
 
+def test_group_chat_builder_uses_stable_default_and_custom_name() -> None:
+    participant = StubAgent("agent", "response")
+
+    default_workflow = GroupChatBuilder(
+        participants=[participant],
+        selection_func=make_sequence_selector(),
+    ).build()
+    custom_workflow = GroupChatBuilder(
+        name="custom-group-chat",
+        participants=[participant],
+        selection_func=make_sequence_selector(),
+    ).build()
+
+    assert default_workflow.name == "GroupChat"
+    assert custom_workflow.name == "custom-group-chat"
+
+
 async def test_group_chat_as_agent_accepts_conversation() -> None:
     selector = make_sequence_selector()
     alpha = StubAgent("alpha", "ack from alpha")
@@ -495,6 +512,7 @@ class TestGroupChatWorkflow:
             selection_func=selector,
         ).build()
 
+        assert workflow.name == "GroupChat"
         updates: list[AgentResponseUpdate] = []
         async for event in workflow.run("test task", stream=True):
             if event.type == "output" and isinstance(event.data, AgentResponseUpdate):
@@ -660,6 +678,7 @@ class TestCheckpointing:
             checkpoint_storage=storage,
             selection_func=selector,
         ).build()
+        assert workflow.name == "GroupChat"
 
         updates: list[AgentResponseUpdate] = []
         async for event in workflow.run("test task", stream=True):

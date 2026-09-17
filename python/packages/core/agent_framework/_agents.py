@@ -1405,8 +1405,10 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             self.context_providers.append(InMemoryHistoryProvider())
 
         active_session = session
+        framework_created_session = False
         if active_session is None and self.context_providers:
             active_session = AgentSession()
+            framework_created_session = True
 
         per_service_call_history_providers = self._resolve_per_service_call_history_providers(
             session=active_session,
@@ -1529,8 +1531,12 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         session_messages: list[Message] = session_context.get_messages(include_input=True)
 
         effective_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
+        from ._tools import _APPROVAL_SESSION_IS_AUTHORITATIVE_KEY  # pyright: ignore[reportPrivateUsage]
+
+        effective_client_kwargs.pop(_APPROVAL_SESSION_IS_AUTHORITATIVE_KEY, None)
         if active_session is not None:
             effective_client_kwargs["session"] = active_session
+            effective_client_kwargs[_APPROVAL_SESSION_IS_AUTHORITATIVE_KEY] = not framework_created_session
         per_service_call_history_middleware: PerServiceCallHistoryPersistingMiddleware | None = None
         if per_service_call_history_providers and active_session is not None:
             per_service_call_history_middleware = PerServiceCallHistoryPersistingMiddleware(

@@ -4,6 +4,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -22,7 +24,8 @@ namespace Microsoft.Agents.AI;
 /// <remarks>
 /// Because MCP-delivered skills are treated strictly as instructor-format text, scripts bundled
 /// inside an archive are surfaced as readable resources only; they are never discovered as
-/// executable scripts.
+/// executable scripts. Supplied SHA-256 digests are verified before extraction; archives without
+/// a digest remain supported.
 /// </remarks>
 internal sealed partial class ArchiveEntryLoader : IMcpSkillEntryLoader, IDisposable
 {
@@ -256,7 +259,8 @@ internal sealed partial class ArchiveEntryLoader : IMcpSkillEntryLoader, IDispos
 
     /// <summary>
     /// Downloads and decodes the binary content of a skill's archive resource. Returns <see langword="null"/>
-    /// bytes when the resource cannot be read, contains no binary content, or is empty.
+    /// bytes when the resource cannot be read, contains no binary content, is empty, exceeds the
+    /// size limit, or has an invalid or mismatched digest.
     /// </summary>
     private async Task<(byte[]? Bytes, string? MimeType)> DownloadSkillBytesAsync(McpSkillIndexEntry entry, CancellationToken cancellationToken)
     {
@@ -306,8 +310,37 @@ internal sealed partial class ArchiveEntryLoader : IMcpSkillEntryLoader, IDispos
             return (null, null);
         }
 
+        if (entry.Digest is not null && !this.VerifyDigest(entry.Name!, entry.Digest, bytes))
+        {
+            return (null, null);
+        }
+
         return (bytes, blobContent.MimeType);
     }
+
+    /// <summary>
+    /// Verifies a supplied digest against decoded archive bytes before extraction.
+    /// </summary>
+    private bool VerifyDigest(string skillName, string digest, byte[] bytes)
+    {
+        if (!ArchiveDigestRegex().IsMatch(digest))
+        {
+            LogArchiveDigestVerificationFailed(this._logger, skillName, "digest must be 'sha256:' followed by 64 lowercase hexadecimal characters");
+            return false;
+        }
+
+        string actualDigest = Convert.ToHexString(SHA256.HashData(bytes));
+        if (!actualDigest.AsSpan().Equals(digest.AsSpan("sha256:".Length), StringComparison.OrdinalIgnoreCase))
+        {
+            LogArchiveDigestVerificationFailed(this._logger, skillName, "digest does not match downloaded content");
+            return false;
+        }
+
+        return true;
+    }
+
+    [GeneratedRegex(@"\Asha256:[0-9a-f]{64}\z", RegexOptions.CultureInvariant)]
+    private static partial Regex ArchiveDigestRegex();
 
     /// <summary>
     /// Filters archive entries to those that are valid for materialization. Entries with missing or
@@ -420,6 +453,9 @@ internal sealed partial class ArchiveEntryLoader : IMcpSkillEntryLoader, IDispos
 
     [LoggerMessage(LogLevel.Warning, "Failed to decode archive resource for skill '{SkillName}'.")]
     private static partial void LogArchiveDecodeFailed(ILogger logger, string skillName, Exception exception);
+
+    [LoggerMessage(LogLevel.Warning, "Skipping archive skill '{SkillName}': {Reason}")]
+    private static partial void LogArchiveDigestVerificationFailed(ILogger logger, string skillName, string reason);
 
     [LoggerMessage(LogLevel.Warning, "Failed to extract archive for skill '{SkillName}'.")]
     private static partial void LogArchiveExtractFailed(ILogger logger, string skillName, Exception exception);

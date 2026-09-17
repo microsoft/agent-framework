@@ -806,8 +806,10 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
             # Merge caller-provided options to avoid duplicate keyword argument
             options = dict(run_kwargs.get("options") or {})
             options["additional_function_arguments"] = run_kwargs
-            # Exclude 'options' from splat to avoid TypeError on duplicate keyword
-            run_kwargs = {k: v for k, v in run_kwargs.items() if k != "options"}
+            # Exclude 'options' from splat to avoid TypeError on duplicate keyword,
+            # and keep internal workflow-routing copies (stored under underscore
+            # keys for nested executors) out of the public Agent.run signature
+            run_kwargs = {k: v for k, v in run_kwargs.items() if k != "options" and not k.startswith("_")}
 
         # Use run() method to get properly structured messages (including tool calls and results)
         # This is critical for multi-turn conversations where tool calls must be followed

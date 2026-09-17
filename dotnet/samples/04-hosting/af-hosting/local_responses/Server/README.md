@@ -11,9 +11,9 @@ Exposes an `AIAgent` over the OpenAI Responses protocol on a `POST /responses` r
 - `OpenAIResponses.WriteResponse(...)` / `WriteResponseStreamAsync(...)` render the agent output back to the
   Responses wire shape (non-streaming JSON and SSE).
 
-Session continuity uses an in-memory `AgentSessionStore` directly. `GetSessionAsync(agent, id)` creates a
-session on first use and returns an independent instance per call; the store does no internal locking, so a
-route that runs concurrent turns against the same id owns any coordination it needs.
+Session continuity uses an in-memory `AgentSessionStore` directly. `GetOrCreateSessionAsync` loads a stored
+session or creates one on first use and returns an independent instance per call. The store does no internal
+locking, so a route that runs concurrent turns against the same id owns any coordination it needs.
 
 The route persists each turn under a continuation id chosen by how the caller continued the thread:
 

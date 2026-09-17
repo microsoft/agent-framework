@@ -20,6 +20,7 @@ from agent_framework import (
     FunctionTool,
     InlineSkill,
     Message,
+    ResponseInvalidatedException,
     ResponseStream,
     SkillFrontmatter,
     SkillsProvider,
@@ -2083,13 +2084,27 @@ def _message_start_event(response_id: str) -> MagicMock:
     return event
 
 
-def _tool_start_event(*, block_type: str, call_id: str, name: str) -> MagicMock:
+def _tool_start_event(*, block_type: str, call_id: str, name: str, index: int = 0) -> MagicMock:
     event = MagicMock()
     event.type = "content_block_start"
+    event.index = index
     event.content_block.type = block_type
     event.content_block.id = call_id
     event.content_block.name = name
     event.content_block.input = {}
+    return event
+
+
+def _content_block_stop_event(index: int = 0) -> MagicMock:
+    event = MagicMock()
+    event.type = "content_block_stop"
+    event.index = index
+    return event
+
+
+def _message_stop_event() -> MagicMock:
+    event = MagicMock()
+    event.type = "message_stop"
     return event
 
 
@@ -2107,6 +2122,262 @@ def _message_delta_event(stop_reason: str) -> MagicMock:
     event.delta.stop_reason = stop_reason
     event.usage = None
     return event
+
+
+def _local_tool_message(stop_reason: str) -> MagicMock:
+    message = MagicMock(spec=BetaMessage)
+    message.id = "msg_local_tool"
+    message.model = "claude-test"
+    message.content = [
+        BetaToolUseBlock(
+            type="tool_use",
+            id="local-call",
+            name="local_tool",
+            input={"value": "a"},
+        )
+    ]
+    message.usage = None
+    message.stop_reason = stop_reason
+    return message
+
+
+@pytest.mark.parametrize("stop_reason", ["max_tokens", "refusal"])
+async def test_non_streaming_local_tool_call_with_invalidating_stop_reason_raises(
+    mock_anthropic_client: MagicMock,
+    stop_reason: str,
+) -> None:
+    """Anthropic terminal reasons other than tool_use invalidate local calls even when arguments parse."""
+    executions = 0
+
+    @tool(name="local_tool", approval_mode="never_require")
+    def local_tool(value: str) -> str:
+        nonlocal executions
+        executions += 1
+        return value
+
+    client = create_test_anthropic_client(mock_anthropic_client)
+    mock_anthropic_client.beta.messages.create.return_value = _local_tool_message(stop_reason)
+
+    with pytest.raises(ResponseInvalidatedException, match="Anthropic invalidated"):
+        await client.get_response(
+            [Message(role="user", contents=["run"])],
+            options={"tools": [local_tool], "max_tokens": 64},
+        )
+
+    assert executions == 0
+    assert mock_anthropic_client.beta.messages.create.call_count == 1
+
+
+def test_non_streaming_hosted_tool_pause_turn_is_not_invalidated(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Hosted server-tool content keeps pause_turn semantics and is not a local invalidation."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    message = MagicMock(spec=BetaMessage)
+    message.id = "msg_hosted"
+    message.model = "claude-test"
+    hosted_block = MagicMock()
+    hosted_block.type = "server_tool_use"
+    hosted_block.id = "hosted-call"
+    hosted_block.name = "local_tool"
+    hosted_block.input = {"value": "a"}
+    message.content = [hosted_block]
+    message.usage = None
+    message.stop_reason = "pause_turn"
+
+    response = client._process_message(message, {})
+
+    assert response.finish_reason == "stop"
+    assert response.messages[0].contents[0].type == "function_call"
+    assert response.messages[0].contents[0].informational_only is True
+
+
+async def test_valid_streaming_local_tool_call_executes_and_continues(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Closed local tool_use streams with message_stop retain the normal function loop."""
+    executions: list[str] = []
+
+    @tool(name="local_tool", approval_mode="never_require")
+    def local_tool(value: str) -> str:
+        executions.append(value)
+        return f"found {value}"
+
+    async def local_events() -> Any:
+        yield _message_start_event("tool-response")
+        yield _tool_start_event(block_type="tool_use", call_id="local-call", name="local_tool")
+        yield _argument_delta_event('{"value": "a"}')
+        yield _content_block_stop_event()
+        yield _message_delta_event("tool_use")
+        yield _message_stop_event()
+
+    async def final_events() -> Any:
+        yield _message_start_event("final-response")
+        text_start = MagicMock()
+        text_start.type = "content_block_start"
+        text_start.index = 0
+        text_start.content_block.type = "text"
+        text_start.content_block.text = "done"
+        text_start.content_block.citations = None
+        yield text_start
+        yield _content_block_stop_event()
+        yield _message_delta_event("end_turn")
+        yield _message_stop_event()
+
+    request_count = 0
+
+    async def create(**kwargs: Any) -> Any:
+        nonlocal request_count
+        del kwargs
+        request_count += 1
+        return local_events() if request_count == 1 else final_events()
+
+    client = create_test_anthropic_client(mock_anthropic_client)
+    mock_anthropic_client.beta.messages.create.side_effect = create
+    stream = client.get_response(
+        [Message(role="user", contents=["run"])],
+        options={"tools": [local_tool], "max_tokens": 64},
+        stream=True,
+    )
+    updates = [update async for update in stream]
+    response = await stream.get_final_response()
+
+    assert executions == ["a"]
+    assert request_count == 2
+    assert any(content.type == "function_result" for update in updates for content in update.contents)
+    assert response.text == "done"
+
+
+@pytest.mark.parametrize(
+    ("close_block", "stop_reason", "include_message_stop"),
+    [
+        (True, "max_tokens", True),
+        (True, "refusal", True),
+        (False, "tool_use", True),
+        (True, "tool_use", False),
+    ],
+    ids=["max_tokens", "refusal", "open_block", "missing_message_stop"],
+)
+async def test_streaming_local_tool_call_invalid_terminal_sequences_raise(
+    mock_anthropic_client: MagicMock,
+    close_block: bool,
+    stop_reason: str,
+    include_message_stop: bool,
+) -> None:
+    """Local streamed calls require closed blocks, tool_use, and message_stop."""
+
+    async def events() -> Any:
+        yield _message_start_event("invalid-response")
+        start = _tool_start_event(block_type="tool_use", call_id="local-call", name="local_tool")
+        start.content_block.input = {"value": "a"}
+        yield start
+        if close_block:
+            yield _content_block_stop_event()
+        yield _message_delta_event(stop_reason)
+        if include_message_stop:
+            yield _message_stop_event()
+
+    client = create_test_anthropic_client(mock_anthropic_client)
+    mock_anthropic_client.beta.messages.create.return_value = events()
+    stream = client._inner_get_response(  # type: ignore[attr-defined]
+        messages=[Message(role="user", contents=["run"])],
+        options={"max_tokens": 64},
+        stream=True,
+    )
+    assert isinstance(stream, ResponseStream)
+    updates: list[ChatResponseUpdate] = []
+
+    with pytest.raises(ResponseInvalidatedException, match="Anthropic invalidated"):
+        async for update in stream:
+            updates.append(update)
+
+    assert any(content.type == "function_call" for update in updates for content in update.contents)
+
+
+async def test_streaming_provider_error_after_local_call_is_wrapped_as_invalidation(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """A provider failure after local call content preserves the original error as the inner exception."""
+    original = RuntimeError("provider stream failed")
+
+    async def events() -> Any:
+        yield _message_start_event("invalid-response")
+        yield _tool_start_event(block_type="tool_use", call_id="local-call", name="local_tool")
+        raise original
+
+    client = create_test_anthropic_client(mock_anthropic_client)
+    mock_anthropic_client.beta.messages.create.return_value = events()
+    stream = client._inner_get_response(  # type: ignore[attr-defined]
+        messages=[Message(role="user", contents=["run"])],
+        options={"max_tokens": 64},
+        stream=True,
+    )
+    assert isinstance(stream, ResponseStream)
+
+    with pytest.raises(ResponseInvalidatedException) as exc_info:
+        async for _ in stream:
+            pass
+
+    assert exc_info.value.args[1] is original
+    assert exc_info.value.__cause__ is original
+
+
+async def test_streaming_cancellation_after_local_call_is_not_wrapped(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Caller cancellation remains asyncio.CancelledError after local call content."""
+
+    async def events() -> Any:
+        yield _message_start_event("cancelled-response")
+        yield _tool_start_event(block_type="tool_use", call_id="local-call", name="local_tool")
+        raise asyncio.CancelledError
+
+    client = create_test_anthropic_client(mock_anthropic_client)
+    mock_anthropic_client.beta.messages.create.return_value = events()
+    stream = client._inner_get_response(  # type: ignore[attr-defined]
+        messages=[Message(role="user", contents=["run"])],
+        options={"max_tokens": 64},
+        stream=True,
+    )
+    assert isinstance(stream, ResponseStream)
+
+    with pytest.raises(asyncio.CancelledError):
+        async for _ in stream:
+            pass
+
+
+async def test_streaming_hosted_tool_pause_turn_is_not_invalidated(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Hosted-only calls keep pause_turn behavior even when their name matches a local tool."""
+
+    @tool(name="local_tool", approval_mode="never_require")
+    def local_tool(value: str) -> str:
+        return value
+
+    async def events() -> Any:
+        yield _message_start_event("hosted-response")
+        yield _tool_start_event(block_type="server_tool_use", call_id="hosted-call", name="local_tool")
+        yield _content_block_stop_event()
+        yield _message_delta_event("pause_turn")
+        yield _message_stop_event()
+
+    client = create_test_anthropic_client(mock_anthropic_client)
+    mock_anthropic_client.beta.messages.create.return_value = events()
+    stream = client._inner_get_response(  # type: ignore[attr-defined]
+        messages=[Message(role="user", contents=["run"])],
+        options={"tools": [local_tool], "max_tokens": 64},
+        stream=True,
+    )
+    assert isinstance(stream, ResponseStream)
+
+    updates = [update async for update in stream]
+    response = await stream.get_final_response()
+
+    hosted_calls = [content for update in updates for content in update.contents if content.type == "function_call"]
+    assert len(hosted_calls) == 1
+    assert hosted_calls[0].informational_only is True
+    assert response.finish_reason == "stop"
 
 
 async def test_concurrent_streams_isolate_tool_state_when_peer_fails(
@@ -2136,7 +2407,9 @@ async def test_concurrent_streams_isolate_tool_state_when_peer_fails(
         yield _argument_delta_event('{"command":')
         await asyncio.wait_for(hosted_failed.wait(), timeout=1)
         yield _argument_delta_event('"pwd"}')
+        yield _content_block_stop_event()
         yield _message_delta_event("tool_use")
+        yield _message_stop_event()
 
     async def hosted_events() -> Any:
         await asyncio.wait_for(primary_started.wait(), timeout=1)
@@ -2226,7 +2499,9 @@ async def test_concurrent_streams_keep_approval_requests_request_local(
         yield _tool_start_event(block_type="tool_use", call_id="shared-approval-call", name="bash")
         yield _argument_delta_event('{"command":')
         yield _argument_delta_event(f'"{command}"}}')
+        yield _content_block_stop_event()
         yield _message_delta_event("tool_use")
+        yield _message_stop_event()
 
     async def create(**kwargs: Any) -> Any:
         nonlocal request_count

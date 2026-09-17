@@ -314,8 +314,10 @@ async def test_end_to_end_workflow_tracing(span_exporter: InMemorySpanExporter) 
 
     # Run workflow (this should create run spans)
     events: list[Any] = []
-    async for event in workflow.run("test input", stream=True):
-        events.append(event)
+    with trace.get_tracer(__name__).start_as_current_span("outer") as outer_span:
+        async for event in workflow.run("test input", stream=True):
+            assert trace.get_current_span() is outer_span
+            events.append(event)
 
     # Verify workflow executed correctly
     assert len(executor1.processed_messages) == 1
@@ -347,6 +349,13 @@ async def test_end_to_end_workflow_tracing(span_exporter: InMemorySpanExporter) 
 
     # Verify workflow span events
     workflow_span = workflow_spans[0]
+    assert workflow_span.parent is not None
+    assert workflow_span.parent.span_id == outer_span.get_span_context().span_id
+    assert workflow_span.context is not None
+    assert all(
+        processing_span.parent is not None and processing_span.parent.span_id == workflow_span.context.span_id
+        for processing_span in processing_spans
+    ), "Executor processing spans should be children of workflow.run"
     assert workflow_span.events is not None
     event_names = [event.name for event in workflow_span.events]
     assert "workflow.started" in event_names

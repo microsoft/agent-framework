@@ -19,7 +19,12 @@ from .._sessions import ContextProvider
 from .._tools import ToolTypes, normalize_tools
 from .._types import Content, ResponseStream
 from ..exceptions import WorkflowException
-from ..observability import OtelAttr, capture_exception, create_workflow_span
+from ..observability import (
+    OtelAttr,
+    _activate_span,  # pyright: ignore[reportPrivateUsage]
+    capture_exception,
+    start_workflow_span,
+)
 from ._checkpoint import CheckpointStorage
 from ._const import (
     DEFAULT_MAX_ITERATIONS,
@@ -405,6 +410,12 @@ class Workflow(DictConvertible):
         # so a subsequent ``run()`` is allowed.
         self._active_run: weakref.ref[ResponseStream[WorkflowEvent, WorkflowRunResult]] | None = None
 
+        # Run-scoped pause checkpoint bookkeeping (owned by Workflow, not callers).
+        # Captured at the start of each ``_run_core`` so ``resolve_pause_checkpoint_id``
+        # can tell a newly persisted pause from a leftover / restored id.
+        self._run_baseline_checkpoint_id: str | None = None
+        self._restored_checkpoint_id: str | None = None
+
     @property
     def status(self) -> WorkflowRunState:
         """Return the current run-level status of this workflow instance.
@@ -551,10 +562,8 @@ class Workflow(DictConvertible):
         if self.description:
             attributes[OtelAttr.WORKFLOW_DESCRIPTION] = self.description
 
-        with create_workflow_span(
-            OtelAttr.WORKFLOW_RUN_SPAN,
-            attributes,
-        ) as span:
+        span = start_workflow_span(OtelAttr.WORKFLOW_RUN_SPAN, attributes)
+        try:
             emitted_in_progress_pending = False
             try:
                 # Add workflow started event (telemetry + surface state to consumers)
@@ -620,10 +629,17 @@ class Workflow(DictConvertible):
 
                 # Execute initial setup if provided
                 if initial_executor_fn:
-                    await initial_executor_fn()
+                    with _activate_span(span):
+                        await initial_executor_fn()
 
-                # All executor executions happen within workflow span
-                async for event in self._runner.run_until_convergence():
+                # Activate the workflow span for each runner pull, then detach before yielding to callers.
+                runner_events = self._runner.run_until_convergence()
+                while True:
+                    with _activate_span(span):
+                        try:
+                            event = await anext(runner_events)
+                        except StopAsyncIteration:
+                            break
                     yield event
 
                     if event.type == "request_info" and not emitted_in_progress_pending:
@@ -671,6 +687,8 @@ class Workflow(DictConvertible):
                 )
                 capture_exception(span, exception=exc)
                 raise
+        finally:
+            span.end()
 
     async def _execute_with_message_or_checkpoint(
         self,
@@ -894,6 +912,12 @@ class Workflow(DictConvertible):
         # Enable runtime checkpointing if storage provided.
         if checkpoint_storage is not None:
             self._runner.context.set_runtime_checkpoint_storage(checkpoint_storage)
+
+        # Own the run boundary for pause-checkpoint resolution: capture the runner id
+        # before this run advances it, and remember an incoming restore so it is not
+        # re-advertised if a later pause save fails.
+        self._run_baseline_checkpoint_id = self.get_last_checkpoint_id()
+        self._restored_checkpoint_id = str(checkpoint_id) if checkpoint_id is not None else None
 
         try:
             # Async validation: a fresh-message run is only allowed when the
@@ -1295,6 +1319,93 @@ class Workflow(DictConvertible):
             output_types.update(workflow_output_types)
 
         return list(output_types)
+
+    def get_last_checkpoint_id(self) -> str | None:
+        """Return the checkpoint id last persisted or restored by this workflow runner."""
+        checkpoint_id = self._runner._previous_checkpoint_id  # pyright: ignore[reportPrivateUsage]
+        return str(checkpoint_id) if checkpoint_id is not None else None
+
+    async def resolve_pause_checkpoint_id(
+        self,
+        request_ids: Collection[str],
+        *,
+        checkpoint_storage: CheckpointStorage | None = None,
+        known_checkpoint_id: str | None = None,
+        baseline_checkpoint_id: str | None | object = _MISSING,
+    ) -> str | None:
+        """Resolve the persisted pause checkpoint that covers ``request_ids``.
+
+        Prefers this runner's last-saved id when it advanced past the run baseline
+        (captured automatically at ``run()`` start), over shared ``get_latest(workflow_name=...)``.
+        Storage precedence is the run argument, else the runner's effective
+        (runtime / builder) storage. When storage is available, candidates are accepted
+        only if their ``pending_request_info_events`` cover ``request_ids``.
+
+        An incoming restored checkpoint id is excluded so a failed pause save after
+        resume cannot re-advertise pre-response state.
+
+        Args:
+            request_ids: Pending request_info ids that must be present on the checkpoint.
+            checkpoint_storage: Optional storage override for this lookup.
+            known_checkpoint_id: Fallback id (for example a cold-resume short-circuit).
+            baseline_checkpoint_id: Optional override for the pre-run runner id. When omitted,
+                uses the baseline captured by the most recent ``run()``. Pass ``None``
+                explicitly to treat any current runner id as newly advanced.
+
+        Returns:
+            A checkpoint id suitable for durable resume, or ``None`` when none is safe.
+        """
+        ids = {str(request_id) for request_id in request_ids if request_id}
+        if not ids:
+            return None
+
+        if baseline_checkpoint_id is _MISSING:
+            baseline_checkpoint_id = self._run_baseline_checkpoint_id
+
+        # Prefer explicit storage; otherwise load via public RunnerContext APIs
+        # (Protocol has no private `_get_effective_checkpoint_storage`).
+        storage = checkpoint_storage
+        use_context_storage = storage is None and self._runner.context.has_checkpointing()
+
+        current = self.get_last_checkpoint_id()
+        excluded: set[str] = set()
+        if self._restored_checkpoint_id is not None:
+            excluded.add(self._restored_checkpoint_id)
+
+        # Run-scoped: do not advertise a pre-run leftover when this run did not persist.
+        runner_candidate: str | None = None
+        if current is not None and current != baseline_checkpoint_id and current not in excluded:
+            runner_candidate = current
+
+        candidates: list[str] = []
+        if runner_candidate is not None:
+            candidates.append(runner_candidate)
+        if (
+            known_checkpoint_id is not None
+            and known_checkpoint_id not in candidates
+            and known_checkpoint_id not in excluded
+        ):
+            candidates.append(str(known_checkpoint_id))
+
+        if storage is None and not use_context_storage:
+            # Without storage we cannot prove coverage; only advertise a run-scoped runner id.
+            return runner_candidate
+
+        for candidate in candidates:
+            try:
+                if storage is not None:
+                    checkpoint = await storage.load(candidate)
+                else:
+                    checkpoint = await self._runner.context.load_checkpoint(candidate)
+            except Exception:  # pragma: no cover - storage/type drift
+                logger.debug("Could not load pause checkpoint candidate %s", candidate, exc_info=True)
+                continue
+            if checkpoint is None:
+                continue
+            pending = checkpoint.pending_request_info_events or {}
+            if ids.issubset({str(key) for key in dict(pending)}):
+                return candidate
+        return None
 
     async def cancel_pending_requests(
         self,

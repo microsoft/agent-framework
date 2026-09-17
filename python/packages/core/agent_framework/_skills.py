@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import inspect
 import io
 import json
@@ -55,13 +56,16 @@ import re
 import time
 import zipfile
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import timedelta
 from enum import Enum
 from html import escape as xml_escape
 from pathlib import Path, PurePosixPath
 from typing import IO, TYPE_CHECKING, Any, ClassVar, Final, Protocol, TypeAlias, TypeVar, cast, runtime_checkable
+
+import yaml
+from yaml.nodes import MappingNode, Node, ScalarNode
 
 from ._feature_stage import ExperimentalFeature, experimental
 from ._filesystem import _is_link_or_reparse_point  # pyright: ignore[reportPrivateUsage]
@@ -75,6 +79,7 @@ if TYPE_CHECKING:
     from pydantic import AnyUrl
 
     from ._agents import SupportsAgentRun
+    from ._middleware import FunctionInvocationContext
     from ._sessions import AgentSession, SessionContext
     from ._types import Content
 
@@ -699,7 +704,9 @@ class SkillFrontmatter:
         compatibility: Optional compatibility information (≤500 characters).
         allowed_tools: Optional space-delimited pre-approved tool names.
         metadata: Optional arbitrary key-value pairs (shallow-copied on
-            construction to avoid caller-owned dict aliasing).
+            construction to avoid caller-owned dict aliasing). Keys are case-sensitive.
+            When parsed from a SKILL.md file, invalid entries are skipped with warnings,
+            and exact duplicate keys retain the first valid value with warnings.
     """
 
     def __init__(
@@ -1747,125 +1754,29 @@ DEFAULT_SEARCH_DEPTH: Final[int] = 2
 # Matches YAML frontmatter delimited by "---" lines.
 # The \uFEFF? prefix allows an optional UTF-8 BOM.
 FRONTMATTER_RE = re.compile(
-    r"\A\uFEFF?---\s*$(.+?)^---\s*$",
+    r"\A\uFEFF?---[ \t]*\r?\n(.*?)^---[ \t]*\r?$",
     re.MULTILINE | re.DOTALL,
 )
 
-# Matches top-level YAML "key: value" lines (unindented). Group 1 = key,
-# Group 2 = quoted value, Group 3 = unquoted value. Only matches keys at
-# column 0 so that indented children (e.g. under "metadata:") are not
-# mistakenly captured as top-level fields.
-YAML_KV_RE = re.compile(
-    r"^([\w-]+)\s*:\s*(?:[\"'](.+?)[\"']|(.+?))\s*$",
-    re.MULTILINE,
-)
+FRONTMATTER_FIELD_NAMES = {
+    "name": "name",
+    "description": "description",
+    "license": "license",
+    "compatibility": "compatibility",
+    "metadata": "metadata",
+    "allowed-tools": "allowed-tools",
+}
 
-# Matches a YAML "metadata:" block followed by indented key-value pairs.
-YAML_METADATA_BLOCK_RE = re.compile(
-    r"^metadata\s*:\s*$\n((?:[ \t]+\S.*\n?)+)",
-    re.MULTILINE,
-)
-
-# Matches indented "key: value" lines within a metadata block.
-YAML_INDENTED_KV_RE = re.compile(
-    r"^\s+([\w-]+)\s*:\s*(?:[\"'](.+?)[\"']|(.+?))\s*$",
-    re.MULTILINE,
-)
+_YAML_TEXT_SCALAR_TAGS = frozenset(f"tag:yaml.org,2002:{kind}" for kind in ("str", "bool", "int", "float", "timestamp"))
 
 # Validates skill names: lowercase letters, numbers, hyphens only;
 # must not start or end with a hyphen, and must not contain consecutive hyphens.
 VALID_NAME_RE = re.compile(r"^[a-z0-9]([a-z0-9]*-[a-z0-9])*[a-z0-9]*$")
 
-# Block scalar indicator characters recognised by the lightweight YAML parser.
-_BLOCK_SCALAR_INDICATORS = ("|", ">")
 
-
-def _parse_yaml_scalar_value(yaml_content: str, kv_match: re.Match[str]) -> str:
-    """Resolve the scalar value for an unquoted YAML key-value match.
-
-    If the captured value starts with a YAML block scalar indicator (``|`` or
-    ``>``), the function reads subsequent indented continuation lines, strips
-    the common leading indentation, and joins them according to the scalar
-    style (literal preserves newlines, folded replaces them with spaces).
-
-    Chomping indicators are respected per YAML 1.2 §8.1.1.2:
-
-    * ``-`` (strip) — final line break and trailing empty lines excluded
-    * ``+`` (keep) — final line break and any trailing empty lines preserved
-    * default (clip) — final line break preserved, trailing empty lines excluded
-
-    For plain (non-block-scalar) values the captured text is returned as-is.
-    Note: explicit indentation indicators (e.g. ``|2``) are not supported;
-    indentation is auto-detected from the common leading whitespace.
-    """
-    value: str = kv_match.group(3)
-
-    if not value or value[0] not in _BLOCK_SCALAR_INDICATORS:
-        return value
-
-    scalar_style = value[0]
-    keep_trailing_newline = len(value) > 1 and value[1] == "+"
-    strip_trailing_newline = len(value) > 1 and value[1] == "-"
-
-    # Find the start of the next line after this key-value match.
-    next_line_start = yaml_content.find("\n", kv_match.end())
-    if next_line_start < 0:
-        return value
-    next_line_start += 1  # skip the newline character itself
-
-    # Collect indented continuation lines (or blank lines within the block).
-    block_lines: list[str] = []
-    pos = next_line_start
-    while pos < len(yaml_content):
-        line_end = yaml_content.find("\n", pos)
-        if line_end < 0:
-            line = yaml_content[pos:]
-            line_end = len(yaml_content)
-        else:
-            line = yaml_content[pos:line_end]
-
-        if not line or line.isspace():
-            # Blank / whitespace-only lines are part of the block.
-            block_lines.append("")
-            pos = line_end + 1 if line_end < len(yaml_content) else line_end
-            continue
-
-        if line[0] not in (" ", "\t"):
-            # Non-indented, non-blank line — end of the block.
-            break
-
-        block_lines.append(line)
-        pos = line_end + 1 if line_end < len(yaml_content) else line_end
-
-    # Strip trailing blank lines collected from the block.
-    while block_lines and block_lines[-1] == "":
-        block_lines.pop()
-
-    if not block_lines:
-        return ""
-
-    # Determine the common leading indentation across non-empty lines.
-    # Only space/tab characters count as indentation (matches YAML semantics).
-    def _indent_width(s: str) -> int:
-        i = 0
-        while i < len(s) and s[i] in (" ", "\t"):
-            i += 1
-        return i
-
-    common_indent = min(_indent_width(line) for line in block_lines if line)
-    normalized = [line[common_indent:] if line else "" for line in block_lines]
-
-    # Literal preserves newlines; folded joins non-empty lines with spaces.
-    parsed = "\n".join(normalized) if scalar_style == "|" else " ".join(line for line in normalized if line)
-
-    if keep_trailing_newline:
-        return parsed + "\n"
-    if strip_trailing_newline:
-        return parsed
-    # Clip (default): literal gets a trailing newline, folded does not.
-    if scalar_style == "|":
-        return parsed + "\n"
-    return parsed
+def _contains_surrogate_code_points(value: str) -> bool:
+    """Detect surrogate escapes that PyYAML accepts but UTF-8 cannot encode."""
+    return any("\ud800" <= char <= "\udfff" for char in value)
 
 
 # Default system prompt template for advertising available skills to the model.
@@ -2549,13 +2460,52 @@ class SkillsProvider(ContextProvider):
         async def _load(skill_name: str) -> str:
             return await self._load_skill(skills, skill_name)
 
-        async def _read_resource(skill_name: str, resource_name: str, **kwargs: Any) -> Any:
-            return await self._read_skill_resource(skills, skill_name, resource_name, **kwargs)
+        # The runtime kwargs these handlers forward come from the host's
+        # ``agent.run(function_invocation_kwargs=...)``, never from the model. Two
+        # things keep the channels apart at this seam, and both are required.
+        #
+        # First, declaring ``ctx`` opts the handler into FunctionInvocationContext
+        # injection; without it the function-invocation layer has nowhere to put the
+        # host values and silently drops them. Second, the handlers take no ``**kwargs``
+        # and the outer schemas below set ``additionalProperties: False``, so an
+        # undeclared top-level argument returned by the model is rejected during
+        # validation instead of binding into the runtime namespace.
+        #
+        # ``ctx`` is injected by name and is absent from the advertised schema, so it is
+        # never something the model can supply or override.
+        #
+        # This guarantee covers ``ctx.kwargs``, not everything a skill callback ends up
+        # seeing. ``args`` stays deliberately free-form because scripts declare their own
+        # parameters, and :meth:`InlineSkillScript.run` expands it alongside these runtime
+        # kwargs, so a script's ``**kwargs`` can also hold model-supplied entries that are
+        # not declared parameters. Resources take no model arguments, so a resource's
+        # ``**kwargs`` is runtime-only. Do not treat a name appearing in a script's
+        # ``**kwargs`` as proof the host supplied it.
+        async def _read_resource(
+            ctx: FunctionInvocationContext,
+            skill_name: str,
+            resource_name: str,
+        ) -> Any:
+            return await self._read_skill_resource(
+                skills,
+                skill_name,
+                resource_name,
+                runtime_kwargs=ctx.kwargs,
+            )
 
         async def _run_script(
-            skill_name: str, script_name: str, args: dict[str, Any] | list[str] | None = None, **kwargs: Any
+            ctx: FunctionInvocationContext,
+            skill_name: str,
+            script_name: str,
+            args: dict[str, Any] | list[str] | None = None,
         ) -> Any:
-            return await self._run_skill_script(skills, skill_name, script_name, args, **kwargs)
+            return await self._run_skill_script(
+                skills,
+                skill_name,
+                script_name,
+                args,
+                runtime_kwargs=ctx.kwargs,
+            )
 
         return [
             FunctionTool(
@@ -2569,6 +2519,7 @@ class SkillsProvider(ContextProvider):
                         "skill_name": {"type": "string", "description": "The name of the skill to load."},
                     },
                     "required": ["skill_name"],
+                    "additionalProperties": False,
                 },
             ),
             FunctionTool(
@@ -2586,6 +2537,7 @@ class SkillsProvider(ContextProvider):
                         },
                     },
                     "required": ["skill_name", "resource_name"],
+                    "additionalProperties": False,
                 },
             ),
             FunctionTool(
@@ -2637,6 +2589,9 @@ class SkillsProvider(ContextProvider):
                         },
                     },
                     "required": ["skill_name", "script_name"],
+                    # Scripts declare their own parameters, so the nested ``args`` object
+                    # above stays free-form; only the outer envelope is closed.
+                    "additionalProperties": False,
                 },
             ),
         ]
@@ -2678,7 +2633,8 @@ class SkillsProvider(ContextProvider):
         skill_name: str,
         script_name: str,
         args: dict[str, Any] | list[str] | None = None,
-        **kwargs: Any,
+        *,
+        runtime_kwargs: Mapping[str, Any] | None = None,
     ) -> Any:
         """Run a named script from a skill.
 
@@ -2691,9 +2647,19 @@ class SkillsProvider(ContextProvider):
             script_name: The script name to look up (case-insensitive).
             args: Optional arguments for the script, provided by the
                 agent/LLM.
-            **kwargs: Runtime keyword arguments forwarded only to script
-                functions that accept ``**kwargs`` (e.g. arguments passed via
-                ``agent.run(user_id="123")``).
+            runtime_kwargs: Runtime keyword arguments forwarded only to script
+                functions that accept ``**kwargs``. This parameter carries host
+                request context supplied via
+                ``agent.run(..., function_invocation_kwargs={"user_id": "123"})``
+                and delivered through :class:`FunctionInvocationContext`; it is
+                never sourced from model-supplied tool arguments. Note that the
+                receiving script's own ``**kwargs`` is not runtime-only: these
+                values are expanded alongside any undeclared entries in *args*,
+                which the model supplies. Taking these as one mapping keeps this
+                helper's own parameter names (``skills``, ``skill_name``,
+                ``script_name``, ``args``) usable as runtime kwarg names; the
+                public :meth:`SkillScript.run` signature still expands them, so
+                ``skill`` and ``args`` remain reserved at that boundary.
 
         Returns:
             The script result. Returns a user-facing error string for
@@ -2719,13 +2685,18 @@ class SkillsProvider(ContextProvider):
             return f"Error: Script '{script_name}' not found in skill '{skill_name}'."
 
         try:
-            return await script.run(skill, args, **kwargs)
+            return await script.run(skill, args, **(runtime_kwargs or {}))
         except Exception:
             logger.exception("Error running script '%s' in skill '%s'", script_name, skill_name)
             raise
 
     async def _read_skill_resource(
-        self, skills: Sequence[Skill], skill_name: str, resource_name: str, **kwargs: Any
+        self,
+        skills: Sequence[Skill],
+        skill_name: str,
+        resource_name: str,
+        *,
+        runtime_kwargs: Mapping[str, Any] | None = None,
     ) -> Any:
         """Read a named resource from a skill.
 
@@ -2737,9 +2708,12 @@ class SkillsProvider(ContextProvider):
             skills: The skills to look up the skill from.
             skill_name: The name of the owning skill.
             resource_name: The resource name to look up (case-insensitive).
-            **kwargs: Runtime keyword arguments forwarded to resource functions
-                that accept ``**kwargs`` (e.g. arguments passed via
-                ``agent.run(user_id="123")``).
+            runtime_kwargs: Runtime keyword arguments forwarded to resource functions
+                that accept ``**kwargs``. These carry host request context
+                supplied via
+                ``agent.run(..., function_invocation_kwargs={"user_id": "123"})``
+                and delivered through :class:`FunctionInvocationContext`; they are
+                never sourced from model-supplied tool arguments.
 
         Returns:
             The resource content (any type). Returns a user-facing error
@@ -2768,7 +2742,7 @@ class SkillsProvider(ContextProvider):
             return f"Error: Resource '{resource_name}' not found in skill '{skill_name}'."
 
         try:
-            return await resource.read(**kwargs)
+            return await resource.read(**(runtime_kwargs or {}))
         except Exception:
             logger.exception("Failed to read resource '%s' from skill '%s'", resource_name, skill_name)
             raise
@@ -3536,6 +3510,58 @@ class FileSkillsSource(SkillsSource):
         return None
 
     @staticmethod
+    def _extract_frontmatter_metadata(node: Node | None, skill_file_path: str) -> dict[str, str] | None:
+        """Read optional metadata without rejecting a skill for invalid entries."""
+        # Missing metadata, an empty declaration, or an explicit YAML null leaves metadata unset.
+        if node is None or (isinstance(node, ScalarNode) and node.tag == "tag:yaml.org,2002:null"):
+            return None
+
+        # Metadata must be a standard YAML mapping; otherwise warn and ignore it without rejecting the skill.
+        if not isinstance(node, MappingNode) or node.tag != "tag:yaml.org,2002:map":
+            logger.warning("SKILL.md at '%s' has invalid metadata; expected a mapping", skill_file_path)
+            return None
+
+        metadata: dict[str, str] = {}
+
+        for key_node, value_node in node.value:
+            # Accept scalar keys as text, but reject collections, nulls, and unsupported YAML types.
+            if (
+                not isinstance(key_node, ScalarNode)
+                or key_node.tag not in _YAML_TEXT_SCALAR_TAGS
+                or _contains_surrogate_code_points(key_node.value)
+            ):
+                logger.warning("SKILL.md at '%s' has an invalid metadata key; skipping entry", skill_file_path)
+                continue
+
+            key = key_node.value
+            # Keep the first valid value for each exact, case-sensitive key; warn about later duplicates.
+            if key in metadata:
+                logger.warning(
+                    "SKILL.md at '%s' contains duplicate metadata key '%s'; keeping the first value",
+                    skill_file_path,
+                    key,
+                )
+                continue
+
+            # The Agent Skills spec requires string-to-string metadata, not arrays or nested mappings.
+            # Keep supported scalars as text; warn and skip invalid values rather than rejecting the skill.
+            if (
+                not isinstance(value_node, ScalarNode)
+                or value_node.tag not in _YAML_TEXT_SCALAR_TAGS
+                or _contains_surrogate_code_points(value_node.value)
+            ):
+                logger.warning(
+                    "SKILL.md at '%s' has an invalid metadata value for '%s'; expected a text scalar; skipping entry",
+                    skill_file_path,
+                    key,
+                )
+                continue
+
+            metadata[key] = value_node.value
+
+        return metadata
+
+    @staticmethod
     def _extract_frontmatter(
         content: str,
         skill_file_path: str,
@@ -3545,7 +3571,13 @@ class FileSkillsSource(SkillsSource):
         Parses the ``---``-delimited frontmatter block for all
         `agentskills.io specification <https://agentskills.io/specification>`_
         fields: ``name``, ``description``, ``license``, ``compatibility``,
-        ``allowed-tools``, and ``metadata``.
+        ``allowed-tools``, and ``metadata``. Recognized top-level fields must
+        use lowercase names and must not be repeated, including equivalent quoted
+        or escaped spellings. YAML scalars are retained as text; null root values
+        remain unset. Within the optional metadata mapping, keys are case-sensitive;
+        exact duplicates retain the first valid value and produce warnings.
+        Invalid metadata entries are skipped with warnings. Invalid YAML syntax
+        or invalid recognized root fields reject the skill.
 
         Args:
             content: Raw text content of the SKILL.md file.
@@ -3560,41 +3592,81 @@ class FileSkillsSource(SkillsSource):
             logger.error("SKILL.md at '%s' does not contain valid YAML frontmatter delimited by '---'", skill_file_path)
             return None
 
-        yaml_content = match.group(1).strip()
-        name: str | None = None
-        description: str | None = None
-        license_value: str | None = None
-        compatibility: str | None = None
-        allowed_tools: str | None = None
+        try:
+            # compose() keeps duplicate keys, unlike safe_load(), which silently keeps only the last value.
+            # The Pyright ignores are needed because PyYAML's type definitions do not fully describe compose().
+            root = yaml.compose(match.group(1), Loader=yaml.SafeLoader)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        except (yaml.YAMLError, RecursionError, ValueError, OverflowError) as exc:
+            # PyYAML raises ValueError or OverflowError for Unicode escapes outside the valid code-point range.
+            logger.error("SKILL.md at '%s' contains invalid YAML frontmatter: %s", skill_file_path, exc)
+            return None
 
-        for kv_match in YAML_KV_RE.finditer(yaml_content):
-            key = kv_match.group(1)
-            value = (
-                kv_match.group(2) if kv_match.group(2) is not None else _parse_yaml_scalar_value(yaml_content, kv_match)
-            )
+        if not isinstance(root, MappingNode) or root.tag != "tag:yaml.org,2002:map":
+            logger.error("SKILL.md at '%s' must contain a YAML frontmatter mapping", skill_file_path)
+            return None
 
-            key_lower = key.lower()
-            if key_lower == "name":
-                name = value
-            elif key_lower == "description":
-                description = value
-            elif key_lower == "license":
-                license_value = value
-            elif key_lower == "compatibility":
-                compatibility = value
-            elif key_lower == "allowed-tools":
-                allowed_tools = value
+        fields: dict[str, str] = {}
+        metadata_node: Node | None = None
+        seen_fields: set[str] = set()
 
-        # Parse metadata block (indented key-value pairs under "metadata:").
-        metadata: dict[str, str] | None = None
-        metadata_match = YAML_METADATA_BLOCK_RE.search(yaml_content)
-        if metadata_match:
-            metadata = {}
-            for kv_match in YAML_INDENTED_KV_RE.finditer(metadata_match.group(1)):
-                mk = kv_match.group(1)
-                mv = kv_match.group(2) if kv_match.group(2) is not None else kv_match.group(3)
-                metadata[mk] = mv
+        for key_node, value_node in root.value:
+            # Accept scalar keys as text, but reject collections, nulls, and unsupported YAML types.
+            if (
+                not isinstance(key_node, ScalarNode)
+                or key_node.tag not in _YAML_TEXT_SCALAR_TAGS
+                or _contains_surrogate_code_points(key_node.value)
+            ):
+                logger.error("SKILL.md at '%s' has an invalid frontmatter property name", skill_file_path)
+                return None
 
+            key = key_node.value
+            canonical_key = FRONTMATTER_FIELD_NAMES.get(key.lower())
+
+            # Unknown fields are intentionally excluded from this validation for forward compatibility.
+            if canonical_key is None:
+                continue
+
+            if key != canonical_key:
+                logger.error(
+                    "SKILL.md at '%s' uses incorrectly cased frontmatter field '%s'; expected '%s'",
+                    skill_file_path,
+                    key,
+                    canonical_key,
+                )
+                return None
+
+            if key in seen_fields:
+                logger.error("SKILL.md at '%s' contains duplicate frontmatter field '%s'", skill_file_path, key)
+                return None
+
+            seen_fields.add(key)
+
+            if key == "metadata":
+                metadata_node = value_node
+                continue
+
+            # Leave empty declarations and explicit YAML nulls unset; required fields are validated below.
+            if isinstance(value_node, ScalarNode) and value_node.tag == "tag:yaml.org,2002:null":
+                continue
+
+            # Reject lists, mappings, and unsupported YAML types because these fields are stored as text.
+            if (
+                not isinstance(value_node, ScalarNode)
+                or value_node.tag not in _YAML_TEXT_SCALAR_TAGS
+                or _contains_surrogate_code_points(value_node.value)
+            ):
+                logger.error(
+                    "SKILL.md at '%s' has an invalid '%s' value; expected a text scalar",
+                    skill_file_path,
+                    key,
+                )
+                return None
+
+            fields[key] = value_node.value
+
+        name = fields.get("name")
+        description = fields.get("description")
+        compatibility = fields.get("compatibility")
         error = FileSkillsSource._validate_skill_metadata(name, description, skill_file_path, compatibility)
         if error:
             logger.error(error)
@@ -3605,10 +3677,10 @@ class FileSkillsSource(SkillsSource):
         return SkillFrontmatter(
             name=cast(str, name),
             description=cast(str, description),
-            license=license_value,
+            license=fields.get("license"),
             compatibility=compatibility,
-            allowed_tools=allowed_tools,
-            metadata=metadata,
+            allowed_tools=fields.get("allowed-tools"),
+            metadata=FileSkillsSource._extract_frontmatter_metadata(metadata_node, skill_file_path),
         )
 
     @staticmethod
@@ -4682,6 +4754,8 @@ class _ArchiveEntryLoader:
 
     Extraction is hardened against path-traversal ("zip-slip") member names,
     oversized downloads, excessive file counts, and decompression bombs.
+    Supplied SHA-256 digests are verified before extraction; archives without
+    a digest remain supported.
     """
 
     def __init__(
@@ -4758,7 +4832,8 @@ class _ArchiveEntryLoader:
 
         Returns:
             A ``(data, mime_type)`` tuple, or ``None`` when the resource is not found,
-            contains no binary content, is empty, or exceeds the configured size limit.
+            contains no binary content, is empty, exceeds the configured size limit,
+            or has an invalid or mismatched digest.
 
         Raises:
             Exception: Any error other than a "resource not found" MCP error raised
@@ -4791,7 +4866,27 @@ class _ArchiveEntryLoader:
             )
             return None
 
+        if entry.digest is not None and not self._verify_digest(entry, data):
+            return None
+
         return data, mime_type
+
+    @staticmethod
+    def _verify_digest(entry: _McpSkillIndexEntry, data: bytes) -> bool:
+        """Verify a supplied digest against decoded archive bytes, before extraction."""
+        digest = entry.digest
+        if not isinstance(digest, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None:
+            logger.warning(
+                "Skipping skill '%s': archive digest must be 'sha256:' followed by 64 lowercase hexadecimal characters",
+                entry.name,
+            )
+            return False
+
+        if hashlib.sha256(data).hexdigest() != digest[7:]:
+            logger.warning("Skipping skill '%s': archive digest does not match downloaded content", entry.name)
+            return False
+
+        return True
 
     def _build_skill(self, entry: _McpSkillIndexEntry, data: bytes, mime_type: str | None) -> FileSkill | None:
         """Detect the format of and unpack one archive entry into an in-memory :class:`FileSkill`.
@@ -4944,6 +5039,16 @@ class MCPSkillsSource(SkillsSource):
     already provides refresh/caching for any source, this source does not offer
     a separate refresh interval; wrap it in :class:`CachingSkillsSource` to cache.
 
+    Archive digests:
+        An archive entry's non-null ``digest`` must be ``sha256:`` followed by
+        64 lowercase hexadecimal characters. It is verified against the decoded
+        archive bytes before extraction. Invalid, unsupported, or mismatched
+        digests cause a warning and the archive is skipped; other entries remain
+        available. A cache refresh therefore replaces its list without rejected
+        archives. Omitted or null digests remain allowed. This verification
+        applies only to ``archive`` entries, not lazily fetched ``skill-md``
+        entries or their supporting resources.
+
     Security considerations:
         Discovering skills over MCP means an *external* MCP server controls
         what skill content (including instructions and, for script-capable
@@ -4957,7 +5062,9 @@ class MCPSkillsSource(SkillsSource):
         servers you have vetted and trust, and treat their responses as
         untrusted input. Archive extraction is hardened against path-traversal
         ("zip-slip") and decompression bombs, but the skill *content* is still
-        untrusted.
+        untrusted. A matching digest proves consistency with the index, not
+        trustworthiness: a server controlling both the index and archive can
+        replace both, or omit the digest.
 
     Examples:
         .. code-block:: python
