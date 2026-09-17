@@ -3134,7 +3134,7 @@ def _stage_pending_mixed_pause_responses(
 def _stateless_mixed_pause_batch_status(
     messages: list[Message],
 ) -> tuple[bool, set[int]]:
-    """Validate the latest unresolved stateless mixed batch and order its responses."""
+    """Validate the latest unresolved stateless mixed batch and identify Host results."""
     from ._types import Message
 
     flattened_contents = [content for message in messages for content in message.contents]
@@ -3203,35 +3203,43 @@ def _stateless_mixed_pause_batch_status(
             batch_items.append({"kind": kind, "request": content.to_dict()})
     finish_current_batch()
 
+    claimed_response_ids: set[int] = set()
+    matched_host_result_ids: set[int] = set()
     for batch_end, items, kinds in reversed(request_batches):
-        if kinds != {"approval", "host"}:
-            continue
         responses = [
             content
             for content in flattened_contents[batch_end + 1 :]
             if content.type in {"function_approval_response", "function_result"}
+            and id(content) not in claimed_response_ids
         ]
-        matched_response_ids, incomplete, ordered_responses, host_result_ids = _match_mixed_pause_responses(
+        matched_response_ids, incomplete, ordered_responses, ordered_host_result_ids = _match_mixed_pause_responses(
             items,
             responses,
         )
+        claimed_response_ids.update(matched_response_ids)
+        original_host_result_ids = {
+            id(content)
+            for content in responses
+            if content.type == "function_result" and id(content) in matched_response_ids
+        }
+        matched_host_result_ids.update(original_host_result_ids)
+        if kinds != {"approval", "host"}:
+            continue
         if incomplete:
-            return True, host_result_ids
+            return True, matched_host_result_ids
 
         pending_approval_response_ids = {
             id(response)
             for response in _collect_approval_responses(
                 messages,
-                non_approval_result_ids={
-                    id(content)
-                    for content in responses
-                    if content.type == "function_result" and id(content) in matched_response_ids
-                },
+                non_approval_result_ids=matched_host_result_ids,
             ).values()
         }
         if matched_response_ids.isdisjoint(pending_approval_response_ids):
             continue
 
+        matched_host_result_ids.difference_update(original_host_result_ids)
+        matched_host_result_ids.update(ordered_host_result_ids)
         filtered_messages: list[Message] = []
         for message in messages:
             message.contents = [content for content in message.contents if id(content) not in matched_response_ids]
@@ -3239,8 +3247,8 @@ def _stateless_mixed_pause_batch_status(
                 filtered_messages.append(message)
         filtered_messages.append(Message(role="user", contents=ordered_responses))
         messages[:] = filtered_messages
-        return False, host_result_ids
-    return False, set()
+        return False, matched_host_result_ids
+    return False, matched_host_result_ids
 
 
 def _collect_approval_responses(
