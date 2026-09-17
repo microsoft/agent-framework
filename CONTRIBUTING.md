@@ -83,7 +83,9 @@ in the job summary. The experimental `agent-framework-lab` package is excluded. 
 workflow checks out only trusted base-branch code, fetches GitHub's synthetic merge commit
 without checking it out, and statically parses its Python source from a temporary directory
 without importing it. This supports fork pull requests while keeping the comparison current
-when a pull request branch is behind `main`.
+when a pull request branch is behind `main`. If GitHub has not produced a current synthetic
+merge ref—typically while the pull request has merge conflicts—the advisory comparison is
+skipped and reruns when the pull request is updated.
 
 Only APIs from packages marked `released` in `python/PACKAGE_STATUS.md` are checked.
 Prerelease packages and APIs marked with `@experimental` or `@release_candidate`—including

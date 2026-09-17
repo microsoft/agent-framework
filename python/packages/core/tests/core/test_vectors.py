@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import base64
 import warnings
 from collections.abc import AsyncIterable, Callable, Iterator, Mapping, Sequence
 from copy import deepcopy
@@ -9,6 +11,7 @@ from dataclasses import FrozenInstanceError, dataclass, field
 from decimal import Decimal
 from typing import Annotated, Any, ClassVar, Literal, cast
 from unittest.mock import patch
+from uuid import UUID, uuid4
 
 import msgspec
 import pytest
@@ -18,6 +21,7 @@ from typing_extensions import TypeVar
 
 from agent_framework import (
     DISTANCE_FUNCTION_DIRECTION_HELPER,
+    AgentSession,
     BaseEmbeddingClient,
     BaseVectorCollection,
     BaseVectorSearch,
@@ -32,14 +36,23 @@ from agent_framework import (
     FilterGroup,
     GeneratedEmbeddings,
     IndexKind,
+    InMemoryCollection,
+    InMemoryStore,
+    Message,
     Param,
     SearchResponse,
     SearchResults,
     SearchType,
+    SessionContext,
     SupportsVectorSearch,
     SupportsVectorUpsert,
+    VectorCollectionContextProvider,
     VectorStoreCollectionDefinition,
     VectorStoreField,
+    VectorStoreHistoryProvider,
+    create_delete_tool,
+    create_get_tool,
+    create_upsert_tool,
     create_vector_search_tool,
     register_vectorstoremodel,
     vectorstoremodel,
@@ -283,6 +296,11 @@ def test_vector_apis_are_marked_experimental() -> None:
         BaseVectorStore,
         BaseVectorSearch,
         register_vectorstoremodel,
+        create_upsert_tool,
+        create_get_tool,
+        create_delete_tool,
+        VectorStoreHistoryProvider,
+        VectorCollectionContextProvider,
     )
     for api in staged_apis:
         assert getattr(api, "__feature_stage__", None) == "experimental"
@@ -2529,3 +2547,606 @@ async def test_runtime_operations_mark_vector_store_feature_usage() -> None:
         mark_feature_used_mock.reset_mock()
         await collection.search(vector=[1.0, 0.0])
         mark_feature_used_mock.assert_called_once_with(FeatureIndex.CORE_VECTOR_STORES)
+
+
+async def test_vector_crud_tools_round_trip_records() -> None:
+    collection = MockCollection()
+    upsert_tool = create_upsert_tool(collection, generate_vectors=False)
+    get_tool = create_get_tool(collection)
+    delete_tool = create_delete_tool(collection)
+
+    assert upsert_tool.approval_mode == "always_require"
+    assert get_tool.approval_mode == "never_require"
+    assert delete_tool.approval_mode == "always_require"
+    record_schema = upsert_tool.parameters()["properties"]["records"]["items"]
+    assert record_schema["required"] == ["id", "text"]
+    assert set(record_schema["properties"]) == {"id", "text", "vector"}
+    assert upsert_tool.parameters()["properties"]["records"]["maxItems"] == 100
+
+    upserted = await upsert_tool.invoke(
+        arguments={"records": [{"id": "one", "text": "first", "vector": [1.0, 0.0]}]},
+        skip_parsing=True,
+    )
+    assert upserted == {"keys": ["one"]}
+
+    fetched = await get_tool.invoke(arguments={"keys": ["one"]}, skip_parsing=True)
+    assert fetched == {"records": [{"id": "one", "text": "first"}]}
+
+    mapped_get_tool = create_get_tool(collection, result_mapper=lambda record: f"{record.id}: {record.text}")
+    mapped = await mapped_get_tool.invoke(arguments={"keys": ["one"]}, skip_parsing=True)
+    assert [content.text for content in mapped] == ["one: first"]
+
+    deleted = await delete_tool.invoke(arguments={"keys": ["one"]}, skip_parsing=True)
+    assert deleted == {"processed_keys": ["one"]}
+    assert await get_tool.invoke(arguments={"keys": ["one"]}, skip_parsing=True) == {"records": []}
+
+
+async def test_vector_crud_tools_support_auto_generated_keys_when_model_can_omit_them() -> None:
+    definition = VectorStoreCollectionDefinition(
+        [
+            VectorStoreField("key", name="id", type_="str", is_auto_generated=True),
+            VectorStoreField("data", name="text", type_="str"),
+        ],
+        collection_name="auto_dict",
+    )
+    collection: InMemoryCollection[str, dict[str, Any]] = InMemoryCollection(dict, definition=definition)
+    await collection.ensure_collection_exists()
+    upsert_tool = create_upsert_tool(collection, generate_vectors=False)
+
+    record_schema = upsert_tool.parameters()["properties"]["records"]["items"]
+    assert record_schema["properties"]["id"] == {"type": "string"}
+    assert record_schema["required"] == ["text"]
+
+    result = await upsert_tool.invoke(arguments={"records": [{"text": "generated"}]}, skip_parsing=True)
+    assert len(result["keys"]) == 1
+    assert isinstance(result["keys"][0], str)
+
+
+def test_vector_upsert_tool_requires_auto_key_when_typed_model_has_no_default() -> None:
+    @vectorstoremodel(collection_name="required_auto_key")
+    @dataclass
+    class RequiredAutoKey:
+        id: Annotated[str, VectorStoreField("key", is_auto_generated=True)]
+        text: Annotated[str, VectorStoreField("data")]
+
+    collection: InMemoryCollection[str, RequiredAutoKey] = InMemoryCollection(RequiredAutoKey)
+
+    record_schema = create_upsert_tool(collection).parameters()["properties"]["records"]["items"]
+
+    assert record_schema["required"] == ["id", "text"]
+
+
+async def test_vector_upsert_tool_omits_auto_key_when_typed_model_has_default() -> None:
+    @vectorstoremodel(collection_name="default_auto_key")
+    @dataclass
+    class DefaultAutoKey:
+        text: Annotated[str, VectorStoreField("data")]
+        id: Annotated[str | None, VectorStoreField("key", is_auto_generated=True)] = None
+
+    collection: InMemoryCollection[str, DefaultAutoKey] = InMemoryCollection(DefaultAutoKey)
+    await collection.ensure_collection_exists()
+    tool = create_upsert_tool(collection, generate_vectors=False)
+
+    record_schema = tool.parameters()["properties"]["records"]["items"]
+    result = await tool.invoke(arguments={"records": [{"text": "generated"}]}, skip_parsing=True)
+
+    assert record_schema["required"] == ["text"]
+    assert len(result["keys"]) == 1
+
+
+async def test_vector_crud_tools_round_trip_uuid_keys_as_json_strings() -> None:
+    @vectorstoremodel(collection_name="uuid_records")
+    @dataclass
+    class UUIDRecord:
+        id: Annotated[UUID, VectorStoreField("key")]
+        text: Annotated[str, VectorStoreField("data")]
+
+    collection: InMemoryCollection[UUID, UUIDRecord] = InMemoryCollection(UUIDRecord)
+    await collection.ensure_collection_exists()
+    record_id = uuid4()
+    upsert_tool = create_upsert_tool(collection, generate_vectors=False)
+    get_tool = create_get_tool(collection)
+
+    upserted = await upsert_tool.invoke(
+        arguments={"records": [{"id": str(record_id), "text": "uuid"}]},
+        skip_parsing=True,
+    )
+    fetched = await get_tool.invoke(arguments={"keys": [str(record_id)]}, skip_parsing=True)
+
+    assert upsert_tool.parameters()["properties"]["records"]["items"]["properties"]["id"] == {
+        "type": "string",
+        "format": "uuid",
+    }
+    assert upserted == {"keys": [str(record_id)]}
+    assert fetched == {"records": [{"id": str(record_id), "text": "uuid"}]}
+
+
+def test_vector_crud_tools_reject_unknown_native_key_schema() -> None:
+    definition = VectorStoreCollectionDefinition([
+        VectorStoreField("key", name="id", type_="native"),
+        VectorStoreField("data", name="text", type_="str"),
+    ])
+    collection: InMemoryCollection[Any, dict[str, Any]] = InMemoryCollection(
+        dict,
+        definition=definition,
+        collection_name="native_keys",
+    )
+
+    with pytest.raises(NotImplementedError, match="no portable JSON schema"):
+        create_get_tool(collection)
+
+
+@pytest.mark.parametrize("factory", [create_upsert_tool, create_get_tool, create_delete_tool])
+async def test_vector_crud_tools_reject_empty_batches(factory: Callable[..., Any]) -> None:
+    collection = MockCollection()
+    tool = factory(collection)
+    argument_name = "records" if factory is create_upsert_tool else "keys"
+
+    with pytest.raises(ValueError, match="must not be empty"):
+        await tool.invoke(arguments={argument_name: []}, skip_parsing=True)
+
+
+async def test_vector_crud_tools_enforce_configured_batch_limits() -> None:
+    collection = MockCollection()
+    upsert_tool = create_upsert_tool(collection, generate_vectors=False, max_batch_size=1)
+    get_tool = create_get_tool(collection, max_batch_size=1)
+    delete_tool = create_delete_tool(collection, max_batch_size=1)
+
+    for tool in (upsert_tool, get_tool, delete_tool):
+        property_schema = next(iter(tool.parameters()["properties"].values()))
+        assert property_schema["maxItems"] == 1
+
+    with pytest.raises(ValueError, match="more than 1"):
+        await upsert_tool.invoke(arguments={"records": [{}, {}]}, skip_parsing=True)
+    for tool in (get_tool, delete_tool):
+        with pytest.raises(ValueError, match="more than 1"):
+            await tool.invoke(arguments={"keys": ["one", "two"]}, skip_parsing=True)
+    with pytest.raises(ValueError, match="greater than zero"):
+        create_get_tool(collection, max_batch_size=0)
+
+
+def test_vector_collection_context_provider_configures_tools_and_approvals() -> None:
+    collection = MockCollection(embedding_generator=MockEmbeddingClient())
+    provider = VectorCollectionContextProvider(
+        collection,
+        scope_filter=None,
+        approval_mode={"upsert": "never_require"},
+    )
+
+    assert [tool.name for tool in provider.tools] == ["upsert", "get", "delete", "search"]
+    assert {tool.name: tool.approval_mode for tool in provider.tools} == {
+        "upsert": "never_require",
+        "get": "never_require",
+        "delete": "always_require",
+        "search": "never_require",
+    }
+    assert any("get when record keys are known" in instruction for instruction in provider.instructions)
+
+    require_all = VectorCollectionContextProvider(collection, scope_filter=None, approval_mode="always_require")
+    assert all(tool.approval_mode == "always_require" for tool in require_all.tools)
+
+
+async def test_vector_collection_context_provider_adds_attributed_context() -> None:
+    collection = MockCollection(embedding_generator=MockEmbeddingClient())
+    details_tool = create_vector_search_tool(collection, name="search_details")
+    provider = VectorCollectionContextProvider(
+        collection,
+        scope_filter=None,
+        include_upsert_tool=False,
+        include_get_tool=False,
+        include_delete_tool=False,
+        include_search_tool=False,
+        additional_search_tools=[details_tool],
+    )
+    session = AgentSession(session_id="session")
+    context = SessionContext(input_messages=[], session_id=session.session_id)
+
+    with patch("agent_framework._vectors.mark_feature_used") as mark_feature_used_mock:
+        await provider.before_run(agent=cast(Any, None), session=session, context=context, state={})
+
+    assert [tool.name for tool in context.tools] == ["search_details"]
+    assert context.tools[0].additional_properties["context_source"] == provider.source_id
+    assert context.instructions == [
+        "Use the available vector collection tools as the source of truth for stored records."
+    ]
+    mark_feature_used_mock.assert_called_once_with(FeatureIndex.CORE_VECTOR_COLLECTION_CONTEXT_PROVIDER)
+
+
+def test_vector_collection_context_provider_validates_configuration() -> None:
+    collection = MockCollection(embedding_generator=MockEmbeddingClient())
+
+    with pytest.raises(ValueError, match="Unknown approval_mode"):
+        VectorCollectionContextProvider(
+            collection,
+            scope_filter=None,
+            approval_mode=cast(Any, {"unknown": "never_require"}),
+        )
+    with pytest.raises(ValueError, match="Invalid approval mode"):
+        VectorCollectionContextProvider(
+            collection,
+            scope_filter=None,
+            approval_mode=cast(Any, {"get": "sometimes"}),
+        )
+    with pytest.raises(ValueError, match="tool names must be unique"):
+        VectorCollectionContextProvider(
+            collection,
+            scope_filter=None,
+            additional_search_tools=[create_vector_search_tool(collection)],
+        )
+    with pytest.raises(TypeError, match="FunctionTool"):
+        VectorCollectionContextProvider(
+            collection,
+            scope_filter=None,
+            include_search_tool=False,
+            additional_search_tools=cast(Any, [object()]),
+        )
+    with pytest.raises(ValueError, match="greater than zero"):
+        VectorCollectionContextProvider(collection, scope_filter=None, max_tool_batch_size=0)
+
+
+async def test_vector_collection_context_provider_enforces_scope_filter_on_read_tools() -> None:
+    generator = MockEmbeddingClient()
+    collection: InMemoryCollection[str, Record] = InMemoryCollection(
+        Record,
+        embedding_generator=generator,
+    )
+    await collection.ensure_collection_exists()
+    await collection.upsert(
+        [
+            Record("one", "visible", [1.0, 0.0]),
+            Record("two", "secret", [0.0, 1.0]),
+        ],
+        generate_vectors=False,
+    )
+    provider = VectorCollectionContextProvider(
+        collection,
+        scope_filter=Filter("id", "eq", "one"),
+    )
+    tools = {tool.name: tool for tool in provider.tools}
+
+    with pytest.raises(ValueError, match="indexes 1"):
+        await tools["upsert"].invoke(
+            arguments={
+                "records": [
+                    {"id": "one", "text": "changed", "vector": [1.0, 0.0]},
+                    {"id": "three", "text": "outside scope", "vector": [1.0, 0.0]},
+                ]
+            },
+            skip_parsing=True,
+        )
+    assert [(record.id, record.text) for record in await collection.get(["one", "three"])] == [("one", "visible")]
+    assert generator.values == []
+
+    unsupported_scope_tool = create_upsert_tool(
+        collection,
+        filter=Filter("id", "provider.native", "one"),
+    )
+    with pytest.raises(NotImplementedError, match="cannot be evaluated"):
+        await unsupported_scope_tool.invoke(
+            arguments={"records": [{"id": "one", "text": "changed", "vector": [1.0, 0.0]}]},
+            skip_parsing=True,
+        )
+
+    fetched = await tools["get"].invoke(arguments={"keys": ["one", "two"]}, skip_parsing=True)
+    assert fetched == {"records": [{"id": "one", "text": "visible"}]}
+
+    searched = await tools["search"].invoke(arguments={"query": "visible"}, skip_parsing=True)
+    assert len(searched) == 1
+    assert msgspec.json.decode(searched[0].text)["record"]["id"] == "one"
+
+    deleted = await tools["delete"].invoke(arguments={"keys": ["one", "two"]}, skip_parsing=True)
+    assert deleted == {"processed_keys": ["one"]}
+    assert [record.id for record in await collection.get(["one", "two"])] == ["two"]
+
+
+async def test_vector_store_history_provider_round_trips_and_idempotently_replays_messages() -> None:
+    generator = MockEmbeddingClient()
+    embedding_options: dict[str, Any] = {"model": "embedding-model", "dimensions": 2}
+    provider = VectorStoreHistoryProvider(
+        InMemoryStore(),
+        application_id="app",
+        tenant_id="tenant",
+        agent_id="agent",
+        collection_name="history_embeddings",
+        embedding_generator=generator,
+        embedding_options=embedding_options,
+    )
+    embedding_options["model"] = "changed-after-construction"
+    messages = [
+        Message(
+            role="user",
+            contents=[
+                "hello",
+                Content.from_uri("https://example.com/image.png", media_type="image/png"),
+            ],
+        ),
+        Message(role="assistant", contents=["hi"]),
+    ]
+
+    await provider.save_messages("session", messages)
+    embedded_contents = [msgspec.json.decode(value) for value in generator.values]
+    assert embedded_contents == [
+        [
+            {"type": "text", "text": "hello", "additional_properties": {}},
+            {
+                "type": "uri",
+                "uri": "https://example.com/image.png",
+                "media_type": "image/png",
+                "additional_properties": {},
+            },
+        ],
+        [{"type": "text", "text": "hi", "additional_properties": {}}],
+    ]
+    assert generator.options == {"model": "embedding-model", "dimensions": 2}
+    assert [message.to_dict() for message in await provider.get_messages("session")] == [
+        message.to_dict() for message in messages
+    ]
+
+    await provider.save_messages("session", messages)
+    assert len(await provider.get_messages("session")) == 2
+
+    await provider.clear("session")
+    assert await provider.get_messages("session") == []
+
+
+async def test_vector_store_history_provider_preserves_repeated_turns_and_concurrent_replays() -> None:
+    store = InMemoryStore()
+    provider = VectorStoreHistoryProvider(store, application_id="app")
+    replica = VectorStoreHistoryProvider(store, application_id="app")
+    first = Message(role="user", contents=["yes"])
+    second = Message(role="user", contents=["yes"])
+
+    await provider.save_messages("session", [first])
+    await provider.save_messages("session", [second])
+
+    assert first.message_id is not None
+    assert second.message_id is not None
+    assert first.message_id != second.message_id
+    assert [message.text for message in await provider.get_messages("session")] == ["yes", "yes"]
+
+    await asyncio.gather(
+        provider.save_messages("session", [first, second]),
+        replica.save_messages("session", [first, second]),
+    )
+    assert [message.text for message in await provider.get_messages("session")] == ["yes", "yes"]
+
+
+async def test_vector_store_history_provider_preserves_created_at_on_reconstructed_retry() -> None:
+    provider = VectorStoreHistoryProvider(InMemoryStore(), application_id="app")
+    first = Message(role="user", contents=["first"], message_id="first-id")
+    second = Message(role="assistant", contents=["second"], message_id="second-id")
+
+    with patch("agent_framework._vectors.time.time_ns", side_effect=[100, 200, 300]):
+        await provider.save_messages("session", [first])
+        await provider.save_messages("session", [second])
+        await provider.save_messages(
+            "session",
+            [Message(role="user", contents=["first retry"], message_id="first-id")],
+        )
+
+    records = await provider._collection.get(filter=provider._scope_filter("session"))
+    by_message_id = {Message.from_json(record["message"]).message_id: record for record in records}
+    assert by_message_id["first-id"]["created_at"] == 100
+    assert by_message_id["first-id"]["modified_at"] == 300
+    assert by_message_id["second-id"]["created_at"] == 200
+    assert [message.message_id for message in await provider.get_messages("session")] == ["first-id", "second-id"]
+
+
+async def test_vector_store_history_provider_isolates_every_scope_dimension() -> None:
+    store = InMemoryStore()
+    provider = VectorStoreHistoryProvider(
+        store,
+        source_id="history",
+        application_id="app",
+        tenant_id="tenant",
+        agent_id="agent",
+        collection_name="shared_history_embeddings",
+        embedding_generator=MockEmbeddingClient(),
+        embedding_options={"dimensions": 2},
+    )
+    await provider.save_messages("session", [Message(role="user", contents=["visible"])])
+
+    other_providers = [
+        VectorStoreHistoryProvider(
+            store,
+            source_id="other-history",
+            application_id="app",
+            tenant_id="tenant",
+            agent_id="agent",
+            collection_name="shared_history_embeddings",
+            embedding_generator=MockEmbeddingClient(),
+            embedding_options={"dimensions": 2},
+        ),
+        VectorStoreHistoryProvider(
+            store,
+            source_id="history",
+            application_id="other-app",
+            tenant_id="tenant",
+            agent_id="agent",
+            collection_name="shared_history_embeddings",
+            embedding_generator=MockEmbeddingClient(),
+            embedding_options={"dimensions": 2},
+        ),
+        VectorStoreHistoryProvider(
+            store,
+            source_id="history",
+            application_id="app",
+            tenant_id="other-tenant",
+            agent_id="agent",
+            collection_name="shared_history_embeddings",
+            embedding_generator=MockEmbeddingClient(),
+            embedding_options={"dimensions": 2},
+        ),
+        VectorStoreHistoryProvider(
+            store,
+            source_id="history",
+            application_id="app",
+            tenant_id="tenant",
+            agent_id="other-agent",
+            collection_name="shared_history_embeddings",
+            embedding_generator=MockEmbeddingClient(),
+            embedding_options={"dimensions": 2},
+        ),
+    ]
+    for index, other_provider in enumerate(other_providers):
+        await other_provider.save_messages("session", [Message(role="user", contents=[f"secret-{index}"])])
+
+    assert [message.text for message in await provider.get_messages("session")] == ["visible"]
+    for index, other_provider in enumerate(other_providers):
+        assert [message.text for message in await other_provider.get_messages("session")] == [f"secret-{index}"]
+    assert await provider.get_messages("other-session") == []
+
+
+async def test_vector_store_history_provider_works_without_embeddings() -> None:
+    provider = VectorStoreHistoryProvider(InMemoryStore(), application_id="app")
+
+    await provider.save_messages("session", [Message(role="user", contents=["plain history"])])
+
+    assert provider._collection.definition.vector_fields == []
+    assert [message.text for message in await provider.get_messages("session")] == ["plain history"]
+
+
+def test_vector_store_history_provider_derives_default_collection_name_from_schema() -> None:
+    store = InMemoryStore()
+    json_provider = VectorStoreHistoryProvider(store, application_id="app")
+    msgpack_provider = VectorStoreHistoryProvider(store, application_id="app", contents_format="msgpack")
+    embedded_provider = VectorStoreHistoryProvider(
+        store,
+        application_id="app",
+        collection_name="embedded_history",
+        embedding_generator=MockEmbeddingClient(),
+        embedding_options={"dimensions": 2},
+    )
+
+    assert (
+        len({
+            json_provider.collection_name,
+            msgpack_provider.collection_name,
+            embedded_provider.collection_name,
+        })
+        == 3
+    )
+    contents_field = json_provider._collection.definition.try_get_field("contents")
+    assert contents_field is not None
+    assert not contents_field.is_full_text_indexed
+
+
+async def test_vector_store_history_provider_supports_msgpack_contents() -> None:
+    provider = VectorStoreHistoryProvider(
+        InMemoryStore(),
+        application_id="app",
+        contents_format="msgpack",
+    )
+    message = Message(
+        role="user",
+        contents=[
+            "hello",
+            Content.from_uri("https://example.com/image.png", media_type="image/png"),
+        ],
+    )
+
+    await provider.save_messages("session", [message])
+
+    records = await provider._collection.get(filter=provider._scope_filter("session"))
+    contents_field = provider._collection.definition.try_get_field("contents")
+    assert contents_field is not None
+    assert contents_field.type_ == "str"
+    assert msgspec.msgpack.decode(base64.b64decode(records[0]["contents"])) == [
+        content.to_dict() for content in message.contents
+    ]
+    assert [stored.to_dict() for stored in await provider.get_messages("session")] == [message.to_dict()]
+
+
+async def test_vector_store_history_provider_compacts_loaded_context_but_searches_full_history() -> None:
+    async def keep_last_message(messages: list[Message]) -> bool:
+        del messages[:-1]
+        return True
+
+    store = InMemoryStore()
+    provider = VectorStoreHistoryProvider(
+        store,
+        source_id="history",
+        application_id="app",
+        collection_name="searchable_history",
+        embedding_generator=MockEmbeddingClient(),
+        embedding_options={"dimensions": 2},
+        compaction_strategy=keep_last_message,
+        include_search_tool=True,
+    )
+    other_provider = VectorStoreHistoryProvider(
+        store,
+        source_id="other-history",
+        application_id="app",
+        collection_name="searchable_history",
+        embedding_generator=MockEmbeddingClient(),
+        embedding_options={"dimensions": 2},
+    )
+    await provider.save_messages(
+        "session",
+        [
+            Message(role="user", contents=["old visible detail"]),
+            Message(role="assistant", contents=["recent visible detail"]),
+        ],
+    )
+    await other_provider.save_messages("session", [Message(role="user", contents=["other source secret"])])
+
+    session = AgentSession(session_id="session")
+    context = SessionContext(input_messages=[], session_id=session.session_id)
+    with patch("agent_framework._vectors.mark_feature_used") as mark_feature_used_mock:
+        await provider.before_run(agent=cast(Any, None), session=session, context=context, state={})
+
+    assert [message.text for message in context.context_messages[provider.source_id]] == ["recent visible detail"]
+    assert context.instructions == [
+        "Use search_history when relevant information is not present in the loaded history."
+    ]
+    assert [tool.name for tool in context.tools] == ["search_history"]
+    search_result = await context.tools[0].invoke(
+        arguments={"query": "visible detail"},
+        skip_parsing=True,
+    )
+    result_text = "\n".join(content.text or "" for content in search_result)
+    assert "old visible detail" in result_text
+    assert "recent visible detail" in result_text
+    assert "other source secret" not in result_text
+    mark_feature_used_mock.assert_any_call(FeatureIndex.CORE_VECTOR_STORE_HISTORY_PROVIDER)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "error_type", "message"),
+    [
+        ({"application_id": ""}, ValueError, "application_id"),
+        ({"application_id": "app", "embedding_options": {"dimensions": 2}}, ValueError, "requires"),
+        (
+            {"application_id": "app", "embedding_generator": MockEmbeddingClient()},
+            ValueError,
+            "requires embedding_options",
+        ),
+        (
+            {
+                "application_id": "app",
+                "embedding_generator": MockEmbeddingClient(),
+                "embedding_options": {"dimensions": 0},
+            },
+            ValueError,
+            "must be positive",
+        ),
+        ({"application_id": "app", "contents_format": "yaml"}, ValueError, "contents_format"),
+        (
+            {
+                "application_id": "app",
+                "embedding_generator": MockEmbeddingClient(),
+                "embedding_options": {"dimensions": 2},
+            },
+            ValueError,
+            "collection_name",
+        ),
+        ({"application_id": "app", "collection_name": ""}, ValueError, "collection_name"),
+    ],
+)
+def test_vector_store_history_provider_validates_configuration(
+    kwargs: dict[str, Any],
+    error_type: type[Exception],
+    message: str,
+) -> None:
+    with pytest.raises(error_type, match=message):
+        VectorStoreHistoryProvider(InMemoryStore(), **kwargs)

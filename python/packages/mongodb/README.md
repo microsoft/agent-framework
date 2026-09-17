@@ -71,7 +71,9 @@ asyncio.run(main())
 - String, signed 64-bit integer, and BSON `ObjectId` `_id` values retain native
   identity. Only `ObjectId` keys can be generated. Typed `ObjectId` models must
   register an encoder and decoder that preserve `ObjectId`; IDs are never stringified
-  or copied to hidden fields.
+  or copied to hidden fields in storage. Agent-facing CRUD tool JSON represents
+  `ObjectId` keys as validated 24-character hexadecimal strings and converts them
+  back to native values at the collection boundary.
 - Multiple top-level dense-vector fields are supported through one vector-search
   index per field. Use `provider_annotations={"mongodb.index_name": "..."}` to
   select an existing index name. Dimensions must be 1-8192. Metrics are cosine,
