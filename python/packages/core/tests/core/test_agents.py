@@ -2046,11 +2046,13 @@ async def test_as_tool_resumes_nested_tool_approval() -> None:
     original_inner_get_response = outer_client._inner_get_response
     sent_messages: list[Message] = []
 
-    def _capturing_inner_get_response(*, messages: Any, **kwargs: Any) -> Any:
+    async def capturing_inner(
+        *, messages: MutableSequence[Message], options: dict[str, Any], **kwargs: Any
+    ) -> ChatResponse:
         sent_messages.extend(messages)
-        return original_inner_get_response(messages=messages, **kwargs)
+        return await original_inner_get_response(messages=messages, options=options, **kwargs)
 
-    outer_client._inner_get_response = _capturing_inner_get_response  # type: ignore[method-assign]
+    outer_client._inner_get_response = capturing_inner  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
 
     second_response = await outer_agent.run(Message(role="user", contents=[approval_response]), session=session)
 

@@ -1929,7 +1929,7 @@ class _NestedApprovalResume:
 def _set_nested_approval_metadata(
     context: Any,
     function_call_content: Content,
-    nested_resume: "_NestedApprovalResume | None",
+    nested_resume: _NestedApprovalResume | None,
 ) -> None:
     """Expose the stable owner call id and, on a resume, the approval response(s) to resume with.
 
@@ -2122,7 +2122,7 @@ async def _auto_invoke_function(
     middleware_pipeline: FunctionMiddlewarePipeline | None = None,
     live_tools: list[ToolTypes] | None = None,
     host_payload_budget: _FunctionResultPayloadBudget | None = None,
-    nested_resume: "_NestedApprovalResume | None" = None,
+    nested_resume: _NestedApprovalResume | None = None,
 ) -> Content:
     """Invoke a function call requested by the agent, applying middleware that is defined.
 
