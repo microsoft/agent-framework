@@ -18,21 +18,5 @@ internal sealed class TestExternalRequestEnvelope : IExternalRequestEnvelope
 
     AIContent? IExternalRequestEnvelope.GetInnerRequestContent() => this.FunctionCall;
 
-    object IExternalRequestEnvelope.CreateResponse(IList<ChatMessage> messages) => new TestExternalResponseEnvelope(messages, requestId: null);
-}
-
-internal sealed class TestExternalResponseEnvelope : IExternalResponseEnvelope
-{
-    [JsonConstructor]
-    public TestExternalResponseEnvelope(IList<ChatMessage> messages, string? requestId)
-    {
-        this.Messages = messages;
-        this.RequestId = requestId;
-    }
-
-    public IList<ChatMessage> Messages { get; }
-
-    public string? RequestId { get; }
-
-    object IExternalResponseEnvelope.WithRequestId(string requestId) => new TestExternalResponseEnvelope(this.Messages, requestId);
+    object IExternalRequestEnvelope.CreateResponse(IList<ChatMessage> messages) => messages;
 }

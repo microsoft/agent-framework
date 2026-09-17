@@ -1781,13 +1781,10 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
         string callId,
         string result)
     {
-        RequestPort port = RequestPort.Create<ExternalInputRequest, ExternalInputResponse>("test-port");
-        ExternalRequest externalRequest = ExternalRequest.Create(port, request);
-        ExternalInputResponse response = new([new ChatMessage(ChatRole.Tool, [new FunctionResultContent(callId, result)])]);
-        ExternalResponse externalResponse = externalRequest.CreateResponse(response);
+        object response = ((IExternalRequestEnvelope)request).CreateResponse(
+            [new ChatMessage(ChatRole.Tool, [new FunctionResultContent(callId, result)])]);
 
-        Assert.True(externalResponse.TryGetDataAs(out ExternalInputResponse? correlatedResponse));
-        Assert.NotNull(correlatedResponse);
+        ExternalInputResponse correlatedResponse = Assert.IsType<ExternalInputResponse>(response);
         Assert.Equal(expectedRequestId, correlatedResponse.RequestId);
         return correlatedResponse;
     }

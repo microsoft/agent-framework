@@ -8,6 +8,5 @@ namespace Microsoft.Agents.AI.Workflows.UnitTests;
 // Checkpointing Types
 [JsonSerializable(typeof(TestJsonSerializable))]
 [JsonSerializable(typeof(TestExternalRequestEnvelope))]
-[JsonSerializable(typeof(TestExternalResponseEnvelope))]
 [ExcludeFromCodeCoverage]
 internal sealed partial class TestJsonContext : JsonSerializerContext;

@@ -9,7 +9,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.Events;
 /// <summary>
 /// Represents the response to a <see cref="ExternalInputRequest"/>.
 /// </summary>
-public sealed class ExternalInputResponse : IExternalResponseEnvelope
+public sealed class ExternalInputResponse
 {
     /// <summary>
     /// The message being provided as external input to the workflow.
@@ -19,7 +19,8 @@ public sealed class ExternalInputResponse : IExternalResponseEnvelope
     /// <summary>
     /// Gets the request id that produced this response, if available.
     /// </summary>
-    public string? RequestId { get; init; }
+    [JsonInclude]
+    public string? RequestId { get; internal init; }
 
     internal bool HasMessages => this.Messages?.Count > 0;
 
@@ -48,5 +49,4 @@ public sealed class ExternalInputResponse : IExternalResponseEnvelope
         this.RequestId = requestId;
     }
 
-    object IExternalResponseEnvelope.WithRequestId(string requestId) => new ExternalInputResponse(this.Messages, requestId);
 }

@@ -37,7 +37,6 @@ internal sealed class InProcessRunnerContext : IRunnerContext
     private readonly ConcurrentDictionary<string, ISuperStepRunner> _joinedSubworkflowRunners = new();
 
     private readonly ConcurrentDictionary<string, ExternalRequest> _externalRequests = new();
-    private readonly ConcurrentDictionary<string, RequestPort> _registeredPorts;
 
     public InProcessRunnerContext(
         Workflow workflow,
@@ -64,7 +63,6 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         this._workflow = workflow;
         this._sessionId = sessionId;
 
-        this._registeredPorts = new(workflow.Ports);
         this._edgeMap = new(this, this._workflow, stepTracer);
         this._outputFilter = new(workflow);
 
@@ -77,11 +75,6 @@ internal sealed class InProcessRunnerContext : IRunnerContext
     public IExternalRequestSink RegisterPort(string executorId, RequestPort port)
     {
         if (!this._edgeMap.TryRegisterPort(this, executorId, port))
-        {
-            throw new InvalidOperationException($"A port with ID {port.Id} already exists.");
-        }
-
-        if (!this._registeredPorts.TryAdd(port.Id, port))
         {
             throw new InvalidOperationException($"A port with ID {port.Id} already exists.");
         }
@@ -174,13 +167,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
                     $"Response port id '{response.PortInfo.PortId}' does not match the originating port id for request {response.RequestId}.");
             }
 
-            if (!this._registeredPorts.TryGetValue(pendingRequest.PortInfo.PortId, out RequestPort? pendingPort))
-            {
-                throw new InvalidOperationException($"Port {pendingRequest.PortInfo.PortId} not found in the workflow context.");
-            }
-
-            Type pendingResponseType = pendingPort.Response;
-            response = pendingRequest.RewrapResponse(response, pendingResponseType);
+            response = pendingRequest.RewrapResponse(response);
 
             // Consume only after validation so a rejected response leaves the legitimate one able to complete.
             if (!this.CompleteRequest(response.RequestId))

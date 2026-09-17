@@ -1,3 +1,2 @@
 ﻿#nullable enable
 Microsoft.Agents.AI.Workflows.Declarative.Events.ExternalInputResponse.RequestId.get -> string?
-Microsoft.Agents.AI.Workflows.Declarative.Events.ExternalInputResponse.RequestId.init -> void
