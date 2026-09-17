@@ -234,7 +234,7 @@ public sealed class ChatClientAgentFactoryTests
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["Temperature"] = "0.9",
-                ["SOME_SECRET"] = "secret-value",
+                ["TopP"] = "0.8",
             })
             .Build();
         GptComponentMetadata promptAgent = AgentBotElementYaml.FromYaml(PromptAgents.AgentWithVariableReferences);
@@ -246,7 +246,7 @@ public sealed class ChatClientAgentFactoryTests
         // Assert
         StringValue temperature = Assert.IsType<StringValue>(factory.Evaluate("Temperature"));
         Assert.Equal("0.9", temperature.Value);
-        Assert.False(factory.CanEvaluate("SOME_SECRET"));
+        Assert.False(factory.CanEvaluate("TopP"));
     }
 
     private sealed class InspectingPromptAgentFactory(IConfiguration configuration, IEnumerable<string> allowedConfigurationVariables)

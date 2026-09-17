@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
@@ -11,6 +12,8 @@ using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.ObjectModel;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Configuration;
+using Microsoft.PowerFx.Types;
 using Moq;
 using Xunit.Sdk;
 
@@ -123,6 +126,99 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         Assert.DoesNotContain("EMBER-QUARTZ-7319", secondImplicitResponse.Text, StringComparison.Ordinal);
         Assert.True(provider.MessageConversations.Count >= 2);
         Assert.NotEqual(provider.MessageConversations[0], provider.MessageConversations[1]);
+    }
+
+    [Fact]
+    public async Task Build_OnlyInitializesAllowedReferencedEnvironmentVariablesAsync()
+    {
+        // Arrange
+        const string AllowedName = "AllowedConfig";
+        const string HiddenName = "HiddenConfig";
+        const string ProcessOnlyName = "ProcessOnlyConfig";
+        const string ProcessOnlyValue = "process-value";
+
+        string? originalProcessOnlyValue = Environment.GetEnvironmentVariable(ProcessOnlyName);
+        Environment.SetEnvironmentVariable(ProcessOnlyName, ProcessOnlyValue);
+
+        try
+        {
+            IConfiguration configuration = new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    [AllowedName] = "allowed-value",
+                    [HiddenName] = "hidden-value",
+                })
+                .Build();
+            using StringReader yamlReader = new(
+                """
+                    kind: Workflow
+                    trigger:
+
+                      kind: OnConversationStart
+                      id: env_boundary_workflow
+                      actions:
+
+                        - kind: ConditionGroup
+                          id: environment_boundary_condition
+                          conditions:
+                            - id: environment_boundary_passed
+                              condition: =Env.AllowedConfig = "allowed-value"
+                              actions:
+                                - kind: SendActivity
+                                  id: environment_boundary_passed_activity
+                                  activity: allowed-configuration-available
+                          elseActions:
+                            - kind: SendActivity
+                              id: environment_boundary_failed_activity
+                              activity: allowed-configuration-missing
+
+                        - kind: SetVariable
+                          id: referenced_hidden_configuration
+                          disabled: true
+                          variable: Local.Hidden
+                          value: =Env.HiddenConfig
+
+                        - kind: SetVariable
+                          id: referenced_process_configuration
+                          disabled: true
+                          variable: Local.ProcessOnly
+                          value: =Env.ProcessOnlyConfig
+                    """);
+            Mock<ResponseAgentProvider> mockAgentProvider = CreateMockProvider("Test input message");
+            DeclarativeWorkflowOptions options =
+                new(mockAgentProvider.Object)
+                {
+                    Configuration = configuration,
+                    AllowedEnvironmentVariables = [AllowedName, ProcessOnlyName],
+                    LoggerFactory = this.Output,
+                };
+            Workflow workflow = DeclarativeWorkflowBuilder.Build<string>(yamlReader, options);
+            WorkflowFormulaState rootState = GetRootState(workflow);
+
+            // Act
+            await using StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, "Test input message");
+
+            await foreach (WorkflowEvent workflowEvent in run.WatchStreamAsync())
+            {
+                this.WorkflowEvents.Add(workflowEvent);
+                if (workflowEvent is WorkflowErrorEvent errorEvent)
+                {
+                    throw errorEvent.Data as Exception ?? new XunitException("Unexpected failure...");
+                }
+            }
+
+            // Assert
+            StringValue allowedValue = Assert.IsType<StringValue>(rootState.Get(AllowedName, VariableScopeNames.Environment));
+            Assert.Equal("allowed-value", allowedValue.Value);
+            Assert.IsType<BlankValue>(rootState.Get(HiddenName, VariableScopeNames.Environment));
+            Assert.IsType<BlankValue>(rootState.Get(ProcessOnlyName, VariableScopeNames.Environment));
+            this.AssertMessage("allowed-configuration-available");
+            this.AssertNotMessage("allowed-configuration-missing");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(ProcessOnlyName, originalProcessOnlyValue);
+        }
     }
 
     [Fact]
@@ -371,6 +467,17 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
 
     private void AssertMessage(string message) =>
         Assert.Contains(this.WorkflowEvents.OfType<MessageActivityEvent>(), e => string.Equals(e.Message.Trim(), message, StringComparison.Ordinal));
+
+    private void AssertNotMessage(string message) =>
+        Assert.DoesNotContain(this.WorkflowEvents.OfType<MessageActivityEvent>(), e => string.Equals(e.Message.Trim(), message, StringComparison.Ordinal));
+
+    private static WorkflowFormulaState GetRootState(Workflow workflow)
+    {
+        ExecutorBinding rootBinding = workflow.ReflectExecutors()[workflow.StartExecutorId];
+        Executor rootExecutor = Assert.IsAssignableFrom<Executor>(rootBinding.RawValue);
+        FieldInfo stateField = Assert.Single(rootExecutor.GetType().GetFields(BindingFlags.Instance | BindingFlags.NonPublic), field => field.FieldType == typeof(WorkflowFormulaState));
+        return Assert.IsType<WorkflowFormulaState>(stateField.GetValue(rootExecutor));
+    }
 
     private Task RunWorkflowAsync(string workflowPath) =>
         this.RunWorkflowAsync(workflowPath, "Test input message");
