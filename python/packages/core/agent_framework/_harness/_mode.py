@@ -182,7 +182,8 @@ def set_agent_mode(
         source_id: Unique source ID for the provider state.
         available_modes: Supported modes to validate against. Defaults to the built-in modes.
         notify: Whether to notify the agent about the mode change on its next run. Set to ``False`` when the
-            agent changes mode through a replacement tool and has already observed the tool result.
+            agent changes mode through a replacement tool and has already observed the tool result. This also
+            clears any pending external-change notification.
 
     Returns:
         The normalized mode string that was stored.
@@ -199,8 +200,11 @@ def set_agent_mode(
     # prior mode so the next ``before_run`` can inject a user message announcing the switch. Without
     # that injection, the model often anchors on the earlier ``set_mode`` tool call in the chat history
     # and keeps behaving as if it were still in that mode — system instructions alone are insufficient.
-    if notify and isinstance(previous_mode, str) and previous_mode != normalized_mode:
-        provider_state[_PREVIOUS_MODE_STATE_KEY] = previous_mode
+    if notify:
+        if isinstance(previous_mode, str) and previous_mode != normalized_mode:
+            provider_state[_PREVIOUS_MODE_STATE_KEY] = previous_mode
+    else:
+        provider_state.pop(_PREVIOUS_MODE_STATE_KEY, None)
     return normalized_mode
 
 

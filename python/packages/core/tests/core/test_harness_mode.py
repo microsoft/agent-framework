@@ -389,6 +389,19 @@ def test_set_agent_mode_can_skip_external_change_notification() -> None:
     assert "previous_mode_for_notification" not in session.state[DEFAULT_MODE_SOURCE_ID]
 
 
+def test_set_agent_mode_without_notification_clears_pending_notification() -> None:
+    """An agent-observed update should replace pending external transition context."""
+    session = AgentSession(session_id="session-1")
+    set_agent_mode(session, "plan")
+    set_agent_mode(session, "execute")
+    assert session.state[DEFAULT_MODE_SOURCE_ID]["previous_mode_for_notification"] == "plan"
+
+    set_agent_mode(session, "plan", notify=False)
+
+    assert get_agent_mode(session) == "plan"
+    assert "previous_mode_for_notification" not in session.state[DEFAULT_MODE_SOURCE_ID]
+
+
 async def test_agent_mode_provider_injects_user_message_after_external_change(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:
