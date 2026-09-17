@@ -280,8 +280,9 @@ public static class IWorkflowContextExtensions
         string? scopeName = null,
         CancellationToken cancellationToken = default)
     {
-        EvaluationResult<object?> sourceValue = await context.ReadStateWithSensitivityAsync<object>(key, scopeName, cancellationToken).ConfigureAwait(false);
-        return new(sourceValue.Value.ConvertType(targetType), sourceValue.Sensitivity);
+        EvaluationResult<PortableValue?> sourceValue = await context.ReadStateWithSensitivityAsync<PortableValue>(key, scopeName, cancellationToken).ConfigureAwait(false);
+        object? convertedValue = sourceValue.Value is null ? null : sourceValue.Value.ToFormula().ToObject().ConvertType(targetType);
+        return new(convertedValue, sourceValue.Sensitivity);
     }
 
     /// <summary>
