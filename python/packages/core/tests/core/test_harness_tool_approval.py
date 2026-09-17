@@ -1369,20 +1369,24 @@ async def test_mixed_batch_hides_already_approved_request_until_approval_replay(
     """Mixed batches should only show real approval requests when a session can store hidden requests."""
     no_approval_calls = 0
     approval_calls = 0
+    execution_order: list[str] = []
 
     @tool(name="lookup_work_items", approval_mode="never_require")
     def lookup_work_items(query: str) -> str:
         nonlocal no_approval_calls
         no_approval_calls += 1
+        execution_order.append("lookup_work_items")
         return f"found {query}"
 
     @tool(name="add_comment", approval_mode="always_require")
     def add_comment(comment: str) -> str:
         nonlocal approval_calls
         approval_calls += 1
+        execution_order.append("add_comment")
         return f"added {comment}"
 
     agent = Agent(client=chat_client_base, tools=[lookup_work_items, add_comment])
+    chat_client_base.function_invocation_configuration["allow_concurrent_invocation"] = False
     session = AgentSession(session_id="approval-session")
     chat_client_base.run_responses = [
         ChatResponse(
@@ -1417,6 +1421,7 @@ async def test_mixed_batch_hides_already_approved_request_until_approval_replay(
     assert second_response.text == "complete"
     assert no_approval_calls == 1
     assert approval_calls == 1
+    assert execution_order == ["lookup_work_items", "add_comment"]
 
 
 async def test_mixed_batch_accepts_restored_tool_approval_state(

@@ -94,14 +94,16 @@ def test_function_invocation_configuration_allows_concurrency_by_default() -> No
     assert config["allow_concurrent_invocation"] is True
 
 
-async def test_sequential_function_invocation_skips_calls_after_termination(
+async def test_sequential_function_invocation_finishes_batch_after_termination(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    executed_calls: list[str | None] = []
+    executed_calls: list[str] = []
 
     async def execute(function_call: Content, **_: Any) -> tuple[list[Content], bool]:
-        executed_calls.append(function_call.call_id)
-        return [Content.from_function_result(call_id=function_call.call_id, result="done")], True  # type: ignore[arg-type]
+        call_id = function_call.call_id
+        assert call_id is not None
+        executed_calls.append(call_id)
+        return [Content.from_function_result(call_id=call_id, result="done")], call_id == "first"
 
     monkeypatch.setattr(tools_module, "_execute_single_function_call", execute)
 
@@ -119,8 +121,8 @@ async def test_sequential_function_invocation_skips_calls_after_termination(
     )
 
     assert should_terminate
-    assert executed_calls == ["first"]
-    assert result_groups[1][0].result == "Skipped: a prior tool call in this batch requested termination."
+    assert executed_calls == ["first", "second"]
+    assert [group[0].result for group in result_groups] == ["done", "done"]
 
 
 def test_tool_decorator():

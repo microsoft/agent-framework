@@ -117,6 +117,7 @@ def _has_authoritative_approval_session(invocation_session: AgentSession | None)
 
 
 _ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY: Final[str] = "already_approved_approval_request_groups"
+_APPROVAL_REQUEST_ORDER_KEY: Final[str] = "approval_request_order"
 _PENDING_APPROVAL_REQUESTS_KEY: Final[str] = "pending_approval_requests"
 _PENDING_MIXED_PAUSE_BATCH_KEY: Final[str] = "pending_mixed_pause_batch"
 _APPROVAL_REQUEST_ID_KEY: Final[str] = "_approval_request_id"
@@ -2343,6 +2344,7 @@ async def _try_execute_function_call_groups(
         logger.debug("Returning visible function_approval_request contents and storing already-approved requests")
         visible_requests: list[Content] = []
         already_approved_requests: list[Content] = []
+        approval_request_order: list[str] = []
         pause_groups: list[list[Content]] = []
         for function_call in function_calls:
             if function_call.type != "function_call":
@@ -2359,6 +2361,8 @@ async def _try_execute_function_call_groups(
                 id=function_call.id or function_call.call_id,  # type: ignore[arg-type]
                 function_call=function_call,
             )
+            if approval_request.id is not None:
+                approval_request_order.append(approval_request.id)
             if tool_name is None:
                 visible_requests.append(approval_request)
                 pause_groups.append([approval_request])
@@ -2377,6 +2381,7 @@ async def _try_execute_function_call_groups(
             invocation_session,
             visible_requests,
             already_approved_requests,
+            approval_request_order=approval_request_order,
         )
         _store_pending_approval_requests(invocation_session, visible_requests)
         _store_pending_mixed_pause_batch(invocation_session, pause_groups)
@@ -2426,22 +2431,9 @@ async def _try_execute_function_call_groups(
             await asyncio.gather(*execution_tasks, return_exceptions=True)
             raise
     else:
-        for index, function_call in enumerate(function_calls):
+        for function_call in function_calls:
             result = await create_execution_task(function_call)
             execution_results.append(result)
-            if result[1]:
-                for skipped_call in function_calls[index + 1 :]:
-                    source_call = _underlying_function_call(skipped_call)
-                    execution_results.append((
-                        [
-                            Content.from_function_result(
-                                call_id=source_call.call_id,  # type: ignore[arg-type]
-                                result="Skipped: a prior tool call in this batch requested termination.",
-                            )
-                        ],
-                        False,
-                    ))
-                break
 
     should_terminate = any(terminate for _, terminate in execution_results)
     return [result_contents for result_contents, _ in execution_results], should_terminate
@@ -2892,6 +2884,8 @@ def _store_already_approved_approval_requests(
     invocation_session: AgentSession | None,
     visible_approval_requests: Sequence[Content],
     already_approved_requests: Sequence[Content],
+    *,
+    approval_request_order: Sequence[str] | None = None,
 ) -> None:
     """Store hidden already-approved requests keyed by the visible approvals that resume the batch."""
     if not already_approved_requests:
@@ -2908,6 +2902,11 @@ def _store_already_approved_approval_requests(
     pending_groups.append({
         "approval_request_ids": visible_ids,
         "approval_requests": [request.to_dict() for request in already_approved_requests],
+        _APPROVAL_REQUEST_ORDER_KEY: list(approval_request_order)
+        if approval_request_order is not None
+        else [
+            request.id for request in (*visible_approval_requests, *already_approved_requests) if request.id is not None
+        ],
     })
     state[_ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY] = pending_groups
 
@@ -2915,19 +2914,20 @@ def _store_already_approved_approval_requests(
 def _pop_already_approved_approval_responses(
     invocation_session: AgentSession | None,
     approval_response_ids: set[str],
-) -> list[Content]:
+) -> tuple[list[Content], list[str]]:
     """Pop already-approved requests for the visible approval ids being answered."""
     if not approval_response_ids:
-        return []
+        return [], []
     state = _get_tool_approval_state(invocation_session)
     if state is None:
-        return []
+        return [], []
     raw_groups = state.get(_ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY, [])
     if not isinstance(raw_groups, list):
-        return []
+        return [], []
     typed_groups = cast(list[Any], raw_groups)
 
     responses: list[Content] = []
+    approval_request_order: list[str] = []
     remaining_groups: list[Any] = []
     for raw_group in typed_groups:
         if not isinstance(raw_group, Mapping):
@@ -2938,6 +2938,9 @@ def _pop_already_approved_approval_responses(
         if group_ids.isdisjoint(approval_response_ids):
             remaining_groups.append(raw_group)
             continue
+        raw_order = group.get(_APPROVAL_REQUEST_ORDER_KEY)
+        if isinstance(raw_order, list):
+            approval_request_order.extend(str(item) for item in cast(list[Any], raw_order))
         raw_requests = group.get("approval_requests")
         if not isinstance(raw_requests, list):
             continue
@@ -2950,7 +2953,7 @@ def _pop_already_approved_approval_responses(
         state[_ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY] = remaining_groups
     else:
         state.pop(_ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY, None)
-    return responses
+    return responses, approval_request_order
 
 
 def _store_pending_mixed_pause_batch(
@@ -4088,11 +4091,31 @@ async def _resolve_approval_responses(
         if content.type == "function_approval_response" and content.id
     }
 
-    if already_approved_responses := _pop_already_approved_approval_responses(
+    already_approved_responses, approval_request_order = _pop_already_approved_approval_responses(
         invocation_session,
         explicit_approval_response_ids,
-    ):
+    )
+    if already_approved_responses:
         prepared_messages.append(Message(role="user", contents=already_approved_responses))
+        responses_by_id: dict[str, Content] = {}
+        for message in prepared_messages:
+            retained_contents: list[Content] = []
+            for content in message.contents:
+                if (
+                    content.type == "function_approval_response"
+                    and content.id is not None
+                    and content.id in approval_request_order
+                ):
+                    responses_by_id[content.id] = content
+                else:
+                    retained_contents.append(content)
+            message.contents = retained_contents
+        prepared_messages[:] = [message for message in prepared_messages if message.contents]
+        ordered_responses = [
+            responses_by_id[request_id] for request_id in approval_request_order if request_id in responses_by_id
+        ]
+        if ordered_responses:
+            prepared_messages.append(Message(role="user", contents=ordered_responses))
 
     # 2. With no new decision, hide any still-pending batch from model input while keeping it resumable in history.
     if not (
