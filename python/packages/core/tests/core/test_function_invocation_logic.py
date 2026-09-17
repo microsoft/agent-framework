@@ -2286,6 +2286,68 @@ async def test_rejected_approval(chat_client_base: SupportsChatGetResponse):
                 assert msg.role == "tool", f"Message with FunctionResultContent must have role='tool', got '{msg.role}'"
 
 
+async def test_stateless_sequential_approval_replay_preserves_model_order(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Stateless approval replay should execute in request order, not response order."""
+    execution_order: list[str] = []
+
+    @tool(name="first_write", approval_mode="always_require")
+    def first_write() -> str:
+        execution_order.append("first_write")
+        return "first"
+
+    @tool(name="second_write", approval_mode="always_require")
+    def second_write() -> str:
+        execution_order.append("second_write")
+        return "second"
+
+    chat_client_base.function_invocation_configuration["allow_concurrent_invocation"] = False  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="call_first", name="first_write", arguments="{}"),
+                    Content.from_function_call(call_id="call_second", name="second_write", arguments="{}"),
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["complete"])),
+    ]
+    options: ChatOptions[None] = {"tool_choice": "auto", "tools": [first_write, second_write]}
+
+    first_response = await chat_client_base.get_response(
+        [Message(role="user", contents=["write in order"])],
+        options=options,
+    )
+    approval_requests = [
+        content
+        for message in first_response.messages
+        for content in message.contents
+        if content.type == "function_approval_request"
+    ]
+    assert [
+        request.function_call.name for request in approval_requests if request.function_call is not None
+    ] == ["first_write", "second_write"]
+
+    await chat_client_base.get_response(
+        [
+            *first_response.messages,
+            Message(
+                role="user",
+                contents=[
+                    approval_requests[1].to_function_approval_response(approved=True),
+                    approval_requests[0].to_function_approval_response(approved=True),
+                ],
+            ),
+        ],
+        options=options,
+    )
+
+    assert execution_order == ["first_write", "second_write"]
+
+
 async def test_approval_requests_in_assistant_message(chat_client_base: SupportsChatGetResponse):
     """Approval requests should be added to the assistant message that contains the function call."""
     exec_counter = 0

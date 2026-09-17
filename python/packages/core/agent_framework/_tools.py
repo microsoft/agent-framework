@@ -3372,6 +3372,39 @@ def _collect_unanswered_approval_requests(messages: Sequence[Message]) -> list[C
     return list(unanswered_by_id.values())
 
 
+def _derive_stateless_approval_response_order(
+    messages: Sequence[Message],
+    approval_responses: Sequence[Content],
+) -> list[dict[str, str | None]]:
+    """Recover approval order from unresolved requests when no session state exists."""
+    response_content_ids = {id(response) for response in approval_responses}
+    history_without_responses: list[Message] = []
+    for message in messages:
+        copied_message = copy.copy(message)
+        copied_message.contents = [content for content in message.contents if id(content) not in response_content_ids]
+        history_without_responses.append(copied_message)
+
+    response_ids = {response.id for response in approval_responses if response.id is not None}
+    response_call_ids = {
+        response.function_call.call_id
+        for response in approval_responses
+        if response.function_call is not None and response.function_call.call_id is not None
+    }
+    order: list[dict[str, str | None]] = []
+    for request in _collect_unanswered_approval_requests(history_without_responses):
+        function_call = request.function_call
+        if function_call is None:
+            continue
+        if (
+            request.id not in response_ids
+            and function_call.id not in response_ids
+            and function_call.call_id not in response_call_ids
+        ):
+            continue
+        order.append({"id": function_call.id or request.id, "call_id": function_call.call_id})
+    return order
+
+
 def _remove_unanswered_approval_batches_from_model_input(messages: list[Message]) -> None:
     pending_requests = _collect_unanswered_approval_requests(messages)
     if not pending_requests:
@@ -4108,6 +4141,12 @@ async def _resolve_approval_responses(
     )
     if already_approved_responses:
         prepared_messages.append(Message(role="user", contents=already_approved_responses))
+    if not function_call_order and approval_session is None and not host_result_ids:
+        pending_stateless_responses = _collect_approval_responses(prepared_messages)
+        function_call_order = _derive_stateless_approval_response_order(
+            prepared_messages,
+            list(pending_stateless_responses.values()),
+        )
     if function_call_order:
         ordered_ids = {item["id"] for item in function_call_order if item["id"] is not None}
         ordered_call_ids = {item["call_id"] for item in function_call_order if item["call_id"] is not None}
