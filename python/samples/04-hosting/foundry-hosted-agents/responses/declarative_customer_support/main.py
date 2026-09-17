@@ -1,6 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import asyncio
 import os
 from pathlib import Path
 from typing import Any, Literal
@@ -87,10 +86,8 @@ ask for them one at a time. Keep responses short and polite.
 # --- Host setup ------------------------------------------------------------------
 
 
-def create_workflow_agent(client: FoundryChatClient) -> WorkflowAgent:
-    """Rebuild the YAML workflow and its agents for the current request."""
-    workflow_path = Path(__file__).parent / "workflow.yaml"
-
+def create_workflow_agent(client: FoundryChatClient, workflow_path: Path) -> WorkflowAgent:
+    """Create a fresh declarative workflow agent for one hosted request."""
     # The workflow's InvokeAzureAgent actions reference these agents by name.
     triage_agent = Agent(
         client=client,
@@ -134,18 +131,16 @@ def create_workflow_agent(client: FoundryChatClient) -> WorkflowAgent:
     )
 
 
-async def main() -> None:
-    """Share only the model client while each request gets a new workflow."""
-    with DefaultAzureCredential() as credential:
-        client = FoundryChatClient(
-            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-            model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-            credential=credential,
-        )
-        async with client.project_client, client.client:
-            server = ResponsesHostServer(agent_factory=lambda: create_workflow_agent(client))
-            await server.run_async()
+def main() -> None:
+    workflow_path = Path(__file__).parent / "workflow.yaml"
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=DefaultAzureCredential(),
+    )
+
+    ResponsesHostServer(agent=lambda: create_workflow_agent(client, workflow_path)).run()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

@@ -26,6 +26,7 @@ from agent_framework import (
     InMemoryCheckpointStorage,
     RunContext,
     StepWrapper,
+    SupportsAgentRun,
     WorkflowEvent,
     WorkflowEventSource,
     WorkflowRunResult,
@@ -717,118 +718,6 @@ class TestStateManagement:
 
 
 class TestCheckpointing:
-    async def test_fresh_agent_checkpoint_replay_cannot_recover_buffered_step_output(self) -> None:
-        """A completed step's saved result does not preserve its buffered output events."""
-        storage = InMemoryCheckpointStorage()
-        step_saved = asyncio.Event()
-        finish = asyncio.Event()
-        calls = 0
-
-        @step
-        async def emit_step(text: str) -> str:
-            nonlocal calls
-            calls += 1
-            ctx = get_run_context()
-            assert ctx is not None
-            await ctx.add_event(WorkflowEvent("output", executor_id="emit_step", data=f"step:{text}"))
-            return text
-
-        @workflow
-        async def buffered_workflow(text: str) -> str:
-            result = await emit_step(text)
-            step_saved.set()
-            await finish.wait()
-            return f"final:{result}"
-
-        original = buffered_workflow.build().as_agent()
-        received: list[str] = []
-
-        async def consume_original() -> None:
-            async for update in original.run("original", stream=True, checkpoint_storage=storage):
-                if update.text:
-                    received.append(update.text)
-
-        consumer = asyncio.create_task(consume_original())
-        try:
-            await asyncio.wait_for(step_saved.wait(), timeout=5)
-            checkpoint = await storage.get_latest(workflow_name=buffered_workflow.name)
-            assert checkpoint is not None
-            assert received == []
-        finally:
-            consumer.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await consumer
-
-        finish.set()
-        recovered = buffered_workflow.build().as_agent()
-        result = await recovered.run(checkpoint_id=checkpoint.checkpoint_id, checkpoint_storage=storage)
-
-        assert calls == 1
-        assert result.text == "final:original"
-        assert "step:original" not in result.text
-
-        complete = await buffered_workflow.build().as_agent().run("original", checkpoint_storage=storage)
-        assert "step:original" in complete.text
-        assert "final:original" in complete.text
-        assert calls == 2
-
-    async def test_fresh_agent_completed_checkpoint_replays_old_input_instead_of_starting_new_turn(self) -> None:
-        calls: list[str] = []
-        storage = InMemoryCheckpointStorage()
-
-        @step
-        async def record(text: str) -> str:
-            calls.append(text)
-            return text
-
-        @workflow
-        async def turns(text: str) -> str:
-            return await record(text)
-
-        original = turns.build().as_agent()
-        assert (await original.run("first", checkpoint_storage=storage)).text == "first"
-        checkpoint = await storage.get_latest(workflow_name=turns.name)
-        assert checkpoint is not None
-
-        restored = turns.build().as_agent()
-        replay = await restored.run(checkpoint_id=checkpoint.checkpoint_id, checkpoint_storage=storage)
-        assert replay.text == "first"
-        assert calls == ["first"]
-        with pytest.raises(ValueError, match="message.*checkpoint_id"):
-            await restored.run("second", checkpoint_id=checkpoint.checkpoint_id, checkpoint_storage=storage)
-
-        assert (await original.run("second", checkpoint_storage=storage)).text == "second"
-        assert calls == ["first", "second"]
-
-    async def test_fresh_agent_resumes_pending_request_from_checkpoint_without_new_message(self) -> None:
-        storage = InMemoryCheckpointStorage()
-
-        @workflow
-        async def review(text: str, ctx: RunContext) -> str:
-            answer = await ctx.request_info(text, response_type=str, request_id="review-request")
-            return f"{text}:{answer}"
-
-        pending_agent = review.build().as_agent()
-        await pending_agent.run("original", checkpoint_storage=storage)
-        checkpoint = await storage.get_latest(workflow_name=review.name)
-        assert checkpoint is not None
-        assert "review-request" in checkpoint.pending_request_info_events
-
-        restored = review.build().as_agent()
-        response = await restored.run(
-            checkpoint_id=checkpoint.checkpoint_id,
-            checkpoint_storage=storage,
-            responses={"review-request": "accepted"},
-        )
-        assert response.text == "original:accepted"
-        completed = next(
-            saved
-            for saved in await storage.list_checkpoints(workflow_name=review.name)
-            if saved.previous_checkpoint_id == checkpoint.checkpoint_id
-        )
-        assert not restored.pending_requests
-        assert not completed.pending_request_info_events
-
     async def test_checkpoint_save_and_restore(self):
         storage = InMemoryCheckpointStorage()
 
@@ -1162,6 +1051,13 @@ class TestAsAgent:
         agent = wf.as_agent(name="my_agent")
         assert agent.id == "FunctionalWorkflowAgent_my_agent"
         assert agent.description == "A test workflow"
+
+    async def test_as_agent_implements_supports_agent_run(self):
+        @built_workflow
+        async def wf(x: int) -> int:
+            return x
+
+        assert isinstance(wf.as_agent(), SupportsAgentRun)
 
 
 # ---------------------------------------------------------------------------

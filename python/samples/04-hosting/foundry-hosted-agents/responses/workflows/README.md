@@ -16,13 +16,10 @@ See [main.py](main.py) for the full implementation.
 
 ### Agent Hosting
 
-The workflow is exposed via `.as_agent()` and supplied through `ResponsesHostServer(agent_factory=...)`.
-Every request creates fresh agents, executors, and workflow state. The host restores the current conversation's
-checkpoint into that new instance when continuing an existing conversation.
-
-The model client is opened once in `main` and closed when the host exits. Only that client is shared across requests;
-the mutable agents and executors are created inside the factory. The workflow name and executor names remain stable
-so newly created workflows can load earlier checkpoints.
+The workflow is exposed as an agent via `.as_agent()` and hosted using the
+[Agent Framework](https://github.com/microsoft/agent-framework) with `ResponsesHostServer`. The host receives a
+callable that builds a fresh workflow, executors, and agents for each request while reusing the application-owned
+`FoundryChatClient`.
 
 ## Running the Agent Host
 

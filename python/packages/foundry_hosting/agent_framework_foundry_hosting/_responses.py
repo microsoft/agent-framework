@@ -9,38 +9,39 @@ import json
 import logging
 import os
 import re
-import sys
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Generator, Mapping, Sequence
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterable,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Generator,
+    Mapping,
+    Sequence,
+)
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, aclosing, suppress
 from dataclasses import asdict, dataclass, is_dataclass
 from typing import Generic, Literal, TypeGuard, TypeVar, cast
 from urllib.parse import urlparse
 
 from agent_framework import (
-    AgentResponse,
     AgentResponseUpdate,
-    AgentSession,
     ChatOptions,
     CheckpointStorage,
     Content,
     ContextProvider,
-    FunctionalWorkflowAgent,
     HistoryProvider,
     InMemoryHistoryProvider,
     Message,
     RawAgent,
-    SessionContext,
     SessionStore,
     SupportsAgentRun,
     UsageDetails,
     WorkflowAgent,
-    WorkflowRunState,
     add_usage_details,
 )
 from agent_framework._telemetry import mark_feature_used
-from agent_framework._workflows._typing_utils import is_instance_of, try_coerce_to_type
 from agent_framework.exceptions import AgentFrameworkException
-from anyio import CancelScope
 from azure.ai.agentserver.core import get_request_context
 from azure.ai.agentserver.responses import (
     ResponseContext,
@@ -81,15 +82,7 @@ from azure.ai.agentserver.responses.streaming._checkpoint import ResponseCheckpo
 from mcp import McpError
 from typing_extensions import Any
 
-from ._agent_factory import (
-    AgentFactory,
-    AgentFactoryResolver,
-    HostedAgent,
-    ScopeLocks,
-    close_run_iterator,
-    is_workflow_agent,
-    validate_agent_source,
-)
+from ._agent_source import is_agent, resolve_agent
 from ._feature_usage import FeatureIndex
 from ._state_store import (
     AgentSessionStoreProvider,
@@ -147,8 +140,6 @@ def _create_response_event_stream(context: ResponseContext) -> ResponseEventStre
 
 
 _T = TypeVar("_T")
-_WorkflowRunFactory = Callable[[], AsyncIterator[AgentResponseUpdate]]
-_WorkflowRun = Callable[[_WorkflowRunFactory], AsyncIterator[AgentResponseUpdate]]
 
 # Sentinel put on the internal queue by _SignalledIterator's driver task to signal that the
 # wrapped iterator is exhausted (distinct from `None`, which is a valid item value).
@@ -170,9 +161,8 @@ class _SignalledIterator(Generic[_T]):
     async context.
 
     If an event and a new item becomes ready at the same time, the event takes priority and the item
-    is discarded. Cancelling the background task while it's mid-call is also what actually interrupts
-    a suspended model/tool call, since ``ResponseStream`` (what ``SupportsAgentRun.run(stream=True)``
-    returns) has no ``aclose()`` of its own.
+    is discarded. Cancelling the background task while it's mid-call interrupts a suspended model or
+    tool call, then the driver closes the underlying stream in ``finally``.
 
     Callers MUST drive this through ``contextlib.aclosing`` (or an equivalent try/finally calling
     ``aclose()``): ``__anext__`` only cancels the driver task on its own signalled/exhausted paths, so
@@ -194,7 +184,6 @@ class _SignalledIterator(Generic[_T]):
         self._queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=1)
         # The background task that drives the wrapped iterator.
         self._driver: asyncio.Task[None] | None = None
-        self._closing = False
 
     @property
     def signalled(self) -> bool:
@@ -211,24 +200,20 @@ class _SignalledIterator(Generic[_T]):
     async def _drive(self) -> None:
         """Pull items from the wrapped iterator into ``self._queue`` for the object's lifetime."""
         try:
-            # Consumer cancellation is forwarded explicitly by aclose(). Shield the
-            # driver from repeated AnyIO cancellation while its iterator unwinds.
-            with CancelScope(shield=True):
+            while True:
                 try:
-                    while True:
-                        try:
-                            item: Any = await self._iterator.__anext__()
-                        except StopAsyncIteration:
-                            break
-                        await self._queue.put(item)
-                finally:
-                    await close_run_iterator(self._iterator)
-        except Exception as exc:
-            if self._closing:
-                raise
-            await self._queue.put(exc)
-        else:
-            await self._queue.put(_STOP_SENTINEL)
+                    item: Any = await self._iterator.__anext__()
+                except StopAsyncIteration:
+                    await self._queue.put(_STOP_SENTINEL)
+                    return
+                except Exception as exc:
+                    await self._queue.put(exc)
+                    return
+                await self._queue.put(item)
+        finally:
+            close = getattr(self._iterator, "aclose", None)
+            if close is not None:
+                await close()
 
     async def __anext__(self) -> _T:
         if self._driver is None:
@@ -242,25 +227,15 @@ class _SignalledIterator(Generic[_T]):
             await asyncio.wait([get_task, *waiters], return_when=asyncio.FIRST_COMPLETED)
             if any(waiter.done() for waiter in waiters):
                 self._signalled = True
-                self._closing = True
                 self._driver.cancel()
-                with CancelScope(shield=True), suppress(asyncio.CancelledError):
+                with suppress(BaseException):
                     await self._driver
                 get_task.cancel()
                 with suppress(BaseException):
                     await get_task
                 raise StopAsyncIteration
             item = get_task.result()
-        except asyncio.CancelledError:
-            if not self._closing:
-                self._closing = True
-                self._driver.cancel()
-            raise
         finally:
-            if not get_task.done():
-                get_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await get_task
             for waiter in waiters:
                 if not waiter.done():
                     waiter.cancel()
@@ -281,10 +256,8 @@ class _SignalledIterator(Generic[_T]):
         """
         if self._driver is None:
             return
-        if not self._closing:
-            self._closing = True
-            self._driver.cancel()
-        with CancelScope(shield=True), suppress(asyncio.CancelledError):
+        self._driver.cancel()
+        with suppress(BaseException):
             await self._driver
 
 
@@ -413,7 +386,6 @@ def consent_url_from_error(exc: BaseException) -> list[ConsentError] | None:
 # endregion Foundry Toolbox Auth integration
 
 
-# region ResponsesHostServer
 @dataclass(frozen=True)
 class _AgentConfiguration:
     workflow: bool
@@ -423,37 +395,32 @@ class _AgentConfiguration:
 
 
 def _validate_agent_configuration(
-    agent: HostedAgent,
+    agent: SupportsAgentRun,
     history_source: Literal["agent_server", "agent"],
     options: ResponsesServerOptions | None,
 ) -> _AgentConfiguration:
-    workflow = is_workflow_agent(agent)
-    if isinstance(agent, WorkflowAgent) and agent.workflow._runner_context.has_checkpointing():  # pyright: ignore[reportPrivateUsage]
+    is_workflow_agent = isinstance(agent, WorkflowAgent)
+    if is_workflow_agent and agent.workflow._runner_context.has_checkpointing():  # pyright: ignore[reportPrivateUsage]
         raise RuntimeError(
             "There should not be a checkpoint storage already present in the workflow agent. "
             "The hosting infrastructure will manage checkpoints instead."
         )
-    if isinstance(agent, FunctionalWorkflowAgent):
-        if agent._workflow._checkpoint_storage is not None:  # pyright: ignore[reportPrivateUsage]
-            raise RuntimeError("The hosting infrastructure must manage the workflow checkpoint storage.")
-        if options and options.resilient_background:
-            raise RuntimeError(
-                "Functional workflow recovery is not supported: checkpoints do not preserve buffered step output. "
-                "Use a graph workflow for resilient_background=True."
-            )
-    if options and options.resilient_background and not workflow:
+
+    resilient_background = bool(options and options.resilient_background)
+    if resilient_background and not is_workflow_agent:
         raise RuntimeError(
             "resilient_background=True is only supported for workflow agents. "
             "Crash recovery cannot be provided for non-workflow agents."
         )
-    if options and options.steerable_conversations and workflow:
+    if options and options.steerable_conversations and is_workflow_agent:
         raise RuntimeError(
             "steerable_conversations=True is only supported for non-workflow agents. "
             "Steering cannot be provided reliably for workflow agents."
         )
-    agent_server_history = history_source == "agent_server"
+
+    uses_agent_server_history = history_source == "agent_server"
     client_stores_by_default = False
-    if agent_server_history and not workflow:
+    if uses_agent_server_history and not is_workflow_agent:
         if not isinstance(agent, RawAgent):
             raise RuntimeError(
                 "history_source='agent_server' requires a RawAgent so hosting can enforce downstream "
@@ -487,30 +454,35 @@ def _validate_agent_configuration(
                 "STORES_BY_DEFAULT so hosting can enforce downstream storage behavior."
             )
         client_stores_by_default = stores_by_default
+
     return _AgentConfiguration(
-        workflow, agent_server_history, client_stores_by_default, agent_server_history and not workflow
+        workflow=is_workflow_agent,
+        agent_server_history=uses_agent_server_history,
+        client_stores_by_default=client_stores_by_default,
+        hosted_history=uses_agent_server_history and not is_workflow_agent,
     )
 
 
-def _initialize_agent_history(agent: HostedAgent, configuration: _AgentConfiguration) -> None:
-    if configuration.hosted_history and isinstance(agent, RawAgent):
-        if not configuration.client_stores_by_default:
-            agent.default_options.pop("store", None)
-        if not any(
-            _is_hosted_responses_history_sentinel(provider)
-            for provider in cast(Sequence[ContextProvider], agent.context_providers)
-        ):
-            agent.context_providers.append(InMemoryHistoryProvider(source_id=_HOSTED_RESPONSES_HISTORY_SOURCE_ID))
+def _initialize_agent_history(agent: SupportsAgentRun, configuration: _AgentConfiguration) -> None:
+    if not configuration.hosted_history or not isinstance(agent, RawAgent):
+        return
+    if not configuration.client_stores_by_default:
+        agent.default_options.pop("store", None)
+    if not any(
+        _is_hosted_responses_history_sentinel(provider)
+        for provider in cast(Sequence[ContextProvider], agent.context_providers)
+    ):
+        agent.context_providers.append(InMemoryHistoryProvider(source_id=_HOSTED_RESPONSES_HISTORY_SOURCE_ID))
 
 
+# region ResponsesHostServer
 class ResponsesHostServer(ResponsesAgentServerHost):
     """A responses server host for an agent."""
 
     def __init__(
         self,
-        agent: HostedAgent | None = None,
+        agent: SupportsAgentRun | Callable[[], SupportsAgentRun | Awaitable[SupportsAgentRun]],
         *,
-        agent_factory: AgentFactory | None = None,
         prefix: str = "",
         options: ResponsesServerOptions | None = None,
         store: ResponseProviderProtocol | None = None,
@@ -523,11 +495,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         """Initialize a ResponsesHostServer.
 
         Args:
-            agent: An ordinary agent instance. Supply workflow agents through agent_factory.
-            agent_factory: A no-argument sync or async factory creating one agent per request.
-                Recreate mutable workflows and executors with stable names and IDs. Returned
-                async context managers remain open through execution, streaming, and persistence.
-                Functional workflows do not support resilient background recovery.
+            agent: The agent to handle responses for, or a zero-argument sync or async callable that creates one for
+                each request. Use a callable for agents that keep mutable state outside `AgentSession`.
             prefix: The URL prefix for the server.
             options: Optional server options.
             store: Optional response store for input and history look up.
@@ -555,6 +524,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                `history_source="agent"` mode, is persisted by the configured session store.
             3. The server owns the supplied agent instance and may add hosting-specific providers.
                Do not reuse the same agent with another host or invoke it directly after construction.
+               An agent returned by a callable belongs to that request.
             4. Resiliency (resilient_background=True) is ONLY supported for workflows; constructing this
                server with a non-workflow agent and `resilient_background=True` raises `RuntimeError`.
                When resiliency is enabled, and the server crashes mid-response:
@@ -577,18 +547,28 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         """
         if history_source not in ("agent_server", "agent"):
             raise ValueError("history_source must be either 'agent_server' or 'agent'.")
-        validate_agent_source(agent, agent_factory)
-        configuration = _validate_agent_configuration(agent, history_source, options) if agent is not None else None
+
+        resolved_agent = agent if is_agent(agent) else None
+        configuration = (
+            _validate_agent_configuration(resolved_agent, history_source, options)
+            if resolved_agent is not None
+            else None
+        )
+
+        # No caller-owned agent state is mutated until all validation and base-host construction succeed.
         super().__init__(prefix=prefix, options=options, store=store, **kwargs)
+
+        self._agent_source = agent
+        self._agent = resolved_agent
+        self._configuration = configuration
         self._history_source: Literal["agent_server", "agent"] = history_source
         self._host_options = options
-        self._configuration = configuration
+        self._uses_agent_server_history = (
+            configuration.agent_server_history if configuration is not None else history_source == "agent_server"
+        )
         self._resilient_background = bool(options and options.resilient_background)
-        self._agent = agent
-        self._agent_resolver = AgentFactoryResolver(agent_factory) if agent_factory is not None else None
-        self._scope_locks = ScopeLocks()
-        if agent is not None and configuration is not None:
-            _initialize_agent_history(agent, configuration)
+        if resolved_agent is not None and configuration is not None:
+            _initialize_agent_history(resolved_agent, configuration)
 
         # Storage providers
         self._checkpoint_storage_provider = (
@@ -627,10 +607,13 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         async with self._agent_init_lock:
             if self._agent_stack is not None:
                 return
+            agent = self._agent
+            if agent is None:
+                raise RuntimeError("A request-scoped agent cannot use the server-lifetime initialization path.")
             stack = AsyncExitStack()
             try:
-                if isinstance(self._agent, AbstractAsyncContextManager):
-                    await stack.enter_async_context(cast(AbstractAsyncContextManager[Any], self._agent))
+                if isinstance(agent, AbstractAsyncContextManager):
+                    await stack.enter_async_context(cast(AbstractAsyncContextManager[Any], agent))
             except BaseException:
                 await stack.aclose()
                 raise
@@ -651,71 +634,41 @@ class ResponsesHostServer(ResponsesAgentServerHost):
     ) -> AsyncIterable[ResponseStreamEvent | ResponseCheckpointEvent]:
         """Handle the creation of a response."""
         response_event_stream = _create_response_event_stream(context)
+        if context.is_steered_turn:
+            logger.debug("Serving steered turn (pending_input_count=%d)", context.pending_input_count)
         yield response_event_stream.emit_created()
         yield response_event_stream.emit_in_progress()
-        if self._agent_resolver is None:
-            async with AsyncExitStack() as resources:
-                inner = self._handle_prepared_response(
-                    request,
-                    context,
-                    cancellation_signal,
-                    response_event_stream,
-                    cast(HostedAgent, self._agent),
-                    cast(_AgentConfiguration, self._configuration),
-                    resources,
-                )
-                async with aclosing(inner):
-                    async for event in inner:
-                        yield event
-            return
+
         terminal_event: ResponseStreamEvent | None = None
-        try:
-            async with AsyncExitStack() as locks:
-                platform_context = get_request_context()
-                if self.config.is_hosted and not platform_context.user_id:
-                    raise RuntimeError("The hosted request context is missing user_id.")
-                scope_id = context.conversation_id or request.get("previous_response_id") or context.response_id
-                _validate_checkpoint_context_id(scope_id)
-                await locks.enter_async_context(self._scope_locks.hold((platform_context.user_id, scope_id)))
-                agent = await self._agent_resolver.resolve()
-                configuration = _validate_agent_configuration(agent, self._history_source, self._host_options)
-                _initialize_agent_history(agent, configuration)
-                # This scope must precede any task-affine MCP scopes entered by the agent.
-                with CancelScope() as cleanup_scope:
-                    resources = AsyncExitStack()
-                    try:
-                        inner = self._handle_prepared_response(
-                            request,
-                            context,
-                            cancellation_signal,
-                            response_event_stream,
-                            agent,
-                            configuration,
-                            resources,
-                        )
-                        async with aclosing(inner):
-                            async for event in inner:
-                                if isinstance(event, Mapping) and event.get("type") in (
-                                    "response.completed",
-                                    "response.incomplete",
-                                    "response.failed",
-                                ):
-                                    terminal_event = event
-                                else:
-                                    yield event
-                    finally:
-                        cleanup_scope.shield = True
-                        exc_info = sys.exc_info()
-                        if isinstance(exc_info[1], GeneratorExit):
-                            await resources.aclose()
-                        else:
-                            await resources.__aexit__(*exc_info)
-            if terminal_event is not None:
-                yield terminal_event
-        except Exception as ex:
-            logger.exception("Failed to prepare or release the request agent")
-            for event in self._emit_failure(response_event_stream, None, ex):
-                yield event
+        agent = await resolve_agent(self._agent_source)
+        configuration = self._configuration or _validate_agent_configuration(
+            agent, self._history_source, self._host_options
+        )
+        if self._configuration is None:
+            _initialize_agent_history(agent, configuration)
+
+        async with AsyncExitStack() as resources:
+            inner = self._handle_prepared_response(
+                request,
+                context,
+                cancellation_signal,
+                response_event_stream,
+                agent,
+                configuration,
+                resources,
+            )
+            async with aclosing(inner):
+                async for event in inner:
+                    if isinstance(event, Mapping) and event.get("type") in (
+                        "response.completed",
+                        "response.incomplete",
+                        "response.failed",
+                    ):
+                        terminal_event = event
+                    else:
+                        yield event
+        if terminal_event is not None:
+            yield terminal_event
 
     async def _handle_prepared_response(
         self,
@@ -723,18 +676,17 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         context: ResponseContext,
         cancellation_signal: asyncio.Event,
         response_event_stream: ResponseEventStream,
-        agent: HostedAgent,
+        agent: SupportsAgentRun,
         configuration: _AgentConfiguration,
         resources: AsyncExitStack,
     ) -> AsyncGenerator[ResponseStreamEvent | ResponseCheckpointEvent]:
-
         # Lazy-enter the agent (and any MCP tools it owns). The MCP client wraps gateway
         # consent failures (and other connection-time errors) in AgentFrameworkException; if
         # one of those is a consent error we surface the consent link to the client through
         # the already-opened response stream instead of failing the request. Other exception
         # types fall through to the outer handler below and become ``response.failed``.
         try:
-            if self._agent_resolver is None:
+            if self._configuration is not None:
                 await self._ensure_agent_ready()
             elif isinstance(agent, AbstractAsyncContextManager):
                 await resources.enter_async_context(agent)
@@ -778,7 +730,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                                 "Cannot find an existing agent session for "
                                 f"previous_response_id={previous_response_id}."
                             )
-                        session = cast(SupportsAgentRun, agent).create_session()
+                        session = agent.create_session()
                     await session_storage.set(context.conversation_id or context.response_id, session)
                 except Exception as save_error:
                     logger.error(
@@ -809,7 +761,12 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         try:
             if configuration.workflow:
                 inner = self._handle_inner_workflow(
-                    request, context, response_event_stream, tracker, cancellation_signal, agent
+                    request,
+                    context,
+                    response_event_stream,
+                    tracker,
+                    cancellation_signal,
+                    cast(WorkflowAgent, agent),
                 )
             else:
                 inner = self._handle_inner_agent(
@@ -818,7 +775,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     response_event_stream,
                     tracker,
                     cancellation_signal,
-                    cast(SupportsAgentRun, agent),
+                    agent,
                     configuration,
                 )
 
@@ -849,6 +806,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         context: ResponseContext,
         *,
         approval_storage: FunctionApprovalStore | None,
+        configuration: _AgentConfiguration | None = None,
     ) -> list[Message]:
         """Load the request's input and prior history concurrently, assembled for the run.
 
@@ -863,13 +821,16 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         need to know the storage-result ordering. If either read fails, the
         sibling task is cancelled and drained so no storage read is orphaned.
         """
+        uses_agent_server_history = (
+            configuration.agent_server_history if configuration is not None else self._uses_agent_server_history
+        )
 
         async def _load_input() -> list[Message]:
             input_items = await context.get_input_items()
             return await _items_to_messages(input_items, approval_storage=approval_storage)
 
         async def _load_history() -> list[Message]:
-            if self._history_source != "agent_server":
+            if not uses_agent_server_history:
                 return []
             history = await context.get_history()
             return await _output_items_to_messages(history, approval_storage=approval_storage)
@@ -925,7 +886,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             # session load below. These are independent storage round-trips with no data dependency
             # between them, so overlapping them removes serial latency from the request critical path.
             request_messages_task = asyncio.ensure_future(
-                self._load_request_messages(context, approval_storage=approval_storage)
+                self._load_request_messages(
+                    context,
+                    approval_storage=approval_storage,
+                    configuration=configuration,
+                )
             )
 
             previous_response_id = request.get("previous_response_id")
@@ -985,7 +950,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             # Non-workflow agents can't be resilient, so there is no exit_for_recovery path here:
             # both shutdown and steering/cancel just wind the turn down once observed.
             agent_stream = _SignalledIterator(
-                agent.run(stream=True, **run_kwargs),  # pyright: ignore[reportUnknownMemberType]
+                agent.run(stream=True, **run_kwargs),  # type: ignore[reportUnknownMemberType]
                 context.shutdown,
                 cancellation_signal,
             )
@@ -1023,8 +988,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     request_failure = misconfigured
             try:
                 if not stored_output_violation:
-                    with CancelScope(shield=True):
-                        await session_storage.set(session_save_id, session)
+                    await session_storage.set(session_save_id, session)
             except Exception as save_error:
                 save_failure = save_error
                 if request_interrupted:
@@ -1052,106 +1016,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         response_event_stream: ResponseEventStream,
         tracker: _OutputItemTracker,
         cancellation_signal: asyncio.Event,
-        agent: HostedAgent,
-    ) -> AsyncGenerator[ResponseStreamEvent | ResponseCheckpointEvent]:
-        if not is_workflow_agent(agent):
-            raise RuntimeError("Agent is not a workflow agent.")
-        platform_context = get_request_context()
-        save_id = context.conversation_id or context.response_id
-        load_id = save_id if context.is_recovery else context.conversation_id or request.get("previous_response_id")
-        _validate_checkpoint_context_id(save_id)
-        if load_id is not None:
-            _validate_checkpoint_context_id(load_id)
-        sessions = self._session_storage_provider.get_store(config=self.config, platform_context=platform_context)
-        session = await sessions.get(load_id) if load_id is not None else None
-        workflow = agent.workflow if isinstance(agent, WorkflowAgent) else agent._workflow  # pyright: ignore[reportPrivateUsage]
-        kind = "graph" if isinstance(agent, WorkflowAgent) else "functional"
-        state_key = "_foundry_responses_workflow"
-        saved_marker = session.state.get(state_key) if session is not None else None
-        marker = cast(dict[str, Any], saved_marker) if isinstance(saved_marker, dict) else None
-        if session is not None and (
-            marker is None or marker.get("name") != workflow.name or marker.get("kind") != kind
-        ):
-            raise RuntimeError("The stored Responses workflow name or kind does not match the factory result.")
-        had_session = session is not None
-        if session is None:
-            session = AgentSession()
-        prior_completed = marker is not None and marker.get("completed") is True
-        state_marker: dict[str, Any] = {"name": workflow.name, "kind": kind, "completed": False}
-        attempt_saved = False
-        attempt_started = False
-
-        async def run_workflow(stream_factory: _WorkflowRunFactory) -> AsyncGenerator[AgentResponseUpdate]:
-            nonlocal attempt_saved, attempt_started
-            if cancellation_signal.is_set():
-                return
-            if not attempt_started:
-                session.state[state_key] = state_marker
-                attempt_saved = True
-                await sessions.set(save_id, session)
-                if cancellation_signal.is_set():
-                    return
-                attempt_started = True
-            iterator = stream_factory()
-            try:
-                async for update in iterator:
-                    yield update
-            finally:
-                await close_run_iterator(iterator)
-
-        try:
-            if isinstance(agent, FunctionalWorkflowAgent):
-                inner = self._handle_functional_workflow(
-                    request, context, tracker, cancellation_signal, agent, had_session, prior_completed, run_workflow
-                )
-            else:
-                inner = self._handle_graph_workflow(
-                    request,
-                    context,
-                    response_event_stream,
-                    tracker,
-                    cancellation_signal,
-                    agent,
-                    session if agent.context_providers else None,
-                    had_session,
-                    run_workflow,
-                )
-            async with aclosing(inner):
-                async for event in inner:
-                    if isinstance(event, ResponseCheckpointEvent):
-                        await sessions.set(save_id, session)
-                    yield event
-            if attempt_started and not cancellation_signal.is_set() and not context.shutdown.is_set():
-                pending = (
-                    agent.workflow.status == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
-                    if isinstance(agent, WorkflowAgent)
-                    else bool(agent.pending_requests)
-                )
-                session.state[state_key]["completed"] = not pending
-        finally:
-            with CancelScope(shield=True):
-                if attempt_started:
-                    await sessions.set(save_id, session)
-                elif attempt_saved:
-                    # The initial write can finish just as cancellation arrives.
-                    # No workflow work ran, so preserve the previous conversation.
-                    if had_session and load_id == save_id:
-                        session.state[state_key] = saved_marker
-                        await sessions.set(save_id, session)
-                    else:
-                        await sessions.delete(save_id)
-
-    async def _handle_graph_workflow(
-        self,
-        request: CreateResponse,
-        context: ResponseContext,
-        response_event_stream: ResponseEventStream,
-        tracker: _OutputItemTracker,
-        cancellation_signal: asyncio.Event,
         agent: WorkflowAgent,
-        session: AgentSession | None,
-        had_session: bool,
-        run_workflow: _WorkflowRun,
     ) -> AsyncGenerator[ResponseStreamEvent | ResponseCheckpointEvent]:
         """Handle the creation of a response for a workflow agent."""
         try:
@@ -1182,13 +1047,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             if context.is_recovery:
                 if not self._resilient_background:
                     raise RuntimeError("Recovery mode is only supported when resilient_background=True.")
-                persisted_messages = (
-                    await _output_items_to_messages(
-                        context.persisted_response.get("output", []), approval_storage=approval_storage
-                    )
-                    if context.persisted_response is not None and session is not None
-                    else []
-                )
                 # Resume from the workflow checkpoint durably paired with the last persisted response
                 # snapshot (recorded in that snapshot's own metadata) -- NOT simply the latest workflow
                 # checkpoint in storage, which may be ahead of what response.output actually reflects if
@@ -1196,16 +1054,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 checkpoint_id = response_event_stream.internal_metadata.get(_LATEST_CHECKPOINT_ID_KEY)
                 if checkpoint_id is not None:
                     logger.debug("Serving recovery request from workflow checkpoint %s", checkpoint_id)
-                    run_stream = run_workflow(
-                        lambda: self._resume_workflow_from_checkpoint(
-                            checkpoint_id,
-                            checkpoint_storage,
-                            context.response_id,
-                            agent,
-                            session,
-                            input_messages,
-                            persisted_messages,
-                        )
+                    run_stream = self._resume_workflow_from_checkpoint(
+                        checkpoint_id, checkpoint_storage, context.response_id, agent
                     )
                 else:
                     latest_checkpoint = await checkpoint_storage.get_latest(workflow_name=agent.workflow.name)
@@ -1215,17 +1065,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                             "resuming from the latest checkpoint",
                             latest_checkpoint.checkpoint_id,
                         )
-                        recovery_checkpoint_id = latest_checkpoint.checkpoint_id
-                        run_stream = run_workflow(
-                            lambda: self._resume_workflow_from_checkpoint(
-                                recovery_checkpoint_id,
-                                checkpoint_storage,
-                                context.response_id,
-                                agent,
-                                session,
-                                input_messages,
-                                persisted_messages,
-                            )
+                        run_stream = self._resume_workflow_from_checkpoint(
+                            latest_checkpoint.checkpoint_id,
+                            checkpoint_storage,
+                            context.response_id,
+                            agent,
                         )
                     else:
                         # No checkpoint was ever paired with a persisted response snapshot (e.g. the crash
@@ -1235,13 +1079,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         logger.debug(
                             "Serving recovery request with no prior workflow checkpoint; replaying original input"
                         )
-                        run_stream = run_workflow(
-                            lambda: agent.run(
-                                input_messages,
-                                stream=True,
-                                session=session,
-                                checkpoint_storage=checkpoint_storage,
-                            )
+                        run_stream = agent.run(
+                            input_messages,
+                            stream=True,
+                            checkpoint_storage=checkpoint_storage,
                         )
             else:
                 # Determine the latest checkpoint (if any) so we can resume the
@@ -1267,12 +1108,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     raise RuntimeError(
                         f"Cannot find an existing workflow checkpoint for previous_response_id={previous_response_id}."
                     )
-                if latest_checkpoint is None and (
-                    had_session or (context.conversation_id is not None and await context.get_history())
-                ):
-                    raise RuntimeError("The existing conversation is missing its required workflow checkpoint.")
-                if latest_checkpoint is not None and not had_session and agent.context_providers:
-                    raise RuntimeError("The workflow checkpoint is missing its required outer agent session.")
 
                 if latest_checkpoint is not None:
                     # If we have a prior checkpoint, restore it first (drive the workflow
@@ -1284,19 +1119,16 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     # If the restored checkpoint had pending request_info events, the
                     # restore-only call replays them through
                     # ``WorkflowAgent._convert_workflow_event_to_agent_response_updates``
-                    # and restores the workflow's pending requests. That is the correct
+                    # and populates ``agent.pending_requests``. That is the correct
                     # state: those requests are genuinely outstanding, and the next
                     # ``run(input_messages, ...)`` call may contain ``function_call_output``
                     # items (carried as FunctionResult/FunctionApprovalResponse content)
                     # that fulfill them via :meth:`WorkflowAgent._process_pending_requests`.
-                    restore_checkpoint_id = latest_checkpoint.checkpoint_id
                     restore_iter = _SignalledIterator(
-                        run_workflow(
-                            lambda: agent.run(
-                                stream=True,
-                                checkpoint_id=restore_checkpoint_id,
-                                checkpoint_storage=restore_checkpoint_storage,
-                            )
+                        agent.run(
+                            stream=True,
+                            checkpoint_id=latest_checkpoint.checkpoint_id,
+                            checkpoint_storage=restore_checkpoint_storage,
                         ),
                         context.shutdown,
                         cancellation_signal,
@@ -1315,13 +1147,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 if cancellation_signal.is_set():
                     return
 
-                run_stream = run_workflow(
-                    lambda: agent.run(
-                        input_messages,
-                        stream=True,
-                        session=session,
-                        checkpoint_storage=checkpoint_storage,
-                    )
+                run_stream = agent.run(
+                    input_messages,
+                    stream=True,
+                    checkpoint_storage=checkpoint_storage,
                 )
 
             main_iter = _SignalledIterator(run_stream, context.shutdown, cancellation_signal)
@@ -1369,9 +1198,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         checkpoint_storage: CheckpointStorage,
         response_id: str,
         agent: WorkflowAgent,
-        session: AgentSession | None,
-        input_messages: list[Message],
-        persisted_messages: list[Message],
     ) -> AsyncGenerator[AgentResponseUpdate]:
         """Resume a crashed background workflow run, forwarding every event it produces.
 
@@ -1386,24 +1212,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
         TODO(@taochen): #7677
         """
-        session_context: SessionContext | None = None
-        if session is not None:
-            session_context = SessionContext(
-                session_id=session.session_id,
-                service_session_id=session.service_session_id,
-                input_messages=input_messages,
-                options={},
-            )
-            for provider in agent.context_providers:
-                if isinstance(provider, HistoryProvider) and not provider.load_messages:
-                    continue
-                await provider.before_run(
-                    agent=agent,
-                    session=session,
-                    context=session_context,
-                    state=session.state.setdefault(provider.source_id, {}),
-                )
-        updates: list[AgentResponseUpdate] = []
         async for event in agent.workflow.run(
             stream=True,
             checkpoint_id=checkpoint_id,
@@ -1412,114 +1220,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             for update in agent._convert_workflow_event_to_agent_response_updates(  # pyright: ignore[reportPrivateUsage]
                 response_id, event
             ):
-                if session_context is not None:
-                    updates.append(update)
                 yield update
-        if session_context is not None:
-            response = AgentResponse.from_updates(updates)
-            session_context._response = AgentResponse(  # pyright: ignore[reportPrivateUsage]
-                messages=[*persisted_messages, *response.messages]
-            )
-            await agent._run_after_providers(session=session, context=session_context)  # pyright: ignore[reportPrivateUsage]
-
-    async def _handle_functional_workflow(
-        self,
-        request: CreateResponse,
-        context: ResponseContext,
-        tracker: _OutputItemTracker,
-        cancellation_signal: asyncio.Event,
-        agent: FunctionalWorkflowAgent,
-        had_session: bool,
-        prior_completed: bool,
-        run_workflow: _WorkflowRun,
-    ) -> AsyncGenerator[ResponseStreamEvent]:
-        if context.is_recovery:
-            raise RuntimeError("Functional workflow recovery cannot preserve buffered step output.")
-        previous_id = request.get("previous_response_id")
-        if previous_id is not None and context.conversation_id is not None:
-            raise RuntimeError("Previous response ID cannot be used in conjunction with conversation ID.")
-        platform_context = get_request_context()
-        save_id = context.conversation_id or context.response_id
-        load_id = context.conversation_id or previous_id
-        storage = self._checkpoint_storage_provider.get_store(
-            config=self.config, context_id=save_id, platform_context=platform_context
-        )
-        restore_storage = storage
-        if load_id is not None and load_id != save_id:
-            restore_storage = self._checkpoint_storage_provider.get_store(
-                config=self.config, context_id=load_id, platform_context=platform_context
-            )
-        checkpoint = await restore_storage.get_latest(workflow_name=agent._workflow.name)  # pyright: ignore[reportPrivateUsage]
-        if checkpoint is None and (
-            had_session
-            or previous_id is not None
-            or (context.conversation_id is not None and await context.get_history())
-        ):
-            raise RuntimeError("The existing conversation is missing its required workflow checkpoint.")
-        if checkpoint is not None and not had_session:
-            raise RuntimeError("The functional workflow checkpoint is missing its required agent session.")
-        approval_storage = self._function_approval_storage_provider.get_store(
-            config=self.config, platform_context=platform_context
-        )
-        messages = await _items_to_messages(await context.get_input_items(), approval_storage=approval_storage)
-        run_kwargs: dict[str, Any] = {"messages": messages, "checkpoint_storage": storage}
-        if checkpoint is not None and not prior_completed:
-            pending = checkpoint.pending_request_info_events
-            if not pending:
-                raise RuntimeError("Cannot continue an interrupted functional workflow without pending requests.")
-            responses: dict[str, Any] = {}
-            for message in messages:
-                for content in message.contents:
-                    request_id = content.call_id if content.type == "function_result" else content.id
-                    if request_id is None or request_id not in pending or request_id in responses:
-                        raise ValueError("The input does not match an authorized pending functional workflow request.")
-                    pending_request = pending[request_id]
-                    if content.type == "function_result":
-                        response = content if pending_request.response_type is Content else content.result
-                    elif content.type == "function_approval_response" and pending_request.response_type is bool:
-                        response = content.approved
-                    elif content.type == "function_approval_response" and pending_request.response_type is Content:
-                        response = content
-                    else:
-                        raise ValueError(
-                            "This pending functional workflow request requires a matching function result."
-                        )
-                    response = try_coerce_to_type(response, pending_request.response_type)
-                    if not is_instance_of(response, pending_request.response_type):
-                        raise ValueError(
-                            f"Response type mismatch for request ID {request_id}: "
-                            f"expected {pending_request.response_type}, got {type(response)}"
-                        )
-                    responses[request_id] = response
-            if not responses:
-                raise ValueError("Pending functional workflow requests require structured responses.")
-            run_kwargs = {
-                "checkpoint_storage": storage,
-                "checkpoint_id": checkpoint.checkpoint_id,
-                "responses": responses,
-            }
-        if cancellation_signal.is_set():
-            return
-
-        async def execute() -> AsyncGenerator[AgentResponseUpdate]:
-            if checkpoint is not None and not prior_completed:
-                # Copy the authorized checkpoint only once restoration actually starts.
-                await storage.save(checkpoint)
-            agent_stream = agent.run(stream=True, **run_kwargs)
-            try:
-                async for update in agent_stream:
-                    yield update
-            finally:
-                await close_run_iterator(agent_stream)
-
-        iterator = _SignalledIterator(run_workflow(execute), context.shutdown, cancellation_signal)
-        async with aclosing(iterator):
-            async for update in iterator:
-                for content in update.contents:
-                    async for event in tracker.handle(
-                        content, message_id=update.message_id, approval_storage=approval_storage
-                    ):
-                        yield event
 
     @staticmethod
     def _emit_failure(

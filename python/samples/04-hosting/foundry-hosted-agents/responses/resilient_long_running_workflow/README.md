@@ -16,20 +16,17 @@ The workflow has three executors (see [main.py](main.py)):
   user's message. If no valid target is found, the workflow yields an error message instead of counting down.
 - **`CountdownExecutor`** decrements the target through a self-loop, sleeping for a second and yielding an
   output on each tick, to simulate a long-running operation.
-- **`CompleteExecutor`** yields the workflow's final `"Countdown complete."` output once the countdown reaches zero.
+- **`complete`** yields the workflow's final `"Countdown complete."` output once the countdown reaches zero.
 
 ### Agent Hosting
 
 The workflow is hosted as an agent using the [Agent Framework](https://github.com/microsoft/agent-framework)
 `ResponsesHostServer`, which provisions a REST API endpoint compatible with the OpenAI Responses protocol.
+The server receives a callable that creates a fresh workflow and executors for each request. Existing response
+sessions and workflow checkpoints are restored by the host, while the application-owned `FoundryChatClient` is reused.
 Setting `resilient_background=True` in `ResponsesServerOptions` enables the framework to checkpoint the
 workflow's progress and durably persist streamed output, so a background response can be recovered and
 resumed after a crash (see "Testing resiliency" below).
-
-The host receives an `agent_factory`, which builds all three executors and the target-extraction agent anew for
-each request, including recovery. The workflow name and executor IDs are stable across factory calls. The model
-client is owned by `main`, shared across requests, and closed when the host exits. Conversation state comes from
-the authorized checkpoint, not from a workflow instance left over from another request.
 
 ## Running the Agent Host
 

@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Generic, Protocol, TypeVar
@@ -336,28 +337,6 @@ class AgentSessionStoreProvider(StoreProvider[SessionStore]):
     def get_store(self, *, config: AgentConfig, platform_context: FoundryAgentRequestContext) -> SessionStore:
         """Get agent session store for the requested hosting environment."""
         return FoundryAgentSessionStore(platform_context)
-
-
-class _InvocationsCheckpointStore(FoundryCheckpointStore):
-    DEFAULT_ROOT_SCOPE = "invocations_checkpoints"
-
-
-class _InvocationsAgentSessionStore(FoundryAgentSessionStore):
-    DEFAULT_ROOT_SCOPE = "invocations_agent_sessions"
-
-
-class _InvocationsCheckpointStoreProvider(CheckpointStoreProvider):  # pyright: ignore[reportUnusedClass]
-    def get_store(
-        self, *, config: AgentConfig, context_id: str, platform_context: FoundryAgentRequestContext
-    ) -> CheckpointStorage:
-        return _InvocationsCheckpointStore(
-            context_id, platform_context, allowed_checkpoint_types=self._allowed_checkpoint_types
-        )
-
-
-class _InvocationsAgentSessionStoreProvider(AgentSessionStoreProvider):  # pyright: ignore[reportUnusedClass]
-    def get_store(self, *, config: AgentConfig, platform_context: FoundryAgentRequestContext) -> SessionStore:
-        return _InvocationsAgentSessionStore(platform_context)
 
 
 # endregion Agent session persistence

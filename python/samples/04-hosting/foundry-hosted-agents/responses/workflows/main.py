@@ -1,6 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import asyncio
 import os
 
 from agent_framework import Agent, AgentExecutor, WorkflowAgent, WorkflowBuilder
@@ -13,7 +12,7 @@ load_dotenv()
 
 
 def create_workflow_agent(client: FoundryChatClient) -> WorkflowAgent:
-    """Create fresh agents and executors for one request, using the host-owned client."""
+    """Create a fresh workflow agent for one hosted request."""
     writer_agent = Agent(
         client=client,
         instructions=("You are an excellent slogan writer. You create new slogans based on the given topic."),
@@ -59,18 +58,16 @@ def create_workflow_agent(client: FoundryChatClient) -> WorkflowAgent:
     )
 
 
-async def main() -> None:
-    """Keep the model client open while request factories create independent workflows."""
-    with DefaultAzureCredential() as credential:
-        client = FoundryChatClient(
-            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-            model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-            credential=credential,
-        )
-        async with client.project_client, client.client:
-            server = ResponsesHostServer(agent_factory=lambda: create_workflow_agent(client))
-            await server.run_async()
+def main() -> None:
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=DefaultAzureCredential(),
+    )
+
+    server = ResponsesHostServer(agent=lambda: create_workflow_agent(client))
+    server.run()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

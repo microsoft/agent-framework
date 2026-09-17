@@ -15,7 +15,7 @@ Environment variables:
 import asyncio
 import os
 
-from agent_framework import Agent, Executor, Message, Workflow, WorkflowBuilder, WorkflowContext, handler
+from agent_framework import Agent, Executor, Message, Workflow, WorkflowBuilder, WorkflowContext, executor, handler
 from agent_framework.foundry import FoundryChatClient
 from agent_framework_foundry_hosting import ResponsesHostServer
 from azure.ai.agentserver.responses import ResponsesServerOptions
@@ -70,15 +70,10 @@ class CountdownExecutor(Executor):
         await ctx.send_message(target - 1, target_id=self.id)
 
 
-class CompleteExecutor(Executor):
+@executor(id="complete")
+async def complete(message: str, ctx: WorkflowContext[Never, str]) -> None:
     """Yield the workflow's completion output."""
-
-    def __init__(self, id: str = "complete") -> None:
-        super().__init__(id=id)
-
-    @handler
-    async def complete(self, message: str, ctx: WorkflowContext[Never, str]) -> None:
-        await ctx.yield_output(message)
+    await ctx.yield_output(message)
 
 
 def build_workflow(client: FoundryChatClient) -> Workflow:
@@ -93,7 +88,6 @@ def build_workflow(client: FoundryChatClient) -> Workflow:
     )
     start = StartExecutor(target_agent)
     countdown = CountdownExecutor()
-    complete = CompleteExecutor()
 
     return (
         WorkflowBuilder(name="countdown-workflow", start_executor=start, output_from="all")
@@ -104,23 +98,21 @@ def build_workflow(client: FoundryChatClient) -> Workflow:
     )
 
 
-async def main() -> None:
+def main() -> None:
     """Run the workflow as a durable Responses API host."""
     print(f"PID: {os.getpid()}")  # lets crash-recovery testing find and kill this process
-    with DefaultAzureCredential() as credential:
-        client = FoundryChatClient(
-            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-            model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-            credential=credential,
-        )
-        async with client.project_client, client.client:
-            server = ResponsesHostServer(
-                agent_factory=lambda: build_workflow(client).as_agent(name="countdown-workflow"),
-                options=ResponsesServerOptions(resilient_background=True),
-                log_level="DEBUG",
-            )
-            await server.run_async()
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=DefaultAzureCredential(),
+    )
+    server = ResponsesHostServer(
+        agent=lambda: build_workflow(client).as_agent(name="countdown-workflow"),
+        options=ResponsesServerOptions(resilient_background=True),
+        log_level="DEBUG",
+    )
+    server.run()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

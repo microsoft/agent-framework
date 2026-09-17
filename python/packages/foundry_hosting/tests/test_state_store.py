@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -19,8 +21,6 @@ from agent_framework_foundry_hosting._state_store import (
     FoundryCheckpointStore,
     FoundryFunctionApprovalStore,
     FunctionApprovalStoreProvider,
-    _InvocationsAgentSessionStoreProvider,
-    _InvocationsCheckpointStoreProvider,
 )
 
 
@@ -74,35 +74,18 @@ def _platform_context(call_id: str = "call-1", user_id: str = "user-1") -> Found
     return FoundryAgentRequestContext(call_id=call_id, user_id=user_id)
 
 
+def test_local_agentserver_state_root_is_test_scoped(tmp_path: Path) -> None:
+    """Independent tests must not share the local fallback state directory."""
+    state_root = Path(os.environ["AGENTSERVER_STATE_ROOT"])
+
+    assert state_root.is_relative_to(tmp_path)
+
+
 def test_storage_providers_use_public_abstraction() -> None:
     assert issubclass(CheckpointStoreProvider, ContextScopedStoreProvider)
     assert not issubclass(CheckpointStoreProvider, StoreProvider)
     assert issubclass(FunctionApprovalStoreProvider, StoreProvider)
     assert issubclass(AgentSessionStoreProvider, StoreProvider)
-
-
-@pytest.mark.parametrize("is_hosted", [False, True])
-async def test_invocations_namespaces_cannot_overlap_responses_records(is_hosted: bool) -> None:
-    store = _store()
-    config = _config(is_hosted=is_hosted)
-    context = _platform_context()
-    with patch(
-        "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
-        new=AsyncMock(return_value=store),
-    ) as get_or_create:
-        for checkpoint_provider in (CheckpointStoreProvider(), _InvocationsCheckpointStoreProvider()):
-            await checkpoint_provider.get_store(config=config, context_id="same-id", platform_context=context).save(
-                _checkpoint("same-checkpoint")
-            )
-        for session_provider in (AgentSessionStoreProvider(), _InvocationsAgentSessionStoreProvider()):
-            await session_provider.get_store(config=config, platform_context=context).set("same-id", AgentSession())
-    assert [call.args[0] for call in get_or_create.await_args_list] == [
-        "checkpoints/same-id",
-        "invocations_checkpoints/same-id",
-        "agent_sessions",
-        "invocations_agent_sessions",
-    ]
-    assert all(call.kwargs == {"user_isolation": True} for call in get_or_create.await_args_list)
 
 
 async def test_save_uses_context_scoped_store() -> None:
