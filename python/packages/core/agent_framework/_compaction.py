@@ -30,6 +30,12 @@ GROUP_KIND_KEY = "kind"
 GROUP_INDEX_KEY = "index"
 GROUP_HAS_REASONING_KEY = "has_reasoning"
 GROUP_TOKEN_COUNT_KEY = "token_count"  # ruff:ignore[hardcoded-password-string] # nosec B105 - compaction metadata key, not a credential
+GROUP_TOKEN_COUNT_BASIS_KEY = "token_count_basis"  # ruff:ignore[hardcoded-password-string] # nosec B105 - compaction metadata key, not a credential
+# Bumped whenever the token-estimation serialization changes. Cached counts
+# stamped with an older basis are recomputed instead of reused: annotations
+# survive Message.to_dict()/from_dict() round-trips, so without the basis a
+# transcript annotated before a serialization change keeps its stale counts.
+TOKEN_COUNT_BASIS_VERSION = 2
 EXCLUDED_KEY = "_excluded"
 EXCLUDE_REASON_KEY = "_exclude_reason"
 SUMMARY_OF_MESSAGE_IDS_KEY = "_summary_of_message_ids"
@@ -496,7 +502,13 @@ def _write_group_annotation(
     token_count: int | None = None
     if existing_raw_annotation is not None:
         raw_token_count = existing_raw_annotation.get(GROUP_TOKEN_COUNT_KEY)
-        if isinstance(raw_token_count, int) or raw_token_count is None:
+        raw_token_count_basis = existing_raw_annotation.get(GROUP_TOKEN_COUNT_BASIS_KEY)
+        # Preserve a cached count only when it was computed with the current
+        # serialization basis; counts from older bases are stale and get
+        # recomputed (see TOKEN_COUNT_BASIS_VERSION).
+        if raw_token_count_basis == TOKEN_COUNT_BASIS_VERSION and (
+            isinstance(raw_token_count, int) or raw_token_count is None
+        ):
             token_count = raw_token_count
         unknown_fields = {
             key: value
@@ -508,6 +520,7 @@ def _write_group_annotation(
                 GROUP_INDEX_KEY,
                 GROUP_HAS_REASONING_KEY,
                 GROUP_TOKEN_COUNT_KEY,
+                GROUP_TOKEN_COUNT_BASIS_KEY,
             }
         }
 
@@ -517,6 +530,7 @@ def _write_group_annotation(
         GROUP_INDEX_KEY: index,
         GROUP_HAS_REASONING_KEY: has_reasoning,
         GROUP_TOKEN_COUNT_KEY: token_count,
+        GROUP_TOKEN_COUNT_BASIS_KEY: TOKEN_COUNT_BASIS_VERSION if token_count is not None else None,
     }
     annotation.update(unknown_fields)
     message.additional_properties[GROUP_ANNOTATION_KEY] = annotation
@@ -550,6 +564,10 @@ def _token_count(message: Message) -> int | None:
     if annotation is None:
         return None
     token_count = annotation.get(GROUP_TOKEN_COUNT_KEY)
+    # Counts stamped with an older serialization basis are stale: they were
+    # computed from a different serialized form and must be recomputed.
+    if annotation.get(GROUP_TOKEN_COUNT_BASIS_KEY) != TOKEN_COUNT_BASIS_VERSION:
+        return None
     return token_count if isinstance(token_count, int) else None
 
 
@@ -558,6 +576,7 @@ def _write_token_count(message: Message, token_count: int) -> None:
     if annotation is None:
         return
     annotation[GROUP_TOKEN_COUNT_KEY] = token_count
+    annotation[GROUP_TOKEN_COUNT_BASIS_KEY] = TOKEN_COUNT_BASIS_VERSION
     message.additional_properties[GROUP_ANNOTATION_KEY] = annotation
 
 
@@ -732,12 +751,68 @@ def annotate_message_groups(
     return _ordered_group_ids_from_annotations(messages)
 
 
+_OPAQUE_REASONING_KEYS: Final[frozenset[str]] = frozenset({"encrypted_content"})
+
+
+def _strip_opaque_reasoning_payload(value: Any) -> Any:
+    """Recursively drop opaque reasoning members, keeping clear-text payloads."""
+    if isinstance(value, dict):
+        entries = cast("dict[Any, Any]", value)
+        filtered: dict[Any, Any] = {}
+        for key, item in entries.items():
+            if key in _OPAQUE_REASONING_KEYS:
+                continue
+            stripped = _strip_opaque_reasoning_payload(item)
+            if stripped is not None:
+                filtered[key] = stripped
+        return filtered or None
+    if isinstance(value, list):
+        entries = cast("list[Any]", value)
+        kept = [
+            stripped
+            for stripped in (_strip_opaque_reasoning_payload(entry) for entry in entries)
+            if stripped is not None
+        ]
+        return kept or None
+    return value
+
+
 def _serialize_content(content: Content) -> dict[str, Any]:
     payload = content.to_dict(exclude_none=True)
     payload.pop("raw_representation", None)
     # ``items`` mirrors ``result`` for function_result content; exclude it
     # to avoid double-counting tokens during estimation.
     payload.pop("items", None)
+    # ``protected_data`` carries provider reasoning payloads. JSON-serialised
+    # reasoning_details (Chat Completions) are replayed to the provider as
+    # clear text -- ``summary``, ``reasoning_text`` and nested ``reasoning.text``
+    # are part of the context the provider receives, so only their opaque
+    # members (``encrypted_content``) are excluded and the clear text stays
+    # counted. Anything that is not such a JSON structure (Anthropic thinking
+    # ``signature``, Responses API ``encrypted_content`` blobs) is replayed
+    # opaquely and never tokenised; exclude it so estimation measures the text
+    # the model actually sees.
+    protected_data = payload.get("protected_data")
+    if isinstance(protected_data, str) and protected_data:
+        try:
+            reasoning_payload = json.loads(protected_data)
+        except ValueError:
+            reasoning_payload = None
+        filtered = (
+            _strip_opaque_reasoning_payload(reasoning_payload) if isinstance(reasoning_payload, (dict, list)) else None
+        )
+        if filtered is None:
+            payload.pop("protected_data", None)
+        else:
+            payload["protected_data"] = json.dumps(filtered, ensure_ascii=False)
+    else:
+        payload.pop("protected_data", None)
+    additional_properties = payload.get("additional_properties")
+    if isinstance(additional_properties, dict) and "encrypted_content" in additional_properties:
+        typed_properties = cast("dict[str, Any]", additional_properties)
+        payload["additional_properties"] = {
+            key: value for key, value in typed_properties.items() if key != "encrypted_content"
+        }
     return payload
 
 
