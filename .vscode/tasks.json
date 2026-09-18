@@ -7,9 +7,9 @@
 			"group": "build",
 			"problemMatcher": [],
 			"label": "dotnet: build release solution filter",
-			"args": ["build", "dotnet/agent-framework-release.slnf"],
+			"args": ["build", "agent-framework-release.slnf"],
 			"options": {
-				"cwd": "${workspaceFolder}"
+				"cwd": "${workspaceFolder}/dotnet"
 			}
 		}
 	]
