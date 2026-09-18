@@ -53,7 +53,7 @@ all = [
     "agent-framework-foundry-local",
     "agent-framework-gemini",
     "agent-framework-github-copilot; python_version >= '3.11'",
-    "agent-framework-hyperlight; (sys_platform == 'linux' and platform_machine == 'x86_64') or (sys_platform == 'win32' and platform_machine == 'AMD64')",
+    "agent-framework-hyperlight; python_version < '3.15' and ((sys_platform == 'linux' and platform_machine == 'x86_64') or (sys_platform == 'win32' and platform_machine == 'AMD64'))",
     "agent-framework-mem0",
     "agent-framework-mistral",
     "agent-framework-monty",
