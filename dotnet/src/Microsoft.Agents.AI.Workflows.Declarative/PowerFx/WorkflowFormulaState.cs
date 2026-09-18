@@ -238,6 +238,6 @@ internal sealed class WorkflowFormulaState
             }
         }
 
-        public Dictionary<string, SensitivityLevel> Sensitivities { get; } = [];
+        public Dictionary<string, SensitivityLevel> Sensitivities { get; } = new(StringComparer.OrdinalIgnoreCase);
     }
 }
