@@ -78,8 +78,9 @@ internal static class InstructionBuilder
 
                 // Surface the host tool's existing parameter schema so the model can see
                 // names, requiredness, descriptions, enums, and nested shapes.
+                // JSON Schema roots are objects or booleans (true/false); reject other kinds.
                 JsonElement schema = tool.JsonSchema;
-                if (schema.ValueKind is JsonValueKind.Object or JsonValueKind.Array or JsonValueKind.String)
+                if (schema.ValueKind is JsonValueKind.Object or JsonValueKind.True or JsonValueKind.False)
                 {
                     sb.AppendLine("  Parameters (JSON Schema):");
                     sb.Append("  ");
