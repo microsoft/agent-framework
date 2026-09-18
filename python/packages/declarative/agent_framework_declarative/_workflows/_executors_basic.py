@@ -226,6 +226,11 @@ class SendActivityExecutor(DeclarativeActionExecutor):
     Sends a text message or activity as workflow output.
     Authored text starting with ``=`` is evaluated and its result is emitted as data.
     Other authored text supports ``{Variable.Path}`` template interpolation.
+
+    Expression results are not interpolated again. To migrate text that relied on
+    a second pass, author the template directly (``Hello, {Local.name}!``) or build
+    the final text in the expression (``="Hello, " & Local.name & "!"``).
+    Both forms work as a string activity or as a mapping's ``text`` field.
     """
 
     @handler
