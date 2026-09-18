@@ -123,7 +123,10 @@ class BedrockKnowledgeBaseProvider(ContextProvider):
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.debug("KB retrieval failed, continuing without context", exc_info=True)
+            # Fail open: the agent continues without KB context rather than erroring.
+            # Log at WARNING (not DEBUG) so a permission error or KB outage is visible
+            # in normal deployments — otherwise the agent silently answers ungrounded.
+            logger.warning("KB retrieval failed, continuing without context", exc_info=True)
             return
 
         if not retrieved_context:
