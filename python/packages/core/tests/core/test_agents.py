@@ -3262,6 +3262,135 @@ async def test_as_tool_resumes_correctly_after_reused_call_id_from_abandoned_cha
     )
 
 
+async def test_as_tool_resume_preserves_middleware_approval_request_instead_of_discarding_it() -> None:
+    """A function_approval_request raised via MiddlewareTermination during a nested resume must survive.
+
+    Regression test: outer-level middleware (e.g. a policy-enforcement gate applied to every
+    tool call, including the synthetic re-invocation of Agent.as_tool()'s wrapper during a
+    nested-approval resume) can itself require approval by setting
+    FunctionInvocationContext.result to a function_approval_request and raising
+    MiddlewareTermination -- the same pattern the ordinary (non-nested) path already supports
+    (see _auto_invoke_function's own MiddlewareTermination handling). When this happens mid-resume,
+    it was caught by _try_execute_function_call_groups's owner-group handling, which treated
+    exc.result as an ordinary terminal value: it read the nonexistent .result attribute off the
+    approval-request content (getting None), wrapped that in a function_result, and terminated --
+    silently discarding the new approval request entirely, with no way for the caller to ever see
+    or answer it.
+
+    This test only covers that the request now surfaces instead of vanishing. It does NOT cover
+    resuming the original in-flight approval (second_tool's) after the policy gate's own request
+    is answered: the policy's approval response replaces, rather than accompanies, the original
+    one being replayed when the gate intervened, so the underlying nested tool call is not itself
+    resumed here. That is a separate, deeper gap -- preserving and replaying the original
+    response(s) alongside a middleware-injected gate's own -- left for follow-up work.
+    """
+    from agent_framework._middleware import FunctionMiddleware, MiddlewareTermination
+
+    calls = {"first": 0, "second": 0}
+
+    @tool(name="first_tool", approval_mode="always_require")
+    def first_tool() -> str:
+        calls["first"] += 1
+        return "first done"
+
+    @tool(name="second_tool", approval_mode="always_require")
+    def second_tool() -> str:
+        calls["second"] += 1
+        return "second done"
+
+    class OuterPolicyGate(FunctionMiddleware):
+        """Requires its own approval exactly once, specifically when resuming to approve
+        second_tool -- proving first_tool already ran for real on the prior resume, and that
+        the policy's own follow-up approval (a *second* resume of worker_tool) is not re-gated.
+        """
+
+        def __init__(self) -> None:
+            self.gated_once = False
+
+        async def process(self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            nested_responses = context.metadata.get("_nested_approval_response") or []
+            targets_second_tool = any(
+                response.function_call is not None and response.function_call.call_id == "second-call"
+                for response in nested_responses
+            )
+            if context.function.name == "worker_tool" and targets_second_tool and not self.gated_once:
+                self.gated_once = True
+                call_id = context.metadata.get("call_id")
+                context.result = Content.from_function_approval_request(
+                    id=f"policy-{call_id}",
+                    function_call=Content.from_function_call(
+                        call_id=f"policy-{call_id}",
+                        name="worker_tool",
+                        arguments={},
+                        id=f"policy-{call_id}",
+                    ),
+                )
+                raise MiddlewareTermination("policy requires approval")
+            await call_next()
+
+    inner_client = MockBaseChatClient()
+    outer_client = MockBaseChatClient()
+    inner_agent = Agent(client=inner_client, name="worker", tools=[first_tool, second_tool])
+    policy_gate = OuterPolicyGate()
+    outer_agent = Agent(
+        client=outer_client,
+        name="coordinator",
+        tools=[inner_agent.as_tool(name="worker_tool", approval_mode="never_require", propagate_session=False)],
+        middleware=[policy_gate],
+    )
+    session = AgentSession()
+
+    async def run_outer(run_input: str | Message) -> AgentResponse:
+        return await outer_agent.run(run_input, session=session, stream=True).get_final_response()
+
+    outer_call = Content.from_function_call(call_id="outer-call", name="worker_tool", arguments='{"task": "x"}')
+    outer_client.streaming_responses = [[ChatResponseUpdate(role="assistant", contents=[outer_call])]]
+    inner_client.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                role="assistant",
+                contents=[Content.from_function_call(call_id="first-call", name="first_tool", arguments="{}")],
+            )
+        ]
+    ]
+
+    first_response = await run_outer("do it")
+    assert calls == {"first": 0, "second": 0}
+    assert len(first_response.user_input_requests) == 1
+    first_request = first_response.user_input_requests[0]
+    assert first_request.function_call is not None
+    assert first_request.function_call.name == "first_tool"
+
+    inner_client.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                role="assistant",
+                contents=[Content.from_function_call(call_id="second-call", name="second_tool", arguments="{}")],
+            )
+        ]
+    ]
+    second_response = await run_outer(
+        Message(role="user", contents=[first_request.to_function_approval_response(True)])
+    )
+    assert calls == {"first": 1, "second": 0}, "first_tool must have actually executed during this resume"
+    assert len(second_response.user_input_requests) == 1
+    second_request = second_response.user_input_requests[0]
+    assert second_request.function_call is not None
+    assert second_request.function_call.name == "second_tool"
+
+    third_response = await run_outer(
+        Message(role="user", contents=[second_request.to_function_approval_response(True)])
+    )
+
+    assert calls == {"first": 1, "second": 0}, "second_tool must not run: the policy gate blocked this resume first"
+    assert len(third_response.user_input_requests) == 1, (
+        "the policy gate's own approval request must surface, not be silently discarded"
+    )
+    policy_request = third_response.user_input_requests[0]
+    assert policy_request.function_call is not None
+    assert policy_request.function_call.name == "worker_tool"
+
+
 async def test_chat_agent_as_mcp_server_basic(client: SupportsChatGetResponse) -> None:
     """Test basic as_mcp_server functionality."""
     agent = Agent(client=client, name="TestAgent", description="Test agent for MCP")

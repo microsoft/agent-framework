@@ -2775,13 +2775,14 @@ async def _try_execute_function_call_groups(
             )
         except MiddlewareTermination as exc:
             stack = _nested_owner_stack(calls[0])
-            owner_call_id = stack[-1].get("call_id") if stack else None
+            frame = stack[-1] if stack else None
+            owner_call_id = frame.get("call_id") if frame is not None else None
             inner_call_ids = [
                 call.function_call.call_id
                 for call in calls
                 if call.function_call is not None and call.function_call.call_id is not None
             ]
-            if not isinstance(owner_call_id, str) or len(inner_call_ids) != len(calls):
+            if frame is None or not isinstance(owner_call_id, str) or len(inner_call_ids) != len(calls):
                 # Not a well-formed tracked group (shouldn't happen: _nested_owner_key
                 # already validated this) -- fall back to the single-call best effort.
                 if isinstance(exc.result, Content):
@@ -2789,19 +2790,65 @@ async def _try_execute_function_call_groups(
                 source_call_id = calls[0].function_call.call_id if calls[0].function_call is not None else None
                 return [([Content.from_function_result(call_id=source_call_id, result=exc.result)], True)]  # type: ignore[arg-type]
 
-            # Middleware terminated mid-resume, inside the synthetic owner call built by
-            # _try_resume_nested_tool_approval_group. Every response in this group, plus the
-            # owner's own still-pending call, needs its own matching function_result -- a
-            # single shared result can satisfy at most one of them, leaving the rest dangling
-            # with no result at all, unlike this function's other return paths.
-            result_payload = (
-                getattr(exc.result, "result", exc.result) if isinstance(exc.result, Content) else exc.result
-            )
             already_paired = bool(
                 invocation_session is not None
                 and invocation_session.state.get(_NESTED_OWNER_PLACEHOLDER_EMITTED_STATE_KEY, {}).get(owner_call_id)
             )
-            result_groups: list[list[Content]] = [
+
+            if isinstance(exc.result, Content) and exc.result.type == "function_approval_request":
+                # Middleware (e.g. policy enforcement) itself requires approval mid-resume. This
+                # is a new pause, not a terminal result -- the ordinary (non-nested) path passes
+                # this content type through untouched for the same reason (see
+                # _auto_invoke_function's own MiddlewareTermination handling above). Re-tag it
+                # with this level's own owner identity, the same way
+                # _try_resume_nested_tool_approval_group's own UserInputRequiredException
+                # handling propagates a fresh nested pause, or the request and the resume it
+                # belongs to are silently lost.
+                remaining_stack = stack[:-1] if stack else []
+                repropagated = copy.copy(exc.result)
+                repropagated.additional_properties = dict(repropagated.additional_properties)
+                repropagated.call_id = owner_call_id
+                if not repropagated.id:
+                    repropagated.id = owner_call_id
+                new_stack = [*remaining_stack, dict(frame)]
+                repropagated.additional_properties[_NESTED_TOOL_APPROVAL_OWNER_STACK_KEY] = new_stack
+                _append_nested_owner_to_already_approved_requests(
+                    invocation_session,
+                    {repropagated.id} if repropagated.id else set(),
+                    new_stack,
+                )
+                result_groups = [
+                    [
+                        Content.from_function_result(
+                            call_id=inner_call_id,
+                            result="Nested approval response processed; further approval is required.",
+                        )
+                    ]
+                    for inner_call_id in inner_call_ids
+                ]
+                if not already_paired:
+                    result_groups[-1].append(
+                        Content.from_function_result(
+                            call_id=owner_call_id,
+                            result="Nested approval response processed; further approval is required.",
+                        )
+                    )
+                    if invocation_session is not None:
+                        emitted = invocation_session.state.setdefault(_NESTED_OWNER_PLACEHOLDER_EMITTED_STATE_KEY, {})
+                        emitted[owner_call_id] = True
+                result_groups[-1].append(repropagated)
+                return [(group, False) for group in result_groups]
+
+            # Middleware terminated mid-resume with a terminal result (or none), inside the
+            # synthetic owner call built by _try_resume_nested_tool_approval_group. Every
+            # response in this group, plus the owner's own still-pending call, needs its own
+            # matching function_result -- a single shared result can satisfy at most one of
+            # them, leaving the rest dangling with no result at all, unlike this function's
+            # other return paths.
+            result_payload = (
+                getattr(exc.result, "result", exc.result) if isinstance(exc.result, Content) else exc.result
+            )
+            result_groups = [
                 [Content.from_function_result(call_id=inner_call_id, result=result_payload)]
                 for inner_call_id in inner_call_ids
             ]
@@ -3100,7 +3147,10 @@ def _get_tool_approval_state(invocation_session: AgentSession | None, *, create:
         serialized_state = raw_state.to_dict(exclude={"type"})
         discarded_pending_state = False
         for key in ("queued_approval_requests", "collected_approval_responses"):
-            if serialized_state.pop(key, None) is not None:
+            # ToolApprovalState.to_dict() always includes these keys, even as empty lists, so
+            # checking "is not None" would warn on every migration regardless of whether there
+            # was ever anything pending to discard. Only a genuinely non-empty queue counts.
+            if serialized_state.pop(key, None):
                 discarded_pending_state = True
         serialized_state[_TOOL_APPROVAL_STATE_VERSION_KEY] = _TOOL_APPROVAL_STATE_VERSION
         authoritative_session.state[_TOOL_APPROVAL_STATE_KEY] = serialized_state

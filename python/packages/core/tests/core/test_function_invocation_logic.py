@@ -849,6 +849,66 @@ def test_versioned_legacy_pending_approval_retains_consume_once_compatibility() 
     assert _load_pending_approval_requests(session) == {}
 
 
+def test_empty_tool_approval_state_object_migrates_without_a_spurious_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Migrating a ToolApprovalState object with nothing queued must not warn about discarding.
+
+    Regression test: ToolApprovalState.to_dict() always includes queued_approval_requests and
+    collected_approval_responses, even as empty lists, when the object form is migrated to the
+    versioned dict form. Checking "was the key present" (popped value is not None) rather than
+    "did it actually contain anything" (popped value is truthy) meant every migration of an
+    object-form state warned about discarding pending approval state, even when there was never
+    anything pending to discard.
+    """
+    from agent_framework._harness._tool_approval import ToolApprovalRule, ToolApprovalState
+    from agent_framework._tools import _get_tool_approval_state
+
+    session = AgentSession(session_id="approval-state-empty-object-migration")
+    session.state["tool_approval"] = ToolApprovalState(rules=[ToolApprovalRule(tool_name="safe_read")])
+
+    with caplog.at_level("WARNING", logger="agent_framework"):
+        migrated = _get_tool_approval_state(session, create=False)
+
+    assert migrated is not None
+    assert migrated["state_version"] == 1
+    assert "queued_approval_requests" not in migrated
+    assert "collected_approval_responses" not in migrated
+    assert "Discarded" not in caplog.text
+
+
+def test_nonempty_tool_approval_state_object_migration_still_warns(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A ToolApprovalState object with a genuinely queued request must still warn on migration."""
+    from agent_framework._harness._tool_approval import ToolApprovalState
+
+    session = AgentSession(session_id="approval-state-nonempty-object-migration")
+    session.state["tool_approval"] = ToolApprovalState(
+        queued_approval_requests=[
+            {
+                "type": "function_approval_request",
+                "id": "legacy-call",
+                "function_call": {
+                    "type": "function_call",
+                    "call_id": "legacy-call",
+                    "name": "guarded_write",
+                    "arguments": {"value": "stored"},
+                },
+                "user_input_request": True,
+            }
+        ],
+    )
+
+    from agent_framework._tools import _get_tool_approval_state
+
+    with caplog.at_level("WARNING", logger="agent_framework"):
+        migrated = _get_tool_approval_state(session, create=False)
+
+    assert migrated is not None
+    assert "Discarded" in caplog.text
+
+
 def test_hosted_approval_keeps_provider_issued_request_id() -> None:
     from agent_framework._tools import _bind_approval_responses_to_pending_requests, _store_pending_approval_requests
 
