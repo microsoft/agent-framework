@@ -40,7 +40,7 @@ public abstract class PromptAgentFactory
         this.Engine = engine ?? new RecalcEngine(CreateConfig(maximumExpressionLength, maximumCallDepth));
         this._configuration = configuration;
         this._allowedConfigurationVariables = new(
-            allowedConfigurationVariables ?? configuration?.AsEnumerable().Select(static pair => pair.Key) ?? [],
+            allowedConfigurationVariables ?? [],
             StringComparer.OrdinalIgnoreCase);
     }
 
@@ -76,7 +76,7 @@ public abstract class PromptAgentFactory
             return;
         }
 
-        foreach (string variableName in AgentBotElementYaml.GetReferencedEnvironmentVariableNames(promptAgent).Where(variableName => this._allowedConfigurationVariables.Contains(variableName)))
+        foreach (string variableName in AgentBotElementYaml.GetReferencedEnvironmentVariableNames(promptAgent).Where(this._allowedConfigurationVariables.Contains))
         {
             this.Engine.UpdateVariable(variableName, this._configuration[variableName] ?? string.Empty);
         }
