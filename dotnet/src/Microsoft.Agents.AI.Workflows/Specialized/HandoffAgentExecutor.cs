@@ -146,6 +146,50 @@ internal sealed class HandoffAgentExecutor :
         return result;
     }
 
+    private AgentRunOptions? MergeRunOptions(AgentRunOptions? runOptions)
+    {
+        if (this._agentOptions is null)
+        {
+            return runOptions;
+        }
+
+        if (runOptions is null)
+        {
+            return this._agentOptions;
+        }
+
+        ChatClientAgentRunOptions mergedOptions = runOptions is ChatClientAgentRunOptions chatClientOptions
+            ? (ChatClientAgentRunOptions)chatClientOptions.Clone()
+            : new ChatClientAgentRunOptions
+            {
+                AllowBackgroundResponses = runOptions.AllowBackgroundResponses,
+                ContinuationToken = runOptions.ContinuationToken,
+                AdditionalProperties = runOptions.AdditionalProperties?.Clone(),
+                ResponseFormat = runOptions.ResponseFormat,
+            };
+
+        ChatOptions handoffChatOptions = this._agentOptions.ChatOptions!;
+        ChatOptions mergedChatOptions = mergedOptions.ChatOptions ?? new();
+
+        mergedChatOptions.AllowMultipleToolCalls = handoffChatOptions.AllowMultipleToolCalls;
+        if (!string.IsNullOrWhiteSpace(handoffChatOptions.Instructions))
+        {
+            mergedChatOptions.Instructions = !string.IsNullOrWhiteSpace(mergedChatOptions.Instructions)
+                ? $"{handoffChatOptions.Instructions}\n{mergedChatOptions.Instructions}"
+                : handoffChatOptions.Instructions;
+        }
+
+        if (handoffChatOptions.Tools is { Count: > 0 })
+        {
+            mergedChatOptions.Tools = mergedChatOptions.Tools is { Count: > 0 } runTools
+                ? [.. runTools, .. handoffChatOptions.Tools]
+                : [.. handoffChatOptions.Tools];
+        }
+
+        mergedOptions.ChatOptions = mergedChatOptions;
+        return mergedOptions;
+    }
+
     private AIContentExternalHandler<ToolApprovalRequestContent, ToolApprovalResponseContent>? _userInputHandler;
     private AIContentExternalHandler<FunctionCallContent, FunctionResultContent>? _functionCallHandler;
 
@@ -251,7 +295,8 @@ internal sealed class HandoffAgentExecutor :
                                              .CopyWithAssistantToUserForOtherParticipants(this._agent.Name ?? this._agent.Id);
 
         bool emitUpdateEvents = state.IncomingState!.ShouldEmitStreamingEvents(this._options.EmitAgentResponseUpdateEvents);
-        AgentInvocationResult result = await this.InvokeAgentAsync(messagesForAgent, context, emitUpdateEvents, cancellationToken)
+        AgentRunOptions? runOptions = context.GetAgentRunOptions(state.IncomingState.TurnToken.RunOptions);
+        AgentInvocationResult result = await this.InvokeAgentAsync(messagesForAgent, context, emitUpdateEvents, runOptions, cancellationToken)
                                                      .ConfigureAwait(false);
 
         if (this.HasOutstandingRequests && result.IsHandoffRequested)
@@ -422,7 +467,7 @@ internal sealed class HandoffAgentExecutor :
     private bool HasOutstandingRequests => (this._userInputHandler?.HasPendingRequests == true)
                                         || (this._functionCallHandler?.HasPendingRequests == true);
 
-    private async ValueTask<AgentInvocationResult> InvokeAgentAsync(IEnumerable<ChatMessage> messages, IWorkflowContext context, bool emitUpdateEvents, CancellationToken cancellationToken = default)
+    private async ValueTask<AgentInvocationResult> InvokeAgentAsync(IEnumerable<ChatMessage> messages, IWorkflowContext context, bool emitUpdateEvents, AgentRunOptions? runOptions, CancellationToken cancellationToken = default)
     {
         AgentResponse response;
 
@@ -434,7 +479,7 @@ internal sealed class HandoffAgentExecutor :
         this._session ??= await this._agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
 
         IAsyncEnumerable<AgentResponseUpdate> agentStream =
-            this._agent.RunStreamingAsync(messages, this._session, this._agentOptions, cancellationToken);
+            this._agent.RunStreamingAsync(messages, this._session, this.MergeRunOptions(runOptions), cancellationToken);
 
         await foreach (AgentResponseUpdate update in agentStream.ConfigureAwait(false))
         {

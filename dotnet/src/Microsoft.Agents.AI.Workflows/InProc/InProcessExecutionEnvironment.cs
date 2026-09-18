@@ -84,6 +84,26 @@ public sealed class InProcessExecutionEnvironment : IWorkflowExecutionEnvironmen
         return await runHandle.EnqueueAndStreamAsync(input, cancellationToken).ConfigureAwait(false);
     }
 
+    internal async ValueTask<StreamingRun> RunStreamingWithAgentRunOptionsAsync<TInput>(
+        Workflow workflow,
+        TInput input,
+        AgentRunOptions? runOptions,
+        string? sessionId = null,
+        CancellationToken cancellationToken = default) where TInput : notnull
+    {
+        InProcessRunner runner = InProcessRunner.CreateTopLevelRunner(
+            workflow,
+            this.CheckpointManager,
+            sessionId,
+            this.EnableConcurrentRuns,
+            knownValidInputTypes: [],
+            hasAgentRunOptions: true,
+            runOptions);
+        AsyncRunHandle runHandle = await runner.BeginStreamAsync(this.ExecutionMode, cancellationToken).ConfigureAwait(false);
+
+        return await runHandle.EnqueueAndStreamAsync(input, cancellationToken).ConfigureAwait(false);
+    }
+
     [MemberNotNull(nameof(CheckpointManager))]
     private void VerifyCheckpointingConfigured()
     {
@@ -129,6 +149,29 @@ public sealed class InProcessExecutionEnvironment : IWorkflowExecutionEnvironmen
 
         AsyncRunHandle runHandle = await this.ResumeRunAsync(workflow, fromCheckpoint, [], republishPendingEvents, cancellationToken)
                                              .ConfigureAwait(false);
+
+        return new(runHandle);
+    }
+
+    internal async ValueTask<StreamingRun> ResumeStreamingWithAgentRunOptionsInternalAsync(
+        Workflow workflow,
+        CheckpointInfo fromCheckpoint,
+        bool republishPendingEvents,
+        AgentRunOptions? runOptions,
+        CancellationToken cancellationToken = default)
+    {
+        this.VerifyCheckpointingConfigured();
+
+        InProcessRunner runner = InProcessRunner.CreateTopLevelRunner(
+            workflow,
+            this.CheckpointManager,
+            fromCheckpoint.SessionId,
+            this.EnableConcurrentRuns,
+            knownValidInputTypes: [],
+            hasAgentRunOptions: true,
+            runOptions);
+        AsyncRunHandle runHandle = await runner.ResumeStreamAsync(this.ExecutionMode, fromCheckpoint, republishPendingEvents, cancellationToken)
+                                               .ConfigureAwait(false);
 
         return new(runHandle);
     }

@@ -19,7 +19,7 @@ using OpenTelemetry.Context.Propagation;
 
 namespace Microsoft.Agents.AI.Workflows.InProc;
 
-internal sealed class InProcessRunnerContext : IRunnerContext
+internal sealed class InProcessRunnerContext : IRunnerContext, IWorkflowAgentRunOptionsContext
 {
     private int _runEnded;
     private readonly string _sessionId;
@@ -37,6 +37,8 @@ internal sealed class InProcessRunnerContext : IRunnerContext
     private readonly ConcurrentDictionary<string, ISuperStepRunner> _joinedSubworkflowRunners = new();
 
     private readonly ConcurrentDictionary<string, ExternalRequest> _externalRequests = new();
+    private readonly bool _hasAgentRunOptions;
+    private readonly AgentRunOptions? _agentRunOptions;
 
     public InProcessRunnerContext(
         Workflow workflow,
@@ -47,6 +49,8 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         object? existingOwnershipSignoff = null,
         bool subworkflow = false,
         bool enableConcurrentRuns = false,
+        bool hasAgentRunOptions = false,
+        AgentRunOptions? agentRunOptions = null,
         ILogger? logger = null)
     {
         if (enableConcurrentRuns)
@@ -62,6 +66,8 @@ internal sealed class InProcessRunnerContext : IRunnerContext
 
         this._workflow = workflow;
         this._sessionId = sessionId;
+        this._hasAgentRunOptions = hasAgentRunOptions;
+        this._agentRunOptions = agentRunOptions;
 
         this._edgeMap = new(this, this._workflow, stepTracer);
         this._outputFilter = new(workflow);
@@ -310,6 +316,12 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         return new BoundWorkflowContext(this, executorId, traceContext);
     }
 
+    public bool TryGetAgentRunOptions(out AgentRunOptions? runOptions)
+    {
+        runOptions = this._agentRunOptions;
+        return this._hasAgentRunOptions;
+    }
+
     public ValueTask PostAsync(ExternalRequest request)
     {
         this.CheckEnded();
@@ -347,8 +359,13 @@ internal sealed class InProcessRunnerContext : IRunnerContext
     private sealed class BoundWorkflowContext(
         InProcessRunnerContext RunnerContext,
         string ExecutorId,
-        Dictionary<string, string>? traceContext) : IWorkflowContext
+        Dictionary<string, string>? traceContext) : IWorkflowContext, IWorkflowAgentRunOptionsContext
     {
+        public bool TryGetAgentRunOptions(out AgentRunOptions? runOptions)
+        {
+            return RunnerContext.TryGetAgentRunOptions(out runOptions);
+        }
+
         public ValueTask AddEventAsync(WorkflowEvent workflowEvent, CancellationToken cancellationToken = default) => RunnerContext.AddEventAsync(workflowEvent, cancellationToken);
 
         public ValueTask SendMessageAsync(object message, string? targetId = null, CancellationToken cancellationToken = default)

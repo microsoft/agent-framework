@@ -7,6 +7,8 @@ using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.InProc;
+using Microsoft.Agents.AI.Workflows.Sample;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
@@ -35,6 +37,8 @@ internal sealed class RequestEmittingAgent : AIAgent
 {
     private readonly AIContent _requestContent;
     private readonly bool _completeOnResponse;
+
+    public List<AgentRunOptions?> RecordedRunOptions { get; } = [];
 
     /// <summary>
     /// Creates a new <see cref="RequestEmittingAgent"/> that emits the given request content.
@@ -71,6 +75,8 @@ internal sealed class RequestEmittingAgent : AIAgent
 
     protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        this.RecordedRunOptions.Add(options);
+
         if (this._completeOnResponse && messages.Any(m => m.Contents.Any(c =>
             c is FunctionResultContent || c is ToolApprovalResponseContent)))
         {
@@ -229,6 +235,31 @@ internal sealed class UppercaseStringExecutor(string name = "UppercaseStringExec
 
 public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
 {
+    private sealed class RunOptionsRecordingAgent(AIAgent innerAgent) : DelegatingAIAgent(innerAgent)
+    {
+        public List<AgentRunOptions?> RecordedRunOptions { get; } = [];
+
+        protected override Task<AgentResponse> RunCoreAsync(
+            IEnumerable<ChatMessage> messages,
+            AgentSession? session = null,
+            AgentRunOptions? options = null,
+            CancellationToken cancellationToken = default)
+        {
+            this.RecordedRunOptions.Add(options);
+            return base.RunCoreAsync(messages, session, options, cancellationToken);
+        }
+
+        protected override IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
+            IEnumerable<ChatMessage> messages,
+            AgentSession? session = null,
+            AgentRunOptions? options = null,
+            CancellationToken cancellationToken = default)
+        {
+            this.RecordedRunOptions.Add(options);
+            return base.RunCoreStreamingAsync(messages, session, options, cancellationToken);
+        }
+    }
+
     private sealed class AlwaysFailsAIAgent(bool failByThrowing) : AIAgent
     {
         private sealed class Session : AgentSession
@@ -274,6 +305,100 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
         ExecutorBinding agent = new AlwaysFailsAIAgent(failByThrowing).BindAsExecutor(emitEvents: true);
 
         return new WorkflowBuilder(agent).Build();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Test_AsAgent_AgentRunOptionsFlowToEverySequentialAgentAsync(bool streaming)
+    {
+        // Arrange
+        RunOptionsRecordingAgent firstAgent = new(new TestEchoAgent("first-agent", "FirstAgent"));
+        RunOptionsRecordingAgent secondAgent = new(new TestEchoAgent("second-agent", "SecondAgent"));
+        AIAgent workflowAgent = AgentWorkflowBuilder.BuildSequential(firstAgent, secondAgent).AsAIAgent();
+        ChatClientAgentRunOptions runOptions = new(new ChatOptions { ModelId = "test-model" })
+        {
+            AdditionalProperties = new() { ["test-property"] = "test-value" },
+        };
+
+        // Act
+        if (streaming)
+        {
+            _ = await workflowAgent.RunStreamingAsync("Hello", options: runOptions).ToListAsync();
+        }
+        else
+        {
+            _ = await workflowAgent.RunAsync("Hello", options: runOptions);
+        }
+
+        // Assert
+        Assert.Same(runOptions, Assert.Single(firstAgent.RecordedRunOptions));
+        Assert.Same(runOptions, Assert.Single(secondAgent.RecordedRunOptions));
+    }
+
+    [Fact]
+    public async Task Test_AsAgent_AgentRunOptionsFlowToEveryConcurrentAgentAsync()
+    {
+        // Arrange
+        RunOptionsRecordingAgent firstAgent = new(new TestEchoAgent("first-agent", "FirstAgent"));
+        RunOptionsRecordingAgent secondAgent = new(new TestEchoAgent("second-agent", "SecondAgent"));
+        AIAgent workflowAgent = AgentWorkflowBuilder.BuildConcurrent([firstAgent, secondAgent]).AsAIAgent();
+        AgentRunOptions runOptions = new() { AdditionalProperties = new() { ["test-property"] = "test-value" } };
+
+        // Act
+        _ = await workflowAgent.RunAsync("Hello", options: runOptions);
+
+        // Assert
+        Assert.Same(runOptions, Assert.Single(firstAgent.RecordedRunOptions));
+        Assert.Same(runOptions, Assert.Single(secondAgent.RecordedRunOptions));
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task Test_AsAgent_CheckpointRecoveryUsesCurrentAgentRunOptionsAsync(
+        bool useSubworkflow,
+        bool specifyRecoveryOptions)
+    {
+        // Arrange
+        RunOptionsRecordingAgent firstAgent = new(new TestEchoAgent("first-agent", "FirstAgent"));
+        RunOptionsRecordingAgent secondAgent = new(new TestEchoAgent("second-agent", "SecondAgent"));
+        Workflow workflow = AgentWorkflowBuilder.BuildSequential(firstAgent, secondAgent);
+        if (useSubworkflow)
+        {
+            ExecutorBinding subworkflow = workflow.BindAsExecutor("NestedWorkflow");
+            workflow = new WorkflowBuilder(subworkflow).Build();
+        }
+
+        InProcessExecutionEnvironment environment =
+            InProcessExecution.Lockstep.WithCheckpointing(CheckpointManager.CreateInMemory());
+        AIAgent workflowAgent = workflow.AsAIAgent(executionEnvironment: environment);
+        AgentSession session = await workflowAgent.CreateSessionAsync();
+        AgentRunOptions firstRunOptions = new() { AdditionalProperties = new() { ["invocation"] = "first" } };
+        AgentRunOptions? recoveryRunOptions = specifyRecoveryOptions
+            ? new() { AdditionalProperties = new() { ["invocation"] = "recovery" } }
+            : null;
+
+        CheckpointInfo checkpoint = await OrchestrationTestHelpers.RunWorkflowAgentUntilCheckpointAsync(
+            workflowAgent,
+            session,
+            firstRunOptions,
+            checkpointNumber: 1);
+        WorkflowSessionCheckpointRecovery recovery = session.GetService<WorkflowSessionCheckpointRecovery>()
+            ?? throw new InvalidOperationException("Workflow checkpoint recovery was not available.");
+        Assert.True(recovery.TryPrepare(checkpoint.CheckpointId));
+
+        // Act
+        List<AgentResponseUpdate> recoveryUpdates = await workflowAgent
+            .RunStreamingAsync([], session, recoveryRunOptions)
+            .ToListAsync();
+
+        // Assert
+        Assert.Empty(recoveryUpdates.SelectMany(update => update.Contents.OfType<ErrorContent>()));
+        Assert.Same(firstRunOptions, Assert.Single(firstAgent.RecordedRunOptions));
+        Assert.Same(recoveryRunOptions, Assert.Single(secondAgent.RecordedRunOptions));
     }
 
     [Theory]
@@ -425,6 +550,52 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
         Assert.DoesNotContain(secondCallUpdates
             .Where(u => u.RawRepresentation is RequestInfoEvent)
             .SelectMany(u => u.Contents.OfType<FunctionCallContent>()), c => c.CallId == receivedRequest.CallId);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task Test_AsAgent_AgentRunOptionsFlowToExternalResponseContinuationAsync(bool useSubworkflow, bool specifyContinuationOptions)
+    {
+        // Arrange
+        const string CallId = "run-options-continuation-call-id";
+        RequestEmittingAgent requestAgent = new(new FunctionCallContent(CallId, "testFunction"), completeOnResponse: true);
+        Workflow requestWorkflow = new WorkflowBuilder(requestAgent.BindAsExecutor(
+            new AIAgentHostOptions { InterceptUnterminatedFunctionCalls = false, EmitAgentUpdateEvents = true })).Build();
+        Workflow workflow = requestWorkflow;
+        if (useSubworkflow)
+        {
+            ExecutorBinding subworkflow = requestWorkflow.BindAsExecutor("NestedWorkflow");
+            workflow = new WorkflowBuilder(subworkflow)
+                .AddExternalRequest<FunctionCallContent, FunctionResultContent>(subworkflow, "NestedFunctionCall")
+                .Build();
+        }
+        AIAgent agent = workflow.AsAIAgent("WorkflowAgent");
+        AgentSession session = await agent.CreateSessionAsync();
+        AgentRunOptions firstRunOptions = new() { AdditionalProperties = new() { ["invocation"] = "first" } };
+        AgentRunOptions? secondRunOptions = specifyContinuationOptions
+            ? new() { AdditionalProperties = new() { ["invocation"] = "second" } }
+            : null;
+
+        List<AgentResponseUpdate> firstCallUpdates = await agent.RunStreamingAsync(
+            new ChatMessage(ChatRole.User, "Start"), session, firstRunOptions).ToListAsync();
+        Assert.Empty(firstCallUpdates.SelectMany(update => update.Contents.OfType<ErrorContent>()));
+        FunctionCallContent request = Assert.Single(firstCallUpdates
+            .Where(update => update.RawRepresentation is RequestInfoEvent)
+            .SelectMany(update => update.Contents.OfType<FunctionCallContent>()));
+
+        // Act
+        _ = await agent.RunStreamingAsync(
+            new ChatMessage(ChatRole.Tool, [new FunctionResultContent(request.CallId, "tool output")]),
+            session,
+            secondRunOptions).ToListAsync();
+
+        // Assert
+        Assert.True(requestAgent.RecordedRunOptions.Count >= 2);
+        Assert.Same(firstRunOptions, requestAgent.RecordedRunOptions[0]);
+        Assert.All(requestAgent.RecordedRunOptions.Skip(1), options => Assert.Same(secondRunOptions, options));
     }
 
     /// <summary>
