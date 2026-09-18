@@ -2,6 +2,7 @@
 
 using System.Collections.Generic;
 using System.Text;
+using System.Text.Json;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Hyperlight.Internal;
@@ -42,7 +43,9 @@ internal static class InstructionBuilder
     /// <remarks>
     /// Host-side filesystem paths are intentionally omitted from the
     /// description — only sandbox-visible mount paths are exposed to the
-    /// model.
+    /// model. Host-tool parameter shapes come from each tool's existing
+    /// <c>JsonSchema</c> and are documentation for the model only; they do
+    /// not change the <c>execute_code</c> input schema.
     /// </remarks>
     public static string BuildExecuteCodeDescription(
         IReadOnlyList<AIFunction> tools,
@@ -72,6 +75,17 @@ internal static class InstructionBuilder
                 }
 
                 sb.AppendLine();
+
+                // Surface the host tool's existing parameter schema so the model can see
+                // names, requiredness, descriptions, enums, and nested shapes.
+                JsonElement schema = tool.JsonSchema;
+                if (schema.ValueKind is JsonValueKind.Object or JsonValueKind.Array or JsonValueKind.String)
+                {
+                    sb.AppendLine("  Parameters (JSON Schema):");
+                    sb.Append("  ");
+                    sb.Append(schema.GetRawText());
+                    sb.AppendLine();
+                }
             }
         }
 
