@@ -255,6 +255,16 @@ class FanOutEdgeRunner(EdgeRunner):
             source_span_ids=message.source_span_ids,
         ) as span:
             try:
+                # Drop messages no target can handle before running the selection function, so a
+                # selection function is only ever asked about a deliverable message. `SingleEdgeRunner`
+                # applies the same ordering by checking `_can_handle` before `Edge.should_route`.
+                if not any(self._can_handle(target_id, message) for target_id in self._target_ids):
+                    span.set_attributes({
+                        OtelAttr.EDGE_GROUP_DELIVERED: False,
+                        OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DROPPED_TYPE_MISMATCH.value,
+                    })
+                    return False
+
                 selection_results = (
                     self._selection_func(message.data, self._target_ids) if self._selection_func else self._target_ids
                 )
