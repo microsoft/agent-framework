@@ -173,7 +173,8 @@ public sealed class ChatClientAgentFactoryTests
         var exception = await Assert.ThrowsAsync<AggregateException>(async () => await factory.TryCreateAsync(promptAgent));
 
         // Assert
-        Assert.Contains("Name isn't valid. 'Temperature' isn't recognized.", exception.Message);
+        var innerException = Assert.IsType<InvalidOperationException>(exception.InnerException);
+        Assert.Contains("Name isn't valid. 'Temperature' isn't recognized.", innerException.Message);
     }
 
     [Fact]
@@ -196,7 +197,8 @@ public sealed class ChatClientAgentFactoryTests
         var exception = Assert.Throws<AggregateException>(() => factory.Evaluate("Temperature"));
 
         // Assert
-        Assert.Contains("Name isn't valid. 'Temperature' isn't recognized.", exception.Message);
+        var innerException = Assert.IsType<InvalidOperationException>(exception.InnerException);
+        Assert.Contains("Name isn't valid. 'Temperature' isn't recognized.", innerException.Message);
     }
 
     [Fact]
@@ -216,7 +218,8 @@ public sealed class ChatClientAgentFactoryTests
         var exception = await Assert.ThrowsAsync<AggregateException>(async () => await factory.CreateAsync(promptAgent));
 
         // Assert
-        Assert.Contains("Name isn't valid. 'Temperature' isn't recognized.", exception.Message);
+        var innerException = Assert.IsType<InvalidOperationException>(exception.InnerException);
+        Assert.Contains("Name isn't valid. 'Temperature' isn't recognized.", innerException.Message);
     }
 
     [Fact]
