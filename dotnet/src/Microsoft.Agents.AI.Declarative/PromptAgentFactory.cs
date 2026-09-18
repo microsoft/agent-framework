@@ -28,12 +28,23 @@ public abstract class PromptAgentFactory
     /// </summary>
     /// <param name="engine">Optional <see cref="RecalcEngine"/>, if none is provided a default instance will be created.</param>
     /// <param name="configuration">Optional configuration used to resolve explicitly allowed environment variables referenced by the agent definition.</param>
+    protected PromptAgentFactory(RecalcEngine? engine = null,
+        IConfiguration? configuration = null) : this(engine, configuration, null, null, null)
+    {
+        // BINARY COMPAT CONSTRUCTOR
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="PromptAgentFactory"/> class.
+    /// </summary>
+    /// <param name="engine">Optional <see cref="RecalcEngine"/>, if none is provided a default instance will be created.</param>
+    /// <param name="configuration">Optional configuration used to resolve explicitly allowed environment variables referenced by the agent definition.</param>
     /// <param name="allowedConfigurationVariables">Configuration keys that may be exposed to Power Fx when the agent definition references them through <c>Env</c>.</param>
     /// <param name="maximumExpressionLength">Optional maximum length for Power Fx expressions evaluated by the factory-created engine.</param>
     /// <param name="maximumCallDepth">Optional maximum nested call depth for Power Fx expressions evaluated by the factory-created engine.</param>
-    protected PromptAgentFactory(RecalcEngine? engine = null,
-        IConfiguration? configuration = null,
-        IEnumerable<string>? allowedConfigurationVariables = null,
+    protected PromptAgentFactory(RecalcEngine? engine,
+        IConfiguration? configuration,
+        IEnumerable<string>? allowedConfigurationVariables,
         int? maximumExpressionLength = null,
         int? maximumCallDepth = null)
     {

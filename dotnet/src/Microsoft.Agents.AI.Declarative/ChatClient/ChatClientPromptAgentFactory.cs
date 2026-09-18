@@ -25,14 +25,32 @@ public sealed class ChatClientPromptAgentFactory : PromptAgentFactory
     /// <param name="engine">Optional Power Fx engine used to evaluate declarative expressions.</param>
     /// <param name="configuration">Optional configuration used to resolve explicitly allowed environment variables referenced by the agent definition.</param>
     /// <param name="loggerFactory">Optional logger factory used by created agents.</param>
-    /// <param name="allowedConfigurationVariables">Optional explicitly allowed environment variables referenced by the agent definition.</param>
     public ChatClientPromptAgentFactory(
         IChatClient chatClient,
         IList<AIFunction>? functions = null,
         RecalcEngine? engine = null,
         IConfiguration? configuration = null,
-        ILoggerFactory? loggerFactory = null,
-        IEnumerable<string>? allowedConfigurationVariables = null)
+        ILoggerFactory? loggerFactory = null)
+        : this(chatClient, functions, engine, configuration, loggerFactory, null)
+    {
+        // BINARY COMPAT CONSTRUCTOR
+    }
+    /// <summary>
+    /// Creates a new instance of the <see cref="ChatClientPromptAgentFactory"/> class.
+    /// </summary>
+    /// <param name="chatClient">The chat client used by created agents.</param>
+    /// <param name="functions">Optional functions exposed as tools to created agents.</param>
+    /// <param name="engine">Optional Power Fx engine used to evaluate declarative expressions.</param>
+    /// <param name="configuration">Optional configuration used to resolve explicitly allowed environment variables referenced by the agent definition.</param>
+    /// <param name="loggerFactory">Optional logger factory used by created agents.</param>
+    /// <param name="allowedConfigurationVariables">Optional explicitly allowed environment variables referenced by the agent definition.</param>
+    public ChatClientPromptAgentFactory(
+        IChatClient chatClient,
+        IList<AIFunction>? functions,
+        RecalcEngine? engine,
+        IConfiguration? configuration,
+        ILoggerFactory? loggerFactory,
+        IEnumerable<string>? allowedConfigurationVariables)
         : base(engine, configuration, allowedConfigurationVariables)
     {
         Throw.IfNull(chatClient);
