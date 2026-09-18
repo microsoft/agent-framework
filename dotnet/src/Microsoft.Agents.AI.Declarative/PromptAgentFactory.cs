@@ -28,29 +28,18 @@ public abstract class PromptAgentFactory
     /// </summary>
     /// <param name="engine">Optional <see cref="RecalcEngine"/>, if none is provided a default instance will be created.</param>
     /// <param name="configuration">Optional configuration used to resolve explicitly allowed environment variables referenced by the agent definition.</param>
-    protected PromptAgentFactory(RecalcEngine? engine = null, IConfiguration? configuration = null)
-        : this(engine, configuration, allowedConfigurationVariables: configuration?.AsEnumerable().Select(static pair => pair.Key))
-    {
-    }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="PromptAgentFactory"/> class.
-    /// </summary>
-    /// <param name="engine">Optional <see cref="RecalcEngine"/>, if none is provided a default instance will be created.</param>
-    /// <param name="configuration">Optional configuration used to resolve explicitly allowed environment variables referenced by the agent definition.</param>
     /// <param name="allowedConfigurationVariables">Configuration keys that may be exposed to Power Fx when the agent definition references them through <c>Env</c>.</param>
     /// <param name="maximumExpressionLength">Optional maximum length for Power Fx expressions evaluated by the factory-created engine.</param>
     /// <param name="maximumCallDepth">Optional maximum nested call depth for Power Fx expressions evaluated by the factory-created engine.</param>
-    protected PromptAgentFactory(
-        RecalcEngine? engine,
-        IConfiguration? configuration,
-        IEnumerable<string>? allowedConfigurationVariables,
+    protected PromptAgentFactory(RecalcEngine? engine = null,
+        IConfiguration? configuration = null,
+        IEnumerable<string>? allowedConfigurationVariables = null,
         int? maximumExpressionLength = null,
         int? maximumCallDepth = null)
     {
         this.Engine = engine ?? new RecalcEngine(CreateConfig(maximumExpressionLength, maximumCallDepth));
         this._configuration = configuration;
-        this._allowedConfigurationVariables = new(allowedConfigurationVariables ?? [], StringComparer.OrdinalIgnoreCase);
+        this._allowedConfigurationVariables = new(allowedConfigurationVariables ?? configuration?.AsEnumerable().Select(static pair => pair.Key), StringComparer.OrdinalIgnoreCase);
     }
 
     private static PowerFxConfig CreateConfig(int? maximumExpressionLength, int? maximumCallDepth)
