@@ -261,9 +261,7 @@ class BedrockKnowledgeBaseTool(FunctionTool):
 
     def _standard_retrieve(self, query: str) -> list[dict[str, Any]]:
         """Use standard Retrieve API with managed search configuration."""
-        passages = _retrieve_standard_passages(
-            self._client, self.knowledge_base_id, query, self.number_of_results
-        )
+        passages = _retrieve_standard_passages(self._client, self.knowledge_base_id, query, self.number_of_results)
         return [{"content": p.content, "source": p.source, "score": p.score} for p in passages]
 
     @staticmethod

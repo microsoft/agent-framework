@@ -148,9 +148,5 @@ class BedrockKnowledgeBaseProvider(ContextProvider):
             query,
             self.number_of_results,
         )
-        framed = [
-            f"[Source: {p.source}]\n{p.content}"
-            for p in passages
-            if p.score >= self.min_score
-        ]
+        framed = [f"[Source: {p.source}]\n{p.content}" for p in passages if p.score >= self.min_score]
         return "\n\n---\n\n".join(framed) if framed else ""
