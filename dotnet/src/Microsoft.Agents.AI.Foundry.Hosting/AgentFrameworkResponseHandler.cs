@@ -50,6 +50,13 @@ public class AgentFrameworkResponseHandler : ResponseHandler
     private readonly bool _resilientBackground;
 
     /// <summary>
+    /// A name proven not to alias the default agent can never start aliasing it: registrations are fixed once the
+    /// provider is built. Remembered so later requests do not resolve the keyed candidate again. Single slot because
+    /// a host has one default agent name.
+    /// </summary>
+    private volatile string? _knownNonAliasAgentName;
+
+    /// <summary>
     /// Cached fallback used when no <see cref="HostedSessionIsolationKeyProvider"/> is registered in DI.
     /// Avoids a per-request allocation on the request hot path.
     /// </summary>
@@ -825,7 +832,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
     /// <param name="request">The request to resolve an agent for.</param>
     /// <param name="defaultAgentName">
     /// When the request was served by the default (non-keyed) agent, receives that agent's
-    /// <see cref="AIAgent.Name"/> if it is non-blank and the keyed registration under that name is the same
+    /// <see cref="AIAgent.Name"/> if it is non-blank and the keyed registration under that name resolves to the same
     /// instance as the default agent; otherwise <see langword="null"/>. The session store lookup uses it so that
     /// a nameless request and a named request for the same agent share one store.
     /// </param>
@@ -842,7 +849,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                 string storageIdentity = FoundryHostingAgent.ResolveSessionStorageIdentity(
                     agent,
                     agentName,
-                    this._serviceProvider.GetService<AIAgent>());
+                    this.TryResolveDefaultAgentForIdentity(agentName));
                 return this.PrepareResolvedAgent(agent, storageIdentity);
             }
 
@@ -860,10 +867,9 @@ public class AgentFrameworkResponseHandler : ResponseHandler
             // under that name. This mirrors the alias relationship FoundryHostingAgent.ResolveSessionStorageIdentity
             // relies on, assuming the agent's Name is the key it was registered under (which AddAIAgent enforces),
             // so store selection and storage identity agree for hosted agents.
-            // The probe assumes the keyed and non-keyed registrations share a lifetime, as the hosting builder guarantees.
             var name = defaultAgent.Name;
             defaultAgentName = !string.IsNullOrWhiteSpace(name)
-                && ReferenceEquals(this._serviceProvider.GetKeyedService<AIAgent>(name), defaultAgent)
+                && this.IsDefaultAgentAliasOfKeyedRegistration(defaultAgent, name)
                     ? name
                     : null;
 
@@ -879,6 +885,88 @@ public class AgentFrameworkResponseHandler : ResponseHandler
             : $"Agent '{agentName}' not found. Ensure it is registered via AddFoundryResponses(services, agent) or services.AddKeyedSingleton<AIAgent>(\"{agentName}\", ...).";
 
         throw new InvalidOperationException(errorMessage);
+    }
+
+    /// <summary>
+    /// Determines whether the already-resolved default (non-keyed) <see cref="AIAgent"/> is the same instance as the
+    /// keyed <see cref="AIAgent"/> registration under <paramref name="name"/>, which is what makes that name usable
+    /// as the session store key. The keyed candidate is resolved only to compare identity; a registration that cannot
+    /// be resolved from this handler's root provider (a scoped registration under scope validation, or a faulting
+    /// factory) is treated as not an alias, so the probe fails the request only when the keyed factory observes
+    /// cancellation; a name proven not to alias is remembered so later requests skip the probe.
+    /// </summary>
+    /// <param name="defaultAgent">The default agent the request resolved to.</param>
+    /// <param name="name">The default agent's <see cref="AIAgent.Name"/>.</param>
+    /// <returns>
+    /// <see langword="true"/> when the keyed <see cref="AIAgent"/> registered under <paramref name="name"/> is the same
+    /// instance as <paramref name="defaultAgent"/>; otherwise <see langword="false"/>.
+    /// </returns>
+    private bool IsDefaultAgentAliasOfKeyedRegistration(AIAgent defaultAgent, string name)
+    {
+        if (string.Equals(this._knownNonAliasAgentName, name, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        try
+        {
+            if (ReferenceEquals(this._serviceProvider.GetKeyedService<AIAgent>(name), defaultAgent))
+            {
+                return true;
+            }
+
+            this._knownNonAliasAgentName = name;
+            return false;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // A keyed registration that cannot be resolved from this handler's root provider (a scoped registration
+            // under scope validation, or a faulting factory) is not an alias of the already-resolved default agent.
+            // The request is served from the non-keyed session store rather than failing on the probe.
+            // Deliberately not cached: a resolution failure may be transient and must not permanently disable the
+            // keyed store.
+            if (this._logger.IsEnabled(LogLevel.Debug))
+            {
+                this._logger.LogDebug(
+                    ex,
+                    "Keyed agent '{AgentName}' could not be resolved while checking whether the default agent aliases it; the default agent's name will not be used as the session store key.",
+                    name);
+            }
+
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Resolves the default (non-keyed) <see cref="AIAgent"/> for the sole purpose of computing the storage identity
+    /// of a request that already resolved a keyed agent. A default registration that cannot be resolved from this
+    /// handler's root provider (a scoped registration under scope validation, or a faulting factory) must not fail
+    /// such a request; the keyed identity is used instead. The result is never cached, because a resolution failure
+    /// may be transient. On the default path the same failure is the request's real error and stays unguarded.
+    /// </summary>
+    /// <param name="agentName">The name the request resolved its keyed agent under; used for logging only.</param>
+    /// <returns>
+    /// The default <see cref="AIAgent"/>, <see langword="null"/> when none is registered, and <see langword="null"/>
+    /// when resolving it threw.
+    /// </returns>
+    private AIAgent? TryResolveDefaultAgentForIdentity(string agentName)
+    {
+        try
+        {
+            return this._serviceProvider.GetService<AIAgent>();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            if (this._logger.IsEnabled(LogLevel.Debug))
+            {
+                this._logger.LogDebug(
+                    ex,
+                    "Default agent could not be resolved while computing the storage identity for agent '{AgentName}'; using the keyed identity.",
+                    agentName);
+            }
+
+            return null;
+        }
     }
 
     private AIAgent PrepareResolvedAgent(AIAgent agent, string sessionStorageIdentity)

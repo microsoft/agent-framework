@@ -180,6 +180,127 @@ public class AgentFrameworkResponseHandlerDefaultAgentStoreTests
         Assert.False(keyedStore.WasUsed);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CreateAsync_NamelessRequestWhenKeyedAgentIsScoped_UsesNonKeyedStoreAsync(bool validateScopes)
+    {
+        // Arrange
+        var keyedStore = new RecordingSessionStore();
+        var nonKeyedStore = new RecordingSessionStore();
+
+        var services = CreateServices();
+
+        // The default agent is a raw non-keyed singleton whose name merely collides with an unrelated scoped keyed
+        // registration. Under scope validation, resolving that keyed agent from the root provider throws and the alias
+        // probe must treat the failure as "not an alias"; without scope validation the resolution succeeds but yields a
+        // different instance. Either way the already-resolved default agent serves the request from the non-keyed store.
+        services.AddSingleton<AIAgent>(new NamedTestAgent(DefaultAgentName));
+        services.AddKeyedScoped<AIAgent>(DefaultAgentName, (_, _) => new NamedTestAgent(DefaultAgentName));
+        services.AddKeyedSingleton<AgentSessionStore>(DefaultAgentName, keyedStore);
+        services.AddSingleton<AgentSessionStore>(nonKeyedStore);
+
+        var handler = CreateHandler(services, new ServiceProviderOptions { ValidateScopes = validateScopes });
+
+        // Act
+        await RunRequestAsync(handler, requestedAgentName: null);
+
+        // Assert
+        Assert.True(nonKeyedStore.WasUsed);
+        Assert.False(keyedStore.WasUsed);
+    }
+
+    [Fact]
+    public async Task CreateAsync_NamelessRequestWhenKeyedAgentIsTransient_ResolvesKeyedCandidateOnceAsync()
+    {
+        // Arrange
+        var keyedStore = new RecordingSessionStore();
+        var nonKeyedStore = new RecordingSessionStore();
+        var keyedResolutions = 0;
+
+        var services = CreateServices();
+
+        // The keyed registration under the default agent's name is a transient that can never be the same instance as
+        // the non-keyed singleton default. Once the probe has proven that, the handler must remember it rather than
+        // construct a fresh candidate on every request.
+        services.AddSingleton<AIAgent>(new NamedTestAgent(DefaultAgentName));
+        services.AddKeyedTransient<AIAgent>(DefaultAgentName, (_, _) =>
+        {
+            keyedResolutions++;
+            return new NamedTestAgent(DefaultAgentName);
+        });
+        services.AddKeyedSingleton<AgentSessionStore>(DefaultAgentName, keyedStore);
+        services.AddSingleton<AgentSessionStore>(nonKeyedStore);
+
+        var handler = CreateHandler(services);
+
+        // Act
+        await RunRequestAsync(handler, requestedAgentName: null);
+        await RunRequestAsync(handler, requestedAgentName: null);
+
+        // Assert
+        Assert.Equal(1, keyedResolutions);
+        Assert.True(nonKeyedStore.WasUsed);
+        Assert.False(keyedStore.WasUsed);
+    }
+
+    [Fact]
+    public async Task CreateAsync_NamedRequestWhenDefaultAgentIsScoped_UsesKeyedAgentAndStoreAsync()
+    {
+        // Arrange
+        const string OtherAgentName = "support";
+        var keyedStore = new RecordingSessionStore();
+        var nonKeyedStore = new RecordingSessionStore();
+
+        var services = CreateServices();
+
+        // The named request resolves its keyed agent without ever needing the default agent; the default agent is only
+        // consulted to compute the storage identity. A scoped default that cannot be resolved from the root provider
+        // must not turn that lookup into the request's error.
+        // The keyed agent is registered through a factory on purpose: with an instance descriptor the container serves
+        // the non-keyed scoped AIAgent from the root provider without raising the scope violation at all (measured on
+        // Microsoft.Extensions.DependencyInjection), which would leave the guard below untested.
+        services.AddKeyedSingleton<AIAgent>(OtherAgentName, (_, _) => new NamedTestAgent(OtherAgentName));
+        services.AddKeyedSingleton<AgentSessionStore>(OtherAgentName, keyedStore);
+        services.AddScoped<AIAgent>(_ => new NamedTestAgent(DefaultAgentName));
+        services.AddSingleton<AgentSessionStore>(nonKeyedStore);
+
+        var handler = CreateHandler(services, new ServiceProviderOptions { ValidateScopes = true });
+
+        // Act
+        await RunRequestAsync(handler, requestedAgentName: OtherAgentName);
+
+        // Assert
+        Assert.True(keyedStore.WasUsed);
+        Assert.False(nonKeyedStore.WasUsed);
+    }
+
+    [Fact]
+    public async Task CreateAsync_NamelessRequestWhenKeyedAgentFactoryThrows_UsesNonKeyedStoreAsync()
+    {
+        // Arrange
+        var keyedStore = new RecordingSessionStore();
+        var nonKeyedStore = new RecordingSessionStore();
+
+        var services = CreateServices();
+
+        // Same collision, but the unrelated keyed registration faults when its factory runs. A probe that throws means
+        // "not an alias", never a failed request.
+        services.AddSingleton<AIAgent>(new NamedTestAgent(DefaultAgentName));
+        services.AddKeyedSingleton<AIAgent>(DefaultAgentName, (_, _) => throw new InvalidOperationException("boom"));
+        services.AddKeyedSingleton<AgentSessionStore>(DefaultAgentName, keyedStore);
+        services.AddSingleton<AgentSessionStore>(nonKeyedStore);
+
+        var handler = CreateHandler(services);
+
+        // Act
+        await RunRequestAsync(handler, requestedAgentName: null);
+
+        // Assert
+        Assert.True(nonKeyedStore.WasUsed);
+        Assert.False(keyedStore.WasUsed);
+    }
+
     private static AgentFrameworkResponseHandler CreateHandler(RecordingSessionStore? keyedStore, RecordingSessionStore? nonKeyedStore)
     {
         var services = CreateServices();
@@ -222,8 +343,8 @@ public class AgentFrameworkResponseHandlerDefaultAgentStoreTests
         services.Add(new ServiceDescriptor(typeof(AIAgent), sp => sp.GetRequiredKeyedService<AIAgent>(key), ServiceLifetime.Singleton));
     }
 
-    private static AgentFrameworkResponseHandler CreateHandler(IServiceCollection services)
-        => new(services.BuildServiceProvider(), NullLogger<AgentFrameworkResponseHandler>.Instance);
+    private static AgentFrameworkResponseHandler CreateHandler(IServiceCollection services, ServiceProviderOptions? options = null)
+        => new(services.BuildServiceProvider(options ?? new ServiceProviderOptions()), NullLogger<AgentFrameworkResponseHandler>.Instance);
 
     private static async Task RunRequestAsync(AgentFrameworkResponseHandler handler, string? requestedAgentName)
     {
