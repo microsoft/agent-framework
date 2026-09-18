@@ -900,6 +900,46 @@ class TestWorkflowAgent:
         assert update.continuation_token == {"token": "resume-token"}
         assert update.additional_properties == {"provider_marker": "preserve-me"}
 
+    async def test_workflow_as_agent_stream_preserves_response_metadata(self) -> None:
+        """Test that streaming preserves metadata from an AgentResponse output."""
+
+        @executor
+        async def metadata_executor(messages: list[Message], ctx: WorkflowContext[Never, AgentResponse]) -> None:  # type: ignore[valid-type]
+            await ctx.yield_output(
+                AgentResponse(
+                    messages=[
+                        Message(role="assistant", contents=["first"]),
+                        Message(role="assistant", contents=["second"]),
+                    ],
+                    agent_id="source-agent",
+                    response_id="source-response",
+                    finish_reason="length",
+                    continuation_token=cast(Any, {"token": "response-resume-token"}),
+                    additional_properties={"provider_marker": "preserve-response"},
+                )
+            )
+
+        workflow = WorkflowBuilder(start_executor=metadata_executor).build()
+        agent = workflow.as_agent("response-metadata-test-agent")
+
+        stream = agent.run("hello", stream=True)
+        updates = [update async for update in stream]
+        final_response = await stream.get_final_response()
+
+        assert [update.text for update in updates] == ["first", "second"]
+        assert updates[0].agent_id is None
+        assert updates[0].finish_reason is None
+        assert updates[0].continuation_token is None
+        assert updates[0].additional_properties is None
+        assert updates[-1].agent_id == "source-agent"
+        assert updates[-1].finish_reason == "length"
+        assert updates[-1].continuation_token == {"token": "response-resume-token"}
+        assert updates[-1].additional_properties == {"provider_marker": "preserve-response"}
+        assert final_response.agent_id == "source-agent"
+        assert final_response.finish_reason == "length"
+        assert final_response.continuation_token == {"token": "response-resume-token"}
+        assert final_response.additional_properties == {"provider_marker": "preserve-response"}
+
     async def test_workflow_as_agent_stream_preserves_custom_finish_reason(self) -> None:
         """Test that a non-literal finish_reason is forwarded unchanged.
 
