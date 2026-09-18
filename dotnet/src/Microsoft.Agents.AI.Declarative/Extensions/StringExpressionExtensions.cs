@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
+using System.ComponentModel;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.PowerFx;
@@ -12,6 +14,18 @@ namespace Microsoft.Agents.ObjectModel;
 /// </summary>
 public static class StringExpressionExtensions
 {
+    /// <summary>
+    /// Evaluates the given <see cref="StringExpression"/> using the provided <see cref="RecalcEngine"/>.
+    /// </summary>
+    /// <param name="expression">Expression to evaluate.</param>
+    /// <param name="engine">Recalc engine to use for evaluation.</param>
+    /// <returns>The evaluated string value, or null if the expression is null or cannot be evaluated.</returns>
+    [Obsolete("Use EvalAsync instead. This method calls into async methods and might cause deadlocks")]
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    public static string? Eval(this StringExpression? expression, RecalcEngine? engine)
+#pragma warning disable VSTHRD002 // Avoid problematic synchronous waits
+    => EvalAsync(expression, engine).GetAwaiter().GetResult();
+#pragma warning restore VSTHRD002 // Avoid problematic synchronous waits
     /// <summary>
     /// Evaluates the given <see cref="StringExpression"/> using the provided <see cref="RecalcEngine"/>.
     /// </summary>
