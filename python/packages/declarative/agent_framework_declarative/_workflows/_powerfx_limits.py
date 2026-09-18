@@ -1,6 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Structural budgets for state copied or marshalled during PowerFx evaluation."""
+"""Structural budgets for state copying and PowerFx symbol conversion.
+
+Each traversal has its own budget and rejects cycles or excess with ValueError,
+rather than truncating values. These limits do not bound expression execution
+or application-defined Python copy/conversion hooks.
+"""
 
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -18,6 +23,12 @@ class _PowerFxStateLimitError(ValueError):
 
 @dataclass
 class _PowerFxStateBudget:
+    """Count values, containers, and mapping keys, including repeated aliases.
+
+    Depth starts at zero. Text size counts string characters and binary bytes,
+    not encoded size or total memory.
+    """
+
     nodes: int = 0
     text_size: int = 0
 
@@ -34,11 +45,7 @@ class _PowerFxStateBudget:
 
 
 def _validate_powerfx_state(value: Any) -> None:  # pyright: ignore[reportUnusedFunction]
-    """Bound traversal before copying, counting shared values at each occurrence.
-
-    Python conversion hooks remain trusted application code. This bounds the
-    data they expose, not arbitrary execution inside those hooks.
-    """
+    """Reject cyclic or over-budget data before copying or conversion."""
     budget = _PowerFxStateBudget()
     active: set[int] = set()
 

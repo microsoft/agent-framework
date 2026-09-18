@@ -21,25 +21,6 @@ This package ships at two different stability levels:
 
 The declarative packages provides support for building agents based on a declarative yaml specification.
 
-## PowerFx state limits
-
-Declarative workflow state snapshots and PowerFx symbol conversion are bounded
-to 64 levels of nesting, 10,000 visited values (including containers and mapping
-keys), and 1,048,576 aggregate string characters or binary bytes per traversal.
-The root is at depth zero. Repeated references count at each occurrence;
-the `inputs` and `Workflow.Inputs` bindings therefore both count in the symbol
-budget. Cycles are rejected.
-
-Exceeding a limit raises `ValueError`; values are never silently truncated.
-Raw state is checked before defensive copies, and projected/converted symbols
-are checked before being passed to PowerFx. The symbol budget also includes
-configured `Env` values and temporary MessageText bindings. Previously accepted
-oversized state must be reduced before continuing; ordinary within-budget
-namespace, type-conversion, and temporary-binding behavior is unchanged.
-
-These are data-construction limits, not an expression execution timeout or a
-sandbox for application-defined Python conversion/copy hooks.
-
 ## HTTP request client ownership and cookies
 
 **Breaking change:** The HTTP client created by `DefaultHttpRequestHandler` no longer
