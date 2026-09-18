@@ -2173,6 +2173,89 @@ async def test_chat_agent_as_tool_shared_session_requires_distinct_tool_approval
     assert result.text == "Done."
 
 
+@pytest.mark.parametrize("stream", [False, True])
+async def test_chat_agent_as_tool_approved_delegation_does_not_confuse_framework_approval_state(
+    stream: bool,
+) -> None:
+    """Test that ordinary parent approval state is not treated as middleware ownership."""
+    child_client = MockBaseChatClient()
+    child_client.streaming_responses = [
+        [ChatResponseUpdate(role="assistant", contents=[Content.from_text("Child completed.")])]
+    ]
+    child_agent = Agent(
+        client=child_client,
+        name="ChildAgent",
+        middleware=[ToolApprovalMiddleware()],
+    )
+
+    parent_client = MockBaseChatClient()
+    parent_call = Content.from_function_call(
+        call_id="delegate-call",
+        name="delegate",
+        arguments={"task": "Complete the child task"},
+    )
+    if stream:
+        parent_client.streaming_responses = [
+            [ChatResponseUpdate(role="assistant", contents=[parent_call])],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("Parent completed.")])],
+        ]
+    else:
+        parent_client.run_responses = [
+            ChatResponse(messages=Message(role="assistant", contents=[parent_call])),
+            ChatResponse(messages=Message(role="assistant", contents=[Content.from_text("Parent completed.")])),
+        ]
+    parent_agent = Agent(
+        client=parent_client,
+        name="ParentAgent",
+        tools=[
+            child_agent.as_tool(
+                name="delegate",
+                approval_mode="always_require",
+                propagate_session=True,
+            )
+        ],
+    )
+    parent_session = AgentSession()
+
+    if stream:
+        first_response = await parent_agent.run(
+            "Delegate the task.",
+            session=parent_session,
+            stream=True,
+        ).get_final_response()
+    else:
+        first_response = await parent_agent.run(
+            "Delegate the task.",
+            session=parent_session,
+            stream=False,
+        )
+
+    approval_response = first_response.user_input_requests[0].to_function_approval_response(approved=True)
+    if stream:
+        result = await parent_agent.run(
+            approval_response,
+            session=parent_session,
+            stream=True,
+        ).get_final_response()
+    else:
+        result = await parent_agent.run(
+            approval_response,
+            session=parent_session,
+            stream=False,
+        )
+
+    delegated_result = next(
+        content
+        for message in result.messages
+        for content in message.contents
+        if content.type == "function_result" and content.call_id == "delegate-call"
+    )
+    assert delegated_result.result == "Child completed."
+    assert delegated_result.exception is None
+    assert child_client.call_count == 1
+    assert result.text == "Parent completed."
+
+
 async def test_chat_agent_as_tool_does_not_restore_custom_approval_queue_on_fresh_delegation() -> None:
     """Test that custom child approval state cannot leak through a shared parent session."""
 

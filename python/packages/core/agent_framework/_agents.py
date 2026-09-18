@@ -731,7 +731,16 @@ class BaseAgent(SerializationMixin):
             child_approval_source_ids = _tool_approval_source_ids(self.middleware)
 
             if propagate_session and parent_session is not None:
-                overlapping_source_ids = child_approval_source_ids.intersection(parent_session.state)
+                from ._tools import _PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY  # pyright: ignore[reportPrivateUsage]
+
+                raw_parent_approval_source_ids = ctx.metadata.get(_PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY)
+                parent_approval_source_ids: frozenset[str]
+                parent_approval_source_ids = (
+                    cast("frozenset[str]", raw_parent_approval_source_ids)
+                    if isinstance(raw_parent_approval_source_ids, frozenset)
+                    else frozenset()
+                )
+                overlapping_source_ids = child_approval_source_ids.intersection(parent_approval_source_ids)
                 if overlapping_source_ids:
                     formatted_source_ids = ", ".join(repr(source_id) for source_id in sorted(overlapping_source_ids))
                     raise ToolExecutionException(
@@ -1565,6 +1574,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
 
         agent_name = self._get_agent_name()
         from ._mcp import MCPTool
+        from ._tools import _PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY  # pyright: ignore[reportPrivateUsage]
 
         base_tools = _normalize_tools(chat_options.pop("tools", None))
         mcp_duplicate_message = "Tool names must be unique. Consider setting `tool_name_prefix` on the MCPTool."
@@ -1608,6 +1618,10 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 mcp_server.functions,
                 duplicate_error_message=mcp_duplicate_message,
             )
+
+        additional_function_arguments[_PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY] = _tool_approval_source_ids(
+            self.middleware
+        )
 
         model = opts.pop("model", None)
 
