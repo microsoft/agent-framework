@@ -39,7 +39,9 @@ public abstract class PromptAgentFactory
     {
         this.Engine = engine ?? new RecalcEngine(CreateConfig(maximumExpressionLength, maximumCallDepth));
         this._configuration = configuration;
-        this._allowedConfigurationVariables = new(allowedConfigurationVariables ?? configuration?.AsEnumerable().Select(static pair => pair.Key), StringComparer.OrdinalIgnoreCase);
+        this._allowedConfigurationVariables = new(
+            allowedConfigurationVariables ?? configuration?.AsEnumerable().Select(static pair => pair.Key) ?? [],
+            StringComparer.OrdinalIgnoreCase);
     }
 
     private static PowerFxConfig CreateConfig(int? maximumExpressionLength, int? maximumCallDepth)
