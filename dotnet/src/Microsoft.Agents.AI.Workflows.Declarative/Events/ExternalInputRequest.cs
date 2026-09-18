@@ -83,8 +83,8 @@ public sealed class ExternalInputRequest : IExternalRequestEnvelope
     private static string? GetContentId(AIContent? content)
         => content switch
         {
-            FunctionCallContent functionCall => functionCall.CallId,
-            ToolApprovalRequestContent toolApprovalRequest => toolApprovalRequest.RequestId,
+            ToolCallContent functionCall => functionCall.CallId,
+            InputRequestContent toolApprovalRequest => toolApprovalRequest.RequestId,
             _ => null,
         };
 }
