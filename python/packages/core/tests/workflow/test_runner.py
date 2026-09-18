@@ -1590,3 +1590,104 @@ async def test_runner_drains_straggler_events_at_iteration_end():
     output_events = [e for e in events if e.type == "output"]
     # We should have output events from both executors
     assert len(output_events) >= 2
+
+@pytest.mark.asyncio
+async def test_failed_superstep_discards_pending_state_before_next_run() -> None:
+    """Pending State writes from a failed superstep must not leak into a later run (#7859)."""
+    from agent_framework import WorkflowBuilder
+
+    @dataclass
+    class Msg:
+        fail: bool
+
+    class FlakyExecutor(Executor):
+        @handler
+        async def run(self, message: Msg, ctx: WorkflowContext[Msg, str]) -> None:
+            if message.fail:
+                ctx.set_state("secret", "leaked-from-failed-run")
+                raise RuntimeError("simulated transient failure")
+            await ctx.yield_output("ok")
+
+    workflow = WorkflowBuilder(start_executor=FlakyExecutor(id="flaky")).build()
+
+    with pytest.raises(RuntimeError, match="simulated transient failure"):
+        async for _ in workflow.run(Msg(fail=True), stream=True):
+            pass
+
+    async for _ in workflow.run(Msg(fail=False), stream=True):
+        pass
+
+    committed = workflow._runner.state.export_state()  # pyright: ignore[reportPrivateUsage]
+    assert "secret" not in committed
+
+
+@pytest.mark.asyncio
+async def test_cancelled_superstep_discards_pending_state_before_next_run() -> None:
+    """Pending State writes from a cancelled superstep must not leak into a later run (#7859)."""
+    from agent_framework import WorkflowBuilder
+
+    @dataclass
+    class Msg:
+        cancel: bool
+
+    started = asyncio.Event()
+
+    class StagingThenBlockingExecutor(Executor):
+        @handler
+        async def run(self, message: Msg, ctx: WorkflowContext[Msg, str]) -> None:
+            if message.cancel:
+                ctx.set_state("secret", "leaked-from-cancelled-run")
+                started.set()
+                await asyncio.sleep(3600)
+            await ctx.yield_output("ok")
+
+    workflow = WorkflowBuilder(start_executor=StagingThenBlockingExecutor(id="blocker")).build()
+
+    async def run_and_cancel() -> None:
+        async for _ in workflow.run(Msg(cancel=True), stream=True):
+            pass
+
+    task = asyncio.create_task(run_and_cancel())
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    async for _ in workflow.run(Msg(cancel=False), stream=True):
+        pass
+
+    committed = workflow._runner.state.export_state()  # pyright: ignore[reportPrivateUsage]
+    assert "secret" not in committed
+
+
+@pytest.mark.asyncio
+async def test_failed_superstep_discards_even_if_executor_cleanup_raises() -> None:
+    """Executor cleanup that raises after set_state must not skip State.discard (#7859)."""
+    from agent_framework import WorkflowBuilder
+
+    @dataclass
+    class Msg:
+        fail: bool
+
+    class CleanupRaisesExecutor(Executor):
+        @handler
+        async def run(self, message: Msg, ctx: WorkflowContext[Msg, str]) -> None:
+            if message.fail:
+                ctx.set_state("secret", "leaked-from-cleanup-raise")
+                try:
+                    raise RuntimeError("primary failure")
+                finally:
+                    raise RuntimeError("cleanup failure")  # noqa: B012
+            await ctx.yield_output("ok")
+
+    workflow = WorkflowBuilder(start_executor=CleanupRaisesExecutor(id="cleanup")).build()
+
+    with pytest.raises(RuntimeError):
+        async for _ in workflow.run(Msg(fail=True), stream=True):
+            pass
+
+    async for _ in workflow.run(Msg(fail=False), stream=True):
+        pass
+
+    committed = workflow._runner.state.export_state()  # pyright: ignore[reportPrivateUsage]
+    assert "secret" not in committed

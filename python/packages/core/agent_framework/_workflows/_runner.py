@@ -80,6 +80,9 @@ class RunnerImpl:
         self._iteration = 0
         self._max_iterations = max_iterations
         self._state = state
+        # When True, Workflow.run must reject successors even if the ResponseStream
+        # weakref is already gone (cleanup still in progress after a drop/cancel).
+        self._blocking_reuse_until_cleanup = False
 
         # Checkpointing related attributes
         self._previous_checkpoint_id: CheckpointID | None = None
@@ -127,51 +130,86 @@ class RunnerImpl:
             # Wake on either a live event or iteration completion, including silent supersteps.
             iteration_task = asyncio.create_task(self._run_iteration())
             event_task: asyncio.Task[WorkflowEvent] | None = None
+            # Track commit so cancel/abort cleanup spans the whole superstep
+            # (event wait → await iteration → drain → commit), not only the poll loop (#7859).
+            committed = False
+            # Defer failure events until after discard so dropping the ResponseStream
+            # cannot race a successor commit of stale pending writes (#7859).
+            deferred_failure_events: list[WorkflowEvent] = []
+            self._blocking_reuse_until_cleanup = True
             try:
-                while not iteration_task.done():
-                    event_task = asyncio.create_task(self._ctx.next_event())
-                    done, _ = await asyncio.wait((iteration_task, event_task), return_when=asyncio.FIRST_COMPLETED)
-                    if event_task in done:
-                        yield event_task.result()
-            finally:
-                # Cancellation and generator closure must not leave an event waiter or executor running.
-                tasks: list[asyncio.Task[Any]] = (
-                    [iteration_task] if event_task is None else [iteration_task, event_task]
-                )
-                for task in tasks:
-                    if not task.done():
-                        task.cancel()
-                await asyncio.gather(*tasks, return_exceptions=True)
+                try:
+                    while not iteration_task.done():
+                        event_task = asyncio.create_task(self._ctx.next_event())
+                        done, _ = await asyncio.wait(
+                            (iteration_task, event_task), return_when=asyncio.FIRST_COMPLETED
+                        )
+                        if event_task in done:
+                            event = event_task.result()
+                            event_task = None
+                            if event.type == "executor_failed":
+                                deferred_failure_events.append(event)
+                            else:
+                                yield event
+                finally:
+                    # Cancellation and generator closure must not leave an event waiter or executor running.
+                    tasks: list[asyncio.Task[Any]] = (
+                        [iteration_task] if event_task is None else [iteration_task, event_task]
+                    )
+                    for task in tasks:
+                        if not task.done():
+                            task.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
 
-            # Propagate errors from iteration, but first surface any pending events
-            try:
-                await iteration_task
-            except Exception:
-                # Make sure failure-related events (like ExecutorFailedEvent) are surfaced
+                # Propagate errors from iteration, but first surface any pending events
+                try:
+                    await iteration_task
+                except Exception:
+                    # Discard staged writes immediately — before any await/yield — so a
+                    # streaming consumer that stops after executor_failed cannot leave
+                    # pending state for a later run to commit (#7859).
+                    self._state.discard()
+                    for event in deferred_failure_events:
+                        yield event
+                    deferred_failure_events.clear()
+                    if await self._ctx.has_events():
+                        for event in await self._ctx.drain_events():
+                            yield event
+                    raise
+
+                for event in deferred_failure_events:
+                    yield event
+                deferred_failure_events.clear()
+
+                self._iteration += 1
+
+                # Drain any straggler events emitted at tail end
                 if await self._ctx.has_events():
                     for event in await self._ctx.drain_events():
                         yield event
-                raise
-            self._iteration += 1
 
-            # Drain any straggler events emitted at tail end
-            if await self._ctx.has_events():
-                for event in await self._ctx.drain_events():
-                    yield event
+                logger.info(f"Completed superstep {self._iteration}")
 
-            logger.info(f"Completed superstep {self._iteration}")
+                # Commit pending state changes at superstep boundary
+                self._state.commit()
 
-            # Commit pending state changes at superstep boundary
-            self._state.commit()
+                # Create checkpoint after each superstep iteration. Keep
+                # ``committed`` false until this returns so residual pending
+                # staged during checkpoint prep is discarded on cancel/failure.
+                await self.create_checkpoint_if_enabled()
+                committed = True
 
-            # Create checkpoint after each superstep iteration
-            await self.create_checkpoint_if_enabled()
+                yield WorkflowEvent.superstep_completed(iteration=self._iteration)
 
-            yield WorkflowEvent.superstep_completed(iteration=self._iteration)
-
-            # Check for convergence: no more messages to process
-            if not await self._ctx.has_messages():
-                break
+                # Check for convergence: no more messages to process
+                if not await self._ctx.has_messages():
+                    break
+            finally:
+                # Always discard on abort — including when iteration-task await above
+                # raised from executor cleanup — so staged writes cannot leak (#7859).
+                if not committed:
+                    self._state.discard()
+                self._blocking_reuse_until_cleanup = False
 
         logger.info(f"Workflow completed after {self._iteration} supersteps")
 
@@ -235,10 +273,18 @@ class RunnerImpl:
 
         This is used by checkpoint capture paths that need a complete, restorable
         state payload without necessarily writing to a checkpoint storage backend.
+
+        If staging executor/edge state fails or is cancelled before ``commit()``,
+        discard residual pending writes so a later run cannot commit a partial
+        checkpoint payload (#7859).
         """
-        await self._save_executor_states()
-        self._save_edge_runner_states()
-        self._state.commit()
+        try:
+            await self._save_executor_states()
+            self._save_edge_runner_states()
+            self._state.commit()
+        except BaseException:
+            self._state.discard()
+            raise
 
     async def create_checkpoint_if_enabled(self) -> None:
         """Create a checkpoint and save the checkpoint to the configured storage if one is configured.
@@ -249,9 +295,11 @@ class RunnerImpl:
         if not self._ctx.has_checkpointing():
             return
 
+        prepared = False
         try:
             # Save executor states into committed state before creating the checkpoint.
             await self._prepare_checkpoint_state()
+            prepared = True
 
             checkpoint_id = await self._ctx.create_checkpoint(
                 self._workflow_name,
@@ -269,6 +317,10 @@ class RunnerImpl:
             )
             self._previous_checkpoint_id = checkpoint_id
         except Exception as e:
+            # ``_prepare_checkpoint_state`` discards on its own failure; if we
+            # never reached that commit, clear any residual pending here too.
+            if not prepared:
+                self._state.discard()
             logger.warning(
                 "Failed to create checkpoint at iteration %d: %s. "
                 "Note that this does not fail the workflow run. "

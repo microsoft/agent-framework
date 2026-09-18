@@ -409,6 +409,9 @@ class Workflow(DictConvertible):
         # ever iterating, the weakref dereferences to ``None`` once Python collects it,
         # so a subsequent ``run()`` is allowed.
         self._active_run: weakref.ref[ResponseStream[WorkflowEvent, WorkflowRunResult]] | None = None
+        # Strong hold for non-streaming exclusive entry points (e.g. cancel_pending_requests)
+        # that mutate the same runner/state without installing a ResponseStream weakref.
+        self._exclusive_run_hold: bool = False
 
         # Run-scoped pause checkpoint bookkeeping (owned by Workflow, not callers).
         # Captured at the start of each ``_run_core`` so ``resolve_pause_checkpoint_id``
@@ -1422,6 +1425,14 @@ class Workflow(DictConvertible):
         if not all(isinstance(request_id, str) and request_id for request_id in selected_ids):
             raise ValueError("Pending workflow request IDs must be non-empty strings.")
 
+        # Share the same active/cleanup lock as ``run()`` so a cancellation continuation
+        # cannot start during ResponseStream cleanup (or while another run holds the lock)
+        # and commit pending State before the abandoned run discards it (#7859).
+        if self._is_run_active():
+            raise WorkflowException(
+                "Workflow is already running; concurrent runs are not allowed on the same instance."
+            )
+
         async def apply_cancellations() -> None:
             cancelled_events = await self._runner.context.cancel_request_info_events(selected_ids)
             for request_id, request_event in cancelled_events.items():
@@ -1436,12 +1447,16 @@ class Workflow(DictConvertible):
                 )
                 await executor._cancel_pending_request(request_id, context)  # pyright: ignore[reportPrivateUsage]
 
-        if checkpoint_storage is not None:
-            self._runner.context.set_runtime_checkpoint_storage(checkpoint_storage)
-        runtime_tools = normalize_tools(tools) if tools is not None else None
-        self._runner.context.set_runtime_tools(runtime_tools)
+        # Acquire the hold first, but keep setup inside try/finally so a failure in
+        # normalize_tools / checkpoint restore cannot leave the workflow permanently locked.
+        self._exclusive_run_hold = True
         events: list[WorkflowEvent[Any]] = []
+        runtime_tools = None
         try:
+            if checkpoint_storage is not None:
+                self._runner.context.set_runtime_checkpoint_storage(checkpoint_storage)
+            runtime_tools = normalize_tools(tools) if tools is not None else None
+            self._runner.context.set_runtime_tools(runtime_tools)
             if checkpoint_id is not None:
                 await self._runner.restore_from_checkpoint(checkpoint_id, checkpoint_storage)
             async for event in self._run_workflow_with_tracing(
@@ -1456,6 +1471,7 @@ class Workflow(DictConvertible):
                     continue
                 events.append(event)
         finally:
+            self._exclusive_run_hold = False
             if checkpoint_storage is not None:
                 self._runner.context.clear_runtime_checkpoint_storage()
             self._runner.context.clear_runtime_tools()
@@ -1510,5 +1526,11 @@ class Workflow(DictConvertible):
         Returns:
             True if a run is active, False otherwise.
         """
+        if self._exclusive_run_hold:
+            return True
+        # Runner cleanup can outlive a dropped ResponseStream (weakref cleared on GC).
+        # Keep the instance reserved until pending State is discarded (#7859).
+        if getattr(self._runner, "_blocking_reuse_until_cleanup", False):
+            return True
         existing_stream = self._active_run() if self._active_run is not None else None
         return existing_stream is not None

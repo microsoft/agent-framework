@@ -427,6 +427,14 @@ class DeclarativeWorkflowState:
         """Set the full state data dict in state."""
         self._state.set(DECLARATIVE_STATE_KEY, data)
 
+    def commit(self) -> None:
+        """Commit pending runner State writes.
+
+        Used when an action publishes diagnostic state and then fails the
+        superstep. The runner discards uncommitted writes on failure (#7859).
+        """
+        self._state.commit()
+
     def get(self, path: str, default: Any = None) -> Any:
         """Get a value from the state using a dot-notated path.
 
