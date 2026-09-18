@@ -149,11 +149,11 @@ class BedrockKnowledgeBaseTool(FunctionTool):
     Subclasses FunctionTool so it can be passed directly to any Agent or ChatClient.
 
     Usage:
-        from agent_framework_bedrock import BedrockKnowledgeBaseTool, BedrockChatClient, BedrockChatOptions
+        from agent_framework_bedrock import BedrockKnowledgeBaseTool, BedrockChatClient
         from agent_framework import Agent
 
         tool = BedrockKnowledgeBaseTool(knowledge_base_id="YOUR_KB_ID")
-        agent = Agent(client=BedrockChatClient(options=BedrockChatOptions(model_id="...")), tools=[tool])
+        agent = Agent(client=BedrockChatClient(model="..."), tools=[tool])
     """
 
     def __init__(

@@ -14,7 +14,7 @@ tool = BedrockKnowledgeBaseTool(
 )
 
 # As a FunctionTool, pass directly to an Agent:
-agent = Agent(client=BedrockChatClient(options=BedrockChatOptions(model_id="...")), tools=[tool])
+agent = Agent(client=BedrockChatClient(model="..."), tools=[tool])
 
 # Or invoke directly for testing:
 import asyncio
