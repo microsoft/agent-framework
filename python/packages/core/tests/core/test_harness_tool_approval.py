@@ -1733,6 +1733,64 @@ async def test_approval_batch_uses_the_first_decision_for_duplicate_responses(
     assert execution_order == ["second_write"]
 
 
+async def test_approval_batch_preserves_first_decision_across_partial_retries(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    """A later retry must not replace a decision staged by an earlier partial response."""
+    execution_order: list[str] = []
+
+    @tool(name="first_write", approval_mode="always_require")
+    def first_write() -> str:
+        execution_order.append("first_write")
+        return "first"
+
+    @tool(name="second_write", approval_mode="always_require")
+    def second_write() -> str:
+        execution_order.append("second_write")
+        return "second"
+
+    agent = Agent(client=chat_client_base, tools=[first_write, second_write])
+    session = AgentSession(session_id="partial-retry-conflicting-decision")
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="call_first", name="first_write", arguments="{}"),
+                    Content.from_function_call(call_id="call_second", name="second_write", arguments="{}"),
+                ],
+            )
+        )
+    ]
+
+    first_response = await agent.run("write twice", session=session)
+    requests = _approval_requests(first_response.messages)
+    partial_response = await agent.run(
+        requests[1].to_function_approval_response(approved=False),
+        session=session,
+    )
+
+    assert execution_order == []
+    assert [_function_call(request).name for request in _approval_requests(partial_response.messages)] == [
+        "first_write"
+    ]
+
+    chat_client_base.run_responses = [ChatResponse(messages=Message(role="assistant", contents=["complete"]))]
+    final_response = await agent.run(
+        Message(
+            role="user",
+            contents=[
+                requests[0].to_function_approval_response(approved=True),
+                requests[1].to_function_approval_response(approved=True),
+            ],
+        ),
+        session=session,
+    )
+
+    assert final_response.text == "complete"
+    assert execution_order == ["first_write"]
+
+
 async def test_mixed_batch_accepts_restored_tool_approval_state(
     chat_client_base: MockBaseChatClient,
 ) -> None:

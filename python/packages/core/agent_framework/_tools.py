@@ -2965,7 +2965,8 @@ def _stage_approval_batch_responses(
             request_id = rebound.additional_properties.get(_APPROVAL_REQUEST_ID_KEY)
             if not isinstance(request_id, str) or request_id not in group_ids:
                 continue
-            stored_responses[request_id] = rebound
+            if request_id not in stored_responses:
+                stored_responses[request_id] = rebound
             matched = True
 
         if not matched:
