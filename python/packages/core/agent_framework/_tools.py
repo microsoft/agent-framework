@@ -3361,11 +3361,12 @@ def _collect_approval_responses(
                 if resolved.id is not None and pending_by_approval_id.get(resolved.id) is resolved:
                     pending_by_approval_id.pop(resolved.id, None)
 
-    return {
-        content.id: content
-        for content in approval_responses
-        if id(content) not in resolved_response_ids and content.id is not None
-    }
+    collected_responses: dict[str, Content] = {}
+    for content in approval_responses:
+        if id(content) in resolved_response_ids or content.id is None:
+            continue
+        collected_responses.setdefault(content.id, content)
+    return collected_responses
 
 
 def _collect_unanswered_approval_requests(messages: Sequence[Message]) -> list[Content]:

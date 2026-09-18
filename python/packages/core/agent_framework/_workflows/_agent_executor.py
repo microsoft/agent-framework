@@ -347,6 +347,18 @@ class AgentExecutor(Executor):
             self._pending_responses_to_agent.append(
                 cancelled_request.to_function_approval_response(approved=False)
             )
+        elif (
+            cancelled_request is not None
+            and cancelled_request.type == "function_call"
+            and cancelled_request.call_id is not None
+        ):
+            self._pending_responses_to_agent.append(
+                Content.from_function_result(
+                    call_id=cancelled_request.call_id,
+                    result="Error: Tool call was cancelled.",
+                    additional_properties={"cancelled": True},
+                )
+            )
         if not self._pending_agent_requests:
             await self._resume_with_pending_responses(ctx)
 

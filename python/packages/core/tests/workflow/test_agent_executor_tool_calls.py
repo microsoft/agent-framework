@@ -511,11 +511,12 @@ declaration_only_tool = FunctionTool(
 class DeclarationOnlyMockChatClient(FunctionInvocationLayer[Any], BaseChatClient[Any]):
     """Mock chat client that calls a declaration-only tool on first iteration."""
 
-    def __init__(self, parallel_request: bool = False) -> None:
+    def __init__(self, parallel_request: bool = False, mixed_request: bool = False) -> None:
         FunctionInvocationLayer.__init__(self)
         BaseChatClient.__init__(self)
         self._iteration: int = 0
         self._parallel_request: bool = parallel_request
+        self._mixed_request: bool = mixed_request
         self.received_messages: list[list[Message]] = []
 
     def _inner_get_response(
@@ -537,7 +538,25 @@ class DeclarationOnlyMockChatClient(FunctionInvocationLayer[Any], BaseChatClient
 
     def _create_response(self) -> ChatResponse:
         if self._iteration == 0:
-            if self._parallel_request:
+            if self._mixed_request:
+                response = ChatResponse(
+                    messages=Message(
+                        "assistant",
+                        [
+                            Content.from_function_call(
+                                call_id="approval-call",
+                                name="mock_tool_requiring_approval",
+                                arguments='{"query": "approved"}',
+                            ),
+                            Content.from_function_call(
+                                call_id="host-call",
+                                name="client_side_tool",
+                                arguments='{"query": "hosted"}',
+                            ),
+                        ],
+                    )
+                )
+            elif self._parallel_request:
                 response = ChatResponse(
                     messages=Message(
                         "assistant",
@@ -570,7 +589,23 @@ class DeclarationOnlyMockChatClient(FunctionInvocationLayer[Any], BaseChatClient
 
     async def _stream_response(self) -> AsyncIterable[ChatResponseUpdate]:
         if self._iteration == 0:
-            if self._parallel_request:
+            if self._mixed_request:
+                yield ChatResponseUpdate(
+                    contents=[
+                        Content.from_function_call(
+                            call_id="approval-call",
+                            name="mock_tool_requiring_approval",
+                            arguments='{"query": "approved"}',
+                        ),
+                        Content.from_function_call(
+                            call_id="host-call",
+                            name="client_side_tool",
+                            arguments='{"query": "hosted"}',
+                        ),
+                    ],
+                    role="assistant",
+                )
+            elif self._parallel_request:
                 yield ChatResponseUpdate(
                     contents=[
                         Content.from_function_call(call_id="1", name="client_side_tool", arguments='{"query": "test"}'),
@@ -728,3 +763,38 @@ async def test_agent_executor_parallel_declaration_only_tool_emits_request_info(
     final_response = events.get_outputs()
     assert len(final_response) == 1
     assert final_response[0] == "Tool executed successfully."
+
+
+async def test_workflow_cancels_host_member_of_mixed_batch_with_terminal_result() -> None:
+    """Cancelling a Host-owned sibling completes the mixed batch with its exact call identity."""
+    client = DeclarationOnlyMockChatClient(mixed_request=True)
+    agent = Agent(
+        client=client,
+        name="MixedApprovalAgent",
+        tools=[mock_tool_requiring_approval, declaration_only_tool],
+    )
+    workflow = WorkflowBuilder(start_executor=agent, output_from=[test_executor]).add_edge(agent, test_executor).build()
+
+    paused = await workflow.run("Run both tools")
+    requests = paused.get_request_info_events()
+    approval_request = next(request for request in requests if request.data.type == "function_approval_request")
+    host_request = next(request for request in requests if request.data.type == "function_call")
+
+    cancelled = await workflow.cancel_pending_requests([host_request.request_id])
+    assert cancelled.get_outputs() == []
+
+    resumed = await workflow.run(
+        responses={
+            approval_request.request_id: approval_request.data.to_function_approval_response(approved=True),
+        }
+    )
+
+    assert resumed.get_outputs() == ["Tool executed successfully."]
+    function_results = [
+        content
+        for message in client.received_messages[-1]
+        for content in message.contents
+        if content.type == "function_result"
+    ]
+    cancelled_result = next(result for result in function_results if result.call_id == host_request.data.call_id)
+    assert cancelled_result.additional_properties["cancelled"] is True
