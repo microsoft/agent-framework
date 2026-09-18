@@ -117,10 +117,10 @@ internal readonly struct MessageHandlerInfo
 
                 return CallResult.ReturnResult(result);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException exception)
             {
                 // If the operation was canceled, return a canceled CallResult.
-                return CallResult.Cancelled(wasVoid: expectingVoid);
+                return CallResult.Cancelled(wasVoid: expectingVoid, exception);
             }
             catch (Exception ex)
             {
