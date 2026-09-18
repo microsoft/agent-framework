@@ -2,6 +2,7 @@
 import asyncio
 import logging
 import threading
+from contextvars import ContextVar
 from typing import Annotated, Any, Literal, get_args, get_origin
 from unittest.mock import Mock
 
@@ -10,6 +11,7 @@ from opentelemetry import trace
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic import BaseModel
 
+import agent_framework._tools as tools_module
 from agent_framework import (
     SKIP_PARSING,
     Content,
@@ -21,11 +23,106 @@ from agent_framework._tools import (
     _auto_invoke_function,
     _parse_annotation,
     _parse_inputs,
+    _try_execute_function_call_groups,
     normalize_function_invocation_configuration,
 )
 from agent_framework.observability import OtelAttr
 
 # region FunctionTool and tool decorator tests
+
+
+async def test_sequential_function_invocation_runs_calls_in_model_order() -> None:
+    execution_order: list[str] = []
+
+    @tool
+    async def first() -> str:
+        execution_order.append("first_start")
+        await asyncio.sleep(0)
+        execution_order.append("first_end")
+        return "first"
+
+    @tool
+    async def second() -> str:
+        execution_order.append("second_start")
+        await asyncio.sleep(0)
+        execution_order.append("second_end")
+        return "second"
+
+    result_groups, should_terminate = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=[
+            Content.from_function_call(call_id="first", name="first", arguments={}),
+            Content.from_function_call(call_id="second", name="second", arguments={}),
+        ],
+        tools=[first, second],
+        config={"allow_concurrent_invocation": False},
+    )
+
+    assert not should_terminate
+    assert execution_order == ["first_start", "first_end", "second_start", "second_end"]
+    assert [group[0].result for group in result_groups] == ["first", "second"]
+
+
+async def test_sequential_function_invocation_isolates_context() -> None:
+    current_tool = ContextVar[str | None]("current_tool", default=None)
+
+    @tool
+    async def first() -> str:
+        current_tool.set("first")
+        return "first"
+
+    @tool
+    async def second() -> str:
+        return str(current_tool.get())
+
+    result_groups, _ = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=[
+            Content.from_function_call(call_id="first", name="first", arguments={}),
+            Content.from_function_call(call_id="second", name="second", arguments={}),
+        ],
+        tools=[first, second],
+        config={"allow_concurrent_invocation": False},
+    )
+
+    assert result_groups[1][0].result == "None"
+
+
+def test_function_invocation_configuration_allows_concurrency_by_default() -> None:
+    config = normalize_function_invocation_configuration(None)
+
+    assert config["allow_concurrent_invocation"] is True
+
+
+async def test_sequential_function_invocation_finishes_batch_after_termination(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executed_calls: list[str] = []
+
+    async def execute(function_call: Content, **_: Any) -> tuple[list[Content], bool]:
+        call_id = function_call.call_id
+        assert call_id is not None
+        executed_calls.append(call_id)
+        return [Content.from_function_result(call_id=call_id, result="done")], call_id == "first"
+
+    monkeypatch.setattr(tools_module, "_execute_single_function_call", execute)
+
+    result_groups, should_terminate = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=[
+            Content.from_function_call(call_id="first", name="first", arguments={}),
+            Content.from_function_call(call_id="second", name="second", arguments={}),
+        ],
+        tools=[
+            FunctionTool(name="first", func=lambda: "first"),
+            FunctionTool(name="second", func=lambda: "second"),
+        ],
+        config={"allow_concurrent_invocation": False},
+    )
+
+    assert should_terminate
+    assert executed_calls == ["first", "second"]
+    assert [group[0].result for group in result_groups] == ["done", "done"]
 
 
 def test_tool_decorator():

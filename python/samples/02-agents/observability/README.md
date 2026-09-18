@@ -88,6 +88,18 @@ from microsoft.opentelemetry import use_microsoft_opentelemetry
 use_microsoft_opentelemetry(enable_azure_monitor=True)
 ```
 
+To disable Agent Framework's baseline GenAI message events without changing providers or exporters configured by a third party, use the instrumentation-only API:
+
+```python
+from agent_framework.observability import enable_instrumentation
+
+enable_instrumentation(enable_message_events=False)
+```
+
+An explicit `True` or `False` overrides the current message-event setting, including a value read from `ENABLE_MESSAGE_EVENTS`. Omitting the argument or passing `None` preserves the current setting without re-reading the environment, including settings established by `configure_otel_providers()` or an earlier explicit call.
+
+This flag controls baseline v1.36.0 events such as `gen_ai.user.message` and `gen_ai.choice`; it does not disable experimental message span attributes, spans, or metrics. Message events still require sensitive-data capture to be enabled separately. Existing `enable_sensitive_data` behavior is unchanged, and [sticky disable](#disabling-instrumentation) still requires `force=True` to re-enable instrumentation.
+
 ```python
 from azure.monitor.opentelemetry import configure_azure_monitor
 from agent_framework.observability import create_resource, enable_sensitive_telemetry

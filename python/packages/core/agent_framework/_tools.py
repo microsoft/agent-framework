@@ -114,6 +114,8 @@ def _has_authoritative_approval_session(invocation_session: AgentSession | None)
 
 
 _ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY: Final[str] = "already_approved_approval_request_groups"
+_APPROVAL_RESPONSES_KEY: Final[str] = "approval_responses"
+_FUNCTION_CALL_ORDER_KEY: Final[str] = "function_call_order"
 _PENDING_APPROVAL_REQUESTS_KEY: Final[str] = "pending_approval_requests"
 _PENDING_MIXED_PAUSE_BATCH_KEY: Final[str] = "pending_mixed_pause_batch"
 _APPROVAL_REQUEST_ID_KEY: Final[str] = "_approval_request_id"
@@ -1693,6 +1695,9 @@ class FunctionInvocationConfiguration(TypedDict, total=False):
       sessions are always bounded, even if individual approval steps are slow.
     - ``max_consecutive_errors_per_request``: How many consecutive errors
       before abandoning the tool loop for this request.
+    - ``allow_concurrent_invocation``: Whether executable calls from one model
+      response may run concurrently. Set to ``False`` to execute them in model
+      order. Defaults to ``True``.
     - ``terminate_on_unknown_calls``: Whether to raise an error when the model
       requests a function that is not in the tool map.
     - ``additional_tools``: Extra tools available during execution but not
@@ -1732,6 +1737,7 @@ class FunctionInvocationConfiguration(TypedDict, total=False):
     terminate_on_unknown_calls: bool
     additional_tools: Sequence[FunctionTool]
     include_detailed_errors: bool
+    allow_concurrent_invocation: bool
 
 
 def normalize_function_invocation_configuration(
@@ -1746,6 +1752,7 @@ def normalize_function_invocation_configuration(
         "terminate_on_unknown_calls": False,
         "additional_tools": [],
         "include_detailed_errors": False,
+        "allow_concurrent_invocation": True,
     }
     if config:
         normalized.update(config)
@@ -2339,6 +2346,11 @@ async def _try_execute_function_call_groups(
         logger.debug("Returning visible function_approval_request contents and storing already-approved requests")
         visible_requests: list[Content] = []
         already_approved_requests: list[Content] = []
+        function_call_order = [
+            {"id": function_call.id, "call_id": function_call.call_id}
+            for function_call in function_calls
+            if function_call.type == "function_call"
+        ]
         pause_groups: list[list[Content]] = []
         for function_call in function_calls:
             if function_call.type != "function_call":
@@ -2373,6 +2385,7 @@ async def _try_execute_function_call_groups(
             approval_session,
             visible_requests,
             already_approved_requests,
+            function_call_order=function_call_order,
         )
         _store_pending_approval_requests(approval_session, visible_requests)
         _store_pending_mixed_pause_batch(approval_session, pause_groups)
@@ -2387,11 +2400,10 @@ async def _try_execute_function_call_groups(
                 declaration_only_calls.append(_as_user_input_pause(function_call))
         return [[function_call] for function_call in declaration_only_calls], False
 
-    # Only a fully executable batch reaches this point; run calls concurrently but retain per-call result groups.
-    # Create each task inside a copied context so the active agent span is
-    # preserved for every parallel tool invocation.
-    execution_tasks = [
-        contextvars.copy_context().run(
+    # Only a fully executable batch reaches this point. Each call gets its own
+    # task so context changes made by one tool cannot leak into another.
+    def create_execution_task(function_call: Content) -> asyncio.Task[tuple[list[Content], bool]]:
+        return contextvars.copy_context().run(
             asyncio.create_task,
             _execute_single_function_call(
                 function_call,
@@ -2404,22 +2416,28 @@ async def _try_execute_function_call_groups(
                 host_payload_budget=host_payload_budget,
             ),
         )
-        for function_call in function_calls
-    ]
-    try:
-        execution_results = await asyncio.gather(*execution_tasks)
-    except BaseException:
-        # A loud escape from one call (e.g. MiddlewareFailure aborting the run
-        # fail-closed) fails the whole batch: cancel in-flight siblings and wait for
-        # them so no new tool work starts after the loop is abandoned. Cancellation
-        # is cooperative — a synchronous tool body already running in a worker thread
-        # (asyncio.to_thread) cannot be interrupted and may complete its side effects,
-        # but its result is discarded with the batch and never reaches the transcript,
-        # the model, or history.
-        for task in execution_tasks:
-            task.cancel()
-        await asyncio.gather(*execution_tasks, return_exceptions=True)
-        raise
+
+    execution_results: list[tuple[list[Content], bool]] = []
+    if config.get("allow_concurrent_invocation", True):
+        execution_tasks = [create_execution_task(function_call) for function_call in function_calls]
+        try:
+            execution_results = await asyncio.gather(*execution_tasks)
+        except BaseException:
+            # A loud escape from one call (e.g. MiddlewareFailure aborting the run
+            # fail-closed) fails the whole batch: cancel in-flight siblings and wait for
+            # them so no new tool work starts after the loop is abandoned. Cancellation
+            # is cooperative — a synchronous tool body already running in a worker thread
+            # (asyncio.to_thread) cannot be interrupted and may complete its side effects,
+            # but its result is discarded with the batch and never reaches the transcript,
+            # the model, or history.
+            for task in execution_tasks:
+                task.cancel()
+            await asyncio.gather(*execution_tasks, return_exceptions=True)
+            raise
+    else:
+        for function_call in function_calls:
+            result = await create_execution_task(function_call)
+            execution_results.append(result)
 
     should_terminate = any(terminate for _, terminate in execution_results)
     return [result_contents for result_contents, _ in execution_results], should_terminate
@@ -2872,10 +2890,10 @@ def _store_already_approved_approval_requests(
     invocation_session: AgentSession | None,
     visible_approval_requests: Sequence[Content],
     already_approved_requests: Sequence[Content],
+    *,
+    function_call_order: Sequence[Mapping[str, str | None]] | None = None,
 ) -> None:
-    """Store hidden already-approved requests keyed by the visible approvals that resume the batch."""
-    if not already_approved_requests:
-        return
+    """Store approval order and hidden safe requests keyed by the visible approvals that resume the batch."""
     state = _get_tool_approval_state(invocation_session)
     if state is None:
         return
@@ -2888,49 +2906,115 @@ def _store_already_approved_approval_requests(
     pending_groups.append({
         "approval_request_ids": visible_ids,
         "approval_requests": [request.to_dict() for request in already_approved_requests],
+        _FUNCTION_CALL_ORDER_KEY: [dict(item) for item in function_call_order]
+        if function_call_order is not None
+        else [
+            {"id": request.id, "call_id": request.function_call.call_id}
+            for request in (*visible_approval_requests, *already_approved_requests)
+            if request.function_call is not None
+        ],
     })
     state[_ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY] = pending_groups
 
 
-def _pop_already_approved_approval_responses(
+def _stage_approval_batch_responses(
     invocation_session: AgentSession | None,
-    approval_response_ids: set[str],
-) -> list[Content]:
-    """Pop already-approved requests for the visible approval ids being answered."""
-    if not approval_response_ids:
-        return []
+    approval_responses: Sequence[Content],
+) -> tuple[list[Content], list[dict[str, str | None]], list[Content] | None]:
+    """Accumulate approval decisions and release a batch only when every decision is present."""
+    if not approval_responses:
+        return [], [], None
     state = _get_tool_approval_state(invocation_session)
     if state is None:
-        return []
+        return [], [], None
     raw_groups = state.get(_ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY, [])
     if not isinstance(raw_groups, list):
-        return []
+        return [], [], None
     typed_groups = cast(list[Any], raw_groups)
 
     responses: list[Content] = []
+    function_call_order: list[dict[str, str | None]] = []
+    waiting_requests: list[Content] | None = None
     remaining_groups: list[Any] = []
+    pending_requests = _load_pending_approval_requests(invocation_session)
     for raw_group in typed_groups:
         if not isinstance(raw_group, Mapping):
             continue
         group = cast(Mapping[str, Any], raw_group)
         raw_ids = group.get("approval_request_ids")
-        group_ids: set[str] = {str(item) for item in cast(list[Any], raw_ids)} if isinstance(raw_ids, list) else set()
-        if group_ids.isdisjoint(approval_response_ids):
+        group_ids = [str(item) for item in cast(list[Any], raw_ids)] if isinstance(raw_ids, list) else []
+        if not group_ids:
+            continue
+
+        stored_responses: dict[str, Content] = {}
+        raw_stored_responses = group.get(_APPROVAL_RESPONSES_KEY)
+        if isinstance(raw_stored_responses, list):
+            for raw_response in cast(list[Any], raw_stored_responses):
+                response = _content_from_state(raw_response)
+                if response is None:
+                    continue
+                request_id = response.additional_properties.get(_APPROVAL_REQUEST_ID_KEY)
+                if isinstance(request_id, str) and request_id in group_ids:
+                    stored_responses[request_id] = response
+
+        matched = False
+        for response in approval_responses:
+            rebound = _bind_approval_response_to_pending_request(response, invocation_session, consume=False)
+            if rebound is None:
+                continue
+            request_id = rebound.additional_properties.get(_APPROVAL_REQUEST_ID_KEY)
+            if not isinstance(request_id, str) or request_id not in group_ids:
+                continue
+            if request_id not in stored_responses:
+                stored_responses[request_id] = rebound
+            matched = True
+
+        if not matched:
             remaining_groups.append(raw_group)
             continue
-        raw_requests = group.get("approval_requests")
-        if not isinstance(raw_requests, list):
+
+        if any(request_id not in stored_responses for request_id in group_ids):
+            updated_group = dict(group)
+            updated_group[_APPROVAL_RESPONSES_KEY] = [
+                stored_responses[request_id].to_dict()
+                for request_id in group_ids
+                if request_id in stored_responses
+            ]
+            remaining_groups.append(updated_group)
+            missing_request_ids = [request_id for request_id in group_ids if request_id not in stored_responses]
+            if any(request_id not in pending_requests for request_id in missing_request_ids):
+                raise RuntimeError("An incomplete approval batch is missing one or more pending approval requests.")
+            waiting_requests = [pending_requests[request_id] for request_id in missing_request_ids]
             continue
-        for raw_request in cast(list[Any], raw_requests):
-            request = _content_from_state(raw_request)
-            if request is None or request.type != "function_approval_request":
-                continue
-            responses.append(request.to_function_approval_response(approved=True))
+
+        responses.extend(stored_responses[request_id] for request_id in group_ids)
+        raw_order = group.get(_FUNCTION_CALL_ORDER_KEY)
+        if isinstance(raw_order, list):
+            for raw_item in cast(list[Any], raw_order):
+                if not isinstance(raw_item, Mapping):
+                    continue
+                item = cast(Mapping[str, Any], raw_item)
+                item_id = item.get("id")
+                call_id = item.get("call_id")
+                function_call_order.append({
+                    "id": str(item_id) if item_id is not None else None,
+                    "call_id": str(call_id) if call_id is not None else None,
+                })
+        raw_requests = group.get("approval_requests")
+        if isinstance(raw_requests, list):
+            for raw_request in cast(list[Any], raw_requests):
+                request = _content_from_state(raw_request)
+                if request is None or request.type != "function_approval_request":
+                    continue
+                responses.append(request.to_function_approval_response(approved=True))
+        for request_id in group_ids:
+            pending_requests.pop(request_id, None)
     if remaining_groups:
         state[_ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY] = remaining_groups
     else:
         state.pop(_ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY, None)
-    return responses
+    _save_pending_approval_requests(invocation_session, pending_requests)
+    return responses, function_call_order, waiting_requests
 
 
 def _store_pending_mixed_pause_batch(
@@ -3421,11 +3505,12 @@ def _collect_approval_responses(
                 if resolved.id is not None and pending_by_approval_id.get(resolved.id) is resolved:
                     pending_by_approval_id.pop(resolved.id, None)
 
-    return {
-        content.id: content
-        for content in approval_responses
-        if id(content) not in resolved_response_ids and content.id is not None
-    }
+    collected_responses: dict[str, Content] = {}
+    for content in approval_responses:
+        if id(content) in resolved_response_ids or content.id is None:
+            continue
+        collected_responses.setdefault(content.id, content)
+    return collected_responses
 
 
 def _collect_unanswered_approval_requests(messages: Sequence[Message]) -> list[Content]:
@@ -3476,6 +3561,39 @@ def _collect_unanswered_approval_requests(messages: Sequence[Message]) -> list[C
                     unanswered_by_id.pop(resolved.id, None)
 
     return list(unanswered_by_id.values())
+
+
+def _derive_stateless_approval_response_order(
+    messages: Sequence[Message],
+    approval_responses: Sequence[Content],
+) -> list[dict[str, str | None]]:
+    """Recover approval order from unresolved requests when no session state exists."""
+    response_content_ids = {id(response) for response in approval_responses}
+    history_without_responses: list[Message] = []
+    for message in messages:
+        copied_message = copy.copy(message)
+        copied_message.contents = [content for content in message.contents if id(content) not in response_content_ids]
+        history_without_responses.append(copied_message)
+
+    response_ids = {response.id for response in approval_responses if response.id is not None}
+    response_call_ids = {
+        response.function_call.call_id
+        for response in approval_responses
+        if response.function_call is not None and response.function_call.call_id is not None
+    }
+    order: list[dict[str, str | None]] = []
+    for request in _collect_unanswered_approval_requests(history_without_responses):
+        function_call = request.function_call
+        if function_call is None:
+            continue
+        if (
+            request.id not in response_ids
+            and function_call.id not in response_ids
+            and function_call.call_id not in response_call_ids
+        ):
+            continue
+        order.append({"id": function_call.id or request.id, "call_id": function_call.call_id})
+    return order
 
 
 def _remove_unanswered_approval_batches_from_model_input(messages: list[Message]) -> None:
@@ -4217,30 +4335,91 @@ async def _resolve_approval_responses(
                 "A mixed function-call batch requires responses for every approval and Host-owned request."
             )
 
+    pending_responses_before_binding = list(
+        _collect_approval_responses(prepared_messages, non_approval_result_ids=host_result_ids).values()
+    )
+    staged_responses, function_call_order, waiting_requests = _stage_approval_batch_responses(
+        approval_session,
+        pending_responses_before_binding,
+    )
+    if waiting_requests is not None:
+        response_messages, streaming_updates = _messages_and_updates_for_terminal_contents(waiting_requests)
+        return _FunctionProcessingResult(
+            errors_in_a_row=errors_in_a_row,
+            action="return",
+            response_messages=response_messages,
+            streaming_updates=streaming_updates,
+        )
+
+    _bind_approval_responses_to_pending_requests(prepared_messages, approval_session)
     active_pending_ids = (
         set(_load_pending_approval_requests(approval_session))
         if _has_authoritative_approval_session(approval_session)
         else None
     )
-    _bind_approval_responses_to_pending_requests(prepared_messages, approval_session)
     if completed_mixed_batch:
         state = _get_tool_approval_state(approval_session, create=False)
         if state is not None:
             state.pop(_PENDING_MIXED_PAUSE_BATCH_KEY, None)
 
     # 1. Restore safe siblings hidden with a prior mixed approval batch when its visible decision arrives.
-    explicit_approval_response_ids = {
-        content.id
-        for message in prepared_messages
-        for content in message.contents
-        if content.type == "function_approval_response" and content.id
-    }
+    if staged_responses:
+        prepared_messages.append(Message(role="user", contents=staged_responses))
+    if not function_call_order and approval_session is None and not host_result_ids:
+        pending_stateless_responses = _collect_approval_responses(prepared_messages)
+        function_call_order = _derive_stateless_approval_response_order(
+            prepared_messages,
+            list(pending_stateless_responses.values()),
+        )
+    if function_call_order:
+        ordered_ids = {item["id"] for item in function_call_order if item["id"] is not None}
+        ordered_call_ids = {item["call_id"] for item in function_call_order if item["call_id"] is not None}
+        batch_responses: list[Content] = []
+        for message in prepared_messages:
+            for content in message.contents:
+                function_call = content.function_call if content.type == "function_approval_response" else None
+                call_id = function_call.call_id if function_call is not None else content.call_id
+                if (
+                    content.type == "function_approval_response"
+                    and (content.id in ordered_ids or call_id in ordered_call_ids)
+                ) or id(content) in host_result_ids:
+                    batch_responses.append(content)
 
-    if already_approved_responses := _pop_already_approved_approval_responses(
-        approval_session,
-        explicit_approval_response_ids,
-    ):
-        prepared_messages.append(Message(role="user", contents=already_approved_responses))
+        remaining_responses = list(batch_responses)
+        ordered_responses: list[Content] = []
+        for order_item in function_call_order:
+            matching_index = next(
+                (
+                    index
+                    for index, response in enumerate(remaining_responses)
+                    if order_item["id"] is not None and response.id == order_item["id"]
+                ),
+                None,
+            )
+            if matching_index is None:
+                matching_index = next(
+                    (
+                        index
+                        for index, response in enumerate(remaining_responses)
+                        if order_item["call_id"] is not None
+                        and (
+                            response.function_call.call_id
+                            if response.type == "function_approval_response" and response.function_call is not None
+                            else response.call_id
+                        )
+                        == order_item["call_id"]
+                    ),
+                    None,
+                )
+            if matching_index is not None:
+                ordered_responses.append(remaining_responses.pop(matching_index))
+
+        batch_response_ids = {id(response) for response in batch_responses}
+        if batch_response_ids:
+            for message in prepared_messages:
+                message.contents = [content for content in message.contents if id(content) not in batch_response_ids]
+            prepared_messages[:] = [message for message in prepared_messages if message.contents]
+            prepared_messages.append(Message(role="user", contents=ordered_responses))
 
     # 2. With no new decision, hide any still-pending batch from model input while keeping it resumable in history.
     if not (
