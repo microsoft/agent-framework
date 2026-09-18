@@ -14,8 +14,9 @@ internal sealed class AIAgentUnservicedRequestsCollector(AIContentExternalHandle
 {
     private readonly Dictionary<string, ToolApprovalRequestContent> _userInputRequests = [];
     private readonly Dictionary<string, FunctionCallContent> _functionCalls = [];
+    private readonly List<string> _displacedRequestIds = [];
 
-    public Task SubmitAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    public async Task SubmitAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
         Task userInputTask = userInputHandler != null && this._userInputRequests.Count > 0
                            ? userInputHandler.ProcessRequestContentsAsync(this._userInputRequests, context, cancellationToken)
@@ -25,7 +26,17 @@ internal sealed class AIAgentUnservicedRequestsCollector(AIContentExternalHandle
                               ? functionCallHandler.ProcessRequestContentsAsync(this._functionCalls, context, cancellationToken)
                               : Task.CompletedTask;
 
-        return Task.WhenAll(userInputTask, functionCallTask);
+        await Task.WhenAll(userInputTask, functionCallTask).ConfigureAwait(false);
+
+        if (this._displacedRequestIds.Count > 0)
+        {
+            // A different request reusing an outstanding ID cannot be serviced alongside the one already
+            // recorded under it, so report the ones that were dropped rather than losing them silently.
+            await context.AddEventAsync(
+                new WorkflowWarningEvent(
+                    $"Ignored request content reusing an outstanding request ID ([{string.Join(", ", this._displacedRequestIds)}])."),
+                cancellationToken).ConfigureAwait(false);
+        }
     }
 
     public void ProcessAgentResponseUpdate(AgentResponseUpdate update, Func<FunctionCallContent, bool>? functionCallFilter = null)
@@ -34,19 +45,34 @@ internal sealed class AIAgentUnservicedRequestsCollector(AIContentExternalHandle
     public void ProcessAgentResponse(AgentResponse response)
         => this.ProcessAIContents(response.Messages.SelectMany(message => message.Contents));
 
+    /// <summary>
+    /// Records the requests these contents leave unserviced, and clears the ones they answer.
+    /// </summary>
+    /// <remarks>
+    /// The first content seen for a request ID is the one kept, matching
+    /// <see cref="AIContentExternalHandler{TRequestContent, TResponseContent}"/>, which treats a repeat as an
+    /// idempotent re-emission, and <c>ApprovalResponseBindingChatClient</c>, which binds a response against the
+    /// first request recorded for the ID. A later content that is not the same request is reported by
+    /// <see cref="SubmitAsync"/>.
+    /// </remarks>
     public void ProcessAIContents(IEnumerable<AIContent> contents, Func<FunctionCallContent, bool>? functionCallFilter = null)
     {
         foreach (AIContent content in contents)
         {
             if (content is ToolApprovalRequestContent userInputRequest)
             {
-                if (this._userInputRequests.ContainsKey(userInputRequest.RequestId))
+                if (this._userInputRequests.TryGetValue(userInputRequest.RequestId, out ToolApprovalRequestContent? recordedRequest))
                 {
-                    throw new InvalidOperationException($"ToolApprovalRequestContent with duplicate RequestId: {userInputRequest.RequestId}");
+                    // The approval's ID is derived from the call it guards, so a different call under the
+                    // same ID is a different request rather than a re-emission of this one.
+                    this.NoteDisplacedRequest(
+                        userInputRequest.RequestId,
+                        string.Equals(recordedRequest.ToolCall.CallId, userInputRequest.ToolCall.CallId, StringComparison.Ordinal));
                 }
-
-                // It is an error to simultaneously have multiple outstanding user input requests with the same ID.
-                this._userInputRequests.Add(userInputRequest.RequestId, userInputRequest);
+                else
+                {
+                    this._userInputRequests.Add(userInputRequest.RequestId, userInputRequest);
+                }
             }
             else if (content is ToolApprovalResponseContent userInputResponse)
             {
@@ -61,18 +87,32 @@ internal sealed class AIAgentUnservicedRequestsCollector(AIContentExternalHandle
                 // possibility 2: this will not be handled inline by the agent abstraction
                 if (functionCallFilter == null || functionCallFilter(functionCall))
                 {
-                    if (this._functionCalls.ContainsKey(functionCall.CallId))
+                    if (this._functionCalls.TryGetValue(functionCall.CallId, out FunctionCallContent? recordedCall))
                     {
-                        throw new InvalidOperationException($"FunctionCallContent with duplicate CallId: {functionCall.CallId}");
+                        // A same-named call under one ID is taken to be a re-emission. Comparing arguments
+                        // instead would report a legitimate re-emission whose arguments were rebuilt.
+                        this.NoteDisplacedRequest(
+                            functionCall.CallId,
+                            string.Equals(recordedCall.Name, functionCall.Name, StringComparison.Ordinal));
                     }
-
-                    this._functionCalls.Add(functionCall.CallId, functionCall);
+                    else
+                    {
+                        this._functionCalls.Add(functionCall.CallId, functionCall);
+                    }
                 }
             }
             else if (content is FunctionResultContent functionResult)
             {
                 _ = this._functionCalls.Remove(functionResult.CallId);
             }
+        }
+    }
+
+    private void NoteDisplacedRequest(string requestId, bool isSameRequest)
+    {
+        if (!isSameRequest && !this._displacedRequestIds.Contains(requestId, StringComparer.Ordinal))
+        {
+            this._displacedRequestIds.Add(requestId);
         }
     }
 }
