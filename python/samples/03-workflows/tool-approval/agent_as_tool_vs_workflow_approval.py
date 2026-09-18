@@ -4,7 +4,9 @@
 
 Use ``Agent.as_tool()`` when the child can decide approvals immediately through
 ``ToolApprovalMiddleware.auto_approval_rules``. Use a workflow when a person or
-external system may respond later.
+external system may respond later. The workflow models delegation as a call and
+return: the coordinator sends one task to the child, the child may pause for
+approval, and the result returns to the same coordinator.
 
 Prerequisites:
 - FOUNDRY_PROJECT_ENDPOINT: Microsoft Foundry project endpoint.
@@ -16,10 +18,23 @@ import asyncio
 import os
 from collections.abc import AsyncIterable
 
-from agent_framework import Agent, Content, Message, ToolApprovalMiddleware, WorkflowEvent, tool
+from agent_framework import (
+    Agent,
+    AgentExecutor,
+    AgentExecutorResponse,
+    Content,
+    Executor,
+    ToolApprovalMiddleware,
+    WorkflowBuilder,
+    WorkflowContext,
+    WorkflowEvent,
+    handler,
+    tool,
+)
 from agent_framework.foundry import FoundryChatClient
-from agent_framework.orchestrations import SequentialBuilder
 from azure.identity import AzureCliCredential
+
+CHILD_COMPLETED_STATE = "inventory_child_completed"
 
 
 @tool(approval_mode="always_require")
@@ -81,25 +96,63 @@ async def collect_workflow_events(stream: AsyncIterable[WorkflowEvent]) -> dict[
     async for event in stream:
         if event.type == "request_info" and isinstance(event.data, Content):
             requests[event.request_id] = event.data
-        elif event.type == "output":
-            messages = event.data
-            if isinstance(messages, list):
-                print("Workflow result:")
-                for message in messages:
-                    if isinstance(message, Message):
-                        print(message.text)
+        elif event.type == "output" and isinstance(event.data, str):
+            print("Workflow result:")
+            print(event.data)
     return requests
 
 
+class DelegationRouter(Executor):
+    """Route one child task back to the coordinator that requested it."""
+
+    def __init__(self, coordinator_id: str, child_id: str) -> None:
+        super().__init__(id="delegation_router")
+        self._coordinator_id = coordinator_id
+        self._child_id = child_id
+
+    @handler
+    async def route(
+        self,
+        response: AgentExecutorResponse,
+        ctx: WorkflowContext[AgentExecutorResponse, str],
+    ) -> None:
+        if response.executor_id == self._child_id:
+            ctx.set_state(CHILD_COMPLETED_STATE, True)
+            await ctx.send_message(response, target_id=self._coordinator_id)
+        elif ctx.get_state(CHILD_COMPLETED_STATE, False):
+            await ctx.yield_output(response.agent_response.text)
+        else:
+            await ctx.send_message(response, target_id=self._child_id)
+
+
 async def run_workflow_example() -> None:
-    """Run the same tool through a workflow that can pause for external approval."""
+    """Delegate to a child and return its result through a durable workflow."""
+    coordinator = AgentExecutor(
+        Agent(
+            client=create_client(),
+            name="Coordinator",
+            instructions=(
+                "You coordinate inventory reservations. For a new request, respond with a concise task "
+                "for InventoryAgent. When InventoryAgent returns a result, summarize that result for the user."
+            ),
+        )
+    )
     inventory_agent = Agent(
         client=create_client(),
         name="InventoryAgent",
         instructions="Reserve the requested inventory using the available tool.",
         tools=[reserve_inventory],
     )
-    workflow = SequentialBuilder(participants=[inventory_agent]).build()
+    inventory = AgentExecutor(inventory_agent)
+    router = DelegationRouter(coordinator_id=coordinator.id, child_id=inventory.id)
+    workflow = (
+        WorkflowBuilder(start_executor=coordinator, output_from=[router])
+        .add_edge(coordinator, router)
+        .add_edge(router, inventory)
+        .add_edge(inventory, router)
+        .add_edge(router, coordinator)
+        .build()
+    )
 
     requests = await collect_workflow_events(workflow.run("Reserve 20 keyboards.", stream=True))
     while requests:
