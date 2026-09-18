@@ -18,7 +18,7 @@ string databasePath = Environment.GetEnvironmentVariable("AGENT_DATABASE_PATH") 
 AIAgent agent = new OpenAIClient(apiKey).GetChatClient(model)
     .AsAIAgent(instructions: "You are a helpful business assistant.");
 var conversations = new ConversationStore(databasePath);
-// ponytail: serialize local requests to avoid lost updates without a distributed locking abstraction.
+// Serialize local requests to avoid lost updates across the load/run/save cycle.
 using SemaphoreSlim turnLock = new(1, 1);
 
 var app = builder.Build();
@@ -36,7 +36,8 @@ app.MapPost("/conversations/{conversationId:guid}/messages", async (Guid convers
         AgentSession session = await conversations.LoadAsync(agent, conversationId, cancellationToken);
         AgentResponse response = await agent.RunAsync(request.Message, session, cancellationToken: cancellationToken);
         // Save only after a successful turn. Failed runs leave the last committed session intact.
-        await conversations.SaveAsync(agent, conversationId, session, cancellationToken);
+        // A disconnected client must not cancel persistence of an already completed turn.
+        await conversations.SaveAsync(agent, conversationId, session, CancellationToken.None);
         return Results.Ok(new { conversationId, response = response.Text });
     }
     finally

@@ -80,6 +80,35 @@ public class ConversationStoreTests
         }
     }
 
+    [Fact]
+    public async Task CompletedTurnCanBeCommittedAfterRequestCancellationAsync()
+    {
+        // Arrange
+        string path = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.db");
+        try
+        {
+            using CancellationTokenSource request = new();
+            Guid id = Guid.NewGuid();
+            List<ChatMessage> observed = [];
+            var agent = CreateAgent(observed);
+            var store = new ConversationStore(path);
+            AgentSession session = await store.LoadAsync(agent, id, request.Token);
+            await agent.RunAsync("Completed turn", session, cancellationToken: request.Token);
+
+            // Act: the HTTP request is aborted after the model has finished.
+            request.Cancel();
+            await store.SaveAsync(agent, id, session, CancellationToken.None);
+            AgentSession restored = await new ConversationStore(path).LoadAsync(agent, id);
+            await agent.RunAsync("Next turn", restored);
+
+            // Assert
+            Assert.Equal(["Completed turn", "reply", "Next turn"], observed.Select(m => m.Text));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
     private static ChatClientAgent CreateAgent(List<ChatMessage> observed)
     {
         var client = new Mock<IChatClient>();
