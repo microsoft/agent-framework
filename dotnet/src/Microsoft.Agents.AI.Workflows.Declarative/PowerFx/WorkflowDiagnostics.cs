@@ -58,7 +58,7 @@ internal static class WorkflowDiagnostics
         IEnumerable<string>? allowedEnvironmentVariables,
         bool allowProcessEnvironmentVariableFallback)
     {
-        HashSet<string> allowedVariables = new(allowedEnvironmentVariables ?? [], StringComparer.OrdinalIgnoreCase);
+        HashSet<string> allowedVariables = new(allowedEnvironmentVariables ?? [], StringComparer.Ordinal);
         foreach (string variableName in semanticModel.GetAllEnvironmentVariablesReferencedInTheBot())
         {
             if (!allowedVariables.Contains(variableName))
