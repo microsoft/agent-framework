@@ -16,6 +16,7 @@ import logging
 import os
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Mapping, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
@@ -5597,7 +5598,8 @@ class _MultiUpdateWorkflowAgentMock(SupportsAgentRun):
         self._texts = list(texts)
         self._gate = gate
         self.run_count = 0
-        self.started = asyncio.Event()  # Set at the top of run(), before any gate wait.
+        self.started = asyncio.Event()
+        self.cancelled = asyncio.Event()
 
     def create_session(self, **kwargs: Any) -> AgentSession:
         del kwargs
@@ -5638,14 +5640,18 @@ class _MultiUpdateWorkflowAgentMock(SupportsAgentRun):
         del messages, session, kwargs
         assert stream is True, "The inner agent only runs in stream mode in Foundry Hosted Agents."
         self.run_count += 1
-        self.started.set()
         texts = self._texts
         name = self.name
         gate = self._gate
 
         async def _aiter() -> AsyncIterator[AgentResponseUpdate]:
+            self.started.set()
             if gate is not None:
-                await gate.wait()  # Simulates a stuck model/tool call for preemption tests.
+                try:
+                    await gate.wait()  # Simulates a stuck model/tool call for preemption tests.
+                except asyncio.CancelledError:
+                    self.cancelled.set()
+                    raise
             for text in texts:
                 yield AgentResponseUpdate(
                     contents=[Content.from_text(text=text)],
@@ -5668,6 +5674,25 @@ def _build_multi_update_workflow_agent(
 
     workflow = WorkflowBuilder(start_executor=start).add_edge(start, inner).build()
     return WorkflowAgent(workflow=workflow, name="Multi Update Workflow Agent"), inner
+
+
+@asynccontextmanager
+async def _pending_workflow_event(
+    handler: AsyncGenerator[Any], started: asyncio.Event
+) -> AsyncIterator[asyncio.Future[Any]]:
+    pending = asyncio.ensure_future(anext(handler))
+    started_wait = asyncio.ensure_future(started.wait())
+    try:
+        # Startup uses pytest's test timeout; only preemption has a short deadline.
+        await asyncio.wait([pending, started_wait], return_when=asyncio.FIRST_COMPLETED)
+        if pending.done():
+            pytest.fail(f"Workflow returned before reaching the blocked call: {pending.result()!r}")
+        yield pending
+    finally:
+        started_wait.cancel()
+        pending.cancel()
+        await asyncio.gather(started_wait, pending, return_exceptions=True)
+        await handler.aclose()
 
 
 def _build_approval_workflow_agent(
@@ -5786,20 +5811,17 @@ class TestWorkflowAgentHosting:
             await anext(handler)  # response.created
             await anext(handler)  # response.in_progress
 
-            # Pull the first workflow event in the background so we can wait for the inner agent's
-            # run() to actually start (proving it's genuinely stuck on `gate`) before signalling --
-            # otherwise cancellation could preempt the pull before the workflow even reaches it.
-            pending = asyncio.ensure_future(anext(handler))
-            await asyncio.wait_for(inner.started.wait(), timeout=1.0)
-            cancellation_signal.set()  # Fires while the inner agent is stuck awaiting `gate`.
+            async with _pending_workflow_event(handler, inner.started) as pending:
+                cancellation_signal.set()  # Fires while the inner agent is stuck awaiting `gate`.
 
-            async def _drain() -> list[Any]:
-                first = await pending
-                return [first, *[event async for event in handler]]
+                async def _drain() -> list[Any]:
+                    first = await pending
+                    return [first, *[event async for event in handler]]
 
-            # Bounded well below `gate` never being set: proves cancellation preempted the stuck
-            # call instead of only being observed after it (eventually) produced an update.
-            events = await asyncio.wait_for(_drain(), timeout=1.0)
+                # Bounded well below `gate` never being set: proves cancellation preempted the stuck
+                # call instead of only being observed after it (eventually) produced an update.
+                events = await asyncio.wait_for(_drain(), timeout=1.0)
+                assert inner.cancelled.is_set()
 
         types = [event.get("type") for event in events if isinstance(event, Mapping)]
         assert "response.output_text.delta" not in types
@@ -5833,16 +5855,14 @@ class TestWorkflowAgentHosting:
             await anext(handler)  # response.created
             await anext(handler)  # response.in_progress
 
-            # Pull the first workflow event in the background so we can wait for the inner agent's
-            # run() to actually start (proving it's genuinely stuck on `gate`) before signalling.
-            pending = asyncio.ensure_future(anext(handler))
-            await asyncio.wait_for(inner.started.wait(), timeout=1.0)
-            context.shutdown.set()  # Fires while the inner agent is stuck awaiting `gate`.
+            async with _pending_workflow_event(handler, inner.started) as pending:
+                context.shutdown.set()  # Fires while the inner agent is stuck awaiting `gate`.
 
-            # Bounded well below `gate` never being set: proves shutdown preempted the stuck call
-            # instead of only being observed after it (eventually) produced an update.
-            with pytest.raises(ResponseExitForRecovery):
-                await asyncio.wait_for(pending, timeout=1.0)
+                # Bounded well below `gate` never being set: proves shutdown preempted the stuck call
+                # instead of only being observed after it (eventually) produced an update.
+                with pytest.raises(ResponseExitForRecovery):
+                    await asyncio.wait_for(pending, timeout=1.0)
+                assert inner.cancelled.is_set()
 
         assert inner.run_count == 1
 

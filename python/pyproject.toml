@@ -51,7 +51,7 @@ dev = [
     "griffe==2.3.0",
 ]
 test = [
-    "azure-monitor-opentelemetry",
+    "azure-monitor-opentelemetry>=1.8.10,<2",
     "mcp[ws]",
     # Optional SDK used by the agent-hooks tests and isolated source checks.
     "agent-hooks-sdk>=0.1.0a4,<0.2",

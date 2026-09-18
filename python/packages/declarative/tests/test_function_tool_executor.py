@@ -38,6 +38,7 @@ from agent_framework_declarative._workflows import (  # noqa: E402
     ActionComplete,
     ActionTrigger,
     DeclarativeWorkflowBuilder,
+    DeclarativeWorkflowState,
     InvokeFunctionToolExecutor,
     ToolApprovalRequest,
     ToolApprovalResponse,
@@ -580,9 +581,24 @@ class TestInvokeFunctionToolEdgeCases:
 
         assert any("15" in out for out in outputs)
 
-    @pytest.mark.asyncio
-    async def test_auto_send_disabled(self):
-        """Test autoSend=false prevents automatic output yielding."""
+    @pytest.mark.parametrize(
+        ("output_config", "expected_auto_send"),
+        [
+            ({}, True),
+            ({"autoSend": True}, True),
+            ({"autoSend": False}, False),
+            ({"autoSend": None}, False),
+            ({"autoSend": "=true"}, True),
+            ({"autoSend": "=false"}, False),
+            ({"autoSend": "=Local.send"}, False),
+            ({"autoSend": "=Not(Local.send)"}, True),
+            ({"autoSend": "=Blank()"}, False),
+            ({"autoSend": "=Local.missing"}, False),
+            ({"autoSend": "false"}, True),
+        ],
+    )
+    async def test_auto_send(self, output_config: dict[str, Any], expected_auto_send: bool) -> None:
+        """Evaluate autoSend without suppressing explicitly requested output."""
 
         def echo_id(msg: str) -> str:
             return msg
@@ -590,12 +606,13 @@ class TestInvokeFunctionToolEdgeCases:
         yaml_def = {
             "name": "auto_send_disabled_test",
             "actions": [
+                {"kind": "SetValue", "id": "set_send", "path": "Local.send", "value": False},
                 {
                     "kind": "InvokeFunctionTool",
                     "id": "call_no_auto_send",
                     "functionName": "echo_id",
                     "arguments": {"msg": "hello"},
-                    "output": {"result": "Local.result", "autoSend": False},
+                    "output": {"result": "Local.result", **output_config},
                 },
                 {"kind": "SendActivity", "id": "output", "activity": {"text": "=Local.result"}},
             ],
@@ -607,8 +624,7 @@ class TestInvokeFunctionToolEdgeCases:
         events = await workflow.run({})
         outputs = events.get_outputs()
 
-        # Result should still be available via explicit SendActivity
-        assert "hello" in outputs
+        assert outputs == ["hello"] * (2 if expected_auto_send else 1)
 
     @pytest.mark.asyncio
     async def test_function_with_only_result_output(self):
@@ -1037,6 +1053,99 @@ class TestApprovalFlow:
             "Agent": {},
             "Conversation": {"messages": [], "history": []},
         }
+
+    @pytest.mark.parametrize("approved", [True, False])
+    @pytest.mark.parametrize("send", [True, False])
+    async def test_auto_send_on_approval_resume(
+        self, mock_state: MagicMock, mock_context: MagicMock, approved: bool, send: bool
+    ) -> None:
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+        state.set("Local.send", not send)
+        tool = MagicMock(return_value="hello")
+        executor = InvokeFunctionToolExecutor(
+            {
+                "kind": "InvokeFunctionTool",
+                "id": "auto_send_approval",
+                "functionName": "echo",
+                "requireApproval": True,
+                "output": {
+                    "result": "Local.result",
+                    "messages": "Local.messages",
+                    "autoSend": "=Local.send",
+                },
+            },
+            tools={"echo": tool},
+        )
+
+        await executor.handle_action(ActionTrigger(), mock_context)
+        tool.assert_not_called()
+        mock_context.yield_output.assert_not_awaited()
+        request = mock_context.request_info.call_args[0][0]
+        state.set("Local.send", send)
+
+        await executor.handle_approval_response(request, ToolApprovalResponse(approved=approved), mock_context)
+
+        if approved:
+            tool.assert_called_once_with()
+            assert state.get("Local.result") == "hello"
+            assert len(state.get("Local.messages")) == 2
+        else:
+            tool.assert_not_called()
+            assert state.get("Local.result")["rejected"] is True
+        if approved and send:
+            mock_context.yield_output.assert_awaited_once_with("hello")
+        else:
+            mock_context.yield_output.assert_not_awaited()
+        mock_context.send_message.assert_awaited_once()
+
+    @pytest.mark.parametrize("approved", [False, True])
+    @pytest.mark.parametrize("missing_engine", [False, True])
+    async def test_auto_send_error_after_approval_request(
+        self,
+        mock_state: MagicMock,
+        mock_context: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+        approved: bool,
+        missing_engine: bool,
+    ) -> None:
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+        state.set("Local.send", 1)
+        tool = MagicMock(return_value="hello")
+        executor = InvokeFunctionToolExecutor(
+            {
+                "kind": "InvokeFunctionTool",
+                "functionName": "echo",
+                "requireApproval": True,
+                "output": {
+                    "result": "Local.result",
+                    "messages": "Local.messages",
+                    "autoSend": "=Local.send + 1 > 0",
+                },
+            },
+            tools={"echo": tool},
+        )
+        await executor.handle_action(ActionTrigger(), mock_context)
+        request = mock_context.request_info.call_args[0][0]
+        if missing_engine:
+            monkeypatch.setattr("agent_framework_declarative._workflows._declarative_base.Engine", None)
+        else:
+            state.set("Local.send", {"unexpected": "record"})
+        response = ToolApprovalResponse(approved=approved, reason="Declined")
+
+        if approved:
+            with pytest.raises(RuntimeError if missing_engine else ValueError):
+                await executor.handle_approval_response(request, response, mock_context)
+            mock_context.send_message.assert_not_awaited()
+        else:
+            await executor.handle_approval_response(request, response, mock_context)
+            assert state.get("Local.result") == {"approved": False, "rejected": True, "reason": "Declined"}
+            assert len(state.get("Local.messages")) == 1
+            mock_context.send_message.assert_awaited_once()
+            assert isinstance(mock_context.send_message.call_args[0][0], ActionComplete)
+        tool.assert_not_called()
+        mock_context.yield_output.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_approval_required_emits_request(self, mock_state, mock_context):

@@ -180,7 +180,7 @@ dev = [
 ]
 test = [
     { name = "agent-hooks-sdk", specifier = ">=0.1.0a4,<0.2" },
-    { name = "azure-monitor-opentelemetry" },
+    { name = "azure-monitor-opentelemetry", specifier = ">=1.8.10,<2" },
     { name = "mcp", extras = ["ws"] },
 ]
 
