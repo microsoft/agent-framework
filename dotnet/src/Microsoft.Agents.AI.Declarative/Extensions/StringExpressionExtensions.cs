@@ -1,5 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
+using System.ComponentModel;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.PowerFx;
 using Microsoft.PowerFx.Types;
 
@@ -16,7 +20,20 @@ public static class StringExpressionExtensions
     /// <param name="expression">Expression to evaluate.</param>
     /// <param name="engine">Recalc engine to use for evaluation.</param>
     /// <returns>The evaluated string value, or null if the expression is null or cannot be evaluated.</returns>
+    [Obsolete("Use EvalAsync instead. This method calls into async methods and might cause deadlocks")]
+    [EditorBrowsable(EditorBrowsableState.Never)]
     public static string? Eval(this StringExpression? expression, RecalcEngine? engine)
+#pragma warning disable VSTHRD002 // Avoid problematic synchronous waits
+    => EvalAsync(expression, engine).GetAwaiter().GetResult();
+#pragma warning restore VSTHRD002 // Avoid problematic synchronous waits
+    /// <summary>
+    /// Evaluates the given <see cref="StringExpression"/> using the provided <see cref="RecalcEngine"/>.
+    /// </summary>
+    /// <param name="expression">Expression to evaluate.</param>
+    /// <param name="engine">Recalc engine to use for evaluation.</param>
+    /// <param name="cancellationToken">Cancellation token to use for the asynchronous operation.</param>
+    /// <returns>The evaluated string value, or null if the expression is null or cannot be evaluated.</returns>
+    public static async Task<string?> EvalAsync(this StringExpression? expression, RecalcEngine? engine, CancellationToken cancellationToken = default)
     {
         if (expression is null)
         {
@@ -35,11 +52,11 @@ public static class StringExpressionExtensions
 
         if (expression.IsExpression)
         {
-            return engine.Eval(expression.ExpressionText!).ToString();
+            return (await engine.EvalAsync(expression.ExpressionText!, cancellationToken: cancellationToken).ConfigureAwait(false)).ToString();
         }
         else if (expression.IsVariableReference)
         {
-            var stringValue = engine.Eval(expression.VariableReference!.VariableName) as StringValue;
+            var stringValue = await engine.EvalAsync(expression.VariableReference!.VariableName, cancellationToken: cancellationToken).ConfigureAwait(false) as StringValue;
             return stringValue?.Value;
         }
 
