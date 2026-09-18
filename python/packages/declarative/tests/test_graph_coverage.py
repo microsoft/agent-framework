@@ -613,6 +613,27 @@ class TestBasicExecutorsCoverage:
 
         mock_context.yield_output.assert_called_once_with("Dynamic message")
 
+    @_requires_powerfx
+    @pytest.mark.parametrize("activity", ["=Local.msg", {"text": "=Local.msg"}])
+    async def test_send_activity_preserves_expression_result(
+        self, mock_context: MagicMock, mock_state: MagicMock, activity: str | dict[str, str]
+    ) -> None:
+        """Expression results are output data, not authored templates."""
+        from agent_framework_declarative._workflows._executors_basic import (
+            SendActivityExecutor,
+        )
+
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+        message = "Keep {Local.marker} as text."
+        state.set("Local.msg", message)
+        state.set("Local.marker", "fixture value")
+
+        executor = SendActivityExecutor({"kind": "SendActivity", "activity": activity})
+        await executor.handle_action(ActionTrigger(), mock_context)
+
+        mock_context.yield_output.assert_awaited_once_with(message)
+
 
 # ---------------------------------------------------------------------------
 # Agent Executors Tests - Covering _executors_agents.py gaps
