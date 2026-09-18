@@ -1727,7 +1727,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                     logger.error("Failed to send log message to server: %s", e)
 
         @server.list_tools()
-        async def _list_tools() -> list[types.Tool]:  # type: ignore
+        async def _list_tools() -> list[types.Tool]:
             """List all tools in the agent."""
             schema = agent_tool.parameters()
 
@@ -1741,7 +1741,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             return [tool]
 
         @server.call_tool()
-        async def _call_tool(  # type: ignore
+        async def _call_tool(
             name: str, arguments: dict[str, Any]
         ) -> Sequence[types.TextContent | types.ImageContent | types.AudioContent | types.EmbeddedResource]:
             """Call a tool in the agent."""
@@ -1784,7 +1784,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             return mcp_content or [types.TextContent(type="text", text="")]
 
         @server.set_logging_level()
-        async def _set_logging_level(level: types.LoggingLevel) -> None:  # type: ignore
+        async def _set_logging_level(level: types.LoggingLevel) -> None:
             """Set the logging level for the server."""
             logger.setLevel(LOG_LEVEL_MAPPING[level])
             # emit this log with the new minimum level
