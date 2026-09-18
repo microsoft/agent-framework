@@ -108,8 +108,8 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         // 1. Resolve agent
-        var agent = this.ResolveAgent(request);
-        var sessionStore = this.ResolveSessionStore(request);
+        var agent = this.ResolveAgent(request, out var defaultAgentName);
+        var sessionStore = this.ResolveSessionStore(request, defaultAgentName);
 
         // 2. Resolve the per-request hosted session identity context, so the session can be
         // loaded from a per-user partition. Fresh sessions are tagged once; resumed sessions are
@@ -819,11 +819,20 @@ public class AgentFrameworkResponseHandler : ResponseHandler
     /// <summary>
     /// Resolves an <see cref="AIAgent"/> from the request.
     /// Tries <c>agent.name</c> first, then falls back to <c>metadata["entity_id"]</c>.
-    /// If neither is present, attempts to resolve a default (non-keyed) <see cref="AIAgent"/>.
+    /// If neither is present, or the named lookup finds no keyed registration, attempts to
+    /// resolve a default (non-keyed) <see cref="AIAgent"/>.
     /// </summary>
-    private AIAgent ResolveAgent(CreateResponse request)
+    /// <param name="request">The request to resolve an agent for.</param>
+    /// <param name="defaultAgentName">
+    /// When the request was served by the default (non-keyed) agent, receives that agent's
+    /// <see cref="AIAgent.Name"/> if it is non-blank and the keyed registration under that name is the same
+    /// instance as the default agent; otherwise <see langword="null"/>. The session store lookup uses it so that
+    /// a nameless request and a named request for the same agent share one store.
+    /// </param>
+    private AIAgent ResolveAgent(CreateResponse request, out string? defaultAgentName)
     {
         var agentName = GetAgentName(request);
+        defaultAgentName = null;
 
         if (!string.IsNullOrEmpty(agentName))
         {
@@ -847,6 +856,17 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         var defaultAgent = this._serviceProvider.GetService<AIAgent>();
         if (defaultAgent is not null)
         {
+            // The name is only usable as a store key when the default agent is an alias of the keyed registration
+            // under that name. This mirrors the alias relationship FoundryHostingAgent.ResolveSessionStorageIdentity
+            // relies on, assuming the agent's Name is the key it was registered under (which AddAIAgent enforces),
+            // so store selection and storage identity agree for hosted agents.
+            // The probe assumes the keyed and non-keyed registrations share a lifetime, as the hosting builder guarantees.
+            var name = defaultAgent.Name;
+            defaultAgentName = !string.IsNullOrWhiteSpace(name)
+                && ReferenceEquals(this._serviceProvider.GetKeyedService<AIAgent>(name), defaultAgent)
+                    ? name
+                    : null;
+
             string storageIdentity = FoundryHostingAgent.ResolveSessionStorageIdentity(
                 defaultAgent,
                 registrationKey: null,
@@ -874,25 +894,43 @@ public class AgentFrameworkResponseHandler : ResponseHandler
     }
 
     /// <summary>
-    /// Resolves an <see cref="AIAgent"/> from the request.
-    /// Tries <c>agent.name</c> first, then falls back to <c>metadata["entity_id"]</c>.
-    /// If neither is present, attempts to resolve a default (non-keyed) <see cref="AIAgent"/>.
+    /// Resolves the <see cref="AgentSessionStore"/> that persists the session for the agent the request resolved to.
+    /// Tries the keyed store under the default agent's name when the request resolved to an aliased default agent,
+    /// otherwise under the name the request supplied; then the non-keyed store.
+    /// For a request served by the default agent, the keyed store registered under that agent's name takes precedence
+    /// over the non-keyed store when the keyed registration under that name is the same instance as the default agent.
     /// </summary>
-    private AgentSessionStore ResolveSessionStore(CreateResponse request)
+    /// <param name="request">The request whose session store is being resolved.</param>
+    /// <param name="defaultAgentName">
+    /// The name of the default (non-keyed) agent the request resolved to, or <see langword="null"/> when the request
+    /// resolved a keyed agent by name, the default agent has a blank Name, or the keyed registration under that name is
+    /// not the same instance as the default agent. When set, it takes precedence over the request's agent name as the
+    /// store key, so that a nameless request and a named request for the same default agent share the same keyed store.
+    /// </param>
+    private AgentSessionStore ResolveSessionStore(CreateResponse request, string? defaultAgentName)
     {
-        var agentName = GetAgentName(request);
+        var storeKey = defaultAgentName ?? GetAgentName(request);
 
-        if (!string.IsNullOrEmpty(agentName))
+        if (!string.IsNullOrEmpty(storeKey))
         {
-            var sessionStore = this._serviceProvider.GetKeyedService<AgentSessionStore>(agentName);
+            var sessionStore = this._serviceProvider.GetKeyedService<AgentSessionStore>(storeKey);
             if (sessionStore is not null)
             {
                 return sessionStore;
             }
 
-            if (this._logger.IsEnabled(LogLevel.Warning))
+            if (defaultAgentName is not null)
             {
-                this._logger.LogWarning("SessionStore for agent '{AgentName}' not found in keyed services. Attempting default resolution.", agentName);
+                // The key came from the default agent rather than from the request, so a host that registered
+                // only a non-keyed store is an expected shape, not a misconfiguration worth a warning.
+                if (this._logger.IsEnabled(LogLevel.Debug))
+                {
+                    this._logger.LogDebug("No keyed SessionStore registered for default agent '{AgentName}'; falling back to the default SessionStore.", storeKey);
+                }
+            }
+            else if (this._logger.IsEnabled(LogLevel.Warning))
+            {
+                this._logger.LogWarning("SessionStore for agent '{AgentName}' not found in keyed services. Attempting default resolution.", storeKey);
             }
         }
 
@@ -903,9 +941,9 @@ public class AgentFrameworkResponseHandler : ResponseHandler
             return defaultSessionStore;
         }
 
-        var errorMessage = string.IsNullOrEmpty(agentName)
+        var errorMessage = string.IsNullOrEmpty(storeKey)
             ? "No agent name specified in the request (via agent.name or metadata[\"entity_id\"]) and no default AgentSessionStore is registered."
-            : $"AgentSessionStore for agent '{agentName}' not found. Ensure it is registered via AddFoundryResponses(services, agent, agentSessionStore) or services.AddKeyedSingleton<AgentSessionStore>(\"{agentName}\", ...).";
+            : $"AgentSessionStore for agent '{storeKey}' not found. Ensure it is registered via AddFoundryResponses(services, agent, agentSessionStore) or services.AddKeyedSingleton<AgentSessionStore>(\"{storeKey}\", ...).";
 
         throw new InvalidOperationException(errorMessage);
     }
