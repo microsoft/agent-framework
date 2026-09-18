@@ -2691,20 +2691,19 @@ class TestOutputItemToMessage:
             OutputItemFunctionShellCallOutput,
         )
 
-        item = OutputItemFunctionShellCallOutput({
+        output: FunctionShellCallOutputContent = {
+            "stdout": "file.txt",
+            "stderr": "",
+            "outcome": cast(FunctionShellCallOutputExitOutcome, {"exit_code": 0}),
+        }
+        item: OutputItemFunctionShellCallOutput = {
             "type": "shell_call_output",
             "id": "sco-1",
             "call_id": "call_sc",
             "status": "completed",
-            "output": [
-                FunctionShellCallOutputContent({
-                    "stdout": "file.txt",
-                    "stderr": "",
-                    "outcome": cast(FunctionShellCallOutputExitOutcome, {"exit_code": 0}),
-                })
-            ],
+            "output": [output],
             "max_output_length": 1024,
-        })
+        }
         msg = await _output_item_to_message(item)
         assert msg.role == "tool"
         assert msg.contents[0].type == "shell_tool_result"
@@ -3232,23 +3231,22 @@ class TestItemToMessage:
 
     async def test_shell_call_output(self) -> None:
         from azure.ai.agentserver.responses.models import (
-            FunctionShellCallOutputContent,
-            FunctionShellCallOutputExitOutcome,
+            FunctionShellCallOutputContentParam,
+            FunctionShellCallOutputExitOutcomeParam,
             FunctionShellCallOutputItemParam,
         )
 
-        item = FunctionShellCallOutputItemParam({
+        output: FunctionShellCallOutputContentParam = {
+            "stdout": "file.txt",
+            "stderr": "",
+            "outcome": cast(FunctionShellCallOutputExitOutcomeParam, {"exit_code": 0}),
+        }
+        item: FunctionShellCallOutputItemParam = {
             "type": "shell_call_output",
             "call_id": "call_sc",
-            "output": [
-                FunctionShellCallOutputContent({
-                    "stdout": "file.txt",
-                    "stderr": "",
-                    "outcome": cast(FunctionShellCallOutputExitOutcome, {"exit_code": 0}),
-                })
-            ],
+            "output": [output],
             "max_output_length": 1024,
-        })
+        }
         msg = await _item_to_message(item)
         assert msg is not None
         assert msg.role == "tool"
