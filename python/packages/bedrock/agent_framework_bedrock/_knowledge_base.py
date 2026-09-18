@@ -32,6 +32,11 @@ except ImportError as e:
 
 logger = logging.getLogger("agent_framework.bedrock")
 
+# Bedrock RetrievalResultContent.type values whose payload is binary (in byteContent),
+# not text. A text retrieval tool renders these as placeholders. The full enum is
+# TEXT | IMAGE | AUDIO | VIDEO | ROW; ROW is handled separately.
+_BINARY_MEDIA_CONTENT_TYPES = frozenset({"IMAGE", "AUDIO", "VIDEO"})
+
 
 def _get_source_uri(result: dict[str, Any]) -> str:
     """Extract source URI from a standard Retrieve result location.
@@ -68,13 +73,14 @@ def _extract_content_text(result: dict[str, Any]) -> str:
     """Extract passage text from a Retrieve result, handling every content type.
 
     The Bedrock ``RetrievalResultContent`` union has a ``type`` of ``TEXT``, ``IMAGE``,
-    or ``ROW`` (SQL knowledge bases). A ``ROW`` result carries no ``text`` field — its
-    data is in ``row`` as a list of ``{columnName, columnValue}`` entries — so reading
-    only ``content.text`` would emit an empty passage and discard every column value.
-    This renders ROW columns as ``columnName: columnValue`` lines instead. An ``IMAGE``
-    result carries binary data in ``byteContent`` (not text); since this is a text
-    retrieval tool, it is rendered as a short placeholder rather than an empty string,
-    so it does not surface as a blank numbered result or a source header with no body.
+    ``AUDIO``, ``VIDEO``, or ``ROW`` (SQL knowledge bases). A ``ROW`` result carries no
+    ``text`` field — its data is in ``row`` as a list of ``{columnName, columnValue}``
+    entries — so reading only ``content.text`` would emit an empty passage and discard
+    every column value. This renders ROW columns as ``columnName: columnValue`` lines
+    instead. Binary media types (``IMAGE``, ``AUDIO``, ``VIDEO``) carry their payload in
+    ``byteContent`` (not text); since this is a text retrieval tool, each is rendered as
+    a short placeholder rather than an empty string, so it does not surface as a blank
+    numbered result or a source header with no body.
     """
     content = result.get("content", {}) or {}
     content_type = content.get("type", "TEXT")
@@ -86,10 +92,10 @@ def _extract_content_text(result: dict[str, Any]) -> str:
             if col.get("columnName") or col.get("columnValue")
         ]
         return "\n".join(rendered)
-    if content_type == "IMAGE":
-        # Image payload lives in content.byteContent, not content.text. A text tool
-        # cannot render bytes, so emit a placeholder instead of an empty passage.
-        return "[image content omitted]"
+    if content_type in _BINARY_MEDIA_CONTENT_TYPES:
+        # Binary media payload lives in content.byteContent, not content.text. A text
+        # tool cannot render bytes, so emit a placeholder instead of an empty passage.
+        return f"[{content_type.lower()} content omitted]"
     # Default handling for the TEXT content type.
     return content.get("text", "")
 

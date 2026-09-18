@@ -217,6 +217,13 @@ class TestExtractContentText:
         result = {"content": {"type": "IMAGE", "byteContent": "<base64-bytes>"}}
         assert _extract_content_text(result) == "[image content omitted]"
 
+    def test_audio_and_video_content_return_placeholders(self):
+        """AUDIO/VIDEO are also binary (byteContent), not text — render placeholders."""
+        from agent_framework_bedrock._knowledge_base import _extract_content_text
+
+        assert _extract_content_text({"content": {"type": "AUDIO", "byteContent": "b"}}) == "[audio content omitted]"
+        assert _extract_content_text({"content": {"type": "VIDEO", "byteContent": "b"}}) == "[video content omitted]"
+
 
 class TestBedrockKnowledgeBaseProvider:
     def test_is_context_provider_subclass(self):
