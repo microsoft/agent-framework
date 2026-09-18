@@ -35,6 +35,7 @@ public sealed class ChatClientPromptAgentFactory : PromptAgentFactory
         IEnumerable<string>? allowedConfigurationVariables = null)
         : base(engine, configuration, allowedConfigurationVariables)
     {
+        Throw.IfNull(chatClient);
         this._chatClient = chatClient;
         this._functions = functions;
         this._loggerFactory = loggerFactory;
