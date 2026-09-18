@@ -206,6 +206,17 @@ class TestExtractContentText:
         result = {"content": {"type": "ROW", "row": [{}, {"columnName": "k", "columnValue": "v"}]}}
         assert _extract_content_text(result) == "k: v"
 
+    def test_image_content_returns_placeholder(self):
+        """IMAGE payload is in byteContent, not text; a text tool renders a placeholder.
+
+        Returning content.text would emit an empty passage — a blank numbered result or
+        a source header with no body.
+        """
+        from agent_framework_bedrock._knowledge_base import _extract_content_text
+
+        result = {"content": {"type": "IMAGE", "byteContent": "<base64-bytes>"}}
+        assert _extract_content_text(result) == "[image content omitted]"
+
 
 class TestBedrockKnowledgeBaseProvider:
     def test_is_context_provider_subclass(self):

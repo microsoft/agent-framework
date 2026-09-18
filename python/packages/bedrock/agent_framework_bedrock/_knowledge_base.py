@@ -71,7 +71,10 @@ def _extract_content_text(result: dict[str, Any]) -> str:
     or ``ROW`` (SQL knowledge bases). A ``ROW`` result carries no ``text`` field — its
     data is in ``row`` as a list of ``{columnName, columnValue}`` entries — so reading
     only ``content.text`` would emit an empty passage and discard every column value.
-    This renders ROW columns as ``columnName: columnValue`` lines instead.
+    This renders ROW columns as ``columnName: columnValue`` lines instead. An ``IMAGE``
+    result carries binary data in ``byteContent`` (not text); since this is a text
+    retrieval tool, it is rendered as a short placeholder rather than an empty string,
+    so it does not surface as a blank numbered result or a source header with no body.
     """
     content = result.get("content", {}) or {}
     content_type = content.get("type", "TEXT")
@@ -83,7 +86,11 @@ def _extract_content_text(result: dict[str, Any]) -> str:
             if col.get("columnName") or col.get("columnValue")
         ]
         return "\n".join(rendered)
-    # TEXT (and IMAGE, which exposes its caption/text in the same field when present)
+    if content_type == "IMAGE":
+        # Image payload lives in content.byteContent, not content.text. A text tool
+        # cannot render bytes, so emit a placeholder instead of an empty passage.
+        return "[image content omitted]"
+    # Default handling for the TEXT content type.
     return content.get("text", "")
 
 

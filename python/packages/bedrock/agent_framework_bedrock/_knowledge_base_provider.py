@@ -132,8 +132,10 @@ class BedrockKnowledgeBaseProvider(ContextProvider):
         # Inject as an untrusted user-role message, consistent with other context
         # providers in this repo (e.g. azure-cosmos-memory): retrieved/external content
         # stays in the untrusted user channel rather than being elevated to system
-        # instructions, which would open a stored prompt-injection path. The
-        # context_prompt frames the passages as reference data, not instructions.
+        # instructions. This reduces — but does not eliminate — prompt-injection risk;
+        # the model may still act on instructions embedded in a passage, so sanitize
+        # untrusted sources as needed. The context_prompt frames the passages as
+        # reference data, not instructions.
         context.extend_messages(
             self.source_id,
             [Message(role="user", contents=[f"{self.context_prompt}\n\n{retrieved_context}"])],

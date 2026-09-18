@@ -68,8 +68,10 @@ Crawler, Confluence, SharePoint, Google Drive, and OneDrive.
 
 Notes:
 - The provider retrieves passages in before_run() and injects them as an
-  untrusted user-role context message (not as system instructions), so retrieved
-  content cannot silently override the agent's instructions.
+  untrusted user-role context message (not as system instructions). This reduces
+  the risk of retrieved content overriding the agent's instructions, but it does
+  not guarantee the model will ignore prompt-injection text embedded in a passage
+  — validate or sanitize untrusted sources as needed.
 - Passages below the configured min_score are dropped before injection.
 """
 

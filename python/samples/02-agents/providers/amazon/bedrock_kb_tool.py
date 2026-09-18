@@ -23,8 +23,11 @@ Environment variables used:
 - AWS credentials via standard variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
   optional `AWS_SESSION_TOKEN`)
 
-Required IAM permissions: `bedrock:Retrieve` and `bedrock:AgenticRetrieveStream`
-(see the amazon provider README for the exact policy).
+Required IAM permissions: `bedrock:Retrieve` (always). The default agentic path
+(`use_agentic_retrieval=True`) additionally needs `bedrock:AgenticRetrieveStream`,
+`bedrock:GetDocumentContent`, and `bedrock:InvokeModelWithResponseStream`; without them
+the agentic call fails or falls back to single-pass retrieval. See the amazon provider
+README for the exact policy.
 """
 
 
