@@ -1,4 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
+# type: ignore
+# Because the Bedrock boto3 client (bedrock-agent-runtime) does not ship type stubs, its
+# methods and responses are untyped, so we ignore type issues in this module. This matches
+# the convention already used in _chat_client.py.
 
 """Amazon Bedrock Knowledge Base context provider for Agent Framework."""
 
@@ -6,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from agent_framework import AgentSession, ContextProvider, Message, SessionContext
 from agent_framework._telemetry import get_user_agent, mark_feature_used
@@ -58,7 +62,7 @@ class BedrockKnowledgeBaseProvider(ContextProvider):
         min_score: float = 0.0,
         source_id: str = "bedrock-kb",
         context_prompt: str | None = None,
-        client: Optional[BaseClient] = None,
+        client: BaseClient | None = None,
     ) -> None:
         """Create a Bedrock Knowledge Base context provider.
 

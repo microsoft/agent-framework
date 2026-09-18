@@ -161,7 +161,7 @@ class TestBedrockKnowledgeBaseTool:
         result = asyncio.run(tool.invoke(arguments={"query": "test invoke"}))
         # invoke() returns list[Content] by default
         assert len(result) > 0
-        assert "Invoked result" in result[0].text
+        assert "Invoked result" in (result[0].text or "")
 
 
 class TestBedrockKnowledgeBaseProvider:
