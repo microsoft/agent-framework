@@ -1748,8 +1748,8 @@ class TestTextMessageEventBalancing:
             all_events.append(event)
 
         # Step 4: End of stream - emit final TextMessageEndEvent
-        if flow.message_id:
-            all_events.append(TextMessageEndEvent(message_id=flow.message_id))
+        assert flow.message_id is not None
+        all_events.append(TextMessageEndEvent(message_id=flow.message_id))
 
         # Verify event counts
         start_events = [e for e in all_events if isinstance(e, TextMessageStartEvent)]
