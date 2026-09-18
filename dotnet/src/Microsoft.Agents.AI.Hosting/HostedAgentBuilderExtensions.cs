@@ -43,7 +43,9 @@ public static class HostedAgentBuilderExtensions
     /// keyed <see cref="AIAgent"/> registration under the same agent name, so <c>AsDefault()</c> wins over that call
     /// in either order. A keyed <see cref="AgentSessionStore"/> that such a call registers under the same agent name
     /// is not ignored: call <see cref="WithSessionStore(IHostedAgentBuilder, AgentSessionStore, bool)"/> if the
-    /// default agent must not share it.
+    /// default agent must not share it. Registering another keyed <see cref="AIAgent"/> under the same name after this
+    /// call is not supported: the registration added here would forward to the replacement and, with a singleton
+    /// lifetime, hold the first instance it resolves regardless of the replacement's lifetime.
     /// </para>
     /// <para>
     /// Use <see cref="ServiceLifetime.Singleton"/> for a default agent. Hosting integrations resolve it from the root
@@ -62,8 +64,9 @@ public static class HostedAgentBuilderExtensions
     /// <see cref="IsolationKeyScopedAgentSessionStoreOptions.Strict"/> is disabled.
     /// </para>
     /// <para>
-    /// If the agent implements <see cref="IDisposable"/>, the container disposes it through both registrations, so
-    /// <see cref="IDisposable.Dispose"/> must be idempotent.
+    /// If the agent implements <see cref="IDisposable"/> or <see cref="IAsyncDisposable"/>, the container disposes it
+    /// through both registrations, so <see cref="IDisposable.Dispose"/> and <see cref="IAsyncDisposable.DisposeAsync"/>
+    /// must be idempotent.
     /// </para>
     /// </remarks>
     public static IHostedAgentBuilder AsDefault(this IHostedAgentBuilder builder)
