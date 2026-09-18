@@ -109,8 +109,6 @@ class _RunConfig:
         return self.workspace_root is not None or bool(self.file_mounts)
 
     def cache_key(self) -> tuple[Any, ...]:
-        # Output limits are invocation-scoped and do not change sandbox construction,
-        # so they intentionally do not participate in the shared runtime cache key.
         return (
             self.backend,
             self.module,
@@ -121,6 +119,9 @@ class _RunConfig:
             self.workspace_signature,
             tuple((mount.mount_path, str(mount.host_path), mount.path_signature) for mount in self.file_mounts),
             tuple((allowed_domain.target, allowed_domain.methods) for allowed_domain in self.allowed_domains),
+            self.max_output_files,
+            self.max_output_file_bytes,
+            self.max_output_total_bytes,
         )
 
 
@@ -1459,6 +1460,9 @@ class _SandboxRegistry(SandboxRuntime):
                     module_path=config.module_path,
                     input_dir=input_dir_handle.name if input_dir_handle is not None else None,
                     output_dir=output_dir_handle.name if output_dir_handle is not None else None,
+                    max_file_size=f"{config.max_output_file_bytes}B",
+                    max_total_size=f"{config.max_output_total_bytes}B",
+                    max_file_count=config.max_output_files,
                 )
             except ImportError as exc:
                 raise RuntimeError(

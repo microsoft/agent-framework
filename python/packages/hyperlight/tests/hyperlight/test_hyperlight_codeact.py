@@ -275,9 +275,15 @@ class _FakeSandbox:
         module_path: str | None = None,
         heap_size: str | None = None,
         stack_size: str | None = None,
+        max_file_size: str | None = None,
+        max_total_size: str | None = None,
+        max_file_count: int | None = None,
     ) -> None:
         self.input_dir = input_dir
         self.output_dir = output_dir
+        self.max_file_size = max_file_size
+        self.max_total_size = max_total_size
+        self.max_file_count = max_file_count
         self.registered_tools: dict[str, Any] = {}
         self.allowed_domains: list[tuple[str, list[str] | None]] = []
         self.restore_calls: list[Any] = []
@@ -2245,8 +2251,12 @@ async def test_execute_code_tool_retries_allowed_domains_with_urls_when_backend_
             backend: str = "wasm",
             module: str | None = None,
             module_path: str | None = None,
+            max_file_size: str | None = None,
+            max_total_size: str | None = None,
+            max_file_count: int | None = None,
         ) -> None:
             del input_dir, output_dir, backend, module, module_path
+            del max_file_size, max_total_size, max_file_count
             self.allowed_domains: list[tuple[str, list[str] | None]] = []
             _FakeStrictNetworkSandbox.instances.append(self)
 
@@ -2371,7 +2381,7 @@ async def test_provider_forwards_output_limits_to_run_tool_and_serializable_stat
     json.dumps(state)
 
 
-async def test_output_limits_are_invocation_scoped_when_registry_is_shared(
+async def test_output_limits_are_isolated_when_registry_is_shared(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2399,7 +2409,50 @@ async def test_output_limits_are_invocation_scoped_when_registry_is_shared(
 
     _assert_bounded_output_error(rejected, "per-file output limit")
     assert [_decode_content_bytes(item) for item in accepted if item.type == "data"] == [b"data"]
-    assert len(_FakeSandbox.instances) == 1
+    assert len(_FakeSandbox.instances) == 2
+    assert [
+        (sandbox.max_file_size, sandbox.max_total_size, sandbox.max_file_count) for sandbox in _FakeSandbox.instances
+    ] == [("4B", "10B", 20), ("3B", "10B", 20)]
+
+
+async def test_default_output_limits_are_forwarded_to_hyperlight_sandbox(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _FakeSandbox.instances.clear()
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandbox)
+    execute_code = HyperlightExecuteCodeTool()
+
+    try:
+        await execute_code.invoke(arguments={"code": "None"})
+    finally:
+        _close_execute_code_registry(execute_code)
+
+    sandbox = _FakeSandbox.instances[0]
+    assert (sandbox.max_file_size, sandbox.max_total_size, sandbox.max_file_count) == (
+        "5242880B",
+        "20971520B",
+        20,
+    )
+
+
+async def test_custom_output_limits_are_forwarded_to_hyperlight_sandbox(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _FakeSandbox.instances.clear()
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandbox)
+    execute_code = HyperlightExecuteCodeTool(
+        max_output_file_bytes=7,
+        max_output_total_bytes=11,
+        max_output_files=3,
+    )
+
+    try:
+        await execute_code.invoke(arguments={"code": "None"})
+    finally:
+        _close_execute_code_registry(execute_code)
+
+    sandbox = _FakeSandbox.instances[0]
+    assert (sandbox.max_file_size, sandbox.max_total_size, sandbox.max_file_count) == ("7B", "11B", 3)
 
 
 def test_execute_code_tool_uses_finite_default_output_limits() -> None:
