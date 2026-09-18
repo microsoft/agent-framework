@@ -17,24 +17,25 @@ Prerequisites:
 import asyncio
 import os
 from collections.abc import AsyncIterable
+from typing import Any, Literal
 
 from agent_framework import (
     Agent,
     AgentExecutor,
     AgentExecutorResponse,
     Content,
-    Executor,
     ToolApprovalMiddleware,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowEvent,
-    handler,
+    executor,
     tool,
 )
 from agent_framework.foundry import FoundryChatClient
+from agent_framework.openai import OpenAIChatOptions
 from azure.identity import AzureCliCredential
-
-CHILD_COMPLETED_STATE = "inventory_child_completed"
+from pydantic import BaseModel
+from typing_extensions import Never
 
 
 @tool(approval_mode="always_require")
@@ -102,27 +103,36 @@ async def collect_workflow_events(stream: AsyncIterable[WorkflowEvent]) -> dict[
     return requests
 
 
-class DelegationRouter(Executor):
-    """Route one child task back to the coordinator that requested it."""
+class CoordinatorDecision(BaseModel):
+    """Choose whether to delegate a task or complete the caller's response."""
 
-    def __init__(self, coordinator_id: str, child_id: str) -> None:
-        super().__init__(id="delegation_router")
-        self._coordinator_id = coordinator_id
-        self._child_id = child_id
+    action: Literal["delegate", "complete"]
+    message: str
 
-    @handler
-    async def route(
-        self,
-        response: AgentExecutorResponse,
-        ctx: WorkflowContext[AgentExecutorResponse, str],
-    ) -> None:
-        if response.executor_id == self._child_id:
-            ctx.set_state(CHILD_COMPLETED_STATE, True)
-            await ctx.send_message(response, target_id=self._coordinator_id)
-        elif ctx.get_state(CHILD_COMPLETED_STATE, False):
-            await ctx.yield_output(response.agent_response.text)
-        else:
-            await ctx.send_message(response, target_id=self._child_id)
+
+def chose_action(expected: Literal["delegate", "complete"]):
+    """Create an edge condition for a structured coordinator decision."""
+
+    def condition(response: Any) -> bool:
+        return (
+            isinstance(response, AgentExecutorResponse)
+            and isinstance(response.agent_response.value, CoordinatorDecision)
+            and response.agent_response.value.action == expected
+        )
+
+    return condition
+
+
+@executor(id="complete_reservation")
+async def complete_reservation(
+    response: AgentExecutorResponse,
+    ctx: WorkflowContext[Never, str],
+) -> None:
+    """Return the coordinator's completed response."""
+    decision = response.agent_response.value
+    if not isinstance(decision, CoordinatorDecision):
+        raise ValueError("Coordinator response must be a CoordinatorDecision.")
+    await ctx.yield_output(decision.message)
 
 
 async def run_workflow_example() -> None:
@@ -132,9 +142,11 @@ async def run_workflow_example() -> None:
             client=create_client(),
             name="Coordinator",
             instructions=(
-                "You coordinate inventory reservations. For a new request, respond with a concise task "
-                "for InventoryAgent. When InventoryAgent returns a result, summarize that result for the user."
+                "You coordinate inventory reservations. For a new request, set action to 'delegate' and message "
+                "to a concise task for InventoryAgent. When InventoryAgent returns a result, set action to "
+                "'complete' and message to a user-facing summary of that result."
             ),
+            default_options=OpenAIChatOptions[Any](response_format=CoordinatorDecision),
         )
     )
     inventory_agent = Agent(
@@ -144,13 +156,11 @@ async def run_workflow_example() -> None:
         tools=[reserve_inventory],
     )
     inventory = AgentExecutor(inventory_agent)
-    router = DelegationRouter(coordinator_id=coordinator.id, child_id=inventory.id)
     workflow = (
-        WorkflowBuilder(start_executor=coordinator, output_from=[router])
-        .add_edge(coordinator, router)
-        .add_edge(router, inventory)
-        .add_edge(inventory, router)
-        .add_edge(router, coordinator)
+        WorkflowBuilder(start_executor=coordinator)
+        .add_edge(coordinator, inventory, condition=chose_action("delegate"))
+        .add_edge(inventory, coordinator)
+        .add_edge(coordinator, complete_reservation, condition=chose_action("complete"))
         .build()
     )
 
