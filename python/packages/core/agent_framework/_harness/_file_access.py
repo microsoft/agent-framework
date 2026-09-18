@@ -229,13 +229,7 @@ async def _run_search_with_timeout(
     """
     try:
         return await asyncio.wait_for(work, timeout=_SEARCH_TIMEOUT_SECONDS)
-    except _SearchTimeout as exc:
-        raise ValueError(_search_timeout_message()) from exc
-    except asyncio.TimeoutError as exc:
-        # On Python 3.10 ``asyncio.wait_for`` raises ``asyncio.TimeoutError``
-        # which is distinct from the builtin ``TimeoutError`` (the two were
-        # unified in 3.11). Catching the asyncio alias works on every
-        # supported version.
+    except (_SearchTimeout, asyncio.TimeoutError) as exc:
         raise ValueError(_search_timeout_message()) from exc
 
 
