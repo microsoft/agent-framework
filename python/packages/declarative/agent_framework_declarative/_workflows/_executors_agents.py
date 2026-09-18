@@ -506,6 +506,13 @@ def _normalize_variable_path(variable: str) -> str:
 class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
     """Executor that invokes a Microsoft Foundry agent.
 
+    ``output.autoSend`` defaults to true and accepts a Boolean or a
+    ``=``-prefixed PowerFx Boolean expression, such as ``=Local.publishResult``.
+    Expressions use current state before each invocation, including resumed
+    external-loop turns. False suppresses automatic output, not invocation,
+    result storage or conversation history; later actions can explicitly emit
+    the stored results.
+
     This executor supports both Python-style and .NET-style YAML schemas:
 
     Python-style (simple):
@@ -615,8 +622,8 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
 
         return arguments, messages, external_loop_when, max_iterations
 
-    def _get_output_config(self) -> tuple[str | None, str | None, str | None, bool]:
-        """Parse output configuration.
+    def _get_output_config(self, state: DeclarativeWorkflowState) -> tuple[str | None, str | None, str | None, bool]:
+        """Parse output bindings and evaluate autoSend against the current state.
 
         Returns:
             Tuple of (messages var, responseObject var, resultProperty, autoSend)
@@ -637,7 +644,7 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
         property_val: Any = output_dict.get("property")
         property_var: str | None = str(property_val) if property_val is not None else None
         auto_send_val: Any = output_dict.get("autoSend", True)
-        auto_send: bool = bool(auto_send_val)
+        auto_send: bool = bool(state.eval_if_expression(auto_send_val))
 
         return messages_var, response_obj_var, property_var or result_property, auto_send
 
@@ -925,7 +932,7 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
         logger.debug("handle_action: starting agent '%s'", agent_name)
 
         arguments, messages_expr, external_loop_when, max_iterations = self._get_input_config()
-        messages_var, response_obj_var, result_property, auto_send = self._get_output_config()
+        messages_var, response_obj_var, result_property, auto_send = self._get_output_config(state)
 
         # Get conversation-specific messages path if conversationId is specified
         conversation_id_expr = self._get_conversation_id()
@@ -1095,6 +1102,9 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
                 f"Agent '{agent_name}' invocation failed: not found during loop resumption"
             )
 
+        _, _, _, auto_send = self._get_output_config(state)
+        loop_state.auto_send = auto_send
+
         try:
             accumulated_response, all_messages, tool_calls = await self._invoke_agent_and_store_results(
                 agent=agent,
@@ -1105,7 +1115,7 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
                 messages_var=loop_state.messages_var,
                 response_obj_var=loop_state.response_obj_var,
                 result_property=loop_state.result_property,
-                auto_send=loop_state.auto_send,
+                auto_send=auto_send,
                 messages_path=loop_state.messages_path,
             )
         except (AgentInvalidRequestException, AgentInvalidResponseException):

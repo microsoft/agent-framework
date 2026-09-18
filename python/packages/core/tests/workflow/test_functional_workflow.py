@@ -26,6 +26,7 @@ from agent_framework import (
     InMemoryCheckpointStorage,
     RunContext,
     StepWrapper,
+    SupportsAgentRun,
     WorkflowEvent,
     WorkflowEventSource,
     WorkflowRunResult,
@@ -1050,6 +1051,13 @@ class TestAsAgent:
         agent = wf.as_agent(name="my_agent")
         assert agent.id == "FunctionalWorkflowAgent_my_agent"
         assert agent.description == "A test workflow"
+
+    async def test_as_agent_implements_supports_agent_run(self):
+        @built_workflow
+        async def wf(x: int) -> int:
+            return x
+
+        assert isinstance(wf.as_agent(), SupportsAgentRun)
 
 
 # ---------------------------------------------------------------------------

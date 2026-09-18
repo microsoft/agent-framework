@@ -73,6 +73,10 @@ agent_framework/
 - **`FunctionTool`** - Wraps Python functions as tools with JSON schema generation
 - **`@tool`** decorator - Converts functions to tools
 - **`use_function_invocation()`** - Decorator to add automatic function calling to chat clients
+- **`_normalize_tool_description_format` / `_format_tool_parameters`** - Private configuration normalizer and
+  structured parameter formatter shared by Hyperlight and Monty descriptions. They validate and detach compact/JSON
+  settings, return detached parameter data, and fall back to full JSON Schema when compact data cannot preserve
+  constraints. They do not change `FunctionTool.parameters()` or render runtime-specific text.
 
 ### Vector stores
 

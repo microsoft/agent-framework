@@ -1331,7 +1331,7 @@ class Workflow(DictConvertible):
         *,
         checkpoint_storage: CheckpointStorage | None = None,
         known_checkpoint_id: str | None = None,
-        baseline_checkpoint_id: str | None | object = _MISSING,
+        baseline_checkpoint_id: str | object | None = _MISSING,
     ) -> str | None:
         """Resolve the persisted pause checkpoint that covers ``request_ids``.
 

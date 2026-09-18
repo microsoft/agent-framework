@@ -8,6 +8,19 @@ This package supports `azure-ai-projects>=2.2.0,<2.7.0`. Projects 2.5 and later 
 `openai>=3.0.0`, so `agent-framework-foundry` requires `agent-framework-openai>=1.14.2`,
 which supports both OpenAI 2.x and 3.x.
 
+## Tracing an existing Foundry agent
+
+Install Azure Monitor to connect client and service traces:
+
+```shell
+pip install --upgrade agent-framework-foundry "azure-monitor-opentelemetry>=1.8.10,<2"
+```
+
+With Application Insights connected to your project, call
+`await agent.configure_azure_monitor()` before invoking a `FoundryAgent`.
+See [the tracing sample](../../samples/02-agents/observability/foundry_agent_tracing.py)
+for streaming and non-streaming examples.
+
 ## Evaluations
 
 `FoundryEvals` implements the provider-neutral `Evaluator` protocol with
