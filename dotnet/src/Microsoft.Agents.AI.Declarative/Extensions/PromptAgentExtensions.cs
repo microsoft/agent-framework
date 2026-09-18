@@ -1,7 +1,10 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Microsoft.PowerFx;
 using Microsoft.Shared.Diagnostics;
@@ -19,7 +22,20 @@ public static class PromptAgentExtensions
     /// <param name="promptAgent">Instance of <see cref="GptComponentMetadata"/></param>
     /// <param name="engine">Instance of <see cref="RecalcEngine"/></param>
     /// <param name="functions">Instance of <see cref="IList{AIFunction}"/></param>
+    [Obsolete("Use GetChatOptionsAsync instead. This method calls into async methods and might cause deadlocks")]
+    [EditorBrowsable(EditorBrowsableState.Never)]
     public static ChatOptions? GetChatOptions(this GptComponentMetadata promptAgent, RecalcEngine? engine, IList<AIFunction>? functions)
+#pragma warning disable VSTHRD002 // Avoid problematic synchronous waits
+    => promptAgent.GetChatOptionsAsync(engine, functions).GetAwaiter().GetResult();
+#pragma warning restore VSTHRD002 // Avoid problematic synchronous waits
+    /// <summary>
+    /// Retrieves the 'options' property from a <see cref="GptComponentMetadata"/> as a <see cref="ChatOptions"/> instance.
+    /// </summary>
+    /// <param name="promptAgent">Instance of <see cref="GptComponentMetadata"/></param>
+    /// <param name="engine">Instance of <see cref="RecalcEngine"/></param>
+    /// <param name="functions">Instance of <see cref="IList{AIFunction}"/></param>
+    /// <param name="cancellationToken">Cancellation token to observe while retrieving chat options.</param>
+    public static async Task<ChatOptions?> GetChatOptionsAsync(this GptComponentMetadata promptAgent, RecalcEngine? engine, IList<AIFunction>? functions, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(promptAgent);
 
@@ -36,17 +52,17 @@ public static class PromptAgentExtensions
         return new ChatOptions()
         {
             Instructions = promptAgent.Instructions?.ToTemplateString(),
-            Temperature = (float?)modelOptions?.Temperature?.Eval(engine),
-            MaxOutputTokens = (int?)modelOptions?.MaxOutputTokens?.Eval(engine),
-            TopP = (float?)modelOptions?.TopP?.Eval(engine),
-            TopK = (int?)modelOptions?.TopK?.Eval(engine),
-            FrequencyPenalty = (float?)modelOptions?.FrequencyPenalty?.Eval(engine),
-            PresencePenalty = (float?)modelOptions?.PresencePenalty?.Eval(engine),
-            Seed = modelOptions?.Seed?.Eval(engine),
+            Temperature = modelOptions?.Temperature is { } temperature ? (float?)await temperature.EvalAsync(engine, cancellationToken: cancellationToken).ConfigureAwait(false) : default,
+            MaxOutputTokens = modelOptions?.MaxOutputTokens is { } maxOutputTokens ? (int?)await maxOutputTokens.EvalAsync(engine, cancellationToken: cancellationToken).ConfigureAwait(false) : default,
+            TopP = modelOptions?.TopP is { } topP ? (float?)await topP.EvalAsync(engine, cancellationToken: cancellationToken).ConfigureAwait(false) : default,
+            TopK = modelOptions?.TopK is { } topK ? (int?)await topK.EvalAsync(engine, cancellationToken: cancellationToken).ConfigureAwait(false) : default,
+            FrequencyPenalty = modelOptions?.FrequencyPenalty is { } frequencyPenalty ? (float?)await frequencyPenalty.EvalAsync(engine, cancellationToken: cancellationToken).ConfigureAwait(false) : default,
+            PresencePenalty = modelOptions?.PresencePenalty is { } presencePenalty ? (float?)await presencePenalty.EvalAsync(engine, cancellationToken: cancellationToken).ConfigureAwait(false) : default,
+            Seed = modelOptions?.Seed is { } seed ? (int?)await seed.EvalAsync(engine, cancellationToken: cancellationToken).ConfigureAwait(false) : default,
             ResponseFormat = outputSchema?.AsChatResponseFormat(),
             ModelId = promptAgent.Model?.ModelNameHint,
             StopSequences = modelOptions?.StopSequences,
-            AllowMultipleToolCalls = modelOptions?.AllowMultipleToolCalls?.Eval(engine),
+            AllowMultipleToolCalls = modelOptions?.AllowMultipleToolCalls is { } allowMultipleToolCalls ? await allowMultipleToolCalls.EvalAsync(engine, cancellationToken: cancellationToken).ConfigureAwait(false) : default,
             ToolMode = modelOptions?.AsChatToolMode(),
             Tools = tools,
             AdditionalProperties = modelOptions?.GetAdditionalProperties(s_chatOptionProperties),

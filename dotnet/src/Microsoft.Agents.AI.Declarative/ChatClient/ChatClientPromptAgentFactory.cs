@@ -42,7 +42,7 @@ public sealed class ChatClientPromptAgentFactory : PromptAgentFactory
     }
 
     /// <inheritdoc/>
-    public override Task<AIAgent?> TryCreateAsync(GptComponentMetadata promptAgent, CancellationToken cancellationToken = default)
+    public override async Task<AIAgent?> TryCreateAsync(GptComponentMetadata promptAgent, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(promptAgent);
 
@@ -52,13 +52,13 @@ public sealed class ChatClientPromptAgentFactory : PromptAgentFactory
         {
             Name = promptAgent.Name,
             Description = promptAgent.Description,
-            ChatOptions = promptAgent.GetChatOptions(this.Engine, this._functions),
+            ChatOptions = await promptAgent.GetChatOptionsAsync(this.Engine, this._functions, cancellationToken: cancellationToken).ConfigureAwait(false),
         };
 
         var agent = new ChatClientAgent(this._chatClient, options, this._loggerFactory);
 
         Declarative.FeatureUsageMarker.MarkUsed();
-        return Task.FromResult<AIAgent?>(agent);
+        return agent;
     }
 
     #region private

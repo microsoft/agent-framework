@@ -170,11 +170,10 @@ public sealed class ChatClientAgentFactoryTests
         ChatClientPromptAgentFactory factory = new(this._mockChatClient.Object, configuration: configuration);
 
         // Act
-        var exception = await Assert.ThrowsAsync<AggregateException>(async () => await factory.TryCreateAsync(promptAgent));
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => await factory.TryCreateAsync(promptAgent));
 
         // Assert
-        var innerException = Assert.IsType<InvalidOperationException>(exception.InnerException);
-        Assert.Contains("Name isn't valid. 'Temperature' isn't recognized.", innerException.Message);
+        Assert.Contains("Name isn't valid. 'Temperature' isn't recognized.", exception.Message);
     }
 
     [Fact]
@@ -194,11 +193,10 @@ public sealed class ChatClientAgentFactoryTests
 
         // Act
         await factory.TryCreateAsync(promptAgent);
-        var exception = Assert.Throws<AggregateException>(() => factory.Evaluate("Temperature"));
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => await factory.EvaluateAsync("Temperature"));
 
         // Assert
-        var innerException = Assert.IsType<InvalidOperationException>(exception.InnerException);
-        Assert.Contains("Name isn't valid. 'Temperature' isn't recognized.", innerException.Message);
+        Assert.Contains("Name isn't valid. 'Temperature' isn't recognized.", exception.Message);
     }
 
     [Fact]
@@ -215,11 +213,10 @@ public sealed class ChatClientAgentFactoryTests
         CreateAsyncInspectingPromptAgentFactory factory = new(configuration, this._mockChatClient.Object);
 
         // Act
-        var exception = await Assert.ThrowsAsync<AggregateException>(async () => await factory.CreateAsync(promptAgent));
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => await factory.CreateAsync(promptAgent));
 
         // Assert
-        var innerException = Assert.IsType<InvalidOperationException>(exception.InnerException);
-        Assert.Contains("Name isn't valid. 'Temperature' isn't recognized.", innerException.Message);
+        Assert.Contains("Name isn't valid. 'Temperature' isn't recognized.", exception.Message);
     }
 
     [Fact]
@@ -240,7 +237,7 @@ public sealed class ChatClientAgentFactoryTests
         await factory.TryCreateAsync(promptAgent);
 
         // Assert
-        StringValue temperature = Assert.IsType<StringValue>(factory.Evaluate("Temperature"));
+        StringValue temperature = Assert.IsType<StringValue>(await factory.EvaluateAsync("Temperature"));
         Assert.Equal("0.9", temperature.Value);
         Assert.False(factory.CanEvaluate("TopP"));
     }
@@ -248,7 +245,7 @@ public sealed class ChatClientAgentFactoryTests
     private sealed class InspectingPromptAgentFactory(IConfiguration configuration, IEnumerable<string> allowedConfigurationVariables)
         : PromptAgentFactory(engine: null, configuration: configuration, allowedConfigurationVariables: allowedConfigurationVariables)
     {
-        public FormulaValue Evaluate(string expression) => this.Engine.Eval(expression);
+        public Task<FormulaValue> EvaluateAsync(string expression, CancellationToken cancellationToken = default) => this.Engine.EvalAsync(expression, cancellationToken);
 
         public bool CanEvaluate(string expression) => this.Engine.Check(expression).IsSuccess;
 
@@ -267,23 +264,23 @@ public sealed class ChatClientAgentFactoryTests
     {
         public string? TemperatureValue { get; private set; }
 
-        public override Task<AIAgent?> TryCreateAsync(GptComponentMetadata promptAgent, CancellationToken cancellationToken = default)
+        public override async Task<AIAgent?> TryCreateAsync(GptComponentMetadata promptAgent, CancellationToken cancellationToken = default)
         {
             // Arrange
-            StringValue temperature = Assert.IsType<StringValue>(this.Engine.Eval("Temperature"));
+            StringValue temperature = Assert.IsType<StringValue>(await this.Engine.EvalAsync("Temperature", cancellationToken));
 
             // Act
             this.TemperatureValue = temperature.Value;
 
             // Assert
-            return Task.FromResult<AIAgent?>(new ChatClientAgent(chatClient));
+            return new ChatClientAgent(chatClient);
         }
     }
 
     private sealed class LegacyInspectingPromptAgentFactory(IConfiguration configuration)
         : PromptAgentFactory(engine: null, configuration: configuration)
     {
-        public FormulaValue Evaluate(string expression) => this.Engine.Eval(expression);
+        public Task<FormulaValue> EvaluateAsync(string expression, CancellationToken cancellationToken = default) => this.Engine.EvalAsync(expression, cancellationToken);
 
         public override Task<AIAgent?> TryCreateAsync(GptComponentMetadata promptAgent, CancellationToken cancellationToken = default)
         {
