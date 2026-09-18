@@ -150,6 +150,46 @@ public class ExecutorCancellationTests
         timeout.Cancel();
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task ForeignCancellationRemainsFailureWhenRuntimeIsCancelledAsync(bool useReflection, bool useDefaultToken)
+    {
+        // Arrange
+        using CancellationTokenSource runtime = new();
+        using CancellationTokenSource foreign = new();
+        foreign.Cancel();
+        OperationCanceledException expected = new(useDefaultToken ? CancellationToken.None : foreign.Token);
+        async ValueTask CancelAsync(string message, IWorkflowContext context, CancellationToken cancellationToken)
+        {
+            await Task.Yield();
+            runtime.Cancel();
+            throw expected;
+        }
+
+        Executor executor = useReflection
+            ? new ReflectingHandler(CancelAsync)
+            : new FunctionExecutor<string>("foreign", CancelAsync);
+        TestWorkflowContext context = new(executor.Id);
+
+        // Act
+        TargetInvocationException exception = await Assert.ThrowsAsync<TargetInvocationException>(
+            () => executor.ExecuteCoreAsync("input", new(typeof(string)), context, runtime.Token).AsTask());
+
+        // Assert: preserve each routing path's existing failure shape.
+        if (useReflection)
+        {
+            Assert.Null(exception.InnerException);
+        }
+        else
+        {
+            Assert.Same(expected, exception.InnerException);
+        }
+
+        Assert.Contains(context.EmittedEvents, evt => evt is ExecutorFailedEvent);
+    }
     private sealed class ReflectingHandler(Func<string, IWorkflowContext, CancellationToken, ValueTask> handler)
         : ReflectingExecutor<ReflectingHandler>("reflecting"), IMessageHandler<string>
     {
