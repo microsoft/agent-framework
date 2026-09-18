@@ -21,12 +21,16 @@ JWT bearer validation before `builder.Build()` in `A2AServer/Program.cs`:
 ```csharp
 builder.Services.AddAuthentication("Bearer").AddJwtBearer(options =>
 {
+    options.MapInboundClaims = false;
     options.Authority = builder.Configuration["Auth:Authority"]
         ?? throw new InvalidOperationException("Auth:Authority is required.");
     options.Audience = builder.Configuration["Auth:Audience"]
         ?? throw new InvalidOperationException("Auth:Audience is required.");
 });
-builder.Services.AddAuthorization();
+builder.Services.AddAuthorizationBuilder()
+    .AddPolicy("InvokeAgent", policy => policy
+        .RequireAuthenticatedUser()
+        .RequireClaim("roles", "Agent.Invoke"));
 ```
 
 After building the app, replace the two protocol mappings with protected mappings:
@@ -34,29 +38,47 @@ After building the app, replace the two protocol mappings with protected mapping
 ```csharp
 app.UseAuthentication();
 app.UseAuthorization();
-app.MapA2AHttpJson(policyAgent, "/").RequireAuthorization();
-app.MapA2AJsonRpc(policyAgent, "/").RequireAuthorization();
+app.MapA2AHttpJson(policyAgent, "/").RequireAuthorization("InvokeAgent");
+app.MapA2AJsonRpc(policyAgent, "/").RequireAuthorization("InvokeAgent");
 ```
 
-Keep issuer, audience, signature, and lifetime validation enabled. Add authorization
-policies for the scopes or roles your service requires; authentication alone does
-not grant permission to perform every business operation. See the
+The `MapInboundClaims = false` setting keeps the `roles` claim's token name.
+Configure your identity provider to issue the
+`Agent.Invoke` application role to authorized callers. If your provider uses a
+different role claim or delegated scopes, adapt the named policy to that contract;
+space-delimited scope claims require checking individual scope values.
+Keep issuer, audience, signature, and lifetime validation enabled. The invocation
+policy does not grant permission to perform every business operation. See the
 [expense authorization sample](../AspNetAgentAuthorization/README.md) for endpoint
 policies and authorization inside tools.
 
 Decide separately whether the well-known agent card should be public. Publishing
 a card does not authorize invocation. If discovery is protected, its HTTP requests
 need authentication too. Advertise the actual security requirements in the agent
-card; card metadata does not configure ASP.NET Core enforcement.
+card; card metadata does not configure ASP.NET Core enforcement. To protect the
+card with the same policy, replace its mapping with:
+
+```csharp
+app.MapWellKnownAgentCard(policyAgentCard).RequireAuthorization("InvokeAgent");
+```
 
 For persisted sessions and tasks, also configure caller isolation as described in
-[the server setup](./A2AServer/Program.cs). Use a validated identity claim with an
+[the server setup](./A2AServer/Program.cs). Register the required HTTP context
+accessor before building the app:
+
+```csharp
+builder.Services.AddHttpContextAccessor();
+```
+
+With inbound claim mapping disabled, choose the actual token claim (for example,
+`sub`) in the isolation provider instead of a mapped `ClaimTypes.NameIdentifier`.
+Use a validated identity claim with an
 appropriate issuer/tenant boundary, not a caller-supplied context or task ID.
 
 ## Authenticate the calling agent
 
-For a public agent card and a protected invocation endpoint, supply an authenticated
-`HttpClient` to `GetAIAgentAsync` in `A2AClient/Program.cs`:
+For protected discovery and invocation, supply an authenticated `HttpClient` to
+both the resolver and `GetAIAgentAsync` in `A2AClient/Program.cs`:
 
 ```csharp
 using var handler = new HttpClientHandler { AllowAutoRedirect = false };
@@ -67,18 +89,19 @@ httpClient.DefaultRequestHeaders.Authorization =
         Environment.GetEnvironmentVariable("A2A_ACCESS_TOKEN")
             ?? throw new InvalidOperationException("A2A_ACCESS_TOKEN is required."));
 
+var agentCardResolver = new A2ACardResolver(new Uri(agentUrl), httpClient);
 AIAgent policyAgent = await agentCardResolver.GetAIAgentAsync(httpClient: httpClient);
 ```
 
-This replaces the existing `GetAIAgentAsync()` call. The token must be issued for
+This replaces both the existing resolver construction and `GetAIAgentAsync()`
+call. Define `agentUrl` from `A2A_AGENT_URL` as in the sample. The token must be issued for
 the A2A host's audience. Use HTTPS and a trusted, configured agent-card origin;
 verify advertised service URLs before sending credentials to them. This example
 uses one token for one console user. It does not acquire or refresh tokens.
 
-The resolver fetches the card before constructing the agent. The `httpClient`
-argument above configures agent invocation, not the resolver's discovery request.
-For protected discovery, configure authentication on the resolver's HTTP client
-as well, using the A2A SDK's resolver configuration.
+The resolver fetches the card before constructing the agent. Passing the client
+to both the resolver constructor and `GetAIAgentAsync` authenticates discovery
+and invocation. Supplying it only to `GetAIAgentAsync` leaves discovery unauthenticated.
 
 In a multi-user host, acquire a token for the current caller and destination through
 your identity library and attach it to each outgoing request. Do not mutate shared
