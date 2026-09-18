@@ -935,6 +935,7 @@ class TestWorkflowAgent:
         assert updates[-1].finish_reason == "length"
         assert updates[-1].continuation_token == {"token": "response-resume-token"}
         assert updates[-1].additional_properties == {"provider_marker": "preserve-response"}
+        assert final_response.agent_id == "source-agent"
         assert final_response.finish_reason == "length"
         assert final_response.continuation_token == {"token": "response-resume-token"}
         assert final_response.additional_properties == {"provider_marker": "preserve-response"}
