@@ -344,9 +344,7 @@ class AgentExecutor(Executor):
         """Release an agent-owned user-input request after workflow cancellation."""
         cancelled_request = self._pending_agent_requests.pop(request_id, None)
         if cancelled_request is not None and cancelled_request.type == "function_approval_request":
-            self._pending_responses_to_agent.append(
-                cancelled_request.to_function_approval_response(approved=False)
-            )
+            self._pending_responses_to_agent.append(cancelled_request.to_function_approval_response(approved=False))
         elif (
             cancelled_request is not None
             and cancelled_request.type == "function_call"

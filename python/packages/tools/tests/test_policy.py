@@ -1,5 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import re
+import time
+
 from agent_framework_tools.shell import ShellDecision, ShellPolicy, ShellRequest
 
 # Representative destructive-rm patterns used to exercise the deny-list
@@ -77,3 +80,43 @@ def test_custom_override_can_deny_allowed_command() -> None:
     policy = ShellPolicy(custom=veto)
     assert _decide(policy, "echo hello").decision == "allow"
     assert _decide(policy, "cat my_secret.env").decision == "deny"
+
+
+# A pattern that backtracks catastrophically, plus a command it cannot match. An operator
+# could plausibly write something this shape while trying to match a spaced-out command
+# line; the model then only has to supply the subject to stall the match.
+_REDOS_PATTERN = r"(a|a)*$"
+_REDOS_COMMAND = "a" * 26 + "!"
+
+
+def test_denylist_pattern_timeout_denies() -> None:
+    """A denylist pattern that cannot be evaluated in time must fail closed."""
+    policy = ShellPolicy(denylist=[_REDOS_PATTERN])
+
+    started = time.monotonic()
+    decision = _decide(policy, _REDOS_COMMAND)
+    elapsed = time.monotonic() - started
+
+    assert decision.decision == "deny"
+    assert "could not be evaluated in time" in decision.reason
+    assert elapsed < 5.0, f"policy evaluation overran: {elapsed:.2f}s"
+
+
+def test_allowlist_pattern_timeout_does_not_grant_access() -> None:
+    """An allowlist pattern that times out must not be what grants permission."""
+    policy = ShellPolicy(allowlist=[_REDOS_PATTERN])
+
+    started = time.monotonic()
+    decision = _decide(policy, _REDOS_COMMAND)
+    elapsed = time.monotonic() - started
+
+    assert decision.decision == "deny"
+    assert "does not match allowlist" in decision.reason
+    assert elapsed < 5.0, f"policy evaluation overran: {elapsed:.2f}s"
+
+
+def test_precompiled_re_pattern_still_supported() -> None:
+    """Handing over an already-compiled ``re`` pattern keeps working."""
+    policy = ShellPolicy(denylist=[re.compile(r"^ssh\b", re.IGNORECASE)])
+    assert _decide(policy, "ssh host").decision == "deny"
+    assert _decide(policy, "ls").decision == "allow"

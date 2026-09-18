@@ -3061,9 +3061,7 @@ def _stage_approval_batch_responses(
         if any(request_id not in stored_responses for request_id in group_ids):
             updated_group = dict(group)
             updated_group[_APPROVAL_RESPONSES_KEY] = [
-                stored_responses[request_id].to_dict()
-                for request_id in group_ids
-                if request_id in stored_responses
+                stored_responses[request_id].to_dict() for request_id in group_ids if request_id in stored_responses
             ]
             remaining_groups.append(updated_group)
             missing_request_ids = [request_id for request_id in group_ids if request_id not in stored_responses]

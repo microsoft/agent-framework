@@ -1658,9 +1658,9 @@ async def test_sequential_approval_replay_waits_for_the_complete_batch(
     )
 
     assert execution_order == []
-    assert [
-        _function_call(request).name for request in _approval_requests(partial_response.messages)
-    ] == ["first_write"]
+    assert [_function_call(request).name for request in _approval_requests(partial_response.messages)] == [
+        "first_write"
+    ]
 
     repeated_partial_response = await agent.run(
         requests[1].to_function_approval_response(approved=True),

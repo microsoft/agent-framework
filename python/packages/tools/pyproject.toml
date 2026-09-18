@@ -28,6 +28,7 @@ dependencies = [
     # may survive timeout on Windows" and "they don't" — a security-relevant
     # property, not an optional one.
     "psutil>=5.9",
+    "regex>=2024.11.6",
 ]
 
 [tool.uv]
