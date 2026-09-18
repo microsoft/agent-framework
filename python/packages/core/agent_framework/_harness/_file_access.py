@@ -1098,10 +1098,7 @@ class FileSystemAgentFileStore(AgentFileStore):
     hostile process that shares the root directory.
     """
 
-    _DELETE_LOCK_STRIPE_COUNT: ClassVar[int] = 64
-    _DELETE_LOCKS: ClassVar[tuple[threading.Lock, ...]] = tuple(
-        threading.Lock() for _ in range(_DELETE_LOCK_STRIPE_COUNT)
-    )
+    _DELETE_LOCK: ClassVar[threading.Lock] = threading.Lock()
 
     def __init__(self, root_directory: str | os.PathLike[str]) -> None:
         """Initialize the file-system store.
@@ -1291,13 +1288,8 @@ class FileSystemAgentFileStore(AgentFileStore):
         return await asyncio.to_thread(self._delete_file_sync, full_path)
 
     @classmethod
-    def _delete_lock(cls, full_path: Path) -> threading.Lock:
-        """Return the process-local deletion lock for a file."""
-        return cls._DELETE_LOCKS[hash(full_path) % cls._DELETE_LOCK_STRIPE_COUNT]
-
-    @classmethod
     def _delete_file_sync(cls, full_path: Path) -> bool:
-        with cls._delete_lock(full_path):
+        with cls._DELETE_LOCK:
             if not full_path.is_file():
                 return False
             try:

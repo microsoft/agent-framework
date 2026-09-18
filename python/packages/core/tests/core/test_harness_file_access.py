@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json
 import os
 import re
@@ -289,13 +290,14 @@ async def test_filesystem_store_round_trips_files(tmp_path: Path) -> None:
     assert await store.delete("nested/a.txt") is False
 
 
-async def test_filesystem_store_concurrent_delete(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Concurrent deletion should report one deletion and one missing file."""
-    store = FileSystemAgentFileStore(tmp_path)
-    other_store = FileSystemAgentFileStore(tmp_path)
-    await store.write("shared.txt", "content")
-
-    file_path = (tmp_path / "shared.txt").resolve()
+async def _run_deterministic_concurrent_deletes(
+    store: FileSystemAgentFileStore,
+    other_store: FileSystemAgentFileStore,
+    first_path: str,
+    second_path: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[bool, bool]:
+    target_paths = {store._resolve_safe_path(first_path), other_store._resolve_safe_path(second_path)}
     original_to_thread = asyncio.to_thread
     original_unlink = Path.unlink
     worker_barrier = threading.Barrier(2)
@@ -312,7 +314,7 @@ async def test_filesystem_store_concurrent_delete(tmp_path: Path, monkeypatch: p
 
     def macos_style_unlink(path: Path, missing_ok: bool = False) -> None:
         nonlocal overlapping_delete_completed
-        if path.resolve() != file_path:
+        if path not in target_paths:
             original_unlink(path, missing_ok=missing_ok)
             return
 
@@ -330,8 +332,53 @@ async def test_filesystem_store_concurrent_delete(tmp_path: Path, monkeypatch: p
 
     monkeypatch.setattr(asyncio, "to_thread", synchronized_to_thread)
     monkeypatch.setattr(Path, "unlink", macos_style_unlink)
+    return await asyncio.gather(store.delete(first_path), other_store.delete(second_path))
 
-    results = await asyncio.gather(store.delete("shared.txt"), other_store.delete("shared.txt"))
+
+async def test_filesystem_store_concurrent_delete(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Concurrent deletion should report one deletion and one missing file."""
+    store = FileSystemAgentFileStore(tmp_path)
+    other_store = FileSystemAgentFileStore(tmp_path)
+    await store.write("shared.txt", "content")
+
+    results = await _run_deterministic_concurrent_deletes(store, other_store, "shared.txt", "shared.txt", monkeypatch)
+
+    assert sorted(results) == [False, True]
+
+
+async def test_filesystem_store_concurrent_delete_case_aliases(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Concurrent deletion through case aliases should report one deletion."""
+    store = FileSystemAgentFileStore(tmp_path)
+    other_store = FileSystemAgentFileStore(tmp_path)
+    original_name = "Shared.txt"
+    await store.write(original_name, "content")
+
+    original_path = store._resolve_safe_path(original_name)
+    lower_path = tmp_path / original_name.lower()
+    if not await asyncio.to_thread(lower_path.exists) or not await asyncio.to_thread(
+        os.path.samefile, original_path, lower_path
+    ):
+        pytest.skip("filesystem does not treat ASCII case variants as aliases")
+
+    # Choose a case alias with opposite hash parity so the regression
+    # deterministically exercises the former path-hash-keyed synchronization bug
+    # without depending on this interpreter's randomized hash values.
+    alias_name = next(
+        (
+            candidate_name
+            for characters in itertools.product(*[
+                (character.lower(), character.upper()) for character in original_name
+            ])
+            if (candidate_name := "".join(characters)) != original_name
+            and hash(store._resolve_safe_path(candidate_name)) % 2 != hash(original_path) % 2
+        ),
+        None,
+    )
+    assert alias_name is not None
+    alias_path = other_store._resolve_safe_path(alias_name)
+    assert await asyncio.to_thread(os.path.samefile, original_path, alias_path)
+
+    results = await _run_deterministic_concurrent_deletes(store, other_store, original_name, alias_name, monkeypatch)
 
     assert sorted(results) == [False, True]
 
