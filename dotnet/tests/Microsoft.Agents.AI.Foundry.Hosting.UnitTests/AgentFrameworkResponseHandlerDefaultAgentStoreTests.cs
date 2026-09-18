@@ -265,7 +265,13 @@ public class AgentFrameworkResponseHandlerDefaultAgentStoreTests
         services.AddScoped<AIAgent>(_ => new NamedTestAgent(DefaultAgentName));
         services.AddSingleton<AgentSessionStore>(nonKeyedStore);
 
-        var handler = CreateHandler(services, new ServiceProviderOptions { ValidateScopes = true });
+        var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
+
+        // The scenario only exists while the default agent genuinely cannot be resolved from the root provider, so
+        // assert that precondition here rather than trusting the registrations above to keep producing it.
+        _ = Assert.Throws<InvalidOperationException>(() => provider.GetService<AIAgent>());
+
+        var handler = CreateHandler(provider);
 
         // Act
         await RunRequestAsync(handler, requestedAgentName: OtherAgentName);
@@ -299,6 +305,53 @@ public class AgentFrameworkResponseHandlerDefaultAgentStoreTests
         // Assert
         Assert.True(nonKeyedStore.WasUsed);
         Assert.False(keyedStore.WasUsed);
+    }
+
+    [Fact]
+    public async Task CreateAsync_NamelessRequestWhenKeyedAgentFactoryThrowsOnce_UsesKeyedStoreOnRetryAsync()
+    {
+        // Arrange
+        var keyedStore = new RecordingSessionStore();
+        var nonKeyedStore = new RecordingSessionStore();
+        var agent = new NamedTestAgent(DefaultAgentName);
+        var calls = 0;
+
+        var services = CreateServices();
+
+        // The keyed registration faults the first time its factory runs and hands back the default agent itself on
+        // every later call, so the alias is only observable from the second request onwards. A probe that threw is
+        // deliberately not remembered as a proven non-alias, so that second request probes again rather than being
+        // answered from the cache.
+        services.AddKeyedTransient<AIAgent>(DefaultAgentName, (_, _) =>
+        {
+            if (++calls == 1)
+            {
+                throw new InvalidOperationException("boom");
+            }
+
+            return agent;
+        });
+
+        // The non-keyed default carries the forwarding shape AsDefault() produces, written as a descriptor whose
+        // factory returns the captured instance.
+        services.Add(new ServiceDescriptor(typeof(AIAgent), _ => agent, ServiceLifetime.Singleton));
+        services.AddKeyedSingleton<AgentSessionStore>(DefaultAgentName, keyedStore);
+        services.AddSingleton<AgentSessionStore>(nonKeyedStore);
+
+        var handler = CreateHandler(services);
+
+        // Act
+        await RunRequestAsync(handler, requestedAgentName: null);
+
+        // Assert
+        Assert.True(nonKeyedStore.WasUsed);
+        Assert.False(keyedStore.WasUsed);
+
+        // Act: the second request re-runs the probe, which now succeeds and proves the alias.
+        await RunRequestAsync(handler, requestedAgentName: null);
+
+        // Assert
+        Assert.True(keyedStore.WasUsed);
     }
 
     private static AgentFrameworkResponseHandler CreateHandler(RecordingSessionStore? keyedStore, RecordingSessionStore? nonKeyedStore)
@@ -344,7 +397,10 @@ public class AgentFrameworkResponseHandlerDefaultAgentStoreTests
     }
 
     private static AgentFrameworkResponseHandler CreateHandler(IServiceCollection services, ServiceProviderOptions? options = null)
-        => new(services.BuildServiceProvider(options ?? new ServiceProviderOptions()), NullLogger<AgentFrameworkResponseHandler>.Instance);
+        => CreateHandler(services.BuildServiceProvider(options ?? new ServiceProviderOptions()));
+
+    private static AgentFrameworkResponseHandler CreateHandler(IServiceProvider provider)
+        => new(provider, NullLogger<AgentFrameworkResponseHandler>.Instance);
 
     private static async Task RunRequestAsync(AgentFrameworkResponseHandler handler, string? requestedAgentName)
     {
