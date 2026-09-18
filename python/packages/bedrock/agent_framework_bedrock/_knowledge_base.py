@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Annotated, Any
 
 from agent_framework import FunctionTool
@@ -84,6 +85,49 @@ def _extract_content_text(result: dict[str, Any]) -> str:
         return "\n".join(rendered)
     # TEXT (and IMAGE, which exposes its caption/text in the same field when present)
     return content.get("text", "")
+
+
+@dataclass
+class _KnowledgeBasePassage:
+    """A single normalized passage from a standard Bedrock ``Retrieve`` response.
+
+    Shared representation so the tool and the context provider extract content,
+    source, and score in exactly one place. ``score`` is the numeric relevance
+    score standard ``Retrieve`` returns per chunk (agentic results have none).
+    """
+
+    content: str
+    source: str
+    score: float
+
+
+def _retrieve_standard_passages(
+    client: BaseClient,
+    knowledge_base_id: str,
+    query: str,
+    number_of_results: int,
+) -> list[_KnowledgeBasePassage]:
+    """Run the standard ``Retrieve`` API and normalize the results.
+
+    Single source of truth for the standard-retrieval request shape
+    (``managedSearchConfiguration``) and response normalization, so retrieval
+    options or SDK response changes are updated in one place. Callers format the
+    passages (the tool) or filter by score and frame them as context (the
+    provider) without duplicating the request or the extraction.
+    """
+    response = client.retrieve(
+        knowledgeBaseId=knowledge_base_id,
+        retrievalQuery={"text": query},
+        retrievalConfiguration={"managedSearchConfiguration": {"numberOfResults": number_of_results}},
+    )
+    return [
+        _KnowledgeBasePassage(
+            content=_extract_content_text(r),
+            source=_get_source_uri(r),
+            score=r.get("score", 0),
+        )
+        for r in response.get("retrievalResults", [])
+    ]
 
 
 class _BedrockKBQueryInput(BaseModel):
@@ -217,19 +261,10 @@ class BedrockKnowledgeBaseTool(FunctionTool):
 
     def _standard_retrieve(self, query: str) -> list[dict[str, Any]]:
         """Use standard Retrieve API with managed search configuration."""
-        response = self._client.retrieve(
-            knowledgeBaseId=self.knowledge_base_id,
-            retrievalQuery={"text": query},
-            retrievalConfiguration={"managedSearchConfiguration": {"numberOfResults": self.number_of_results}},
+        passages = _retrieve_standard_passages(
+            self._client, self.knowledge_base_id, query, self.number_of_results
         )
-        results = []
-        for r in response.get("retrievalResults", []):
-            results.append({
-                "content": _extract_content_text(r),
-                "source": _get_source_uri(r),
-                "score": r.get("score", 0),
-            })
-        return results
+        return [{"content": p.content, "source": p.source, "score": p.score} for p in passages]
 
     @staticmethod
     def _format_results(results: list[dict[str, Any]]) -> str:

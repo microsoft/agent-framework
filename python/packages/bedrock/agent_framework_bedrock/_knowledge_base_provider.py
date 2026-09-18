@@ -28,7 +28,7 @@ except ImportError as e:
     ) from e
 
 from ._feature_usage import FeatureIndex
-from ._knowledge_base import _extract_content_text, _get_source_uri
+from ._knowledge_base import _retrieve_standard_passages
 
 logger = logging.getLogger("agent_framework.bedrock")
 
@@ -141,20 +141,16 @@ class BedrockKnowledgeBaseProvider(ContextProvider):
 
     async def _retrieve(self, query: str) -> str:
         """Retrieve and format context from the knowledge base."""
-        response = await asyncio.to_thread(
-            lambda: self._client.retrieve(
-                knowledgeBaseId=self.knowledge_base_id,
-                retrievalQuery={"text": query},
-                retrievalConfiguration={"managedSearchConfiguration": {"numberOfResults": self.number_of_results}},
-            )
+        passages = await asyncio.to_thread(
+            _retrieve_standard_passages,
+            self._client,
+            self.knowledge_base_id,
+            query,
+            self.number_of_results,
         )
-
-        passages = []
-        for r in response.get("retrievalResults", []):
-            score = r.get("score", 0)
-            if score >= self.min_score:
-                content = _extract_content_text(r)
-                source = _get_source_uri(r)
-                passages.append(f"[Source: {source}]\n{content}")
-
-        return "\n\n---\n\n".join(passages) if passages else ""
+        framed = [
+            f"[Source: {p.source}]\n{p.content}"
+            for p in passages
+            if p.score >= self.min_score
+        ]
+        return "\n\n---\n\n".join(framed) if framed else ""
