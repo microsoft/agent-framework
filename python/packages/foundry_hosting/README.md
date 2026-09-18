@@ -5,7 +5,8 @@ This package provides the integration of Agent Framework agents and workflows wi
 ## Agent instances and factories
 
 `ResponsesHostServer` and `InvocationsHostServer` accept an agent instance or a zero-argument callable through the
-existing `agent` parameter. The callable may be synchronous or asynchronous and is invoked once for each request:
+existing `agent` parameter. The callable may be synchronous or asynchronous, must return an object implementing
+`SupportsAgentRun`, and is invoked once for each request:
 
 ```python
 server = ResponsesHostServer(agent=create_agent)

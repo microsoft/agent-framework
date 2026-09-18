@@ -18,8 +18,7 @@ See [main.py](main.py) for the full implementation.
 
 The workflow is exposed as an agent via `.as_agent()` and hosted using the
 [Agent Framework](https://github.com/microsoft/agent-framework) with `ResponsesHostServer`. The host receives a
-callable that builds a fresh workflow, executors, and agents for each request while reusing the application-owned
-`FoundryChatClient`.
+callable that builds a fresh `FoundryChatClient`, workflow, executors, and agents for each request.
 
 ## Running the Agent Host
 
