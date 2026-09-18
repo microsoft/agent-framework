@@ -1,0 +1,38 @@
+﻿#
+# This workflow has three discrete actions so each runs in a distinct
+# superstep, making the checkpoint progression easy to follow.
+#
+# 1. SetVariable: capture the user input
+# 2. InvokeAzureAgent: greet the user via an Azure agent (autoSend on)
+# 3. SendActivity: emit a closing message
+#
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: workflow_aot_demo
+  actions:
+
+    # Capture the user's input
+    - kind: SetVariable
+      id: set_input
+      variable: Local.UserInput
+      value: =System.LastMessage.Text
+
+    # Invoke the greeting agent and stream the response to the user
+    - kind: InvokeAzureAgent
+      id: invoke_greeter
+      conversationId: =System.ConversationId
+      agent:
+        name: GreeterAgent
+      input:
+        messages: =Local.UserInput
+      output:
+        messages: Local.GreeterResponse
+        autoSend: true
+
+    # Emit a closing activity so there is a clear final superstep
+    - kind: SendActivity
+      id: send_summary
+      activity: |-
+        [Sample] Workflow completed. Checkpoints persisted to disk.

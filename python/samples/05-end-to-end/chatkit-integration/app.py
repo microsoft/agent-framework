@@ -1,6 +1,8 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
+#     "agent-framework-chatkit",
+#     "agent-framework-foundry",
 #     "fastapi",
 #     "uvicorn",
 # ]
@@ -41,7 +43,7 @@ from azure.identity import AzureCliCredential
 # ChatKit imports
 from chatkit.actions import Action
 from chatkit.server import ChatKitServer
-from chatkit.store import StoreItemType, default_generate_id
+from chatkit.store import NotFoundError, StoreItemType, default_generate_id
 from chatkit.types import (
     ThreadItem,
     ThreadItemDoneEvent,
@@ -588,20 +590,30 @@ async def upload_file(attachment_id: str, file: UploadFile = File(...)):  # noqa
     logger.info(f"Receiving file upload for attachment: {attachment_id}")
 
     try:
+        file_path = attachment_store.get_file_path(attachment_id)
+    except ValueError:
+        logger.warning(f"Rejected invalid attachment ID: {attachment_id!r}")
+        return JSONResponse(status_code=400, content={"error": "Invalid attachment ID."})
+
+    try:
+        attachment = await data_store.load_attachment(attachment_id, {"user_id": DEFAULT_USER_ID})
+    except NotFoundError:
+        return JSONResponse(status_code=404, content={"error": "Attachment not found."})
+
+    if attachment.upload_descriptor is None:
+        return JSONResponse(status_code=409, content={"error": "Attachment upload is already complete."})
+
+    try:
         # Read file contents
         contents = await file.read()
 
         # Save to disk
-        file_path = attachment_store.get_file_path(attachment_id)
-        file_path.write_bytes(contents)
+        file_path.write_bytes(contents)  # CodeQL [SM01305] Path is constrained by get_file_path.
 
         logger.info(f"Saved {len(contents)} bytes to {file_path}")
 
-        # Load the attachment metadata from the data store
-        attachment = await data_store.load_attachment(attachment_id, {"user_id": DEFAULT_USER_ID})
-
-        # Clear the upload_url since upload is complete
-        attachment.upload_url = None
+        # Clear the upload descriptor since upload is complete
+        attachment.upload_descriptor = None
 
         # Save the updated attachment back to the store
         await data_store.save_attachment(attachment, {"user_id": DEFAULT_USER_ID})
@@ -625,20 +637,20 @@ async def preview_image(attachment_id: str):
 
     try:
         file_path = attachment_store.get_file_path(attachment_id)
+    except ValueError:
+        logger.warning(f"Rejected invalid attachment ID: {attachment_id!r}")
+        return JSONResponse(status_code=400, content={"error": "Invalid attachment ID."})
 
-        if not file_path.exists():
+    try:
+        attachment = await data_store.load_attachment(attachment_id, {"user_id": DEFAULT_USER_ID})
+    except NotFoundError:
+        return JSONResponse(status_code=404, content={"error": "Attachment not found."})
+
+    try:
+        if not file_path.exists():  # CodeQL [SM01305] Path is constrained by get_file_path.
             return JSONResponse(status_code=404, content={"error": "File not found"})
 
-        # Determine media type from file extension or attachment metadata
-        # For simplicity, we'll try to load from the store
-        try:
-            attachment = await data_store.load_attachment(attachment_id, {"user_id": DEFAULT_USER_ID})
-            media_type = attachment.mime_type
-        except Exception:
-            # Default to binary if we can't determine
-            media_type = "application/octet-stream"
-
-        return FileResponse(file_path, media_type=media_type)
+        return FileResponse(file_path, media_type=attachment.mime_type)  # CodeQL [SM01305] Path is constrained by get_file_path.  # fmt: skip
 
     except Exception as e:
         logger.error(f"Error serving preview for attachment {attachment_id}: {e}", exc_info=True)

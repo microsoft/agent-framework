@@ -34,7 +34,7 @@ When to use Agent(client=workflow,):
 - To maintain a consistent agent interface for callers
 
 Prerequisites:
-- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_PROJECT_ENDPOINT must be your Microsoft Foundry Agent Service (V2) project endpoint.
 - FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 """
 
@@ -140,7 +140,7 @@ async def main() -> None:
     print("\n===== Streaming Response =====")
     async for update in workflow_agent.run(
         "Please get my user data and then call the users API endpoint.",
-        additional_function_arguments={"custom_data": custom_data, "user_token": user_token},
+        function_invocation_kwargs={"custom_data": custom_data, "user_token": user_token},
         stream=True,
     ):
         if update.text:

@@ -3,15 +3,17 @@
 import asyncio
 import json
 import os
-
-# Uncomment this filter to suppress the experimental Skills warning before
-# using the sample's Skills APIs.
-# import warnings  # isort: skip
-# warnings.filterwarnings("ignore", message=r"\[SKILLS\].*", category=FutureWarning)
 from textwrap import dedent
 from typing import Any
 
-from agent_framework import Agent, InlineSkill, InlineSkillResource, SkillFrontmatter, SkillsProvider
+from agent_framework import (
+    Agent,
+    InlineSkill,
+    InlineSkillResource,
+    SkillFrontmatter,
+    SkillsProvider,
+    ToolApprovalMiddleware,
+)
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -35,6 +37,14 @@ using a unit-converter skill:
 3. Dynamic Scripts
    Attach a callable script via the @skill.script decorator. Scripts are
    executable functions the agent can invoke directly in-process.
+
+Resources and scripts that accept ``**kwargs`` also receive host-supplied
+runtime context from ``agent.run(..., function_invocation_kwargs={...})``.
+This sample passes ``precision`` that way. Scripts additionally receive the
+model-supplied nested ``args`` dictionary: declared parameters bind by name,
+and extra entries can enter the callback's ``**kwargs``. Unlike resource
+callbacks, script callbacks therefore do not have a runtime-only ``**kwargs``
+mapping.
 
 Code-defined skills can be combined with file-based skills in a single
 SkillsProvider — see the mixed_skills sample.
@@ -93,12 +103,23 @@ def conversion_policy(**kwargs: Any) -> Any:
     When the resource function accepts ``**kwargs``, runtime keyword
     arguments passed to ``agent.run()`` are forwarded automatically.
 
+    These runtime values are *host-controlled request context*: they come only
+    from the application calling ``agent.run()``, never from the model. That
+    distinction matters for values that select authority — a tenant ID, a user
+    ID, or an auth token — so this resource treats a missing ``precision`` as a
+    bug rather than silently falling back to a default and masking it.
+
     Args:
         **kwargs: Runtime keyword arguments from ``agent.run()``.
             For example, ``agent.run(..., function_invocation_kwargs={"precision": 2})``
             makes ``kwargs["precision"]`` available here.
     """
-    precision = kwargs.get("precision", 4)
+    if "precision" not in kwargs:
+        raise RuntimeError(
+            "Expected host-supplied 'precision' in runtime kwargs. Runtime context must reach "
+            "resources via agent.run(function_invocation_kwargs=...)."
+        )
+    precision = kwargs["precision"]
     return dedent(f"""\
         # Conversion Policy
 
@@ -117,17 +138,27 @@ def convert_units(value: float, factor: float, **kwargs: Any) -> str:
     The caller looks up the correct factor from the conversion-tables
     resource and passes it here.
 
+    The model supplies ``value`` and ``factor`` through the script's nested
+    ``args`` dictionary, while ``main()`` supplies ``precision`` through
+    ``function_invocation_kwargs``. Both dictionaries are expanded into this
+    callback, so additional nested ``args`` entries can also enter ``**kwargs``.
+    Checking for ``precision`` below verifies its presence, not its source.
+
     Args:
         value: The numeric value to convert.
         factor: Conversion factor from the conversion table.
-        **kwargs: Runtime keyword arguments from ``agent.run()``.
-            The ``precision`` kwarg controls how many decimal places
-            the result is rounded to (default 4).
+        **kwargs: Runtime keyword arguments from ``agent.run()`` and any extra
+            entries in the script's nested ``args`` dictionary. The ``precision``
+            kwarg controls how many decimal places the result is rounded to.
 
     Returns:
         JSON string with the inputs and converted result.
     """
-    precision = kwargs.get("precision", 4)
+    if "precision" not in kwargs:
+        raise RuntimeError(
+            "This sample requires 'precision'. main() supplies it through agent.run(function_invocation_kwargs=...)."
+        )
+    precision = kwargs["precision"]
     result = round(value * factor, precision)
     return json.dumps({"value": value, "factor": factor, "result": result})
 
@@ -144,16 +175,22 @@ async def main() -> None:
     )
 
     # Create the skills provider with the code-defined skill and pass it to the agent
+    # All skill tools require approval by default; auto-approve them so the
+    # sample runs unattended. See the script_approval / skills_auto_approval
+    # samples for interactive and selective approval handling.
     async with Agent(
         client=client,
         instructions="You are a helpful assistant that can convert units.",
         context_providers=[SkillsProvider(unit_converter_skill)],
+        middleware=[ToolApprovalMiddleware(auto_approval_rules=[SkillsProvider.all_tools_auto_approval_rule])],
     ) as agent:
         print("Converting units")
         print("-" * 60)
+        session = agent.create_session()
         response = await agent.run(
             "How many kilometers is a marathon (26.2 miles)? And how many pounds is 75 kilograms?",
             function_invocation_kwargs={"precision": 2},
+            session=session,
         )
         print(f"Agent: {response}\n")
 

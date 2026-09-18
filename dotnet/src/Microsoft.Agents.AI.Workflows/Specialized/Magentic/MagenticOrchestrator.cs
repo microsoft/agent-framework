@@ -77,7 +77,9 @@ public sealed class MagenticProgressLedgerUpdatedEvent(MagenticProgressLedger pr
 /// <param name="team"></param>
 /// <param name="limits"></param>
 /// <param name="requirePlanSignoff"></param>
-internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, TaskLimits limits, bool requirePlanSignoff)
+/// <param name="responseLanguage"></param>
+/// <param name="promptOverrides"></param>
+internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, TaskLimits limits, bool requirePlanSignoff, string? responseLanguage = null, MagenticPromptOverrides? promptOverrides = null)
     : ChatProtocolExecutor(nameof(MagenticOrchestrator), s_options, declareCrossRunShareable: false)
 {
     private readonly MagenticManager _manager = new(managerAgent);
@@ -191,7 +193,7 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
         if (this._taskContext == null)
         {
             // First Turn: Initialize the task context and create the initial plan
-            this._taskContext = new(messages, team, limits, emitEvents, []);
+            this._taskContext = new(messages, team, limits, emitEvents, []) { ResponseLanguage = responseLanguage, PromptOverrides = promptOverrides };
             await this.UpdatePlanAndDelegateAsync(this._taskContext, context, cancellationToken).ConfigureAwait(false);
         }
         else
@@ -384,7 +386,13 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
 
             if (state != null)
             {
-                this._taskContext = new MagenticTaskContext(state, team, limits, []);
+                // ResponseLanguage and PromptOverrides are build-time configuration supplied by the builder, so they
+                // are re-applied here rather than restored from the checkpoint state.
+                this._taskContext = new MagenticTaskContext(state, team, limits, [])
+                {
+                    ResponseLanguage = responseLanguage,
+                    PromptOverrides = promptOverrides,
+                };
             }
         }
 

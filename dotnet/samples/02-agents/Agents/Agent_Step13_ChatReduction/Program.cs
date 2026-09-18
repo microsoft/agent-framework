@@ -1,30 +1,37 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample shows how to use a chat history reducer to keep the context within model size limits.
-// Any implementation of Microsoft.Extensions.AI.IChatReducer can be used to customize how the chat history is reduced.
-// NOTE: this feature is only supported where the chat history is stored locally, such as with OpenAI Chat Completion.
-// Where the chat history is stored server side, such as with Microsoft Foundry Agents, the service must manage the chat history size.
+// Chat Reduction — Keep conversation context within model limits
+//
+// This sample shows how to use a chat history reducer to keep the context
+// within model size limits. Any IChatReducer implementation can customize
+// how the chat history is reduced.
+// NOTE: This feature is only supported where chat history is stored locally
+// (e.g. OpenAI Chat Completion). For server-side history (e.g. Foundry Agents),
+// the service manages chat history size.
 
-using Azure.AI.OpenAI;
+using Azure.AI.Extensions.OpenAI;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using OpenAI.Chat;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
+var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
 
 // Construct the agent, and provide a factory to create an in-memory chat message store with a reducer that keeps only the last 2 non-system messages.
+// You must dissable client side conversation storage for clients that support it.
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-AIAgent agent = new AzureOpenAIClient(
+AIAgent agent = new AIProjectClient(
     new Uri(endpoint),
     new DefaultAzureCredential())
-    .GetChatClient(deploymentName)
+    .GetProjectOpenAIClient()
+    .GetProjectResponsesClient()
+    .AsIChatClientWithStoredOutputDisabled(deploymentName)
     .AsAIAgent(new ChatClientAgentOptions
     {
-        ChatOptions = new() { Instructions = "You are good at telling jokes." },
+        ChatOptions = new() { ModelId = deploymentName, Instructions = "You are good at telling jokes." },
         Name = "Joker",
         ChatHistoryProvider = new InMemoryChatHistoryProvider(new() { ChatReducer = new MessageCountingChatReducer(2) })
     });

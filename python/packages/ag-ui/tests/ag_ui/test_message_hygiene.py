@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from typing import Any
+
 from agent_framework import Content, Message
 
 from agent_framework_ag_ui._message_adapters import _deduplicate_messages, _sanitize_tool_history
@@ -276,7 +278,7 @@ def test_clean_resolved_approvals_from_snapshot() -> None:
     from agent_framework_ag_ui._agent_run import _clean_resolved_approvals_from_snapshot
 
     # Snapshot still has the approval payload
-    snapshot_messages = [
+    snapshot_messages: list[dict[str, Any]] = [  # type: ignore[name-defined]
         {"role": "user", "content": "What time is it?", "id": "msg_1"},
         {
             "role": "assistant",
@@ -318,7 +320,7 @@ def test_clean_resolved_approvals_from_snapshot_no_approvals() -> None:
     """When there are no approval payloads, snapshot should be unchanged."""
     from agent_framework_ag_ui._agent_run import _clean_resolved_approvals_from_snapshot  # type: ignore
 
-    snapshot_messages = [
+    snapshot_messages: list[dict[str, Any]] = [  # type: ignore[name-defined]
         {"role": "user", "content": "Hello", "id": "msg_1"},
         {"role": "assistant", "content": "Hi there", "id": "msg_2"},
     ]
@@ -349,7 +351,7 @@ def test_cleaned_snapshot_prevents_approval_reprocessing() -> None:
     from agent_framework_ag_ui._message_adapters import normalize_agui_input_messages
 
     # Turn 2 snapshot: still has the raw approval payload
-    snapshot_messages = [
+    snapshot_messages: list[dict[str, Any]] = [  # type: ignore[name-defined]
         {"role": "user", "content": "What time is it?", "id": "msg_1"},
         {
             "role": "assistant",
@@ -387,7 +389,7 @@ def test_cleaned_snapshot_prevents_approval_reprocessing() -> None:
     assert snapshot_messages[2]["content"] == "2024-01-01 12:00:00"
 
     # Simulate Turn 3: CopilotKit re-sends the cleaned snapshot + new messages
-    turn3_messages = list(snapshot_messages) + [
+    turn3_messages: list[dict[str, Any]] = list(snapshot_messages) + [  # type: ignore[name-defined]
         {"role": "assistant", "content": "It is 12:00 PM.", "id": "msg_4"},
         {"role": "user", "content": "Thanks!", "id": "msg_5"},
     ]

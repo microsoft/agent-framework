@@ -16,7 +16,7 @@ Flow:
   4. The workflow resumes — the agent sees the tool result and finishes.
 
 Prerequisites:
-  - FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+  - FOUNDRY_PROJECT_ENDPOINT must be your Microsoft Foundry Agent Service (V2) project endpoint.
   - Azure OpenAI endpoint configured via environment variables.
   - `az login` for AzureCliCredential.
 """

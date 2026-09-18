@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import mimetypes
+import os
 import shutil
+import stat
 import threading
 import time
 from collections.abc import Callable, Iterator, Sequence
@@ -18,7 +21,13 @@ from typing import Any, Protocol, TypeGuard, TypeVar, cast
 from urllib.parse import urlparse
 
 from agent_framework import Content, FunctionTool
-from agent_framework._tools import ApprovalMode, normalize_tools
+from agent_framework._tools import (
+    ApprovalMode,
+    _normalize_tool_description_format,  # pyright: ignore[reportPrivateUsage]
+    _NormalizedToolDescriptionFormat,  # pyright: ignore[reportPrivateUsage]
+    _ToolDescriptionFormat,  # pyright: ignore[reportPrivateUsage]
+    normalize_tools,
+)
 
 from ._instructions import build_codeact_instructions, build_execute_code_description
 from ._types import AllowedDomain, AllowedDomainInput, FileMount, FileMountHostPath, FileMountInput
@@ -28,6 +37,13 @@ DEFAULT_HYPERLIGHT_MODULE = "python_guest.path"
 EXECUTE_CODE_TOOL_DESCRIPTION = "Execute Python in an isolated Hyperlight sandbox."
 OUTPUT_FILE_RETRY_ATTEMPTS = 10
 OUTPUT_FILE_RETRY_DELAY_SECONDS = 0.1
+DEFAULT_MAX_OUTPUT_FILES = 20
+DEFAULT_MAX_OUTPUT_FILE_BYTES = 5 * 1024 * 1024
+DEFAULT_MAX_OUTPUT_TOTAL_BYTES = 20 * 1024 * 1024
+OUTPUT_TRAVERSAL_MIN_ENTRIES = 100
+OUTPUT_TRAVERSAL_ENTRIES_PER_FILE = 10
+OUTPUT_TRAVERSAL_MAX_ENTRIES = 10_000
+OUTPUT_TRAVERSAL_MAX_DEPTH = 32
 
 EXECUTE_CODE_INPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -41,6 +57,25 @@ EXECUTE_CODE_INPUT_SCHEMA: dict[str, Any] = {
     },
     "required": ["code"],
 }
+
+
+class _OutputMaterializationError(RuntimeError):
+    """Raised when sandbox output cannot be safely materialized."""
+
+
+class _OutputCleanupError(RuntimeError):
+    """Raised when sandbox output cannot be safely cleaned within configured bounds."""
+
+
+def _output_cleanup_error_content(error: _OutputCleanupError) -> Content:
+    return Content.from_error(message="Execution error", error_details=str(error))
+
+
+@dataclass(frozen=True, slots=True)
+class _ValidatedOutputFile:
+    relative_path: str
+    media_type: str
+    data: bytes
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +96,9 @@ class _RunConfig:
     workspace_signature: tuple[tuple[str, int, int], ...]
     file_mounts: tuple[_NormalizedFileMount, ...]
     allowed_domains: tuple[AllowedDomain, ...]
+    max_output_files: int = DEFAULT_MAX_OUTPUT_FILES
+    max_output_file_bytes: int = DEFAULT_MAX_OUTPUT_FILE_BYTES
+    max_output_total_bytes: int = DEFAULT_MAX_OUTPUT_TOTAL_BYTES
 
     @property
     def mounted_paths(self) -> tuple[str, ...]:
@@ -81,11 +119,18 @@ class _RunConfig:
             self.workspace_signature,
             tuple((mount.mount_path, str(mount.host_path), mount.path_signature) for mount in self.file_mounts),
             tuple((allowed_domain.target, allowed_domain.methods) for allowed_domain in self.allowed_domains),
+            self.max_output_files,
+            self.max_output_file_bytes,
+            self.max_output_total_bytes,
         )
 
 
 class SandboxRuntime(Protocol):
     def execute(self, *, config: _RunConfig, code: str) -> list[Content]: ...
+
+
+class _NamedDirectory(Protocol):
+    name: str
 
 
 _T = TypeVar("_T")
@@ -118,7 +163,7 @@ class _SandboxWorker:
     copy (preserving message and exception type) is re-raised on the caller.
     """
 
-    __slots__ = ("_executor", "_initialized", "_sandbox", "_snapshot")
+    __slots__ = ("_executor", "_initialized", "_reusable", "_sandbox", "_snapshot")
 
     def __init__(self, *, name: str = "hl-sandbox") -> None:
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix=name)
@@ -126,6 +171,7 @@ class _SandboxWorker:
         self._sandbox: Any = None
         self._snapshot: Any = None
         self._initialized = False
+        self._reusable = True
 
     def _run_on_worker(self, fn: Callable[[], _T]) -> _T:
         """Run ``fn`` on the worker thread; sanitize any exception's traceback there.
@@ -156,7 +202,8 @@ class _SandboxWorker:
                 del exc
                 return False, (exc_type, exc_args)
 
-        ok, payload = self._executor.submit(_wrapped).result()
+        current_context = contextvars.copy_context()
+        ok, payload = self._executor.submit(lambda: current_context.run(_wrapped)).result()
         if ok:
             return cast(_T, payload)
         exc_type, exc_args = cast(tuple[type[BaseException], tuple[str, ...]], payload)
@@ -192,33 +239,71 @@ class _SandboxWorker:
         code: str,
         output_dir: TemporaryDirectory[str] | None,
         build_contents: Callable[..., list[Content]],
+        max_output_files: int,
+        max_output_file_bytes: int,
+        max_output_total_bytes: int,
     ) -> list[Content]:
         """Restore + run + build sendable contents — all on the worker thread.
 
         Returns a plain ``list[Content]`` whose elements never carry strong
         references to the underlying sandbox or snapshot.
         """
+        cleanup_max_entries = _output_traversal_entry_limit(max_output_files)
 
         def _on_worker() -> list[Content]:
+            if not self._reusable:
+                return [_output_cleanup_error_content(_OutputCleanupError("Could not clear sandbox output safely."))]
+
             sandbox = self._sandbox
             snapshot = self._snapshot
             sandbox.restore(snapshot)
-            _clear_directory(output_dir)
-            result = sandbox.run(code=code)
             try:
-                return build_contents(
-                    result=result,
-                    sandbox=sandbox,
-                    output_dir=output_dir,
-                    code=code,
+                _clear_directory(
+                    output_dir,
+                    max_entries=cleanup_max_entries,
+                    max_depth=OUTPUT_TRAVERSAL_MAX_DEPTH,
                 )
+            except _OutputCleanupError as exc:
+                self._reusable = False
+                return [_output_cleanup_error_content(exc)]
+
+            contents: list[Content] | None = None
+            try:
+                result = sandbox.run(code=code)
+                try:
+                    contents = build_contents(
+                        result=result,
+                        output_dir=output_dir,
+                        max_output_files=max_output_files,
+                        max_output_file_bytes=max_output_file_bytes,
+                        max_output_total_bytes=max_output_total_bytes,
+                    )
+                    if output_dir is not None and not any(item.type == "data" for item in contents):
+                        # Isolate any file that becomes visible after the finite discovery window
+                        # from later invocations by retiring this output generation.
+                        self._reusable = False
+                    return contents
+                finally:
+                    # ``result`` may carry a back-reference to the sandbox. Force its
+                    # final dec_ref on this thread so Drop runs here, not on whatever
+                    # thread later GCs the ``Content`` list.
+                    del result
             finally:
-                # ``result`` may carry a back-reference to the sandbox. Force its
-                # final dec_ref on this thread so Drop runs here, not on whatever
-                # thread later GCs the ``Content`` list.
-                del result
+                try:
+                    _clear_directory(
+                        output_dir,
+                        max_entries=cleanup_max_entries,
+                        max_depth=OUTPUT_TRAVERSAL_MAX_DEPTH,
+                    )
+                except _OutputCleanupError as exc:
+                    self._reusable = False
+                    if contents is not None and not any(item.type == "error" for item in contents):
+                        contents.append(_output_cleanup_error_content(exc))
 
         return self._run_on_worker(_on_worker)
+
+    def is_reusable(self) -> bool:
+        return self._reusable
 
     def is_alive(self) -> bool:
         """Return ``True`` while the worker thread can still accept new submissions.
@@ -285,15 +370,20 @@ class _SandboxEntry:
     input_dir: TemporaryDirectory[str] | None
     output_dir: TemporaryDirectory[str] | None
 
+    def cleanup_temp_dirs(self) -> None:
+        """Clean up temporary directories after the sandbox worker has stopped."""
+        temp_dirs = (self.input_dir, self.output_dir)
+        self.input_dir = None
+        self.output_dir = None
+        for tmp_dir in temp_dirs:
+            if tmp_dir is not None:
+                with suppress(Exception):
+                    _remove_temporary_directory(tmp_dir)
+
     def dispose(self) -> None:
         """Release the sandbox+snapshot on the worker thread and clean up temp dirs."""
         self.worker.dispose()
-        for tmp_dir in (self.input_dir, self.output_dir):
-            if tmp_dir is not None:
-                with suppress(Exception):
-                    tmp_dir.cleanup()
-        self.input_dir = None
-        self.output_dir = None
+        self.cleanup_temp_dirs()
 
 
 def _load_sandbox_class() -> type[Any]:
@@ -338,6 +428,14 @@ def _resolve_execute_code_approval_mode(
     return "never_require"
 
 
+def _validate_positive_integer(*, name: str, value: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{name} must be a positive integer.")
+    if value <= 0:
+        raise ValueError(f"{name} must be a positive integer.")
+    return value
+
+
 def _resolve_existing_path(value: str | Path) -> Path:
     return Path(value).expanduser().resolve(strict=True)
 
@@ -350,6 +448,72 @@ def _resolve_workspace_root(value: str | Path | None) -> Path | None:
     if not resolved_path.is_dir():
         raise ValueError("workspace_root must point to an existing directory.")
     return resolved_path
+
+
+def _is_link_or_reparse_point(path: Path, path_stat: os.stat_result | None = None) -> bool:
+    """Return True for links or Windows reparse points without following targets."""
+    if path_stat is None:
+        try:
+            path_stat = path.lstat()
+        except OSError:
+            return True
+
+    if stat.S_ISLNK(path_stat.st_mode):
+        return True
+
+    is_junction = getattr(path, "is_junction", None)
+    if callable(is_junction):
+        try:
+            if bool(is_junction()):
+                return True
+        except OSError:
+            return True
+
+    reparse_attribute = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    file_attributes = getattr(path_stat, "st_file_attributes", 0)
+    return bool(reparse_attribute and file_attributes & reparse_attribute)
+
+
+def _is_relative_to_or_same(*, path: Path, root: Path) -> bool:
+    return path == root or path.is_relative_to(root)
+
+
+def _resolve_contained_path(*, path: Path, root: Path) -> Path:
+    try:
+        resolved_path = path.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise ValueError(
+            "Could not resolve Hyperlight sandbox input path while validating it stays under the configured "
+            f"source root: {path}. Source root: {root}. Ensure the path exists, is accessible, and does not "
+            f"contain symlink loops. Original error: {exc}"
+        ) from exc
+
+    if not _is_relative_to_or_same(path=resolved_path, root=root):
+        raise ValueError(f"Refusing to stage Hyperlight sandbox input path outside the configured source root: {path}")
+
+    return resolved_path
+
+
+def _inspect_stageable_input_path(*, path: Path, root: Path) -> os.stat_result:
+    try:
+        path_stat = path.lstat()
+    except OSError as exc:
+        raise ValueError(f"Could not inspect Hyperlight sandbox input path: {path}") from exc
+
+    if _is_link_or_reparse_point(path, path_stat):
+        raise ValueError(f"Refusing to stage linked or reparse-point path for Hyperlight sandbox input: {path}")
+
+    _resolve_contained_path(path=path, root=root)
+    return path_stat
+
+
+def _is_resolved_under_root(*, path: Path, root: Path) -> bool:
+    try:
+        resolved_path = path.resolve(strict=True)
+        resolved_root = root.resolve(strict=True)
+    except (OSError, RuntimeError):
+        return False
+    return _is_relative_to_or_same(path=resolved_path, root=resolved_root)
 
 
 def _is_file_mount_pair(value: Any) -> TypeGuard[FileMount | tuple[FileMountHostPath, str]]:
@@ -483,38 +647,74 @@ def _display_mount_path(mount_path: str) -> str:
     return f"/input/{mount_path}"
 
 
-def _iter_real_entries(root: Path) -> Iterator[Path]:
+def _iter_real_entries(root: Path, *, reject_links: bool = False, files_only: bool = False) -> Iterator[Path]:
     """Walk ``root`` recursively, yielding directories and regular files only.
 
-    ``Path.rglob`` follows directory symlinks by default, which combined with
+    ``Path.rglob`` follows directory links by default, which combined with
     ``Path.is_file()`` / ``shutil.copy2`` (all follow symlinks) would expose
     paths outside the configured input tree if the source tree is
-    attacker-controlled. This walker mirrors the safe behaviour by checking
-    ``is_symlink()`` at every directory level and never descending through one.
+    attacker-controlled. This walker mirrors the safe behaviour by rejecting or
+    skipping symlinks, Windows junctions, and other reparse points at every
+    directory level and never descending through one.
 
     Non-regular files (sockets, FIFOs, devices) are also filtered out so the
     signature mirrors exactly what ``_copy_path`` actually stages.
     """
-    stack: list[Path] = [root]
-    while stack:
-        current = stack.pop()
+    scan_stack: list[tuple[Path, Any]] = []
+    try:
         try:
-            children = list(current.iterdir())
-        except OSError:
-            continue
-        for child in children:
+            scan_stack.append((root, os.scandir(root)))
+        except OSError as exc:
+            if reject_links:
+                raise ValueError(f"Could not inspect Hyperlight sandbox input directory: {root}") from exc
+            return
+
+        while scan_stack:
+            current, entries = scan_stack[-1]
             try:
-                if child.is_symlink():
-                    continue
-                if child.is_dir():
-                    stack.append(child)
-                    yield child
-                elif child.is_file():
-                    yield child
-                # Non-regular files (sockets/FIFOs/devices) are skipped to
-                # match ``_copy_path``'s staging behaviour.
-            except OSError:
+                entry = next(entries)
+            except StopIteration:
+                entries.close()
+                scan_stack.pop()
                 continue
+            except OSError as exc:
+                entries.close()
+                scan_stack.pop()
+                if reject_links:
+                    raise ValueError(f"Could not inspect Hyperlight sandbox input directory: {current}") from exc
+                continue
+
+            child = Path(entry.path)
+            try:
+                child_stat = child.lstat()
+            except OSError as exc:
+                if reject_links:
+                    raise ValueError(f"Could not inspect Hyperlight sandbox input path: {child}") from exc
+                continue
+
+            if _is_link_or_reparse_point(child, child_stat):
+                if reject_links:
+                    raise ValueError(
+                        f"Refusing to stage linked or reparse-point path for Hyperlight sandbox input: {child}"
+                    )
+                continue
+
+            if stat.S_ISDIR(child_stat.st_mode):
+                if not files_only:
+                    yield child
+                try:
+                    scan_stack.append((child, os.scandir(child)))
+                except OSError as exc:
+                    if reject_links:
+                        raise ValueError(f"Could not inspect Hyperlight sandbox input directory: {child}") from exc
+                    continue
+            elif stat.S_ISREG(child_stat.st_mode):
+                yield child
+            # Non-regular files (sockets/FIFOs/devices) are skipped to
+            # match ``_copy_path``'s staging behaviour.
+    finally:
+        for _, entries in scan_stack:
+            entries.close()
 
 
 def _path_tree_signature(path: Path) -> tuple[tuple[str, int, int], ...]:
@@ -526,58 +726,60 @@ def _path_tree_signature(path: Path) -> tuple[tuple[str, int, int], ...]:
     resolve roots up front) and acts as defense in depth for any direct caller
     that builds a ``_RunConfig`` without going through the constructor.
 
-    Symlinks encountered inside the walked tree are skipped, and ``lstat()`` is
-    used so size/mtime are read from the entry itself, never through a
-    target. The result mirrors what ``_copy_path`` actually stages.
+    Links encountered inside the walked tree are rejected, and ``lstat()`` is
+    used so size/mtime are read from the entry itself, never through a target.
+    The result mirrors what ``_copy_path`` actually stages.
     """
     if path.is_symlink():
         try:
             path = path.resolve(strict=True)
-        except OSError:
+        except (OSError, RuntimeError):
             return ()
     if path.is_file():
-        stat = path.lstat()
-        return ((path.name, int(stat.st_size), int(stat.st_mtime_ns)),)
+        path_stat = path.lstat()
+        return ((path.name, int(path_stat.st_size), int(path_stat.st_mtime_ns)),)
 
     entries: list[tuple[str, int, int]] = []
-    for candidate in sorted(_iter_real_entries(path), key=lambda value: value.as_posix()):
+    resolved_path = _resolve_existing_path(path)
+    for candidate in sorted(_iter_real_entries(resolved_path, reject_links=True), key=lambda value: value.as_posix()):
         try:
-            stat = candidate.lstat()
+            candidate_stat = candidate.lstat()
         except FileNotFoundError:
             continue
-        relative_path = candidate.relative_to(path).as_posix()
-        size = int(stat.st_size) if candidate.is_file() else 0
-        entries.append((relative_path, size, int(stat.st_mtime_ns)))
+        relative_path = candidate.relative_to(resolved_path).as_posix()
+        size = int(candidate_stat.st_size) if stat.S_ISREG(candidate_stat.st_mode) else 0
+        entries.append((relative_path, size, int(candidate_stat.st_mtime_ns)))
     return tuple(entries)
 
 
-def _copy_path(source: Path, destination: Path) -> None:
-    """Stage ``source`` into ``destination`` without following symlinks.
+def _copy_path(source: Path, destination: Path, *, source_root: Path) -> None:
+    """Stage ``source`` into ``destination`` without following links.
 
-    Symlinks (file or directory) found in the source tree are skipped entirely
-    so a sandbox input tree can only contain real entries that physically live
-    under the configured ``workspace_root`` or a ``file_mounts`` host path.
-    ``Path.is_dir()``, ``Path.is_file()`` and ``shutil.copy2`` all follow
-    symlinks by default, which is unsafe for symlinks planted in the source
-    tree at rest.
+    Symlinks, Windows junctions, and other reparse-point entries found in the
+    source tree are rejected so a sandbox input tree can only contain real
+    entries that physically live under the configured ``workspace_root`` or a
+    ``file_mounts`` host path. ``Path.is_dir()``, ``Path.is_file()`` and
+    ``shutil.copy2`` all follow links by default, which is unsafe for links
+    planted in the source tree at rest.
 
     This helper does not attempt to make the copy atomic with respect to
     concurrent mutation of the source tree. Callers that need protection from
     an adversary modifying the workspace mid-stage should pass in an
     immutable / snapshotted directory.
     """
-    # Detect symlinks before doing anything else - ``is_symlink()`` does not
-    # follow the link, unlike ``is_dir()`` / ``is_file()``.
-    if source.is_symlink():
-        return
+    source_stat = _inspect_stageable_input_path(path=source, root=source_root)
 
-    if source.is_dir():
+    if stat.S_ISDIR(source_stat.st_mode):
         destination.mkdir(parents=True, exist_ok=True)
-        for child in sorted(source.iterdir(), key=lambda value: value.name):
-            _copy_path(child, destination / child.name)
+        try:
+            children = sorted(source.iterdir(), key=lambda value: value.name)
+        except OSError as exc:
+            raise ValueError(f"Could not inspect Hyperlight sandbox input directory: {source}") from exc
+        for child in children:
+            _copy_path(child, destination / child.name, source_root=source_root)
         return
 
-    if not source.is_file():
+    if not stat.S_ISREG(source_stat.st_mode):
         # Non-regular files (sockets, FIFOs, devices) are intentionally skipped.
         return
 
@@ -587,65 +789,319 @@ def _copy_path(source: Path, destination: Path) -> None:
 
 def _populate_input_dir(*, config: _RunConfig, input_root: Path) -> None:
     if config.workspace_root is not None:
-        for child in sorted(config.workspace_root.iterdir(), key=lambda value: value.name):
-            _copy_path(child, input_root / child.name)
+        workspace_root = _resolve_existing_path(config.workspace_root)
+        for child in sorted(workspace_root.iterdir(), key=lambda value: value.name):
+            _copy_path(child, input_root / child.name, source_root=workspace_root)
 
     for mount in config.file_mounts:
-        _copy_path(mount.host_path, input_root / mount.mount_path)
+        mount_root = _resolve_existing_path(mount.host_path)
+        _copy_path(mount.host_path, input_root / mount.mount_path, source_root=mount_root)
 
 
-def _create_file_content(file_path: Path, *, relative_path: str) -> Content:
-    media_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
-    return Content.from_data(
-        data=file_path.read_bytes(),
-        media_type=media_type,
-        additional_properties={"path": f"/output/{relative_path}"},
+def _supports_secure_output_dir_fd() -> bool:
+    return (
+        os.open in os.supports_dir_fd
+        and os.stat in os.supports_dir_fd
+        and os.stat in os.supports_follow_symlinks
+        and hasattr(os, "O_DIRECTORY")
+        and hasattr(os, "O_NOFOLLOW")
     )
 
 
-def _normalize_output_relative_path(*, output_file: object, root: Path) -> str | None:
-    candidate_path = Path(str(output_file))
-    if candidate_path.is_absolute():
+def _open_direct_output_file(*, root: Path, file_name: str) -> tuple[int, os.stat_result]:
+    file_path = root / file_name
+    pre_stat = file_path.lstat()
+    if _is_link_or_reparse_point(file_path, pre_stat) or not stat.S_ISREG(pre_stat.st_mode):
+        raise OSError(f"refusing to read linked, reparse-point, or non-regular output file: {file_path}")
+
+    fd = os.open(file_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    keep_fd = False
+    try:
+        opened_stat = os.fstat(fd)
+        if (opened_stat.st_dev, opened_stat.st_ino) != (pre_stat.st_dev, pre_stat.st_ino):
+            raise OSError(f"output file changed between validation and read: {file_path}")
+        if not stat.S_ISREG(opened_stat.st_mode):
+            raise OSError(f"refusing to read non-regular output file: {file_path}")
+        keep_fd = True
+        return fd, opened_stat
+    finally:
+        if not keep_fd:
+            os.close(fd)
+
+
+def _open_output_file_with_dir_fd(*, root: Path, path_parts: tuple[str, ...]) -> tuple[int, os.stat_result]:
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    file_flags = os.O_RDONLY | os.O_NOFOLLOW
+    directory_fds: list[int] = []
+    file_fd = -1
+    keep_file_fd = False
+
+    try:
+        root_fd = os.open(root, directory_flags)
+        directory_fds.append(root_fd)
+        parent_fd = root_fd
+
+        for part in path_parts[:-1]:
+            pre_stat = os.stat(part, dir_fd=parent_fd, follow_symlinks=False)
+            if stat.S_ISLNK(pre_stat.st_mode) or not stat.S_ISDIR(pre_stat.st_mode):
+                raise OSError(f"refusing to traverse linked or non-directory output component: {part}")
+
+            next_fd = os.open(part, directory_flags, dir_fd=parent_fd)
+            directory_fds.append(next_fd)
+            opened_stat = os.fstat(next_fd)
+            if (opened_stat.st_dev, opened_stat.st_ino) != (pre_stat.st_dev, pre_stat.st_ino):
+                raise OSError(f"output directory changed while opening component: {part}")
+            if not stat.S_ISDIR(opened_stat.st_mode):
+                raise OSError(f"refusing to traverse non-directory output component: {part}")
+
+            parent_fd = next_fd
+
+        file_name = path_parts[-1]
+        pre_stat = os.stat(file_name, dir_fd=parent_fd, follow_symlinks=False)
+        if stat.S_ISLNK(pre_stat.st_mode) or not stat.S_ISREG(pre_stat.st_mode):
+            raise OSError(f"refusing to read linked or non-regular output file: {file_name}")
+
+        file_fd = os.open(file_name, file_flags, dir_fd=parent_fd)
+        opened_stat = os.fstat(file_fd)
+        if (opened_stat.st_dev, opened_stat.st_ino) != (pre_stat.st_dev, pre_stat.st_ino):
+            raise OSError(f"output file changed while opening: {file_name}")
+        if not stat.S_ISREG(opened_stat.st_mode):
+            raise OSError(f"refusing to read non-regular output file: {file_name}")
+
+        keep_file_fd = True
+        return file_fd, opened_stat
+    finally:
+        if file_fd >= 0 and not keep_file_fd:
+            os.close(file_fd)
+        for directory_fd in reversed(directory_fds):
+            os.close(directory_fd)
+
+
+def _open_output_file(*, root: Path, relative_path: str) -> tuple[int, os.stat_result]:
+    path_parts = tuple(PurePosixPath(relative_path).parts)
+    if not path_parts:
+        raise OSError(f"invalid output path: {relative_path}")
+    if any(part in {"", ".", ".."} for part in path_parts):
+        raise OSError(f"invalid output path: {relative_path}")
+
+    if _supports_secure_output_dir_fd():
+        return _open_output_file_with_dir_fd(root=root, path_parts=path_parts)
+
+    if len(path_parts) > 1:
+        raise _OutputMaterializationError(
+            "Nested output attachments cannot be opened safely on this platform; write files directly under /output."
+        )
+    return _open_direct_output_file(root=root, file_name=next(iter(path_parts)))
+
+
+def _read_output_file_bytes(
+    root: Path,
+    *,
+    relative_path: str,
+    max_file_bytes: int,
+    remaining_total_bytes: int,
+    max_total_bytes: int,
+) -> bytes:
+    """Open and read an output file relative to a pinned output root.
+
+    Platforms with ``dir_fd`` support walk every component relative to verified directory
+    descriptors. Other platforms accept only direct children of the trusted output root,
+    where lstat/open/fstat identity checks fail closed on final-component replacements.
+    """
+    output_path = f"/output/{relative_path}"
+    fd, opened_stat = _open_output_file(root=root, relative_path=relative_path)
+    try:
+        if opened_stat.st_size > max_file_bytes:
+            raise _OutputMaterializationError(
+                f"Output file {output_path[:200]!r} exceeds the {max_file_bytes}-byte per-file output limit."
+            )
+        if opened_stat.st_size > remaining_total_bytes:
+            raise _OutputMaterializationError(
+                f"Output files exceed the {max_total_bytes}-byte cumulative output limit."
+            )
+
+        with os.fdopen(fd, "rb", closefd=False) as handle:
+            read_allowance = min(opened_stat.st_size, max_file_bytes, remaining_total_bytes)
+            try:
+                data = handle.read(read_allowance + 1)
+            except (MemoryError, OverflowError):
+                raise _OutputMaterializationError(
+                    "Sandbox output could not be read within the configured byte limits."
+                ) from None
+    finally:
+        os.close(fd)
+
+    if len(data) > max_file_bytes:
+        raise _OutputMaterializationError(
+            f"Output file {output_path[:200]!r} exceeds the {max_file_bytes}-byte per-file output limit."
+        )
+    if len(data) > remaining_total_bytes:
+        raise _OutputMaterializationError(f"Output files exceed the {max_total_bytes}-byte cumulative output limit.")
+    if len(data) > opened_stat.st_size:
+        raise _OutputMaterializationError(f"Output file {output_path[:200]!r} grew while it was being read.")
+    return data
+
+
+def _materialize_output_files(output_files: Sequence[_ValidatedOutputFile]) -> list[Content]:
+    contents: list[Content] = []
+    try:
+        for output_file in output_files:
+            contents.append(
+                Content.from_data(
+                    data=output_file.data,
+                    media_type=output_file.media_type,
+                    additional_properties={"path": f"/output/{output_file.relative_path}"},
+                )
+            )
+    except MemoryError:
+        raise _OutputMaterializationError(
+            "Sandbox output could not be encoded because the host did not have enough memory."
+        ) from None
+    return contents
+
+
+def _is_safe_output_file(*, root: Path, host_path: Path) -> bool:
+    """Return True only if ``host_path`` is a real regular file safely under ``root``.
+
+    The ``/output`` directory is sandbox-controlled, so a payload can plant a
+    final-component symlink (``/output/leak.txt -> /host/secret``), a Windows
+    junction/reparse point, or an intermediate directory link to escape ``root``
+    and read host files.
+    ``Path.is_file`` follows symlinks, so this validator instead walks each path
+    component from ``root`` to ``host_path`` with ``lstat`` and rejects the path
+    if any component is a symlink, requiring the final entry to be a regular
+    file. ``..``/``.`` components are rejected up front because
+    ``Path.relative_to`` is purely lexical and would otherwise allow a listing
+    such as ``root / ".." / "secret.txt"`` to escape ``root`` without any
+    symlink. This mirrors the symlink-hardening already applied to the input
+    staging path (``_copy_path`` / ``_iter_real_entries``).
+    """
+    try:
+        relative = host_path.relative_to(root)
+    except ValueError:
+        return False
+
+    if not relative.parts or any(part in {"..", "."} for part in relative.parts):
+        return False
+
+    if not _is_resolved_under_root(path=host_path, root=root):
+        return False
+
+    *parent_parts, final_part = relative.parts
+    current = root
+    for part in parent_parts:
+        current = current / part
         try:
-            return candidate_path.relative_to(root).as_posix()
-        except ValueError:
-            return None
+            parent_stat = current.lstat()
+        except OSError:
+            return False
+        if _is_link_or_reparse_point(current, parent_stat):
+            return False
 
-    raw_path = str(output_file).replace("\\", "/")
-    pure_path = PurePosixPath(raw_path)
-    parts = [part for part in pure_path.parts if part not in {"", "/", "."}]
-    if parts and parts[0] == "output":
-        parts = parts[1:]
-    if not parts or any(part == ".." for part in parts):
-        return None
-    return "/".join(parts)
+    current = current / final_part
+    try:
+        final_stat = current.lstat()
+    except OSError:
+        return False
+    if _is_link_or_reparse_point(current, final_stat):
+        return False
+    return stat.S_ISREG(final_stat.st_mode)
 
 
-def _collect_output_relative_paths(*, sandbox: Any, root: Path) -> set[str]:
+def _output_traversal_entry_limit(max_output_files: int) -> int:
+    return min(
+        OUTPUT_TRAVERSAL_MAX_ENTRIES,
+        max(OUTPUT_TRAVERSAL_MIN_ENTRIES, max_output_files * OUTPUT_TRAVERSAL_ENTRIES_PER_FILE),
+    )
+
+
+def _iter_bounded_output_files(
+    root: Path,
+    *,
+    max_entries: int,
+    max_depth: int,
+) -> Iterator[Path]:
+    """Yield regular output files while bounding traversal work and open scanners."""
+    scan_stack: list[tuple[Any, int]] = []
+    entries_visited = 0
+
+    def _open_scanner(path: Path) -> Any:
+        try:
+            return os.scandir(path)
+        except OSError as exc:
+            raise _OutputMaterializationError("Could not enumerate output directory safely.") from exc
+
+    try:
+        scan_stack.append((_open_scanner(root), 0))
+        while scan_stack:
+            entries, depth = scan_stack[-1]
+            try:
+                entry = next(entries)
+            except StopIteration:
+                entries.close()
+                scan_stack.pop()
+                continue
+            except OSError as exc:
+                raise _OutputMaterializationError("Could not enumerate output directory safely.") from exc
+
+            entries_visited += 1
+            if entries_visited > max_entries:
+                raise _OutputMaterializationError(
+                    f"Sandbox output exceeded the traversal entry limit of {max_entries}."
+                )
+
+            child = Path(entry.path)
+            try:
+                child_stat = child.lstat()
+            except OSError as exc:
+                raise _OutputMaterializationError("Could not inspect output entry safely.") from exc
+
+            if _is_link_or_reparse_point(child, child_stat):
+                continue
+            if stat.S_ISREG(child_stat.st_mode):
+                yield child
+                continue
+            if not stat.S_ISDIR(child_stat.st_mode):
+                continue
+
+            child_depth = depth + 1
+            if child_depth > max_depth:
+                raise _OutputMaterializationError(f"Sandbox output exceeded the nesting depth limit of {max_depth}.")
+            scan_stack.append((_open_scanner(child), child_depth))
+    finally:
+        for entries, _ in scan_stack:
+            with suppress(OSError):
+                entries.close()
+
+
+def _collect_output_relative_paths(
+    *,
+    root: Path,
+    max_output_files: int = DEFAULT_MAX_OUTPUT_FILES,
+) -> set[str]:
     relative_paths: set[str] = set()
 
-    if hasattr(sandbox, "get_output_files"):
-        try:
-            output_files = cast(Sequence[object], sandbox.get_output_files())
-        except Exception:
-            output_files = ()
-
-        for output_file in output_files:
-            if (relative_path := _normalize_output_relative_path(output_file=output_file, root=root)) is not None:
-                relative_paths.add(relative_path)
-
-    for host_path in root.rglob("*"):
-        if host_path.is_file():
-            relative_paths.add(host_path.relative_to(root).as_posix())
+    for host_path in _iter_bounded_output_files(
+        root,
+        max_entries=_output_traversal_entry_limit(max_output_files),
+        max_depth=OUTPUT_TRAVERSAL_MAX_DEPTH,
+    ):
+        if len(relative_paths) >= max_output_files:
+            raise _OutputMaterializationError(
+                f"Sandbox exceeded the output file count limit of {max_output_files} while enumerating candidates."
+            )
+        relative_paths.add(host_path.relative_to(root).as_posix())
 
     return relative_paths
 
 
 def _parse_output_files(
     *,
-    sandbox: Any,
-    output_dir: TemporaryDirectory[str] | None,
+    output_dir: _NamedDirectory | None,
     expect_output_files: bool,
+    max_output_files: int = DEFAULT_MAX_OUTPUT_FILES,
+    max_output_file_bytes: int = DEFAULT_MAX_OUTPUT_FILE_BYTES,
+    max_output_total_bytes: int = DEFAULT_MAX_OUTPUT_TOTAL_BYTES,
 ) -> list[Content]:
     if output_dir is None:
         return []
@@ -653,22 +1109,61 @@ def _parse_output_files(
     root = Path(output_dir.name)
 
     for attempt in range(OUTPUT_FILE_RETRY_ATTEMPTS):
-        relative_paths = _collect_output_relative_paths(sandbox=sandbox, root=root)
+        try:
+            relative_paths = _collect_output_relative_paths(
+                root=root,
+                max_output_files=max_output_files,
+            )
+        except MemoryError:
+            raise _OutputMaterializationError(
+                "Sandbox output could not be enumerated because the host did not have enough memory."
+            ) from None
         missing_files = expect_output_files and not relative_paths
-        contents: list[Content] = []
+        safe_output_files: list[tuple[str, Path]] = []
 
         for relative_path in sorted(relative_paths):
             host_path = root.joinpath(*PurePosixPath(relative_path).parts)
-            if not host_path.is_file():
+            if not _is_safe_output_file(root=root, host_path=host_path):
                 missing_files = True
                 continue
+            safe_output_files.append((relative_path, host_path))
+
+        if len(safe_output_files) > max_output_files:
+            raise _OutputMaterializationError(
+                f"Sandbox produced {len(safe_output_files)} safe output files, exceeding the "
+                f"output file count limit of {max_output_files}."
+            )
+
+        validated_output_files: list[_ValidatedOutputFile] = []
+        total_bytes_read = 0
+        for relative_path, host_path in safe_output_files:
             try:
-                contents.append(_create_file_content(host_path, relative_path=relative_path))
-            except PermissionError:
+                data = _read_output_file_bytes(
+                    root,
+                    relative_path=relative_path,
+                    max_file_bytes=max_output_file_bytes,
+                    remaining_total_bytes=max_output_total_bytes - total_bytes_read,
+                    max_total_bytes=max_output_total_bytes,
+                )
+            except MemoryError:
+                raise _OutputMaterializationError(
+                    "Sandbox output could not be read because the host did not have enough memory."
+                ) from None
+            except (PermissionError, OSError):
                 missing_files = True
+                continue
+
+            total_bytes_read += len(data)
+            validated_output_files.append(
+                _ValidatedOutputFile(
+                    relative_path=relative_path,
+                    media_type=mimetypes.guess_type(host_path.name)[0] or "application/octet-stream",
+                    data=data,
+                )
+            )
 
         if not missing_files or attempt == OUTPUT_FILE_RETRY_ATTEMPTS - 1:
-            return contents
+            return _materialize_output_files(validated_output_files)
 
         time.sleep(OUTPUT_FILE_RETRY_DELAY_SECONDS)
 
@@ -695,9 +1190,10 @@ def _result_snapshot(result: Any) -> dict[str, Any]:
 def _build_execution_contents(
     *,
     result: Any,
-    sandbox: Any,
     output_dir: TemporaryDirectory[str] | None,
-    code: str,
+    max_output_files: int,
+    max_output_file_bytes: int,
+    max_output_total_bytes: int,
 ) -> list[Content]:
     success = bool(getattr(result, "success", False))
     stdout = str(getattr(result, "stdout", "") or "").replace("\r\n", "\n") or None
@@ -708,13 +1204,25 @@ def _build_execution_contents(
     if stdout is not None:
         outputs.append(Content.from_text(stdout, raw_representation=snapshot))
 
-    outputs.extend(
-        _parse_output_files(
-            sandbox=sandbox,
+    try:
+        output_files = _parse_output_files(
             output_dir=output_dir,
-            expect_output_files="/output" in code,
+            expect_output_files=output_dir is not None,
+            max_output_files=max_output_files,
+            max_output_file_bytes=max_output_file_bytes,
+            max_output_total_bytes=max_output_total_bytes,
         )
-    )
+    except _OutputMaterializationError as exc:
+        outputs.append(
+            Content.from_error(
+                message="Execution error",
+                error_details=str(exc),
+                raw_representation=snapshot,
+            )
+        )
+        return outputs
+
+    outputs.extend(output_files)
 
     if success:
         if stderr is not None:
@@ -745,12 +1253,13 @@ def _make_sandbox_callback(tool_obj: FunctionTool) -> Callable[..., Any]:
         # registered callbacks synchronously via FFI, so this must be a sync function.
         # We run the async call on a dedicated thread to avoid conflicts with any
         # event loop that may be running on the current thread.
+        current_context = contextvars.copy_context()
         result_box: list[Any] = [None]
         error_box: list[BaseException] = []
 
         def _run() -> None:
             try:
-                result_box[0] = asyncio.run(_invoke())
+                result_box[0] = current_context.run(lambda: asyncio.run(_invoke()))
             except BaseException as exc:
                 error_box.append(exc)
 
@@ -768,24 +1277,110 @@ def _make_sandbox_callback(tool_obj: FunctionTool) -> Callable[..., Any]:
     return _callback
 
 
-def _clear_directory(output_dir: TemporaryDirectory[str] | None) -> None:
-    """Remove all contents of the output directory without deleting the directory itself."""
+def _clear_directory(
+    output_dir: TemporaryDirectory[str] | None,
+    *,
+    max_entries: int = OUTPUT_TRAVERSAL_MAX_ENTRIES,
+    max_depth: int = OUTPUT_TRAVERSAL_MAX_DEPTH,
+) -> None:
+    """Remove output entries without following links or exceeding traversal bounds."""
     if output_dir is None:
         return
+
     root = Path(output_dir.name)
-    for child in root.iterdir():
+    entries_visited = 0
+
+    def _remove_contents(path: Path, depth: int) -> None:
+        nonlocal entries_visited
         try:
-            if child.is_symlink() or child.is_file():
-                child.unlink()
-            elif child.is_dir():
-                shutil.rmtree(child, ignore_errors=True)
-        except (FileNotFoundError, PermissionError):
-            pass
+            with os.scandir(path) as entries:
+                for entry in entries:
+                    entries_visited += 1
+                    if entries_visited > max_entries:
+                        raise _OutputCleanupError(f"Sandbox output exceeded the cleanup entry limit of {max_entries}.")
+
+                    child = Path(entry.path)
+                    child_stat = child.lstat()
+                    if _is_link_or_reparse_point(child, child_stat):
+                        if stat.S_ISDIR(child_stat.st_mode):
+                            child.rmdir()
+                        else:
+                            try:
+                                child.unlink()
+                            except OSError:
+                                child.rmdir()
+                        continue
+
+                    if not stat.S_ISDIR(child_stat.st_mode):
+                        child.unlink()
+                        continue
+
+                    child_depth = depth + 1
+                    if child_depth > max_depth:
+                        raise _OutputCleanupError(
+                            f"Sandbox output exceeded the cleanup nesting depth limit of {max_depth}."
+                        )
+                    _remove_contents(child, child_depth)
+                    child.rmdir()
+        except _OutputCleanupError:
+            raise
+        except OSError as exc:
+            raise _OutputCleanupError("Could not clear sandbox output safely.") from exc
+
+    _remove_contents(root, 0)
+
+
+def _remove_temporary_directory(tmp_dir: TemporaryDirectory[str]) -> None:
+    """Remove a stopped sandbox's temporary tree without recursive traversal."""
+    root = Path(tmp_dir.name)
+    scan_stack: list[tuple[Path, Any]] = []
+
+    try:
+        try:
+            scan_stack.append((root, os.scandir(root)))
+        except FileNotFoundError:
+            tmp_dir.cleanup()
+            return
+
+        while scan_stack:
+            current, entries = scan_stack[-1]
+            try:
+                entry = next(entries)
+            except StopIteration:
+                entries.close()
+                scan_stack.pop()
+                current.rmdir()
+                continue
+
+            child = Path(entry.path)
+            child_stat = child.lstat()
+            if _is_link_or_reparse_point(child, child_stat):
+                if stat.S_ISDIR(child_stat.st_mode):
+                    child.rmdir()
+                else:
+                    try:
+                        child.unlink()
+                    except OSError:
+                        child.rmdir()
+                continue
+
+            if stat.S_ISDIR(child_stat.st_mode):
+                scan_stack.append((child, os.scandir(child)))
+                continue
+
+            child.unlink()
+    finally:
+        for _, entries in scan_stack:
+            with suppress(OSError):
+                entries.close()
+
+    tmp_dir.cleanup()
 
 
 class _SandboxRegistry(SandboxRuntime):
     def __init__(self) -> None:
         self._entries: dict[tuple[Any, ...], _SandboxEntry] = {}
+        self._cleanup_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="hl-cleanup")
         self._entries_lock = threading.RLock()
 
     def execute(self, *, config: _RunConfig, code: str) -> list[Content]:
@@ -796,13 +1391,30 @@ class _SandboxRegistry(SandboxRuntime):
         both serializes concurrent callers and satisfies the PyO3 ``unsendable`` invariant
         that the sandbox can only be touched from the thread that created it. The unsendable
         objects never escape the worker; this method returns only sendable plain Python data.
+        Entries whose output cannot be cleaned safely are evicted before another invocation.
         """
+        cache_key = config.cache_key()
         entry = self._get_or_create_entry(config)
-        return entry.worker.execute(
-            code=code,
-            output_dir=entry.output_dir,
-            build_contents=_build_execution_contents,
-        )
+        try:
+            return entry.worker.execute(
+                code=code,
+                output_dir=entry.output_dir,
+                build_contents=_build_execution_contents,
+                max_output_files=config.max_output_files,
+                max_output_file_bytes=config.max_output_file_bytes,
+                max_output_total_bytes=config.max_output_total_bytes,
+            )
+        finally:
+            if not entry.worker.is_reusable():
+                self._discard_entry(cache_key=cache_key, entry=entry)
+
+    def _discard_entry(self, *, cache_key: tuple[Any, ...], entry: _SandboxEntry) -> None:
+        with self._entries_lock:
+            if self._entries.get(cache_key) is not entry:
+                return
+            del self._entries[cache_key]
+            entry.worker.dispose()
+            self._cleanup_executor.submit(entry.cleanup_temp_dirs)
 
     def _get_or_create_entry(self, config: _RunConfig) -> _SandboxEntry:
         cache_key = config.cache_key()
@@ -826,6 +1438,7 @@ class _SandboxRegistry(SandboxRuntime):
             for entry in entries:
                 entry.dispose()
         finally:
+            self._cleanup_executor.shutdown(wait=True, cancel_futures=False)
             # Drop our local strong references; entries' own refs to sandbox/snapshot
             # were already moved into the per-worker disposal closure inside dispose().
             del entries
@@ -847,6 +1460,9 @@ class _SandboxRegistry(SandboxRuntime):
                     module_path=config.module_path,
                     input_dir=input_dir_handle.name if input_dir_handle is not None else None,
                     output_dir=output_dir_handle.name if output_dir_handle is not None else None,
+                    max_file_size=f"{config.max_output_file_bytes}B",
+                    max_total_size=f"{config.max_output_total_bytes}B",
+                    max_file_count=config.max_output_files,
                 )
             except ImportError as exc:
                 raise RuntimeError(
@@ -900,21 +1516,36 @@ class _SandboxRegistry(SandboxRuntime):
 
 
 class HyperlightExecuteCodeTool(FunctionTool):
-    """Execute Python code inside a Hyperlight sandbox."""
+    """Execute Python code inside a Hyperlight sandbox.
+
+    Keyword Args:
+        tool_description_format: Parameter documentation in ``.description``: ``"compact"`` (default)
+            or ``"json"``, globally or mapped by exact, case-sensitive tool name. Missing names use
+            compact format. Schemas that cannot be represented faithfully in compact form use JSON Schema.
+            Mappings are copied, including entries for tools registered later.
+    """
 
     def __init__(
         self,
         *,
         tools: FunctionTool | Callable[..., Any] | Sequence[FunctionTool | Callable[..., Any]] | None = None,
+        tool_description_format: _ToolDescriptionFormat = "compact",
         approval_mode: ApprovalMode | None = None,
         workspace_root: str | Path | None = None,
         file_mounts: FileMountInput | Sequence[FileMountInput] | None = None,
         allowed_domains: AllowedDomainInput | Sequence[AllowedDomainInput] | None = None,
+        max_output_files: int = DEFAULT_MAX_OUTPUT_FILES,
+        max_output_file_bytes: int = DEFAULT_MAX_OUTPUT_FILE_BYTES,
+        max_output_total_bytes: int = DEFAULT_MAX_OUTPUT_TOTAL_BYTES,
         backend: str = DEFAULT_HYPERLIGHT_BACKEND,
         module: str | None = DEFAULT_HYPERLIGHT_MODULE,
         module_path: str | None = None,
         _registry: SandboxRuntime | None = None,
     ) -> None:
+        normalized_description_format = _normalize_tool_description_format(tool_description_format)
+        max_output_files = _validate_positive_integer(name="max_output_files", value=max_output_files)
+        max_output_file_bytes = _validate_positive_integer(name="max_output_file_bytes", value=max_output_file_bytes)
+        max_output_total_bytes = _validate_positive_integer(name="max_output_total_bytes", value=max_output_total_bytes)
         super().__init__(
             name="execute_code",
             description=EXECUTE_CODE_TOOL_DESCRIPTION,
@@ -923,12 +1554,16 @@ class HyperlightExecuteCodeTool(FunctionTool):
             input_model=EXECUTE_CODE_INPUT_SCHEMA,
         )
         self._state_lock = threading.RLock()
+        self._tool_description_format: _NormalizedToolDescriptionFormat = normalized_description_format
         self._registry = _registry or _SandboxRegistry()
         self._default_approval_mode: ApprovalMode = approval_mode or "never_require"
         self._workspace_root = _resolve_workspace_root(workspace_root)
         self._backend: str = backend
         self._module: str | None = module
         self._module_path: str | None = module_path
+        self._max_output_files = max_output_files
+        self._max_output_file_bytes = max_output_file_bytes
+        self._max_output_total_bytes = max_output_total_bytes
         self._managed_tools: list[FunctionTool] = []
         self._file_mounts: dict[str, FileMount] = {}
         self._allowed_domains: dict[str, AllowedDomain] = {}
@@ -956,6 +1591,7 @@ class HyperlightExecuteCodeTool(FunctionTool):
                 workspace_enabled=self._workspace_root is not None,
                 mounted_paths=[_display_mount_path(mount.mount_path) for mount in self._file_mounts.values()],
                 allowed_domains=allowed_domains,
+                tool_description_format=self._tool_description_format,
             )
 
     @description.setter
@@ -1077,10 +1713,14 @@ class HyperlightExecuteCodeTool(FunctionTool):
 
         return HyperlightExecuteCodeTool(
             tools=self.get_tools(),
+            tool_description_format=self._tool_description_format,
             approval_mode=self._default_approval_mode,
             workspace_root=self._workspace_root,
             file_mounts=file_mounts or None,
             allowed_domains=allowed_domains or None,
+            max_output_files=self._max_output_files,
+            max_output_file_bytes=self._max_output_file_bytes,
+            max_output_total_bytes=self._max_output_total_bytes,
             backend=self._backend,
             module=self._module,
             module_path=self._module_path,
@@ -1095,7 +1735,15 @@ class HyperlightExecuteCodeTool(FunctionTool):
             "module": config.module,
             "module_path": config.module_path,
             "approval_mode": config.approval_mode,
+            "max_output_files": config.max_output_files,
+            "max_output_file_bytes": config.max_output_file_bytes,
+            "max_output_total_bytes": config.max_output_total_bytes,
             "tool_names": [tool_obj.name for tool_obj in config.tools],
+            "tool_description_format": (
+                dict(self._tool_description_format)
+                if isinstance(self._tool_description_format, dict)
+                else self._tool_description_format
+            ),
             "filesystem_enabled": config.filesystem_enabled,
             "workspace_root": str(config.workspace_root) if config.workspace_root is not None else None,
             "file_mounts": [
@@ -1131,6 +1779,9 @@ class HyperlightExecuteCodeTool(FunctionTool):
             workspace_root = self._workspace_root
             stored_mounts = tuple(self._file_mounts.values())
             allowed_domains = tuple(sorted(self._allowed_domains.values(), key=lambda value: value.target))
+            max_output_files = self._max_output_files
+            max_output_file_bytes = self._max_output_file_bytes
+            max_output_total_bytes = self._max_output_total_bytes
             approval_mode = _resolve_execute_code_approval_mode(
                 base_approval_mode=self._default_approval_mode,
                 tools=managed_tools,
@@ -1156,6 +1807,9 @@ class HyperlightExecuteCodeTool(FunctionTool):
             workspace_signature=workspace_signature,
             file_mounts=normalized_mounts,
             allowed_domains=allowed_domains,
+            max_output_files=max_output_files,
+            max_output_file_bytes=max_output_file_bytes,
+            max_output_total_bytes=max_output_total_bytes,
         )
 
     async def _run_code(self, *, code: str) -> list[Content]:

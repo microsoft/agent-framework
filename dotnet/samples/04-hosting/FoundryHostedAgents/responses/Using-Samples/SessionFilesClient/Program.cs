@@ -10,10 +10,10 @@ using Microsoft.Agents.AI.Foundry;
 // Load .env file if present (for local development)
 Env.TraversePath().Load();
 
-// AZURE_AI_PROJECT_ENDPOINT is the Foundry project endpoint. Shape:
+// FOUNDRY_PROJECT_ENDPOINT is the Foundry project endpoint. Shape:
 //   https://<host>/api/projects/<project>
-Uri projectEndpoint = new(Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")
-    ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set."));
+Uri projectEndpoint = new(Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
+    ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set."));
 
 // AZURE_AI_AGENT_NAME is the registered server-side agent name.
 string agentName = Environment.GetEnvironmentVariable("AZURE_AI_AGENT_NAME")

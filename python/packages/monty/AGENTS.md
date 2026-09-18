@@ -3,8 +3,8 @@
 Monty-backed CodeAct integrations for the Microsoft Agent Framework.
 
 > [!NOTE]
-> **Alpha package.** Not part of `agent-framework[all]` yet. Install explicitly
-> with `pip install agent-framework-monty --pre`.
+> **Beta package.** Included in `agent-framework[all]` and available through
+> the lazy-loading namespace `agent_framework.monty`.
 
 ## Core Classes
 
@@ -19,7 +19,7 @@ Monty-backed CodeAct integrations for the Microsoft Agent Framework.
 ## Public API
 
 ```python
-from agent_framework_monty import (
+from agent_framework.monty import (
     FileMount,
     FileMountInput,
     MontyCodeActProvider,
@@ -36,6 +36,19 @@ from agent_framework_monty import (
 - `file_mounts` — sequence of `FileMountInput` (str shorthand,
   `(host_path, mount_path)` tuple, or `FileMount`)
 - `resource_limits` — Monty `ResourceLimits` TypedDict
+- `tool_description_format` — keyword-only
+  `Literal["compact", "json"] | Mapping[str, Literal["compact", "json"]] = "compact"`.
+  Selects parameter documentation in both the description and instructions.
+  Compact includes scalar types, required/optional status, descriptions, enums,
+  and defaults; schemas that cannot be represented faithfully fall back to full
+  JSON Schema with an explanatory note. `"json"` always includes the full schema.
+  Mappings use exact, case-sensitive tool names, with compact for missing names;
+  mappings are copied on construction and per-run snapshots, retaining inactive
+  names for dynamic registration. Unsupported choices raise `ValueError`; invalid
+  input types (including `None`), non-string keys, and non-string choices raise
+  `TypeError`. Serializable state stores the configured string or mapping as
+  `tool_description_format`. This affects documentation only, not type checking
+  or invocation.
 
 Tool-management methods on both classes: `add_tools`, `get_tools`,
 `remove_tool`, `clear_tools`. Mount-management methods: `add_file_mounts`,
@@ -59,7 +72,8 @@ Tool-management methods on both classes: `add_tools`, `get_tools`,
   adapted from the reference Monty CodeAct repo. Pauses on `FunctionSnapshot`
   to dispatch host calls, then resumes; supports direct typed tool calls,
   the `call_tool` fallback, `asyncio.gather` fan-out, and forwards
-  ``mount`` / ``limits`` to `Monty(...).start(...)`.
+  ``limits`` / type-check options via `pool.checkout(...)`, and ``mount`` /
+  ``print_callback`` via `session.feed_start(...)`.
 - **`_instructions.py`** — dynamic instruction / tool-description builders
   (include filesystem capability summaries when mounts are configured).
 
@@ -67,7 +81,7 @@ Tool-management methods on both classes: `add_tools`, `get_tools`,
 
 | Capability | Monty primitive | Status |
 |------------|-----------------|--------|
-| Custom virtual filesystem | `OSAccess` subclass passed to `Monty(...).start(os=...)` | Not exposed. Strictly more general than file mounts; useful when you want a fully synthetic FS. |
+| Custom virtual filesystem | `OSAccess` subclass passed to `session.feed_start(..., os=...)` | Not exposed. Strictly more general than file mounts; useful when you want a fully synthetic FS. |
 | Outbound URL allow-list | No Monty primitive — expose `fetch_url` as a host tool with the allow-list check in your tool function. | Not exposed in this package; users add it as a regular tool. |
 
 ## Out of scope (for now)

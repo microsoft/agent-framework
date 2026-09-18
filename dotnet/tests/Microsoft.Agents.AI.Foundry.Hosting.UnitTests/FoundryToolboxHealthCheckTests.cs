@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure.Core;
@@ -64,12 +63,11 @@ public class FoundryToolboxHealthCheckTests
     }
 
     [Fact]
-    public async Task CheckHealthAsync_UnhealthyStatus_ReturnsConfiguredFailureWithFailedNamesAsync()
+    public async Task CheckHealthAsync_DegradedStatus_StaysRoutableForDeferredToolboxAsync()
     {
-        // Arrange: pre-registered toolbox at an unreachable endpoint forces StartAsync to
-        // record the failure. The health-check must reflect Unhealthy and expose the
-        // failed toolbox names in the result data so operators can diagnose without log
-        // diving.
+        // Arrange: a pre-registered toolbox at an unreachable endpoint forces StartAsync to defer
+        // the toolbox (non-consent failure). The container must stay routable so the toolbox can be
+        // retried per-request, where the platform injects the per-user isolation key on egress.
         var options = new FoundryToolboxOptions
         {
             EndpointOverride = "http://127.0.0.1:1/unreachable",
@@ -84,11 +82,11 @@ public class FoundryToolboxHealthCheckTests
         // Act
         var result = await check.CheckHealthAsync(context);
 
-        // Assert
-        Assert.Equal(HealthStatus.Unhealthy, result.Status);
-        Assert.True(result.Data.ContainsKey("failedToolboxes"));
-        var failed = Assert.IsAssignableFrom<IReadOnlyList<string>>(result.Data["failedToolboxes"]);
-        Assert.Equal("broken-toolbox", Assert.Single(failed));
+        // Assert: deferred toolbox keeps the container Healthy (routable), not bricked.
+        Assert.Equal(FoundryToolboxStartupStatus.Degraded, service.StartupStatus);
+        Assert.Equal(HealthStatus.Healthy, result.Status);
+        Assert.Equal("broken-toolbox", Assert.Single(service.DeferredToolboxNames));
+        Assert.Contains("deferred", result.Description, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

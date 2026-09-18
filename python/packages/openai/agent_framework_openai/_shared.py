@@ -5,12 +5,12 @@ from __future__ import annotations
 import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from copy import copy
-from typing import TYPE_CHECKING, Any, Literal, Union
+from typing import TYPE_CHECKING, Any, Literal, Union, cast
 
 from agent_framework._settings import SecretString, load_settings
 from agent_framework._telemetry import APP_INFO, prepend_agent_framework_to_user_agent
 from agent_framework.exceptions import SettingNotFoundError
-from openai import AsyncAzureOpenAI, AsyncOpenAI, AsyncStream, _legacy_response  # type: ignore
+from openai import AsyncAzureOpenAI, AsyncOpenAI, AsyncStream, HttpxBinaryResponseContent
 from openai.types import Completion
 from openai.types.audio import Transcription
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
@@ -18,19 +18,23 @@ from openai.types.images_response import ImagesResponse
 from openai.types.responses.response import Response
 from openai.types.responses.response_stream_event import ResponseStreamEvent
 
+from ._feature_usage import create_feature_usage_http_client
+
 if sys.version_info >= (3, 11):
-    from typing import TypedDict  # type: ignore # pragma: no cover
+    from typing import TypedDict  # pragma: no cover
 else:
-    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
+    from typing_extensions import TypedDict  # pragma: no cover
 
 if TYPE_CHECKING:
+    from agent_framework import Content
     from azure.core.credentials import TokenCredential
     from azure.core.credentials_async import AsyncTokenCredential
 
     AzureCredentialTypes = TokenCredential | AsyncTokenCredential
 
 
-AZURE_OPENAI_TOKEN_SCOPE = "https://cognitiveservices.azure.com/.default"  # noqa: S105 # nosec B105
+AZURE_OPENAI_TOKEN_SCOPE = "https://cognitiveservices.azure.com/.default"  # ruff:ignore[hardcoded-password-string] # nosec B105
+_SUPPRESSED_AZURE_API_KEY = "<missing API key>"
 
 
 RESPONSE_TYPE = Union[
@@ -43,10 +47,29 @@ RESPONSE_TYPE = Union[
     Response,
     AsyncStream[ResponseStreamEvent],
     Transcription,
-    _legacy_response.HttpxBinaryResponseContent,
+    HttpxBinaryResponseContent,
 ]
 
 AzureTokenProvider = Callable[[], str | Awaitable[str]]
+
+
+PROMPT_CACHE_BREAKPOINT_KEY = "prompt_cache_breakpoint"
+
+
+def _attach_prompt_cache_breakpoint(  # pyright: ignore[reportUnusedFunction]
+    part: dict[str, Any], content: Content
+) -> dict[str, Any]:
+    """Copy a prompt cache breakpoint from content metadata onto an outgoing part.
+
+    GPT-5.6 and later models accept an explicit cache breakpoint on supported content
+    blocks; users opt in per part via
+    ``Content.additional_properties["prompt_cache_breakpoint"]``.
+    """
+    props = content.additional_properties
+    breakpoint_value = props.get(PROMPT_CACHE_BREAKPOINT_KEY) if props else None
+    if isinstance(breakpoint_value, Mapping):
+        part[PROMPT_CACHE_BREAKPOINT_KEY] = dict(cast("Mapping[str, Any]", breakpoint_value))
+    return part
 
 
 class OpenAISettings(TypedDict, total=False):
@@ -265,6 +288,7 @@ def load_openai_service_settings(
     if client:
         return azure_settings, client, True  # type: ignore[return-value]
     client_args["default_headers"] = merged_headers
+    client_args["http_client"] = create_feature_usage_http_client()
     if endpoint := azure_settings.get("endpoint"):
         if responses_mode:
             client_args["base_url"] = f"{endpoint.rstrip('/')}/openai/v1/"
@@ -272,14 +296,16 @@ def load_openai_service_settings(
             client_args["azure_endpoint"] = endpoint
     if base_url := azure_settings.get("base_url"):
         client_args["base_url"] = base_url
-    if api_key := azure_settings.get("api_key"):
-        client_args["api_key"] = api_key.get_secret_value()
-    if api_key_callable:
-        client_args["api_key"] = api_key_callable
     if api_version := azure_settings.get("api_version"):
         client_args["api_version"] = api_version
     if credential:
+        # Both supported SDK majors recognize this sentinel and skip API-key auth without consulting the environment.
+        client_args["api_key"] = _SUPPRESSED_AZURE_API_KEY
         client_args["azure_ad_token_provider"] = _resolve_azure_credential_to_token_provider(credential)
+    elif api_key_callable:
+        client_args["api_key"] = api_key_callable
+    elif api_key := azure_settings.get("api_key"):
+        client_args["api_key"] = api_key.get_secret_value()
     if "api_key" not in client_args and "azure_ad_token_provider" not in client_args:
         raise SettingNotFoundError(
             "Azure OpenAI client requires either an API key or an Azure AD token provider."
@@ -297,6 +323,7 @@ def load_openai_service_settings(
         openai_args: dict[str, Any] = {
             "base_url": resolved_base_url,
             "default_headers": client_args.get("default_headers"),
+            "http_client": client_args["http_client"],
         }
         if "azure_ad_token_provider" in client_args:
             openai_args["api_key"] = _ensure_async_token_provider(client_args["azure_ad_token_provider"])
@@ -349,7 +376,7 @@ def _resolve_azure_credential_to_token_provider(
     if isinstance(credential, AsyncTokenCredential):
         return get_async_bearer_token_provider(credential, AZURE_OPENAI_TOKEN_SCOPE)
     if isinstance(credential, TokenCredential):
-        return get_bearer_token_provider(credential, AZURE_OPENAI_TOKEN_SCOPE)  # type: ignore[arg-type]
+        return get_bearer_token_provider(credential, AZURE_OPENAI_TOKEN_SCOPE)
     raise ValueError(
         "The 'credential' parameter must be an Azure TokenCredential, AsyncTokenCredential, or a "
         "callable token provider."

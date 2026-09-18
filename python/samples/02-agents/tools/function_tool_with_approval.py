@@ -58,6 +58,8 @@ async def handle_approvals(query: str, agent: "SupportsAgentRun") -> AgentRespon
         new_inputs: list[Any] = [query]
 
         for user_input_needed in result.user_input_requests:
+            if user_input_needed.function_call is None:
+                continue
             print(
                 f"\nUser Input Request for function from {agent.name}:"
                 f"\n  Function: {user_input_needed.function_call.name}"
@@ -108,6 +110,8 @@ async def handle_approvals_streaming(query: str, agent: "SupportsAgentRun") -> N
             new_inputs: list[Any] = [query]
 
             for user_input_needed in user_input_requests:
+                if user_input_needed.function_call is None:
+                    continue
                 print(
                     f"\n\nUser Input Request for function from {agent.name}:"
                     f"\n  Function: {user_input_needed.function_call.name}"

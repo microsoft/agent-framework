@@ -1,8 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.ComponentModel;
+using AGUI.Client;
 using Microsoft.Agents.AI;
-using Microsoft.Agents.AI.AGUI;
 using Microsoft.Extensions.AI;
 
 string serverUrl = Environment.GetEnvironmentVariable("AGUI_SERVER_URL") ?? "http://localhost:8888";
@@ -18,7 +18,7 @@ static string GetUserLocation()
 }
 
 // Create frontend tools
-AITool[] frontendTools = [AIFunctionFactory.Create(GetUserLocation)];
+AITool[] frontendTools = [AIFunctionFactory.Create(GetUserLocation, name: "get_user_location")];
 
 // Create the AG-UI client agent with tools
 using HttpClient httpClient = new()
@@ -26,7 +26,7 @@ using HttpClient httpClient = new()
     Timeout = TimeSpan.FromSeconds(60)
 };
 
-AGUIChatClient chatClient = new(httpClient, serverUrl);
+AGUIChatClient chatClient = new(new(httpClient, serverUrl));
 
 AIAgent agent = chatClient.AsAIAgent(
     name: "agui-client",
@@ -62,7 +62,6 @@ try
 
         // Stream the response
         bool isFirstUpdate = true;
-        string? sessionId = null;
 
         await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages, session))
         {
@@ -71,9 +70,8 @@ try
             // First update indicates run started
             if (isFirstUpdate)
             {
-                sessionId = chatUpdate.ConversationId;
                 Console.ForegroundColor = ConsoleColor.Yellow;
-                Console.WriteLine($"\n[Run Started - Session: {chatUpdate.ConversationId}, Run: {chatUpdate.ResponseId}]");
+                Console.WriteLine($"\n[Run Started - Run: {chatUpdate.ResponseId}]");
                 Console.ResetColor();
                 isFirstUpdate = false;
             }
@@ -108,8 +106,11 @@ try
             }
         }
 
+        // The session owns prior history, so the next run sends only the new user message.
+        messages.Clear();
+
         Console.ForegroundColor = ConsoleColor.Green;
-        Console.WriteLine($"\n[Run Finished - Session: {sessionId}]");
+        Console.WriteLine("\n[Run Finished]");
         Console.ResetColor();
     }
 }

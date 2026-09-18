@@ -44,7 +44,7 @@ class EntityDiscovery:
             logger.info("No Agent Framework entities directory configured")
             return []
 
-        entities_dir = Path(self.entities_dir).resolve()  # noqa: ASYNC240
+        entities_dir = Path(self.entities_dir).resolve()  # ruff:ignore[blocking-path-method-in-async-function]
         await self._scan_entities_directory(entities_dir)
 
         logger.info(f"Discovered {len(self._entities)} Agent Framework entities")
@@ -166,17 +166,17 @@ class EntityDiscovery:
         """
         # Get directory path from metadata
         dir_path = Path(entity_info.metadata.get("path", ""))
-        if not dir_path.exists():  # noqa: ASYNC240
+        if not dir_path.exists():  # ruff:ignore[blocking-path-method-in-async-function]
             raise ValueError(f"Entity directory not found: {dir_path}")
 
         # Load .env if it exists
-        if dir_path.is_dir():  # noqa: ASYNC240
+        if dir_path.is_dir():  # ruff:ignore[blocking-path-method-in-async-function]
             self._load_env_for_entity(dir_path)
         else:
             self._load_env_for_entity(dir_path.parent)
 
         # Import the module
-        if dir_path.is_dir():  # noqa: ASYNC240
+        if dir_path.is_dir():  # ruff:ignore[blocking-path-method-in-async-function]
             # Directory-based entity - try different import patterns
             import_patterns = [
                 entity_id,
@@ -415,7 +415,7 @@ class EntityDiscovery:
         Args:
             entities_dir: Directory to scan for entities
         """
-        if not entities_dir.exists():  # noqa: ASYNC240
+        if not entities_dir.exists():  # ruff:ignore[blocking-path-method-in-async-function]
             logger.warning(f"Entities directory not found: {entities_dir}")
             return
 
@@ -427,7 +427,7 @@ class EntityDiscovery:
             sys.path.insert(0, entities_dir_str)
 
         # Scan for directories and Python files WITHOUT importing
-        for item in entities_dir.iterdir():  # noqa: ASYNC240
+        for item in entities_dir.iterdir():  # ruff:ignore[blocking-path-method-in-async-function]
             if item.name.startswith(".") or item.name == "__pycache__":
                 continue
 

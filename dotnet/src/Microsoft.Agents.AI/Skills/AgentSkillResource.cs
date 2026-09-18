@@ -1,10 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -12,7 +10,6 @@ namespace Microsoft.Agents.AI;
 /// <summary>
 /// Abstract base class for skill resources. A resource provides supplementary content (references, assets) to a skill.
 /// </summary>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public abstract class AgentSkillResource
 {
     /// <summary>

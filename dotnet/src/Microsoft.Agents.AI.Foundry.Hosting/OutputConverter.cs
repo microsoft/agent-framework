@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
@@ -14,8 +15,26 @@ using Azure.AI.AgentServer.Responses.Models;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
 using MeaiTextContent = Microsoft.Extensions.AI.TextContent;
+using OpenAIContainerFileCitationMessageAnnotation = OpenAI.Responses.ContainerFileCitationMessageAnnotation;
+using OpenAIFileCitationMessageAnnotation = OpenAI.Responses.FileCitationMessageAnnotation;
+using OpenAIFilePathMessageAnnotation = OpenAI.Responses.FilePathMessageAnnotation;
+using OpenAIMessageResponseItem = OpenAI.Responses.MessageResponseItem;
+using OpenAIStreamingResponseOutputItemAddedUpdate = OpenAI.Responses.StreamingResponseOutputItemAddedUpdate;
+using OpenAIStreamingResponseOutputItemDoneUpdate = OpenAI.Responses.StreamingResponseOutputItemDoneUpdate;
+using OpenAIStreamingResponseOutputTextAnnotationAddedUpdate = OpenAI.Responses.StreamingResponseOutputTextAnnotationAddedUpdate;
+using OpenAIStreamingResponseOutputTextDeltaUpdate = OpenAI.Responses.StreamingResponseOutputTextDeltaUpdate;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
+
+internal abstract record OutputConverterItem
+{
+    public sealed record ResponseEvent(ResponseStreamEvent Event) : OutputConverterItem;
+
+    public sealed record WorkflowCheckpoint(CheckpointInfo Checkpoint) : OutputConverterItem;
+
+    public static implicit operator OutputConverterItem(ResponseStreamEvent value) =>
+        new ResponseEvent(value);
+}
 
 /// <summary>
 /// Converts agent-framework <see cref="AgentResponseUpdate"/> streams into
@@ -32,10 +51,40 @@ internal static class OutputConverter
     /// <param name="stream">The SDK event stream builder.</param>
     /// <param name="stateBag">Optional session state bag used to persist tool-approval id mappings across turns.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>An async enumerable of SDK response stream events (excluding lifecycle events).</returns>
+    /// <returns>
+    /// An async enumerable of SDK response stream events. Workflow checkpoint boundaries are omitted.
+    /// </returns>
+    public static async IAsyncEnumerable<ResponseStreamEvent> ConvertUpdatesToEventsAsync(
+        IAsyncEnumerable<AgentResponseUpdate> updates,
+        ResponseEventStream stream,
+        AgentSessionStateBag? stateBag = null,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        await foreach (OutputConverterItem item in ConvertUpdatesToItemsAsync(
+            updates,
+            stream,
+            stateBag,
+            cancellationToken).ConfigureAwait(false))
+        {
+            if (item is OutputConverterItem.ResponseEvent responseEvent)
+            {
+                yield return responseEvent.Event;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Converts a stream of <see cref="AgentResponseUpdate"/> into response events and workflow
+    /// checkpoint boundaries.
+    /// </summary>
+    /// <param name="updates">The agent response updates to convert.</param>
+    /// <param name="stream">The SDK event stream builder.</param>
+    /// <param name="stateBag">Optional session state bag used to persist tool-approval id mappings across turns.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Converted response events and workflow checkpoint boundaries in source order.</returns>
     [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Serializing function call arguments dictionary.")]
     [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Serializing function call arguments dictionary.")]
-    public static async IAsyncEnumerable<ResponseStreamEvent> ConvertUpdatesToEventsAsync(
+    public static async IAsyncEnumerable<OutputConverterItem> ConvertUpdatesToItemsAsync(
         IAsyncEnumerable<AgentResponseUpdate> updates,
         ResponseEventStream stream,
         AgentSessionStateBag? stateBag = null,
@@ -45,6 +94,7 @@ internal static class OutputConverter
         OutputItemMessageBuilder? currentMessageBuilder = null;
         TextContentBuilder? currentTextBuilder = null;
         StringBuilder? accumulatedText = null;
+        List<Annotation>? accumulatedAnnotations = null;
         string? previousMessageId = null;
         bool hasTerminalEvent = false;
         var executorItemIds = new Dictionary<string, string>();
@@ -60,7 +110,7 @@ internal static class OutputConverter
             if (update.RawRepresentation is WorkflowEvent workflowEvent && update.Contents.Count == 0)
             {
                 // Close any open message builder before emitting workflow items
-                foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText))
+                foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText, accumulatedAnnotations))
                 {
                     yield return evt;
                 }
@@ -68,6 +118,7 @@ internal static class OutputConverter
                 currentTextBuilder = null;
                 currentMessageBuilder = null;
                 accumulatedText = null;
+                accumulatedAnnotations = null;
                 previousMessageId = null;
 
                 foreach (var evt in EmitWorkflowEvent(stream, workflowEvent, executorItemIds))
@@ -75,18 +126,27 @@ internal static class OutputConverter
                     yield return evt;
                 }
 
+                if (workflowEvent is SuperStepCompletedEvent
+                    {
+                        CompletionInfo.Checkpoint: { } checkpoint
+                    })
+                {
+                    yield return new OutputConverterItem.WorkflowCheckpoint(checkpoint);
+                }
+
                 continue;
             }
 
+            string? currentMessageId = ResolveMessageId(update);
             foreach (var content in update.Contents)
             {
                 switch (content)
                 {
                     case MeaiTextContent textContent:
                     {
-                        if (!IsSameMessage(update.MessageId, previousMessageId) && currentMessageBuilder is not null)
+                        if (!IsSameMessage(currentMessageId, previousMessageId) && currentMessageBuilder is not null)
                         {
-                            foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText))
+                            foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText, accumulatedAnnotations))
                             {
                                 yield return evt;
                             }
@@ -94,9 +154,13 @@ internal static class OutputConverter
                             currentTextBuilder = null;
                             currentMessageBuilder = null;
                             accumulatedText = null;
+                            accumulatedAnnotations = null;
                         }
 
-                        previousMessageId = update.MessageId;
+                        if (currentMessageId is { Length: > 0 })
+                        {
+                            previousMessageId = currentMessageId;
+                        }
 
                         if (currentMessageBuilder is null)
                         {
@@ -125,7 +189,7 @@ internal static class OutputConverter
                             break;
                         }
 
-                        foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText))
+                        foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText, accumulatedAnnotations))
                         {
                             yield return evt;
                         }
@@ -133,6 +197,7 @@ internal static class OutputConverter
                         currentTextBuilder = null;
                         currentMessageBuilder = null;
                         accumulatedText = null;
+                        accumulatedAnnotations = null;
                         previousMessageId = null;
 
                         var arguments = functionCall.Arguments is not null
@@ -149,7 +214,7 @@ internal static class OutputConverter
 
                     case TextReasoningContent reasoningContent:
                     {
-                        foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText))
+                        foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText, accumulatedAnnotations))
                         {
                             yield return evt;
                         }
@@ -157,6 +222,7 @@ internal static class OutputConverter
                         currentTextBuilder = null;
                         currentMessageBuilder = null;
                         accumulatedText = null;
+                        accumulatedAnnotations = null;
                         previousMessageId = null;
 
                         var reasoningBuilder = stream.AddOutputItemReasoningItem();
@@ -176,7 +242,7 @@ internal static class OutputConverter
 
                     case ToolApprovalRequestContent approvalRequest when approvalRequest.ToolCall is FunctionCallContent approvalFunctionCall:
                     {
-                        foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText))
+                        foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText, accumulatedAnnotations))
                         {
                             yield return evt;
                         }
@@ -184,6 +250,7 @@ internal static class OutputConverter
                         currentTextBuilder = null;
                         currentMessageBuilder = null;
                         accumulatedText = null;
+                        accumulatedAnnotations = null;
                         previousMessageId = null;
 
                         // The Responses API only standardizes the MCP-flavored approval primitive.
@@ -237,7 +304,7 @@ internal static class OutputConverter
 
                     case ErrorContent errorContent:
                     {
-                        foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText))
+                        foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText, accumulatedAnnotations))
                         {
                             yield return evt;
                         }
@@ -245,6 +312,7 @@ internal static class OutputConverter
                         currentTextBuilder = null;
                         currentMessageBuilder = null;
                         accumulatedText = null;
+                        accumulatedAnnotations = null;
                         previousMessageId = null;
                         hasTerminalEvent = true;
 
@@ -269,7 +337,7 @@ internal static class OutputConverter
                             break;
                         }
 
-                        foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText))
+                        foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText, accumulatedAnnotations))
                         {
                             yield return evt;
                         }
@@ -277,6 +345,7 @@ internal static class OutputConverter
                         currentTextBuilder = null;
                         currentMessageBuilder = null;
                         accumulatedText = null;
+                        accumulatedAnnotations = null;
                         previousMessageId = null;
 
                         var outputText = EncodeFunctionResultAsJsonStringPayload(functionResult.Result);
@@ -300,11 +369,32 @@ internal static class OutputConverter
                     default:
                         break;
                 }
+
+                var isTextContent = content is MeaiTextContent;
+                var isAnnotationOnlyContentForCurrentMessage =
+                    content.GetType() == typeof(AIContent) &&
+                    IsSameAnnotationMessage(currentMessageId, previousMessageId);
+
+                // MEAI OpenAI sends streaming citations in a separate annotation-only AIContent after
+                // the text deltas. Accumulate them because AgentServer emits annotations only after
+                // output_text.done, and de-duplicate providers that report the same citation twice.
+                if ((isTextContent || isAnnotationOnlyContentForCurrentMessage)
+                    && content.Annotations is { Count: > 0 }
+                    && currentMessageBuilder is not null)
+                {
+                    foreach (var sdkAnnotation in ConvertToSdkAnnotations(content.Annotations))
+                    {
+                        if (accumulatedAnnotations?.Any(existing => AreEquivalentAnnotations(existing, sdkAnnotation)) is not true)
+                        {
+                            (accumulatedAnnotations ??= []).Add(sdkAnnotation);
+                        }
+                    }
+                }
             }
         }
 
         // Close any remaining open message
-        foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText))
+        foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText, accumulatedAnnotations))
         {
             yield return evt;
         }
@@ -318,7 +408,8 @@ internal static class OutputConverter
     private static IEnumerable<ResponseStreamEvent> CloseCurrentMessage(
         OutputItemMessageBuilder? messageBuilder,
         TextContentBuilder? textBuilder,
-        StringBuilder? accumulatedText)
+        StringBuilder? accumulatedText,
+        List<Annotation>? annotations = null)
     {
         if (messageBuilder is null)
         {
@@ -329,6 +420,16 @@ internal static class OutputConverter
         {
             var finalText = accumulatedText?.ToString() ?? string.Empty;
             yield return textBuilder.EmitTextDone(finalText);
+
+            // Annotations must be emitted after EmitTextDone and before EmitDone.
+            if (annotations is not null)
+            {
+                foreach (var annotation in annotations)
+                {
+                    yield return textBuilder.EmitAnnotationAdded(annotation);
+                }
+            }
+
             yield return textBuilder.EmitDone();
         }
 
@@ -338,16 +439,129 @@ internal static class OutputConverter
     private static bool IsSameMessage(string? currentId, string? previousId) =>
         currentId is not { Length: > 0 } || previousId is not { Length: > 0 } || currentId == previousId;
 
+    private static bool IsSameAnnotationMessage(string? currentId, string? previousId) =>
+        currentId is { Length: > 0 }
+            ? currentId == previousId
+            : previousId is not { Length: > 0 };
+
+    private static string? ResolveMessageId(AgentResponseUpdate update)
+    {
+        if (update.MessageId is { Length: > 0 })
+        {
+            return update.MessageId;
+        }
+
+        object? rawRepresentation = update.RawRepresentation is ChatResponseUpdate chatUpdate
+            ? chatUpdate.RawRepresentation
+            : update.RawRepresentation;
+
+        return rawRepresentation switch
+        {
+            OpenAIStreamingResponseOutputTextAnnotationAddedUpdate annotationAdded => annotationAdded.ItemId,
+            OpenAIStreamingResponseOutputTextDeltaUpdate textDelta => textDelta.ItemId,
+            OpenAIStreamingResponseOutputItemAddedUpdate { Item: OpenAIMessageResponseItem message } => message.Id,
+            OpenAIStreamingResponseOutputItemDoneUpdate { Item: OpenAIMessageResponseItem message } => message.Id,
+            _ => null,
+        };
+    }
+
+    private static bool AreEquivalentAnnotations(Annotation left, Annotation right) =>
+        (left, right) switch
+        {
+            (UrlCitationBody leftUrl, UrlCitationBody rightUrl) =>
+                leftUrl.Url == rightUrl.Url &&
+                leftUrl.StartIndex == rightUrl.StartIndex &&
+                leftUrl.EndIndex == rightUrl.EndIndex &&
+                leftUrl.Title == rightUrl.Title,
+            (FileCitationBody leftFile, FileCitationBody rightFile) =>
+                leftFile.FileId == rightFile.FileId &&
+                leftFile.Index == rightFile.Index &&
+                leftFile.Filename == rightFile.Filename,
+            (ContainerFileCitationBody leftContainerFile, ContainerFileCitationBody rightContainerFile) =>
+                leftContainerFile.ContainerId == rightContainerFile.ContainerId &&
+                leftContainerFile.FileId == rightContainerFile.FileId &&
+                leftContainerFile.StartIndex == rightContainerFile.StartIndex &&
+                leftContainerFile.EndIndex == rightContainerFile.EndIndex &&
+                leftContainerFile.Filename == rightContainerFile.Filename,
+            (FilePath leftFilePath, FilePath rightFilePath) =>
+                leftFilePath.FileId == rightFilePath.FileId &&
+                leftFilePath.Index == rightFilePath.Index,
+            _ => false,
+        };
+
+    /// <summary>
+    /// Converts MEAI <see cref="AIAnnotation"/> instances to Responses SDK <see cref="Annotation"/> objects.
+    /// Only supported <see cref="CitationAnnotation"/> shapes are converted; all others are skipped.
+    /// </summary>
+    private static IEnumerable<Annotation> ConvertToSdkAnnotations(IList<AIAnnotation> annotations)
+    {
+        foreach (var ann in annotations)
+        {
+            if (ann is not CitationAnnotation citation)
+            {
+                continue;
+            }
+
+            if (citation.RawRepresentation is OpenAIContainerFileCitationMessageAnnotation containerFileCitation)
+            {
+                yield return new ContainerFileCitationBody(
+                    containerFileCitation.ContainerId,
+                    containerFileCitation.FileId,
+                    containerFileCitation.StartIndex,
+                    containerFileCitation.EndIndex,
+                    containerFileCitation.Filename);
+                continue;
+            }
+
+            if (citation.RawRepresentation is OpenAIFileCitationMessageAnnotation fileCitation)
+            {
+                yield return new FileCitationBody(fileCitation.FileId, fileCitation.Index, fileCitation.Filename);
+                continue;
+            }
+
+            if (citation.RawRepresentation is OpenAIFilePathMessageAnnotation filePath)
+            {
+                yield return new FilePath(filePath.FileId, filePath.Index);
+                continue;
+            }
+
+            if (citation.Url is null)
+            {
+                continue;
+            }
+
+            var regions = citation.AnnotatedRegions?
+                .OfType<TextSpanAnnotatedRegion>()
+                .Where(r => r.StartIndex is not null && r.EndIndex is not null)
+                .ToList();
+
+            if (regions is not { Count: > 0 })
+            {
+                continue;
+            }
+
+            foreach (var region in regions)
+            {
+                yield return new UrlCitationBody(
+                    citation.Url,
+                    region.StartIndex!.Value,
+                    region.EndIndex!.Value,
+                    citation.Title ?? string.Empty);
+            }
+        }
+    }
+
     private static ResponseUsage ConvertUsage(UsageDetails details, ResponseUsage? existing)
     {
         var inputTokens = details.InputTokenCount ?? 0;
         var outputTokens = details.OutputTokenCount ?? 0;
         var totalTokens = details.TotalTokenCount ?? 0;
 
-        var cachedTokens = details.AdditionalCounts?.TryGetValue("InputTokenDetails.CachedTokenCount", out var cached) ?? false
-            ? cached : 0;
-        var reasoningTokens = details.AdditionalCounts?.TryGetValue("OutputTokenDetails.ReasoningTokenCount", out var reasoning) ?? false
-            ? reasoning : 0;
+        // Prefer the dedicated counters, retaining the legacy dictionary keys as a fallback.
+        var cachedTokens = details.CachedInputTokenCount ??
+            (details.AdditionalCounts?.TryGetValue("InputTokenDetails.CachedTokenCount", out var cached) is true ? cached : 0);
+        var reasoningTokens = details.ReasoningTokenCount ??
+            (details.AdditionalCounts?.TryGetValue("OutputTokenDetails.ReasoningTokenCount", out var reasoning) is true ? reasoning : 0);
 
         if (existing is not null)
         {

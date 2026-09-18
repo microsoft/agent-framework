@@ -10,7 +10,16 @@ using Azure.AI.AgentServer.Responses.Models;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
 using Moq;
+using ContainerFileCitationMessageAnnotation = OpenAI.Responses.ContainerFileCitationMessageAnnotation;
+using FileCitationMessageAnnotation = OpenAI.Responses.FileCitationMessageAnnotation;
+using FilePathMessageAnnotation = OpenAI.Responses.FilePathMessageAnnotation;
 using MeaiTextContent = Microsoft.Extensions.AI.TextContent;
+using OpenAIResponseItem = OpenAI.Responses.ResponseItem;
+using OpenAIStreamingResponseOutputItemDoneUpdate = OpenAI.Responses.StreamingResponseOutputItemDoneUpdate;
+using OpenAIStreamingResponseOutputTextAnnotationAddedUpdate = OpenAI.Responses.StreamingResponseOutputTextAnnotationAddedUpdate;
+using OpenAIStreamingResponseOutputTextDeltaUpdate = OpenAI.Responses.StreamingResponseOutputTextDeltaUpdate;
+
+#pragma warning disable OPENAI001 // Experimental Responses API surfaces
 
 namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 
@@ -173,6 +182,107 @@ public class OutputConverterTests
 
         var completedEvent = events.OfType<ResponseCompletedEvent>().SingleOrDefault();
         Assert.NotNull(completedEvent);
+    }
+
+    [Theory]
+    [InlineData(34304L, 128L, null, null, 34304L, 128L)]
+    [InlineData(34304L, 128L, 999L, 999L, 34304L, 128L)]
+    [InlineData(0L, 0L, 999L, 999L, 0L, 0L)]
+    [InlineData(null, null, null, null, 0L, 0L)]
+    [InlineData(null, null, 34304L, 128L, 34304L, 128L)]
+    [InlineData(34304L, null, 999L, 128L, 34304L, 128L)]
+    [InlineData(null, 128L, 34304L, 999L, 34304L, 128L)]
+    public async Task ConvertUpdatesToEventsAsync_UsageCounters_PreservesDetailsAsync(
+        long? cachedTokens, long? reasoningTokens, long? legacyCachedTokens, long? legacyReasoningTokens,
+        long expectedCachedTokens, long expectedReasoningTokens)
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var details = new UsageDetails
+        {
+            InputTokenCount = 34847,
+            OutputTokenCount = 1000,
+            TotalTokenCount = 35847,
+            CachedInputTokenCount = cachedTokens,
+            ReasoningTokenCount = reasoningTokens,
+        };
+        if (legacyCachedTokens is { } cached)
+        {
+            (details.AdditionalCounts ??= [])["InputTokenDetails.CachedTokenCount"] = cached;
+        }
+
+        if (legacyReasoningTokens is { } reasoning)
+        {
+            (details.AdditionalCounts ??= [])["OutputTokenDetails.ReasoningTokenCount"] = reasoning;
+        }
+
+        var updates = new[] { new AgentResponseUpdate { Contents = [new UsageContent(details)] } };
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(updates), stream))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        var completed = Assert.Single(events.OfType<ResponseCompletedEvent>());
+        var usage = Assert.IsType<ResponseUsage>(completed.Response.Usage);
+        Assert.Equal(34847, usage.InputTokens);
+        Assert.Equal(1000, usage.OutputTokens);
+        Assert.Equal(35847, usage.TotalTokens);
+        Assert.Equal(expectedCachedTokens, usage.InputTokensDetails.CachedTokens);
+        Assert.Equal(expectedReasoningTokens, usage.OutputTokensDetails.ReasoningTokens);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ConvertUpdatesToEventsAsync_UsageCounters_AccumulatesInTerminalEventAsync(bool fail)
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var updates = new List<AgentResponseUpdate>
+        {
+            new()
+            {
+                Contents = [new UsageContent(new UsageDetails
+                {
+                    InputTokenCount = 100, OutputTokenCount = 10, TotalTokenCount = 110,
+                    CachedInputTokenCount = 64, ReasoningTokenCount = 2,
+                })],
+            },
+            new()
+            {
+                Contents = [new UsageContent(new UsageDetails
+                {
+                    InputTokenCount = 200, OutputTokenCount = 20, TotalTokenCount = 220,
+                    CachedInputTokenCount = 128, ReasoningTokenCount = 4,
+                })],
+            },
+        };
+        if (fail)
+        {
+            updates.Add(new AgentResponseUpdate { Contents = [new ErrorContent("Test failure")] });
+        }
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(updates), stream))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        var terminal = Assert.Single(events);
+        var usage = Assert.IsType<ResponseUsage>(fail
+            ? Assert.IsType<ResponseFailedEvent>(terminal).Response.Usage
+            : Assert.IsType<ResponseCompletedEvent>(terminal).Response.Usage);
+        Assert.Equal(300, usage.InputTokens);
+        Assert.Equal(30, usage.OutputTokens);
+        Assert.Equal(330, usage.TotalTokens);
+        Assert.Equal(192, usage.InputTokensDetails.CachedTokens);
+        Assert.Equal(6, usage.OutputTokensDetails.ReasoningTokens);
     }
 
     [Fact]
@@ -1372,6 +1482,751 @@ public class OutputConverterTests
         // ErrorContent should drive a failed event rather than being swallowed by the workflow branch.
         Assert.Contains(events, e => e is ResponseFailedEvent);
     }
+
+    #region url_citation annotation coverage
+
+    /// <summary>A <see cref="MeaiTextContent"/> with a url_citation annotation emits a <see cref="ResponseOutputTextAnnotationAddedEvent"/>.</summary>
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_TextWithUrlCitationAnnotation_EmitsAnnotationEventAsync()
+    {
+        var (stream, _) = CreateTestStream();
+        var annotation = new CitationAnnotation
+        {
+            Url = new Uri("https://example.com/doc"),
+            Title = "Example Document",
+            AnnotatedRegions = [new TextSpanAnnotatedRegion { StartIndex = 0, EndIndex = 5 }]
+        };
+        var textContent = new MeaiTextContent("Hello") { Annotations = [annotation] };
+        var update = new AgentResponseUpdate { MessageId = "msg_1", Contents = [textContent] };
+
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream))
+        {
+            events.Add(evt);
+        }
+
+        var annotationEvent = Assert.Single(events.OfType<ResponseOutputTextAnnotationAddedEvent>());
+        var urlCitation = Assert.IsType<UrlCitationBody>(annotationEvent.Annotation);
+        Assert.Equal(new Uri("https://example.com/doc"), urlCitation.Url);
+        Assert.Equal("Example Document", urlCitation.Title);
+        Assert.Equal(0L, urlCitation.StartIndex);
+        Assert.Equal(5L, urlCitation.EndIndex);
+        Assert.IsType<ResponseCompletedEvent>(events[^1]);
+    }
+
+    /// <summary>An annotation-only update following text for the same message emits a url_citation event.</summary>
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_AnnotationOnlyContentAfterText_EmitsAnnotationEventAsync()
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var annotation = new CitationAnnotation
+        {
+            Url = new Uri("https://example.com/doc"),
+            Title = "Example Document",
+            AnnotatedRegions = [new TextSpanAnnotatedRegion { StartIndex = 0, EndIndex = 5 }]
+        };
+        var updates = new[]
+        {
+            new AgentResponseUpdate
+            {
+                MessageId = "msg_1",
+                Contents = [new MeaiTextContent("Hello")]
+            },
+            new AgentResponseUpdate
+            {
+                MessageId = "msg_1",
+                Contents = [new AIContent { Annotations = [annotation] }]
+            },
+        };
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(updates), stream))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        var annotationEvent = Assert.Single(events.OfType<ResponseOutputTextAnnotationAddedEvent>());
+        var urlCitation = Assert.IsType<UrlCitationBody>(annotationEvent.Annotation);
+        Assert.Equal(new Uri("https://example.com/doc"), urlCitation.Url);
+        Assert.Equal("Example Document", urlCitation.Title);
+        Assert.Equal(0L, urlCitation.StartIndex);
+        Assert.Equal(5L, urlCitation.EndIndex);
+
+        var contentPartDone = Assert.Single(events.OfType<ResponseContentPartDoneEvent>());
+        var donePart = Assert.IsType<OutputContentOutputTextContent>(contentPartDone.Part);
+        Assert.IsType<UrlCitationBody>(Assert.Single(donePart.Annotations));
+
+        var outputItemDone = Assert.Single(events.OfType<ResponseOutputItemDoneEvent>());
+        var doneMessage = Assert.IsType<OutputItemMessage>(outputItemDone.Item);
+        var doneText = Assert.IsType<MessageContentOutputTextContent>(Assert.Single(doneMessage.Content));
+        Assert.IsType<UrlCitationBody>(Assert.Single(doneText.Annotations));
+    }
+
+    /// <summary>The same citation attached to text and a later annotation-only update is emitted once.</summary>
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_DuplicateCitationAcrossContentUpdates_EmitsOnceAsync()
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var annotation = new CitationAnnotation
+        {
+            Url = new Uri("https://example.com/doc"),
+            Title = "Example Document",
+            AnnotatedRegions = [new TextSpanAnnotatedRegion { StartIndex = 0, EndIndex = 5 }]
+        };
+        var updates = new[]
+        {
+            new AgentResponseUpdate
+            {
+                MessageId = "msg_1",
+                Contents = [new MeaiTextContent("Hello") { Annotations = [annotation] }]
+            },
+            new AgentResponseUpdate
+            {
+                MessageId = "msg_1",
+                Contents = [new AIContent { Annotations = [annotation] }]
+            },
+        };
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(updates), stream))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        Assert.Single(events.OfType<ResponseOutputTextAnnotationAddedEvent>());
+    }
+
+    /// <summary>An annotation-only update for a different message is not attached to the open message.</summary>
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_AnnotationForDifferentMessage_IsSkippedAsync()
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var annotation = new CitationAnnotation
+        {
+            Url = new Uri("https://example.com/doc"),
+            Title = "Example Document",
+            AnnotatedRegions = [new TextSpanAnnotatedRegion { StartIndex = 0, EndIndex = 5 }]
+        };
+        var updates = new[]
+        {
+            new AgentResponseUpdate
+            {
+                MessageId = "msg_1",
+                Contents = [new MeaiTextContent("Hello")]
+            },
+            new AgentResponseUpdate
+            {
+                MessageId = "msg_2",
+                Contents = [new AIContent { Annotations = [annotation] }]
+            },
+        };
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(updates), stream))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        Assert.Empty(events.OfType<ResponseOutputTextAnnotationAddedEvent>());
+    }
+
+    /// <summary>An annotation-only update without a message ID is not attached to the open message.</summary>
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_AnnotationWithoutMessageId_IsSkippedAsync()
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var annotation = new CitationAnnotation
+        {
+            Url = new Uri("https://example.com/doc"),
+            Title = "Example Document",
+            AnnotatedRegions = [new TextSpanAnnotatedRegion { StartIndex = 0, EndIndex = 5 }]
+        };
+        var updates = new[]
+        {
+            new AgentResponseUpdate
+            {
+                MessageId = "msg_1",
+                Contents = [new MeaiTextContent("Hello")]
+            },
+            new AgentResponseUpdate
+            {
+                Contents = [new AIContent { Annotations = [annotation] }]
+            },
+        };
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(updates), stream))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        Assert.Empty(events.OfType<ResponseOutputTextAnnotationAddedEvent>());
+    }
+
+    /// <summary>Generic updates without message IDs can attach annotations to the only open message.</summary>
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_TextAndAnnotationWithoutMessageIds_EmitsAnnotationAsync()
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var annotation = new CitationAnnotation
+        {
+            Url = new Uri("https://example.com/doc"),
+            Title = "Example Document",
+            AnnotatedRegions = [new TextSpanAnnotatedRegion { StartIndex = 0, EndIndex = 5 }]
+        };
+        var updates = new[]
+        {
+            new AgentResponseUpdate
+            {
+                Contents = [new MeaiTextContent("Hello")]
+            },
+            new AgentResponseUpdate
+            {
+                Contents = [new AIContent { Annotations = [annotation] }]
+            },
+        };
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(updates), stream))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        Assert.Single(events.OfType<ResponseOutputTextAnnotationAddedEvent>());
+    }
+
+    /// <summary>OpenAI item IDs recover correlation when flattened message IDs are absent.</summary>
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_OpenAIRawItemIds_EmitsAnnotationAsync()
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var annotation = new CitationAnnotation
+        {
+            Url = new Uri("https://example.com/doc"),
+            Title = "Example Document",
+            AnnotatedRegions = [new TextSpanAnnotatedRegion { StartIndex = 0, EndIndex = 5 }]
+        };
+        var completedMessage = OpenAIResponseItem.CreateAssistantMessageItem("Hello");
+        completedMessage.Id = "msg_raw";
+        var updates = new[]
+        {
+            new AgentResponseUpdate
+            {
+                Contents = [new MeaiTextContent("Hello")],
+                RawRepresentation = new ChatResponseUpdate
+                {
+                    RawRepresentation = new OpenAIStreamingResponseOutputTextDeltaUpdate
+                    {
+                        ItemId = "msg_raw"
+                    }
+                }
+            },
+            new AgentResponseUpdate
+            {
+                Contents = [new AIContent { Annotations = [annotation] }],
+                RawRepresentation = new ChatResponseUpdate
+                {
+                    RawRepresentation = new OpenAIStreamingResponseOutputItemDoneUpdate
+                    {
+                        Item = completedMessage
+                    }
+                }
+            },
+        };
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(updates), stream))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        Assert.Single(events.OfType<ResponseOutputTextAnnotationAddedEvent>());
+    }
+
+    /// <summary>The OpenAI annotation event item ID correlates annotation content when the flattened ID is absent.</summary>
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_OpenAIRawAnnotationItemId_EmitsAnnotationAsync()
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var annotation = new CitationAnnotation
+        {
+            Url = new Uri("https://example.com/doc"),
+            Title = "Example Document",
+            AnnotatedRegions = [new TextSpanAnnotatedRegion { StartIndex = 0, EndIndex = 5 }]
+        };
+        var updates = new[]
+        {
+            new AgentResponseUpdate
+            {
+                MessageId = "msg_raw",
+                Contents = [new MeaiTextContent("Hello")]
+            },
+            new AgentResponseUpdate
+            {
+                Contents = [new AIContent { Annotations = [annotation] }],
+                RawRepresentation = new ChatResponseUpdate
+                {
+                    RawRepresentation = new OpenAIStreamingResponseOutputTextAnnotationAddedUpdate
+                    {
+                        ItemId = "msg_raw"
+                    }
+                }
+            },
+        };
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(updates), stream))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        Assert.Single(events.OfType<ResponseOutputTextAnnotationAddedEvent>());
+    }
+
+    /// <summary>An annotation on non-text content is not attached to the open text message.</summary>
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_AnnotationOnDataContent_IsSkippedAsync()
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var annotation = new CitationAnnotation
+        {
+            Url = new Uri("https://example.com/image"),
+            Title = "Image source",
+            AnnotatedRegions = [new TextSpanAnnotatedRegion { StartIndex = 0, EndIndex = 5 }]
+        };
+        var updates = new[]
+        {
+            new AgentResponseUpdate
+            {
+                MessageId = "msg_1",
+                Contents = [new MeaiTextContent("Hello")]
+            },
+            new AgentResponseUpdate
+            {
+                MessageId = "msg_1",
+                Contents =
+                [
+                    new DataContent("data:image/png;base64,aWNv", "image/png")
+                    {
+                        Annotations = [annotation]
+                    }
+                ]
+            },
+        };
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(updates), stream))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        Assert.Empty(events.OfType<ResponseOutputTextAnnotationAddedEvent>());
+    }
+
+    /// <summary>An annotation-only update without an open text message does not create a message.</summary>
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_AnnotationWithoutOpenMessage_IsSkippedAsync()
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var annotation = new CitationAnnotation
+        {
+            Url = new Uri("https://example.com/doc"),
+            Title = "Example Document",
+            AnnotatedRegions = [new TextSpanAnnotatedRegion { StartIndex = 0, EndIndex = 5 }]
+        };
+        var update = new AgentResponseUpdate
+        {
+            MessageId = "msg_1",
+            Contents = [new AIContent { Annotations = [annotation] }]
+        };
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync([update]), stream))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        Assert.Single(events);
+        Assert.IsType<ResponseCompletedEvent>(events[0]);
+    }
+
+    /// <summary>An annotation-only file citation is emitted with its file metadata.</summary>
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_AnnotationOnlyFileCitation_EmitsAnnotationEventAsync()
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var annotation = new CitationAnnotation
+        {
+            FileId = "file_123",
+            Title = "report.pdf",
+            RawRepresentation = new FileCitationMessageAnnotation("file_123", 2, "report.pdf")
+        };
+        var updates = new[]
+        {
+            new AgentResponseUpdate
+            {
+                MessageId = "msg_1",
+                Contents = [new MeaiTextContent("See the report")]
+            },
+            new AgentResponseUpdate
+            {
+                MessageId = "msg_1",
+                Contents = [new AIContent { Annotations = [annotation] }]
+            },
+        };
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(updates), stream))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        var annotationEvent = Assert.Single(events.OfType<ResponseOutputTextAnnotationAddedEvent>());
+        var fileCitation = Assert.IsType<FileCitationBody>(annotationEvent.Annotation);
+        Assert.Equal("file_123", fileCitation.FileId);
+        Assert.Equal(2L, fileCitation.Index);
+        Assert.Equal("report.pdf", fileCitation.Filename);
+    }
+
+    /// <summary>An annotation-only file path is emitted with its file metadata.</summary>
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_AnnotationOnlyFilePath_EmitsAnnotationEventAsync()
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var annotation = new CitationAnnotation
+        {
+            FileId = "file_123",
+            RawRepresentation = new FilePathMessageAnnotation("file_123", 3)
+        };
+        var updates = new[]
+        {
+            new AgentResponseUpdate
+            {
+                MessageId = "msg_1",
+                Contents = [new MeaiTextContent("Download the file")]
+            },
+            new AgentResponseUpdate
+            {
+                MessageId = "msg_1",
+                Contents = [new AIContent { Annotations = [annotation] }]
+            },
+        };
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(updates), stream))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        var annotationEvent = Assert.Single(events.OfType<ResponseOutputTextAnnotationAddedEvent>());
+        var filePath = Assert.IsType<FilePath>(annotationEvent.Annotation);
+        Assert.Equal("file_123", filePath.FileId);
+        Assert.Equal(3L, filePath.Index);
+    }
+
+    /// <summary>An annotation-only container file citation is emitted with its container and span metadata.</summary>
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_AnnotationOnlyContainerFileCitation_EmitsAnnotationEventAsync()
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var annotation = new CitationAnnotation
+        {
+            FileId = "file_123",
+            Title = "chart.png",
+            AnnotatedRegions = [new TextSpanAnnotatedRegion { StartIndex = 4, EndIndex = 9 }],
+            RawRepresentation = new ContainerFileCitationMessageAnnotation(
+                "container_123",
+                "file_123",
+                4,
+                9,
+                "chart.png")
+        };
+        var updates = new[]
+        {
+            new AgentResponseUpdate
+            {
+                MessageId = "msg_1",
+                Contents = [new MeaiTextContent("See chart")]
+            },
+            new AgentResponseUpdate
+            {
+                MessageId = "msg_1",
+                Contents = [new AIContent { Annotations = [annotation] }]
+            },
+        };
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(updates), stream))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        var annotationEvent = Assert.Single(events.OfType<ResponseOutputTextAnnotationAddedEvent>());
+        var containerCitation = Assert.IsType<ContainerFileCitationBody>(annotationEvent.Annotation);
+        Assert.Equal("container_123", containerCitation.ContainerId);
+        Assert.Equal("file_123", containerCitation.FileId);
+        Assert.Equal(4L, containerCitation.StartIndex);
+        Assert.Equal(9L, containerCitation.EndIndex);
+        Assert.Equal("chart.png", containerCitation.Filename);
+    }
+
+    /// <summary>The content_part.done and output_item.done payloads carry the url_citation metadata, guarding against the empty-annotations regression where only the annotation.added event fires.</summary>
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_TextWithUrlCitationAnnotation_DoneEventsCarryAnnotationMetadataAsync()
+    {
+        var (stream, _) = CreateTestStream();
+        var annotation = new CitationAnnotation
+        {
+            Url = new Uri("https://example.com/doc"),
+            Title = "Example Document",
+            AnnotatedRegions = [new TextSpanAnnotatedRegion { StartIndex = 0, EndIndex = 5 }]
+        };
+        var update = new AgentResponseUpdate
+        {
+            MessageId = "msg_1",
+            Contents = [new MeaiTextContent("Hello") { Annotations = [annotation] }]
+        };
+
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream))
+        {
+            events.Add(evt);
+        }
+
+        // content_part.done must serialize the annotation, not an empty array.
+        var contentPartDone = Assert.Single(events.OfType<ResponseContentPartDoneEvent>());
+        var donePart = Assert.IsType<OutputContentOutputTextContent>(contentPartDone.Part);
+        var donePartCitation = Assert.IsType<UrlCitationBody>(Assert.Single(donePart.Annotations));
+        Assert.Equal(new Uri("https://example.com/doc"), donePartCitation.Url);
+        Assert.Equal("Example Document", donePartCitation.Title);
+
+        // output_item.done message content must also carry the annotation.
+        var outputItemDone = Assert.Single(events.OfType<ResponseOutputItemDoneEvent>());
+        var doneMessage = Assert.IsType<OutputItemMessage>(outputItemDone.Item);
+        var doneText = Assert.IsType<MessageContentOutputTextContent>(Assert.Single(doneMessage.Content));
+        var doneTextCitation = Assert.IsType<UrlCitationBody>(Assert.Single(doneText.Annotations));
+        Assert.Equal(new Uri("https://example.com/doc"), doneTextCitation.Url);
+        Assert.Equal("Example Document", doneTextCitation.Title);
+    }
+
+    /// <summary>The annotation event must appear after the last text delta and before output_item.done.</summary>
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_TextWithAnnotation_AnnotationOrderedAfterDeltaBeforeMessageDoneAsync()
+    {
+        var (stream, _) = CreateTestStream();
+        var annotation = new CitationAnnotation
+        {
+            Url = new Uri("https://example.com/src"),
+            Title = "Source",
+            AnnotatedRegions = [new TextSpanAnnotatedRegion { StartIndex = 10, EndIndex = 20 }]
+        };
+        var update = new AgentResponseUpdate
+        {
+            MessageId = "msg_1",
+            Contents = [new MeaiTextContent("text with citation") { Annotations = [annotation] }]
+        };
+
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream))
+        {
+            events.Add(evt);
+        }
+
+        var lastDeltaIdx = events.FindLastIndex(e => e is ResponseTextDeltaEvent);
+        var annotationIdx = events.FindIndex(e => e is ResponseOutputTextAnnotationAddedEvent);
+        var messageDoneIdx = events.FindIndex(e => e is ResponseOutputItemDoneEvent);
+
+        Assert.True(annotationIdx >= 0, "Expected ResponseOutputTextAnnotationAddedEvent");
+        Assert.True(messageDoneIdx >= 0, "Expected ResponseOutputItemDoneEvent");
+        Assert.True(lastDeltaIdx < annotationIdx, "Annotation must come after last text delta");
+        Assert.True(annotationIdx < messageDoneIdx, "Annotation must come before output_item.done");
+    }
+
+    /// <summary>Multiple annotations on one <see cref="MeaiTextContent"/> all emit events, in order.</summary>
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_TextWithMultipleAnnotations_EmitsAllAnnotationsAsync()
+    {
+        var (stream, _) = CreateTestStream();
+        var ann1 = new CitationAnnotation
+        {
+            Url = new Uri("https://a.example.com"),
+            Title = "A",
+            AnnotatedRegions = [new TextSpanAnnotatedRegion { StartIndex = 0, EndIndex = 10 }]
+        };
+        var ann2 = new CitationAnnotation
+        {
+            Url = new Uri("https://b.example.com"),
+            Title = "B",
+            AnnotatedRegions = [new TextSpanAnnotatedRegion { StartIndex = 20, EndIndex = 30 }]
+        };
+        var update = new AgentResponseUpdate
+        {
+            MessageId = "msg_1",
+            Contents = [new MeaiTextContent("text") { Annotations = [ann1, ann2] }]
+        };
+
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream))
+        {
+            events.Add(evt);
+        }
+
+        var annotationEvents = events.OfType<ResponseOutputTextAnnotationAddedEvent>().ToList();
+        Assert.Equal(2, annotationEvents.Count);
+        var first = Assert.IsType<UrlCitationBody>(annotationEvents[0].Annotation);
+        Assert.Equal("A", first.Title);
+        var second = Assert.IsType<UrlCitationBody>(annotationEvents[1].Annotation);
+        Assert.Equal("B", second.Title);
+        Assert.IsType<ResponseCompletedEvent>(events[^1]);
+    }
+
+    /// <summary>Annotations on a <see cref="MeaiTextContent"/> across multiple streaming updates are all accumulated.</summary>
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_AnnotationsAcrossMultipleUpdates_AccumulatesAllAsync()
+    {
+        var (stream, _) = CreateTestStream();
+        var ann1 = new CitationAnnotation
+        {
+            Url = new Uri("https://first.example.com"),
+            Title = "First",
+            AnnotatedRegions = [new TextSpanAnnotatedRegion { StartIndex = 0, EndIndex = 5 }]
+        };
+        var ann2 = new CitationAnnotation
+        {
+            Url = new Uri("https://second.example.com"),
+            Title = "Second",
+            AnnotatedRegions = [new TextSpanAnnotatedRegion { StartIndex = 6, EndIndex = 11 }]
+        };
+        var updates = new[]
+        {
+            new AgentResponseUpdate { MessageId = "msg_1", Contents = [new MeaiTextContent("Hello") { Annotations = [ann1] }] },
+            new AgentResponseUpdate { MessageId = "msg_1", Contents = [new MeaiTextContent(" world") { Annotations = [ann2] }] },
+        };
+
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(updates), stream))
+        {
+            events.Add(evt);
+        }
+
+        var annotationEvents = events.OfType<ResponseOutputTextAnnotationAddedEvent>().ToList();
+        Assert.Equal(2, annotationEvents.Count);
+        Assert.IsType<ResponseCompletedEvent>(events[^1]);
+    }
+
+    /// <summary>A <see cref="CitationAnnotation"/> without a URL is skipped (no annotation event emitted).</summary>
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_CitationAnnotationWithoutUrl_IsSkippedAsync()
+    {
+        var (stream, _) = CreateTestStream();
+        var annotation = new CitationAnnotation
+        {
+            Url = null,
+            Title = "No URL",
+            AnnotatedRegions = [new TextSpanAnnotatedRegion { StartIndex = 0, EndIndex = 5 }]
+        };
+        var update = new AgentResponseUpdate
+        {
+            MessageId = "msg_1",
+            Contents = [new MeaiTextContent("text") { Annotations = [annotation] }]
+        };
+
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream))
+        {
+            events.Add(evt);
+        }
+
+        Assert.Empty(events.OfType<ResponseOutputTextAnnotationAddedEvent>());
+        Assert.IsType<ResponseCompletedEvent>(events[^1]);
+    }
+
+    /// <summary>A <see cref="CitationAnnotation"/> without a <see cref="TextSpanAnnotatedRegion"/> is skipped.</summary>
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_CitationAnnotationWithoutRegions_IsSkippedAsync()
+    {
+        var (stream, _) = CreateTestStream();
+        var annotation = new CitationAnnotation
+        {
+            Url = new Uri("https://example.com"),
+            Title = "No Regions",
+            AnnotatedRegions = null
+        };
+        var update = new AgentResponseUpdate
+        {
+            MessageId = "msg_1",
+            Contents = [new MeaiTextContent("text") { Annotations = [annotation] }]
+        };
+
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream))
+        {
+            events.Add(evt);
+        }
+
+        Assert.Empty(events.OfType<ResponseOutputTextAnnotationAddedEvent>());
+        Assert.IsType<ResponseCompletedEvent>(events[^1]);
+    }
+
+    /// <summary>A non-<see cref="CitationAnnotation"/> in Annotations is silently skipped.</summary>
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_NonCitationAnnotation_IsSkippedAsync()
+    {
+        var (stream, _) = CreateTestStream();
+        var rawAnnotation = new AIAnnotation(); // base type, not a CitationAnnotation
+        var update = new AgentResponseUpdate
+        {
+            MessageId = "msg_1",
+            Contents = [new MeaiTextContent("text") { Annotations = [rawAnnotation] }]
+        };
+
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream))
+        {
+            events.Add(evt);
+        }
+
+        Assert.Empty(events.OfType<ResponseOutputTextAnnotationAddedEvent>());
+        Assert.IsType<ResponseCompletedEvent>(events[^1]);
+    }
+
+    #endregion
 
     private sealed class RawToolCallContent : ToolCallContent
     {

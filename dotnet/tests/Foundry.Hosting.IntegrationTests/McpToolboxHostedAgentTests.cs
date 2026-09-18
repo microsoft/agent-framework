@@ -24,7 +24,7 @@ public sealed class McpToolboxHostedAgentTests(McpToolboxHostedAgentFixture fixt
         var agent = this._fixture.Agent;
 
         // Act
-        var response = await agent.RunAsync("Use the Microsoft Learn MCP tool to look up 'Azure AI Foundry'. Reply with one short paragraph.");
+        var response = await agent.RunAsync("Use the Microsoft Learn MCP tool to look up 'Microsoft Foundry'. Reply with one short paragraph.");
 
         // Assert
         Assert.False(string.IsNullOrWhiteSpace(response.Text));

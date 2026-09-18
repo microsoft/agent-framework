@@ -13,7 +13,8 @@ Start with file-based or code-defined skills, then explore combining them and ad
 | [**class_based_skill**](class_based_skill/) | Define skills as Python classes using `ClassSkill` with `@ClassSkill.resource` and `@ClassSkill.script` decorators for auto-discovery. Uses a class-based unit-converter skill. |
 | [**mixed_skills**](mixed_skills/) | Combine code-defined, class-based, and file-based skills in a single agent. Uses a code-defined volume-converter, a class-based temperature-converter, and a file-based unit-converter. |
 | [**mcp_based_skill**](mcp_based_skill/) | Discover skills served over the [Model Context Protocol (MCP)](https://modelcontextprotocol.io) via `MCPSkillsSource`. Connects to a remote MCP server that exposes skills as `skill://...` resources following the SEP-2640 convention. |
-| [**script_approval**](script_approval/) | Require human-in-the-loop approval before executing skill scripts |
+| [**script_approval**](script_approval/) | Require manual human-in-the-loop approval before running skill tools (the default). |
+| [**skills_auto_approval**](skills_auto_approval/) | Configure auto-approval rules with `ToolApprovalMiddleware` so read-only skill tools are approved automatically while script execution still prompts. |
 
 ## Key Concepts
 
@@ -53,12 +54,13 @@ The `script_runner` parameter on `SkillsProvider` is only applicable to **file-b
 ## Prerequisites
 
 All samples require:
-- An [Azure AI Foundry](https://ai.azure.com/) project with a deployed model (e.g. `gpt-4o-mini`)
+- A [Microsoft Foundry](https://ai.azure.com/) project with a deployed model (e.g. `gpt-4o-mini`)
 - Azure CLI authentication (`az login`)
 - Environment variables set in a `.env` file (see `python/.env.example`)
 
-## Suppressing the experimental warning
+## Suppressing the experimental MCP Skills warning
 
-The Agent Skills APIs in these samples are still experimental. Each sample includes
-a short commented `warnings.filterwarnings(...)` snippet near the imports. Uncomment
-it if you want to suppress the Skills warning before using the experimental APIs.
+The core Agent Skills APIs are stable. MCP-based skill discovery
+(`MCPSkillsSource`) is still experimental, so the [mcp_based_skill](mcp_based_skill/)
+sample includes a short commented `warnings.filterwarnings(...)` snippet near the
+imports. Uncomment it if you want to suppress the MCP Skills warning.

@@ -21,6 +21,8 @@ public sealed class PlanningOutputObserver : ConsoleObserver
     private readonly string _planModeName;
     private readonly string _executionModeName;
     private readonly IReadOnlyDictionary<string, ConsoleColor>? _modeColors;
+    private string? _lastResponseId;
+    private string? _lastMessageId;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PlanningOutputObserver"/> class.
@@ -38,26 +40,47 @@ public sealed class PlanningOutputObserver : ConsoleObserver
     }
 
     /// <inheritdoc/>
-    public override void ConfigureRunOptions(AgentRunOptions options, AIAgent agent, AgentSession session)
+    public override async ValueTask ConfigureRunOptionsAsync(AgentRunOptions options, AIAgent agent, AgentSession session)
     {
-        if (this.IsPlanningMode(this._modeProvider.GetMode(session)))
+        if (this.IsPlanningMode(await this._modeProvider.GetModeAsync(session).ConfigureAwait(false)))
         {
             options.ResponseFormat = ChatResponseFormat.ForJsonSchema<PlanningResponse>();
         }
     }
 
     /// <inheritdoc/>
-    public override Task OnTextAsync(IUXStateDriver ux, string text, AIAgent agent, AgentSession session)
+    public override async Task OnResponseUpdateAsync(IUXStateDriver ux, AgentResponseUpdate update, AIAgent agent, AgentSession session)
     {
-        if (this.IsPlanningMode(ux.CurrentMode))
+        // We aren't in planning mode, so we can just stream the output directly.
+        if (!this.IsPlanningMode(ux.CurrentMode))
         {
-            // Planning mode: collect text silently for JSON parsing after the stream.
-            this._textCollector.Append(text);
-            return Task.CompletedTask;
+            if (!string.IsNullOrWhiteSpace(update.Text))
+            {
+                await ux.WriteTextAsync(update.Text).ConfigureAwait(false);
+            }
+
+            return;
         }
 
-        // Execution mode: stream text directly to the console.
-        return ux.WriteTextAsync(text);
+        // We are still accumulating the same response/message.
+        if (this._lastResponseId == update.ResponseId && this._lastMessageId == update.MessageId)
+        {
+            this._textCollector.Append(update.Text);
+            return;
+        }
+
+        // New response/message, write the previous response/message and
+        // clear the text collector for the next JSON response/message.
+        string collectedText = this._textCollector.ToString();
+        if (!string.IsNullOrWhiteSpace(collectedText))
+        {
+            await ux.WriteTextAsync(collectedText).ConfigureAwait(false);
+        }
+
+        this._textCollector.Clear();
+        this._textCollector.Append(update.Text);
+        this._lastResponseId = update.ResponseId;
+        this._lastMessageId = update.MessageId;
     }
 
     /// <inheritdoc/>
@@ -182,7 +205,7 @@ public sealed class PlanningOutputObserver : ConsoleObserver
 
                 if (selection == ApproveOption)
                 {
-                    this._modeProvider.SetMode(session, this._executionModeName);
+                    await this._modeProvider.SetModeAsync(session, this._executionModeName).ConfigureAwait(false);
                     await ux.WriteInfoLineAsync(
                         $"✅ Switched to {this._executionModeName} mode.",
                         ModeColors.Get(this._executionModeName, this._modeColors)).ConfigureAwait(false);

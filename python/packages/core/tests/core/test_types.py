@@ -1,11 +1,13 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import base64
 import json
-from collections.abc import AsyncIterable, Sequence
+import warnings
+from collections.abc import AsyncIterable, Awaitable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import pytest
 from pydantic import BaseModel, Field, ValidationError
@@ -36,6 +38,7 @@ from agent_framework._compaction import (
     GROUP_TOKEN_COUNT_KEY,
 )
 from agent_framework._types import (
+    _append_instructions,
     _get_data_bytes,
     _get_data_bytes_as_str,
     _parse_content_list,
@@ -112,6 +115,93 @@ def test_text_content_keyword():
     content.type = "text"  # This should work fine now
 
 
+def test_marked_refusal_text_is_visible_and_serializable() -> None:
+    content = Content.from_text(
+        "I cannot help with that.",
+        additional_properties={"model_output_kind": "refusal"},
+        raw_representation={"type": "refusal"},
+    )
+    message = Message("assistant", [content])
+    chat_update = ChatResponseUpdate(contents=[content])
+    agent_update = AgentResponseUpdate(contents=[content])
+
+    assert content.type == "text"
+    assert str(content) == "I cannot help with that."
+    assert message.text == "I cannot help with that."
+    assert chat_update.text == "I cannot help with that."
+    assert agent_update.text == "I cannot help with that."
+    assert content.to_dict() == {
+        "type": "text",
+        "text": "I cannot help with that.",
+        "additional_properties": {"model_output_kind": "refusal"},
+    }
+    assert Content.from_dict(content.to_dict()) == Content.from_text(
+        "I cannot help with that.",
+        additional_properties={"model_output_kind": "refusal"},
+    )
+
+
+def test_marked_refusal_text_is_excluded_from_structured_output() -> None:
+    response = ChatResponse(
+        messages=[
+            Message(
+                "assistant",
+                [
+                    Content.from_text(
+                        '{"should_not": "parse"}',
+                        additional_properties={"model_output_kind": "refusal"},
+                    )
+                ],
+            )
+        ],
+        response_format={"type": "object"},
+    )
+
+    assert response.text == '{"should_not": "parse"}'
+    assert response.value is None
+
+
+@pytest.mark.parametrize("response_type", [ChatResponse, AgentResponse])
+def test_final_marked_refusal_does_not_fall_back_to_earlier_structured_output(response_type: type) -> None:
+    response = response_type(
+        messages=[
+            Message("assistant", [Content.from_text('{"result": "stale"}')]),
+            Message(
+                "assistant",
+                [
+                    Content.from_text(
+                        "I cannot provide a result.",
+                        additional_properties={"model_output_kind": "refusal"},
+                    )
+                ],
+            ),
+        ],
+        response_format={"type": "object"},
+    )
+
+    assert response.value is None
+
+
+def test_mixed_final_message_with_refusal_has_no_structured_output() -> None:
+    response = ChatResponse(
+        messages=[
+            Message(
+                "assistant",
+                [
+                    Content.from_text('{"result": "partial"}'),
+                    Content.from_text(
+                        "I cannot continue.",
+                        additional_properties={"model_output_kind": "refusal"},
+                    ),
+                ],
+            )
+        ],
+        response_format={"type": "object"},
+    )
+
+    assert response.value is None
+
+
 # region DataContent
 
 
@@ -125,8 +215,8 @@ def test_data_content_bytes():
     # Check the type and content
     assert content.type == "data"
     assert content.uri == "data:application/octet-stream;base64,dGVzdA=="
-    assert content.media_type.startswith("application/") is True
-    assert content.media_type.startswith("image/") is False
+    assert content.media_type.startswith("application/") is True  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+    assert content.media_type.startswith("image/") is False  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
     assert content.additional_properties["version"] == 1
 
     # Ensure the instance is of type BaseContent
@@ -208,11 +298,25 @@ def test_data_content_detect_image_format_from_base64():
         detect_media_type_from_base64(data_str="data", data_uri="data:application/octet-stream;base64,AAA")
 
 
+@mark.parametrize(
+    ("data_uri", "error_message"),
+    [
+        ("data:text/plain,hello", "Data URI must use base64 encoding."),
+        ("data:image/png;base64", "Invalid data URI format."),
+        ("not-a-data-uri", "Invalid data URI format."),
+    ],
+)
+def test_detect_media_type_from_base64_rejects_malformed_data_uri(data_uri: str, error_message: str):
+    """Test malformed data URI inputs raise the documented ValueError."""
+    with raises(ValueError, match=error_message):
+        detect_media_type_from_base64(data_uri=data_uri)
+
+
 def test_data_content_create_data_uri_from_base64():
     """Test the create_data_uri_from_base64 class method."""
     # Test with PNG data
     png_data = b"\x89PNG\r\n\x1a\n" + b"fake_data"
-    content = Content.from_data(png_data, media_type=detect_media_type_from_base64(data_bytes=png_data))
+    content = Content.from_data(png_data, media_type=detect_media_type_from_base64(data_bytes=png_data))  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
     assert content.uri == f"data:image/png;base64,{base64.b64encode(png_data).decode()}"
     assert content.media_type == "image/png"
@@ -220,7 +324,7 @@ def test_data_content_create_data_uri_from_base64():
     # Test with different format
     jpeg_data = b"\xff\xd8\xff\xe0" + b"fake_data"
     jpeg_base64 = base64.b64encode(jpeg_data).decode()
-    content = Content.from_data(jpeg_data, media_type=detect_media_type_from_base64(data_bytes=jpeg_data))
+    content = Content.from_data(jpeg_data, media_type=detect_media_type_from_base64(data_bytes=jpeg_data))  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
     assert content.uri == f"data:image/jpeg;base64,{jpeg_base64}"
     assert content.media_type == "image/jpeg"
@@ -332,6 +436,7 @@ def test_mcp_server_tool_call_and_result():
     call = Content.from_mcp_server_tool_call(call_id="c-1", tool_name="tool", server_name="server", arguments={"x": 1})
     assert call.type == "mcp_server_tool_call"
     assert call.arguments == {"x": 1}
+    assert call.informational_only is True
 
     result = Content.from_mcp_server_tool_result(call_id="c-1", output=[{"type": "text", "text": "done"}])
     assert result.type == "mcp_server_tool_result"
@@ -340,6 +445,17 @@ def test_mcp_server_tool_call_and_result():
     # Empty call_id is allowed, validation happens elsewhere
     call2 = Content.from_mcp_server_tool_call(call_id="", tool_name="tool", server_name="server")
     assert call2.call_id == ""
+
+
+def test_mcp_server_tool_call_is_always_informational_only():
+    direct = Content("mcp_server_tool_call", call_id="c-1", tool_name="tool", informational_only=False)
+    assert direct.informational_only is True
+
+    serialized = direct.to_dict()
+    assert "informational_only" not in serialized
+
+    restored = Content.from_dict({**serialized, "informational_only": False})
+    assert restored.informational_only is True
 
 
 # region: Shell tool content
@@ -496,9 +612,25 @@ def test_function_call_content():
     assert content.type == "function_call"
     assert content.name == "example_function"
     assert content.arguments == {"param1": "value1"}
+    assert content.informational_only is False
 
     # Ensure the instance is of type BaseContent
     assert isinstance(content, Content)
+
+
+def test_function_call_content_informational_only_serialization():
+    content = Content.from_function_call(
+        call_id="1",
+        name="example_function",
+        arguments={"param1": "value1"},
+        informational_only=True,
+    )
+
+    assert content.informational_only is True
+    assert content.to_dict()["informational_only"] is True
+    assert Content.from_dict(content.to_dict()).informational_only is True
+    assert "informational_only" not in Content.from_function_call(call_id="1", name="f").to_dict()
+    assert "informational_only" not in Content.from_text("hello").to_dict(exclude_none=False)
 
 
 def test_function_call_content_parse_arguments():
@@ -523,6 +655,21 @@ def test_function_call_content_add_merging_and_errors():
     c = a + b
     assert c.arguments == {"x": 1, "y": 2}
 
+    # informational_only is preserved across streamed chunks
+    a = Content.from_function_call(call_id="1", name="f", arguments='{"x":', informational_only=True)
+    b = Content.from_function_call(call_id="1", name="f", arguments="1}")
+    c = a + b
+    assert c.informational_only is True
+
+    # control metadata is preserved when a metadata-only update follows argument chunks
+    metadata = Content.from_function_call(call_id="1", name="f", arguments=None)
+    metadata.id = "1"
+    metadata.user_input_request = True
+    c = c + metadata
+    assert c.arguments == '{"x":1}'
+    assert c.id == "1"
+    assert c.user_input_request is True
+
     # incompatible argument types
     a = Content.from_function_call(call_id="1", name="f", arguments="abc")
     b = Content.from_function_call(call_id="1", name="f", arguments={"y": 2})
@@ -535,6 +682,27 @@ def test_function_call_content_add_merging_and_errors():
 
     with raises(ContentError):
         _ = a + b
+
+    # incompatible occurrence ids
+    a = Content.from_function_call(call_id="1", name="f", arguments="abc", id="occurrence-a")
+    b = Content.from_function_call(call_id="1", name="f", arguments="def", id="occurrence-b")
+    with raises(AdditionItemMismatch, match="different ids"):
+        _ = a + b
+
+    # name merging: when the first chunk has no name (e.g. a streaming delta where
+    # the function name arrives later), the merged content must keep the name from
+    # whichever side provides it, regardless of order.
+    # A nameless delta is constructed via Content(...) directly (the factory
+    # from_function_call requires name: str); this mirrors how a streaming
+    # function-call delta with no name yet is represented.
+    a = Content("function_call", call_id="1", name=None, arguments='{"a":')
+    b = Content.from_function_call(call_id="1", name="get_weather", arguments="1}")
+    assert (a + b).name == "get_weather"
+    assert (b + a).name == "get_weather"
+    # both sides missing a name stays None
+    a = Content("function_call", call_id="1", name=None, arguments="")
+    b = Content("function_call", call_id="1", name=None, arguments="")
+    assert (a + b).name is None
 
 
 # region FunctionResultContent
@@ -568,14 +736,14 @@ def test_usage_details():
 
 
 def test_usage_details_addition():
-    usage1 = UsageDetails(
+    usage1 = UsageDetails(  # type: ignore[typeddict-unknown-key]
         input_token_count=5,
         output_token_count=10,
         total_token_count=15,
         test1=10,
         test2=20,
     )
-    usage2 = UsageDetails(
+    usage2 = UsageDetails(  # type: ignore[typeddict-unknown-key]
         input_token_count=3,
         output_token_count=6,
         total_token_count=9,
@@ -587,20 +755,23 @@ def test_usage_details_addition():
     assert combined_usage["input_token_count"] == 8
     assert combined_usage["output_token_count"] == 16
     assert combined_usage["total_token_count"] == 24
-    assert combined_usage["test1"] == 20
-    assert combined_usage["test2"] == 20
-    assert combined_usage["test3"] == 30
+    assert combined_usage["test1"] == 20  # type: ignore[typeddict-item]
+    assert combined_usage["test2"] == 20  # type: ignore[typeddict-item]
+    assert combined_usage["test3"] == 30  # type: ignore[typeddict-item]
 
 
 def test_usage_details_fail():
     # TypedDict doesn't validate types at runtime, so this test no longer applies
     # Creating UsageDetails with wrong types won't raise ValueError
-    usage = UsageDetails(input_token_count=5, output_token_count=10, total_token_count=15, wrong_type="42.923")
-    assert usage["wrong_type"] == "42.923"
+    usage = cast(
+        UsageDetails,
+        {"input_token_count": 5, "output_token_count": 10, "total_token_count": 15, "wrong_type": "42.923"},
+    )
+    assert usage["wrong_type"] == "42.923"  # type: ignore[typeddict-item]
 
 
 def test_usage_details_additional_counts():
-    usage = UsageDetails(input_token_count=5, output_token_count=10, total_token_count=15, **{"test": 1})
+    usage = UsageDetails(input_token_count=5, output_token_count=10, total_token_count=15, **{"test": 1})  # type: ignore[call-arg, typeddict-unknown-key]
     assert usage.get("test") == 1
 
 
@@ -616,8 +787,8 @@ def test_usage_details_add_with_none_and_type_errors():
 
 
 def test_usage_details_add_skips_non_int():
-    u1 = UsageDetails(input_token_count=10, other="test")
-    u2 = UsageDetails(input_token_count=10, another="test")
+    u1 = cast(UsageDetails, {"input_token_count": 10, "other": "test"})
+    u2 = cast(UsageDetails, {"input_token_count": 10, "another": "test"})
     u3 = add_usage_details(u1, u2)
     assert len(u3.keys()) == 1
     assert "input_token_count" in u3
@@ -656,12 +827,73 @@ def test_function_approval_serialization_roundtrip():
     # Test that the basic properties match
     assert loaded.id == req.id
     assert loaded.additional_properties == req.additional_properties
-    assert loaded.function_call.call_id == req.function_call.call_id
-    assert loaded.function_call.name == req.function_call.name
-    assert loaded.function_call.arguments == req.function_call.arguments
+    assert loaded.function_call.call_id == req.function_call.call_id  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+    assert loaded.function_call.name == req.function_call.name  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+    assert loaded.function_call.arguments == req.function_call.arguments  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
 
     # Skip the BaseModel validation test since we're no longer using Pydantic
     # The Content union will need to be handled differently when we fully migrate
+
+
+def test_function_call_occurrence_id_roundtrips_without_regeneration():
+    function_call = Content.from_function_call(
+        call_id="provider-call",
+        name="f",
+        arguments={"x": 1},
+        id="af-call-existing",
+    )
+
+    restored = Content.from_dict(function_call.to_dict())
+
+    assert restored.id == "af-call-existing"
+    assert restored.call_id == "provider-call"
+
+
+def test_local_function_approval_request_warns_for_legacy_occurrence_identity() -> None:
+    function_call = Content.from_function_call(
+        call_id="provider-call",
+        name="f",
+        id="af-call-occurrence",
+    )
+
+    with pytest.warns(FutureWarning, match="id differs from function_call.id.*legacy"):
+        request = Content.from_function_approval_request(id="provider-call", function_call=function_call)
+
+    assert request.id == "provider-call"
+    assert request.function_call is function_call
+
+
+def test_hosted_function_approval_request_allows_provider_request_identity_without_warning() -> None:
+    function_call = Content.from_function_call(
+        call_id="provider-call",
+        name="hosted",
+        id="af-call-occurrence",
+        additional_properties={"server_label": "provider"},
+    )
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        request = Content.from_function_approval_request(
+            id="provider-approval-request",
+            function_call=function_call,
+        )
+
+    assert request.id == "provider-approval-request"
+    assert caught == []
+
+
+def test_legacy_function_call_deserialization_does_not_generate_an_occurrence_id():
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        restored = Content.from_dict({
+            "type": "function_call",
+            "call_id": "legacy-call",
+            "name": "f",
+            "arguments": {},
+        })
+
+    assert restored.id is None
+    assert caught == []
 
 
 def test_function_approval_request_function_call_none_guard():
@@ -688,6 +920,7 @@ def test_function_approval_accepts_mcp_call():
 
     assert isinstance(req.function_call, Content)
     assert req.function_call.call_id == "c-mcp"
+    assert req.function_call.informational_only is True
 
 
 # region BaseContent Serialization
@@ -829,6 +1062,109 @@ def test_chat_response_with_mapping_response_format() -> None:
     assert response.value is not None
     assert isinstance(response.value, dict)
     assert response.value["response"] == "Hello"
+
+
+def test_chat_response_value_parses_split_structured_text_without_changing_message_text() -> None:
+    """ChatResponse.value should not use Message.text spacing between structured output chunks."""
+    message = Message(role="assistant", contents=[Content.from_text('{ "respon'), Content.from_text('se": "Hello" }')])
+    response = ChatResponse(messages=message, response_format=OutputModel)
+
+    assert message.text == '{ "respon se": "Hello" }'
+    assert response.text == '{ "respon se": "Hello" }'
+    assert response.value is not None
+    assert response.value.response == "Hello"
+
+
+def test_chat_response_value_parses_final_message_with_response_format() -> None:
+    """ChatResponse.value should ignore intermediate messages when parsing structured output."""
+    response = ChatResponse(
+        messages=[
+            Message(role="assistant", contents=['{"skill_name": "building-permit-compliance"}']),
+            Message(role="assistant", contents=['{"response": "Hello"}']),
+        ],
+        response_format=OutputModel,
+    )
+
+    assert response.text == '{"skill_name": "building-permit-compliance"}\n{"response": "Hello"}'
+    assert response.value is not None
+    assert response.value.response == "Hello"
+
+
+def test_agent_response_value_parses_split_structured_text_without_changing_message_text() -> None:
+    """AgentResponse.value should not use Message.text spacing between structured output chunks."""
+    message = Message(role="assistant", contents=[Content.from_text('{"response": "Hel'), Content.from_text('lo"}')])
+    response = AgentResponse(messages=message, response_format=OutputModel)
+
+    assert message.text == '{"response": "Hel lo"}'
+    assert response.text == '{"response": "Hel lo"}'
+    assert response.value is not None
+    assert response.value.response == "Hello"
+
+
+def test_agent_response_value_parses_final_message_with_response_format() -> None:
+    """AgentResponse.value should ignore intermediate messages when parsing structured output."""
+    response = AgentResponse(
+        messages=[
+            Message(role="assistant", contents=['{"skill_name": "building-permit-compliance"}']),
+            Message(role="assistant", contents=['{"response": "Hello"}']),
+        ],
+        response_format=OutputModel,
+    )
+
+    assert response.text == '{"skill_name": "building-permit-compliance"}{"response": "Hello"}'
+    assert response.value is not None
+    assert response.value.response == "Hello"
+
+
+def test_chat_response_value_handles_text_content_without_text() -> None:
+    """ChatResponse.value should ignore text content with no text value."""
+    message = Message(role="assistant", contents=[Content.from_dict({"type": "text"})])
+    response = ChatResponse(messages=message, response_format=OutputModel)
+
+    assert response.value is None
+
+
+def test_agent_response_mapping_value_parses_final_message() -> None:
+    """AgentResponse.value should parse the final message for JSON schema mappings."""
+    response = AgentResponse(
+        messages=[
+            Message(role="assistant", contents=['{"skill_name": "building-permit-compliance"}']),
+            Message(role="assistant", contents=['{"response": "Hello"}']),
+        ],
+        response_format={"type": "object", "properties": {"response": {"type": "string"}}},
+    )
+
+    assert response.value is not None
+    assert isinstance(response.value, dict)
+    assert response.value["response"] == "Hello"
+
+
+def test_chat_response_value_ignores_trailing_non_assistant_message() -> None:
+    """ChatResponse.value should parse the final assistant message when later tool output exists."""
+    response = ChatResponse(
+        messages=[
+            Message(role="assistant", contents=['{"response": "Hello"}']),
+            Message(role="tool", contents=["tool output is not structured JSON"]),
+        ],
+        response_format=OutputModel,
+    )
+
+    assert response.value is not None
+    assert response.value.response == "Hello"
+
+
+def test_agent_response_value_ignores_trailing_non_assistant_message() -> None:
+    """AgentResponse.value should parse the final assistant message when later tool output exists."""
+    response = AgentResponse(
+        messages=[
+            Message(role="assistant", contents=['{"response": "Hello"}']),
+            Message(role="tool", contents=["tool output is not structured JSON"]),
+        ],
+        response_format=OutputModel,
+    )
+
+    assert response.value is not None
+    assert response.value.response == "Hello"
 
 
 def test_parse_structured_response_value_empty_text_with_pydantic_model() -> None:
@@ -1017,7 +1353,7 @@ def test_chat_response_updates_to_chat_response_multiple_multiple():
     assert len(chat_response.messages) == 1
     assert isinstance(chat_response.messages[0], Message)
     assert chat_response.messages[0].message_id == "1"
-    assert chat_response.messages[0].contents[0].raw_representation is not None
+    assert chat_response.messages[0].contents[0].raw_representation is None
 
     assert len(chat_response.messages[0].contents) == 3
     assert chat_response.messages[0].contents[0].type == "text"
@@ -1075,6 +1411,37 @@ async def test_chat_response_from_async_generator_mapping_response_format() -> N
     assert resp.value is not None
     assert isinstance(resp.value, dict)
     assert resp.value["response"] == "Hello"
+
+
+def test_chat_response_from_streaming_updates_parses_final_assistant_message() -> None:
+    """Combined streaming updates should parse the final assistant message, not trailing tool output."""
+    updates = [
+        ChatResponseUpdate(
+            role="assistant",
+            message_id="skill-message",
+            contents=[Content.from_text('{"skill_name": "building-permit-compliance"}')],
+        ),
+        ChatResponseUpdate(
+            role="assistant",
+            message_id="final-message",
+            contents=[Content.from_text('{"respon')],
+        ),
+        ChatResponseUpdate(
+            message_id="final-message",
+            contents=[Content.from_text('se": "Hello"}')],
+        ),
+        ChatResponseUpdate(
+            role="tool",
+            message_id="tool-message",
+            contents=[Content.from_text("tool output is not structured JSON")],
+        ),
+    ]
+
+    response = ChatResponse.from_updates(updates, output_format_type=OutputModel)
+
+    assert [message.role for message in response.messages] == ["assistant", "assistant", "tool"]
+    assert response.value is not None
+    assert response.value.response == "Hello"
 
 
 # region ToolMode
@@ -1152,9 +1519,9 @@ def test_chat_options_tool_choice_validation():
     assert validate_tool_mode(None) is None
 
     with raises(ContentError):
-        validate_tool_mode("invalid_mode")
+        validate_tool_mode("invalid_mode")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
     with raises(ContentError):
-        validate_tool_mode({"mode": "invalid_mode"})
+        validate_tool_mode({"mode": "invalid_mode"})  # type: ignore[arg-type, typeddict-item]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
     with raises(ContentError):
         validate_tool_mode({"mode": "auto", "required_function_name": "should_not_be_here"})
 
@@ -1180,11 +1547,11 @@ def test_chat_options_tool_choice_validation():
 
     # allowed_tools must be a non-string sequence of strings
     with raises(ContentError):
-        validate_tool_mode({"mode": "auto", "allowed_tools": "get_weather"})
+        validate_tool_mode({"mode": "auto", "allowed_tools": "get_weather"})  # type: ignore[arg-type, typeddict-item]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
     with raises(ContentError):
-        validate_tool_mode({"mode": "auto", "allowed_tools": 123})
+        validate_tool_mode({"mode": "auto", "allowed_tools": 123})  # type: ignore[arg-type, typeddict-item]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
     with raises(ContentError):
-        validate_tool_mode({"mode": "auto", "allowed_tools": ["get_weather", 123]})
+        validate_tool_mode({"mode": "auto", "allowed_tools": ["get_weather", 123]})  # type: ignore[arg-type, list-item]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
     # Empty list is valid (caller explicitly allows no tools)
     assert validate_tool_mode({"mode": "auto", "allowed_tools": []}) == {
@@ -1193,7 +1560,7 @@ def test_chat_options_tool_choice_validation():
     }
 
     # Tuple is normalized to list
-    result = validate_tool_mode({"mode": "auto", "allowed_tools": ("get_weather",)})
+    result = validate_tool_mode({"mode": "auto", "allowed_tools": ("get_weather",)})  # type: ignore[arg-type, typeddict-item]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
     assert result is not None
     assert result["allowed_tools"] == ["get_weather"]
 
@@ -1210,12 +1577,71 @@ def test_chat_options_merge(tool_tool, ai_tool) -> None:
     assert options1 != options2
 
     # Merge options - override takes precedence for non-collection fields
-    options3 = merge_chat_options(options1, options2)
+    options3 = merge_chat_options(options1, options2)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
     assert options3.get("model") == "gpt-4.1"
     assert options3.get("tools") == [tool_tool, ai_tool]  # tools are combined
     assert options3.get("logit_bias") == {"x": 1}  # base value preserved
     assert options3.get("metadata") == {"a": "b"}  # base value preserved
+
+
+def test_append_instructions_combines_plain_strings() -> None:
+    """String instructions are concatenated with a newline."""
+    assert _append_instructions("Base.", "Added.") == "Base.\nAdded."
+
+
+def test_append_instructions_returns_the_populated_side_when_one_is_empty() -> None:
+    """An empty base or addition leaves the other side untouched."""
+    blocks = [{"type": "text", "text": "Base."}]
+
+    assert _append_instructions(None, "Added.") == "Added."
+    assert _append_instructions("Base.", None) == "Base."
+    assert _append_instructions([], "Added.") == "Added."
+    assert _append_instructions(blocks, "") == blocks
+
+
+def test_append_instructions_preserves_structured_instructions() -> None:
+    """A structured base is extended element-wise instead of being coerced to a string."""
+    blocks = [
+        {"type": "text", "text": "Stable.", "block_options": {"pinned": True}},
+        {"type": "text", "text": "Dynamic."},
+    ]
+
+    combined = _append_instructions(blocks, "Added.")
+
+    # The leading blocks must stay unchanged for providers that treat them as a stable prefix.
+    assert combined == [*blocks, "Added."]
+    assert blocks == [
+        {"type": "text", "text": "Stable.", "block_options": {"pinned": True}},
+        {"type": "text", "text": "Dynamic."},
+    ]
+
+
+def test_append_instructions_promotes_a_string_base_when_the_addition_is_structured() -> None:
+    """A string base becomes the first element when structured instructions are appended."""
+    assert _append_instructions("Base.", [{"type": "text", "text": "Added."}]) == [
+        "Base.",
+        {"type": "text", "text": "Added."},
+    ]
+
+
+def test_append_instructions_treats_a_single_mapping_as_one_element() -> None:
+    """A lone structured block is appended whole, not iterated into its keys."""
+    block = {"type": "text", "text": "Stable.", "block_options": {"pinned": True}}
+
+    assert _append_instructions(block, "Added.") == [block, "Added."]
+    assert _append_instructions("Base.", block) == ["Base.", block]
+
+
+def test_chat_options_merge_preserves_structured_instructions() -> None:
+    """merge_chat_options must not stringify provider-native structured instructions."""
+    blocks = [{"type": "text", "text": "Stable.", "block_options": {"pinned": True}}]
+    base: ChatOptions = {"instructions": blocks}  # type: ignore[typeddict-item]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    override: ChatOptions = {"instructions": "Added."}
+
+    merged = merge_chat_options(base, override)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+
+    assert merged.get("instructions") == [*blocks, "Added."]
 
 
 def test_chat_options_and_tool_choice_override() -> None:
@@ -1225,7 +1651,7 @@ def test_chat_options_and_tool_choice_override() -> None:
     # Run-level specifies "required"
     run_options: ChatOptions = {"tool_choice": "required"}
 
-    merged = merge_chat_options(agent_options, run_options)
+    merged = merge_chat_options(agent_options, run_options)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
     # Run-level should override agent-level
     assert merged.get("tool_choice") == "required"
@@ -1237,7 +1663,7 @@ def test_chat_options_and_tool_choice_none_in_other_uses_self() -> None:
     agent_options: ChatOptions = {"tool_choice": "auto"}
     run_options: ChatOptions = {"model": "gpt-4.1"}  # tool_choice is None
 
-    merged = merge_chat_options(agent_options, run_options)
+    merged = merge_chat_options(agent_options, run_options)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
     # Should keep agent-level tool_choice since run-level is None
     assert merged.get("tool_choice") == "auto"
@@ -1249,7 +1675,7 @@ def test_chat_options_and_tool_choice_with_tool_mode() -> None:
     agent_options: ChatOptions = {"tool_choice": "auto"}
     run_options: ChatOptions = {"tool_choice": "required"}
 
-    merged = merge_chat_options(agent_options, run_options)
+    merged = merge_chat_options(agent_options, run_options)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
     assert merged.get("tool_choice") == "required"
     assert merged.get("tool_choice") == "required"
@@ -1260,11 +1686,12 @@ def test_chat_options_and_tool_choice_required_specific_function() -> None:
     agent_options: ChatOptions = {"tool_choice": "auto"}
     run_options: ChatOptions = {"tool_choice": {"mode": "required", "required_function_name": "get_weather"}}
 
-    merged = merge_chat_options(agent_options, run_options)
+    merged = merge_chat_options(agent_options, run_options)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
     tool_choice = merged.get("tool_choice")
+    assert isinstance(tool_choice, dict)
     assert tool_choice == {"mode": "required", "required_function_name": "get_weather"}
-    assert tool_choice["required_function_name"] == "get_weather"
+    assert tool_choice["required_function_name"] == "get_weather"  # pyrefly: ignore[unsupported-operation]
 
 
 # region Agent Response Fixtures
@@ -1381,6 +1808,7 @@ def test_agent_run_response_update_created_at() -> None:
         created_at=formatted_utc,
     )
     assert update_with_now.created_at == formatted_utc
+    assert update_with_now.created_at is not None
     assert update_with_now.created_at.endswith("Z")
 
 
@@ -1403,6 +1831,7 @@ def test_agent_run_response_created_at() -> None:
         created_at=formatted_utc,
     )
     assert response_with_now.created_at == formatted_utc
+    assert response_with_now.created_at is not None
     assert response_with_now.created_at.endswith("Z")
 
 
@@ -1484,6 +1913,114 @@ def test_function_call_incompatible_ids_are_not_merged():
     assert len(fcs) == 2
 
 
+def test_function_call_interleaved_parallel_streaming_merges_by_call_id():
+    """Argument deltas for two parallel tool calls can interleave; each must land on its own call.
+
+    This mirrors how the OpenAI Responses API streams parallel tool calls: every
+    ``response.function_call_arguments.delta`` event is tagged with the call's real
+    call_id (tracked per output_index), but deltas for different calls are not
+    guaranteed to arrive grouped together. Before this fix, only the trailing
+    content item was ever considered a merge target, so an out-of-turn delta for an
+    earlier call_id was appended as a stray duplicate instead of being folded into
+    its call, leaving both calls with incomplete, unparsable arguments.
+    """
+    updates = [
+        ChatResponseUpdate(contents=[Content.from_function_call(call_id="call_1", name="get_weather", arguments="")]),
+        ChatResponseUpdate(contents=[Content.from_function_call(call_id="call_2", name="get_time", arguments="")]),
+        ChatResponseUpdate(
+            contents=[Content.from_function_call(call_id="call_1", name="get_weather", arguments='{"location":')]
+        ),
+        ChatResponseUpdate(
+            contents=[Content.from_function_call(call_id="call_2", name="get_time", arguments='{"timezone":')]
+        ),
+        ChatResponseUpdate(
+            contents=[Content.from_function_call(call_id="call_1", name="get_weather", arguments='"NYC"}')]
+        ),
+        ChatResponseUpdate(
+            contents=[Content.from_function_call(call_id="call_2", name="get_time", arguments='"EST"}')]
+        ),
+    ]
+
+    resp = ChatResponse.from_updates(updates)
+    assert len(resp.messages) == 1
+    fcs = [c for c in resp.messages[0].contents if c.type == "function_call"]
+    assert len(fcs) == 2
+
+    by_call_id = {c.call_id: c for c in fcs}
+    assert by_call_id["call_1"].arguments == '{"location":"NYC"}'
+    assert by_call_id["call_2"].arguments == '{"timezone":"EST"}'
+
+
+def test_function_call_merge_falls_back_to_trailing_item_without_call_id():
+    """Continuation deltas some providers never re-stamp with a call_id still merge.
+
+    Not every provider repeats the call_id on every streamed chunk (e.g. the OpenAI
+    Chat Completions API only sends it on the first delta for a tool call), so the
+    fallback of merging into the trailing function_call item must still hold for the
+    single-call-in-flight case.
+    """
+    updates = [
+        ChatResponseUpdate(contents=[Content.from_function_call(call_id="call_1", name="f", arguments="{")]),
+        ChatResponseUpdate(contents=[Content.from_function_call(call_id="", name="", arguments="}")]),
+    ]
+
+    resp = ChatResponse.from_updates(updates)
+    fcs = [c for c in resp.messages[0].contents if c.type == "function_call"]
+    assert len(fcs) == 1
+    assert fcs[0].call_id == "call_1"
+    assert fcs[0].arguments == "{}"
+
+
+def test_function_call_reused_call_id_does_not_absorb_untagged_chunk():
+    """A reused call_id must not let an untagged chunk merge into an already-identified call.
+
+    The Chat Completions client stamps a stable occurrence ``id`` on every function-call
+    chunk it emits, precisely so a provider reusing a ``call_id`` (or a client that only
+    tags the first chunk) can't be confused with an unrelated call. If a later, untagged
+    chunk happens to carry the same ``call_id`` as a call that already has an occurrence
+    id, it must not be assumed to be that call's continuation - it should be treated as
+    a new, separate call instead of corrupting the finished one's arguments.
+    """
+    updates = [
+        ChatResponseUpdate(
+            contents=[Content.from_function_call(id="af-call-1", call_id="call_1", name="get_weather", arguments="{}")]
+        ),
+        # No `id` and a reused call_id: an unrelated call, not a continuation.
+        ChatResponseUpdate(contents=[Content.from_function_call(call_id="call_1", name="get_time", arguments="{}")]),
+    ]
+
+    resp = ChatResponse.from_updates(updates)
+    fcs = [c for c in resp.messages[0].contents if c.type == "function_call"]
+    assert len(fcs) == 2
+    assert fcs[0].name == "get_weather"
+    assert fcs[0].arguments == "{}"
+    assert fcs[1].name == "get_time"
+    assert fcs[1].arguments == "{}"
+
+
+def test_function_call_tagged_chunk_does_not_absorb_into_untagged_trailing_call():
+    """A tagged chunk with no matching in-progress call must not merge into an untagged one.
+
+    Content.__add__ only rejects a merge when *both* sides carry a call_id and they
+    differ, so an untagged trailing item (call_id falsy) would otherwise silently
+    accept a chunk tagged with a brand-new call_id, adopting that id and
+    concatenating unrelated arguments. The trailing-item fallback must be reserved
+    for chunks that carry no call_id at all.
+    """
+    untagged = Content("function_call", call_id=None, name="a", arguments="partial-a")
+    resp = ChatResponse.from_updates([
+        ChatResponseUpdate(contents=[untagged]),
+        ChatResponseUpdate(contents=[Content.from_function_call(call_id="call_new", name="b", arguments="{}")]),
+    ])
+
+    fcs = [c for c in resp.messages[0].contents if c.type == "function_call"]
+    assert len(fcs) == 2
+    assert fcs[0].call_id is None
+    assert fcs[0].arguments == "partial-a"
+    assert fcs[1].call_id == "call_new"
+    assert fcs[1].arguments == "{}"
+
+
 # region Role & FinishReason basics
 
 
@@ -1523,17 +2060,17 @@ def test_response_update_propagates_fields_and_metadata():
     assert resp.messages[0].message_id == "mid"
 
 
-def test_text_coalescing_preserves_first_properties():
+def test_text_coalescing_preserves_first_serializable_properties():
     t1 = Content.from_text("A", raw_representation={"r": 1}, additional_properties={"p": 1})
     t2 = Content.from_text("B")
     upd1 = ChatResponseUpdate(contents=[t1], message_id="x")
     upd2 = ChatResponseUpdate(contents=[t2], message_id="x")
     resp = ChatResponse.from_updates([upd1, upd2])
-    # After coalescing there should be a single TextContent with merged text and preserved props from first
+    # After coalescing there should be a single TextContent with merged text and serializable props from first.
     items = [c for c in resp.messages[0].contents if c.type == "text"]
     assert len(items) >= 1
     assert items[0].text == "AB"
-    assert items[0].raw_representation == {"r": 1}
+    assert items[0].raw_representation is None
     assert items[0].additional_properties == {"p": 1}
 
 
@@ -1702,7 +2239,28 @@ def test_text_reasoning_content_add_conflicting_ids_raises():
     t2 = Content.from_text_reasoning(id="rs_xyz789", text=" part 2")
 
     with pytest.raises(AdditionItemMismatch, match="different ids"):
-        t1 + t2
+        _ = t1 + t2
+
+
+def test_text_reasoning_content_add_preserves_empty_text_with_signature():
+    """Empty thinking text plus a signature delta must keep text="" (not None).
+
+    Regression for microsoft/agent-framework#8168: collapsing "" to None makes a
+    real empty signed Anthropic thinking block look like an orphan signature.
+    """
+
+    empty_thinking = Content.from_text_reasoning(text="")
+    signature_only = Content.from_text_reasoning(text=None, protected_data="synthetic-signature")
+
+    result = empty_thinking + signature_only
+    assert result.text == ""
+    assert result.protected_data == "synthetic-signature"
+
+    both_none = Content.from_text_reasoning(text=None) + Content.from_text_reasoning(
+        text=None, protected_data="orphan-sig"
+    )
+    assert both_none.text is None
+    assert both_none.protected_data == "orphan-sig"
 
 
 def test_text_reasoning_content_add_neither_has_id():
@@ -1740,6 +2298,68 @@ def test_coalesce_text_reasoning_with_different_ids():
     assert contents[1].text == "Thinking B1 B2"
 
 
+def test_agent_response_from_updates_preserves_refusal_marker() -> None:
+    marker = {"model_output_kind": "refusal"}
+    response = AgentResponse.from_updates([
+        AgentResponseUpdate(
+            contents=[Content.from_text("I cannot ", additional_properties=marker)],
+            role="assistant",
+        ),
+        AgentResponseUpdate(
+            contents=[Content.from_text("help.", additional_properties=marker)],
+            role="assistant",
+        ),
+    ])
+
+    assert len(response.messages[0].contents) == 1
+    assert response.messages[0].contents[0].type == "text"
+    assert response.messages[0].contents[0].text == "I cannot help."
+    assert response.messages[0].contents[0].additional_properties == marker
+    assert response.text == "I cannot help."
+
+
+@pytest.mark.parametrize(
+    ("updates", "expected"),
+    [
+        (
+            [
+                Content.from_text("Partial answer."),
+                Content.from_text(
+                    "I cannot continue.",
+                    additional_properties={"model_output_kind": "refusal"},
+                ),
+            ],
+            [
+                ("Partial answer.", {}),
+                ("I cannot continue.", {"model_output_kind": "refusal"}),
+            ],
+        ),
+        (
+            [
+                Content.from_text(
+                    "I cannot continue.",
+                    additional_properties={"model_output_kind": "refusal"},
+                ),
+                Content.from_text("Additional context."),
+            ],
+            [
+                ("I cannot continue.", {"model_output_kind": "refusal"}),
+                ("Additional context.", {}),
+            ],
+        ),
+    ],
+)
+def test_response_coalescing_preserves_model_output_kind_boundaries(
+    updates: list[Content],
+    expected: list[tuple[str, dict[str, str]]],
+) -> None:
+    response = AgentResponse.from_updates([
+        AgentResponseUpdate(contents=[content], role="assistant") for content in updates
+    ])
+
+    assert [(content.text, content.additional_properties) for content in response.messages[0].contents] == expected
+
+
 def test_comprehensive_to_dict_exclude_options():
     """Test to_dict methods with various exclude options for better coverage."""
 
@@ -1755,9 +2375,9 @@ def test_comprehensive_to_dict_exclude_options():
     assert "text" in text_dict_exclude
 
     # Test UsageDetails - it's a TypedDict now, not a class with to_dict
-    usage = UsageDetails(input_token_count=5, custom_count=10)
+    usage = UsageDetails(input_token_count=5, custom_count=10)  # type: ignore[typeddict-unknown-key]
     assert usage["input_token_count"] == 5
-    assert usage["custom_count"] == 10
+    assert usage["custom_count"] == 10  # type: ignore[typeddict-item]
 
     # Test UsageDetails exclude_none behavior isn't applicable to TypedDict
     # TypedDict doesn't have a to_dict method
@@ -1766,8 +2386,8 @@ def test_comprehensive_to_dict_exclude_options():
 def test_usage_details_iadd_edge_cases():
     """Test UsageDetails addition with edge cases for better coverage."""
     # Test with None values
-    u1 = UsageDetails(input_token_count=None, output_token_count=5, custom1=10)
-    u2 = UsageDetails(input_token_count=3, output_token_count=None, custom2=20)
+    u1 = UsageDetails(input_token_count=None, output_token_count=5, custom1=10)  # type: ignore[typeddict-unknown-key]
+    u2 = UsageDetails(input_token_count=3, output_token_count=None, custom2=20)  # type: ignore[typeddict-unknown-key]
 
     result = add_usage_details(u1, u2)
     assert result["input_token_count"] == 3
@@ -1776,8 +2396,8 @@ def test_usage_details_iadd_edge_cases():
     assert result.get("custom2") == 20
 
     # Test merging additional counts
-    u3 = UsageDetails(input_token_count=1, shared_count=5)
-    u4 = UsageDetails(input_token_count=2, shared_count=15)
+    u3 = UsageDetails(input_token_count=1, shared_count=5)  # type: ignore[typeddict-unknown-key]
+    u4 = UsageDetails(input_token_count=2, shared_count=15)  # type: ignore[typeddict-unknown-key]
 
     result2 = add_usage_details(u3, u4)
     assert result2["input_token_count"] == 3
@@ -1812,7 +2432,7 @@ def test_text_content_add_type_error():
     t1 = Content.from_text("Hello")
 
     with raises(TypeError, match="Incompatible type"):
-        t1 + "not a TextContent"
+        t1 + "not a TextContent"  # type: ignore[operator]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[unsupported-operator]
 
 
 def test_comprehensive_serialization_methods():
@@ -1966,6 +2586,49 @@ def test_content_to_dict_exclude_fields() -> None:
     assert parsed["type"] == "text"
 
 
+def test_function_result_exception_is_internal_by_default() -> None:
+    diagnostic = "test-token-value at /srv/private/tool.py"
+    content = Content.from_function_result(
+        call_id="call-1",
+        result="Error: Function failed.",
+        exception=diagnostic,
+    )
+
+    assert content.exception == diagnostic
+    assert content.to_dict()["exception"] == "FunctionInvocationError"
+    assert content.to_dict(exclude_none=False)["exception"] == "FunctionInvocationError"
+    response = AgentResponse(messages=[Message(role="tool", contents=[content])])
+    serialized = json.dumps(response.to_dict())
+    assert diagnostic not in serialized
+    assert "FunctionInvocationError" in serialized
+
+    restored = Content.from_dict(content.to_dict())
+    assert restored.exception == "FunctionInvocationError"
+    assert restored != Content.from_function_result(
+        call_id="call-1",
+        result="Error: Function failed.",
+        exception="different diagnostic",
+    )
+
+    empty_diagnostic = Content.from_function_result(call_id="call-2", exception="")
+    assert empty_diagnostic.to_dict()["exception"] == "FunctionInvocationError"
+
+
+def test_content_equality_compares_nested_raw_exception_diagnostics() -> None:
+    first = Content(
+        "function_result",
+        call_id="outer",
+        items=[Content.from_function_result(call_id="inner", exception="diagnostic-a")],
+    )
+    second = Content(
+        "function_result",
+        call_id="outer",
+        items=[Content.from_function_result(call_id="inner", exception="diagnostic-b")],
+    )
+
+    assert first != second
+
+
 def test_chat_response_roundtrip_preserves_compaction_annotation_dict() -> None:
     response = ChatResponse(
         messages=[
@@ -2007,10 +2670,10 @@ def test_usage_content_serialization_with_details():
             "custom_count": 5,
         },
     }
-    usage_content = Content(**usage_data)
+    usage_content = Content(**usage_data)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
     assert isinstance(usage_content.usage_details, dict)
     assert usage_content.usage_details["input_token_count"] == 10
-    assert usage_content.usage_details["custom_count"] == 5  # Custom fields go directly in UsageDetails
+    assert usage_content.usage_details["custom_count"] == 5  # type: ignore[typeddict-item]  # Custom fields go directly in UsageDetails
 
     # Test to_dict with UsageDetails object
     usage_dict = usage_content.to_dict()
@@ -2034,13 +2697,31 @@ def test_function_approval_response_content_serialization():
         },
     }
     response_content = Content.from_dict(response_data)
-    assert response_content.function_call.type == "function_call"
-    assert response_content.function_call.call_id == "call123"
+    assert response_content.function_call.type == "function_call"  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+    assert response_content.function_call.call_id == "call123"  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
 
     # Test to_dict with FunctionCallContent object
     response_dict = response_content.to_dict()
     assert isinstance(response_dict["function_call"], dict)
     assert response_dict["function_call"]["call_id"] == "call123"
+
+
+@pytest.mark.parametrize("approved", ["false", "no", 1, "0", 0, None])
+def test_function_approval_response_deserialization_rejects_non_boolean_decisions(approved: Any) -> None:
+    """Serialized non-boolean approval decisions must fail closed."""
+    response = Content.from_dict({
+        "type": "function_approval_response",
+        "id": "response123",
+        "approved": approved,
+        "function_call": {
+            "type": "function_call",
+            "call_id": "call123",
+            "name": "test_func",
+            "arguments": {},
+        },
+    })
+
+    assert response.approved is False
 
 
 def test_chat_response_complex_serialization():
@@ -2209,18 +2890,43 @@ class _NonCopyableRaw:
         raise TypeError("Cannot deepcopy this object")
 
 
-def test_content_deepcopy_preserves_raw_representation():
-    """Test that deepcopy of Content keeps raw_representation by reference."""
+def test_content_deepcopy_discards_raw_representation(caplog: pytest.LogCaptureFixture) -> None:
+    """Test that deepcopy of Content discards raw_representation and logs at debug level."""
     import copy
 
     raw = _NonCopyableRaw()
     content = Content.from_text("hello", raw_representation=raw)
 
-    cloned = copy.deepcopy(content)
+    with caplog.at_level("DEBUG", logger="agent_framework"):
+        cloned = copy.deepcopy(content)
 
     assert cloned.text == "hello"
-    assert cloned.raw_representation is raw
+    assert cloned.raw_representation is None
     assert cloned.additional_properties is not content.additional_properties
+    assert caplog.messages == ["Discarding field 'raw_representation' while deep-copying Content."]
+
+
+def test_content_pickle_discards_nested_annotation_raw_representation() -> None:
+    """Pickle should omit provider objects stored on annotations."""
+    import pickle
+
+    raw = object()
+    annotation: Annotation = {"type": "citation", "url": "https://example.com", "raw_representation": raw}
+    content = Content.from_text("hello", annotations=[annotation])
+
+    restored = pickle.loads(pickle.dumps(content))
+
+    assert restored.annotations == [{"type": "citation", "url": "https://example.com"}]
+
+
+def test_content_shallow_copy_preserves_raw_representation() -> None:
+    """Shallow copies of Content retain provider runtime fields."""
+    import copy
+
+    raw = _NonCopyableRaw()
+    cloned = copy.copy(Content.from_text("hello", raw_representation=raw))
+
+    assert cloned.raw_representation is raw
 
 
 def test_message_deepcopy_preserves_raw_representation():
@@ -2326,21 +3032,20 @@ def test_nested_deepcopy_preserves_raw_representation():
     assert cloned.text == "hello"
 
 
-def test_content_deepcopy_shallow_copy_fields_identity():
-    """Test that Content._SHALLOW_COPY_FIELDS fields are identity-preserved while others are deep-copied."""
+def test_content_deepcopy_does_not_log_for_empty_shallow_copy_fields(caplog: pytest.LogCaptureFixture) -> None:
+    """Test that empty shallow-copy fields do not emit discard logs."""
     import copy
 
-    raw = _NonCopyableRaw()
-    content = Content.from_text("hello", raw_representation=raw)
+    content = Content.from_text("hello")
     content.additional_properties["key"] = "value"
 
-    cloned = copy.deepcopy(content)
+    with caplog.at_level("DEBUG", logger="agent_framework"):
+        cloned = copy.deepcopy(content)
 
-    # _SHALLOW_COPY_FIELDS (raw_representation) should be same object
-    assert cloned.raw_representation is raw
-    # Non-shallow fields should be independent deep copies
+    assert cloned.raw_representation is None
     assert cloned.additional_properties is not content.additional_properties
     assert cloned.additional_properties == {"key": "value"}
+    assert caplog.messages == []
 
 
 def test_chat_response_deepcopy_deep_copies_additional_properties():
@@ -2618,7 +3323,7 @@ def test_content_roundtrip_serialization(content_class: type[Content], init_kwar
             assert hasattr(reconstructed, "media_type")
             assert reconstructed.media_type == init_kwargs.get("media_type")
             # Verify the uri contains the encoded data
-            assert reconstructed.uri.startswith(f"data:{init_kwargs.get('media_type')};base64,")
+            assert reconstructed.uri.startswith(f"data:{init_kwargs.get('media_type')};base64,")  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
             continue
 
         reconstructed_value = getattr(reconstructed, key)
@@ -2634,16 +3339,16 @@ def test_content_roundtrip_serialization(content_class: type[Content], init_kwar
                 # Compare each item by serializing the reconstructed object
                 assert len(reconstructed_value) == len(value)
                 for orig_dict, recon_obj in zip(value, reconstructed_value):
-                    recon_dict = recon_obj.to_dict()
+                    recon_dict = recon_obj.to_dict()  # ty: ignore[unresolved-attribute]
                     # Compare all keys from original dict (reconstructed may have extra default fields)
-                    for k, v in orig_dict.items():
+                    for k, v in orig_dict.items():  # ty: ignore[unresolved-attribute]
                         assert k in recon_dict, f"Key '{k}' missing from reconstructed dict"
                         # For nested lists, recursively compare
                         if isinstance(v, list) and v and isinstance(v[0], dict):
                             assert len(recon_dict[k]) == len(v)
                             for orig_item, recon_item in zip(v, recon_dict[k]):
                                 # Compare essential keys, ignoring fields like additional_properties
-                                for item_key, item_val in orig_item.items():
+                                for item_key, item_val in orig_item.items():  # ty: ignore[unresolved-attribute]
                                     assert item_key in recon_item
                                     assert recon_item[item_key] == item_val
                         else:
@@ -2688,12 +3393,13 @@ def test_text_content_with_annotations_serialization():
     reconstructed = Content.from_dict(content_dict)
 
     # Verify reconstruction
-    assert len(reconstructed.annotations) == 2
+    assert len(reconstructed.annotations) == 2  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    assert reconstructed.annotations is not None
     # Annotation are TypedDicts (dicts at runtime)
-    assert all(isinstance(ann, dict) for ann in reconstructed.annotations)
-    assert reconstructed.annotations[0]["title"] == "Citation 1"
-    assert reconstructed.annotations[1]["title"] == "Citation 2"
-    assert all(isinstance(ann["annotated_regions"][0], dict) for ann in reconstructed.annotations)
+    assert all(isinstance(ann, dict) for ann in reconstructed.annotations)  # type: ignore[union-attr]  # pyrefly: ignore[not-iterable]
+    assert reconstructed.annotations[0]["title"] == "Citation 1"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]
+    assert reconstructed.annotations[1]["title"] == "Citation 2"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]
+    assert all(isinstance(ann["annotated_regions"][0], dict) for ann in reconstructed.annotations)  # type: ignore[union-attr]  # pyrefly: ignore[not-iterable]
 
 
 # region FunctionTool.parse_result with Pydantic models
@@ -2721,8 +3427,8 @@ def test_parse_result_pydantic_model():
     assert isinstance(parsed, list)
     assert len(parsed) == 1
     assert parsed[0].type == "text"
-    assert '"temperature": 22.5' in parsed[0].text or '"temperature":22.5' in parsed[0].text
-    assert '"condition": "sunny"' in parsed[0].text or '"condition":"sunny"' in parsed[0].text
+    assert '"temperature": 22.5' in parsed[0].text or '"temperature":22.5' in parsed[0].text  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
+    assert '"condition": "sunny"' in parsed[0].text or '"condition":"sunny"' in parsed[0].text  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
 
 
 def test_parse_result_pydantic_model_in_list():
@@ -2736,9 +3442,9 @@ def test_parse_result_pydantic_model_in_list():
     assert isinstance(parsed, list)
     assert len(parsed) == 1
     assert parsed[0].type == "text"
-    assert parsed[0].text.startswith("[")
-    assert "cloudy" in parsed[0].text
-    assert "sunny" in parsed[0].text
+    assert parsed[0].text.startswith("[")  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+    assert "cloudy" in parsed[0].text  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
+    assert "sunny" in parsed[0].text  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
 
 
 def test_parse_result_pydantic_model_in_dict():
@@ -2752,10 +3458,10 @@ def test_parse_result_pydantic_model_in_dict():
     assert isinstance(parsed, list)
     assert len(parsed) == 1
     assert parsed[0].type == "text"
-    assert "current" in parsed[0].text
-    assert "forecast" in parsed[0].text
-    assert "partly cloudy" in parsed[0].text
-    assert "sunny" in parsed[0].text
+    assert "current" in parsed[0].text  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
+    assert "forecast" in parsed[0].text  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
+    assert "partly cloudy" in parsed[0].text  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
+    assert "sunny" in parsed[0].text  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
 
 
 def test_parse_result_nested_pydantic_model():
@@ -2766,9 +3472,9 @@ def test_parse_result_nested_pydantic_model():
     assert isinstance(parsed, list)
     assert len(parsed) == 1
     assert parsed[0].type == "text"
-    assert "Seattle" in parsed[0].text
-    assert "rainy" in parsed[0].text
-    assert "18.0" in parsed[0].text or "18" in parsed[0].text
+    assert "Seattle" in parsed[0].text  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
+    assert "rainy" in parsed[0].text  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
+    assert "18.0" in parsed[0].text or "18" in parsed[0].text  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
 
 
 # region FunctionTool.parse_result with MCP TextContent-like objects
@@ -3006,8 +3712,8 @@ def test_content_add_usage_content():
     result = usage1 + usage2
 
     assert result.type == "usage"
-    assert result.usage_details["input_token_count"] == 300
-    assert result.usage_details["output_token_count"] == 150
+    assert result.usage_details["input_token_count"] == 300  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert result.usage_details["output_token_count"] == 150  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     # Raw representations should be combined
     assert isinstance(result.raw_representation, list)
     assert "raw1" in result.raw_representation
@@ -3036,19 +3742,20 @@ def test_content_add_usage_content_non_integer_values():
     """Test adding usage content with non-integer values."""
     usage1 = Content(
         type="usage",
-        usage_details={"model": "gpt-4", "count": 10},
+        usage_details=cast(UsageDetails, {"model": "gpt-4", "count": 10}),
     )
     usage2 = Content(
         type="usage",
-        usage_details={"model": "gpt-3.5", "count": 20},
+        usage_details=cast(UsageDetails, {"model": "gpt-3.5", "count": 20}),
     )
 
     result = usage1 + usage2
 
     # Non-integer "model" should take first non-None value
-    assert "model" not in result.usage_details
+    assert result.usage_details is not None
+    assert "model" not in result.usage_details  # type: ignore[operator]  # pyrefly: ignore[not-iterable]
     # Integer "count" should be summed
-    assert result.usage_details["count"] == 30
+    assert result.usage_details["count"] == 30  # type: ignore[index, typeddict-item]  # pyrefly: ignore[unsupported-operation]
 
 
 # endregion
@@ -3062,7 +3769,7 @@ def test_content_has_top_level_media_type():
     image = Content(type="uri", uri="https://example.com/image.png", media_type="image/png")
 
     assert image.has_top_level_media_type("image") is True
-    assert image.has_top_level_media_type("IMAGE") is True  # Case insensitive
+    assert image.has_top_level_media_type("IMAGE") is True  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]  # Case insensitive
     assert image.has_top_level_media_type("audio") is False
 
 
@@ -3333,7 +4040,7 @@ class TestResponseStreamBasicIteration:
         stream = ResponseStream(
             _generate_updates(2),
             finalizer=_combine_updates,
-            result_hooks=[tracking_hook],
+            result_hooks=[tracking_hook],  # ty: ignore[invalid-argument-type]
         )
 
         async for _ in stream:
@@ -3351,7 +4058,7 @@ class TestResponseStreamBasicIteration:
             call_count["value"] += 1
             return _combine_updates(updates)
 
-        stream = ResponseStream(_generate_updates(2), finalizer=counting_finalizer)
+        stream = ResponseStream(_generate_updates(2), finalizer=counting_finalizer)  # type: ignore[arg-type, var-annotated]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
         async for _ in stream:
             pass
@@ -3376,7 +4083,7 @@ class TestResponseStreamTransformHooks:
         stream = ResponseStream(
             _generate_updates(3),
             finalizer=_combine_updates,
-            transform_hooks=[counting_hook],
+            transform_hooks=[counting_hook],  # ty: ignore[invalid-argument-type]
         )
 
         await stream.get_final_response()
@@ -3389,18 +4096,18 @@ class TestResponseStreamTransformHooks:
         def uppercase_hook(update: ChatResponseUpdate) -> ChatResponseUpdate:
             return ChatResponseUpdate(
                 contents=[Content.from_text((update.text or "").upper())],
-                role=update.role,
+                role=cast(Any, update.role),
             )
 
         stream = ResponseStream(
             _generate_updates(2),
             finalizer=_combine_updates,
-            transform_hooks=[uppercase_hook],
+            transform_hooks=[uppercase_hook],  # ty: ignore[invalid-argument-type]
         )
 
         collected: list[str] = []
         async for update in stream:
-            collected.append(update.text or "")
+            collected.append(update.text or "")  # ty: ignore[unresolved-attribute]
 
         assert collected == ["UPDATE_0", "UPDATE_1"]
 
@@ -3419,7 +4126,7 @@ class TestResponseStreamTransformHooks:
         stream = ResponseStream(
             _generate_updates(2),
             finalizer=_combine_updates,
-            transform_hooks=[hook_a, hook_b],
+            transform_hooks=[hook_a, hook_b],  # ty: ignore[invalid-argument-type]
         )
 
         async for _ in stream:
@@ -3436,12 +4143,12 @@ class TestResponseStreamTransformHooks:
         stream = ResponseStream(
             _generate_updates(2),
             finalizer=_combine_updates,
-            transform_hooks=[none_hook],
+            transform_hooks=[none_hook],  # ty: ignore[invalid-argument-type]
         )
 
         collected: list[str] = []
         async for update in stream:
-            collected.append(update.text or "")
+            collected.append(update.text or "")  # ty: ignore[unresolved-attribute]
 
         assert collected == ["update_0", "update_1"]
 
@@ -3466,24 +4173,66 @@ class TestResponseStreamTransformHooks:
         async def async_hook(update: ChatResponseUpdate) -> ChatResponseUpdate:
             return ChatResponseUpdate(
                 contents=[Content.from_text(f"async_{update.text}")],
-                role=update.role,
+                role=cast(Any, update.role),
             )
 
         stream = ResponseStream(
             _generate_updates(2),
             finalizer=_combine_updates,
-            transform_hooks=[async_hook],
+            transform_hooks=[async_hook],  # ty: ignore[invalid-argument-type]
         )
 
         collected: list[str] = []
         async for update in stream:
-            collected.append(update.text or "")
+            collected.append(update.text or "")  # ty: ignore[unresolved-attribute]
 
         assert collected == ["async_update_0", "async_update_1"]
 
 
 class TestResponseStreamCleanupHooks:
     """Tests for cleanup hooks (after stream consumption, before finalizer)."""
+
+    async def test_close_closes_iterator_and_runs_cleanup_once(self) -> None:
+        """Closing a partially consumed stream releases its iterator and cleanup hooks."""
+        events: list[str] = []
+
+        async def updates() -> AsyncIterable[ChatResponseUpdate]:
+            try:
+                yield ChatResponseUpdate(contents=[Content.from_text("first")], role="assistant")
+                yield ChatResponseUpdate(contents=[Content.from_text("second")], role="assistant")
+            finally:
+                events.append("iterator")
+
+        stream: ResponseStream[ChatResponseUpdate, Sequence[ChatResponseUpdate]] = ResponseStream(
+            updates(), cleanup_hooks=[lambda: events.append("cleanup")]
+        )
+        await anext(stream)
+
+        await stream.close()
+        await stream.close()
+
+        assert events == ["iterator", "cleanup"]
+
+    async def test_close_closes_wrapped_stream(self) -> None:
+        """Closing a wrapper releases the concrete inner stream."""
+        events: list[str] = []
+
+        async def updates() -> AsyncIterable[ChatResponseUpdate]:
+            try:
+                yield ChatResponseUpdate(contents=[Content.from_text("first")], role="assistant")
+                yield ChatResponseUpdate(contents=[Content.from_text("second")], role="assistant")
+            finally:
+                events.append("iterator")
+
+        inner: ResponseStream[ChatResponseUpdate, Sequence[ChatResponseUpdate]] = ResponseStream(
+            updates(), cleanup_hooks=[lambda: events.append("inner")]
+        )
+        outer = inner.map(lambda update: update, _combine_updates).with_cleanup_hook(lambda: events.append("outer"))
+        await anext(outer)
+
+        await outer.close()
+
+        assert events == ["iterator", "inner", "outer"]
 
     async def test_cleanup_hook_called_after_iteration(self) -> None:
         """Cleanup hook is called after iteration completes."""
@@ -3589,12 +4338,12 @@ class TestResponseStreamResultHooks:
         stream = ResponseStream(
             _generate_updates(2),
             finalizer=_combine_updates,
-            result_hooks=[add_metadata],
+            result_hooks=[add_metadata],  # ty: ignore[invalid-argument-type]
         )
 
         final = await stream.get_final_response()
 
-        assert final.additional_properties["processed"] is True
+        assert final.additional_properties["processed"] is True  # ty: ignore[unresolved-attribute]
 
     async def test_result_hook_can_transform_result(self) -> None:
         """Result hook can transform the final result."""
@@ -3605,12 +4354,12 @@ class TestResponseStreamResultHooks:
         stream = ResponseStream(
             _generate_updates(2),
             finalizer=_combine_updates,
-            result_hooks=[wrap_text],
+            result_hooks=[wrap_text],  # ty: ignore[invalid-argument-type]
         )
 
         final = await stream.get_final_response()
 
-        assert final.text == "[update_0update_1]"
+        assert final.text == "[update_0update_1]"  # ty: ignore[unresolved-attribute]
 
     async def test_multiple_result_hooks_chained(self) -> None:
         """Multiple result hooks are called in order."""
@@ -3624,12 +4373,12 @@ class TestResponseStreamResultHooks:
         stream = ResponseStream(
             _generate_updates(1),
             finalizer=_combine_updates,
-            result_hooks=[add_prefix, add_suffix],
+            result_hooks=[add_prefix, add_suffix],  # ty: ignore[invalid-argument-type]
         )
 
         final = await stream.get_final_response()
 
-        assert final.text == "prefix_update_0_suffix"
+        assert final.text == "prefix_update_0_suffix"  # ty: ignore[unresolved-attribute]
 
     async def test_result_hook_returning_none_keeps_previous(self) -> None:
         """Result hook returning None keeps the previous value."""
@@ -3642,7 +4391,7 @@ class TestResponseStreamResultHooks:
         stream = ResponseStream(
             _generate_updates(2),
             finalizer=_combine_updates,
-            result_hooks=[none_hook],
+            result_hooks=[none_hook],  # ty: ignore[invalid-argument-type]
         )
 
         final = await stream.get_final_response()
@@ -3672,12 +4421,12 @@ class TestResponseStreamResultHooks:
         stream = ResponseStream(
             _generate_updates(2),
             finalizer=_combine_updates,
-            result_hooks=[async_hook],
+            result_hooks=[async_hook],  # ty: ignore[invalid-argument-type]
         )
 
         final = await stream.get_final_response()
 
-        assert final.text == "async_update_0update_1"
+        assert final.text == "async_update_0update_1"  # ty: ignore[unresolved-attribute]
 
 
 class TestResponseStreamFinalizer:
@@ -3691,7 +4440,7 @@ class TestResponseStreamFinalizer:
             received_updates.extend(updates)
             return ChatResponse(messages=Message("assistant", ["done"]))
 
-        stream = ResponseStream(_generate_updates(3), finalizer=capturing_finalizer)
+        stream = ResponseStream(_generate_updates(3), finalizer=capturing_finalizer)  # type: ignore[arg-type, var-annotated]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
         await stream.get_final_response()
 
@@ -3716,11 +4465,11 @@ class TestResponseStreamFinalizer:
             text = "".join(u.text or "" for u in updates)
             return ChatResponse(messages=Message("assistant", [f"async_{text}"]))
 
-        stream = ResponseStream(_generate_updates(2), finalizer=async_finalizer)
+        stream = ResponseStream(_generate_updates(2), finalizer=async_finalizer)  # type: ignore[arg-type, var-annotated]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
         final = await stream.get_final_response()
 
-        assert final.text == "async_update_0update_1"
+        assert final.text == "async_update_0update_1"  # ty: ignore[unresolved-attribute]
 
     async def test_finalized_only_once(self) -> None:
         """Finalizer is only called once even with multiple get_final_response calls."""
@@ -3730,7 +4479,7 @@ class TestResponseStreamFinalizer:
             call_count["value"] += 1
             return ChatResponse(messages=Message("assistant", ["done"]))
 
-        stream = ResponseStream(_generate_updates(2), finalizer=counting_finalizer)
+        stream = ResponseStream(_generate_updates(2), finalizer=counting_finalizer)  # type: ignore[arg-type, var-annotated]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
         await stream.get_final_response()
         await stream.get_final_response()
@@ -3761,7 +4510,7 @@ class TestResponseStreamMapAndWithFinalizer:
         def add_prefix(update: ChatResponseUpdate) -> ChatResponseUpdate:
             return ChatResponseUpdate(
                 contents=[Content.from_text(f"mapped_{update.text}")],
-                role=update.role,
+                role=cast(Any, update.role),
             )
 
         outer = inner.map(add_prefix, _combine_updates)
@@ -3793,7 +4542,7 @@ class TestResponseStreamMapAndWithFinalizer:
         inner = ResponseStream(
             _generate_updates(2),
             finalizer=_combine_updates,
-            result_hooks=[inner_result_hook],
+            result_hooks=[inner_result_hook],  # ty: ignore[invalid-argument-type]
         )
         outer = inner.map(lambda u: u, _combine_updates)
 
@@ -3843,7 +4592,7 @@ class TestResponseStreamMapAndWithFinalizer:
         def add_prefix(update: ChatResponseUpdate) -> ChatResponseUpdate:
             return ChatResponseUpdate(
                 contents=[Content.from_text(f"mapped_{update.text}")],
-                role=update.role,
+                role=cast(Any, update.role),
             )
 
         outer = inner.map(add_prefix, _combine_updates)
@@ -3856,6 +4605,61 @@ class TestResponseStreamMapAndWithFinalizer:
 
         final = await outer.get_final_response()
         assert final.text == "mapped_update_0mapped_update_1"
+
+    async def test_flat_map_expands_updates(self) -> None:
+        """flat_map() can transform one update into many updates."""
+        inner = ResponseStream(_generate_updates(2), finalizer=_combine_updates)
+
+        def expand(update: ChatResponseUpdate) -> list[ChatResponseUpdate]:
+            return [
+                ChatResponseUpdate(contents=[Content.from_text(update.text)], role=cast(Any, update.role)),
+                ChatResponseUpdate(contents=[Content.from_text(f"{update.text}_extra")], role=cast(Any, update.role)),
+            ]
+
+        outer = inner.flat_map(expand, _combine_updates)
+
+        collected: list[str] = []
+        async for update in outer:
+            collected.append(update.text or "")
+
+        assert collected == ["update_0", "update_0_extra", "update_1", "update_1_extra"]
+
+        final = await outer.get_final_response()
+        assert final.text == "update_0update_0_extraupdate_1update_1_extra"
+
+    async def test_flat_map_skips_empty_mappings(self) -> None:
+        """flat_map() supports zero-output transforms."""
+        inner = ResponseStream(_generate_updates(3), finalizer=_combine_updates)
+
+        def keep_odd(update: ChatResponseUpdate) -> list[ChatResponseUpdate]:
+            return [update] if update.text == "update_1" else []
+
+        outer = inner.flat_map(keep_odd, _combine_updates)
+
+        collected = [update.text async for update in outer]
+        assert collected == ["update_1"]
+
+        final = await outer.get_final_response()
+        assert final.text == "update_1"
+
+    async def test_flat_map_calls_inner_result_hooks(self) -> None:
+        """flat_map() preserves inner result hooks."""
+        inner_result_hook_called = {"value": False}
+
+        def inner_result_hook(response: ChatResponse) -> ChatResponse:
+            inner_result_hook_called["value"] = True
+            return response
+
+        inner = ResponseStream(
+            _generate_updates(2),
+            finalizer=_combine_updates,
+            result_hooks=[inner_result_hook],  # ty: ignore[invalid-argument-type]
+        )
+        outer = inner.flat_map(lambda u: [u], _combine_updates)
+
+        await outer.get_final_response()
+
+        assert inner_result_hook_called["value"] is True
 
     async def test_outer_transform_hooks_independent(self) -> None:
         """Outer stream has its own independent transform hooks."""
@@ -3873,7 +4677,7 @@ class TestResponseStreamMapAndWithFinalizer:
         inner = ResponseStream(
             _generate_updates(2),
             finalizer=_combine_updates,
-            transform_hooks=[inner_hook],
+            transform_hooks=[inner_hook],  # ty: ignore[invalid-argument-type]
         )
         outer = inner.map(lambda u: u, _combine_updates).with_transform_hook(outer_hook)
 
@@ -3908,7 +4712,7 @@ class TestResponseStreamMapAndWithFinalizer:
         async def async_map(update: ChatResponseUpdate) -> ChatResponseUpdate:
             return ChatResponseUpdate(
                 contents=[Content.from_text(f"async_{update.text}")],
-                role=update.role,
+                role=cast(Any, update.role),
             )
 
         outer = inner.map(async_map, _combine_updates)
@@ -3919,13 +4723,22 @@ class TestResponseStreamMapAndWithFinalizer:
 
         assert collected == ["async_update_0", "async_update_1"]
 
-    async def test_from_awaitable(self) -> None:
+    @pytest.mark.parametrize("source_kind", ["coroutine", "task", "future"])
+    async def test_from_awaitable(self, source_kind: str) -> None:
         """from_awaitable() wraps an awaitable ResponseStream."""
 
         async def get_stream() -> ResponseStream[ChatResponseUpdate, ChatResponse]:
             return ResponseStream(_generate_updates(2), finalizer=_combine_updates)
 
-        outer = ResponseStream.from_awaitable(get_stream())
+        source: Awaitable[ResponseStream[ChatResponseUpdate, ChatResponse]]
+        if source_kind == "task":
+            source = asyncio.create_task(get_stream())
+        elif source_kind == "future":
+            source = asyncio.get_running_loop().create_future()
+            source.set_result(await get_stream())
+        else:
+            source = get_stream()
+        outer = ResponseStream.from_awaitable(source)
 
         collected: list[str] = []
         async for update in outer:
@@ -3959,12 +4772,12 @@ class TestResponseStreamExecutionOrder:
             order.append("result")
             return response
 
-        stream = ResponseStream(
+        stream = ResponseStream(  # type: ignore[var-annotated]
             _generate_updates(2),
-            finalizer=finalizer,
-            transform_hooks=[transform_hook],
+            finalizer=finalizer,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+            transform_hooks=[transform_hook],  # ty: ignore[invalid-argument-type]
             cleanup_hooks=[cleanup_hook],
-            result_hooks=[result_hook],
+            result_hooks=[result_hook],  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
         )
 
         async for _ in stream:
@@ -3990,9 +4803,9 @@ class TestResponseStreamExecutionOrder:
             order.append("finalizer")
             return ChatResponse(messages=Message("assistant", ["done"]))
 
-        stream = ResponseStream(
+        stream = ResponseStream(  # type: ignore[var-annotated]
             _generate_updates(2),
-            finalizer=finalizer,
+            finalizer=finalizer,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
             cleanup_hooks=[cleanup_hook],
         )
 
@@ -4004,13 +4817,22 @@ class TestResponseStreamExecutionOrder:
 class TestResponseStreamAwaitableSource:
     """Tests for ResponseStream with awaitable stream sources."""
 
-    async def test_awaitable_stream_source(self) -> None:
+    @pytest.mark.parametrize("source_kind", ["coroutine", "task", "future"])
+    async def test_awaitable_stream_source(self, source_kind: str) -> None:
         """ResponseStream can accept an awaitable that resolves to an async iterable."""
 
         async def get_stream() -> AsyncIterable[ChatResponseUpdate]:
             return _generate_updates(2)
 
-        stream = ResponseStream(get_stream(), finalizer=_combine_updates)
+        source: Awaitable[AsyncIterable[ChatResponseUpdate]]
+        if source_kind == "task":
+            source = asyncio.create_task(get_stream())
+        elif source_kind == "future":
+            source = asyncio.get_running_loop().create_future()
+            source.set_result(await get_stream())
+        else:
+            source = get_stream()
+        stream = ResponseStream(source, finalizer=_combine_updates)
 
         collected: list[str] = []
         async for update in stream:
@@ -4065,7 +4887,7 @@ class TestResponseStreamEdgeCases:
         stream = ResponseStream(
             empty_gen(),
             finalizer=_combine_updates,
-            transform_hooks=[transform_hook],
+            transform_hooks=[transform_hook],  # ty: ignore[invalid-argument-type]
         )
 
         async for _ in stream:
@@ -4114,12 +4936,12 @@ class TestResponseStreamEdgeCases:
             events.append("result")
             return r
 
-        stream = ResponseStream(
+        stream = ResponseStream(  # type: ignore[var-annotated]
             _generate_updates(1),
-            finalizer=finalizer,
-            transform_hooks=[transform],
+            finalizer=finalizer,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+            transform_hooks=[transform],  # ty: ignore[invalid-argument-type]
             cleanup_hooks=[cleanup],
-            result_hooks=[result],
+            result_hooks=[result],  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
         )
 
         await stream.get_final_response()
@@ -4236,6 +5058,48 @@ def test_prepend_instructions_custom_role():
     result = prepend_instructions_to_messages(messages, "Be concise.", role="developer")
     assert len(result) == 2
     assert result[0].role == "developer"
+
+
+def test_prepend_instructions_partial_dedup_preserves_order():
+    """Test that partially deduplicated instructions keep their relative order.
+
+    When only a prefix of the instructions is already present as leading
+    messages, the remaining instructions must still appear in their original
+    order after the matched prefix, not inverted in front of it.
+    """
+    from agent_framework._types import prepend_instructions_to_messages
+
+    messages = [
+        Message("system", ["First instruction"]),
+        Message("user", ["Hello"]),
+    ]
+    result = prepend_instructions_to_messages(messages, ["First instruction", "Second instruction"])
+
+    assert [message.text for message in result] == [
+        "First instruction",
+        "Second instruction",
+        "Hello",
+    ]
+    assert result[0] is messages[0]
+    assert result[2] is messages[1]
+
+
+def test_prepend_instructions_partial_dedup_no_match_keeps_prefix_behavior():
+    """Test that a non-matching leading message still yields a plain prepend."""
+    from agent_framework._types import prepend_instructions_to_messages
+
+    messages = [
+        Message("system", ["Different instruction"]),
+        Message("user", ["Hello"]),
+    ]
+    result = prepend_instructions_to_messages(messages, ["First instruction", "Second instruction"])
+
+    assert [message.text for message in result] == [
+        "First instruction",
+        "Second instruction",
+        "Different instruction",
+        "Hello",
+    ]
 
 
 # endregion

@@ -11,8 +11,8 @@ using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using OpenAI.Responses;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
-var model = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
+var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+var model = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
 
 // Get a client to create/retrieve server side agents with.
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
@@ -29,6 +29,16 @@ var mcpTool = ResponseTool.CreateMcpTool(
     serverLabel: "microsoft_learn",
     serverUri: new Uri("https://learn.microsoft.com/api/mcp"),
     toolCallApprovalPolicy: new McpToolCallApprovalPolicy(GlobalMcpToolCallApprovalPolicy.NeverRequireApproval));
+
+// Optional: authenticate the MCP server through a Foundry project connection.
+// The connection stores credentials, so the platform injects them at request time and no inline token is sent.
+// The public Microsoft Learn MCP server above needs no authentication, so this is shown for illustration only.
+// Use the FoundryAITool.CreateMcpTool overload that takes a projectConnectionId:
+//   AITool tool = FoundryAITool.CreateMcpTool(
+//       serverLabel: "github",
+//       serverUri: new Uri("https://api.githubcopilot.com/mcp"),
+//       projectConnectionId: "my-foundry-connection",
+//       toolCallApprovalPolicy: new McpToolCallApprovalPolicy(GlobalMcpToolCallApprovalPolicy.AlwaysRequireApproval));
 
 // Create a server side agent with the mcp tool, and expose it as an AIAgent.
 ProjectsAgentVersion agentVersion = await aiProjectClient.AgentAdministrationClient.CreateAgentVersionAsync(

@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 from datetime import datetime, timezone
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -197,7 +198,10 @@ async def test_cmc_additional_properties(
     chat_history.append(Message(role="user", contents=["hello world"]))
 
     openai_chat_completion = OpenAIChatCompletionClient()
-    await openai_chat_completion.get_response(messages=chat_history, options={"reasoning_effort": "low"})
+    await cast(Any, openai_chat_completion).get_response(
+        messages=chat_history,
+        options={"reasoning_effort": "low"},
+    )
     mock_create.assert_awaited_once_with(
         model=openai_unit_test_env["OPENAI_MODEL"],
         stream=False,

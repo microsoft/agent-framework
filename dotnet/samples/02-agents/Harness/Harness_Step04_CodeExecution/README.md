@@ -1,4 +1,4 @@
-# Harness Step 04 — Code Execution (Hyperlight + Skills)
+﻿# Harness Step 04 — Code Execution (Hyperlight + Skills)
 
 This sample demonstrates a HarnessAgent with **all features enabled**, plus:
 
@@ -10,15 +10,15 @@ The agent can plan tasks, manage modes, store memories, read/write files, search
 ## Prerequisites
 
 - .NET 10 SDK
-- An Azure AI Foundry project endpoint
+- A Microsoft Foundry project endpoint
 - KVM-capable host (the Hyperlight sandbox runs code in micro-VMs)
 
 ## Environment Variables
 
 | Variable | Description |
 |----------|-------------|
-| `AZURE_AI_PROJECT_ENDPOINT` | Your Azure AI Foundry project endpoint |
-| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Model deployment name (default: `gpt-5.4`) |
+| `FOUNDRY_PROJECT_ENDPOINT` | Your Microsoft Foundry project endpoint |
+| `FOUNDRY_MODEL` | Model deployment name (default: `gpt-5.4`) |
 
 ## Running
 

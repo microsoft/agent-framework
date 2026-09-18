@@ -1,19 +1,17 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Tests for the AgentEvalConverter, FoundryEvals, and eval helper functions."""
+"""Tests for Foundry Evals wire conversion and evaluation helpers."""
 
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from agent_framework import AgentExecutorResponse, AgentResponse, Content, FunctionTool, Message, WorkflowEvent
 from agent_framework._evaluation import (
-    AgentEvalConverter,
-    ConversationSplit,
     EvalItem,
     EvalNotPassedError,
     EvalResults,
@@ -33,6 +31,8 @@ from agent_framework_foundry._foundry_evals import (
     FoundryEvals,
     _build_item_schema,
     _build_testing_criteria,
+    _convert_message,
+    _convert_messages,
     _extract_per_evaluator,
     _extract_result_counts,
     _extract_rubric_scores,
@@ -109,25 +109,25 @@ class TestResolveEvaluator:
 
 
 # ---------------------------------------------------------------------------
-# AgentEvalConverter.convert_message
+# Foundry Evals message conversion
 # ---------------------------------------------------------------------------
 
 
 class TestConvertMessage:
     def test_user_text_message(self) -> None:
         msg = Message("user", ["Hello, world!"])
-        result = AgentEvalConverter.convert_message(msg)
+        result = _convert_message(msg)
         assert len(result) == 1
         assert result[0] == {"role": "user", "content": [{"type": "text", "text": "Hello, world!"}]}
 
     def test_system_message(self) -> None:
         msg = Message("system", ["You are helpful."])
-        result = AgentEvalConverter.convert_message(msg)
+        result = _convert_message(msg)
         assert result[0] == {"role": "system", "content": [{"type": "text", "text": "You are helpful."}]}
 
     def test_assistant_text_message(self) -> None:
         msg = Message("assistant", ["Here is the answer."])
-        result = AgentEvalConverter.convert_message(msg)
+        result = _convert_message(msg)
         assert len(result) == 1
         assert result[0]["role"] == "assistant"
         assert result[0]["content"] == [{"type": "text", "text": "Here is the answer."}]
@@ -144,7 +144,7 @@ class TestConvertMessage:
                 ),
             ],
         )
-        result = AgentEvalConverter.convert_message(msg)
+        result = _convert_message(msg)
         assert len(result) == 1
         assert result[0]["role"] == "assistant"
         tc = result[0]["content"][0]
@@ -152,6 +152,23 @@ class TestConvertMessage:
         assert tc["tool_call_id"] == "call_1"
         assert tc["name"] == "get_weather"
         assert tc["arguments"] == {"location": "Seattle"}
+
+    def test_assistant_with_zero_argument_tool_call(self) -> None:
+        msg = Message(
+            "assistant",
+            [
+                Content.from_function_call(
+                    call_id="call_3",
+                    name="get_site_summary",
+                    arguments=None,
+                ),
+            ],
+        )
+        result = _convert_message(msg)
+        tc = result[0]["content"][0]
+        assert tc["type"] == "tool_call"
+        assert "arguments" in tc
+        assert tc["arguments"] == {}
 
     def test_assistant_text_and_tool_call(self) -> None:
         msg = Message(
@@ -165,7 +182,7 @@ class TestConvertMessage:
                 ),
             ],
         )
-        result = AgentEvalConverter.convert_message(msg)
+        result = _convert_message(msg)
         assert len(result) == 1
         assert result[0]["content"][0] == {"type": "text", "text": "Let me check that."}
         tc = result[0]["content"][1]
@@ -182,7 +199,7 @@ class TestConvertMessage:
                 ),
             ],
         )
-        result = AgentEvalConverter.convert_message(msg)
+        result = _convert_message(msg)
         assert len(result) == 1
         assert result[0]["role"] == "tool"
         assert result[0]["tool_call_id"] == "call_1"
@@ -196,7 +213,7 @@ class TestConvertMessage:
                 Content.from_function_result(call_id="call_2", result="r2"),
             ],
         )
-        result = AgentEvalConverter.convert_message(msg)
+        result = _convert_message(msg)
         assert len(result) == 2
         assert result[0]["tool_call_id"] == "call_1"
         assert result[1]["tool_call_id"] == "call_2"
@@ -211,21 +228,21 @@ class TestConvertMessage:
                 ),
             ],
         )
-        result = AgentEvalConverter.convert_message(msg)
+        result = _convert_message(msg)
         tr = result[0]["content"][0]
         assert tr["type"] == "tool_result"
         assert tr["tool_result"] == {"temp": 72, "unit": "F"}
 
     def test_empty_message(self) -> None:
         msg = Message("user", [])
-        result = AgentEvalConverter.convert_message(msg)
+        result = _convert_message(msg)
         assert result[0] == {"role": "user", "content": [{"type": "text", "text": ""}]}
 
     def test_user_image_from_data(self) -> None:
         """Image created via Content.from_data() emits input_image."""
         img = Content.from_data(data=b"\x89PNG\r\n\x1a\n", media_type="image/png")
         msg = Message("user", [img])
-        result = AgentEvalConverter.convert_message(msg)
+        result = _convert_message(msg)
         assert len(result) == 1
         assert result[0]["role"] == "user"
         part = result[0]["content"][0]
@@ -237,7 +254,7 @@ class TestConvertMessage:
         """Image created via Content.from_uri() with an external URL."""
         img = Content.from_uri("https://example.com/photo.jpg", media_type="image/jpeg")
         msg = Message("user", [img])
-        result = AgentEvalConverter.convert_message(msg)
+        result = _convert_message(msg)
         assert len(result) == 1
         part = result[0]["content"][0]
         assert part["type"] == "input_image"
@@ -248,7 +265,7 @@ class TestConvertMessage:
         """URI content without media_type still emits input_image (no detail key)."""
         img = Content("uri", uri="https://example.com/pic.png")
         msg = Message("user", [img])
-        result = AgentEvalConverter.convert_message(msg)
+        result = _convert_message(msg)
         part = result[0]["content"][0]
         assert part["type"] == "input_image"
         assert part["image_url"] == "https://example.com/pic.png"
@@ -263,7 +280,7 @@ class TestConvertMessage:
                 Content.from_uri("https://example.com/cat.jpg", media_type="image/jpeg"),
             ],
         )
-        result = AgentEvalConverter.convert_message(msg)
+        result = _convert_message(msg)
         assert len(result) == 1
         assert len(result[0]["content"]) == 2
         assert result[0]["content"][0] == {"type": "text", "text": "What's in this image?"}
@@ -272,7 +289,7 @@ class TestConvertMessage:
 
 
 # ---------------------------------------------------------------------------
-# AgentEvalConverter.convert_messages
+# Foundry Evals conversation conversion
 # ---------------------------------------------------------------------------
 
 
@@ -287,7 +304,7 @@ class TestConvertMessages:
             Message("tool", [Content.from_function_result(call_id="c1", result="Sunny")]),
             Message("assistant", ["It's sunny in Seattle!"]),
         ]
-        result = AgentEvalConverter.convert_messages(messages)
+        result = _convert_messages(messages)
         assert len(result) == 4
         assert result[0]["role"] == "user"
         assert result[1]["role"] == "assistant"
@@ -310,7 +327,7 @@ class TestConvertMessages:
             ),
             Message("assistant", ["This is a photo of a sunset over the ocean."]),
         ]
-        result = AgentEvalConverter.convert_messages(messages)
+        result = _convert_messages(messages)
         assert len(result) == 2
         # User message has text + image
         user_content = result[0]["content"]
@@ -320,412 +337,6 @@ class TestConvertMessages:
         assert user_content[1]["image_url"] == "https://example.com/photo.jpg"
         # Assistant response is text
         assert result[1]["content"] == [{"type": "text", "text": "This is a photo of a sunset over the ocean."}]
-
-
-# ---------------------------------------------------------------------------
-# AgentEvalConverter.extract_tools
-# ---------------------------------------------------------------------------
-
-
-class TestExtractTools:
-    def test_extracts_function_tools(self) -> None:
-        tool = FunctionTool(
-            name="get_weather",
-            description="Get weather for a location",
-            func=lambda location: f"Sunny in {location}",
-        )
-        agent = MagicMock()
-        agent.default_options = {"tools": [tool]}
-
-        result = AgentEvalConverter.extract_tools(agent)
-        assert len(result) == 1
-        assert result[0]["name"] == "get_weather"
-        assert result[0]["description"] == "Get weather for a location"
-        assert "parameters" in result[0]
-
-    def test_skips_non_function_tools(self) -> None:
-        agent = MagicMock()
-        agent.default_options = {"tools": [{"type": "web_search"}, "some_string"]}
-
-        result = AgentEvalConverter.extract_tools(agent)
-        assert len(result) == 0
-
-    def test_no_tools(self) -> None:
-        agent = MagicMock()
-        agent.default_options = {}
-        assert AgentEvalConverter.extract_tools(agent) == []
-
-    def test_no_default_options(self) -> None:
-        agent = MagicMock(spec=[])  # No attributes
-        assert AgentEvalConverter.extract_tools(agent) == []
-
-
-# ---------------------------------------------------------------------------
-# AgentEvalConverter.to_eval_item (now returns EvalItem)
-# ---------------------------------------------------------------------------
-
-
-class TestToEvalItem:
-    def test_string_query(self) -> None:
-        response = AgentResponse(messages=[Message("assistant", ["The weather is sunny."])])
-        item = AgentEvalConverter.to_eval_item(query="What's the weather?", response=response)
-
-        assert isinstance(item, EvalItem)
-        assert item.query == "What's the weather?"
-        assert item.response == "The weather is sunny."
-        assert len(item.conversation) == 2
-        assert item.conversation[0].role == "user"
-        assert item.conversation[1].role == "assistant"
-
-    def test_message_query(self) -> None:
-        input_msgs = [
-            Message("system", ["Be helpful."]),
-            Message("user", ["Hello"]),
-        ]
-        response = AgentResponse(messages=[Message("assistant", ["Hi there!"])])
-        item = AgentEvalConverter.to_eval_item(query=input_msgs, response=response)
-
-        assert item.query == "Hello"  # Only user messages
-        assert len(item.conversation) == 3  # system + user + assistant
-
-    def test_with_context(self) -> None:
-        response = AgentResponse(messages=[Message("assistant", ["Answer."])])
-        item = AgentEvalConverter.to_eval_item(
-            query="Question?",
-            response=response,
-            context="Some reference document.",
-        )
-        assert item.context == "Some reference document."
-
-    def test_with_explicit_tools(self) -> None:
-        tool = FunctionTool(
-            name="search",
-            description="Search the web",
-            func=lambda q: f"Results for {q}",
-        )
-        response = AgentResponse(messages=[Message("assistant", ["Found it."])])
-        item = AgentEvalConverter.to_eval_item(
-            query="Find info",
-            response=response,
-            tools=[tool],
-        )
-        assert item.tools is not None
-        assert len(item.tools) == 1
-        assert item.tools[0].name == "search"
-
-    def test_with_agent_tools(self) -> None:
-        tool = FunctionTool(name="calc", description="Calculate", func=lambda x: str(x))
-        agent = MagicMock()
-        agent.default_options = {"tools": [tool]}
-
-        response = AgentResponse(messages=[Message("assistant", ["42"])])
-        item = AgentEvalConverter.to_eval_item(
-            query="What is 6*7?",
-            response=response,
-            agent=agent,
-        )
-        assert item.tools is not None
-        assert item.tools[0].name == "calc"
-
-    def test_explicit_tools_override_agent(self) -> None:
-        agent_tool = FunctionTool(name="agent_tool", description="from agent", func=lambda: "")
-        explicit_tool = FunctionTool(name="explicit_tool", description="explicit", func=lambda: "")
-
-        agent = MagicMock()
-        agent.default_options = {"tools": [agent_tool]}
-
-        response = AgentResponse(messages=[Message("assistant", ["Done"])])
-        item = AgentEvalConverter.to_eval_item(
-            query="Test",
-            response=response,
-            agent=agent,
-            tools=[explicit_tool],
-        )
-        assert item.tools is not None
-        assert len(item.tools) == 1
-        assert item.tools[0].name == "explicit_tool"
-
-    def test_split_messages_format(self) -> None:
-        """split_messages() should split conversation at last user message."""
-        response = AgentResponse(messages=[Message("assistant", ["Answer"])])
-        item = AgentEvalConverter.to_eval_item(
-            query="Q",
-            response=response,
-            tools=[FunctionTool(name="t", description="d", func=lambda: "")],
-        )
-        query_msgs, response_msgs = item.split_messages()
-        # Single-turn: query has just the user msg, response has the assistant msg
-        assert len(query_msgs) == 1
-        assert query_msgs[0].role == "user"
-        assert len(response_msgs) == 1
-        assert response_msgs[0].role == "assistant"
-        # Tools preserved on item
-        assert item.tools is not None
-        assert len(item.tools) == 1
-        assert item.tools[0].name == "t"
-
-    def test_split_messages_multiturn_preserves_interleaving(self) -> None:
-        """Multi-turn split_messages() splits at last user message, preserving interleaving."""
-        conversation = [
-            Message("user", ["What's the weather?"]),
-            Message("assistant", ["It's sunny in Seattle."]),
-            Message("user", ["And tomorrow?"]),
-            Message("assistant", [Content(type="function_call", name="get_forecast")]),
-            Message("tool", [Content(type="function_result", result="Rain expected")]),
-            Message("assistant", ["Rain is expected tomorrow."]),
-        ]
-        item = EvalItem(conversation=conversation)
-        query_msgs, response_msgs = item.split_messages()
-        # query_messages: everything up to and including the last user message
-        assert len(query_msgs) == 3  # user, assistant, user
-        assert query_msgs[0].role == "user"
-        assert query_msgs[1].role == "assistant"  # interleaved!
-        assert query_msgs[2].role == "user"
-        # response_messages: everything after the last user message
-        assert len(response_msgs) == 3  # assistant(tool_call), tool, assistant
-        assert response_msgs[0].role == "assistant"
-        assert response_msgs[1].role == "tool"
-        assert response_msgs[2].role == "assistant"
-
-    def test_split_messages_full_split(self) -> None:
-        """ConversationSplit.FULL splits after the first user message."""
-        conversation = [
-            Message("user", ["What's the weather?"]),
-            Message("assistant", ["It's 62°F in Seattle."]),
-            Message("user", ["And tomorrow?"]),
-            Message("assistant", ["Rain is expected tomorrow."]),
-        ]
-        item = EvalItem(conversation=conversation)
-        query_msgs, response_msgs = item.split_messages(split=ConversationSplit.FULL)
-        # query_messages: just the first user message
-        assert len(query_msgs) == 1
-        assert query_msgs[0].role == "user"
-        assert query_msgs[0].text == "What's the weather?"
-        # response_messages: everything after the first user message
-        assert len(response_msgs) == 3
-        assert response_msgs[0].role == "assistant"
-        assert response_msgs[1].role == "user"
-        assert response_msgs[2].role == "assistant"
-
-    def test_split_messages_full_split_with_system(self) -> None:
-        """FULL split includes system messages before the first user message in query."""
-        conversation = [
-            Message("system", ["You are a weather assistant."]),
-            Message("user", ["What's the weather?"]),
-            Message("assistant", ["It's sunny."]),
-        ]
-        item = EvalItem(conversation=conversation)
-        query_msgs, response_msgs = item.split_messages(split=ConversationSplit.FULL)
-        # query includes system + first user
-        assert len(query_msgs) == 2
-        assert query_msgs[0].role == "system"
-        assert query_msgs[1].role == "user"
-        assert len(response_msgs) == 1
-
-    def test_split_messages_full_split_with_tools(self) -> None:
-        """FULL split puts all tool interactions in response_messages."""
-        conversation = [
-            Message("user", ["What's the weather?"]),
-            Message("assistant", [Content(type="function_call", name="get_weather")]),
-            Message("tool", [Content(type="function_result", result="62°F")]),
-            Message("assistant", ["It's 62°F."]),
-            Message("user", ["Thanks!"]),
-            Message("assistant", ["You're welcome!"]),
-        ]
-        item = EvalItem(conversation=conversation)
-        query_msgs, response_msgs = item.split_messages(split=ConversationSplit.FULL)
-        assert len(query_msgs) == 1
-        assert len(response_msgs) == 5
-
-    def test_split_messages_last_turn_is_default(self) -> None:
-        """Default split_messages() uses LAST_TURN split."""
-        conversation = [
-            Message("user", ["Hello"]),
-            Message("assistant", ["Hi there"]),
-            Message("user", ["Bye"]),
-            Message("assistant", ["Goodbye"]),
-        ]
-        item = EvalItem(conversation=conversation)
-        q_default, r_default = item.split_messages()
-        q_explicit, r_explicit = item.split_messages(split=ConversationSplit.LAST_TURN)
-        assert [m.role for m in q_default] == [m.role for m in q_explicit]
-        assert [m.text for m in q_default] == [m.text for m in q_explicit]
-        assert [m.role for m in r_default] == [m.role for m in r_explicit]
-        assert [m.text for m in r_default] == [m.text for m in r_explicit]
-
-    def test_per_turn_items_simple(self) -> None:
-        """per_turn_items produces one EvalItem per user message."""
-        conversation = [
-            Message("user", ["What's the weather?"]),
-            Message("assistant", ["It's 62°F."]),
-            Message("user", ["And tomorrow?"]),
-            Message("assistant", ["Rain expected."]),
-        ]
-        items = EvalItem.per_turn_items(conversation)
-        assert len(items) == 2
-
-        # Turn 1
-        assert items[0].query == "What's the weather?"
-        assert items[0].response == "It's 62°F."
-        assert len(items[0].conversation) == 2
-
-        # Turn 2 — includes cumulative context; query joins all user texts in query split
-        assert items[1].query == "What's the weather? And tomorrow?"
-        assert items[1].response == "Rain expected."
-        assert len(items[1].conversation) == 4
-
-    def test_per_turn_items_with_tools(self) -> None:
-        """per_turn_items handles tool calls within a turn."""
-        conversation = [
-            Message("user", ["Check weather"]),
-            Message("assistant", [Content(type="function_call", name="get_weather")]),
-            Message("tool", [Content(type="function_result", result="sunny")]),
-            Message("assistant", ["It's sunny."]),
-            Message("user", ["Thanks"]),
-            Message("assistant", ["You're welcome!"]),
-        ]
-        tool_objs = [_make_tool("get_weather")]
-        items = EvalItem.per_turn_items(conversation, tools=tool_objs)
-        assert len(items) == 2
-
-        # Turn 1: response includes tool_call, tool_result, and final assistant
-        assert items[0].response == "It's sunny."
-        assert items[0].tools == tool_objs
-        assert len(items[0].conversation) == 4  # user, assistant(tool), tool, assistant
-
-        # Turn 2
-        assert items[1].response == "You're welcome!"
-        assert len(items[1].conversation) == 6  # full conversation
-
-    def test_per_turn_items_empty(self) -> None:
-        """per_turn_items returns empty list when no user messages."""
-        items = EvalItem.per_turn_items([Message("assistant", ["Hello"])])
-        assert items == []
-
-    def test_per_turn_items_single_turn(self) -> None:
-        """per_turn_items with single turn produces one item."""
-        conversation = [
-            Message("user", ["Hi"]),
-            Message("assistant", ["Hello!"]),
-        ]
-        items = EvalItem.per_turn_items(conversation)
-        assert len(items) == 1
-        assert items[0].query == "Hi"
-        assert items[0].response == "Hello!"
-
-    def test_custom_splitter_callable(self) -> None:
-        """Custom callable splitter is used by split_messages()."""
-        conversation = [
-            Message("user", ["Remember my name is Alice"]),
-            Message("assistant", ["Got it, Alice!"]),
-            Message("user", ["What's the capital of France?"]),
-            Message("assistant", [Content(type="function_call", name="retrieve_memory", call_id="m1")]),
-            Message("tool", [Content(type="function_result", call_id="m1", result="User name: Alice")]),
-            Message("assistant", ["The capital of France is Paris, Alice!"]),
-        ]
-
-        def split_before_memory(conv):
-            """Split just before the memory retrieval tool call."""
-            for i, msg in enumerate(conv):
-                for c in msg.contents:
-                    if c.name == "retrieve_memory":
-                        return conv[:i], conv[i:]
-            return EvalItem._split_last_turn_static(conv)
-
-        item = EvalItem(conversation=conversation)
-        query_msgs, response_msgs = item.split_messages(split=split_before_memory)
-
-        # split_before_memory finds "retrieve_memory" at conv[3] (assistant tool_call msg)
-        # query = conv[:3] = [user, assistant, user]
-        # response = conv[3:] = [assistant(tool_call), tool, assistant]
-        assert len(query_msgs) == 3
-        assert query_msgs[-1].role == "user"
-        assert len(response_msgs) == 3
-        assert response_msgs[0].role == "assistant"  # the tool_call msg
-
-    def test_custom_splitter_with_fallback(self) -> None:
-        """Custom splitter falls back to _split_last_turn_static when pattern not found."""
-        conversation = [
-            Message("user", ["Hello"]),
-            Message("assistant", ["Hi there!"]),
-        ]
-
-        def split_before_memory(conv):
-            for i, msg in enumerate(conv):
-                for c in msg.contents:
-                    if c.name == "retrieve_memory":
-                        return conv[:i], conv[i:]
-            return EvalItem._split_last_turn_static(conv)
-
-        item = EvalItem(conversation=conversation)
-        query_msgs, response_msgs = item.split_messages(split=split_before_memory)
-        # Falls back to last-turn split
-        assert len(query_msgs) == 1
-        assert query_msgs[0].role == "user"
-        assert len(response_msgs) == 1
-        assert response_msgs[0].role == "assistant"
-
-    def test_custom_splitter_lambda(self) -> None:
-        """A lambda works as a custom splitter."""
-        conversation = [
-            Message("user", ["A"]),
-            Message("assistant", ["B"]),
-            Message("user", ["C"]),
-            Message("assistant", ["D"]),
-        ]
-        # Split at index 2 (arbitrary)
-        item = EvalItem(conversation=conversation)
-        query_msgs, response_msgs = item.split_messages(split=lambda conv: (conv[:2], conv[2:]))
-        assert len(query_msgs) == 2
-        assert len(response_msgs) == 2
-
-    def test_split_strategy_on_item_used_by_split_messages(self) -> None:
-        """split_strategy field on EvalItem is used as default by split_messages()."""
-        conversation = [
-            Message("user", ["First"]),
-            Message("assistant", ["Response 1"]),
-            Message("user", ["Second"]),
-            Message("assistant", ["Response 2"]),
-        ]
-        item = EvalItem(
-            conversation=conversation,
-            split_strategy=ConversationSplit.FULL,
-        )
-        # split_messages() with no split arg should use item.split_strategy
-        query_msgs, response_msgs = item.split_messages()
-        assert len(query_msgs) == 1  # FULL: just first user msg
-        assert query_msgs[0].text == "First"
-        assert len(response_msgs) == 3
-
-    def test_explicit_split_overrides_item_split_strategy(self) -> None:
-        """Explicit split= arg to split_messages() overrides item.split_strategy."""
-        conversation = [
-            Message("user", ["First"]),
-            Message("assistant", ["Response 1"]),
-            Message("user", ["Second"]),
-            Message("assistant", ["Response 2"]),
-        ]
-        item = EvalItem(
-            conversation=conversation,
-            split_strategy=ConversationSplit.FULL,
-        )
-        # Explicit split= should override split_strategy
-        query_msgs, response_msgs = item.split_messages(split=ConversationSplit.LAST_TURN)
-        assert len(query_msgs) == 3  # LAST_TURN: up to last user
-        assert query_msgs[-1].text == "Second"
-        assert len(response_msgs) == 1
-
-    def test_no_split_defaults_to_last_turn(self) -> None:
-        """When neither split= nor split_strategy is set, defaults to LAST_TURN."""
-        conversation = [
-            Message("user", ["Hello"]),
-            Message("assistant", ["Hi"]),
-        ]
-        item = EvalItem(conversation=conversation)
-        assert item.split_strategy is None
-        query_msgs, response_msgs = item.split_messages()
-        assert len(query_msgs) == 1
-        assert query_msgs[0].role == "user"
 
 
 # ---------------------------------------------------------------------------
@@ -923,14 +534,14 @@ class TestFoundryEvals:
         mock_project.get_openai_client.return_value = mock_oai
         fe = FoundryEvals(project_client=mock_project, model="gpt-4o")
         assert fe.name == "Microsoft Foundry"
-        mock_project.get_openai_client.assert_called_once()
+        mock_project.get_openai_client.assert_called_once_with()
 
     def test_constructor_no_client_auto_creates_from_env(self) -> None:
         """When no client/project_client given, auto-creates FoundryChatClient from env."""
         import os
         from unittest.mock import patch
 
-        with patch.dict(os.environ, {}, clear=True), pytest.raises((ValueError, Exception)):
+        with patch.dict(os.environ, {}, clear=True), pytest.raises(ValueError):
             FoundryEvals(model="gpt-4o")
 
     def test_name_property(self) -> None:
@@ -1809,7 +1420,7 @@ class TestExtractAgentEvalData:
             WorkflowEvent.executor_invoked("planner", "Plan a trip"),
             WorkflowEvent.executor_completed("planner", [aer]),
         ]
-        result = WorkflowRunResult(events, [])
+        result = WorkflowRunResult(cast(Any, events), [])
 
         data = _extract_agent_eval_data(result)
         assert len(data) == 1
@@ -1826,7 +1437,7 @@ class TestExtractAgentEvalData:
             WorkflowEvent.executor_invoked("booker", "Book flight"),
             WorkflowEvent.executor_completed("booker", [aer2]),
         ]
-        result = WorkflowRunResult(events, [])
+        result = WorkflowRunResult(cast(Any, events), [])
 
         data = _extract_agent_eval_data(result)
         assert len(data) == 2
@@ -1844,7 +1455,7 @@ class TestExtractAgentEvalData:
             WorkflowEvent.executor_invoked("end", []),
             WorkflowEvent.executor_completed("end", None),
         ]
-        result = WorkflowRunResult(events, [])
+        result = WorkflowRunResult(cast(Any, events), [])
 
         data = _extract_agent_eval_data(result)
         assert len(data) == 1
@@ -1857,7 +1468,7 @@ class TestExtractAgentEvalData:
             WorkflowEvent.executor_invoked("my-agent", "Do it"),
             WorkflowEvent.executor_completed("my-agent", [aer]),
         ]
-        result = WorkflowRunResult(events, [])
+        result = WorkflowRunResult(cast(Any, events), [])
 
         # Build a mock workflow with AgentExecutor
         from agent_framework import AgentExecutor
@@ -1878,13 +1489,13 @@ class TestExtractAgentEvalData:
 class TestExtractOverallQuery:
     def test_extracts_string_query(self) -> None:
         events = [WorkflowEvent.executor_invoked("input", "Plan a trip")]
-        result = WorkflowRunResult(events, [])
+        result = WorkflowRunResult(cast(Any, events), [])
         assert _extract_overall_query(result) == "Plan a trip"
 
     def test_extracts_message_query(self) -> None:
         msgs = [Message("user", ["What's the weather?"])]
         events = [WorkflowEvent.executor_invoked("input", msgs)]
-        result = WorkflowRunResult(events, [])
+        result = WorkflowRunResult(cast(Any, events), [])
         assert "What's the weather?" in (_extract_overall_query(result) or "")
 
     def test_returns_none_for_empty(self) -> None:
@@ -1932,7 +1543,7 @@ class TestEvaluateWorkflow:
             WorkflowEvent.executor_completed("reviewer", [aer2]),
             WorkflowEvent("output", executor_id="end", data=final_output),
         ]
-        wf_result = WorkflowRunResult(events, [])
+        wf_result = WorkflowRunResult(cast(Any, events), [])
 
         mock_workflow = MagicMock()
         mock_workflow.executors = {}
@@ -1961,7 +1572,7 @@ class TestEvaluateWorkflow:
             WorkflowEvent.executor_completed("agent", [aer]),
             WorkflowEvent("output", executor_id="end", data=final_output),
         ]
-        wf_result = WorkflowRunResult(events, [])
+        wf_result = WorkflowRunResult(cast(Any, events), [])
 
         mock_workflow = MagicMock()
         mock_workflow.executors = {}
@@ -1991,7 +1602,7 @@ class TestEvaluateWorkflow:
             WorkflowEvent.executor_completed("planner", [aer]),
             WorkflowEvent("output", executor_id="end", data=final_output),
         ]
-        wf_result = WorkflowRunResult(events, [])
+        wf_result = WorkflowRunResult(cast(Any, events), [])
 
         mock_workflow = MagicMock()
         mock_workflow.executors = {}
@@ -2028,7 +1639,7 @@ class TestEvaluateWorkflow:
             WorkflowEvent.executor_invoked("agent-a", "Do stuff"),
             WorkflowEvent.executor_completed("agent-a", [aer]),
         ]
-        wf_result = WorkflowRunResult(events, [])
+        wf_result = WorkflowRunResult(cast(Any, events), [])
 
         mock_workflow = MagicMock()
         mock_workflow.executors = {}
@@ -2057,7 +1668,7 @@ class TestEvaluateWorkflow:
             WorkflowEvent.executor_completed("researcher", [aer]),
             WorkflowEvent("output", executor_id="end", data=[Message("assistant", ["Weather is sunny"])]),
         ]
-        wf_result = WorkflowRunResult(events, [])
+        wf_result = WorkflowRunResult(cast(Any, events), [])
 
         mock_workflow = MagicMock()
         mock_workflow.executors = {}
@@ -2098,7 +1709,7 @@ class TestEvaluateWorkflow:
             WorkflowEvent.executor_invoked("planner", "Plan based on: sunny"),
             WorkflowEvent.executor_completed("planner", [aer2]),
         ]
-        wf_result = WorkflowRunResult(events, [])
+        wf_result = WorkflowRunResult(cast(Any, events), [])
 
         from agent_framework import AgentExecutor
 
@@ -2166,7 +1777,7 @@ class TestEvaluateWorkflow:
             WorkflowEvent.executor_completed("agent", [aer]),
             WorkflowEvent("output", executor_id="end", data=final_output),
         ]
-        wf_result = WorkflowRunResult(events, [])
+        wf_result = WorkflowRunResult(cast(Any, events), [])
 
         mock_workflow = MagicMock()
         mock_workflow.executors = {}
@@ -2205,7 +1816,7 @@ class TestEvaluateWorkflow:
             WorkflowEvent.executor_completed("agent", [aer]),
             WorkflowEvent("output", executor_id="end", data=final_output),
         ]
-        wf_result = WorkflowRunResult(events, [])
+        wf_result = WorkflowRunResult(cast(Any, events), [])
 
         mock_workflow = MagicMock()
         mock_workflow.executors = {}
@@ -2618,6 +2229,44 @@ class TestExtractRubricScores:
         assert result is not None
         assert result[0].id == "policy_enforcement"
         assert result[0].score == 1
+
+    def test_dimension_scores_directly_on_typed_sample_no_properties_wrapper(self) -> None:
+        """Typed SDK sample with ``dimension_scores`` directly on the instance (no ``properties``)."""
+
+        rs = MagicMock()
+        rs.id = "intent_recognition"
+        rs.score = 4
+        rs.applicable = True
+        rs.weight = 2
+        rs.reason = "ok"
+
+        # spec= restricts available attributes — no `properties`, just `dimension_scores`.
+        sample = MagicMock(spec=["dimension_scores"])
+        sample.dimension_scores = [rs]
+
+        result = _extract_rubric_scores(sample)
+        assert result is not None
+        assert result[0].id == "intent_recognition"
+        assert result[0].score == 4
+        assert result[0].weight == 2
+
+    def test_rubric_scores_directly_on_typed_sample_legacy_key(self) -> None:
+        """Same fallback works for the legacy ``rubric_scores`` key."""
+
+        rs = MagicMock()
+        rs.id = "policy"
+        rs.score = 2
+        rs.applicable = True
+        rs.weight = 1
+        rs.reason = "partial"
+
+        sample = MagicMock(spec=["rubric_scores"])
+        sample.rubric_scores = [rs]
+
+        result = _extract_rubric_scores(sample)
+        assert result is not None
+        assert result[0].id == "policy"
+        assert result[0].score == 2
 
 
 # ---------------------------------------------------------------------------

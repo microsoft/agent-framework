@@ -12,7 +12,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// Extension methods for <see cref="FoundryAITool"/> that require Azure.AI.Projects 2.1.0-beta.1+
 /// types (e.g. <see cref="ToolboxRecord"/>, <see cref="ToolboxVersion"/>).
 /// </summary>
-[Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
+[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public static class FoundryAIToolExtensions
 {
     /// <summary>

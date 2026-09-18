@@ -17,26 +17,31 @@ import tempfile
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from functools import lru_cache
 from pathlib import Path
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
 import tomli
 from packaging.requirements import InvalidRequirement, Requirement
+from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 from rich import print
 
 from scripts.dependencies._dependency_bounds_runtime import (
     extend_command_with_runtime_tools,
     extend_command_with_task,
+    load_workspace_package_configs,
     next_zero_major_minor_boundary,
+    resolve_internal_editables,
 )
 from scripts.task_runner import discover_projects, extract_poe_tasks, project_filter_matches
 
 logger = logging.getLogger(__name__)
 
-CHECK_TASK_PRIORITY = ("check", "typing", "pyright", "mypy", "lint")
+CHECK_TASK_PRIORITY = ("dependency-pyright", "check", "typing", "pyright", "mypy", "lint")
+AZURE_MONITOR_OPENTELEMETRY = "azure-monitor-opentelemetry"
+OPENTELEMETRY_SDK = "opentelemetry-sdk"
+VALIDATION_TOOL_DEV_PINS = frozenset({"mypy", "pyrefly", "pyright", "ruff", "ty", "zuban"})
 REQ_PATTERN = r"^\s*([A-Za-z0-9_.-]+(?:\[[^\]]+\])?)\s*(.*?)\s*$"
 SECTION_HEADER_PATTERN = re.compile(r"^\s*\[([^\]]+)\]\s*$")
 INLINE_ARRAY_ASSIGNMENT_PATTERN = re.compile(
@@ -127,7 +132,7 @@ class PackagePlan:
     package_name: str
     pyproject_path: Path
     internal_editables: list[Path]
-    include_dev_group: bool
+    dependency_groups: list[str]
     include_dev_extra: bool
     optional_extras: list[str]
 
@@ -238,26 +243,19 @@ def _select_latest_dev_version(versions: list[Version]) -> Version | None:
     return versions[-1]
 
 
-@lru_cache(maxsize=8)
-def _load_workspace_package_versions(workspace_root: str) -> dict[str, Version]:
-    workspace_path = Path(workspace_root)
-    versions: dict[str, Version] = {}
-    for package_pyproject in sorted((workspace_path / "packages").glob("*/pyproject.toml")):
-        with package_pyproject.open("rb") as f:
-            package_data = tomli.load(f)
-        project_section = package_data.get("project", {}) or {}
-        package_name = str(project_section.get("name", "")).strip().lower()
-        package_version = project_section.get("version")
-        if not package_name or not package_version:
+def _exact_pin_version(requirement: Requirement) -> Version | None:
+    """Return the exact pinned version from a requirement, if it has one."""
+    for specifier in requirement.specifier:
+        if specifier.operator not in {"==", "==="} or "*" in specifier.version:
             continue
         try:
-            versions[package_name] = Version(str(package_version))
+            return Version(specifier.version)
         except InvalidVersion:
-            continue
-    return versions
+            return None
+    return None
 
 
-def _collect_dev_pin_replacements(
+def _collect_development_pin_replacements(
     pyproject_file: Path,
     *,
     catalog: VersionCatalog,
@@ -268,30 +266,36 @@ def _collect_dev_pin_replacements(
     optional_dependencies = project.get("optional-dependencies", {}) or {}
     dependency_groups = data.get("dependency-groups", {}) or {}
     logger.debug(
-        "Collecting dev dependency replacements from %s with optional_dependencies=%s and dependency_groups=%s",
+        "Collecting development dependency replacements from %s with optional_dependencies=%s and dependency_groups=%s",
         pyproject_file,
         optional_dependencies.keys(),
         dependency_groups.keys(),
     )
-    workspace_versions = _load_workspace_package_versions(str(pyproject_file.parent.parent.parent.resolve()))
-
-    dev_requirements: list[str] = []
-    dev_requirements.extend(
+    development_requirements: list[str] = []
+    development_requirements.extend(
         requirement for requirement in (optional_dependencies.get("dev", []) or []) if isinstance(requirement, str)
     )
-    dev_requirements.extend(
-        requirement for requirement in (dependency_groups.get("dev", []) or []) if isinstance(requirement, str)
-    )
-    logger.debug(f"Found {len(dev_requirements)} dev requirements in {pyproject_file}")
+    for group_requirements in dependency_groups.values():
+        development_requirements.extend(
+            requirement for requirement in (group_requirements or []) if isinstance(requirement, str)
+        )
+    logger.debug(f"Found {len(development_requirements)} development requirements in {pyproject_file}")
+    parsed_development_requirements: dict[str, Requirement] = {}
+    for requirement in development_requirements:
+        try:
+            parsed_requirement = Requirement(requirement)
+        except InvalidRequirement:
+            continue
+        parsed_development_requirements[parsed_requirement.name.lower()] = parsed_requirement
 
     seen_requirements: set[str] = set()
     replacements: dict[str, str] = {}
-    for requirement in dev_requirements:
+    for requirement in development_requirements:
         if requirement in seen_requirements:
             continue
         seen_requirements.add(requirement)
 
-        # Refresh exact dev pins while we already have the file open so outdated test tooling
+        # Refresh exact development pins while we already have the file open so outdated test tooling
         # does not masquerade as a runtime dependency compatibility failure.
         try:
             parsed_requirement = Requirement(requirement)
@@ -301,13 +305,48 @@ def _collect_dev_pin_replacements(
             continue
         dependency_name = parsed_requirement.name.lower()
         if dependency_name.startswith("agent-framework"):
-            latest_version = workspace_versions.get(dependency_name)
-        else:
-            # Dev-tool refreshes should follow the selected version source (PyPI by default)
-            # instead of being pinned by the current lockfile. VersionCatalog already falls
-            # back to lock data when PyPI cannot be reached or --version-source=lock is used.
-            latest_version = _select_latest_dev_version(catalog.get(dependency_name))
+            logger.info(
+                "Skipping %s in %s because internal package pins are maintained by package versioning.",
+                dependency_name,
+                pyproject_file,
+            )
+            continue
+        # Dev-tool refreshes should follow the selected version source (PyPI by default)
+        # instead of being pinned by the current lockfile. VersionCatalog already falls
+        # back to lock data when PyPI cannot be reached or --version-source=lock is used.
+        latest_version = _select_latest_dev_version(catalog.get(dependency_name))
         if latest_version is None:
+            continue
+        current_exact_version = _exact_pin_version(parsed_requirement)
+        if current_exact_version is None:
+            continue
+        if dependency_name in VALIDATION_TOOL_DEV_PINS:
+            logger.info(
+                "Skipping %s in %s because validation tool upgrades should be handled separately.",
+                dependency_name,
+                pyproject_file,
+            )
+            continue
+        if latest_version < current_exact_version:
+            logger.info(
+                "Skipping %s in %s because selected version %s is older than current pin %s.",
+                dependency_name,
+                pyproject_file,
+                latest_version,
+                current_exact_version,
+            )
+            continue
+        if (
+            dependency_name == OPENTELEMETRY_SDK
+            and AZURE_MONITOR_OPENTELEMETRY in parsed_development_requirements
+            and latest_version != current_exact_version
+        ):
+            logger.info(
+                "Skipping %s in %s because %s currently pins the SDK version.",
+                dependency_name,
+                pyproject_file,
+                AZURE_MONITOR_OPENTELEMETRY,
+            )
             continue
 
         extras = f"[{','.join(sorted(parsed_requirement.extras))}]" if parsed_requirement.extras else ""
@@ -426,10 +465,16 @@ def _load_lock_versions(workspace_root: Path) -> dict[str, list[Version]]:
 class VersionCatalog:
     """Cache and fetch available dependency versions."""
 
-    def __init__(self, lock_versions: dict[str, list[Version]], source: str) -> None:
+    def __init__(
+        self,
+        lock_versions: dict[str, list[Version]],
+        source: str,
+        exclude_newer: datetime | None = None,
+    ) -> None:
         """Initialize the catalog with lock-based fallback and fetch source."""
         self._lock_versions = lock_versions
         self._source = source
+        self._exclude_newer = exclude_newer if exclude_newer is not None else _load_exclude_newer_from_env()
         self._cache: dict[str, list[Version]] = {}
         self._lock = threading.Lock()
 
@@ -463,7 +508,11 @@ class VersionCatalog:
         for raw_version, files in payload.get("releases", {}).items():
             if not files:
                 continue
-            non_yanked = any(not bool(file_info.get("yanked", False)) for file_info in files)
+            non_yanked = any(
+                not bool(file_info.get("yanked", False))
+                and _upload_is_not_newer(file_info, exclude_newer=self._exclude_newer)
+                for file_info in files
+            )
             if not non_yanked:
                 continue
             try:
@@ -475,17 +524,39 @@ class VersionCatalog:
         return self._lock_versions.get(package_name, [])
 
 
+def _load_exclude_newer_from_env() -> datetime | None:
+    raw_value = os.environ.get("DEPENDENCY_RELEASE_CUTOFF") or os.environ.get("UV_EXCLUDE_NEWER")
+    if not raw_value:
+        return None
+    normalized = raw_value.removesuffix("Z")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _upload_is_not_newer(file_info: dict[str, object], *, exclude_newer: datetime | None) -> bool:
+    if exclude_newer is None:
+        return True
+    upload_time = file_info.get("upload_time_iso_8601") or file_info.get("upload_time")
+    if not isinstance(upload_time, str) or not upload_time:
+        return False
+    normalized = upload_time.removesuffix("Z")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return False
+    parsed = parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+    return parsed <= exclude_newer
+
+
 def _load_package_name(pyproject_file: Path) -> str:
     with pyproject_file.open("rb") as f:
         data = tomli.load(f)
     return str(data["project"]["name"])
-
-
-def _extract_requirement_name(requirement: str) -> str | None:
-    try:
-        return Requirement(requirement).name.lower()
-    except InvalidRequirement:
-        return None
 
 
 def _select_validation_tasks(available_tasks: set[str]) -> list[str]:
@@ -496,62 +567,6 @@ def _select_validation_tasks(available_tasks: set[str]) -> list[str]:
     if "test" in available_tasks and "test" not in tasks:
         tasks.append("test")
     return tasks
-
-
-def _build_workspace_package_map(workspace_root: Path) -> dict[str, Path]:
-    package_map: dict[str, Path] = {}
-    for pyproject_file in sorted((workspace_root / "packages").glob("*/pyproject.toml")):
-        with pyproject_file.open("rb") as f:
-            data = tomli.load(f)
-        package_name = str(data.get("project", {}).get("name", "")).strip()
-        if package_name:
-            package_map[package_name] = pyproject_file.parent
-    return package_map
-
-
-def _build_internal_graph(workspace_root: Path, package_map: dict[str, Path]) -> dict[str, set[str]]:
-    graph: dict[str, set[str]] = {}
-    for package_name, package_path in package_map.items():
-        pyproject_file = package_path / "pyproject.toml"
-        with pyproject_file.open("rb") as f:
-            data = tomli.load(f)
-        project = data.get("project", {}) or {}
-        dependencies: list[str] = list(project.get("dependencies", []) or [])
-        for values in (project.get("optional-dependencies", {}) or {}).values():
-            dependencies.extend([value for value in (values or []) if isinstance(value, str)])
-        for values in (data.get("dependency-groups", {}) or {}).values():
-            dependencies.extend([value for value in (values or []) if isinstance(value, str)])
-        internal = set()
-        for dependency in dependencies:
-            dependency_name = _extract_requirement_name(dependency)
-            if dependency_name is None:
-                continue
-            if dependency_name.startswith("agent-framework"):
-                for candidate_name in package_map:
-                    if candidate_name.lower() == dependency_name:
-                        internal.add(candidate_name)
-                        break
-        graph[package_name] = internal
-    return graph
-
-
-def _resolve_internal_editables(
-    package_name: str, package_map: dict[str, Path], graph: dict[str, set[str]]
-) -> list[Path]:
-    visited: set[str] = set()
-    stack = [package_name]
-    results: set[Path] = set()
-    while stack:
-        current = stack.pop()
-        if current in visited:
-            continue
-        visited.add(current)
-        for dependency_name in graph.get(current, set()):
-            dependency_path = package_map.get(dependency_name)
-            if dependency_path and dependency_name != package_name:
-                results.add(dependency_path.resolve())
-            stack.append(dependency_name)
-    return sorted(results)
 
 
 def _collect_targets(
@@ -699,9 +714,7 @@ def _select_upper_probe_version(
     allow_prerelease: bool,
 ) -> Version | None:
     """Return the newest concrete version that would be allowed by a candidate upper bound."""
-    probe_versions = [
-        version for version in versions if version < upper_bound and (lower is None or version >= lower)
-    ]
+    probe_versions = [version for version in versions if version < upper_bound and (lower is None or version >= lower)]
     if not allow_prerelease:
         probe_versions = [version for version in probe_versions if not version.is_prerelease]
     return probe_versions[-1] if probe_versions else None
@@ -715,7 +728,7 @@ def _run_tasks(
     internal_editables: list[Path],
     resolution: str,
     dependency_pin: tuple[str, Version] | None,
-    include_dev_group: bool,
+    dependency_groups: list[str],
     include_dev_extra: bool,
     optional_extras: list[str],
     timeout_seconds: int,
@@ -741,8 +754,8 @@ def _run_tasks(
             "--quiet",
         ]
         extend_command_with_runtime_tools(command, workspace_root)
-        if include_dev_group:
-            command.extend(["--group", "dev"])
+        for group_name in dependency_groups:
+            command.extend(["--group", group_name])
         if include_dev_extra:
             command.extend(["--extra", "dev"])
         for extra_name in optional_extras:
@@ -752,7 +765,7 @@ def _run_tasks(
         if dependency_pin is not None:
             dependency_name, dependency_version = dependency_pin
             command.extend(["--with", f"{dependency_name}=={dependency_version}"])
-        extend_command_with_task(command, task_name)
+        extend_command_with_task(command, task_name, workspace_root=workspace_root)
         try:
             result = subprocess.run(
                 command,
@@ -783,7 +796,7 @@ def _optimize_dependency(
     max_candidates: int,
     timeout_seconds: int,
     package_label: str,
-    include_dev_group: bool,
+    dependency_groups: list[str],
     include_dev_extra: bool,
     optional_extras: list[str],
 ) -> DependencyOutcome:
@@ -837,7 +850,7 @@ def _optimize_dependency(
             internal_editables=internal_editables,
             resolution=baseline_resolution,
             dependency_pin=(dependency.name, baseline_version),
-            include_dev_group=include_dev_group,
+            dependency_groups=dependency_groups,
             include_dev_extra=include_dev_extra,
             optional_extras=optional_extras,
             timeout_seconds=timeout_seconds,
@@ -908,7 +921,7 @@ def _optimize_dependency(
             internal_editables=internal_editables,
             resolution="highest",
             dependency_pin=(dependency.name, probe_version),
-            include_dev_group=include_dev_group,
+            dependency_groups=dependency_groups,
             include_dev_extra=include_dev_extra,
             optional_extras=optional_extras,
             timeout_seconds=timeout_seconds,
@@ -996,17 +1009,18 @@ def _process_package(
             if candidate.exists():
                 temp_internal_editables.append(candidate)
 
-        dev_replacements = _collect_dev_pin_replacements(temp_pyproject, catalog=catalog)
-        if dev_replacements:
-            _replace_requirements(temp_pyproject, list(dev_replacements.items()))
+        development_replacements = _collect_development_pin_replacements(temp_pyproject, catalog=catalog)
+        if development_replacements:
+            _replace_requirements(temp_pyproject, list(development_replacements.items()))
             print(
-                f"[cyan]{plan.project_path}: refreshed {len(dev_replacements)} dev dependency pin(s) to latest[/cyan]"
+                f"[cyan]{plan.project_path}: refreshed "
+                f"{len(development_replacements)} development dependency pin(s) to latest[/cyan]"
             )
 
         targets, skipped = _collect_targets(temp_pyproject, dependency_filters=dependency_filters)
 
         dependency_results: list[DependencyOutcome] = []
-        replacements: dict[str, str] = dict(dev_replacements)
+        replacements: dict[str, str] = dict(development_replacements)
         package_label = f"{plan.project_path} ({plan.package_name})"
 
         if not targets:
@@ -1025,7 +1039,7 @@ def _process_package(
                 max_candidates=max_candidates,
                 timeout_seconds=timeout_seconds,
                 package_label=package_label,
-                include_dev_group=plan.include_dev_group,
+                dependency_groups=plan.dependency_groups,
                 include_dev_extra=plan.include_dev_extra,
                 optional_extras=plan.optional_extras,
             )
@@ -1148,8 +1162,7 @@ def main() -> None:
     dependency_filters = {name.lower() for name in args.dependencies} if args.dependencies else None
     output_json_path = (workspace_root / args.output_json).resolve()
 
-    package_map = _build_workspace_package_map(workspace_root)
-    internal_graph = _build_internal_graph(workspace_root, package_map)
+    workspace_packages = load_workspace_package_configs(workspace_root)
     lock_versions = _load_lock_versions(workspace_root)
     catalog = VersionCatalog(lock_versions=lock_versions, source=args.version_source)
 
@@ -1160,11 +1173,15 @@ def main() -> None:
             print(f"[yellow]Skipping {project_path}: missing pyproject.toml[/yellow]")
             continue
         package_name = _load_package_name(pyproject_file)
-        with pyproject_file.open("rb") as f:
-            package_config = tomli.load(f)
-        project_section = package_config.get("project", {})
-        optional_dependencies = project_section.get("optional-dependencies", {}) or {}
-        dependency_groups = package_config.get("dependency-groups", {}) or {}
+        workspace_package = workspace_packages[str(canonicalize_name(package_name))]
+        dependency_group_names = sorted(workspace_package.dependency_groups)
+        include_dev_extra = "dev" in workspace_package.optional_dependencies
+        optional_extra_names = sorted(
+            name for name in workspace_package.optional_dependencies if name not in {"all", "dev"}
+        )
+        selected_extra_names = list(optional_extra_names)
+        if include_dev_extra:
+            selected_extra_names.append("dev")
         # Reuse the shared selector matcher so direct optimizer runs accept the
         # same short-name package filters as the contributor-facing Poe tasks.
         if package_filters and not any(
@@ -1176,10 +1193,15 @@ def main() -> None:
                 project_path=project_path,
                 package_name=package_name,
                 pyproject_path=pyproject_file,
-                internal_editables=_resolve_internal_editables(package_name, package_map, internal_graph),
-                include_dev_group="dev" in dependency_groups,
-                include_dev_extra="dev" in optional_dependencies,
-                optional_extras=sorted(name for name in optional_dependencies if name not in {"all", "dev"}),
+                internal_editables=resolve_internal_editables(
+                    package_name,
+                    workspace_packages,
+                    dependency_groups=dependency_group_names,
+                    optional_extras=selected_extra_names,
+                ),
+                dependency_groups=dependency_group_names,
+                include_dev_extra=include_dev_extra,
+                optional_extras=optional_extra_names,
             )
         )
 
@@ -1202,7 +1224,7 @@ def main() -> None:
                 package_name=root_package_name,
                 pyproject_path=workspace_pyproject,
                 internal_editables=[],
-                include_dev_group="dev" in root_dependency_groups,
+                dependency_groups=sorted(root_dependency_groups),
                 include_dev_extra="dev" in root_optional_dependencies,
                 optional_extras=sorted(name for name in root_optional_dependencies if name not in {"all", "dev"}),
             )

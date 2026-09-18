@@ -20,13 +20,10 @@
 #pragma warning disable AAIP001 // ProjectAgentSkills is experimental
 
 using System.ClientModel;
-using System.IO.Compression;
 using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
-using Azure.Core;
 using Azure.Identity;
 using DotNetEnv;
-using Hosted_Shared_Contributor_Setup;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Foundry.Hosting;
 using Microsoft.Extensions.AI;
@@ -34,10 +31,13 @@ using Microsoft.Extensions.AI;
 // Load .env file if present (for local development)
 Env.TraversePath().Load();
 
-string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")
-    ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
-string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o";
-string skillNames = Environment.GetEnvironmentVariable("SKILL_NAMES")
+string endpoint = System.Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
+    ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+string deploymentName = FirstNonBlank(
+    System.Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME"),
+    System.Environment.GetEnvironmentVariable("FOUNDRY_MODEL"),
+    "gpt-4o")!;
+string skillNames = FirstNonBlank(System.Environment.GetEnvironmentVariable("SKILL_NAMES"))
     ?? throw new InvalidOperationException("SKILL_NAMES is not set. Provide a comma-separated list of skill names (e.g., support-style,escalation-policy).");
 
 string[] requestedSkills = skillNames.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -56,11 +56,12 @@ foreach (string name in requestedSkills)
     }
 }
 
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 // Use a chained credential: try a temporary dev token first (for local Docker debugging),
 // then fall back to DefaultAzureCredential (for local dev via dotnet run / managed identity in production).
-TokenCredential credential = new ChainedTokenCredential(
-    new DevTemporaryTokenCredential(),
-    new DefaultAzureCredential());
+var credential = new DefaultAzureCredential();
 
 AIProjectClient projectClient = new(new Uri(endpoint), credential);
 ProjectAgentSkills skillsClient = projectClient.AgentAdministrationClient.GetAgentSkills();
@@ -71,7 +72,7 @@ ProjectAgentSkills skillsClient = projectClient.AgentAdministrationClient.GetAge
 // out of the box without a separate setup step. Set PROVISION_SAMPLE_SKILLS=true to enable.
 string sourceSkillsDir = Path.Combine(AppContext.BaseDirectory, "skills");
 bool provisionEnabled = string.Equals(
-    Environment.GetEnvironmentVariable("PROVISION_SAMPLE_SKILLS"), "true", StringComparison.OrdinalIgnoreCase);
+    System.Environment.GetEnvironmentVariable("PROVISION_SAMPLE_SKILLS"), "true", StringComparison.OrdinalIgnoreCase);
 if (provisionEnabled && Directory.Exists(sourceSkillsDir))
 {
     await EnsureSkillsProvisionedAsync(skillsClient, sourceSkillsDir, requestedSkills);
@@ -81,7 +82,7 @@ if (provisionEnabled && Directory.Exists(sourceSkillsDir))
 // Pull the latest copy of each skill from Foundry into a runtime-only folder.
 // This directory is recreated on every startup so the agent always picks up
 // the latest version of each skill.
-string downloadedSkillsDir = Path.Combine(AppContext.BaseDirectory, "downloaded_skills");
+string downloadedSkillsDir = Path.Combine(Path.GetTempPath(), "hosted-agent-skills", "downloaded_skills");
 await DownloadSkillsAsync(skillsClient, requestedSkills, downloadedSkillsDir);
 
 // ── Wire skills into the agent ───────────────────────────────────────────────
@@ -90,36 +91,40 @@ await DownloadSkillsAsync(skillsClient, requestedSkills, downloadedSkillsDir);
 // body is loaded on demand when the model calls the load_skill tool.
 AgentSkillsProvider skillsProvider = new(downloadedSkillsDir);
 
-ChatClientAgent agent = projectClient.AsAIAgent(new ChatClientAgentOptions
+AIAgent agent = projectClient.AsAIAgent(new ChatClientAgentOptions
 {
-    Name = Environment.GetEnvironmentVariable("AGENT_NAME") ?? "hosted-agent-skills",
+    Name = System.Environment.GetEnvironmentVariable("AGENT_NAME") ?? "hosted-agent-skills",
     ChatOptions = new ChatOptions
     {
         ModelId = deploymentName,
         Instructions = "You are a customer-support assistant for Contoso Outdoors.",
     },
     AIContextProviders = [skillsProvider]
-});
+})
+.AsBuilder()
+.UseToolApproval(new ToolApprovalAgentOptions
+{
+    AutoApprovalRules = [AgentSkillsProvider.AllToolsAutoApprovalRule],
+})
+.Build();
 
 // Host the agent as a Foundry Hosted Agent using the Responses API.
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddFoundryResponses(agent);
-builder.Services.AddDevTemporaryLocalContributorSetup(); // Local Docker debugging only - must not be used in production.
 
 var app = builder.Build();
 app.MapFoundryResponses();
 
-// Contributor-only: in Development, also map the per-agent OpenAI route shape that live Foundry uses
-// so a local REPL client can target this server via AIProjectClient.AsAIAgent(Uri agentEndpoint).
-// Do not use this in production. Hosted Foundry agents only support the agent-endpoint path.
-app.MapDevTemporaryLocalAgentEndpoint();
 
 app.Run();
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-// Downloads each named skill from Foundry and extracts the ZIP archive into a
-// separate subdirectory under the target directory.
+static string? FirstNonBlank(params string?[] candidates) =>
+    Array.Find(candidates, candidate => !string.IsNullOrWhiteSpace(candidate));
+
+// Downloads each named skill from Foundry into a separate subdirectory under the target directory.
+// GetSkillContentAsync downloads the skill package and unzips it into the destination directory.
 static async Task DownloadSkillsAsync(ProjectAgentSkills skillsClient, string[] skillNames, string targetDir)
 {
     if (Directory.Exists(targetDir))
@@ -132,56 +137,16 @@ static async Task DownloadSkillsAsync(ProjectAgentSkills skillsClient, string[] 
     foreach (string name in skillNames)
     {
         Console.WriteLine($"Downloading skill '{name}' from Foundry...");
-        BinaryData zipData = await skillsClient.DownloadSkillAsync(name);
 
         string skillDir = Path.Combine(targetDir, name);
         Directory.CreateDirectory(skillDir);
 
-        using var zipStream = zipData.ToStream();
-        using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read);
-        SafeExtractZip(archive, skillDir);
+        await skillsClient.GetSkillContentAsync(name, skillDir);
 
         if (!File.Exists(Path.Combine(skillDir, "SKILL.md")))
         {
             throw new InvalidOperationException(
-                $"Downloaded archive for '{name}' did not contain a SKILL.md at the root.");
-        }
-    }
-}
-
-// Extracts a ZIP archive into a destination directory, rejecting entries that would
-// escape the target path (zip-slip guard).
-static void SafeExtractZip(ZipArchive archive, string destinationDir)
-{
-    string destRoot = Path.GetFullPath(destinationDir);
-    string destRootWithSep = Path.EndsInDirectorySeparator(destRoot)
-        ? destRoot
-        : destRoot + Path.DirectorySeparatorChar;
-
-    // Use ordinal comparison on Unix (case-sensitive FS) and ordinal-ignore-case on Windows.
-    var comparison = OperatingSystem.IsWindows()
-        ? StringComparison.OrdinalIgnoreCase
-        : StringComparison.Ordinal;
-
-    foreach (ZipArchiveEntry entry in archive.Entries)
-    {
-        string entryPath = Path.GetFullPath(Path.Combine(destRoot, entry.FullName));
-        if (!entryPath.StartsWith(destRootWithSep, comparison)
-            && !string.Equals(entryPath, destRoot, comparison))
-        {
-            throw new InvalidOperationException(
-                $"Refusing to extract unsafe path '{entry.FullName}' outside of '{destRoot}'.");
-        }
-
-        if (string.IsNullOrEmpty(entry.Name))
-        {
-            // Directory entry — ensure it exists.
-            Directory.CreateDirectory(entryPath);
-        }
-        else
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(entryPath)!);
-            entry.ExtractToFile(entryPath, overwrite: true);
+                $"Downloaded skill '{name}' did not contain a SKILL.md at the root.");
         }
     }
 }
@@ -208,8 +173,8 @@ static async Task EnsureSkillsProvisionedAsync(ProjectAgentSkills skillsClient, 
         catch (ClientResultException ex) when (ex.Status == 404)
         {
             Console.WriteLine($"Provisioning skill '{name}' from {skillPath}...");
-            AgentsSkill imported = await skillsClient.CreateSkillFromPackageAsync(skillPath);
-            Console.WriteLine($"  Imported skill '{imported.Name}' (id={imported.SkillId}, has_blob={imported.HasBlob}).");
+            AgentsSkill imported = (await skillsClient.CreateSkillVersionFromFilesAsync(name, skillPath)).Value;
+            Console.WriteLine($"  Imported skill '{imported.Name}' (id={imported.Id}, version={imported.LatestVersion}).");
         }
     }
 }

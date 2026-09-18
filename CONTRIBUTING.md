@@ -4,6 +4,16 @@ You can contribute to Agent Framework with issues and pull requests (PRs). Simpl
 filing issues for problems you encounter is a great way to contribute. Contributing
 code is greatly appreciated.
 
+This repository is dedicated to the canonical .NET and Python implementations of
+Microsoft Agent Framework. Microsoft contributors outside the product team should
+engage with the maintainers before submitting pull requests that add new language
+implementations or before starting a new Microsoft-owned repository for another
+language.
+
+Contributors outside Microsoft are welcome to start their own repositories to
+implement Microsoft Agent Framework in other languages, as long as they make it
+clear that the effort is not owned or maintained directly by Microsoft.
+
 ## Reporting Issues
 
 We always welcome bug reports, API proposals and overall feedback. Here are a few
@@ -74,6 +84,37 @@ Contributions must maintain API signature and behavioral compatibility. Contribu
 that include breaking changes will be rejected. Please file an issue to discuss
 your idea or change if you believe that a breaking change is warranted.
 
+#### Python Public API Compatibility
+
+Python pull requests run a non-blocking [Griffe](https://mkdocstrings.github.io/griffe/)
+check that compares the pull request's public API with its base commit. The workflow only
+runs when Python files change, and reports potential breaking changes as annotations and
+in the job summary. The experimental `agent-framework-lab` package is excluded. The
+workflow checks out only trusted base-branch code, fetches GitHub's synthetic merge commit
+without checking it out, and statically parses its Python source from a temporary directory
+without importing it. This supports fork pull requests while keeping the comparison current
+when a pull request branch is behind `main`. If GitHub has not produced a current synthetic
+merge ref—typically while the pull request has merge conflicts—the advisory comparison is
+skipped and reruns when the pull request is updated.
+
+Only APIs from packages marked `released` in `python/PACKAGE_STATUS.md` are checked.
+Prerelease packages and APIs marked with `@experimental` or `@release_candidate`—including
+members of a staged class—are excluded. Package state and feature-stage markers are read
+from the base commit, so changing either in the same pull request cannot suppress a
+compatibility finding. The Griffe version is pinned with the other Python development
+dependencies in `python/pyproject.toml`; the workflow reads that pin from the trusted base
+commit. Instance-attribute initializer values are excluded because Griffe derives them from
+constructor control flow and can report implementation-only assignment changes; other
+Griffe-detected attribute value changes remain checked.
+
+If a breaking change is intentional, add the `breaking change` label to the pull request
+or add `[BREAKING]` to its title. Existing title/label automation keeps those signals
+synchronized. The label declares that the detected break is intentional; normal repository
+review and merge policies determine whether the change is approved. The compatibility
+workflow still reports acknowledged changes but succeeds. Without the label, the comparison
+step fails; the job is configured as non-blocking so it cannot prevent a merge while the
+workflow is being evaluated.
+
 #### Automated API Compatibility Validation
 
 The .NET projects use [Package Validation](https://learn.microsoft.com/dotnet/fundamentals/package-validation/overview)
@@ -105,6 +146,26 @@ individual projects may opt out (for example by setting `EnablePackageValidation
 
 For more details, see the [Package Validation diagnostic IDs](https://learn.microsoft.com/dotnet/fundamentals/package-validation/diagnostic-ids).
 
+#### Public API Baselines
+
+Released .NET packages also use `Microsoft.CodeAnalysis.PublicApiAnalyzers` to make source-level public API changes visible during builds. The `PublicAPI.*.txt` files use `#nullable enable` so nullability annotations are tracked as part of the public API surface. When adding, changing, or removing public APIs in a released package, update the package's `PublicAPI.Unshipped.txt` file with the analyzer-provided entries and include that change in your PR. The build will fail if public API changes are not reflected in the baseline files.
+
+If local or CI builds report Public API Analyzer warnings or errors, handle each diagnostic separately:
+
+- `RS0016` reports a newly exposed public API that is missing from the baseline. The preferred fix is to use the analyzer code fix on the affected code symbol to add the missing API entry automatically. Alternatively, run `dotnet format` for `RS0016` from the repository root:
+
+  ```powershell
+  dotnet format .\dotnet\agent-framework-dotnet.slnx analyzers --diagnostics RS0016
+  ```
+
+- `RS0017` reports that a declared public API was deleted. Restore the API if the deletion was accidental; otherwise, record the removed signature in the package's `PublicAPI.Unshipped.txt` file with the `*REMOVED*` prefix by using the corresponding code fix, or the following dotnet format script:
+
+  ```powershell
+  dotnet format .\dotnet\agent-framework-dotnet.slnx analyzers --diagnostics RS0017
+  ```
+
+After a release, the `Promote Shipped APIs` workflow moves entries from `PublicAPI.Unshipped.txt` to `PublicAPI.Shipped.txt` and opens or updates a promotion PR. Publish builds fail if released packages still contain unshipped public API entries.
+
 ### Suggested Workflow
 
 We use and recommend the following workflow:
@@ -127,8 +188,27 @@ We use and recommend the following workflow:
 7. Create a PR against the repository's **main** branch.
    - State in the description what issue or improvement your change is addressing.
    - Verify that all the Continuous Integration checks are passing.
-8. Wait for feedback or approval of your changes from the code maintainers.
+8. Address feedback from the code maintainers. Reply to every review comment with
+   the outcome and resolve each completed review conversation yourself before
+   requesting another review.
 9. When area owners have signed off, and all checks are green, your PR will be merged.
+
+### Resolving PR Review Comments
+
+PR authors are responsible for closing out all review conversations on their pull
+requests, including conversations opened by reviewers. Do not wait for the reviewer
+or a maintainer to resolve completed conversations for you.
+
+For every review comment:
+
+- If the feedback was addressed, reply with a brief explanation and, preferably,
+  the commit containing the change.
+- If the feedback was not addressed, reply with the reason why.
+
+After replying and completing any necessary discussion, **resolve the conversation
+yourself**. Leave a conversation open only while it has an unanswered question or
+active discussion. Reviewers may reopen a conversation if further changes or
+discussion are needed.
 
 ### Development Setup
 
@@ -147,6 +227,18 @@ Each language has its own dev setup guide, coding standards, and build scripts:
     - Unit tests: `dotnet test --filter-query "/*UnitTests*/*/*/*"`
     - Integration tests: `dotnet test --filter-query "/*IntegrationTests*/*/*/*"` (requires API keys/endpoints)
     - Linting (auto-fix): `dotnet format`
+
+#### Microsoft Internal Feed Proxy for GitHub Copilot SDK (.NET)
+
+Microsoft contributors can route GitHub Copilot SDK npm downloads through the internal proxy without passing extra `dotnet` arguments:
+
+1. Create `dotnet/Directory.Build.rsp` with:
+
+   ```text
+   -p:CopilotNpmRegistryUrl=https://packagefeedproxy.microsoft.io/npm/
+   ```
+
+When running `dotnet build` (or other `dotnet` commands) from the `./dotnet` directory, this property is applied automatically.
 
 ### PR - CI Process
 

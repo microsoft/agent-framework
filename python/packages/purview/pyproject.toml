@@ -4,7 +4,7 @@ description = "Microsoft Purview (Graph dataSecurityAndGovernance) integration f
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b260521"
+version = "1.0.0b260918"
 license-files = ["LICENSE"]
 urls.homepage = "https://github.com/microsoft/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -24,13 +24,13 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core>=1.6.0,<2",
+    "agent-framework-core>=1.19.0,<2",
     "azure-core>=1.30.0,<2",
     "httpx>=0.27.0,<0.29",
 ]
 
 [tool.uv]
-prerelease = "if-necessary-or-explicit"
+prerelease = "if-necessary"
 environments = [
     "sys_platform == 'darwin'",
     "sys_platform == 'linux'",

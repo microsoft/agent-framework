@@ -1,7 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Diagnostics.CodeAnalysis;
-using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -9,7 +7,6 @@ namespace Microsoft.Agents.AI;
 /// <summary>
 /// Provides extension methods for adding tool approval middleware to <see cref="AIAgentBuilder"/> instances.
 /// </summary>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public static class ToolApprovalAgentBuilderExtensions
 {
     /// <summary>

@@ -23,6 +23,7 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
     private readonly MemoryCache _cache;
     private readonly InMemoryStorageOptions _options;
     private readonly Conversations.IConversationStorage? _conversationStorage;
+    private readonly IsolationKeyResolver? _isolationKeyResolver;
 
     private sealed class ResponseState
     {
@@ -32,6 +33,7 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
 
         public Response? Response { get; set; }
         public CreateResponse? Request { get; set; }
+        public string? ConversationStorageId { get; set; }
         public List<StreamingResponseEvent> StreamingUpdates { get; } = [];
         public Task? CompletionTask { get; set; }
         public CancellationTokenSource? CancellationTokenSource { get; set; }
@@ -138,6 +140,15 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
     }
 
     public InMemoryResponsesService(IResponseExecutor executor, InMemoryStorageOptions options, Conversations.IConversationStorage? conversationStorage)
+        : this(executor, options, conversationStorage, isolationKeyResolver: null)
+    {
+    }
+
+    public InMemoryResponsesService(
+        IResponseExecutor executor,
+        InMemoryStorageOptions options,
+        Conversations.IConversationStorage? conversationStorage,
+        IsolationKeyResolver? isolationKeyResolver)
     {
         ArgumentNullException.ThrowIfNull(executor);
         ArgumentNullException.ThrowIfNull(options);
@@ -145,6 +156,7 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
         this._options = options;
         this._cache = new MemoryCache(options.ToMemoryCacheOptions());
         this._conversationStorage = conversationStorage;
+        this._isolationKeyResolver = isolationKeyResolver;
     }
 
     public async ValueTask<ResponseError?> ValidateRequestAsync(
@@ -156,9 +168,27 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
         {
             return new ResponseError
             {
-                Code = "invalid_request",
+                Code = ResponseErrorCodes.InvalidRequest,
                 Message = "Mutually exclusive parameters: 'conversation' and 'previous_response_id'. Ensure you are only providing one of: 'previous_response_id' or 'conversation'."
             };
+        }
+
+        // When a conversation store is configured and the request references a conversation,
+        // verify it exists up front. This surfaces a missing conversation as a clean not-found
+        // error (mapped to HTTP 404, consistent with the Conversations API) instead of failing
+        // mid-execution and reporting a generic server error.
+        if (this._conversationStorage is not null && request.Conversation?.Id is { Length: > 0 } conversationId)
+        {
+            var conversationStorageId = await this.GetStorageIdAsync(conversationId, cancellationToken).ConfigureAwait(false);
+            var conversation = await this._conversationStorage.GetConversationAsync(conversationStorageId, cancellationToken).ConfigureAwait(false);
+            if (conversation is null)
+            {
+                return new ResponseError
+                {
+                    Code = ResponseErrorCodes.ConversationNotFound,
+                    Message = $"Conversation with id '{conversationId}' not found."
+                };
+            }
         }
 
         return await this._executor.ValidateRequestAsync(request, cancellationToken).ConfigureAwait(false);
@@ -175,12 +205,20 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
 
         var idGenerator = new IdGenerator(responseId: null, conversationId: request.Conversation?.Id);
         var responseId = idGenerator.ResponseId;
-        var state = this.InitializeResponse(responseId, request);
+
+        var responseStorageId = await this.GetStorageIdAsync(responseId, cancellationToken).ConfigureAwait(false);
+
+        var conversationStorageId = request.Conversation?.Id is { } conversationId
+            ? await this.GetStorageIdAsync(conversationId, cancellationToken).ConfigureAwait(false)
+            : null;
+
         var ct = request.Background switch
         {
             true => CancellationToken.None,
             _ => cancellationToken,
         };
+
+        var state = this.InitializeResponse(responseId, responseStorageId, conversationStorageId, request);
         state.CompletionTask = this.ExecuteResponseAsync(responseId, state, ct);
 
         // For background responses, start execution and return immediately
@@ -205,9 +243,15 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
 
         var idGenerator = new IdGenerator(responseId: null, conversationId: request.Conversation?.Id);
         var responseId = idGenerator.ResponseId;
-        var state = this.InitializeResponse(responseId, request);
+
+        var responseStorageId = await this.GetStorageIdAsync(responseId, cancellationToken).ConfigureAwait(false);
+
+        var conversationStorageId = request.Conversation?.Id is { } conversationId
+            ? await this.GetStorageIdAsync(conversationId, cancellationToken).ConfigureAwait(false)
+            : null;
 
         // Start execution
+        var state = this.InitializeResponse(responseId, responseStorageId, conversationStorageId, request);
         state.CompletionTask = this.ExecuteResponseAsync(responseId, state, CancellationToken.None);
 
         // Stream updates as they become available
@@ -217,10 +261,11 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
         }
     }
 
-    public Task<Response?> GetResponseAsync(string responseId, CancellationToken cancellationToken = default)
+    public async Task<Response?> GetResponseAsync(string responseId, CancellationToken cancellationToken = default)
     {
-        this._cache.TryGetValue(responseId, out ResponseState? state);
-        return Task.FromResult(state?.Response);
+        var responseStorageId = await this.GetStorageIdAsync(responseId, cancellationToken).ConfigureAwait(false);
+        this._cache.TryGetValue(responseStorageId, out ResponseState? state);
+        return state?.Response;
     }
 
     public async IAsyncEnumerable<StreamingResponseEvent> GetResponseStreamingAsync(
@@ -228,7 +273,8 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
         int? startingAfter = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        if (!this._cache.TryGetValue(responseId, out ResponseState? state) || state is null)
+        var responseStorageId = await this.GetStorageIdAsync(responseId, cancellationToken).ConfigureAwait(false);
+        if (!this._cache.TryGetValue(responseStorageId, out ResponseState? state) || state is null)
         {
             yield break;
         }
@@ -242,7 +288,8 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
 
     public async Task<Response> CancelResponseAsync(string responseId, CancellationToken cancellationToken = default)
     {
-        if (!this._cache.TryGetValue(responseId, out ResponseState? state) || state is null)
+        var responseStorageId = await this.GetStorageIdAsync(responseId, cancellationToken).ConfigureAwait(false);
+        if (!this._cache.TryGetValue(responseStorageId, out ResponseState? state) || state is null)
         {
             throw new InvalidOperationException($"Response '{responseId}' not found.");
         }
@@ -268,22 +315,23 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
         return state.Response;
     }
 
-    public Task<bool> DeleteResponseAsync(string responseId, CancellationToken cancellationToken = default)
+    public async Task<bool> DeleteResponseAsync(string responseId, CancellationToken cancellationToken = default)
     {
-        if (!this._cache.TryGetValue(responseId, out ResponseState? state))
+        var responseStorageId = await this.GetStorageIdAsync(responseId, cancellationToken).ConfigureAwait(false);
+        if (!this._cache.TryGetValue(responseStorageId, out ResponseState? state))
         {
-            return Task.FromResult(false);
+            return false;
         }
 
         // Cancel any ongoing execution
         state?.CancellationTokenSource?.Cancel();
 
         // Remove the response
-        this._cache.Remove(responseId);
-        return Task.FromResult(true);
+        this._cache.Remove(responseStorageId);
+        return true;
     }
 
-    public Task<ListResponse<ItemResource>> ListResponseInputItemsAsync(
+    public async Task<ListResponse<ItemResource>> ListResponseInputItemsAsync(
         string responseId,
         int? limit = null,
         SortOrder? order = null,
@@ -294,7 +342,8 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
         int effectiveLimit = Math.Clamp(limit ?? IResponsesService.DefaultListLimit, 1, 100);
         SortOrder effectiveOrder = order ?? SortOrder.Descending;
 
-        if (!this._cache.TryGetValue(responseId, out ResponseState? state))
+        var responseStorageId = await this.GetStorageIdAsync(responseId, cancellationToken).ConfigureAwait(false);
+        if (!this._cache.TryGetValue(responseStorageId, out ResponseState? state))
         {
             throw new InvalidOperationException($"Response '{responseId}' not found.");
         }
@@ -340,16 +389,26 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
             result = result.Take(effectiveLimit).ToList();
         }
 
-        return Task.FromResult(new ListResponse<ItemResource>
+        return new ListResponse<ItemResource>
         {
             Data = result,
             FirstId = result.FirstOrDefault()?.Id,
             LastId = result.LastOrDefault()?.Id,
             HasMore = hasMore
-        });
+        };
     }
 
-    private ResponseState InitializeResponse(string responseId, CreateResponse request)
+    private ValueTask<string> GetStorageIdAsync(string id, CancellationToken cancellationToken)
+    {
+        if (this._isolationKeyResolver is null)
+        {
+            return new ValueTask<string>(id);
+        }
+
+        return this._isolationKeyResolver.ScopeIdAsync(id, cancellationToken);
+    }
+
+    private ResponseState InitializeResponse(string responseId, string responseStorageId, string? conversationStorageId, CreateResponse request)
     {
         var metadata = request.Metadata ?? [];
 
@@ -366,6 +425,7 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
             Id = responseId,
             IncompleteDetails = null,
             Instructions = request.Instructions,
+            Logprobs = request.Logprobs,
             MaxOutputTokens = request.MaxOutputTokens,
             MaxToolCalls = request.MaxToolCalls,
             Metadata = metadata,
@@ -397,6 +457,7 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
         {
             Response = response,
             Request = request,
+            ConversationStorageId = conversationStorageId,
             CancellationTokenSource = new CancellationTokenSource()
         };
 
@@ -409,7 +470,7 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
             }
         });
 
-        this._cache.Set(responseId, state, entryOptions);
+        this._cache.Set(responseStorageId, state, entryOptions);
 
         return state;
     }
@@ -427,10 +488,10 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
 
             // Load conversation history if a conversation ID is provided
             IReadOnlyList<Extensions.AI.ChatMessage>? conversationHistory = null;
-            if (this._conversationStorage is not null && request.Conversation?.Id is not null)
+            if (this._conversationStorage is not null && state.ConversationStorageId is not null)
             {
                 var itemsResult = await this._conversationStorage.ListItemsAsync(
-                    request.Conversation.Id,
+                    state.ConversationStorageId,
                     limit: 100,
                     order: SortOrder.Ascending,
                     cancellationToken: linkedCts.Token).ConfigureAwait(false);
@@ -459,7 +520,7 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
 
             // Add both input and output items to conversation storage if available
             // This happens AFTER successful execution, in line with OpenAI's behavior
-            if (this._conversationStorage is not null && request.Conversation?.Id is not null)
+            if (this._conversationStorage is not null && state.ConversationStorageId is not null)
             {
                 var inputItems = GetInputItems(responseId, state);
                 var allItems = new List<ItemResource>(inputItems.Count + outputItems.Count);
@@ -468,7 +529,7 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
 
                 if (allItems.Count > 0)
                 {
-                    await this._conversationStorage.AddItemsAsync(request.Conversation.Id, allItems, linkedCts.Token).ConfigureAwait(false);
+                    await this._conversationStorage.AddItemsAsync(state.ConversationStorageId, allItems, linkedCts.Token).ConfigureAwait(false);
                 }
             }
 

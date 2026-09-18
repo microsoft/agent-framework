@@ -11,7 +11,11 @@ ownership semantics.
 
 from __future__ import annotations
 
+import asyncio
 import sys
+from collections.abc import AsyncIterator
+from typing import Any
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -67,6 +71,201 @@ class TestRequestComposition:
         # httpx exposes the merged URL with QS appended
         assert req.url.params.get("q") == "alpha"
         assert req.url.params.get("limit") == "5"
+
+    @pytest.mark.asyncio
+    async def test_query_parameters_preserve_url_query_string(self) -> None:
+        """query_parameters must be appended, not replace the URL's existing query string.
+
+        Regression for https://github.com/microsoft/agent-framework/issues/7749:
+        passing ``params=`` to httpx replaces the URL's existing query string, and the
+        handler used to do exactly that — URL parameters (api-version, tenant, ...) were
+        silently dropped. The .NET DefaultHttpRequestHandler.ResolveRequestUri preserves
+        them; Python now matches that behavior.
+        """
+        captured: dict[str, httpx.Request] = {}
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            captured["req"] = request
+            return httpx.Response(200, text="ok")
+
+        handler = _make_handler(httpx.MockTransport(respond))
+        try:
+            await handler.send(
+                HttpRequestInfo(
+                    method="GET",
+                    url="https://api.example.test/items?api-version=2025-01-01&tenant=alpha",
+                    query_parameters={"page": "2"},
+                )
+            )
+        finally:
+            await handler.aclose()
+
+        req = captured["req"]
+        # URL-supplied params are preserved and query_parameters are appended on top
+        assert req.url.params.get("api-version") == "2025-01-01"
+        assert req.url.params.get("tenant") == "alpha"
+        assert req.url.params.get("page") == "2"
+
+    @pytest.mark.asyncio
+    async def test_query_parameters_append_before_fragment(self) -> None:
+        """query_parameters must be inserted before any fragment, not appended after.
+
+        Plain string concatenation would produce ``url#frag?key=val`` (an invalid URL
+        — the query string must come before the fragment). The fix uses urlsplit so
+        reassembly keeps the fragment last.
+        """
+        captured: dict[str, httpx.Request] = {}
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            captured["req"] = request
+            return httpx.Response(200, text="ok")
+
+        handler = _make_handler(httpx.MockTransport(respond))
+        try:
+            await handler.send(
+                HttpRequestInfo(
+                    method="GET",
+                    url="https://api.example.test/items?api-version=2025-01-01#section",
+                    query_parameters={"page": "2"},
+                )
+            )
+        finally:
+            await handler.aclose()
+
+        req = captured["req"]
+        assert req.url.params.get("api-version") == "2025-01-01"
+        assert req.url.params.get("page") == "2"
+        # The fragment is preserved and stays last
+        assert str(req.url).endswith("#section")
+        assert req.url.fragment == "section"
+
+    @pytest.mark.asyncio
+    async def test_query_parameters_when_url_ends_with_question_mark(self) -> None:
+        """query_parameters must append cleanly when the URL already ends with ``?``.
+
+        urlsplit parses the trailing ``?`` as an empty query part, so the result is
+        a clean ``?key=val`` rather than a malformed ``?&key=val`` that plain string
+        concatenation would produce.
+        """
+        captured: dict[str, httpx.Request] = {}
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            captured["req"] = request
+            return httpx.Response(200, text="ok")
+
+        handler = _make_handler(httpx.MockTransport(respond))
+        try:
+            await handler.send(
+                HttpRequestInfo(
+                    method="GET",
+                    url="https://api.example.test/items?",
+                    query_parameters={"page": "2"},
+                )
+            )
+        finally:
+            await handler.aclose()
+
+        req = captured["req"]
+        assert req.url.params.get("page") == "2"
+        # Result is a clean query string, not && or && at the start
+        assert str(req.url) == "https://api.example.test/items?page=2"
+
+    @pytest.mark.asyncio
+    async def test_query_parameters_preserve_client_level_params(self) -> None:
+        """Client-level ``AsyncClient.params`` must survive alongside URL-embedded and
+        ``query_parameters`` params.
+
+        moonbox3 review on #7765: when a caller-supplied ``AsyncClient`` is built with
+        ``params=``, letting httpx merge them drops the URL's own query outright. The
+        handler composes the query itself and writes it over the built request's
+        ``raw_path``, so every source survives.
+        """
+        captured: dict[str, httpx.Request] = {}
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            captured["req"] = request
+            return httpx.Response(200, text="ok")
+
+        client = httpx.AsyncClient(
+            params={"client-default": "v"},
+            transport=httpx.MockTransport(respond),
+        )
+        handler = DefaultHttpRequestHandler(client=client)
+        try:
+            await handler.send(
+                HttpRequestInfo(
+                    method="GET",
+                    url="https://api.example.test/items?tenant=alpha&page=2",
+                    query_parameters={"limit": "5"},
+                )
+            )
+        finally:
+            await handler.aclose()
+            await client.aclose()
+
+        req_url = str(captured["req"].url)
+        for needle in ("client-default=v", "tenant=alpha", "page=2", "limit=5"):
+            assert needle in req_url, f"missing {needle!r} in {req_url!r}"
+        # Lower-precedence source's duplicate key is overridden (query_parameters win).
+        assert "tenant=alpha" in req_url  # smoke: distinct keys all survive
+
+    @pytest.mark.asyncio
+    async def test_query_parameters_higher_precedence_than_client_params(self) -> None:
+        """A client default is excluded by either request-level source, which both survive.
+
+        ``query_parameters`` append to the URL query rather than replacing it, matching
+        the .NET handler, so both request-level values are sent. The client-level param
+        is a default and applies only for a key neither source mentions.
+        """
+        captured: dict[str, httpx.Request] = {}
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            captured["req"] = request
+            return httpx.Response(200, text="ok")
+
+        client = httpx.AsyncClient(
+            params={"key": "clientval"},
+            transport=httpx.MockTransport(respond),
+        )
+        handler = DefaultHttpRequestHandler(client=client)
+        try:
+            await handler.send(
+                HttpRequestInfo(
+                    method="GET",
+                    url="https://api.example.test/items?key=urlval",
+                    query_parameters={"key": "qpval"},
+                )
+            )
+        finally:
+            await handler.aclose()
+            await client.aclose()
+
+        assert captured["req"].url.raw_path == b"/items?key=urlval&key=qpval"
+
+    @pytest.mark.asyncio
+    async def test_query_parameters_empty_key_skipped(self) -> None:
+        """Empty query-parameter keys are dropped (matches .NET ResolveRequestUri)."""
+        captured: dict[str, httpx.Request] = {}
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            captured["req"] = request
+            return httpx.Response(200, text="ok")
+
+        handler = _make_handler(httpx.MockTransport(respond))
+        try:
+            await handler.send(
+                HttpRequestInfo(
+                    method="GET",
+                    url="https://api.example.test/items",
+                    query_parameters={"": "shouldbedropped", "page": "2"},
+                )
+            )
+        finally:
+            await handler.aclose()
+
+        req_url = str(captured["req"].url)
+        assert "shouldbedropped" not in req_url
+        assert "page=2" in req_url
 
     @pytest.mark.asyncio
     async def test_body_content_type_forwarded(self) -> None:
@@ -192,16 +391,87 @@ class TestResponseHeaders:
 
 
 class TestClientOwnership:
-    @pytest.mark.asyncio
     async def test_owned_client_is_closed_on_aclose(self) -> None:
+        requests: list[httpx.Request] = []
+        clients: list[httpx.AsyncClient] = []
+        original_ctor = httpx.AsyncClient
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(200, headers={"Set-Cookie": "session=previous; Path=/; Secure"})
+
+        def create_client(**kwargs: Any) -> httpx.AsyncClient:
+            client = original_ctor(transport=httpx.MockTransport(respond), **kwargs)
+            clients.append(client)
+            return client
+
         handler = DefaultHttpRequestHandler()
-        # Inject a MockTransport-backed client into the owned slot and verify
-        # aclose() releases it. Avoids real network access.
-        owned = httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(200, text="ok")))
-        handler._owned_client = owned
-        assert not owned.is_closed
-        await handler.aclose()
-        assert owned.is_closed
+        info = HttpRequestInfo(method="GET", url="https://api.example.test/x")
+        with patch("httpx.AsyncClient", side_effect=create_client):
+            for index in range(2):
+                async with handler:
+                    assert handler._owned_client is None
+                    await handler.send(info)
+                    await handler.send(info)
+                    assert len(clients) == index + 1
+                    assert handler._owned_client is clients[index]
+                    assert not clients[index].is_closed
+                    assert clients[index].timeout == httpx.Timeout(5.0)
+                    assert not clients[index].follow_redirects
+                assert handler._owned_client is None
+                assert clients[index].is_closed
+            await handler.aclose()
+        assert clients[0].cookies.jar is not clients[1].cookies.jar
+        assert all(not client.cookies for client in clients)
+        assert all("Cookie" not in request.headers for request in requests)
+
+    @pytest.mark.parametrize("provider_fallback", [False, True])
+    @pytest.mark.parametrize("first_status", [200, 503])
+    async def test_owned_client_does_not_replay_response_cookies(
+        self, provider_fallback: bool, first_status: int
+    ) -> None:
+        requests: list[httpx.Request] = []
+        response_cookies = ["session=first; Path=/; HttpOnly; Secure", "affinity=first; Path=/; Secure"]
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(
+                first_status if len(requests) == 1 else 200,
+                text="ok",
+                headers=[("Set-Cookie", cookie) for cookie in response_cookies] if len(requests) == 1 else [],
+            )
+
+        async def provider(info: HttpRequestInfo) -> httpx.AsyncClient | None:
+            return None
+
+        original_ctor = httpx.AsyncClient
+
+        def create_client(**kwargs: Any) -> httpx.AsyncClient:
+            return original_ctor(transport=httpx.MockTransport(respond), **kwargs)
+
+        with patch("httpx.AsyncClient", side_effect=create_client):
+            async with DefaultHttpRequestHandler(client_provider=provider if provider_fallback else None) as handler:
+                first = await handler.send(
+                    HttpRequestInfo(
+                        method="GET", url="https://api.example.test/x", headers={"Authorization": "caller-a"}
+                    )
+                )
+                second = await handler.send(
+                    HttpRequestInfo(
+                        method="GET", url="https://api.example.test/x", headers={"Authorization": "caller-b"}
+                    )
+                )
+                await handler.send(
+                    HttpRequestInfo(
+                        method="GET", url="https://api.example.test/x", headers={"Cookie": "explicit=caller"}
+                    )
+                )
+        assert first.status_code == first_status
+        assert first.is_success_status_code is (first_status == 200)
+        assert first.headers["set-cookie"] == response_cookies
+        assert second.is_success_status_code
+        assert [request.headers.get("Authorization") for request in requests[:2]] == ["caller-a", "caller-b"]
+        assert [request.headers.get("Cookie") for request in requests] == [None, None, "explicit=caller"]
 
     @pytest.mark.asyncio
     async def test_caller_owned_client_is_not_closed(self) -> None:
@@ -212,7 +482,6 @@ class TestClientOwnership:
         assert not client.is_closed
         await client.aclose()  # cleanup
 
-    @pytest.mark.asyncio
     async def test_concurrent_first_send_creates_single_owned_client(self) -> None:
         """Concurrent first-send calls must not race-leak duplicate clients.
 
@@ -222,38 +491,50 @@ class TestClientOwnership:
         is serialized: all concurrent sends end up using the same client and
         ``aclose()`` cleanly closes it.
         """
-        import asyncio
-
-        # Patch httpx.AsyncClient to count constructions, but only when called
-        # from inside _resolve_client (no transport=) so we don't break the
-        # MockTransport-backed clients used elsewhere.
         original_ctor = httpx.AsyncClient
-        construction_count = 0
+        clients: list[httpx.AsyncClient] = []
+        requests: list[httpx.Request] = []
+        first_headers_received = asyncio.Event()
+        second_request_received = asyncio.Event()
 
-        def counting_ctor(*args, **kwargs):  # type: ignore[no-untyped-def]
-            nonlocal construction_count
-            if not args and not kwargs:
-                construction_count += 1
-                return original_ctor(transport=httpx.MockTransport(lambda r: httpx.Response(200, text="ok")))
-            return original_ctor(*args, **kwargs)
+        class PendingResponse(httpx.AsyncByteStream):
+            async def __aiter__(self) -> AsyncIterator[bytes]:
+                # HTTPX processes response cookies before reading the body.
+                first_headers_received.set()
+                await second_request_received.wait()
+                yield b"ok"
 
-        import agent_framework_declarative._workflows._http_handler as hh
+        def respond(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            if len(requests) == 1:
+                return httpx.Response(
+                    200,
+                    headers={"Set-Cookie": "session=first; Path=/; HttpOnly; Secure"},
+                    stream=PendingResponse(),
+                )
+            second_request_received.set()
+            return httpx.Response(200, text="ok")
 
-        hh.httpx.AsyncClient = counting_ctor  # type: ignore[assignment]
-        try:
-            handler = DefaultHttpRequestHandler()
-            try:
-                await asyncio.gather(*[
-                    handler.send(HttpRequestInfo(method="GET", url="https://api.example.test/x")) for _ in range(8)
-                ])
-            finally:
-                await handler.aclose()
-        finally:
-            hh.httpx.AsyncClient = original_ctor  # type: ignore[assignment]
+        def create_client(**kwargs: Any) -> httpx.AsyncClient:
+            client = original_ctor(transport=httpx.MockTransport(respond), **kwargs)
+            clients.append(client)
+            return client
 
-        assert construction_count == 1, (
-            f"Expected exactly 1 owned client to be lazily created but got {construction_count}"
-        )
+        with patch("httpx.AsyncClient", side_effect=create_client):
+            async with DefaultHttpRequestHandler() as handler:
+
+                async def send(index: int) -> None:
+                    if index:
+                        await first_headers_received.wait()
+                    result = await handler.send(HttpRequestInfo(method="GET", url="https://api.example.test/x"))
+                    assert result.body == "ok"
+
+                await asyncio.wait_for(asyncio.gather(*(send(index) for index in range(8))), timeout=5)
+                assert len(clients) == 1
+                assert handler._owned_client is clients[0]
+        assert clients[0].is_closed
+        assert len(requests) == 8
+        assert all("Cookie" not in request.headers for request in requests)
 
 
 class TestClientProvider:
@@ -282,6 +563,8 @@ class TestClientProvider:
             assert captured["transport"] == "provided"
         finally:
             await handler.aclose()
+            assert not primary_client.is_closed
+            assert not provided_client.is_closed
             await primary_client.aclose()
             await provided_client.aclose()
 
@@ -327,3 +610,281 @@ class TestAsyncContextManager:
             owned = httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(200, text="ok")))
             handler._owned_client = owned
         assert owned.is_closed
+
+
+class TestRawQueryPreservation:
+    """The URL's query must reach the wire byte-for-byte.
+
+    Routing it through ``httpx.QueryParams`` -- via ``params=`` or the client's own
+    params merge -- decodes and re-encodes it, which rewrites ``%20`` as ``+``, expands
+    a bare flag into ``key=`` and reorders interleaved duplicates. Any of those can
+    invalidate a presigned URL or change how the server reads the request.
+    """
+
+    @pytest.mark.asyncio
+    async def test_url_query_is_sent_verbatim(self) -> None:
+        captured: dict[str, httpx.Request] = {}
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            captured["req"] = request
+            return httpx.Response(200, text="ok")
+
+        handler = _make_handler(httpx.MockTransport(respond))
+        try:
+            await handler.send(
+                HttpRequestInfo(
+                    method="GET",
+                    # percent-encoded space, a bare flag, and duplicates interleaved
+                    # around another key
+                    url="https://api.example.test/s?term=a%20b&download&x=1&y=2&x=3",
+                )
+            )
+        finally:
+            await handler.aclose()
+
+        assert captured["req"].url.raw_path == b"/s?term=a%20b&download&x=1&y=2&x=3"
+
+    @pytest.mark.asyncio
+    async def test_url_query_is_verbatim_even_when_client_params_are_set(self) -> None:
+        """A client params merge drops the URL query outright, so it must be bypassed."""
+        captured: dict[str, httpx.Request] = {}
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            captured["req"] = request
+            return httpx.Response(200, text="ok")
+
+        client = httpx.AsyncClient(
+            params={"api-version": "2024-01-01"},
+            transport=httpx.MockTransport(respond),
+        )
+        handler = DefaultHttpRequestHandler(client=client)
+        try:
+            await handler.send(
+                HttpRequestInfo(
+                    method="GET",
+                    url="https://api.example.test/s?term=a%20b&download&x=1&y=2&x=3",
+                )
+            )
+        finally:
+            await handler.aclose()
+            await client.aclose()
+
+        # The URL's bytes are untouched and the client default is appended after them.
+        assert captured["req"].url.raw_path == (b"/s?term=a%20b&download&x=1&y=2&x=3&api-version=2024-01-01")
+
+    @pytest.mark.asyncio
+    async def test_appended_parameters_encode_space_as_percent20(self) -> None:
+        """Appended values are encoded the same way a preserved URL query is."""
+        captured: dict[str, httpx.Request] = {}
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            captured["req"] = request
+            return httpx.Response(200, text="ok")
+
+        handler = _make_handler(httpx.MockTransport(respond))
+        try:
+            await handler.send(
+                HttpRequestInfo(
+                    method="GET",
+                    url="https://api.example.test/s",
+                    query_parameters={"q": "a b", "sym": "a&b=c"},
+                )
+            )
+        finally:
+            await handler.aclose()
+
+        assert captured["req"].url.raw_path == b"/s?q=a%20b&sym=a%26b%3Dc"
+
+    @pytest.mark.asyncio
+    async def test_client_param_applies_only_when_key_absent_from_both_sources(self) -> None:
+        captured: dict[str, httpx.Request] = {}
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            captured["req"] = request
+            return httpx.Response(200, text="ok")
+
+        client = httpx.AsyncClient(
+            params={"in-url": "dropped", "in-explicit": "dropped", "unique": "kept"},
+            transport=httpx.MockTransport(respond),
+        )
+        handler = DefaultHttpRequestHandler(client=client)
+        try:
+            await handler.send(
+                HttpRequestInfo(
+                    method="GET",
+                    url="https://api.example.test/s?in-url=fromurl",
+                    query_parameters={"in-explicit": "fromexplicit"},
+                )
+            )
+        finally:
+            await handler.aclose()
+            await client.aclose()
+
+        assert captured["req"].url.raw_path == (b"/s?in-url=fromurl&in-explicit=fromexplicit&unique=kept")
+
+    @pytest.mark.parametrize("client_source", ["caller", "provider", "provider_none"])
+    async def test_client_headers_cookies_auth_and_timeout_survive(self, client_source: str) -> None:
+        """Building through the client keeps its configuration, params merge bypassed."""
+        requests: list[httpx.Request] = []
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(200, text="ok", headers={"Set-Cookie": "response=retained; Path=/; Secure"})
+
+        auth = httpx.BasicAuth("user", "pass")
+        client = httpx.AsyncClient(
+            params={"api-version": "2024-01-01"},
+            headers={"X-Client-Header": "client-value"},
+            cookies={"session": "cookie-value"},
+            auth=auth,
+            timeout=17.0,
+            follow_redirects=True,
+            transport=httpx.MockTransport(respond),
+        )
+
+        async def provider(info: HttpRequestInfo) -> httpx.AsyncClient | None:
+            return client if client_source == "provider" else None
+
+        handler = DefaultHttpRequestHandler(
+            client=client if client_source != "provider" else None,
+            client_provider=provider if client_source != "caller" else None,
+        )
+        try:
+            await handler.send(
+                HttpRequestInfo(
+                    method="GET",
+                    url="https://api.example.test/s?keep=me",
+                    timeout_ms=4500,
+                )
+            )
+            await handler.send(HttpRequestInfo(method="GET", url="https://api.example.test/s"))
+            await handler.aclose()
+            assert not client.is_closed
+            assert handler._owned_client is None
+            assert client.cookies["session"] == "cookie-value"
+            assert client.cookies["response"] == "retained"
+            assert client.auth is auth
+            assert client.timeout == httpx.Timeout(17.0)
+            assert client.follow_redirects
+            assert set(requests[1].headers["Cookie"].split("; ")) == {
+                "session=cookie-value",
+                "response=retained",
+            }
+        finally:
+            await handler.aclose()
+            await client.aclose()
+
+        request = requests[0]
+        assert request.headers["X-Client-Header"] == "client-value"
+        assert request.headers["Cookie"] == "session=cookie-value"
+        assert request.headers["Authorization"].startswith("Basic ")
+        assert request.extensions["timeout"] == {
+            "connect": 4.5,
+            "read": 4.5,
+            "write": 4.5,
+            "pool": 4.5,
+        }
+        assert request.url.raw_path == b"/s?keep=me&api-version=2024-01-01"
+
+    @pytest.mark.asyncio
+    async def test_non_ascii_url_query_is_percent_encoded_not_rejected(self) -> None:
+        """Composing raw bytes must still escape what cannot go on the wire.
+
+        A caller can hand us a URL whose query holds literal non-ASCII text, which has
+        no byte representation in a request target. Only those characters are escaped;
+        an already-valid query stays byte-identical.
+        """
+        captured: dict[str, httpx.Request] = {}
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            captured["req"] = request
+            return httpx.Response(200, text="ok")
+
+        handler = _make_handler(httpx.MockTransport(respond))
+        try:
+            await handler.send(HttpRequestInfo(method="GET", url="https://api.example.test/s?q=café&keep=%20"))
+        finally:
+            await handler.aclose()
+
+        assert captured["req"].url.raw_path == b"/s?q=caf%C3%A9&keep=%20"
+
+    @pytest.mark.asyncio
+    async def test_presigned_style_query_survives_untouched(self) -> None:
+        """A signature-bearing query reaches the server byte-identical.
+
+        Verified against a real Azure Blob SAS URL: base64 and ``%3A`` happen to
+        round-trip through ``QueryParams`` unchanged, so this shape was already intact
+        before the handler stopped re-encoding. It is pinned because a scheme that signs
+        a value holding an encoded space is not so lucky -- see
+        ``test_encoded_space_in_a_signed_value_is_not_rewritten``.
+        """
+        captured: dict[str, httpx.Request] = {}
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            captured["req"] = request
+            return httpx.Response(200, text="ok")
+
+        signed = b"sig=abc%2Bdef%3D&se=2026-01-01T00%3A00%3A00Z&sp=r&sv=2024-11-04"
+        handler = _make_handler(httpx.MockTransport(respond))
+        try:
+            await handler.send(HttpRequestInfo(method="GET", url="https://api.example.test/blob?" + signed.decode()))
+        finally:
+            await handler.aclose()
+
+        assert captured["req"].url.raw_path == b"/blob?" + signed
+
+    @pytest.mark.asyncio
+    async def test_appended_values_cannot_inject_additional_pairs(self) -> None:
+        """Only the caller's own URL query is verbatim; everything appended is escaped.
+
+        A value or key carrying ``&`` or ``=`` must not become a separate query
+        parameter, for ``query_parameters`` or for client-level defaults.
+        """
+        captured: dict[str, httpx.Request] = {}
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            captured["req"] = request
+            return httpx.Response(200, text="ok")
+
+        client = httpx.AsyncClient(
+            params={"cd": "x&role=admin"},
+            transport=httpx.MockTransport(respond),
+        )
+        handler = DefaultHttpRequestHandler(client=client)
+        try:
+            await handler.send(
+                HttpRequestInfo(
+                    method="GET",
+                    url="https://api.example.test/s?a=1",
+                    query_parameters={"q": "v&role=admin", "k&evil": "1"},
+                )
+            )
+        finally:
+            await handler.aclose()
+            await client.aclose()
+
+        assert captured["req"].url.raw_path == (b"/s?a=1&q=v%26role%3Dadmin&k%26evil=1&cd=x%26role%3Dadmin")
+
+    @pytest.mark.asyncio
+    async def test_encoded_space_in_a_signed_value_is_not_rewritten(self) -> None:
+        """An encoded space in a query value must not become ``+``.
+
+        This is the transformation that actually breaks a signature. Measured against
+        httpx 0.28.1, routing the query through ``QueryParams`` rewrote
+        ``filename%3D%22a%20b.txt%22`` as ``filename%3D%22a+b.txt%22``, which changes
+        the bytes any scheme signing that parameter computed its HMAC over.
+        """
+        captured: dict[str, httpx.Request] = {}
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            captured["req"] = request
+            return httpx.Response(200, text="ok")
+
+        signed = b"response-content-disposition=attachment%3B%20filename%3D%22a%20b.txt%22"
+        handler = _make_handler(httpx.MockTransport(respond))
+        try:
+            await handler.send(HttpRequestInfo(method="GET", url="https://api.example.test/o?" + signed.decode()))
+        finally:
+            await handler.aclose()
+
+        assert captured["req"].url.raw_path == b"/o?" + signed

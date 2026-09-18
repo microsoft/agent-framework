@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 import json
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from agent_framework import Content, Message
@@ -70,7 +70,7 @@ def _make_client(response_text: str = "Bedrock says hi") -> tuple[BedrockChatCli
     client = BedrockChatClient(
         model="us.anthropic.claude-haiku-4-5-v1:0",
         region="us-east-1",
-        client=stub,
+        client=stub,  # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type] # pyright: ignore[reportArgumentType]
     )
     return client, stub
 
@@ -248,7 +248,7 @@ async def test_unsupported_model_validation_exception() -> None:
     client = BedrockChatClient(
         model="us.anthropic.claude-v2",
         region="us-east-1",
-        client=_FailingStubBedrockRuntime(),
+        client=_FailingStubBedrockRuntime(),  # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type] # pyright: ignore[reportArgumentType]
     )
 
     with pytest.raises(ValueError) as exc:
@@ -366,14 +366,9 @@ async def test_non_outputconfig_validation_exception_propagates() -> None:
             "Message": "Invalid message format",
         }
     }
-    with (
-        patch.object(
-            client,
-            "_bedrock_client",
-            **{"converse.side_effect": ClientError(error_response, "Converse")},
-        ),
-        pytest.raises(ClientError),
-    ):
+    failing_client = MagicMock()
+    failing_client.converse.side_effect = ClientError(error_response, "Converse")
+    with patch.object(client, "_bedrock_client", failing_client), pytest.raises(ClientError):
         await client.get_response(
             messages=_user_messages(),
             options={"max_tokens": 100},

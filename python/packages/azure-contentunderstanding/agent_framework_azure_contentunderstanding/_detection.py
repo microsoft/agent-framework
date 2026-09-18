@@ -143,7 +143,7 @@ def sniff_media_type(binary_data: bytes | None, content: Content) -> str | None:
     if binary_data:
         kind = filetype.guess(binary_data[:262])  # type: ignore[reportUnknownMemberType]
         if kind:
-            mime: str = kind.mime  # type: ignore[reportUnknownMemberType]
+            mime: str = kind.mime
             return MIME_ALIASES.get(mime, mime)
 
     # 2. Filename extension fallback — try additional_properties first,

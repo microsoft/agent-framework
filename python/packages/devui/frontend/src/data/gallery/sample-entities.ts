@@ -42,13 +42,13 @@ export const SAMPLE_ENTITIES: SampleEntity[] = [
     requiredEnvVars: [
       {
         name: "FOUNDRY_PROJECT_ENDPOINT",
-        description: "Azure AI Foundry project endpoint URL",
+        description: "Microsoft Foundry project endpoint URL",
         required: true,
         example: "https://your-project.api.azureml.ms",
       },
       {
         name: "FOUNDRY_MODEL",
-        description: "Name of the deployed model in Azure AI Foundry",
+        description: "Name of the deployed model in Microsoft Foundry",
         required: true,
         example: "gpt-4o",
       },

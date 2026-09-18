@@ -21,7 +21,7 @@ class TestDocumentEntry:
             "analyzed_at": "2026-01-01T00:00:00+00:00",
             "analysis_duration_s": 1.23,
             "upload_duration_s": None,
-            "result": {"markdown": "# Title"},
+            "result": "---\nsource: invoice.pdf\n---\n# Title",
             "error": None,
         }
         assert entry["status"] == DocumentStatus.READY
@@ -29,6 +29,7 @@ class TestDocumentEntry:
         assert entry["analyzer_id"] == "prebuilt-documentSearch"
         assert entry["analysis_duration_s"] == 1.23
         assert entry["upload_duration_s"] is None
+        assert isinstance(entry["result"], str)
 
     def test_failed_entry(self) -> None:
         entry: DocumentEntry = {

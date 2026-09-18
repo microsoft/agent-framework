@@ -13,6 +13,7 @@ from opentelemetry.propagate import inject
 from opentelemetry.trace import SpanKind
 from typing_extensions import Never, TypeVar
 
+from .._tools import ToolTypes
 from ..observability import OtelAttr, create_workflow_span
 from ._events import (
     WorkflowEvent,
@@ -21,6 +22,7 @@ from ._events import (
 )
 from ._runner_context import RunnerContext, WorkflowMessage
 from ._state import State
+from ._typing_utils import contains_typevar
 
 if TYPE_CHECKING:
     from ._executor import Executor
@@ -176,6 +178,15 @@ def validate_workflow_context_annotation(
             if type_arg is Any:
                 continue
 
+            # Check for unresolved TypeVar early with an actionable error message
+            if contains_typevar(type_arg):
+                raise ValueError(
+                    f"{context_description} {parameter_name} {param_description} "
+                    f"contains an unresolved TypeVar in '{type_arg}'. "
+                    f"Use @handler(input=ConcreteType, output=ConcreteType) with concrete types "
+                    f"for parameterized executors."
+                )
+
             # Check if it's a union type and validate each member
             union_origin = get_origin(type_arg)
             if union_origin in (Union, UnionType):
@@ -328,7 +339,7 @@ class WorkflowContext(Generic[OutT, W_OutT]):
             self._sent_messages.append(message)
 
             # Inject current trace context if tracing enabled
-            if OBSERVABILITY_SETTINGS.ENABLED and span and span.is_recording():  # type: ignore[name-defined]
+            if OBSERVABILITY_SETTINGS.ENABLED and span and span.is_recording():
                 trace_context: dict[str, str] = {}
                 inject(trace_context)  # Inject current trace context for message propagation
 
@@ -477,3 +488,7 @@ class WorkflowContext(Generic[OutT, W_OutT]):
             True if the workflow was started with stream=True, False otherwise.
         """
         return self._runner_context.is_streaming()
+
+    def get_runtime_tools(self) -> list[ToolTypes] | None:
+        """Get request-scoped tools supplied to the active workflow run."""
+        return self._runner_context.get_runtime_tools()

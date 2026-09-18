@@ -1,8 +1,11 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Hosting;
@@ -48,10 +51,25 @@ public class AIHostAgent : DelegatingAIAgent
     /// <returns>A task that represents the asynchronous operation. The task result contains the agent session associated with the
     /// specified conversation. If no session exists, a new session is created and returned.</returns>
     public ValueTask<AgentSession> GetOrCreateSessionAsync(string conversationId, CancellationToken cancellationToken = default)
-    {
-        _ = Throw.IfNullOrWhitespace(conversationId);
+        => this.GetOrCreateSessionAsync(new AgentSessionStoreKey(conversationId), cancellationToken);
 
-        return this._sessionStore.GetSessionAsync(this.InnerAgent, conversationId, cancellationToken);
+    /// <summary>
+    /// Gets an existing agent session for the specified storage key, or creates a new one if none exists.
+    /// </summary>
+    /// <param name="key">The key that identifies and partitions the session.</param>
+    /// <param name="cancellationToken">A cancellation token that can be used to cancel the asynchronous operation.</param>
+    /// <returns>A task whose result contains the stored or newly created agent session.</returns>
+    public ValueTask<AgentSession> GetOrCreateSessionAsync(
+        AgentSessionStoreKey key,
+        CancellationToken cancellationToken = default)
+    {
+        _ = Throw.IfNull(key);
+
+        MarkFeatureUsed();
+        return this._sessionStore.GetOrCreateSessionAsync(
+            this.InnerAgent,
+            key,
+            cancellationToken);
     }
 
     /// <summary>
@@ -64,10 +82,60 @@ public class AIHostAgent : DelegatingAIAgent
     /// <exception cref="ArgumentException"><paramref name="conversationId"/> is null or whitespace.</exception>
     /// <exception cref="ArgumentNullException"><paramref name="session"/> is <see langword="null"/>.</exception>
     public ValueTask SaveSessionAsync(string conversationId, AgentSession session, CancellationToken cancellationToken = default)
+        => this.SaveSessionAsync(new AgentSessionStoreKey(conversationId), session, cancellationToken);
+
+    /// <summary>
+    /// Persists a session under the specified storage key.
+    /// </summary>
+    /// <param name="key">The key that identifies and partitions the session.</param>
+    /// <param name="session">The session to persist.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
+    /// <returns>A task that represents the asynchronous save operation.</returns>
+    public ValueTask SaveSessionAsync(
+        AgentSessionStoreKey key,
+        AgentSession session,
+        CancellationToken cancellationToken = default)
     {
-        _ = Throw.IfNullOrWhitespace(conversationId);
+        _ = Throw.IfNull(key);
         _ = Throw.IfNull(session);
 
-        return this._sessionStore.SaveSessionAsync(this.InnerAgent, conversationId, session, cancellationToken);
+        MarkFeatureUsed();
+        return this._sessionStore.SaveSessionAsync(
+            this.InnerAgent,
+            key,
+            session,
+            cancellationToken);
+    }
+
+    /// <inheritdoc />
+    protected override Task<AgentResponse> RunCoreAsync(
+        IEnumerable<ChatMessage> messages,
+        AgentSession? session = null,
+        AgentRunOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        MarkFeatureUsed();
+        return base.RunCoreAsync(messages, session, options, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
+        IEnumerable<ChatMessage> messages,
+        AgentSession? session = null,
+        AgentRunOptions? options = null,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        MarkFeatureUsed();
+        await foreach (AgentResponseUpdate update in base.RunCoreStreamingAsync(messages, session, options, cancellationToken).ConfigureAwait(false))
+        {
+            yield return update;
+        }
+    }
+
+    private static void MarkFeatureUsed()
+    {
+#pragma warning disable MAAI001
+        FeatureUsage.MarkUsed((int)FeatureIndex.HostingAgent);
+#pragma warning restore MAAI001
     }
 }

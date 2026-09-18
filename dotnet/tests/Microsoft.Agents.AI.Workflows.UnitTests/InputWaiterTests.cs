@@ -3,13 +3,18 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
-using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.Execution;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
 public sealed class InputWaiterTests : IDisposable
 {
+    /// <summary>
+    /// Liveness backstop for waits that are expected to complete. Never the thing under test:
+    /// it is set far above the timeouts being exercised so a regression fails instead of hanging.
+    /// </summary>
+    private static readonly TimeSpan s_guardTimeout = TimeSpan.FromSeconds(30);
+
     private readonly InputWaiter _waiter = new();
 
     public void Dispose()
@@ -21,39 +26,35 @@ public sealed class InputWaiterTests : IDisposable
     [Fact]
     public async Task InputWaiter_WaitForInputAsync_CompletesAfterSignalAsync()
     {
+        // Arrange
         this._waiter.SignalInput();
 
-        // WaitForInputAsync should complete immediately since input was already signaled
-        Task waitTask = this._waiter.WaitForInputAsync(CancellationToken.None);
-        Task completed = await Task.WhenAny(waitTask, Task.Delay(TimeSpan.FromSeconds(1)));
+        // Act
+        bool signaled = await this._waiter.WaitForInputAsync(s_guardTimeout);
 
-        completed.Should().BeSameAs(waitTask, "the wait task should complete before the timeout");
-        await waitTask;
+        // Assert
+        Assert.True(signaled);
     }
 
     [Fact]
     public async Task InputWaiter_WaitForInputAsync_BlocksUntilSignaledAsync()
     {
-        // Use the no-timeout overload so that the wait can only be released by SignalInput.
-        // A finite timeout would make this test's logic racy: the component correctly
-        // honors the timeout, but if the test thread is starved of CPU time (CI load,
-        // GC pause) long enough for the timeout to fire, waitTask completes before
-        // SignalInput is called and the "should not complete before signaled" assertion
-        // flakes. Timeout behavior is covered separately below.
-        Task waitTask = this._waiter.WaitForInputAsync(CancellationToken.None);
+        // Arrange - the no-timeout overload is used so that only SignalInput can release the wait.
+        using CancellationTokenSource guard = new();
+        Task waitTask = this._waiter.WaitForInputAsync(guard.Token);
 
+        // Assert - the waiter stays blocked while no input has been signaled.
         Task completedBeforeSignal = await Task.WhenAny(waitTask, Task.Delay(100));
-        completedBeforeSignal.Should().NotBeSameAs(
-            waitTask,
-            "the waiter should not complete before input is signaled");
+        Assert.NotSame(waitTask, completedBeforeSignal);
 
+        // Act
         this._waiter.SignalInput();
 
-        Task completedAfterSignal = await Task.WhenAny(waitTask, Task.Delay(TimeSpan.FromSeconds(1)));
-        completedAfterSignal.Should().BeSameAs(
-            waitTask,
-            "the wait task should complete after being signaled");
+        // Armed only once the signal has released the wait, since cancelling a still-pending
+        // waiter would fail the test rather than guard it.
+        guard.CancelAfter(s_guardTimeout);
 
+        // Assert - completion alone proves the signal released the wait.
         await waitTask;
     }
 
@@ -61,11 +62,11 @@ public sealed class InputWaiterTests : IDisposable
     public void InputWaiter_SignalInput_DoubleSignalDoesNotThrow()
     {
         // Binary semaphore behavior: double signal should be idempotent
-        FluentActions.Invoking(() =>
+        Assert.Null(Record.Exception(() =>
         {
             this._waiter.SignalInput();
             this._waiter.SignalInput();
-        }).Should().NotThrow("double signaling should be handled gracefully");
+        }));
     }
 
     [Fact]
@@ -76,8 +77,8 @@ public sealed class InputWaiterTests : IDisposable
 
         cts.Cancel();
 
-        Func<Task> act = () => waitTask;
-        await act.Should().ThrowAsync<OperationCanceledException>();
+        Task actAsync() => waitTask;
+        await Assert.ThrowsAsync<OperationCanceledException>(actAsync);
     }
 
     [Fact]
@@ -87,7 +88,7 @@ public sealed class InputWaiterTests : IDisposable
         Task waitTask = this._waiter.WaitForInputAsync(cts.Token);
         Task completed = await Task.WhenAny(waitTask, Task.Delay(100));
 
-        completed.Should().NotBeSameAs(waitTask, "the wait task should not complete when input is not signaled");
+        Assert.NotSame(waitTask, completed);
 
         // Cancel and observe the pending task to avoid an unobserved exception on Dispose
         cts.Cancel();
@@ -98,27 +99,34 @@ public sealed class InputWaiterTests : IDisposable
     [Fact]
     public async Task InputWaiter_WaitForInputAsync_CanBeSignaledMultipleTimesSequentiallyAsync()
     {
-        // First signal/wait cycle
+        // Arrange / Act - first signal/wait cycle
         this._waiter.SignalInput();
-        await this._waiter.WaitForInputAsync(TimeSpan.FromSeconds(1));
+        bool firstSignaled = await this._waiter.WaitForInputAsync(s_guardTimeout);
 
-        // Second signal/wait cycle
+        // Arrange / Act - second signal/wait cycle
         this._waiter.SignalInput();
-        await this._waiter.WaitForInputAsync(TimeSpan.FromSeconds(1));
+        bool secondSignaled = await this._waiter.WaitForInputAsync(s_guardTimeout);
+
+        // Assert each cycle was released by its signal rather than by an expiring timeout.
+        Assert.True(firstSignaled);
+        Assert.True(secondSignaled);
     }
 
     [Fact]
     public async Task InputWaiter_WaitForInputAsync_CompletesWhenTimeoutExpiresAsync()
     {
-        // Verify that a finite timeout releases the block even without a signal.
-        // We only assert that it *does* complete (within a generous outer bound);
-        // we intentionally do not assert that it stays blocked until the timeout,
-        // because that would re-introduce the same wall-clock flakiness
-        // described in BlocksUntilSignaledAsync (see comment on that test).
-        Task waitTask = this._waiter.WaitForInputAsync(TimeSpan.FromMilliseconds(300));
+        // Arrange - nothing signals this waiter, so an expiring timeout is the only thing that
+        // can release the wait, and the returned flag proves which one did. The guard only
+        // bounds a wait that never returns; it is not part of the assertion.
+        using CancellationTokenSource guard = new();
 
-        Task completed = await Task.WhenAny(waitTask, Task.Delay(TimeSpan.FromSeconds(5)));
-        completed.Should().BeSameAs(waitTask, "the wait task should complete once the timeout expires");
-        await waitTask;
+        // Act
+        Task<bool> waitTask = this._waiter.WaitForInputAsync(TimeSpan.FromMilliseconds(300), guard.Token);
+        guard.CancelAfter(s_guardTimeout);
+
+        bool signaled = await waitTask;
+
+        // Assert
+        Assert.False(signaled);
     }
 }

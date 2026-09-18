@@ -1,0 +1,13 @@
+﻿#nullable enable
+GitHub.Copilot.CopilotClientExtensions
+Microsoft.Agents.AI.GitHub.Copilot.GitHubCopilotAgent
+Microsoft.Agents.AI.GitHub.Copilot.GitHubCopilotAgent.CreateSessionAsync(string! sessionId) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.AgentSession!>
+Microsoft.Agents.AI.GitHub.Copilot.GitHubCopilotAgent.DisposeAsync() -> System.Threading.Tasks.ValueTask
+Microsoft.Agents.AI.GitHub.Copilot.GitHubCopilotAgent.GitHubCopilotAgent(GitHub.Copilot.CopilotClient! copilotClient, GitHub.Copilot.SessionConfig? sessionConfig = null, bool ownsClient = false, string? id = null, string? name = null, string? description = null, System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null) -> void
+Microsoft.Agents.AI.GitHub.Copilot.GitHubCopilotAgent.GitHubCopilotAgent(GitHub.Copilot.CopilotClient! copilotClient, bool ownsClient = false, string? id = null, string? name = null, string? description = null, System.Collections.Generic.IList<Microsoft.Extensions.AI.AIFunctionDeclaration!>? tools = null, string? instructions = null, System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null) -> void
+Microsoft.Agents.AI.GitHub.Copilot.GitHubCopilotAgentSession
+Microsoft.Agents.AI.GitHub.Copilot.GitHubCopilotAgentSession.SessionId.get -> string?
+override Microsoft.Agents.AI.GitHub.Copilot.GitHubCopilotAgent.Description.get -> string!
+override Microsoft.Agents.AI.GitHub.Copilot.GitHubCopilotAgent.Name.get -> string!
+static GitHub.Copilot.CopilotClientExtensions.AsAIAgent(this GitHub.Copilot.CopilotClient! client, GitHub.Copilot.SessionConfig? sessionConfig = null, bool ownsClient = false, string? id = null, string? name = null, string? description = null) -> Microsoft.Agents.AI.AIAgent!
+static GitHub.Copilot.CopilotClientExtensions.AsAIAgent(this GitHub.Copilot.CopilotClient! client, bool ownsClient = false, string? id = null, string? name = null, string? description = null, System.Collections.Generic.IList<Microsoft.Extensions.AI.AIFunctionDeclaration!>? tools = null, string? instructions = null) -> Microsoft.Agents.AI.AIAgent!

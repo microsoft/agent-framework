@@ -8,7 +8,6 @@ using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.InProc;
 using Microsoft.Extensions.AI;
 
@@ -119,8 +118,7 @@ public class GroupChatOrchestrationTests
 
         await using (StreamingRun firstRun = await env.RunStreamingAsync(workflow, new List<ChatMessage> { new(ChatRole.User, "hello") }))
         {
-            (await firstRun.TrySendMessageAsync(new TurnToken(emitEvents: false)))
-                .Should().BeTrue();
+            Assert.True(await firstRun.TrySendMessageAsync(new TurnToken(emitEvents: false)));
 
             using CancellationTokenSource cts = new(TimeSpan.FromSeconds(30));
             await foreach (WorkflowEvent evt in firstRun.WatchStreamAsync(blockOnPendingRequest: false, cts.Token))
@@ -137,16 +135,15 @@ public class GroupChatOrchestrationTests
             }
         }
 
-        pendingRequest.Should().NotBeNull("agent1 should have surfaced an approval request for the privileged tool");
-        firstRunEvents.OfType<WorkflowErrorEvent>().Should().BeEmpty();
-        firstRunEvents.OfType<ExecutorFailedEvent>().Should().BeEmpty();
-        approvalToolCallCount.Should().Be(0, "the tool must not be invoked before approval is granted");
+        Assert.NotNull(pendingRequest);
+        Assert.Empty(firstRunEvents.OfType<WorkflowErrorEvent>() ?? []);
+        Assert.Empty(firstRunEvents.OfType<ExecutorFailedEvent>() ?? []);
+        Assert.Equal(0, approvalToolCallCount);
 
-        ToolApprovalRequestContent approvalRequest =
-            pendingRequest!.Data.As<ToolApprovalRequestContent>().Should().NotBeNull()
-                                                                 .And.Subject.As<ToolApprovalRequestContent>();
-        approvalRequest.ToolCall.Should().BeOfType<FunctionCallContent>();
-        ((FunctionCallContent)approvalRequest.ToolCall).Name.Should().Be(ApprovalToolName);
+        ToolApprovalRequestContent? approvalRequest = pendingRequest!.Data.As<ToolApprovalRequestContent>();
+        Assert.NotNull(approvalRequest);
+        Assert.True(approvalRequest.ToolCall is FunctionCallContent);
+        Assert.Equal(ApprovalToolName, ((FunctionCallContent)approvalRequest.ToolCall).Name);
 
         // Deny the request and continue the conversation.
         ExternalResponse denial = pendingRequest.CreateResponse(approvalRequest.CreateResponse(approved: false, reason: "Denied"));
@@ -168,18 +165,16 @@ public class GroupChatOrchestrationTests
             }
         }
 
-        secondRunEvents.OfType<WorkflowErrorEvent>().Should().BeEmpty(
-            "denying the approval should not surface any workflow errors");
-        secondRunEvents.OfType<ExecutorFailedEvent>().Should().BeEmpty(
-            "denying the approval should not raise executor failures (regression guard for the GroupChat duplicate-key bug pinned in PR #5952's A2 test before the broadcast refactor)");
+        Assert.Empty(secondRunEvents.OfType<WorkflowErrorEvent>() ?? []);
+        Assert.Empty(secondRunEvents.OfType<ExecutorFailedEvent>() ?? []);
 
-        approvalToolCallCount.Should().Be(0, "the tool must not be invoked after denial");
-        agent1CallCount.Should().BeGreaterThanOrEqualTo(2, "agent1 should be re-invoked by FICC after the denial to produce a final assistant message");
-        agent2CallCount.Should().Be(1, "agent2 should be the next round-robin speaker and produce its own reply");
+        Assert.Equal(0, approvalToolCallCount);
+        Assert.True(agent1CallCount >= 2);
+        Assert.Equal(1, agent2CallCount);
 
-        finalOutput.Should().NotBeNull();
-        finalOutput!.Should().Contain(m => m.AuthorName == "agent1");
-        finalOutput.Should().Contain(m => m.AuthorName == "agent2" && m.Text == "agent2 reply");
+        Assert.NotNull(finalOutput);
+        Assert.Contains(finalOutput!, m => m.AuthorName == "agent1");
+        Assert.Contains(finalOutput, m => m.AuthorName == "agent2" && m.Text == "agent2 reply");
     }
 
     /// <summary>
@@ -240,8 +235,7 @@ public class GroupChatOrchestrationTests
 
         await using (StreamingRun firstRun = await env.RunStreamingAsync(workflow, new List<ChatMessage> { new(ChatRole.User, "hello") }))
         {
-            (await firstRun.TrySendMessageAsync(new TurnToken(emitEvents: false)))
-                .Should().BeTrue();
+            Assert.True(await firstRun.TrySendMessageAsync(new TurnToken(emitEvents: false)));
 
             using CancellationTokenSource cts = new(TimeSpan.FromSeconds(30));
             await foreach (WorkflowEvent evt in firstRun.WatchStreamAsync(blockOnPendingRequest: false, cts.Token))
@@ -257,14 +251,12 @@ public class GroupChatOrchestrationTests
             }
         }
 
-        pendingRequest.Should().NotBeNull("agent1 should have surfaced a FunctionCallContent for the declaration-only tool");
+        Assert.NotNull(pendingRequest);
 
-        FunctionCallContent functionCall =
-            pendingRequest!.Data.As<FunctionCallContent>().Should().NotBeNull()
-                                                          .And.Subject.As<FunctionCallContent>();
-        functionCall.Name.Should().Be(FunctionName);
-        functionCall.CallId.Should().EndWith(FunctionCallId,
-            "the workflow rewrites the CallId with an executor-scoped prefix, but should preserve the original tail");
+        FunctionCallContent? functionCall = pendingRequest!.Data.As<FunctionCallContent>();
+        Assert.NotNull(functionCall);
+        Assert.Equal(FunctionName, functionCall.Name);
+        Assert.EndsWith(FunctionCallId, functionCall.CallId);
 
         // Respond with a function result and let the conversation continue.
         ExternalResponse response = pendingRequest.CreateResponse(new FunctionResultContent(functionCall.CallId, "external-data-payload"));
@@ -286,15 +278,15 @@ public class GroupChatOrchestrationTests
             }
         }
 
-        resumeEvents.OfType<WorkflowErrorEvent>().Should().BeEmpty();
-        resumeEvents.OfType<ExecutorFailedEvent>().Should().BeEmpty();
+        Assert.Empty(resumeEvents.OfType<WorkflowErrorEvent>() ?? []);
+        Assert.Empty(resumeEvents.OfType<ExecutorFailedEvent>() ?? []);
 
-        agent1CallCount.Should().BeGreaterThanOrEqualTo(2, "agent1 should be re-invoked once the externally-resolved function result is delivered");
-        agent2CallCount.Should().Be(1, "agent2 should be the next round-robin speaker after agent1 finishes");
+        Assert.True(agent1CallCount >= 2);
+        Assert.Equal(1, agent2CallCount);
 
-        finalOutput.Should().NotBeNull();
-        finalOutput!.Should().Contain(m => m.AuthorName == "agent1");
-        finalOutput.Should().Contain(m => m.AuthorName == "agent2" && m.Text == "agent2 reply");
+        Assert.NotNull(finalOutput);
+        Assert.Contains(finalOutput!, m => m.AuthorName == "agent1");
+        Assert.Contains(finalOutput, m => m.AuthorName == "agent2" && m.Text == "agent2 reply");
     }
 
     /// <summary>
@@ -320,8 +312,7 @@ public class GroupChatOrchestrationTests
         await using (StreamingRun firstRun = await env.WithCheckpointing(checkpointManager)
                                                       .RunStreamingAsync(workflow, inputMessages))
         {
-            (await firstRun.TrySendMessageAsync(new TurnToken(emitEvents: false)))
-                .Should().BeTrue($"[{scenarioName}] the workflow should accept a TurnToken");
+            Assert.True(await firstRun.TrySendMessageAsync(new TurnToken(emitEvents: false)));
 
             using CancellationTokenSource cts = new(TimeSpan.FromSeconds(30));
             await foreach (WorkflowEvent evt in firstRun.WatchStreamAsync(blockOnPendingRequest: false, cts.Token))
@@ -337,17 +328,14 @@ public class GroupChatOrchestrationTests
             }
         }
 
-        firstRunRequest.Should().NotBeNull(
-            $"[{scenarioName}] the ChatClientAgent + FICC pipeline should surface the approval request as a workflow RequestInfoEvent");
-        checkpoint.Should().NotBeNull(
-            $"[{scenarioName}] a checkpoint should have been produced while the approval request was pending");
-        harness.ChatCallCount.Should().Be(1, $"[{scenarioName}] the mock chat client should have been called exactly once before approval was requested");
-        harness.InvocationCount.Should().Be(0, $"[{scenarioName}] the underlying tool must NOT have been invoked before approval was granted");
+        Assert.NotNull(firstRunRequest);
+        Assert.NotNull(checkpoint);
+        Assert.Equal(1, harness.ChatCallCount);
+        Assert.Equal(0, harness.InvocationCount);
 
         ToolApprovalRequestContent? preCheckpoint = firstRunRequest!.Data.As<ToolApprovalRequestContent>();
-        preCheckpoint.Should().NotBeNull($"[{scenarioName}] the pending external request should carry a ToolApprovalRequestContent payload");
-        preCheckpoint!.ToolCall.Should().BeOfType<FunctionCallContent>(
-            $"[{scenarioName}] the pre-checkpoint pending request payload must already be a FunctionCallContent");
+        Assert.NotNull(preCheckpoint);
+        Assert.True(preCheckpoint!.ToolCall is FunctionCallContent);
 
         // Resume on a fresh handle and capture the re-emitted approval request.
         ExternalRequest? resumedRequest = null;
@@ -365,16 +353,12 @@ public class GroupChatOrchestrationTests
                 }
             }
 
-            resumedRequest.Should().NotBeNull($"[{scenarioName}] the resumed workflow should re-emit the pending approval RequestInfoEvent");
+            Assert.NotNull(resumedRequest);
 
             ToolApprovalRequestContent? postResume = resumedRequest!.Data.As<ToolApprovalRequestContent>();
-            postResume.Should().NotBeNull(
-                $"[{scenarioName}] ExternalRequest.Data.As<ToolApprovalRequestContent>() should materialize the payload after JSON-checkpoint resume");
-            postResume!.ToolCall.Should().NotBeNull($"[{scenarioName}] the resumed TARC must carry its ToolCall");
-            postResume.ToolCall.Should().BeOfType<FunctionCallContent>(
-                $"[{scenarioName}] after CheckpointManager.CreateJson round-trip via ResumeStreamingAsync, " +
-                "ToolApprovalRequestContent.ToolCall must still be a FunctionCallContent so that " +
-                "FunctionInvokingChatClient's pattern match (`tarc.ToolCall is FunctionCallContent`) continues to fire.");
+            Assert.NotNull(postResume);
+            Assert.NotNull(postResume!.ToolCall);
+            Assert.True(postResume.ToolCall is FunctionCallContent);
 
             ToolApprovalResponseContent approvalResponse = postResume.CreateResponse(approved: true);
             await resumed.SendResponseAsync(resumedRequest.CreateResponse(approvalResponse));
@@ -386,14 +370,9 @@ public class GroupChatOrchestrationTests
             }
         }
 
-        harness.InvocationCount.Should().Be(1,
-            $"[{scenarioName}] approving the request should cause FunctionInvokingChatClient to invoke the wrapped AIFunction exactly once");
-        postResumeEvents.OfType<WorkflowErrorEvent>().Should().BeEmpty(
-            $"[{scenarioName}] no workflow errors should be raised when responding to the resumed approval request");
-        postResumeEvents.OfType<ExecutorFailedEvent>().Should().BeEmpty(
-            $"[{scenarioName}] no executor failures should be raised when responding to the resumed approval request " +
-            "(regression guard: pre-broadcast-refactor this test was the `Track A2` repro in PR #5952 which surfaced a " +
-            "duplicate-key ArgumentException out of FunctionInvokingChatClient.ExtractAndRemoveApprovalRequestsAndResponses).");
+        Assert.Equal(1, harness.InvocationCount);
+        Assert.Empty(postResumeEvents.OfType<WorkflowErrorEvent>() ?? []);
+        Assert.Empty(postResumeEvents.OfType<ExecutorFailedEvent>() ?? []);
     }
 
     /// <summary>

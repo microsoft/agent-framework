@@ -4,11 +4,12 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
-using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.InProc;
 using Microsoft.Agents.AI.Workflows.Observability;
+using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
@@ -115,7 +116,7 @@ public sealed class ObservabilityTests : IDisposable
 
         // Assert
         var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
-        capturedActivities.Should().HaveCount(9, "Exactly 9 activities should be created.");
+        Assert.Equal(9, capturedActivities.Count);
 
         // Make sure all expected activities exist and have the correct count
         foreach (var kvp in GetExpectedActivityNameCounts())
@@ -123,14 +124,14 @@ public sealed class ObservabilityTests : IDisposable
             var activityName = kvp.Key;
             var expectedCount = kvp.Value;
             var actualCount = capturedActivities.Count(a => a.OperationName.StartsWith(activityName, StringComparison.Ordinal));
-            actualCount.Should().Be(expectedCount, $"Activity '{activityName}' should occur {expectedCount} times.");
+            Assert.Equal(expectedCount, actualCount);
         }
 
         // Verify WorkflowRun activity events include workflow lifecycle events
         var workflowRunActivity = capturedActivities.First(a => a.OperationName.StartsWith(ActivityNames.WorkflowInvoke, StringComparison.Ordinal));
         var activityEvents = workflowRunActivity.Events.ToList();
-        activityEvents.Should().Contain(e => e.Name == EventNames.WorkflowStarted, "activity should have workflow started event");
-        activityEvents.Should().Contain(e => e.Name == EventNames.WorkflowCompleted, "activity should have workflow completed event");
+        Assert.Contains(activityEvents, e => e.Name == EventNames.WorkflowStarted);
+        Assert.Contains(activityEvents, e => e.Name == EventNames.WorkflowCompleted);
     }
 
     [Fact]
@@ -168,18 +169,17 @@ public sealed class ObservabilityTests : IDisposable
         CreateWorkflow();
         // Assert
         var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
-        capturedActivities.Should().HaveCount(1, "Exactly 1 activity should be created.");
-        capturedActivities[0].OperationName.Should().Be(ActivityNames.WorkflowBuild,
-            "The activity should have the correct operation name for workflow build.");
+        var capturedActivity = Assert.Single(capturedActivities);
+        Assert.Equal(ActivityNames.WorkflowBuild, capturedActivity.OperationName);
 
-        var events = capturedActivities[0].Events.ToList();
-        events.Should().Contain(e => e.Name == EventNames.BuildStarted, "activity should have build started event");
-        events.Should().Contain(e => e.Name == EventNames.BuildValidationCompleted, "activity should have build validation completed event");
-        events.Should().Contain(e => e.Name == EventNames.BuildCompleted, "activity should have build completed event");
+        var events = capturedActivity.Events.ToList();
+        Assert.Contains(events, e => e.Name == EventNames.BuildStarted);
+        Assert.Contains(events, e => e.Name == EventNames.BuildValidationCompleted);
+        Assert.Contains(events, e => e.Name == EventNames.BuildCompleted);
 
         var tags = capturedActivities[0].Tags.ToDictionary(t => t.Key, t => t.Value);
-        tags.Should().ContainKey(Tags.WorkflowId);
-        tags.Should().ContainKey(Tags.WorkflowDefinition);
+        Assert.Contains(Tags.WorkflowId, tags);
+        Assert.Contains(Tags.WorkflowDefinition, tags);
     }
 
     [Fact]
@@ -197,7 +197,7 @@ public sealed class ObservabilityTests : IDisposable
         builder.Build(); // No WithOpenTelemetry() call
         // Assert - No activities should be created
         var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
-        capturedActivities.Should().BeEmpty("No activities should be created when telemetry is disabled (default).");
+        Assert.Empty(capturedActivities ?? []);
     }
 
     [Fact]
@@ -229,10 +229,8 @@ public sealed class ObservabilityTests : IDisposable
 
         // Assert
         var capturedActivities = userActivities.Where(a => a.RootId == testActivity.RootId).ToList();
-        capturedActivities.Should().NotBeEmpty("Activities should be created with user-provided ActivitySource.");
-        capturedActivities.Should().OnlyContain(
-            a => a.Source.Name == "UserProvidedSource",
-            "All activities should come from the user-provided ActivitySource.");
+        Assert.NotEmpty(capturedActivities);
+        Assert.All(capturedActivities, a => Assert.True(a.Source.Name == "UserProvidedSource"));
     }
 
     [Fact]
@@ -250,9 +248,7 @@ public sealed class ObservabilityTests : IDisposable
 
         // Assert
         var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
-        capturedActivities.Should().NotContain(
-            a => a.OperationName.StartsWith(ActivityNames.WorkflowBuild, StringComparison.Ordinal),
-            "WorkflowBuild activity should be disabled.");
+        Assert.DoesNotContain(capturedActivities, a => a.OperationName.StartsWith(ActivityNames.WorkflowBuild, StringComparison.Ordinal));
     }
 
     [Fact]
@@ -274,15 +270,9 @@ public sealed class ObservabilityTests : IDisposable
 
         // Assert
         var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
-        capturedActivities.Should().NotContain(
-            a => a.OperationName.StartsWith(ActivityNames.WorkflowInvoke, StringComparison.Ordinal),
-            "WorkflowRun activity should be disabled.");
-        capturedActivities.Should().NotContain(
-            a => a.OperationName.StartsWith(ActivityNames.WorkflowSession, StringComparison.Ordinal),
-            "WorkflowSession activity should also be disabled when DisableWorkflowRun is true.");
-        capturedActivities.Should().Contain(
-            a => a.OperationName.StartsWith(ActivityNames.WorkflowBuild, StringComparison.Ordinal),
-            "Other activities should still be created.");
+        Assert.DoesNotContain(capturedActivities, a => a.OperationName.StartsWith(ActivityNames.WorkflowInvoke, StringComparison.Ordinal));
+        Assert.DoesNotContain(capturedActivities, a => a.OperationName.StartsWith(ActivityNames.WorkflowSession, StringComparison.Ordinal));
+        Assert.Contains(capturedActivities, a => a.OperationName.StartsWith(ActivityNames.WorkflowBuild, StringComparison.Ordinal));
     }
 
     [Fact]
@@ -304,12 +294,8 @@ public sealed class ObservabilityTests : IDisposable
 
         // Assert
         var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
-        capturedActivities.Should().NotContain(
-            a => a.OperationName.StartsWith(ActivityNames.ExecutorProcess, StringComparison.Ordinal),
-            "ExecutorProcess activity should be disabled.");
-        capturedActivities.Should().Contain(
-            a => a.OperationName.StartsWith(ActivityNames.WorkflowInvoke, StringComparison.Ordinal),
-            "Other activities should still be created.");
+        Assert.DoesNotContain(capturedActivities, a => a.OperationName.StartsWith(ActivityNames.ExecutorProcess, StringComparison.Ordinal));
+        Assert.Contains(capturedActivities, a => a.OperationName.StartsWith(ActivityNames.WorkflowInvoke, StringComparison.Ordinal));
     }
 
     [Fact]
@@ -325,12 +311,8 @@ public sealed class ObservabilityTests : IDisposable
 
         // Assert
         var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
-        capturedActivities.Should().NotContain(
-            a => a.OperationName.StartsWith(ActivityNames.EdgeGroupProcess, StringComparison.Ordinal),
-            "EdgeGroupProcess activity should be disabled.");
-        capturedActivities.Should().Contain(
-            a => a.OperationName.StartsWith(ActivityNames.ExecutorProcess, StringComparison.Ordinal),
-            "Other activities should still be created.");
+        Assert.DoesNotContain(capturedActivities, a => a.OperationName.StartsWith(ActivityNames.EdgeGroupProcess, StringComparison.Ordinal));
+        Assert.Contains(capturedActivities, a => a.OperationName.StartsWith(ActivityNames.ExecutorProcess, StringComparison.Ordinal));
     }
 
     [Fact]
@@ -346,12 +328,8 @@ public sealed class ObservabilityTests : IDisposable
 
         // Assert
         var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
-        capturedActivities.Should().NotContain(
-            a => a.OperationName.StartsWith(ActivityNames.MessageSend, StringComparison.Ordinal),
-            "MessageSend activity should be disabled.");
-        capturedActivities.Should().Contain(
-            a => a.OperationName.StartsWith(ActivityNames.ExecutorProcess, StringComparison.Ordinal),
-            "Other activities should still be created.");
+        Assert.DoesNotContain(capturedActivities, a => a.OperationName.StartsWith(ActivityNames.MessageSend, StringComparison.Ordinal));
+        Assert.Contains(capturedActivities, a => a.OperationName.StartsWith(ActivityNames.ExecutorProcess, StringComparison.Ordinal));
     }
 
     private static Workflow CreateWorkflowWithDisabledEdges()
@@ -404,13 +382,13 @@ public sealed class ObservabilityTests : IDisposable
         var executorActivity = capturedActivities.FirstOrDefault(
             a => a.OperationName.StartsWith(ActivityNames.ExecutorProcess, StringComparison.Ordinal));
 
-        executorActivity.Should().NotBeNull("ExecutorProcess activity should be created.");
+        Assert.NotNull(executorActivity);
 
         var tags = executorActivity!.Tags.ToDictionary(t => t.Key, t => t.Value);
-        tags.Should().ContainKey(Tags.ExecutorInput, "Input should be logged when EnableSensitiveData is true.");
-        tags.Should().ContainKey(Tags.ExecutorOutput, "Output should be logged when EnableSensitiveData is true.");
-        tags[Tags.ExecutorInput].Should().Contain("hello", "Input should contain the input value.");
-        tags[Tags.ExecutorOutput].Should().Contain("HELLO", "Output should contain the transformed value.");
+        Assert.Contains(Tags.ExecutorInput, tags);
+        Assert.Contains(Tags.ExecutorOutput, tags);
+        Assert.Contains("hello", tags[Tags.ExecutorInput]);
+        Assert.Contains("HELLO", tags[Tags.ExecutorOutput]);
     }
 
     [Fact]
@@ -435,11 +413,11 @@ public sealed class ObservabilityTests : IDisposable
         var executorActivity = capturedActivities.FirstOrDefault(
             a => a.OperationName.StartsWith(ActivityNames.ExecutorProcess, StringComparison.Ordinal));
 
-        executorActivity.Should().NotBeNull("ExecutorProcess activity should be created.");
+        Assert.NotNull(executorActivity);
 
         var tags = executorActivity!.Tags.ToDictionary(t => t.Key, t => t.Value);
-        tags.Should().NotContainKey(Tags.ExecutorInput, "Input should NOT be logged when EnableSensitiveData is false.");
-        tags.Should().NotContainKey(Tags.ExecutorOutput, "Output should NOT be logged when EnableSensitiveData is false.");
+        Assert.DoesNotContain(Tags.ExecutorInput, tags);
+        Assert.DoesNotContain(Tags.ExecutorOutput, tags);
     }
 
     [Fact]
@@ -467,11 +445,11 @@ public sealed class ObservabilityTests : IDisposable
         var messageSendActivity = capturedActivities.FirstOrDefault(
             a => a.OperationName.StartsWith(ActivityNames.MessageSend, StringComparison.Ordinal));
 
-        messageSendActivity.Should().NotBeNull("MessageSend activity should be created.");
+        Assert.NotNull(messageSendActivity);
 
         var tags = messageSendActivity!.Tags.ToDictionary(t => t.Key, t => t.Value);
-        tags.Should().ContainKey(Tags.MessageContent, "Message content should be logged when EnableSensitiveData is true.");
-        tags.Should().ContainKey(Tags.MessageSourceId, "Source ID should be logged.");
+        Assert.Contains(Tags.MessageContent, tags);
+        Assert.Contains(Tags.MessageSourceId, tags);
     }
 
     [Fact]
@@ -499,10 +477,143 @@ public sealed class ObservabilityTests : IDisposable
         var messageSendActivity = capturedActivities.FirstOrDefault(
             a => a.OperationName.StartsWith(ActivityNames.MessageSend, StringComparison.Ordinal));
 
-        messageSendActivity.Should().NotBeNull("MessageSend activity should be created.");
+        Assert.NotNull(messageSendActivity);
 
         var tags = messageSendActivity!.Tags.ToDictionary(t => t.Key, t => t.Value);
-        tags.Should().NotContainKey(Tags.MessageContent, "Message content should NOT be logged when EnableSensitiveData is false.");
-        tags.Should().ContainKey(Tags.MessageSourceId, "Source ID should still be logged.");
+        Assert.DoesNotContain(Tags.MessageContent, tags);
+        Assert.Contains(Tags.MessageSourceId, tags);
+    }
+
+    [Fact]
+    public async Task EnableSensitiveData_UnserializableMessage_DoesNotFailWorkflowAsync()
+    {
+        // Arrange
+        const string SenderId = "UnserializableMessageSender";
+        const string ReceiverId = "UnserializableMessageReceiver";
+        const string ExpectedOutput = "done";
+        string expectedFallback = $"[Unserializable: {typeof(ChatMessage).FullName}]";
+
+        using var testActivity = new Activity("ObservabilityTest").Start();
+
+        var sender = new UnserializableMessageSender(SenderId, ReceiverId);
+        List<ChatMessage> received = [];
+        Func<ChatMessage, string> consume = message =>
+        {
+            received.Add(message);
+            return ExpectedOutput;
+        };
+        var receiver = consume.BindAsExecutor(ReceiverId);
+
+        WorkflowBuilder builder = new(sender);
+        builder.AddEdge(sender, receiver).WithOutputFrom(receiver);
+        Workflow workflow = builder.WithOpenTelemetry(configure: opts => opts.EnableSensitiveData = true).Build();
+
+        // Act
+        Run run = await InProcessExecution.Default.RunAsync(workflow, "start");
+        await run.DisposeAsync();
+
+        // Assert
+        Assert.Empty(run.OutgoingEvents.OfType<WorkflowErrorEvent>() ?? []);
+        WorkflowOutputEvent output = Assert.Single(run.OutgoingEvents.OfType<WorkflowOutputEvent>());
+        Assert.Equal(ExpectedOutput, output.Data);
+
+        ChatMessage delivered = Assert.Single(received);
+        Assert.IsType<UnregisteredAIContent>(Assert.Single(delivered.Contents));
+
+        List<Activity> capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
+        Assert.Contains(
+            capturedActivities,
+            activity => activity.OperationName.StartsWith(ActivityNames.MessageSend, StringComparison.Ordinal)
+                && Equals(expectedFallback, activity.GetTagItem(Tags.MessageContent)));
+
+        Assert.Contains(
+            capturedActivities,
+            activity => activity.OperationName.StartsWith(ActivityNames.ExecutorProcess, StringComparison.Ordinal)
+                && Equals(expectedFallback, activity.GetTagItem(Tags.ExecutorInput)));
+    }
+
+    [Fact]
+    public void EnableSensitiveData_UnserializableExecutorInputAndOutput_UsesFallback()
+    {
+        // Arrange
+        string expectedFallback = $"[Unserializable: {typeof(ChatMessage).FullName}]";
+        ChatMessage message = CreateUnserializableMessage();
+        WorkflowTelemetryContext context = new(new WorkflowTelemetryOptions { EnableSensitiveData = true });
+
+        // Act
+        using Activity? activity = context.StartExecutorProcessActivity(
+            "TestExecutor",
+            typeof(ObservabilityTests).FullName,
+            typeof(ChatMessage).FullName!,
+            message);
+        context.SetExecutorOutput(activity, message);
+
+        // Assert
+        Assert.NotNull(activity);
+        Assert.Equal(expectedFallback, activity!.GetTagItem(Tags.ExecutorInput));
+        Assert.Equal(expectedFallback, activity.GetTagItem(Tags.ExecutorOutput));
+    }
+
+    [Fact]
+    public void EnableSensitiveData_SerializationThrowsInvalidOperation_UsesFallback()
+    {
+        // Arrange
+        // Reflection-disabled (Native AOT) apps surface serialization failures as InvalidOperationException,
+        // which System.Text.Json does not wrap. A throwing property getter reproduces that escape path.
+        string expectedFallback = $"[Unserializable: {typeof(ThrowingMessage).FullName}]";
+        WorkflowTelemetryContext context = new(new WorkflowTelemetryOptions { EnableSensitiveData = true });
+
+        // Act
+        using Activity? activity = context.StartMessageSendActivity("source", "target", new ThrowingMessage());
+
+        // Assert
+        Assert.NotNull(activity);
+        Assert.Equal(expectedFallback, activity!.GetTagItem(Tags.MessageContent));
+    }
+
+    [Theory]
+    [InlineData(typeof(ArgumentException))]
+    [InlineData(typeof(IOException))]
+    [InlineData(typeof(OperationCanceledException))]
+    [InlineData(typeof(TimeoutException))]
+    public void EnableSensitiveData_SerializationThrowsAnyException_UsesFallback(Type exceptionType)
+    {
+        // Arrange
+        // System.Text.Json does not wrap property-getter exceptions, so serialization can surface any
+        // exception type. Telemetry must fall back rather than fail the workflow for all of them.
+        string expectedFallback = $"[Unserializable: {typeof(ThrowingMessage).FullName}]";
+        WorkflowTelemetryContext context = new(new WorkflowTelemetryOptions { EnableSensitiveData = true });
+
+        // Act
+        using Activity? activity = context.StartMessageSendActivity("source", "target", new ThrowingMessage(exceptionType));
+
+        // Assert
+        Assert.NotNull(activity);
+        Assert.Equal(expectedFallback, activity!.GetTagItem(Tags.MessageContent));
+    }
+
+    private static ChatMessage CreateUnserializableMessage() =>
+        new(ChatRole.Assistant, [new UnregisteredAIContent()]);
+
+    private sealed class UnserializableMessageSender(string id, string targetId) : Executor(id)
+    {
+        protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
+        {
+            protocolBuilder.RouteBuilder.AddHandler<string>(
+                (_, context) => context.SendMessageAsync(CreateUnserializableMessage(), targetId));
+
+            return protocolBuilder.SendsMessage<ChatMessage>();
+        }
+    }
+
+    private sealed class UnregisteredAIContent : AIContent;
+
+    private sealed class ThrowingMessage(Type exceptionType)
+    {
+        public ThrowingMessage() : this(typeof(InvalidOperationException))
+        {
+        }
+
+        public string Value => throw (Exception)Activator.CreateInstance(exceptionType, "serialization failed")!;
     }
 }

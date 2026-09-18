@@ -2,7 +2,7 @@
 
 This directory contains samples demonstrating how to use Azure AI's evaluation and red teaming capabilities with Agent Framework agents.
 
-For more details on the Red Team setup see [the Azure AI Foundry docs](https://learn.microsoft.com/en-us/azure/ai-foundry/how-to/develop/run-scans-ai-red-teaming-agent)
+For more details on the Red Team setup see [the Microsoft Foundry docs](https://learn.microsoft.com/en-us/azure/ai-foundry/how-to/develop/run-scans-ai-red-teaming-agent)
 
 ## Samples
 
@@ -31,7 +31,7 @@ A focused sample demonstrating Azure AI's RedTeam functionality to assess the sa
 
 ### Python Environment
 ```bash
-pip install agent-framework azure-ai-evaluation pyrit duckdb azure-identity
+pip install agent-framework-foundry azure-ai-evaluation pyrit==0.9.0 duckdb
 ```
 
 Note: The sample uses `python-dotenv` to load environment variables from a `.env` file.

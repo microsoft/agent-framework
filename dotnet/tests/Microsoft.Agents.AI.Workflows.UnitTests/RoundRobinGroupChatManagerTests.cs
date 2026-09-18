@@ -3,7 +3,6 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using FluentAssertions;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
@@ -25,9 +24,9 @@ public class RoundRobinGroupChatManagerTests
         AIAgent second = await manager.SelectNextAgentAsync(history);
         AIAgent third = await manager.SelectNextAgentAsync(history);
 
-        first.Should().BeSameAs(agent1);
-        second.Should().BeSameAs(agent2);
-        third.Should().BeSameAs(agent3);
+        Assert.Same(agent1, first);
+        Assert.Same(agent2, second);
+        Assert.Same(agent3, third);
     }
 
     [Fact]
@@ -45,7 +44,7 @@ public class RoundRobinGroupChatManagerTests
 
         AIAgent wrappedAgent = await manager.SelectNextAgentAsync(history);
 
-        wrappedAgent.Should().BeSameAs(agent1, "the manager should wrap around to the first agent after cycling through all agents");
+        Assert.Same(agent1, wrappedAgent);
     }
 
     [Fact]
@@ -59,11 +58,11 @@ public class RoundRobinGroupChatManagerTests
 
         manager.IterationCount = 2;
         bool shouldTerminateBefore = await manager.ShouldTerminateAsync(history);
-        shouldTerminateBefore.Should().BeFalse("the iteration count has not yet reached the maximum");
+        Assert.False(shouldTerminateBefore);
 
         manager.IterationCount = 3;
         bool shouldTerminateAt = await manager.ShouldTerminateAsync(history);
-        shouldTerminateAt.Should().BeTrue("the iteration count has reached the maximum");
+        Assert.True(shouldTerminateAt);
     }
 
     [Fact]
@@ -80,7 +79,7 @@ public class RoundRobinGroupChatManagerTests
         };
 
         bool shouldTerminate = await manager.ShouldTerminateAsync(history);
-        shouldTerminate.Should().BeTrue("the custom termination function should cause early termination");
+        Assert.True(shouldTerminate);
     }
 
     [Fact]
@@ -97,7 +96,7 @@ public class RoundRobinGroupChatManagerTests
         };
 
         bool shouldTerminate = await manager.ShouldTerminateAsync(history);
-        shouldTerminate.Should().BeFalse("the custom termination function should not cause termination when condition is not met");
+        Assert.False(shouldTerminate);
     }
 
     [Fact]
@@ -116,25 +115,22 @@ public class RoundRobinGroupChatManagerTests
 
         manager.Reset();
 
-        manager.IterationCount.Should().Be(0, "Reset should clear the iteration count");
+        Assert.Equal(0, manager.IterationCount);
 
         AIAgent afterReset = await manager.SelectNextAgentAsync(history);
-        afterReset.Should().BeSameAs(agent1, "Reset should cause the next selection to start from the first agent");
+        Assert.Same(agent1, afterReset);
     }
 
     [Fact]
     public void RoundRobinGroupChat_Constructor_ThrowsOnNullAgents()
     {
-        FluentActions.Invoking(() => new RoundRobinGroupChatManager(null!))
-            .Should().Throw<System.ArgumentNullException>()
-            .WithParameterName("agents");
+        Assert.Equal("agents", Assert.Throws<System.ArgumentNullException>(() => new RoundRobinGroupChatManager(null!)).ParamName);
     }
 
     [Fact]
     public void RoundRobinGroupChat_Constructor_ThrowsOnEmptyAgents()
     {
-        FluentActions.Invoking(() => new RoundRobinGroupChatManager([]))
-            .Should().Throw<System.ArgumentException>();
+        Assert.Throws<System.ArgumentException>(() => new RoundRobinGroupChatManager([]));
     }
 
     [Fact]
@@ -157,14 +153,14 @@ public class RoundRobinGroupChatManagerTests
         await source.CheckpointAsync(sourceContext);
 
         RoundRobinGroupChatManager restored = new(agents);
-        restored.IterationCount.Should().Be(0, "freshly constructed manager has no iteration count");
+        Assert.Equal(0, restored.IterationCount);
 
         await restored.RestoreCheckpointAsync(sinkContext);
 
-        restored.IterationCount.Should().Be(7, "the base hook must rehydrate IterationCount");
+        Assert.Equal(7, restored.IterationCount);
 
         AIAgent next = await restored.SelectNextAgentAsync(history);
-        next.Should().BeSameAs(agent2, "the round-robin cursor should resume where the source left off");
+        Assert.Same(agent2, next);
     }
 
     [Fact]
@@ -183,8 +179,8 @@ public class RoundRobinGroupChatManagerTests
 
         await manager.RestoreCheckpointAsync(emptyContext);
 
-        manager.IterationCount.Should().Be(0, "restore from an empty checkpoint should clear IterationCount");
+        Assert.Equal(0, manager.IterationCount);
         AIAgent next = await manager.SelectNextAgentAsync(history);
-        next.Should().BeSameAs(agent1, "restore from an empty checkpoint should reset the cursor to the first agent");
+        Assert.Same(agent1, next);
     }
 }

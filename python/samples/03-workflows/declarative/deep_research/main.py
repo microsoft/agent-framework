@@ -24,10 +24,12 @@ Usage:
 import asyncio
 import os
 from pathlib import Path
+from typing import Any
 
 from agent_framework import Agent
 from agent_framework.declarative import WorkflowFactory
 from agent_framework.foundry import FoundryChatClient
+from agent_framework.openai import OpenAIChatOptions
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
@@ -148,7 +150,7 @@ async def main() -> None:
         client=client,
         name="ManagerAgent",
         instructions=MANAGER_INSTRUCTIONS,
-        default_options={"response_format": ManagerResponse},
+        default_options=OpenAIChatOptions[Any](response_format=ManagerResponse),
     )
 
     summary_agent = Agent(

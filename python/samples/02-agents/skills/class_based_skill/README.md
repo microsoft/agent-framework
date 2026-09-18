@@ -32,13 +32,13 @@ class_based_skill/
 
 ### Prerequisites
 
-- An [Azure AI Foundry](https://ai.azure.com/) project with a deployed model (e.g. `gpt-4o-mini`)
+- A [Microsoft Foundry](https://ai.azure.com/) project with a deployed model (e.g. `gpt-4o-mini`)
 
 ### Environment Variables
 
 Set the required environment variables in a `.env` file (see `python/.env.example`):
 
-- `FOUNDRY_PROJECT_ENDPOINT`: Your Azure AI Foundry project endpoint
+- `FOUNDRY_PROJECT_ENDPOINT`: Your Microsoft Foundry project endpoint
 - `FOUNDRY_MODEL`: The name of your model deployment (defaults to `gpt-4o-mini`)
 
 ### Authentication

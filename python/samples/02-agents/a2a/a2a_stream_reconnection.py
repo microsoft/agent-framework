@@ -2,10 +2,12 @@
 
 import asyncio
 import os
+from typing import cast
 
 import httpx
 from a2a.client import A2ACardResolver
 from agent_framework.a2a import A2AAgent
+from agent_framework_a2a import A2AContinuationToken
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -82,9 +84,9 @@ async def main() -> None:
         # 4. Reconnect using the saved continuation token.
         #    background=True is required so that in-progress task updates
         #    surface continuation tokens (matching the A2AAgent contract).
-        print(f"Reconnecting with continuation token (task_id={saved_token['task_id']})...")
+        print("Reconnecting with continuation token...")
         resumed_stream = agent.run(
-            continuation_token=saved_token,
+            continuation_token=cast(A2AContinuationToken, saved_token),
             stream=True,
             background=True,
         )

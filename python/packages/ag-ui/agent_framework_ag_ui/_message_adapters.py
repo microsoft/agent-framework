@@ -8,39 +8,123 @@ import base64
 import binascii
 import json
 import logging
-from typing import Any, cast
+from typing import Any, cast, get_args
 
 from agent_framework import (
     Content,
     Message,
 )
+from agent_framework._types import ContentType  # pyright: ignore[reportPrivateUsage]
 
+from ._state import TOOL_RESULT_DISPLAY_KEY
 from ._utils import (
+    _AGUI_HOST_PAYLOAD_OMITTED_KEY,
+    _AGUI_MCP_TOOL_RESULT_KEY,
+    _AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY,
+    _AGUI_TOOL_RESULT_MODEL_CONTENT_KEY,
+    _MAX_MCP_HOST_PAYLOAD_HISTORY_SIZE_BYTES,
     AGUI_TO_FRAMEWORK_ROLE,
     FRAMEWORK_TO_AGUI_ROLE,
+    _bound_host_payload_history,
+    _extract_mcp_tool_result_host_payload,
+    _extract_tool_result_marker_values,
+    _host_payload_history_size,
+    _mcp_host_history_fields,
+    _model_content_from_mcp_host_payload,
+    _model_items_for_agui_replay,
+    _persistable_host_payload_history,
+    _project_host_payload_history,
+    _sanitize_model_replay_item,
+    _stringify_tool_result,
     get_role_value,
     normalize_agui_role,
     safe_json_parse,
 )
 
 logger = logging.getLogger(__name__)
+_VALID_CONTENT_TYPES = frozenset(get_args(ContentType))
+_APPROVAL_DECISION_IS_BOOLEAN_KEY = "_ag_ui_approval_decision_is_boolean"
 
 
-def _sanitize_tool_history(messages: list[Message]) -> list[Message]:
+def _append_synthetic_tool_results(
+    sanitized: list[Message],
+    pending_tool_call_ids: list[str],
+    result: str,
+    *,
+    excluded_tool_call_ids: set[str] | None = None,
+) -> None:
+    excluded_tool_call_ids = excluded_tool_call_ids or set()
+    for pending_call_id in pending_tool_call_ids:
+        if pending_call_id in excluded_tool_call_ids:
+            logger.info("Not injecting synthetic tool result for non-abandoned call_id=%s", pending_call_id)
+            continue
+        logger.info("Injecting synthetic tool result for pending call_id=%s", pending_call_id)
+        sanitized.append(
+            Message(
+                role="tool",
+                contents=[
+                    Content.from_function_result(
+                        call_id=pending_call_id,
+                        result=result,
+                    )
+                ],
+            )
+        )
+
+
+def _ordered_unique_tool_call_ids(contents: list[Content]) -> list[str]:
+    tool_ids: list[str] = []
+    seen: set[str] = set()
+    for content in contents:
+        if content.type != "function_call" or not content.call_id:
+            continue
+        tool_id = str(content.call_id)
+        if tool_id in seen:
+            continue
+        tool_ids.append(tool_id)
+        seen.add(tool_id)
+    return tool_ids
+
+
+def _function_result_call_ids(messages: list[Message]) -> set[str]:
+    result_ids: set[str] = set()
+    for msg in messages:
+        for content in msg.contents or []:
+            if content.type == "function_result" and content.call_id:
+                result_ids.add(str(content.call_id))
+    return result_ids
+
+
+def _sanitize_tool_history(
+    messages: list[Message],
+    *,
+    protected_tool_call_ids: set[str] | None = None,
+) -> list[Message]:
     """Normalize tool ordering and inject synthetic results for AG-UI edge cases."""
     sanitized: list[Message] = []
-    pending_tool_call_ids: set[str] | None = None
+    pending_tool_call_ids: list[str] | None = None
     pending_confirm_changes_id: str | None = None
+    non_abandoned_tool_call_ids = set(protected_tool_call_ids or set()) | _function_result_call_ids(messages)
 
     for msg in messages:
         role_value = get_role_value(msg)
 
         if role_value == "assistant":
-            tool_ids = {
-                str(content.call_id)
-                for content in msg.contents or []
-                if content.type == "function_call" and content.call_id
-            }
+            if pending_tool_call_ids:
+                logger.info(
+                    "Assistant message arrived with %d pending tool calls - injecting synthetic results",
+                    len(pending_tool_call_ids),
+                )
+                _append_synthetic_tool_results(
+                    sanitized,
+                    pending_tool_call_ids,
+                    "Tool execution skipped - assistant continued before the tool result was available.",
+                    excluded_tool_call_ids=non_abandoned_tool_call_ids,
+                )
+                pending_tool_call_ids = None
+                pending_confirm_changes_id = None
+
+            tool_ids = _ordered_unique_tool_call_ids(msg.contents or [])
             confirm_changes_call = None
             for content in msg.contents or []:
                 if content.type == "function_call" and content.name == "confirm_changes":
@@ -67,7 +151,8 @@ def _sanitize_tool_history(messages: list[Message]) -> list[Message]:
 
                 # Remove confirm_changes from tool_ids since we filtered it from the message
                 if confirm_changes_call.call_id:
-                    tool_ids.discard(str(confirm_changes_call.call_id))
+                    confirm_call_id = str(confirm_changes_call.call_id)
+                    tool_ids = [tool_id for tool_id in tool_ids if tool_id != confirm_call_id]
                 # Don't set pending_confirm_changes_id - we don't want a synthetic result
                 confirm_changes_call = None
             else:
@@ -87,12 +172,14 @@ def _sanitize_tool_history(messages: list[Message]) -> list[Message]:
                     if content.function_call and content.function_call.call_id:
                         approval_call_ids.add(str(content.function_call.call_id))
                     if approval_accepted is None:
-                        approval_accepted = bool(content.approved)
+                        approval_accepted = content.approved is True
                     else:
-                        approval_accepted = approval_accepted and bool(content.approved)
+                        approval_accepted = approval_accepted and content.approved is True
 
             if approval_call_ids and pending_tool_call_ids:
-                pending_tool_call_ids -= approval_call_ids
+                pending_tool_call_ids = [
+                    call_id for call_id in pending_tool_call_ids if call_id not in approval_call_ids
+                ]
                 logger.info(
                     f"function_approval_response content found for call_ids={sorted(approval_call_ids)} - "
                     "framework will handle execution"
@@ -111,20 +198,22 @@ def _sanitize_tool_history(messages: list[Message]) -> list[Message]:
                 )
                 sanitized.append(synthetic_result)
                 if pending_tool_call_ids:
-                    pending_tool_call_ids.discard(pending_confirm_changes_id)
+                    pending_tool_call_ids = [
+                        call_id for call_id in pending_tool_call_ids if call_id != pending_confirm_changes_id
+                    ]
                 pending_confirm_changes_id = None
 
             if pending_confirm_changes_id:
                 user_text = ""
                 for content in msg.contents or []:
                     if content.type == "text":
-                        user_text = content.text  # type: ignore[assignment]
+                        user_text = content.text
                         break
 
                 if not user_text:
                     continue
                 try:
-                    parsed = json.loads(user_text)  # type: ignore[arg-type]
+                    parsed = json.loads(user_text)
                     if "accepted" in parsed:
                         logger.info(
                             f"Injecting synthetic tool result for confirm_changes call_id={pending_confirm_changes_id}"
@@ -134,13 +223,15 @@ def _sanitize_tool_history(messages: list[Message]) -> list[Message]:
                             contents=[
                                 Content.from_function_result(
                                     call_id=pending_confirm_changes_id,
-                                    result="Confirmed" if parsed.get("accepted") else "Rejected",
+                                    result="Confirmed" if parsed.get("accepted") is True else "Rejected",
                                 )
                             ],
                         )
                         sanitized.append(synthetic_result)
                         if pending_tool_call_ids:
-                            pending_tool_call_ids.discard(pending_confirm_changes_id)
+                            pending_tool_call_ids = [
+                                call_id for call_id in pending_tool_call_ids if call_id != pending_confirm_changes_id
+                            ]
                         pending_confirm_changes_id = None
                         continue
                 except (json.JSONDecodeError, KeyError) as exc:
@@ -151,18 +242,12 @@ def _sanitize_tool_history(messages: list[Message]) -> list[Message]:
                     f"User message arrived with {len(pending_tool_call_ids)} pending tool calls - "
                     "injecting synthetic results"
                 )
-                for pending_call_id in pending_tool_call_ids:
-                    logger.info(f"Injecting synthetic tool result for pending call_id={pending_call_id}")
-                    synthetic_result = Message(
-                        role="tool",
-                        contents=[
-                            Content.from_function_result(
-                                call_id=pending_call_id,
-                                result="Tool execution skipped - user provided follow-up message",
-                            )
-                        ],
-                    )
-                    sanitized.append(synthetic_result)
+                _append_synthetic_tool_results(
+                    sanitized,
+                    pending_tool_call_ids,
+                    "Tool execution skipped - user provided follow-up message",
+                    excluded_tool_call_ids=non_abandoned_tool_call_ids,
+                )
                 pending_tool_call_ids = None
                 pending_confirm_changes_id = None
 
@@ -182,7 +267,9 @@ def _sanitize_tool_history(messages: list[Message]) -> list[Message]:
                         # Remove the call_id from pending since we now have its result.
                         # This prevents duplicate synthetic "skipped" results from being
                         # injected when a user message arrives later.
-                        pending_tool_call_ids.discard(call_id)
+                        pending_tool_call_ids = [
+                            pending_id for pending_id in pending_tool_call_ids if pending_id != call_id
+                        ]
                         if call_id == pending_confirm_changes_id:
                             pending_confirm_changes_id = None
                         break
@@ -190,9 +277,34 @@ def _sanitize_tool_history(messages: list[Message]) -> list[Message]:
                 sanitized.append(msg)
             continue
 
+        if pending_tool_call_ids:
+            logger.info(
+                "%s message arrived with %d pending tool calls - injecting synthetic results",
+                role_value,
+                len(pending_tool_call_ids),
+            )
+            _append_synthetic_tool_results(
+                sanitized,
+                pending_tool_call_ids,
+                "Tool execution skipped - conversation continued before the tool result was available.",
+                excluded_tool_call_ids=non_abandoned_tool_call_ids,
+            )
+
         sanitized.append(msg)
         pending_tool_call_ids = None
         pending_confirm_changes_id = None
+
+    if pending_tool_call_ids:
+        logger.info(
+            "History ended with %d pending tool calls - injecting synthetic results",
+            len(pending_tool_call_ids),
+        )
+        _append_synthetic_tool_results(
+            sanitized,
+            pending_tool_call_ids,
+            "Tool execution skipped - conversation ended before the tool result was available.",
+            excluded_tool_call_ids=non_abandoned_tool_call_ids,
+        )
 
     return sanitized
 
@@ -268,9 +380,10 @@ def _extract_multimodal_source_fields(
 ) -> tuple[str | None, str | None, str | None, str | None]:
     """Extract ``(url, data, binary_id, mime_type)`` from an AG-UI multimodal part.
 
-    Handles both the current AG-UI spec (``source.value`` for base64 payloads) and the
-    legacy ``source.data`` field for backward compatibility. Returned values are the
-    raw extracted strings (or ``None`` when absent); callers apply their own defaults.
+    Handles both the current AG-UI spec (``source.value`` for both URL and base64
+    payloads) and the legacy ``source.url``/``source.data`` fields for backward
+    compatibility. Returned values are the raw extracted strings (or ``None`` when
+    absent); callers apply their own defaults.
     """
     mime_type = cast(str | None, part.get("mimeType") or part.get("mime_type"))
     url = cast(str | None, part.get("url") or part.get("uri"))
@@ -286,7 +399,7 @@ def _extract_multimodal_source_fields(
             mime_type = source_mime
 
         if source_type in {"url", "uri"}:
-            url = cast(str | None, source_dict.get("url") or source_dict.get("uri"))
+            url = cast(str | None, source_dict.get("value") or source_dict.get("url") or source_dict.get("uri"))
         elif source_type in {"base64", "data", "binary"}:
             data = cast(str | None, source_dict.get("value") or source_dict.get("data"))
         elif source_type in {"id", "file"}:
@@ -468,6 +581,7 @@ def normalize_agui_input_messages(
     messages: list[dict[str, Any]],
     *,
     sanitize_tool_history: bool = True,
+    protected_tool_call_ids: set[str] | None = None,
 ) -> tuple[list[Message], list[dict[str, Any]]]:
     """Normalize raw AG-UI messages into provider and snapshot formats.
 
@@ -476,13 +590,33 @@ def normalize_agui_input_messages(
         sanitize_tool_history: Apply agent-run specific tool history repair logic.
             Keep enabled for standard agent runs; disable for native workflow runs
             where pending-request responses must come explicitly from interrupt resume.
+        protected_tool_call_ids: Server-owned tool calls that are still eligible
+            to complete and must not receive synthetic skipped results.
     """
     provider_messages = agui_messages_to_agent_framework(messages)
     if sanitize_tool_history:
-        provider_messages = _sanitize_tool_history(provider_messages)
+        provider_messages = _sanitize_tool_history(provider_messages, protected_tool_call_ids=protected_tool_call_ids)
     provider_messages = _deduplicate_messages(provider_messages)
     snapshot_messages = agui_messages_to_snapshot_format(messages)
     return provider_messages, snapshot_messages
+
+
+def _deserialize_model_replay_items(serialized_items: Any) -> list[Content] | None:
+    """Deserialize a valid model replay sidecar without trusting malformed Host history."""
+    if not isinstance(serialized_items, list) or not all(
+        isinstance(item, dict) and item.get("type") in _VALID_CONTENT_TYPES for item in serialized_items
+    ):
+        return None
+    try:
+        model_items = [Content.from_dict(_sanitize_model_replay_item(item)) for item in serialized_items]
+        if any(
+            item.get("type") == "text" and "text" in item and not isinstance(item.get("text"), str)
+            for item in serialized_items
+        ):
+            raise TypeError("Serialized text replay content must contain a string")
+        return model_items
+    except (RecursionError, TypeError, ValueError):
+        return None
 
 
 def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Message]:
@@ -623,13 +757,41 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Mes
             elif isinstance(result_content, dict):
                 parsed = cast(dict[str, Any], result_content)
 
+            if msg.get(_AGUI_MCP_TOOL_RESULT_KEY) is True:
+                host_payload = msg.get(_AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY, result_content)
+                parsed_host_payload = safe_json_parse(host_payload)
+                serialized_items = msg.get(_AGUI_TOOL_RESULT_MODEL_CONTENT_KEY)
+                model_items = _deserialize_model_replay_items(serialized_items)
+                if model_items is None:
+                    model_items = [Content.from_text(_model_content_from_mcp_host_payload(parsed_host_payload))]
+                function_result = Content.from_function_result(call_id=str(tool_call_id), result=model_items)
+                chat_msg = Message(
+                    role="tool",
+                    contents=[function_result],
+                )
+                if "id" in msg:
+                    chat_msg.message_id = msg["id"]
+                result.append(chat_msg)
+                continue
+
+            if msg.get(_AGUI_HOST_PAYLOAD_OMITTED_KEY) is True:
+                safe_result = result_content if isinstance(result_content, (str, dict, list)) else str(result_content)
+                chat_msg = Message(
+                    role="tool",
+                    contents=[Content.from_function_result(call_id=str(tool_call_id), result=safe_result)],
+                )
+                if "id" in msg:
+                    chat_msg.message_id = msg["id"]
+                result.append(chat_msg)
+                continue
+
             is_approval = parsed is not None and "accepted" in parsed
 
             if is_approval:
                 # Look for the matching function call in previous messages to create
                 # proper function_approval_response content. This enables the agent framework
                 # to execute the approved tool (fix for GitHub issue #3034).
-                accepted = parsed.get("accepted", False) if parsed is not None else False
+                accepted = parsed.get("accepted") is True if parsed is not None else False
                 approval_payload_text = result_content if isinstance(result_content, str) else json.dumps(parsed)
 
                 # Log the full approval payload to debug modified arguments
@@ -719,6 +881,7 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Mes
                             name=matching_func_call.name,  # type: ignore[arg-type]
                             arguments=json.dumps(filtered_args),
                         )
+                        func_call_for_approval.id = matching_func_call.id or str(approval_call_id)
                         logger.info(f"Using modified arguments from approval: {filtered_args}")
                     else:
                         # No modified arguments - use the original function call
@@ -727,7 +890,7 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Mes
                     # Create function_approval_response content for the agent framework
                     approval_response = Content.from_function_approval_response(
                         approved=accepted,
-                        id=str(approval_call_id),
+                        id=func_call_for_approval.id or str(approval_call_id),
                         function_call=func_call_for_approval,
                         additional_properties={"ag_ui_state_args": state_args} if state_args else None,
                     )
@@ -834,23 +997,28 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Mes
                     name=approval.get("name", ""),
                     arguments=approval.get("arguments", {}),
                 )
+                func_call.id = approval.get("function_call_id") or approval.get("id") or None
 
                 # Create the approval response
+                approved_value = approval.get("approved")
                 approval_response = Content.from_function_approval_response(
-                    approved=approval.get("approved", True),
+                    approved=approved_value is True,
                     id=approval.get("id", ""),
                     function_call=func_call,
+                    additional_properties={
+                        _APPROVAL_DECISION_IS_BOOLEAN_KEY: isinstance(approved_value, bool),
+                    },
                 )
                 approval_contents.append(approval_response)
 
-            chat_msg = Message(role=role, contents=approval_contents)  # type: ignore[call-overload]
+            chat_msg = Message(role=role, contents=approval_contents)
         else:
             # Regular message content (text or multimodal)
             content = msg.get("content", "")
             converted_contents = _convert_agui_content_to_framework(content)
             if not converted_contents:
                 converted_contents = [Content.from_text(text="")]
-            chat_msg = Message(role=role, contents=converted_contents)  # type: ignore[call-overload]
+            chat_msg = Message(role=role, contents=converted_contents)
 
         if "id" in msg:
             chat_msg.message_id = msg["id"]
@@ -860,23 +1028,243 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Mes
     return result
 
 
-def agent_framework_messages_to_agui(messages: list[Message] | list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Convert Agent Framework messages to AG-UI format.
+def _convert_framework_content_to_agui(content: Content) -> dict[str, Any] | None:
+    """Convert Agent Framework media content to an AG-UI input part."""
+    if content.type not in {"uri", "data"} or not content.uri:
+        return None
 
-    Args:
-        messages: List of Agent Framework Message objects or AG-UI dicts (already converted)
+    media_type = content.media_type
+    media_type_prefix = media_type.lower().split("/", 1)[0] if media_type else ""
+    part_type = media_type_prefix if media_type_prefix in {"image", "audio", "video"} else "document"
 
-    Returns:
-        List of AG-UI message dictionaries
+    if content.type == "data":
+        data_uri_prefix, separator, encoded_data = content.uri.partition(",")
+        is_base64_data_uri = bool(separator) and any(
+            parameter.lower() == "base64" for parameter in data_uri_prefix.split(";")[1:]
+        )
+        if is_base64_data_uri:
+            source: dict[str, Any] = {"type": "data", "value": encoded_data}
+        else:
+            source = {"type": "url", "value": content.uri}
+    else:
+        source = {"type": "url", "value": content.uri}
+
+    if media_type is not None:
+        source["mimeType"] = media_type
+    return {"type": part_type, "source": source}
+
+
+def _encode_agui_segment(contents: list[Content], role: str) -> tuple[str | list[dict[str, Any]], list[dict[str, Any]]]:
+    """Encode a framework content segment into AG-UI message content and tool calls.
+
+    The shared encoder preserves ordered user text and media parts for both the
+    single-message and function-result split paths. Non-user messages retain AG-UI's
+    string-content shape.
+    """
+    text = ""
+    input_content_parts: list[dict[str, Any]] = []
+    has_multimodal_content = False
+    tool_calls: list[dict[str, Any]] = []
+    for content in contents:
+        if content.type == "text":
+            text_content = content.text or ""
+            text += text_content
+            if role == "user":
+                input_content_parts.append({"type": "text", "text": text_content})
+        elif role == "user" and content.type in {"uri", "data"}:
+            if input_part := _convert_framework_content_to_agui(content):
+                input_content_parts.append(input_part)
+                has_multimodal_content = True
+        elif content.type == "function_call":
+            tool_calls.append(
+                {
+                    "id": content.call_id,
+                    "type": "function",
+                    "function": {
+                        "name": content.name,
+                        "arguments": content.arguments,
+                    },
+                }
+            )
+    message_content: str | list[dict[str, Any]] = input_content_parts if has_multimodal_content else text
+    return message_content, tool_calls
+
+
+def _split_mixed_message_to_agui(
+    msg: Message,
+    role: str,
+    unresolved_call_ids: set[str],
+    emitted_results: list[tuple[Content, dict[str, Any]]] | None = None,
+) -> list[dict[str, Any]]:
+    """Convert a Message that carries function_result content into ordered AG-UI messages.
+
+    A single Agent Framework message can interleave assistant content (text,
+    function_call) with one or more function_result (tool) contents -- for example a
+    parallel tool-call batch or a finalized turn. AG-UI needs each function_result as
+    its own ``tool`` message. ``_sanitize_tool_history`` resets its pending-call set on
+    every non-tool message, so a result is dropped as orphaned whenever an assistant
+    message lands between a call and that call's result. Four ordering rules keep the
+    transcript provider-valid:
+
+    * A ``function_call`` must precede its matching result, so a pending assistant
+      segment that carries tool calls is flushed (together with any buffered text) right
+      before the result.
+    * A text-only segment is NOT flushed before a result. Such text is deferred and
+      emitted after the results instead.
+    * A new assistant segment is NOT flushed while earlier emitted calls are still
+      awaiting their results. For ``[call A, call B, result A, call C, result B,
+      result C]``, flushing ``assistant(C)`` before ``result B`` would separate the
+      still-open call B from its result; deferring it yields ``[assistant(A,B), tool(A),
+      tool(B), assistant(C), tool(C)]``.
+    * A result whose own call is still buffered (not yet emitted) is QUEUED rather than
+      emitted, because emitting it would leave it ahead of its call. For
+      ``[call A, call B, result A, call C, result C, result B]`` the queued ``result C``
+      is held until ``assistant(C)`` is flushed, giving ``[assistant(A,B), tool(A),
+      tool(B), assistant(C), tool(C)]``.
+
+    ``unresolved_call_ids`` is owned by ``agent_framework_messages_to_agui`` and carried
+    across the whole conversion, not rebuilt per message: a call emitted by an earlier
+    message stays open until its result is emitted, so a later mixed message cannot slip
+    a new assistant segment between that call and its result (e.g. a prior
+    ``assistant(call A)`` followed by ``[call C, result A, result C]``).
+
+    The source message id is kept on the first emitted message; every additional
+    message gets an independent generated id. Deriving suffixes from the source id
+    (e.g. ``f"{base_id}-1"``) risks colliding with a legitimate id elsewhere in the
+    history, which would let id-keyed clients re-collapse the split messages.
     """
     from ._utils import generate_event_id
 
+    messages: list[dict[str, Any]] = []
+    seg_contents: list[Content] = []
+    seg_has_call = False
+    seg_call_ids: set[str] = set()
+    # Results whose own call is still buffered; emitted once that segment is flushed.
+    queued_results: list[Content] = []
+    source_id_available = bool(msg.message_id)
+
+    def next_id() -> str:
+        nonlocal source_id_available
+        if source_id_available and msg.message_id:
+            source_id_available = False
+            return msg.message_id
+        source_id_available = False
+        return generate_event_id()
+
+    def flush_segment() -> None:
+        nonlocal seg_contents, seg_has_call
+        if not seg_contents:
+            return
+        seg_text, seg_tool_calls = _encode_agui_segment(seg_contents, role)
+        seg_contents = []
+        seg_has_call = False
+        seg_call_ids.clear()
+        if not seg_text and not seg_tool_calls:
+            return
+        assistant_msg: dict[str, Any] = {"id": next_id(), "role": role, "content": seg_text}
+        if seg_tool_calls:
+            assistant_msg["tool_calls"] = seg_tool_calls
+            unresolved_call_ids.update(str(tc["id"]) for tc in seg_tool_calls if tc["id"] is not None)
+        messages.append(assistant_msg)
+
+    def emit_result(content: Content) -> None:
+        tool_message: dict[str, Any] = {
+            "id": next_id(),
+            "role": "tool",
+            "content": content.result if content.result is not None else "",
+            "toolCallId": content.call_id,
+        }
+        messages.append(tool_message)
+        if emitted_results is not None:
+            emitted_results.append((content, tool_message))
+        if content.call_id is not None:
+            unresolved_call_ids.discard(str(content.call_id))
+
+    def drain_queued() -> None:
+        """Flush the buffered segment, then release the results waiting on its calls."""
+        if not queued_results:
+            return
+        flush_segment()
+        for queued in queued_results:
+            emit_result(queued)
+        queued_results.clear()
+
+    for content in msg.contents:
+        if content.type in ("text", "function_call") or (role == "user" and content.type in {"uri", "data"}):
+            seg_contents.append(content)
+            if content.type == "function_call":
+                seg_has_call = True
+                if content.call_id is not None:
+                    seg_call_ids.add(str(content.call_id))
+        elif content.type == "function_result":
+            call_id = str(content.call_id) if content.call_id is not None else None
+            if call_id is not None and call_id in unresolved_call_ids:
+                # Its call is already emitted and still open, so the result can go now.
+                emit_result(content)
+                if not unresolved_call_ids:
+                    drain_queued()
+            elif seg_has_call and not unresolved_call_ids:
+                # No older batch is open: flush the buffered segment so its calls precede
+                # this result, then emit it.
+                flush_segment()
+                emit_result(content)
+                drain_queued()
+            elif call_id is not None and call_id in seg_call_ids:
+                # This result's call is still buffered behind an open older batch.
+                # Emitting now would put the result ahead of its call, so hold it.
+                queued_results.append(content)
+            else:
+                # Its call came from an already-emitted message: emit in place.
+                emit_result(content)
+
+    # Emit any deferred / trailing segment (buffered text, or a new-call segment whose
+    # results arrive in a later message), then release anything still queued behind it.
+    flush_segment()
+    for queued in queued_results:
+        emit_result(queued)
+    return messages
+
+
+def _convert_agent_framework_messages_to_agui(
+    messages: list[Message] | list[dict[str, Any]],
+    *,
+    emitted_results: list[tuple[Content, dict[str, Any]]] | None = None,
+    preserve_host_history_dicts: bool = False,
+) -> list[dict[str, Any]]:
+    """Convert Agent Framework messages to AG-UI format."""
+    from ._utils import generate_event_id
+
     result: list[dict[str, Any]] = []
+    # Calls emitted so far whose results have not been emitted yet. Carried across every
+    # message (mirroring _sanitize_tool_history's pending set) so a mixed message never
+    # slips a new assistant segment between an earlier call and its result.
+    unresolved_call_ids: set[str] = set()
+
+    def track_emitted(
+        role_value: str | None, tool_calls: list[dict[str, Any]] | None, tool_call_id: Any = None
+    ) -> None:
+        """Mirror _sanitize_tool_history's pending-call bookkeeping for an emitted message."""
+        if role_value == "tool":
+            if tool_call_id:
+                unresolved_call_ids.discard(str(tool_call_id))
+            return
+        # Any non-tool message resets the pending set to the calls it introduces.
+        unresolved_call_ids.clear()
+        for tool_call in tool_calls or []:
+            if isinstance(tool_call, dict) and tool_call.get("id") is not None:
+                unresolved_call_ids.add(str(tool_call["id"]))
+
     for msg in messages:
         # If already a dict (AG-UI format), ensure it has an ID and normalize keys for Pydantic
         if isinstance(msg, dict):
             # Always work on a copy to avoid mutating input
             normalized_msg = msg.copy()
+            if not preserve_host_history_dicts and normalized_msg.get(_AGUI_MCP_TOOL_RESULT_KEY) is True:
+                normalized_msg = _persistable_host_payload_history([normalized_msg])[0].copy()
+                normalized_msg.pop(_AGUI_MCP_TOOL_RESULT_KEY, None)
+                normalized_msg.pop(_AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY, None)
+                normalized_msg.pop(_AGUI_TOOL_RESULT_MODEL_CONTENT_KEY, None)
+                normalized_msg.pop(_AGUI_HOST_PAYLOAD_OMITTED_KEY, None)
             normalized_msg["role"] = normalize_agui_role(normalized_msg.get("role"))
             # Ensure ID exists
             if "id" not in normalized_msg:
@@ -891,53 +1279,150 @@ def agent_framework_messages_to_agui(messages: list[Message] | list[dict[str, An
                     normalized_msg["toolCallId"] = ""
             # Always append the normalized copy, not the original
             result.append(normalized_msg)
+            track_emitted(
+                normalized_msg.get("role"),
+                normalized_msg.get("tool_calls"),
+                normalized_msg.get("toolCallId"),
+            )
             continue
 
         # Convert Message to AG-UI format
-        role_value: str = msg.role if hasattr(msg.role, "value") else msg.role  # type: ignore[assignment]
+        role_value: str = msg.role if hasattr(msg.role, "value") else msg.role
         role = FRAMEWORK_TO_AGUI_ROLE.get(role_value, "user")
 
-        content_text = ""
-        tool_calls: list[dict[str, Any]] = []
-        tool_result_call_id: str | None = None
-
-        for content in msg.contents:
-            if content.type == "text":
-                content_text += content.text  # type: ignore[operator]
-            elif content.type == "function_call":
-                tool_calls.append(
-                    {
-                        "id": content.call_id,
-                        "type": "function",
-                        "function": {
-                            "name": content.name,
-                            "arguments": content.arguments,
-                        },
-                    }
+        # A message carrying function_result content may interleave assistant
+        # (text/function_call) and tool (function_result) segments -- e.g. parallel
+        # tool calls or a finalized turn. Split it into ordered AG-UI messages so no
+        # result is dropped and each result stays after its matching call. Messages
+        # with no result use the simple single-message form below.
+        if any(content.type == "function_result" for content in msg.contents):
+            result.extend(
+                _split_mixed_message_to_agui(
+                    msg,
+                    role,
+                    unresolved_call_ids,
+                    emitted_results,
                 )
-            elif content.type == "function_result":
-                # Tool result content - extract call_id and result
-                tool_result_call_id = content.call_id
-                content_text = content.result if content.result is not None else ""
+            )
+            continue
+
+        message_content, tool_calls = _encode_agui_segment(msg.contents, role)
 
         agui_msg: dict[str, Any] = {
             "id": msg.message_id if msg.message_id else generate_event_id(),  # Always include id
             "role": role,
-            "content": content_text,
+            "content": message_content,
         }
 
         if tool_calls:
             agui_msg["tool_calls"] = tool_calls
 
-        # If this is a tool result message, add toolCallId (using camelCase for Pydantic)
-        if tool_result_call_id:
-            agui_msg["toolCallId"] = tool_result_call_id
-            # Tool result messages should have role="tool"
-            agui_msg["role"] = "tool"
-
         result.append(agui_msg)
+        track_emitted(role, tool_calls)
 
     return result
+
+
+def agent_framework_messages_to_agui(messages: list[Message] | list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Convert Agent Framework messages to model-safe AG-UI request format."""
+    return _convert_agent_framework_messages_to_agui(messages)
+
+
+def _prepare_host_history_fields(
+    emitted_results: list[tuple[Content, dict[str, Any]]],
+    *,
+    max_size_bytes: int,
+) -> tuple[dict[int, dict[str, Any]], set[int]]:
+    """Materialize only the newest MCP Host projections that fit the aggregate budget."""
+    retained_fields: dict[int, dict[str, Any]] = {}
+    omitted_ids: set[int] = set()
+    retained_size = 0
+    budget_exhausted = False
+
+    for content, _ in reversed(emitted_results):
+        has_host_payload, host_payload = _extract_mcp_tool_result_host_payload(content)
+        if not has_host_payload:
+            continue
+        content_id = id(content)
+        if budget_exhausted:
+            omitted_ids.add(content_id)
+            continue
+
+        display_values = _extract_tool_result_marker_values(content, TOOL_RESULT_DISPLAY_KEY)
+        if display_values:
+            host_payload = display_values[-1]
+        model_result = _stringify_tool_result(content.result if content.result is not None else "")
+        fields = _mcp_host_history_fields(
+            host_payload,
+            _model_items_for_agui_replay(content, model_result),
+        )
+        message_size = _host_payload_history_size({"content": model_result, **fields})
+        if retained_size + message_size > max_size_bytes:
+            omitted_ids.add(content_id)
+            budget_exhausted = True
+            continue
+        retained_size += message_size
+        retained_fields[content_id] = fields
+
+    return retained_fields, omitted_ids
+
+
+def _normalize_host_history_dict_replay(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Replace malformed dictionary sidecars before projecting Host-visible content."""
+    normalized: list[dict[str, Any]] = []
+    for message in messages:
+        normalized_message = message.copy()
+        if (
+            message.get(_AGUI_MCP_TOOL_RESULT_KEY) is True
+            and _deserialize_model_replay_items(message.get(_AGUI_TOOL_RESULT_MODEL_CONTENT_KEY)) is None
+        ):
+            if _AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY in message:
+                model_content = _stringify_tool_result(message.get("content", "Tool result unavailable."))
+            else:
+                host_payload = safe_json_parse(message.get("content"))
+                model_content = (
+                    "Error: Function failed."
+                    if isinstance(host_payload, dict) and host_payload.get("isError") is True
+                    else "Tool result unavailable."
+                )
+            normalized_message[_AGUI_TOOL_RESULT_MODEL_CONTENT_KEY] = [{"type": "text", "text": model_content}]
+        normalized.append(normalized_message)
+    return normalized
+
+
+def agent_framework_messages_to_agui_host_history(
+    messages: list[Message] | list[dict[str, Any]],
+    *,
+    max_host_payload_history_size_bytes: int = _MAX_MCP_HOST_PAYLOAD_HISTORY_SIZE_BYTES,
+) -> list[dict[str, Any]]:
+    """Convert Agent Framework messages to bounded AG-UI Host history with replay metadata."""
+    if messages and isinstance(messages[0], dict):
+        converted = _persistable_host_payload_history(
+            _normalize_host_history_dict_replay(
+                _convert_agent_framework_messages_to_agui(messages, preserve_host_history_dicts=True)
+            )
+        )
+    else:
+        message_objects = cast(list[Message], messages)
+        emitted_results: list[tuple[Content, dict[str, Any]]] = []
+        converted = _convert_agent_framework_messages_to_agui(
+            message_objects,
+            emitted_results=emitted_results,
+        )
+        host_history_fields, omitted_ids = _prepare_host_history_fields(
+            emitted_results,
+            max_size_bytes=max_host_payload_history_size_bytes,
+        )
+        for content, tool_message in emitted_results:
+            if fields := host_history_fields.get(id(content)):
+                tool_message.update(fields)
+            elif id(content) in omitted_ids:
+                tool_message[_AGUI_HOST_PAYLOAD_OMITTED_KEY] = True
+    bounded = _bound_host_payload_history(
+        converted,
+        max_size_bytes=max_host_payload_history_size_bytes,
+    )
+    return _project_host_payload_history(bounded)
 
 
 def extract_text_from_contents(contents: list[Any]) -> str:

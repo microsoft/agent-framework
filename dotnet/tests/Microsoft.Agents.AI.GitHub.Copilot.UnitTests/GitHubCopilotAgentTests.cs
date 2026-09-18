@@ -1,11 +1,17 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Linq.Expressions;
+using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 using GitHub.Copilot;
 using GitHub.Copilot.Rpc;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging;
+using Moq;
 
 namespace Microsoft.Agents.AI.GitHub.Copilot.UnitTests;
 
@@ -14,9 +20,6 @@ namespace Microsoft.Agents.AI.GitHub.Copilot.UnitTests;
 /// </summary>
 public sealed class GitHubCopilotAgentTests
 {
-    private static readonly Func<PermissionRequest, PermissionInvocation, Task<PermissionDecision>> s_testPermissionHandler =
-        (_, _) => Task.FromResult(PermissionDecision.ApproveOnce());
-
     [Fact]
     public void Constructor_WithCopilotClient_InitializesPropertiesCorrectly()
     {
@@ -27,7 +30,7 @@ public sealed class GitHubCopilotAgentTests
         const string TestDescription = "test-description";
 
         // Act
-        var agent = new GitHubCopilotAgent(copilotClient, s_testPermissionHandler, ownsClient: false, id: TestId, name: TestName, description: TestDescription);
+        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, id: TestId, name: TestName, description: TestDescription, tools: null);
 
         // Assert
         Assert.Equal(TestId, agent.Id);
@@ -39,27 +42,7 @@ public sealed class GitHubCopilotAgentTests
     public void Constructor_WithNullCopilotClient_ThrowsArgumentNullException()
     {
         // Act & Assert
-        Assert.Throws<ArgumentNullException>(() => new GitHubCopilotAgent(copilotClient: null!, sessionConfig: new() { OnPermissionRequest = s_testPermissionHandler }));
-    }
-
-    [Fact]
-    public void Constructor_WithNullSessionConfig_ThrowsArgumentNullException()
-    {
-        // Arrange
-        CopilotClient copilotClient = new(new CopilotClientOptions());
-
-        // Act & Assert
-        Assert.Throws<ArgumentNullException>(() => new GitHubCopilotAgent(copilotClient, sessionConfig: null!));
-    }
-
-    [Fact]
-    public void Constructor_WithNullPermissionHandler_ThrowsArgumentNullException()
-    {
-        // Arrange
-        CopilotClient copilotClient = new(new CopilotClientOptions());
-
-        // Act & Assert
-        Assert.Throws<ArgumentNullException>(() => new GitHubCopilotAgent(copilotClient, onPermissionRequest: null!));
+        Assert.Throws<ArgumentNullException>(() => new GitHubCopilotAgent(copilotClient: null!, sessionConfig: null));
     }
 
     [Fact]
@@ -69,7 +52,7 @@ public sealed class GitHubCopilotAgentTests
         CopilotClient copilotClient = new(new CopilotClientOptions());
 
         // Act
-        var agent = new GitHubCopilotAgent(copilotClient, s_testPermissionHandler);
+        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, tools: null);
 
         // Assert
         Assert.NotNull(agent.Id);
@@ -83,7 +66,7 @@ public sealed class GitHubCopilotAgentTests
     {
         // Arrange
         CopilotClient copilotClient = new(new CopilotClientOptions());
-        var agent = new GitHubCopilotAgent(copilotClient, s_testPermissionHandler);
+        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, tools: null);
 
         // Act
         var session = await agent.CreateSessionAsync();
@@ -98,7 +81,7 @@ public sealed class GitHubCopilotAgentTests
     {
         // Arrange
         CopilotClient copilotClient = new(new CopilotClientOptions());
-        var agent = new GitHubCopilotAgent(copilotClient, s_testPermissionHandler);
+        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, tools: null);
         const string TestSessionId = "test-session-id";
 
         // Act
@@ -115,10 +98,10 @@ public sealed class GitHubCopilotAgentTests
     {
         // Arrange
         CopilotClient copilotClient = new(new CopilotClientOptions());
-        List<AITool> tools = [AIFunctionFactory.Create(() => "test", "TestFunc", "Test function")];
+        List<AIFunctionDeclaration> tools = [AIFunctionFactory.Create(() => "test", "TestFunc", "Test function")];
 
         // Act
-        var agent = new GitHubCopilotAgent(copilotClient, s_testPermissionHandler, tools: tools);
+        var agent = new GitHubCopilotAgent(copilotClient, tools: tools);
 
         // Assert
         Assert.NotNull(agent);
@@ -126,126 +109,284 @@ public sealed class GitHubCopilotAgentTests
     }
 
     [Fact]
-    public void Constructor_WithSessionConfig_InitializesCorrectly()
+    public void CopySessionConfig_CopiesAllProperties()
     {
         // Arrange
-        CopilotClient copilotClient = new(new CopilotClientOptions());
-        var sessionConfig = new SessionConfig
-        {
-            OnPermissionRequest = s_testPermissionHandler,
-            Model = "gpt-5",
-            GitHubToken = "per-session-token",
-        };
+        List<AIFunctionDeclaration> tools = [AIFunctionFactory.Create(() => "test", "TestFunc", "Test function")];
+        var hooks = new SessionHooks();
+        var infiniteSessions = new InfiniteSessionConfig();
+        var systemMessage = new SystemMessageConfig { Mode = SystemMessageMode.Append, Content = "Be helpful" };
+        Func<PermissionRequest, PermissionInvocation, Task<PermissionDecision>> permissionHandler = (_, _) => Task.FromResult(PermissionDecision.ApproveOnce());
+        Func<UserInputRequest, UserInputInvocation, Task<UserInputResponse>> userInputHandler = (_, _) => Task.FromResult(new UserInputResponse { Answer = "input" });
+        var mcpServers = new Dictionary<string, McpServerConfig> { ["server1"] = new McpStdioServerConfig() };
 
-        // Act
-        var agent = new GitHubCopilotAgent(copilotClient, sessionConfig, id: "cfg-id", name: "Cfg Agent");
-
-        // Assert
-        Assert.Equal("cfg-id", agent.Id);
-        Assert.Equal("Cfg Agent", agent.Name);
-    }
-
-    [Fact]
-    public void CopySessionConfig_ForwardsAllProperties_IncludingGitHubToken()
-    {
-        // Arrange
         var source = new SessionConfig
         {
-            OnPermissionRequest = s_testPermissionHandler,
-            Model = "gpt-5",
+            Model = "gpt-4o",
             ReasoningEffort = "high",
-            GitHubToken = "per-session-token",
+            Tools = tools,
+            SystemMessage = systemMessage,
+            AvailableTools = ["tool1", "tool2"],
+            ExcludedTools = ["tool3"],
             WorkingDirectory = "/workspace",
             ConfigDirectory = "/config",
+            Hooks = hooks,
+            InfiniteSessions = infiniteSessions,
+            OnPermissionRequest = permissionHandler,
+            OnUserInputRequest = userInputHandler,
+            McpServers = mcpServers,
+            DisabledSkills = ["skill1"],
         };
 
         // Act
         SessionConfig result = GitHubCopilotAgent.CopySessionConfig(source);
 
         // Assert
-        Assert.Equal("gpt-5", result.Model);
+        Assert.Equal("gpt-4o", result.Model);
         Assert.Equal("high", result.ReasoningEffort);
-        Assert.Equal("per-session-token", result.GitHubToken);
+        Assert.Equal(systemMessage, result.SystemMessage);
+        Assert.Equal(["tool1", "tool2"], result.AvailableTools);
+        Assert.Equal(["tool3"], result.ExcludedTools);
         Assert.Equal("/workspace", result.WorkingDirectory);
         Assert.Equal("/config", result.ConfigDirectory);
-        Assert.Same(s_testPermissionHandler, result.OnPermissionRequest);
+        Assert.Same(hooks, result.Hooks);
+        Assert.Same(infiniteSessions, result.InfiniteSessions);
+        Assert.Same(permissionHandler, result.OnPermissionRequest);
+        Assert.Same(userInputHandler, result.OnUserInputRequest);
+        Assert.Equal(["skill1"], result.DisabledSkills);
         Assert.True(result.Streaming);
     }
 
     [Fact]
-    public void CopyResumeSessionConfig_ForwardsAllProperties_IncludingGitHubToken()
+    public void ToResumeSessionConfig_CopiesAllProperties()
     {
         // Arrange
+        List<AIFunctionDeclaration> tools = [AIFunctionFactory.Create(() => "test", "TestFunc", "Test function")];
         var hooks = new SessionHooks();
         var infiniteSessions = new InfiniteSessionConfig();
         var systemMessage = new SystemMessageConfig { Mode = SystemMessageMode.Append, Content = "Be helpful" };
-        var modelCapabilities = new ModelCapabilitiesOverride();
-        var defaultAgent = new DefaultAgentConfig();
+        Func<PermissionRequest, PermissionInvocation, Task<PermissionDecision>> permissionHandler = (_, _) => Task.FromResult(PermissionDecision.ApproveOnce());
+        Func<UserInputRequest, UserInputInvocation, Task<UserInputResponse>> userInputHandler = (_, _) => Task.FromResult(new UserInputResponse { Answer = "input" });
+        var mcpServers = new Dictionary<string, McpServerConfig> { ["server1"] = new McpStdioServerConfig() };
+
         var source = new SessionConfig
         {
-            Model = "gpt-5",
+            Model = "gpt-4o",
             ReasoningEffort = "high",
-            ModelCapabilities = modelCapabilities,
+            ReasoningSummary = ReasoningSummary.Detailed,
+            ContextTier = ContextTier.LongContext,
+            Tools = tools,
             SystemMessage = systemMessage,
             AvailableTools = ["tool1", "tool2"],
             ExcludedTools = ["tool3"],
             WorkingDirectory = "/workspace",
             ConfigDirectory = "/config",
-            EnableConfigDiscovery = true,
             Hooks = hooks,
             InfiniteSessions = infiniteSessions,
-            OnPermissionRequest = s_testPermissionHandler,
+            OnPermissionRequest = permissionHandler,
+            OnUserInputRequest = userInputHandler,
+            McpServers = mcpServers,
             DisabledSkills = ["skill1"],
-            DefaultAgent = defaultAgent,
-            Agent = "myagent",
-            ClientName = "test-client",
-            GitHubToken = "test-token",
         };
 
         // Act
-        ResumeSessionConfig result = GitHubCopilotAgent.CopyResumeSessionConfig(source);
+        ResumeSessionConfig result = GitHubCopilotAgent.ToResumeSessionConfig(source);
 
         // Assert
-        Assert.Equal("gpt-5", result.Model);
+        Assert.Equal("gpt-4o", result.Model);
         Assert.Equal("high", result.ReasoningEffort);
-        Assert.Same(modelCapabilities, result.ModelCapabilities);
+        Assert.Equal(ReasoningSummary.Detailed, result.ReasoningSummary);
+        Assert.Equal(ContextTier.LongContext, result.ContextTier);
+        Assert.Same(tools, result.Tools);
         Assert.Same(systemMessage, result.SystemMessage);
-        Assert.Equal(new List<string> { "tool1", "tool2" }, result.AvailableTools);
-        Assert.Equal(new List<string> { "tool3" }, result.ExcludedTools);
+        Assert.Equal(["tool1", "tool2"], result.AvailableTools);
+        Assert.Equal(["tool3"], result.ExcludedTools);
         Assert.Equal("/workspace", result.WorkingDirectory);
         Assert.Equal("/config", result.ConfigDirectory);
-        Assert.Equal(true, result.EnableConfigDiscovery);
         Assert.Same(hooks, result.Hooks);
         Assert.Same(infiniteSessions, result.InfiniteSessions);
-        Assert.Same(s_testPermissionHandler, result.OnPermissionRequest);
-        Assert.Equal(new List<string> { "skill1" }, result.DisabledSkills);
-        Assert.Same(defaultAgent, result.DefaultAgent);
-        Assert.Equal("myagent", result.Agent);
-        Assert.Equal("test-client", result.ClientName);
-        Assert.Equal("test-token", result.GitHubToken);
+        Assert.Same(permissionHandler, result.OnPermissionRequest);
+        Assert.Same(userInputHandler, result.OnUserInputRequest);
+        Assert.Same(mcpServers, result.McpServers);
+        Assert.Equal(["skill1"], result.DisabledSkills);
         Assert.True(result.Streaming);
     }
 
     [Fact]
-    public void CopyResumeSessionConfig_WithNullSource_ReturnsDefaultsWithStreamingTrue()
+    public void ToResumeSessionConfig_WithFileHooksDisabled_PreservesDisabledValue()
+    {
+        // Arrange
+        var source = new SessionConfig
+        {
+            EnableFileHooks = false,
+        };
+
+        // Act
+        ResumeSessionConfig result = GitHubCopilotAgent.ToResumeSessionConfig(source);
+
+        // Assert
+        Assert.False(result.EnableFileHooks);
+    }
+
+    [Fact]
+    public void ToResumeSessionConfig_WithGitHubToken_PreservesToken()
+    {
+        // Arrange
+        var source = new SessionConfig
+        {
+            GitHubToken = "per-session-token",
+        };
+
+        // Act
+        ResumeSessionConfig result = GitHubCopilotAgent.ToResumeSessionConfig(source);
+
+        // Assert
+        Assert.Equal("per-session-token", result.GitHubToken);
+    }
+
+    [Fact]
+    public void ToResumeSessionConfig_PreservesEverySharedProperty()
+    {
+        // Arrange
+        PropertyInfo[] sharedProperties = typeof(SessionConfigBase)
+            .GetProperties(BindingFlags.Instance | BindingFlags.Public)
+            .Where(property => property.CanRead && property.CanWrite)
+            .ToArray();
+        var source = new SessionConfig();
+
+        foreach ((PropertyInfo property, int index) in sharedProperties.Select((property, index) => (property, index)))
+        {
+            property.SetValue(source, CreateNonDefaultValue(property.PropertyType, index));
+        }
+
+        // Act
+        ResumeSessionConfig result = GitHubCopilotAgent.ToResumeSessionConfig(source);
+
+        // Assert
+        List<string> propertiesNotPreserved = [];
+        foreach (PropertyInfo property in sharedProperties)
+        {
+            if (!Equals(property.GetValue(source), property.GetValue(result)))
+            {
+                propertiesNotPreserved.Add(property.Name);
+            }
+        }
+
+        Assert.True(propertiesNotPreserved.Count == 0, $"Properties not preserved: {string.Join(", ", propertiesNotPreserved)}");
+    }
+
+    [Fact]
+    public void ToResumeSessionConfig_WithNullSource_ReturnsDefaults()
     {
         // Act
-        ResumeSessionConfig result = GitHubCopilotAgent.CopyResumeSessionConfig(null);
+        ResumeSessionConfig result = GitHubCopilotAgent.ToResumeSessionConfig(null);
 
         // Assert
         Assert.Null(result.Model);
         Assert.Null(result.ReasoningEffort);
+        Assert.Null(result.ReasoningSummary);
+        Assert.Null(result.ContextTier);
+        Assert.Null(result.Tools);
         Assert.Null(result.SystemMessage);
         Assert.Null(result.OnPermissionRequest);
+        Assert.Null(result.OnUserInputRequest);
         Assert.Null(result.Hooks);
         Assert.Null(result.WorkingDirectory);
         Assert.Null(result.ConfigDirectory);
-        Assert.Null(result.GitHubToken);
+        Assert.True(result.Streaming);
+        Assert.False(result.SuppressResumeEvent);
+        Assert.Null(result.ContinuePendingWork);
+        Assert.Null(result.OpenCanvases);
+    }
+
+    [Fact]
+    public void ToResumeSessionConfig_RoundTripsReasoningSummary()
+    {
+        // Regression: ReasoningSummary controls whether the model returns readable
+        // extended-thinking summaries. It must round-trip onto resumed turns, just like
+        // ReasoningEffort, otherwise callers lose readable reasoning after the first turn.
+        var source = new SessionConfig
+        {
+            ReasoningEffort = "high",
+            ReasoningSummary = ReasoningSummary.Detailed,
+        };
+
+        // Act
+        ResumeSessionConfig result = GitHubCopilotAgent.ToResumeSessionConfig(source);
+
+        // Assert
+        Assert.Equal(ReasoningSummary.Detailed, result.ReasoningSummary);
+        Assert.Equal("high", result.ReasoningEffort);
+    }
+
+    [Fact]
+    public void CopySessionConfig_WithStreamingDisabled_PreservesStreamingValue()
+    {
+        // Arrange
+        var source = new SessionConfig
+        {
+            Streaming = false,
+            Model = "gpt-4o",
+        };
+
+        // Act
+        SessionConfig result = GitHubCopilotAgent.CopySessionConfig(source);
+
+        // Assert
+        Assert.False(result.Streaming);
+    }
+
+    [Fact]
+    public void CopySessionConfig_WithStreamingNull_DefaultsToTrue()
+    {
+        // Arrange
+        var source = new SessionConfig
+        {
+            Model = "gpt-4o",
+        };
+
+        // Act
+        SessionConfig result = GitHubCopilotAgent.CopySessionConfig(source);
+
+        // Assert
         Assert.True(result.Streaming);
     }
 
     [Fact]
-    public void ConvertToAgentResponseUpdate_AssistantMessageEvent_DoesNotEmitTextContent()
+    public void ToResumeSessionConfig_WithStreamingDisabled_PreservesStreamingValue()
+    {
+        // Arrange
+        var source = new SessionConfig
+        {
+            Streaming = false,
+            Model = "gpt-4o",
+        };
+
+        // Act
+        ResumeSessionConfig result = GitHubCopilotAgent.ToResumeSessionConfig(source);
+
+        // Assert
+        Assert.False(result.Streaming);
+    }
+
+    [Fact]
+    public void ToResumeSessionConfig_WithStreamingNull_DefaultsToTrue()
+    {
+        // Arrange
+        var source = new SessionConfig
+        {
+            Model = "gpt-4o",
+        };
+
+        // Act
+        ResumeSessionConfig result = GitHubCopilotAgent.ToResumeSessionConfig(source);
+
+        // Assert
+        Assert.True(result.Streaming);
+    }
+
+    [Fact]
+    public void ConvertToAgentResponseUpdate_AssistantMessageEventWhenStreaming_DoesNotEmitTextContent()
     {
         var assistantMessage = new AssistantMessageEvent
         {
@@ -257,12 +398,318 @@ public sealed class GitHubCopilotAgentTests
         };
         CopilotClient copilotClient = new(new CopilotClientOptions());
         const string TestId = "agent-id";
-        var agent = new GitHubCopilotAgent(copilotClient, s_testPermissionHandler, id: TestId);
-        AgentResponseUpdate result = agent.ConvertToAgentResponseUpdate(assistantMessage);
+        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, id: TestId, tools: null);
+        AgentResponseUpdate result = agent.ConvertToAgentResponseUpdate(assistantMessage, isStreaming: true);
 
-        // result.Text need to be empty because the content was already delivered via delta events, and we want to avoid emitting duplicate content in the response update.
-        // The content should be delivered through TextContent in the Contents collection instead.
+        // result.Text should be empty because content was already delivered via delta events.
         Assert.Empty(result.Text);
         Assert.DoesNotContain(result.Contents, c => c is TextContent);
+    }
+
+    [Fact]
+    public void ConvertToAgentResponseUpdate_AssistantMessageEventWhenNotStreaming_EmitsTextContent()
+    {
+        // Arrange
+        const string ExpectedContent = "Full response text from non-streaming session";
+        var assistantMessage = new AssistantMessageEvent
+        {
+            Data = new AssistantMessageData
+            {
+                MessageId = "msg-789",
+                Content = ExpectedContent
+            }
+        };
+        CopilotClient copilotClient = new(new CopilotClientOptions());
+        const string TestId = "agent-id";
+        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, id: TestId, tools: null);
+
+        // Act
+        AgentResponseUpdate result = agent.ConvertToAgentResponseUpdate(assistantMessage, isStreaming: false);
+
+        // Assert - text must be emitted since no delta events precede it in non-streaming mode.
+        Assert.Equal(ExpectedContent, result.Text);
+        Assert.Contains(result.Contents, c => c is TextContent);
+        TextContent textContent = (TextContent)result.Contents.Single(c => c is TextContent);
+        Assert.Equal(ExpectedContent, textContent.Text);
+        Assert.Same(assistantMessage, textContent.RawRepresentation);
+    }
+
+    [Fact]
+    public void ConvertToAgentResponseUpdate_AssistantMessageEventWhenNotStreaming_HandlesEmptyContent()
+    {
+        // Arrange
+        var assistantMessage = new AssistantMessageEvent
+        {
+            Data = new AssistantMessageData
+            {
+                MessageId = "msg-000",
+                Content = string.Empty
+            }
+        };
+        CopilotClient copilotClient = new(new CopilotClientOptions());
+        const string TestId = "agent-id";
+        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, id: TestId, tools: null);
+
+        // Act
+        AgentResponseUpdate result = agent.ConvertToAgentResponseUpdate(assistantMessage, isStreaming: false);
+
+        // Assert - should emit empty TextContent rather than throwing.
+        Assert.Empty(result.Text);
+        Assert.Contains(result.Contents, c => c is TextContent);
+    }
+
+    [Fact]
+    public void ConvertToAgentResponseUpdate_AssistantMessageEventWhenNotStreaming_HandlesNullData()
+    {
+        // Arrange
+        var assistantMessage = new AssistantMessageEvent
+        {
+            Data = null!
+        };
+        CopilotClient copilotClient = new(new CopilotClientOptions());
+        const string TestId = "agent-id";
+        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, id: TestId, tools: null);
+
+        // Act
+        AgentResponseUpdate result = agent.ConvertToAgentResponseUpdate(assistantMessage, isStreaming: false);
+
+        // Assert - null Data should produce empty TextContent via null-propagation fallback.
+        Assert.Empty(result.Text);
+        Assert.Contains(result.Contents, c => c is TextContent);
+        Assert.Null(result.MessageId);
+        Assert.Null(result.ResponseId);
+    }
+
+    [Fact]
+    public async Task Constructor_WithApprovalRequiredTool_InstallsAskPreToolUseHookAsync()
+    {
+        // Arrange
+        AIFunction dangerousTool = AIFunctionFactory.Create(() => "sensitive", "ApprovalRequiredOperation", "A sensitive operation.");
+        AIFunction plainTool = AIFunctionFactory.Create(() => "ok", "PlainOperation", "A normal operation.");
+        CopilotClient copilotClient = new(new CopilotClientOptions());
+
+        // Act
+        var agent = new GitHubCopilotAgent(copilotClient, tools: [new ApprovalRequiredAIFunction(dangerousTool), plainTool]);
+
+        // Assert - the provider installs a default OnPreToolUse that asks for the approval-required tool
+        // (routing the decision to OnPermissionRequest) and defers everything else.
+        SessionConfig sessionConfig = GetSessionConfigFromAgent(agent);
+        Assert.NotNull(sessionConfig.Hooks?.OnPreToolUse);
+
+        PreToolUseHookOutput? approvalDecision = await InvokePreToolUseAsync(sessionConfig, "ApprovalRequiredOperation");
+        Assert.Equal("ask", approvalDecision?.PermissionDecision);
+        Assert.False(string.IsNullOrEmpty(approvalDecision?.PermissionDecisionReason));
+
+        PreToolUseHookOutput? plainDecision = await InvokePreToolUseAsync(sessionConfig, "PlainOperation");
+        Assert.Null(plainDecision);
+    }
+
+    [Fact]
+    public async Task Constructor_WithApprovalRequiredToolInSessionConfig_InstallsAskPreToolUseHookAsync()
+    {
+        // Arrange
+        AIFunction dangerousTool = AIFunctionFactory.Create(() => "sensitive", "ApprovalRequiredOperation", "A sensitive operation.");
+        SessionConfig sessionConfig = new() { Tools = [new ApprovalRequiredAIFunction(dangerousTool)] };
+        CopilotClient copilotClient = new(new CopilotClientOptions());
+
+        // Act
+        var agent = new GitHubCopilotAgent(copilotClient, sessionConfig);
+
+        // Assert
+        SessionConfig configured = GetSessionConfigFromAgent(agent);
+        Assert.NotNull(configured.Hooks?.OnPreToolUse);
+        PreToolUseHookOutput? decision = await InvokePreToolUseAsync(configured, "ApprovalRequiredOperation");
+        Assert.Equal("ask", decision?.PermissionDecision);
+    }
+
+    [Fact]
+    public void Constructor_WithNoApprovalRequiredTools_DoesNotInstallPreToolUseHook()
+    {
+        // Arrange
+        AIFunction plainTool = AIFunctionFactory.Create(() => "ok", "PlainOperation", "A normal operation.");
+        CopilotClient copilotClient = new(new CopilotClientOptions());
+
+        // Act
+        var agent = new GitHubCopilotAgent(copilotClient, tools: [plainTool]);
+
+        // Assert - no approval-required tools means no hook is installed; tools flow through normally.
+        SessionConfig sessionConfig = GetSessionConfigFromAgent(agent);
+        Assert.Null(sessionConfig.Hooks?.OnPreToolUse);
+    }
+
+    [Fact]
+    public async Task Constructor_WithUserPreToolUseHook_PreservesItAndWarnsAsync()
+    {
+        // Arrange - the caller supplies their own OnPreToolUse hook and also registers an approval-required tool.
+        AIFunction dangerousTool = AIFunctionFactory.Create(() => "sensitive", "ApprovalRequiredOperation", "A sensitive operation.");
+        var userHookOutput = new PreToolUseHookOutput { PermissionDecision = "allow" };
+        SessionConfig sessionConfig = new()
+        {
+            Tools = [new ApprovalRequiredAIFunction(dangerousTool)],
+            Hooks = new SessionHooks
+            {
+                OnPreToolUse = (input, invocation) => Task.FromResult<PreToolUseHookOutput?>(userHookOutput),
+            },
+        };
+
+        CapturingLoggerFactory loggerFactory = new();
+        CopilotClient copilotClient = new(new CopilotClientOptions());
+
+        // Act
+        var agent = new GitHubCopilotAgent(copilotClient, sessionConfig, loggerFactory: loggerFactory);
+
+        // Assert - the user's hook is preserved (not overridden), and a warning is logged for the unenforced tool.
+        SessionConfig configured = GetSessionConfigFromAgent(agent);
+        PreToolUseHookOutput? decision = await InvokePreToolUseAsync(configured, "ApprovalRequiredOperation");
+        Assert.Same(userHookOutput, decision);
+
+        (LogLevel Level, string Message) warning = Assert.Single(loggerFactory.Entries, e => e.Level == LogLevel.Warning);
+        Assert.Contains("ApprovalRequiredOperation", warning.Message);
+    }
+
+    [Fact]
+    public void Constructor_WithUserPreToolUseHookButNoApprovalRequiredTools_DoesNotWarn()
+    {
+        // Arrange
+        AIFunction plainTool = AIFunctionFactory.Create(() => "ok", "PlainOperation", "A normal operation.");
+        SessionConfig sessionConfig = new()
+        {
+            Tools = [plainTool],
+            Hooks = new SessionHooks
+            {
+                OnPreToolUse = (input, invocation) => Task.FromResult<PreToolUseHookOutput?>(null),
+            },
+        };
+
+        CapturingLoggerFactory loggerFactory = new();
+        CopilotClient copilotClient = new(new CopilotClientOptions());
+
+        // Act
+        var agent = new GitHubCopilotAgent(copilotClient, sessionConfig, loggerFactory: loggerFactory);
+
+        // Assert - nothing is being bypassed, so no warning is emitted.
+        Assert.DoesNotContain(loggerFactory.Entries, e => e.Level == LogLevel.Warning);
+    }
+
+    [Fact]
+    public void Constructor_WithApprovalRequiredTool_DoesNotMutateCallerHooks()
+    {
+        // Arrange
+        AIFunction dangerousTool = AIFunctionFactory.Create(() => "sensitive", "ApprovalRequiredOperation", "A sensitive operation.");
+        SessionHooks callerHooks = new();
+        SessionConfig sessionConfig = new()
+        {
+            Tools = [new ApprovalRequiredAIFunction(dangerousTool)],
+            Hooks = callerHooks,
+        };
+        CopilotClient copilotClient = new(new CopilotClientOptions());
+
+        // Act
+        _ = new GitHubCopilotAgent(copilotClient, sessionConfig);
+
+        // Assert - the caller-supplied SessionConfig and its Hooks instance are not mutated.
+        Assert.Null(callerHooks.OnPreToolUse);
+        Assert.Same(callerHooks, sessionConfig.Hooks);
+    }
+
+    private static object CreateNonDefaultValue(Type type, int index)
+    {
+        Type? nullableType = Nullable.GetUnderlyingType(type);
+        if (nullableType is not null)
+        {
+            return nullableType == typeof(bool) ? false : CreateNonDefaultValue(nullableType, index);
+        }
+
+        if (type == typeof(bool))
+        {
+            return true;
+        }
+
+        if (type == typeof(string))
+        {
+            return $"value-{index}";
+        }
+
+        if (type.IsEnum)
+        {
+            return Enum.GetValues(type).GetValue(0)!;
+        }
+
+        if (typeof(Delegate).IsAssignableFrom(type))
+        {
+            MethodInfo invokeMethod = type.GetMethod(nameof(Action.Invoke))!;
+            ParameterExpression[] parameters = invokeMethod.GetParameters()
+                .Select(parameter => Expression.Parameter(parameter.ParameterType, parameter.Name))
+                .ToArray();
+            Expression body = invokeMethod.ReturnType == typeof(void)
+                ? Expression.Empty()
+                : Expression.Default(invokeMethod.ReturnType);
+            return Expression.Lambda(type, body, parameters).Compile();
+        }
+
+        if (type.IsGenericType)
+        {
+            Type genericType = type.GetGenericTypeDefinition();
+            Type[] genericArguments = type.GetGenericArguments();
+            if (genericType == typeof(IList<>) || genericType == typeof(ICollection<>))
+            {
+                return Activator.CreateInstance(typeof(List<>).MakeGenericType(genericArguments))!;
+            }
+
+            if (genericType == typeof(IDictionary<,>))
+            {
+                return Activator.CreateInstance(typeof(Dictionary<,>).MakeGenericType(genericArguments))!;
+            }
+        }
+
+        if (type.IsInterface)
+        {
+            Type mockType = typeof(Mock<>).MakeGenericType(type);
+            object mock = Activator.CreateInstance(mockType)!;
+            PropertyInfo objectProperty = mockType.GetProperties()
+                .Single(property => property.Name == nameof(Mock<object>.Object) && property.PropertyType == type);
+            return objectProperty.GetValue(mock)!;
+        }
+
+        return RuntimeHelpers.GetUninitializedObject(type);
+    }
+
+    private static Task<PreToolUseHookOutput?> InvokePreToolUseAsync(SessionConfig sessionConfig, string toolName)
+    {
+        var input = new PreToolUseHookInput { ToolName = toolName };
+        return sessionConfig.Hooks!.OnPreToolUse!(input, new HookInvocation());
+    }
+
+    private static SessionConfig GetSessionConfigFromAgent(GitHubCopilotAgent agent)
+    {
+        FieldInfo field = typeof(GitHubCopilotAgent).GetField(
+            "_sessionConfig",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+        return (SessionConfig)field.GetValue(agent)!;
+    }
+
+    private sealed class CapturingLoggerFactory : ILoggerFactory
+    {
+        public List<(LogLevel Level, string Message)> Entries { get; } = [];
+
+        public void AddProvider(ILoggerProvider provider)
+        {
+        }
+
+        public ILogger CreateLogger(string categoryName) => new CapturingLogger(this.Entries);
+
+        public void Dispose()
+        {
+        }
+
+        private sealed class CapturingLogger(List<(LogLevel Level, string Message)> entries) : ILogger
+        {
+            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+            public bool IsEnabled(LogLevel logLevel) => true;
+
+            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+                => entries.Add((logLevel, formatter(state, exception)));
+        }
     }
 }

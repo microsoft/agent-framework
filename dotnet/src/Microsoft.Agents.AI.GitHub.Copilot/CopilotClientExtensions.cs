@@ -1,13 +1,10 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Collections.Generic;
-using System.Threading.Tasks;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.GitHub.Copilot;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
-using GitHub.Copilot.Rpc;
 
 namespace GitHub.Copilot;
 
@@ -30,7 +27,7 @@ public static class CopilotClientExtensions
     /// Retrieves an instance of <see cref="AIAgent"/> for a GitHub Copilot client.
     /// </summary>
     /// <param name="client">The <see cref="CopilotClient"/> to use for the agent.</param>
-    /// <param name="sessionConfig">Session configuration for the agent. Must include <c>SessionConfig.OnPermissionRequest</c> as required by the GitHub Copilot SDK.</param>
+    /// <param name="sessionConfig">Optional session configuration for the agent.</param>
     /// <param name="ownsClient">Whether the agent owns the client and should dispose it. Default is false.</param>
     /// <param name="id">The unique identifier for the agent.</param>
     /// <param name="name">The name of the agent.</param>
@@ -38,7 +35,7 @@ public static class CopilotClientExtensions
     /// <returns>An <see cref="AIAgent"/> instance backed by the GitHub Copilot client.</returns>
     public static AIAgent AsAIAgent(
         this CopilotClient client,
-        SessionConfig sessionConfig,
+        SessionConfig? sessionConfig = null,
         bool ownsClient = false,
         string? id = null,
         string? name = null,
@@ -53,7 +50,6 @@ public static class CopilotClientExtensions
     /// Retrieves an instance of <see cref="AIAgent"/> for a GitHub Copilot client.
     /// </summary>
     /// <param name="client">The <see cref="CopilotClient"/> to use for the agent.</param>
-    /// <param name="onPermissionRequest">Handler called before each tool execution to approve or deny it. Required by the GitHub Copilot SDK.</param>
     /// <param name="ownsClient">Whether the agent owns the client and should dispose it. Default is false.</param>
     /// <param name="id">The unique identifier for the agent.</param>
     /// <param name="name">The name of the agent.</param>
@@ -63,16 +59,15 @@ public static class CopilotClientExtensions
     /// <returns>An <see cref="AIAgent"/> instance backed by the GitHub Copilot client.</returns>
     public static AIAgent AsAIAgent(
         this CopilotClient client,
-        Func<PermissionRequest, PermissionInvocation, Task<PermissionDecision>> onPermissionRequest,
         bool ownsClient = false,
         string? id = null,
         string? name = null,
         string? description = null,
-        IList<AITool>? tools = null,
+        IList<AIFunctionDeclaration>? tools = null,
         string? instructions = null)
     {
         Throw.IfNull(client);
 
-        return new GitHubCopilotAgent(client, onPermissionRequest, ownsClient, id, name, description, tools, instructions);
+        return new GitHubCopilotAgent(client, ownsClient, id, name, description, tools, instructions);
     }
 }

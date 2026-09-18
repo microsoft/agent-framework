@@ -62,8 +62,9 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
     protected virtual bool EmitResultEvent => true;
 
     /// <inheritdoc/>
-    public ValueTask ResetAsync()
+    public virtual ValueTask ResetAsync()
     {
+        this._state.Reset();
         return default;
     }
 

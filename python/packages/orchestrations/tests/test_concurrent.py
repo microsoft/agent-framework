@@ -22,7 +22,6 @@ from agent_framework import (
 )
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
 from agent_framework.orchestrations import ConcurrentBuilder
-from typing_extensions import Never
 
 
 class _FakeAgentExec(Executor):
@@ -54,6 +53,13 @@ def test_concurrent_builder_rejects_duplicate_executors() -> None:
     b = _FakeAgentExec("dup", "B")  # same executor id
     with pytest.raises(ValueError):
         ConcurrentBuilder(participants=[a, b])
+
+
+def test_concurrent_builder_uses_stable_default_and_custom_name() -> None:
+    participants = [_FakeAgentExec("agentA", "A"), _FakeAgentExec("agentB", "B")]
+
+    assert ConcurrentBuilder(participants=participants).build().name == "Concurrent"
+    assert ConcurrentBuilder(name="custom-concurrent", participants=participants).build().name == "custom-concurrent"
 
 
 async def test_concurrent_default_aggregator_emits_assistants_only() -> None:
@@ -158,7 +164,7 @@ async def test_concurrent_with_aggregator_executor_instance() -> None:
 
     class CustomAggregator(Executor):
         @handler
-        async def aggregate(self, results: list[AgentExecutorResponse], ctx: WorkflowContext[Never, str]) -> None:
+        async def aggregate(self, results: list[AgentExecutorResponse], ctx: WorkflowContext[Any, str]) -> None:
             texts: list[str] = []
             for r in results:
                 msgs: list[Message] = r.agent_response.messages
@@ -211,6 +217,7 @@ async def test_concurrent_checkpoint_resume_round_trip() -> None:
     )
 
     wf = ConcurrentBuilder(participants=list(participants), checkpoint_storage=storage).build()
+    assert wf.name == "Concurrent"
 
     baseline_output: AgentResponse | None = None
     async for ev in wf.run("checkpoint concurrent", stream=True):

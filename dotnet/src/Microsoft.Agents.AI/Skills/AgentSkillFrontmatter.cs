@@ -4,7 +4,6 @@ using System;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.AI;
-using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI;
 
@@ -23,7 +22,6 @@ namespace Microsoft.Agents.AI;
 /// and throws <see cref="ArgumentException"/> if either value is invalid.
 /// </para>
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class AgentSkillFrontmatter
 {
     /// <summary>
@@ -114,6 +112,10 @@ public sealed class AgentSkillFrontmatter
     /// <summary>
     /// Gets or sets the arbitrary key-value metadata for this skill.
     /// </summary>
+    /// <remarks>
+    /// Keys are compared case-insensitively. When parsed from a SKILL.md file, duplicate
+    /// entries retain the first value and key spelling and produce warnings without rejecting the skill.
+    /// </remarks>
     public AdditionalPropertiesDictionary? Metadata { get; set; }
 
     /// <summary>

@@ -98,7 +98,7 @@ class WorkflowViz:
                 return temp_file.name
 
         try:
-            import graphviz  # type: ignore
+            import graphviz
         except ImportError as e:
             raise ImportError(
                 "viz extra is required for export. Install it with: pip install graphviz>=0.20.0 "
@@ -109,7 +109,7 @@ class WorkflowViz:
 
         # Create a temporary graphviz Source object
         dot_content = self.to_digraph(include_internal_executors=include_internal_executors)
-        source = graphviz.Source(dot_content)  # type: ignore[reportUnknownVariableType]
+        source = graphviz.Source(dot_content)
 
         try:
             if filename:
@@ -131,7 +131,7 @@ class WorkflowViz:
 
             source.render(base_name, format=format, cleanup=True)  # type: ignore
             return f"{base_name}.{format}"
-        except graphviz.backend.execute.ExecutableNotFound as e:  # type: ignore
+        except graphviz.backend.execute.ExecutableNotFound as e:
             raise ImportError(
                 "The graphviz executables are not found. The graphviz Python package is installed, but the "
                 "graphviz executables (dot, neato, etc.) are not available on your system's PATH. "
@@ -308,7 +308,7 @@ class WorkflowViz:
         """Emit DOT subgraphs for any WorkflowExecutor instances found in the workflow."""
         # Lazy import to avoid any potential import cycles
         try:
-            from ._workflow_executor import WorkflowExecutor  # type: ignore
+            from ._workflow_executor import WorkflowExecutor
         except ImportError:  # pragma: no cover - best-effort; if unavailable, skip subgraphs
             return
 
@@ -408,7 +408,7 @@ class WorkflowViz:
         include_internal_executors: bool = False,
     ) -> None:
         try:
-            from ._workflow_executor import WorkflowExecutor  # type: ignore
+            from ._workflow_executor import WorkflowExecutor
         except ImportError:  # pragma: no cover
             return
 

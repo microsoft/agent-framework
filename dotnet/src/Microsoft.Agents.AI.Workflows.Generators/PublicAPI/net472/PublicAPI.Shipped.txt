@@ -1,0 +1,4 @@
+﻿#nullable enable
+Microsoft.Agents.AI.Workflows.Generators.ExecutorRouteGenerator
+Microsoft.Agents.AI.Workflows.Generators.ExecutorRouteGenerator.ExecutorRouteGenerator() -> void
+Microsoft.Agents.AI.Workflows.Generators.ExecutorRouteGenerator.Initialize(Microsoft.CodeAnalysis.IncrementalGeneratorInitializationContext context) -> void

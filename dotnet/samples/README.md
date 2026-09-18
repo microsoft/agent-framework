@@ -13,10 +13,10 @@ were local agents. These are supported using various `AIAgent` subclasses.
 
 | Folder | Description |
 |--------|-------------|
-| [`01-get-started/`](./01-get-started/) | Progressive tutorial: hello agent → hosting |
+| [`01-get-started/`](./01-get-started/) | Progressive tutorial: hello agent → first workflow |
 | [`02-agents/`](./02-agents/) | Deep-dive by concept: tools, middleware, providers, orchestrations |
 | [`03-workflows/`](./03-workflows/) | Workflow patterns: sequential, concurrent, state, declarative |
-| [`04-hosting/`](./04-hosting/) | Deployment: Azure Functions, Durable Tasks |
+| [`04-hosting/`](./04-hosting/) | Deployment: A2A and Foundry hosted agents |
 | [`05-end-to-end/`](./05-end-to-end/) | Full applications, evaluation, demos |
 
 ## Getting Started
@@ -28,7 +28,6 @@ Start with `01-get-started/` and work through the numbered files:
 3. **[03_multi_turn](./01-get-started/03_multi_turn/Program.cs)** — Multi-turn conversations with `AgentSession`
 4. **[04_memory](./01-get-started/04_memory/Program.cs)** — Agent memory with `AIContextProvider`
 5. **[05_first_workflow](./01-get-started/05_first_workflow/Program.cs)** — Build a workflow with executors and edges
-6. **[06_host_your_agent](./01-get-started/06_host_your_agent/Program.cs)** — Host your agent via Azure Functions
 
 ## Additional Samples
 
@@ -39,8 +38,7 @@ Some additional samples of note include:
   `AIAgent` and can be used with any underlying service that provides an `AIAgent` implementation.
 - [Agent Providers](./02-agents/AgentProviders/README.md): Shows how to create an AIAgent instance for a selection of providers.
 - [Agent Telemetry](./02-agents/AgentOpenTelemetry/README.md): Demo which showcases the integration of OpenTelemetry with the Microsoft Agent Framework using Azure OpenAI and .NET Aspire Dashboard for telemetry visualization.
-- [Durable Agents - Azure Functions](./04-hosting/DurableAgents/AzureFunctions/README.md): Samples for using the Microsoft Agent Framework with Azure Functions via the durable task extension.
-- [Durable Agents - Console Apps](./04-hosting/DurableAgents/ConsoleApps/README.md): Samples demonstrating durable agents in console applications.
+- [Durable Agent Framework extension](https://github.com/microsoft/agent-framework-durable-extension/tree/main/dotnet/samples): Durable agents and workflows for console applications and Azure Functions.
 
 ## Migration from Semantic Kernel
 

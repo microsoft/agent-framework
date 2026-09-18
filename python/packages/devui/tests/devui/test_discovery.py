@@ -113,6 +113,7 @@ agent = NonStreamingAgent()
 
         # Now check enriched metadata after loading
         enriched = discovery.get_entity_info(entity.id)
+        assert enriched is not None
         assert enriched.type == "agent"  # Now correctly identified
         assert enriched.name == "Non-Streaming Agent"
 

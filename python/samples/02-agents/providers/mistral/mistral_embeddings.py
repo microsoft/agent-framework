@@ -1,0 +1,85 @@
+# Copyright (c) Microsoft. All rights reserved.
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["agent-framework-mistral"]
+# ///
+
+"""Shows how to generate embeddings using the Mistral AI embedding client.
+
+Requires ``MISTRAL_API_KEY`` and ``MISTRAL_EMBEDDING_MODEL`` environment variables.
+"""
+
+import asyncio
+
+from agent_framework.mistral import MistralEmbeddingClient
+from dotenv import load_dotenv
+
+load_dotenv()
+
+
+async def basic_embedding_example() -> None:
+    """Generate embeddings for a list of texts."""
+    print("=== Basic Embedding Generation ===")
+
+    # 1. Create the embedding client using environment-based configuration.
+    client = MistralEmbeddingClient()
+
+    # 2. Generate embeddings for multiple texts.
+    texts = ["Hello, world!", "How are you?", "Agent Framework with Mistral AI"]
+    try:
+        result = await client.get_embeddings(texts)
+
+        # 3. Print the generated vectors and usage metadata.
+        print(f"Generated {len(result)} embeddings")
+        for i, embedding in enumerate(result):
+            print(f"  Text {i + 1}: dimensions={embedding.dimensions}, vector={embedding.vector[:5]}...")
+
+        if result.usage:
+            print(
+                f"  Usage: {result.usage['input_token_count']} input tokens, "
+                f"{result.usage['total_token_count']} total tokens"
+            )
+    finally:
+        await client.close()
+
+
+async def embedding_with_options_example() -> None:
+    """Generate embeddings with custom dimensions."""
+    print("\n=== Embedding with Custom Dimensions ===")
+
+    from agent_framework.mistral import MistralEmbeddingOptions
+
+    # Only some models support a custom output dimension (e.g. codestral-embed; mistral-embed does not).
+    client = MistralEmbeddingClient(model="codestral-embed")
+
+    options: MistralEmbeddingOptions = {"dimensions": 256}
+    try:
+        result = await client.get_embeddings(["Dimensionality reduction example"], options=options)
+        print(f"  Dimensions: {result[0].dimensions}")
+        print(f"  Vector (first 5): {result[0].vector[:5]}...")
+    finally:
+        await client.close()
+
+
+async def main() -> None:
+    """Run embedding examples."""
+    await basic_embedding_example()
+    await embedding_with_options_example()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+
+"""
+Sample output:
+=== Basic Embedding Generation ===
+Generated 3 embeddings
+  Text 1: dimensions=1024, vector=[0.0123, -0.0456, 0.0789, -0.0012, 0.0345]...
+  Text 2: dimensions=1024, vector=[0.0234, -0.0567, 0.0891, -0.0023, 0.0456]...
+  Text 3: dimensions=1024, vector=[0.0345, -0.0678, 0.0912, -0.0034, 0.0567]...
+  Usage: 15 input tokens, 15 total tokens
+
+=== Embedding with Custom Dimensions ===
+  Dimensions: 256
+  Vector (first 5): [0.0456, -0.0789, 0.0123, -0.0456, 0.0789]...
+"""

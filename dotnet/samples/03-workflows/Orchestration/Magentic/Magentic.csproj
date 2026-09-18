@@ -6,7 +6,7 @@
 
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <NoWarn>$(NoWarn);MAAIW001;OPENAI001</NoWarn>
+    <NoWarn>$(NoWarn);MAAIW001;OPENAI001;MAAI001</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>

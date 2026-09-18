@@ -12,9 +12,9 @@ internal static class Application
     /// </summary>
     public static class Settings
     {
-        public const string FoundryEndpoint = "AZURE_AI_PROJECT_ENDPOINT";
-        public const string FoundryModel = "AZURE_AI_MODEL_DEPLOYMENT_NAME";
-        public const string FoundryGroundingTool = "AZURE_AI_BING_CONNECTION_ID";
+        public const string FoundryEndpoint = "FOUNDRY_PROJECT_ENDPOINT";
+        public const string FoundryModel = "FOUNDRY_MODEL";
+        public const string FoundryGroundingTool = "FOUNDRY_GROUNDING_TOOL";
     }
 
     public static string GetInput(string[] args)
@@ -37,6 +37,12 @@ internal static class Application
             while (string.IsNullOrWhiteSpace(input))
             {
                 input = Console.ReadLine();
+
+                // Exit gracefully when stdin is closed (e.g. automated test runner).
+                if (input is null)
+                {
+                    return string.Empty;
+                }
             }
 
             return input.Trim();

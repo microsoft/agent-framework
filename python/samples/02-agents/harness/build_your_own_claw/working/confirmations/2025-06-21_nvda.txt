@@ -1,0 +1,6 @@
+TRADE CONFIRMATION
+Confirmation: TRADE-55AA44BB
+Date: 2025-06-21
+Symbol: NVDA
+Action: SELL
+Quantity: 20

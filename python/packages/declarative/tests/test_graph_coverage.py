@@ -5,10 +5,11 @@
 # pyright: reportGeneralTypeIssues=false
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from agent_framework import Message
 
 from agent_framework_declarative._workflows import (
     ActionComplete,
@@ -67,6 +68,7 @@ def mock_context(mock_state: MagicMock) -> MagicMock:
     """Create a mock workflow context."""
     ctx = MagicMock()
     ctx.state = mock_state
+    ctx.get_state = MagicMock(side_effect=mock_state.get)
     ctx.send_message = AsyncMock()
     ctx.yield_output = AsyncMock()
     ctx.request_info = AsyncMock()
@@ -141,7 +143,7 @@ class TestDeclarativeWorkflowStateExtended:
 
         # Set via direct state data manipulation to create custom namespace
         state_data = state.get_state_data()
-        state_data["Custom"] = {"myns": {"value": 42}}
+        cast(dict[str, Any], state_data)["Custom"] = {"myns": {"value": 42}}
         state.set_state_data(state_data)
 
         result = state.get("myns.value")
@@ -253,10 +255,10 @@ class TestDeclarativeWorkflowStateExtended:
         state.initialize()
 
         # Cast to Any to test the runtime behavior with non-string inputs
-        result = state.eval(42)  # type: ignore[arg-type]
+        result = state.eval(42)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
         assert result == 42
 
-        result = state.eval([1, 2, 3])  # type: ignore[arg-type]
+        result = state.eval([1, 2, 3])  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
         assert result == [1, 2, 3]
 
     @_requires_powerfx
@@ -554,8 +556,20 @@ class TestBasicExecutorsCoverage:
         assert state.get("Local.a") is None
         assert state.get("Local.b") is None
 
-    async def test_send_activity_with_dict_activity(self, mock_context, mock_state):
-        """Test SendActivityExecutor with dict activity containing text field."""
+    @_requires_powerfx
+    @pytest.mark.parametrize(
+        "activity",
+        [
+            "Hello, {Local.name}!",
+            {"text": "Hello, {Local.name}!"},
+            '="Hello, " & Local.name & "!"',
+            {"text": '="Hello, " & Local.name & "!"'},
+        ],
+    )
+    async def test_send_activity_with_authored_greeting(
+        self, mock_context: MagicMock, mock_state: MagicMock, activity: str | dict[str, str]
+    ) -> None:
+        """Authored templates and explicit expressions support the same greeting."""
         from agent_framework_declarative._workflows._executors_basic import (
             SendActivityExecutor,
         )
@@ -566,12 +580,12 @@ class TestBasicExecutorsCoverage:
 
         action_def = {
             "kind": "SendActivity",
-            "activity": {"text": "Hello, {Local.name}!"},
+            "activity": activity,
         }
         executor = SendActivityExecutor(action_def)
         await executor.handle_action(ActionTrigger(), mock_context)
 
-        mock_context.yield_output.assert_called_once_with("Hello, Alice!")
+        mock_context.yield_output.assert_awaited_once_with("Hello, Alice!")
 
     async def test_send_activity_with_string_activity(self, mock_context, mock_state):
         """Test SendActivityExecutor with string activity."""
@@ -610,6 +624,27 @@ class TestBasicExecutorsCoverage:
         await executor.handle_action(ActionTrigger(), mock_context)
 
         mock_context.yield_output.assert_called_once_with("Dynamic message")
+
+    @_requires_powerfx
+    @pytest.mark.parametrize("activity", ["=Local.msg", {"text": "=Local.msg"}])
+    async def test_send_activity_preserves_expression_result(
+        self, mock_context: MagicMock, mock_state: MagicMock, activity: str | dict[str, str]
+    ) -> None:
+        """Expression results are output data, not authored templates."""
+        from agent_framework_declarative._workflows._executors_basic import (
+            SendActivityExecutor,
+        )
+
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+        message = "Keep {Local.marker} as text."
+        state.set("Local.msg", message)
+        state.set("Local.marker", "fixture value")
+
+        executor = SendActivityExecutor({"kind": "SendActivity", "activity": activity})
+        await executor.handle_action(ActionTrigger(), mock_context)
+
+        mock_context.yield_output.assert_awaited_once_with(message)
 
 
 # ---------------------------------------------------------------------------
@@ -834,7 +869,9 @@ class TestAgentExecutorsCoverage:
         }
         executor = InvokeAzureAgentExecutor(action_def)
 
-        messages_var, response_obj, result_prop, auto_send = executor._get_output_config()
+        messages_var, response_obj, result_prop, auto_send = executor._get_output_config(
+            DeclarativeWorkflowState(mock_state)
+        )
         assert messages_var is None
         assert response_obj is None
         assert result_prop == "Local.result"
@@ -858,7 +895,9 @@ class TestAgentExecutorsCoverage:
         }
         executor = InvokeAzureAgentExecutor(action_def)
 
-        messages_var, response_obj, result_prop, auto_send = executor._get_output_config()
+        messages_var, response_obj, result_prop, auto_send = executor._get_output_config(
+            DeclarativeWorkflowState(mock_state)
+        )
         assert messages_var == "Local.ResponseMessages"
         assert response_obj == "Local.ParsedResponse"
         assert result_prop == "Local.result"
@@ -1127,7 +1166,7 @@ class TestControlFlowCoverage:
 
         # Set up loop state as ForeachInitExecutor would
         state_data = state.get_state_data()
-        state_data[LOOP_STATE_KEY] = {
+        cast(dict[str, Any], state_data)[LOOP_STATE_KEY] = {
             "foreach_init": {
                 "items": ["a", "b", "c"],
                 "index": 0,
@@ -1238,7 +1277,7 @@ class TestControlFlowCoverage:
 
         # Set up loop state at last item
         state_data = state.get_state_data()
-        state_data[LOOP_STATE_KEY] = {
+        cast(dict[str, Any], state_data)[LOOP_STATE_KEY] = {
             "loop_id": {
                 "items": ["a", "b"],
                 "index": 1,  # Already at last item
@@ -1272,7 +1311,7 @@ class TestControlFlowCoverage:
 
         # Set up loop state
         state_data = state.get_state_data()
-        state_data[LOOP_STATE_KEY] = {
+        cast(dict[str, Any], state_data)[LOOP_STATE_KEY] = {
             "loop_id": {
                 "items": ["a", "b", "c"],
                 "index": 0,
@@ -1306,7 +1345,7 @@ class TestControlFlowCoverage:
 
         # Set up loop state
         state_data = state.get_state_data()
-        state_data[LOOP_STATE_KEY] = {
+        cast(dict[str, Any], state_data)[LOOP_STATE_KEY] = {
             "loop_id": {
                 "items": ["a", "b", "c"],
                 "index": 0,
@@ -1521,6 +1560,19 @@ class TestDeclarativeActionExecutorBase:
         state = DeclarativeWorkflowState(mock_state)
         inputs = state.get("Workflow.Inputs")
         assert inputs == {"input": "string trigger"}
+
+    async def test_ensure_state_initialized_with_message_input(self, mock_context, mock_state):
+        """Test _ensure_state_initialized with a single Message input."""
+        from agent_framework_declarative._workflows._executors_control_flow import JoinExecutor
+
+        executor = JoinExecutor({"kind": "Entry"})
+        message = Message(role="user", contents=["message trigger"], message_id="message-1")
+        await executor.handle_action(message, mock_context)
+
+        state = DeclarativeWorkflowState(mock_state)
+        assert state.get("Workflow.Inputs") == {"input": "message trigger"}
+        assert state.get("System.LastMessage") == {"Text": "message trigger", "Id": "message-1"}
+        assert state.get("System.LastMessageText") == "message trigger"
 
     async def test_ensure_state_initialized_with_custom_object(self, mock_context, mock_state):
         """Test _ensure_state_initialized with custom object converts to string."""
@@ -1758,6 +1810,178 @@ class TestHumanInputExecutorsCoverage:
 
 class TestAgentExternalLoopCoverage:
     """Tests for agent executor external loop handling."""
+
+    @_requires_powerfx
+    @pytest.mark.parametrize("string_result", [False, True])
+    @pytest.mark.parametrize(
+        ("output_config", "expected_auto_send"),
+        [
+            ({}, True),
+            ({"autoSend": True}, True),
+            ({"autoSend": False}, False),
+            ({"autoSend": None}, False),
+            ({"autoSend": "=true"}, True),
+            ({"autoSend": "=false"}, False),
+            ({"autoSend": "=Local.send"}, False),
+            ({"autoSend": "=Not(Local.send)"}, True),
+            ({"autoSend": "=Blank()"}, False),
+            ({"autoSend": "=Local.missing"}, False),
+            ({"autoSend": "false"}, True),
+        ],
+    )
+    async def test_agent_auto_send(
+        self,
+        mock_context: MagicMock,
+        mock_state: MagicMock,
+        output_config: dict[str, Any],
+        expected_auto_send: bool,
+        string_result: bool,
+    ) -> None:
+        from types import SimpleNamespace
+
+        from agent_framework_declarative._workflows._executors_agents import InvokeAzureAgentExecutor
+
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+        state.set("Local.send", False)
+        result = "hello" if string_result else SimpleNamespace(text="hello", messages=[], tool_calls=[])
+        agent = MagicMock(run=AsyncMock(return_value=result))
+        executor = InvokeAzureAgentExecutor(
+            {
+                "kind": "InvokeAzureAgent",
+                "agent": "TestAgent",
+                "input": "question",
+                "resultProperty": "Local.result",
+                "output": {"messages": "Local.messages", **output_config},
+            },
+            agents={"TestAgent": agent},
+        )
+
+        await executor.handle_action(ActionTrigger(), mock_context)
+
+        agent.run.assert_awaited_once()
+        if expected_auto_send:
+            mock_context.yield_output.assert_awaited_once_with("hello")
+        else:
+            mock_context.yield_output.assert_not_awaited()
+        assert state.get("Local.result") == "hello"
+        assert state.get("Local.messages") == "hello"
+        assert state.get("Conversation.messages")[-1].text == "hello"
+        mock_context.send_message.assert_awaited_once()
+
+    @_requires_powerfx
+    @pytest.mark.parametrize("send", [False, True])
+    async def test_agent_auto_send_on_external_loop_resume(
+        self, mock_context: MagicMock, mock_state: MagicMock, send: bool
+    ) -> None:
+        from agent_framework_declarative._workflows._executors_agents import (
+            AgentExternalInputResponse,
+            InvokeAzureAgentExecutor,
+        )
+
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+        state.set("Local.send", send)
+        agent = MagicMock(run=AsyncMock(return_value="hello"))
+        executor = InvokeAzureAgentExecutor(
+            {
+                "kind": "InvokeAzureAgent",
+                "agent": "TestAgent",
+                "input": {"externalLoop": {"when": "=true"}},
+                "output": {"property": "Local.result", "autoSend": "=Local.send"},
+            },
+            agents={"TestAgent": agent},
+        )
+
+        await executor.handle_action(ActionTrigger(), mock_context)
+        request = mock_context.request_info.call_args[0][0]
+        state.set("Local.send", not send)
+        mock_context.yield_output.reset_mock()
+
+        await executor.handle_external_input_response(
+            request, AgentExternalInputResponse(user_input="continue"), mock_context
+        )
+
+        assert agent.run.await_count == 2
+        if not send:
+            mock_context.yield_output.assert_awaited_once_with("hello")
+        else:
+            mock_context.yield_output.assert_not_awaited()
+        assert state.get("Local.result") == "hello"
+
+    @_requires_powerfx
+    async def test_agent_auto_send_error_on_external_loop_resume(
+        self, mock_context: MagicMock, mock_state: MagicMock
+    ) -> None:
+        from agent_framework_declarative._workflows._executors_agents import (
+            AgentExternalInputResponse,
+            InvokeAzureAgentExecutor,
+        )
+
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+        state.set("Local.send", 1)
+        agent = MagicMock(run=AsyncMock(return_value="hello"))
+        executor = InvokeAzureAgentExecutor(
+            {
+                "kind": "InvokeAzureAgent",
+                "agent": "TestAgent",
+                "input": {"externalLoop": {"when": "=true"}},
+                "output": {"autoSend": "=Local.send + 1 > 0"},
+            },
+            agents={"TestAgent": agent},
+        )
+        await executor.handle_action(ActionTrigger(), mock_context)
+        request = mock_context.request_info.call_args[0][0]
+        state.set("Local.send", {"unexpected": "record"})
+        mock_context.yield_output.reset_mock()
+
+        with pytest.raises(ValueError):
+            await executor.handle_external_input_response(
+                request, AgentExternalInputResponse(user_input="continue"), mock_context
+            )
+
+        agent.run.assert_awaited_once()
+        mock_context.yield_output.assert_not_awaited()
+
+    @_requires_powerfx
+    @pytest.mark.parametrize("kind", ["InvokeFunctionTool", "InvokeAzureAgent"])
+    @pytest.mark.parametrize("missing_engine", [False, True])
+    async def test_auto_send_evaluation_error_prevents_invocation(
+        self,
+        mock_context: MagicMock,
+        mock_state: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+        kind: str,
+        missing_engine: bool,
+    ) -> None:
+        from agent_framework_declarative._workflows._executors_agents import InvokeAzureAgentExecutor
+        from agent_framework_declarative._workflows._executors_tools import InvokeFunctionToolExecutor
+
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+        tool = MagicMock(return_value="hello")
+        agent = MagicMock(run=AsyncMock(return_value="hello"))
+        action_def = {
+            "kind": kind,
+            "agent": "TestAgent",
+            "functionName": "echo",
+            "output": {"autoSend": "=true" if missing_engine else "=1 +"},
+        }
+        executor = (
+            InvokeFunctionToolExecutor(action_def, tools={"echo": tool})
+            if kind == "InvokeFunctionTool"
+            else InvokeAzureAgentExecutor(action_def, agents={"TestAgent": agent})
+        )
+        if missing_engine:
+            monkeypatch.setattr("agent_framework_declarative._workflows._declarative_base.Engine", None)
+
+        with pytest.raises(RuntimeError if missing_engine else ValueError):
+            await executor.handle_action(ActionTrigger(), mock_context)
+
+        tool.assert_not_called()
+        agent.run.assert_not_awaited()
+        mock_context.yield_output.assert_not_awaited()
 
     @_requires_powerfx
     async def test_agent_executor_with_external_loop(self, mock_context, mock_state):
@@ -2340,7 +2564,7 @@ class TestBuilderEdgeWiring:
         exec3 = SendActivityExecutor({"kind": "SendActivity", "activity": {"text": "3"}}, id="e3")
 
         # Simulate a chain by dynamically setting attribute
-        exec1._chain_executors = [exec1, exec2, exec3]  # type: ignore[attr-defined]
+        exec1._chain_executors = [exec1, exec2, exec3]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
         exit_exec = graph_builder._get_branch_exit(exec1)
 
@@ -2378,7 +2602,7 @@ class TestBuilderEdgeWiring:
         )
 
         # Simulate a single-action branch chain
-        goto_executor._chain_executors = [goto_executor]  # type: ignore[attr-defined]
+        goto_executor._chain_executors = [goto_executor]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
         exit_exec = graph_builder._get_branch_exit(goto_executor)
         assert exit_exec is None
@@ -2395,7 +2619,7 @@ class TestBuilderEdgeWiring:
             {"kind": "EndWorkflow", "id": "end"},
             id="end",
         )
-        end_executor._chain_executors = [end_executor]  # type: ignore[attr-defined]
+        end_executor._chain_executors = [end_executor]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
         exit_exec = graph_builder._get_branch_exit(end_executor)
         assert exit_exec is None
@@ -2419,7 +2643,7 @@ class TestBuilderEdgeWiring:
             {"kind": "GotoAction", "id": "goto_target", "actionId": "some_target"},
             id="goto_target",
         )
-        activity._chain_executors = [activity, goto]  # type: ignore[attr-defined]
+        activity._chain_executors = [activity, goto]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
         exit_exec = graph_builder._get_branch_exit(activity)
         assert exit_exec is None
@@ -2434,7 +2658,7 @@ class TestBuilderEdgeWiring:
 
         exec1 = SendActivityExecutor({"kind": "SendActivity", "activity": {"text": "1"}}, id="e1")
         exec2 = SendActivityExecutor({"kind": "SendActivity", "activity": {"text": "2"}}, id="e2")
-        exec1._chain_executors = [exec1, exec2]  # type: ignore[attr-defined]
+        exec1._chain_executors = [exec1, exec2]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
         exit_exec = graph_builder._get_branch_exit(exec1)
         assert exit_exec == exec2
@@ -2747,8 +2971,8 @@ class TestExpressionEdgeCases:
 class TestLongMessageTextHandling:
     """Tests for handling long MessageText results that exceed PowerFx limits."""
 
-    async def test_short_message_text_embedded_inline(self, mock_state):
-        """Test that short MessageText results are embedded inline."""
+    async def test_short_message_text_round_trips_without_residual_temp_state(self, mock_state):
+        """Test that short MessageText results are removed from temporary state after evaluation."""
         state = DeclarativeWorkflowState(mock_state)
         state.initialize()
 
@@ -2756,16 +2980,16 @@ class TestLongMessageTextHandling:
         short_text = "Hello world"
         state.set("Local.Messages", [{"text": short_text, "contents": [{"type": "text", "text": short_text}]}])
 
-        # Evaluate a formula with MessageText - should embed inline
+        # Evaluate a formula with MessageText.
         result = state.eval("=Upper(MessageText(Local.Messages))")
         assert result == "HELLO WORLD"
 
-        # No temp variable should be created for short strings
+        # Temporary state should be cleaned up after evaluation.
         temp_var = state.get("Local._TempMessageText0")
         assert temp_var is None
 
     async def test_long_message_text_stored_in_temp_variable(self, mock_state):
-        """Test that long MessageText results are stored in temp variables."""
+        """Long MessageText results round-trip and the temp key is removed after eval."""
         state = DeclarativeWorkflowState(mock_state)
         state.initialize()
 
@@ -2777,9 +3001,9 @@ class TestLongMessageTextHandling:
         result = state.eval("=Upper(MessageText(Local.Messages))")
         assert result == "A" * 600  # Upper on 'A' is still 'A'
 
-        # A temp variable should have been created
-        temp_var = state.get("Local._TempMessageText0")
-        assert temp_var == long_text
+        local = state.get_state_data().get("Local", {})
+        remaining = sorted(k for k in local if k.startswith("_TempMessageText"))
+        assert not remaining, f"Temporary keys remain in Local: {remaining}"
 
     async def test_find_with_long_message_text(self, mock_state):
         """Test Find function works with long MessageText stored in temp variable."""

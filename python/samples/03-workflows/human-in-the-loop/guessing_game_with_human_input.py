@@ -4,6 +4,7 @@ import asyncio
 import os
 from collections.abc import AsyncIterable
 from dataclasses import dataclass
+from typing import Any
 
 from agent_framework import (
     Agent,
@@ -19,6 +20,7 @@ from agent_framework import (
     response_handler,
 )
 from agent_framework.foundry import FoundryChatClient
+from agent_framework.openai import OpenAIChatOptions
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import BaseModel
@@ -43,7 +45,7 @@ Demonstrate:
 - Driving the loop in application code with run and responses parameter.
 
 Prerequisites:
-- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_PROJECT_ENDPOINT must be your Microsoft Foundry Agent Service (V2) project endpoint.
 - FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 - Basic familiarity with WorkflowBuilder, executors, edges, events, and streaming runs.
@@ -211,7 +213,7 @@ async def main() -> None:
             "No explanations or additional text."
         ),
         # response_format enforces that the model produces JSON compatible with GuessOutput.
-        default_options={"response_format": GuessOutput},
+        default_options=OpenAIChatOptions[Any](response_format=GuessOutput),
     )
     turn_manager = TurnManager(id="turn_manager")
 

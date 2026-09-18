@@ -6,17 +6,19 @@ import os
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import suppress
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from agent_framework import AgentResponse, Message
 from agent_framework._sessions import AgentSession, SessionContext
+from agent_framework._settings import SecretString
 from agent_framework.exceptions import SettingNotFoundError
 from azure.cosmos.aio import CosmosClient
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 
 import agent_framework_azure_cosmos._history_provider as history_provider_module
+from agent_framework_azure_cosmos._feature_usage import FeatureIndex
 from agent_framework_azure_cosmos._history_provider import CosmosHistoryProvider
 
 skip_if_cosmos_integration_tests_disabled = pytest.mark.skipif(
@@ -42,6 +44,15 @@ def _to_async_iter(items: list[Any]) -> AsyncIterator[Any]:
             yield item
 
     return _iterator()
+
+
+async def test_save_messages_marks_azure_cosmos_used_before_empty_return() -> None:
+    provider = object.__new__(CosmosHistoryProvider)
+
+    with patch("agent_framework_azure_cosmos._history_provider.mark_feature_used") as mark_feature_used:
+        await provider.save_messages(None, [])
+
+    mark_feature_used.assert_called_once_with(FeatureIndex.AZURE_COSMOS)
 
 
 @pytest.fixture
@@ -94,15 +105,22 @@ class TestCosmosHistoryProviderInit:
         with pytest.raises(SettingNotFoundError, match="database_name"):
             CosmosHistoryProvider()
 
-    def test_constructs_client_with_string_credential(
-        self, monkeypatch: pytest.MonkeyPatch, mock_cosmos_client: MagicMock
+    @pytest.mark.parametrize(
+        "credential", [None, "key-123", SecretString("key-123"), MagicMock()], ids=["env", "str", "secret", "token"]
+    )
+    def test_constructs_client_with_credential(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        mock_cosmos_client: MagicMock,
+        credential: str | SecretString | MagicMock | None,
     ) -> None:
         mock_factory = MagicMock(return_value=mock_cosmos_client)
         monkeypatch.setattr(history_provider_module, "CosmosClient", mock_factory)
+        monkeypatch.setenv("AZURE_COSMOS_KEY", "env-key")
 
         CosmosHistoryProvider(
             endpoint="https://account.documents.azure.com:443/",
-            credential="key-123",
+            credential=credential,
             database_name="db1",
             container_name="history",
         )
@@ -110,7 +128,11 @@ class TestCosmosHistoryProviderInit:
         mock_factory.assert_called_once()
         kwargs = mock_factory.call_args.kwargs
         assert kwargs["url"] == "https://account.documents.azure.com:443/"
-        assert kwargs["credential"] == "key-123"
+        if isinstance(credential, MagicMock):
+            assert kwargs["credential"] is credential
+        else:
+            assert type(kwargs["credential"]) is str
+            assert kwargs["credential"] == ("env-key" if credential is None else "key-123")
 
 
 class TestCosmosHistoryProviderContainerConfig:
@@ -234,6 +256,47 @@ class TestCosmosHistoryProviderSaveMessages:
 
         mock_container.execute_item_batch.assert_not_awaited()
 
+    async def test_filters_replayed_transcript_prefix(self, mock_container: MagicMock) -> None:
+        existing_messages = [
+            Message(role="user", contents=["A"]),
+            Message(role="assistant", contents=["B"]),
+        ]
+        mock_container.query_items.return_value = _to_async_iter([
+            {"message": message.to_dict()} for message in existing_messages
+        ])
+        provider = CosmosHistoryProvider(source_id="mem", container_client=mock_container)
+        incoming_messages = [
+            Message(role="user", contents=["A"]),
+            Message(role="assistant", contents=["B"]),
+            Message(role="user", contents=["C"]),
+        ]
+
+        await provider.save_messages("s1", incoming_messages)
+
+        batch_operations = mock_container.execute_item_batch.await_args.kwargs["batch_operations"]
+        assert len(batch_operations) == 1
+        assert batch_operations[0][1][0]["message"]["contents"][0]["text"] == "C"
+        mock_container.query_items.assert_called_once()
+
+    async def test_skips_exact_replayed_transcript(self, mock_container: MagicMock) -> None:
+        existing_messages = [
+            Message(role="user", contents=["A"]),
+            Message(role="assistant", contents=["B"]),
+        ]
+        mock_container.query_items.return_value = _to_async_iter([
+            {"message": message.to_dict()} for message in existing_messages
+        ])
+        provider = CosmosHistoryProvider(source_id="mem", container_client=mock_container)
+        incoming_messages = [
+            Message(role="user", contents=["A"]),
+            Message(role="assistant", contents=["B"]),
+        ]
+
+        await provider.save_messages("s1", incoming_messages)
+
+        mock_container.query_items.assert_called_once()
+        mock_container.execute_item_batch.assert_not_awaited()
+
     async def test_batches_when_message_count_exceeds_limit(self, mock_container: MagicMock) -> None:
         provider = CosmosHistoryProvider(source_id="mem", container_client=mock_container)
         messages = [Message(role="user", contents=[f"msg-{index}"]) for index in range(101)]
@@ -282,8 +345,11 @@ class TestCosmosHistoryProviderBeforeAfterRun:
         context = SessionContext(input_messages=[Message(role="user", contents=["new msg"])], session_id="s1")
 
         await provider.before_run(
-            agent=None, session=session, context=context, state=session.state.setdefault(provider.source_id, {})
-        )  # type: ignore[arg-type]
+            agent=cast(Any, None),
+            session=session,
+            context=context,
+            state=session.state.setdefault(provider.source_id, {}),
+        )
 
         assert "mem" in context.context_messages
         assert context.context_messages["mem"][0].text == "old msg"
@@ -295,8 +361,11 @@ class TestCosmosHistoryProviderBeforeAfterRun:
         context._response = AgentResponse(messages=[Message(role="assistant", contents=["hello"])])
 
         await provider.after_run(
-            agent=None, session=session, context=context, state=session.state.setdefault(provider.source_id, {})
-        )  # type: ignore[arg-type]
+            agent=cast(Any, None),
+            session=session,
+            context=context,
+            state=session.state.setdefault(provider.source_id, {}),
+        )
 
         mock_container.execute_item_batch.assert_awaited_once()
         batch_operations = mock_container.execute_item_batch.await_args.kwargs["batch_operations"]

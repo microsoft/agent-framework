@@ -31,7 +31,11 @@ async def main():
     # Use response.value with try/except for safe parsing
     try:
         parsed = response.value
-        print("Agent response:", parsed.model_dump_json(indent=2))
+        model_dump_json = getattr(parsed, "model_dump_json", None)
+        if callable(model_dump_json):
+            print("Agent response:", model_dump_json(indent=2))
+        else:
+            print("Agent response:", response.text)
     except Exception:
         print("Agent response:", response.text)
 

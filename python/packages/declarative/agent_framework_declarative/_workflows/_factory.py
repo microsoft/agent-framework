@@ -24,7 +24,9 @@ from agent_framework import (
     SupportsAgentRun,
     Workflow,
 )
+from agent_framework._telemetry import mark_feature_used
 
+from .._feature_usage import FeatureIndex
 from .._loader import AgentFactory
 from ._declarative_base import DeclarativeEnvConfig, discover_env_references
 from ._declarative_builder import DeclarativeWorkflowBuilder
@@ -208,7 +210,8 @@ class WorkflowFactory:
             An executable Workflow object with action nodes for each YAML action.
 
         Raises:
-            DeclarativeWorkflowError: If the YAML is invalid or cannot be parsed.
+            DeclarativeWorkflowError: If the YAML is invalid, cannot be parsed, or
+                environment-reference discovery encounters a mapping/list cycle.
             FileNotFoundError: If the YAML file doesn't exist.
 
         Examples:
@@ -239,7 +242,7 @@ class WorkflowFactory:
         if not yaml_path.exists():
             raise FileNotFoundError(f"Workflow YAML file not found: {yaml_path}")
 
-        with open(yaml_path) as f:
+        with open(yaml_path, encoding="utf-8") as f:
             yaml_content = f.read()
 
         return self.create_workflow_from_yaml(yaml_content, base_path=yaml_path.parent)
@@ -260,7 +263,8 @@ class WorkflowFactory:
             An executable Workflow object with action nodes for each YAML action.
 
         Raises:
-            DeclarativeWorkflowError: If the YAML is invalid or cannot be parsed.
+            DeclarativeWorkflowError: If the YAML is invalid, cannot be parsed, or
+                environment-reference discovery encounters a mapping/list cycle.
 
         Examples:
             .. code-block:: python
@@ -336,7 +340,8 @@ class WorkflowFactory:
             An executable Workflow object with action nodes for each YAML action.
 
         Raises:
-            DeclarativeWorkflowError: If the definition is invalid or missing required fields.
+            DeclarativeWorkflowError: If the definition is invalid, is missing required
+                fields, or environment-reference discovery encounters a mapping/list cycle.
 
         Examples:
             .. code-block:: python
@@ -471,6 +476,7 @@ class WorkflowFactory:
             len(graph_builder._executors),  # type: ignore[reportPrivateUsage]
         )
 
+        mark_feature_used(FeatureIndex.DECLARATIVE_WORKFLOW)
         return workflow
 
     def _normalize_workflow_def(self, workflow_def: dict[str, Any]) -> dict[str, Any]:

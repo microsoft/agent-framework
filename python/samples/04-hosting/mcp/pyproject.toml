@@ -1,0 +1,22 @@
+[project]
+name = "agent-framework-hosting-sample-mcp"
+version = "0.0.1"
+description = "Streamable HTTP MCP server using Agent Framework hosting helpers."
+requires-python = ">=3.10"
+dependencies = [
+    "agent-framework-core",
+    "agent-framework-foundry",
+    "agent-framework-hosting",
+    "agent-framework-hosting-mcp",
+    "azure-identity",
+    "mcp>=1.27.0,<2",
+    "starlette>=0.40",
+    "uvicorn>=0.30",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+agent-framework-hosting = { git = "https://github.com/microsoft/agent-framework.git", branch = "main", subdirectory = "python/packages/hosting" }
+agent-framework-hosting-mcp = { git = "https://github.com/microsoft/agent-framework.git", branch = "main", subdirectory = "python/packages/hosting-mcp" }

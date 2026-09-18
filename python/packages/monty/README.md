@@ -3,8 +3,8 @@
 Monty-backed CodeAct integrations for Microsoft Agent Framework.
 
 > [!WARNING]
-> This package is in **alpha**. APIs may change without notice. It is not part of
-> `agent-framework[all]` yet; install it explicitly with `--pre`.
+> This package is in **beta**. APIs may change before its stable release. It is
+> included in `agent-framework[all]`.
 
 ## Installation
 
@@ -28,7 +28,7 @@ available inside the Monty interpreter as **typed async functions** (e.g.
 
 ```python
 from agent_framework import Agent, tool
-from agent_framework_monty import MontyCodeActProvider
+from agent_framework.monty import MontyCodeActProvider
 
 
 @tool
@@ -61,7 +61,7 @@ tools on the same agent).
 
 ```python
 from agent_framework import Agent, tool
-from agent_framework_monty import MontyExecuteCodeTool
+from agent_framework.monty import MontyExecuteCodeTool
 
 
 @tool
@@ -105,12 +105,50 @@ agent = Agent(
 )
 ```
 
+### Tool parameter documentation
+
+Both `MontyCodeActProvider` and `MontyExecuteCodeTool` accept the keyword-only
+`tool_description_format` parameter. It controls the registered tools' parameter
+documentation in both the `execute_code` description and CodeAct instructions:
+
+- `"compact"` (default) lists scalar parameter types, required/optional status,
+  descriptions, enum choices, and defaults.
+- `"json"` includes the complete parameter JSON Schema.
+- A mapping such as `{"compute": "json", "send_email": "compact"}` selects formats
+  by exact, case-sensitive tool name. Names missing from the mapping use compact.
+
+Compact automatically falls back to complete JSON Schema, with an explanatory
+note, for schemas it cannot represent faithfully, such as nested objects, arrays,
+references, unions, or additional constraints. Parameter schemas and runtime
+type checking are not changed.
+
+Mappings are copied at construction and for each run snapshot. Entries for
+currently unregistered tools are retained for later `add_tools` calls, including
+after removal or clearing of the registry. State snapshots include the configured
+string or mapping in `tool_description_format`.
+
+Only `"compact"`, `"json"`, or mappings from string names to these values are
+accepted: unsupported choices raise `ValueError`; `None`, invalid input types,
+non-string mapping keys, and non-string choices raise `TypeError`.
+
+Tool parameter schemas are model-visible metadata, just as they are for direct
+function calling. Do not put credentials, tenant identifiers, or other secrets in
+parameter descriptions, enum values, defaults, or custom schema fields.
+
+### Host tool lifetime
+
+Registered `FunctionTool` instances retain their invocation and exception counters
+across `execute_code` calls and provider runs. Their `max_invocations` and
+`max_invocation_exceptions` limits use the same counters as direct invocations of
+those instances. A provider's run-scoped snapshot captures tool membership; it
+does not reset host tool counters.
+
 ### File mounts and resource limits
 
 Mount host directories into the sandbox and cap execution resources:
 
 ```python
-from agent_framework_monty import FileMount, MontyCodeActProvider
+from agent_framework.monty import FileMount, MontyCodeActProvider
 
 codeact = MontyCodeActProvider(
     tools=[compute],
@@ -145,8 +183,8 @@ codeact = MontyCodeActProvider(
   nothing is captured). `read-only` mounts reject writes.
 - **`resource_limits`** is forwarded straight to Monty's
   [`ResourceLimits`](https://github.com/pydantic/monty) TypedDict
-  (`max_allocations`, `max_duration_secs`, `max_memory`, `gc_interval`,
-  `max_recursion_depth`).
+  (`max_duration_secs`, `max_memory`, `gc_interval`, `max_recursion_depth`,
+  `max_suspensions`).
 
 ## DSL inside `execute_code`
 
@@ -174,6 +212,5 @@ Available primitives:
 - Code is type-checked against tool signatures via
   [ty](https://docs.astral.sh/ty/) before execution, so wrong argument types
   surface as a clear error before any host tool runs.
-- The alpha package is **not** part of `agent-framework[all]` yet, so it must
-  be installed explicitly. Once promoted to beta it will be reachable via the
-  lazy-loading namespace `agent_framework.monty`.
+- The beta package is part of `agent-framework[all]` and is reachable through
+  the lazy-loading namespace `agent_framework.monty`.

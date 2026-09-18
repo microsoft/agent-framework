@@ -2,11 +2,13 @@
 
   <PropertyGroup>
     <IsReleased>true</IsReleased>
-    <NoWarn>$(NoWarn);MEAI001;MAAIW001</NoWarn>
+    <NoWarn>$(NoWarn);MEAI001;MAAIW001;MAAI001</NoWarn>
   </PropertyGroup>
 
   <PropertyGroup>
     <InjectSharedThrow>true</InjectSharedThrow>
+    <InjectSharedDiagnosticIds>true</InjectSharedDiagnosticIds>
+    <InjectSharedUsage>true</InjectSharedUsage>
     <InjectIsExternalInitOnLegacy>true</InjectIsExternalInitOnLegacy>
     <InjectExperimentalAttributeOnLegacy>true</InjectExperimentalAttributeOnLegacy>
     <InjectTrimAttributesOnLegacy>true</InjectTrimAttributesOnLegacy>

@@ -17,6 +17,7 @@ Usage:
 
 import argparse
 import asyncio
+import logging
 import os
 import sys
 import time
@@ -28,6 +29,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from sample_validation.models import Report
 from sample_validation.report import save_report
 from sample_validation.workflow import ValidationConfig, create_validation_workflow
+
+logging.basicConfig(level=logging.INFO)
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -82,6 +85,33 @@ Examples:
         help="Subdirectory paths to exclude (relative to the search directory set by --subdir)",
     )
 
+    parser.add_argument(
+        "--playbooks-dir",
+        type=str,
+        default="./sample_validation/playbooks",
+        help=(
+            "Directory (relative to samples/) where cached per-sample playbooks are stored and "
+            "reused across runs (default: ./sample_validation/playbooks)"
+        ),
+    )
+
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Ignore cached playbooks and always validate every sample with the agent",
+    )
+
+    parser.add_argument(
+        "--agent-timeout",
+        type=int,
+        default=120,
+        help=(
+            "Per-turn timeout in seconds for the GitHub Copilot agent while validating a sample. "
+            "Increase for long-running samples such as hosted agents that start a server and make "
+            "multiple calls (default: 120)"
+        ),
+    )
+
     return parser.parse_args()
 
 
@@ -107,13 +137,22 @@ async def main() -> int:
         )
 
     # Create validation config
+    playbooks_dir = (samples_dir / args.playbooks_dir).resolve()
     config = ValidationConfig(
         samples_dir=samples_dir,
         python_root=python_root,
         subdir=args.subdir,
         exclude=args.exclude,
         max_parallel_workers=max(1, args.max_parallel_workers),
+        playbooks_dir=playbooks_dir,
+        use_cache=not args.no_cache,
+        agent_timeout=max(1, args.agent_timeout),
     )
+
+    if config.use_cache:
+        print(f"Playbook cache: {playbooks_dir}")
+    else:
+        print("Playbook cache: disabled (--no-cache)")
 
     # Create and run the workflow
     workflow = create_validation_workflow(config)

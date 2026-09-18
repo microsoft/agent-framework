@@ -91,7 +91,7 @@ class TestComplexModels:
         protected_app = ProtectedAppMetadata(name="Protected", version="1.0", application_location=location)
 
         content = ContentToProcess(
-            content_entries=[metadata],
+            content_entry=metadata,
             activity_metadata=activity_meta,
             device_metadata=device_meta,
             integrated_app_metadata=integrated_app,
@@ -100,7 +100,9 @@ class TestComplexModels:
 
         assert len(content.content_entries) == 1
         assert content.activity_metadata.activity == Activity.UPLOAD_TEXT
-        assert content.device_metadata.operating_system_specifications.operating_system_platform == "Windows"
+        os_specs = content.device_metadata.operating_system_specifications
+        assert os_specs is not None
+        assert os_specs.operating_system_platform == "Windows"
         assert content.integrated_app_metadata.name == "App"
         assert content.protected_app_metadata.name == "Protected"
 
@@ -162,6 +164,7 @@ class TestModelDeserialization:
 
         assert response.id == "response-123"
         assert response.protection_scope_state == "blocked"
+        assert response.policy_actions is not None
         assert len(response.policy_actions) == 1
 
     def test_content_serialization_uses_aliases(self) -> None:
@@ -185,7 +188,7 @@ class TestModelDeserialization:
         protected_app = ProtectedAppMetadata(name="Protected", version="1.0", application_location=location)
 
         content = ContentToProcess(
-            content_entries=[metadata],
+            content_entry=metadata,
             activity_metadata=activity_meta,
             device_metadata=device_meta,
             integrated_app_metadata=integrated_app,
@@ -195,6 +198,7 @@ class TestModelDeserialization:
         dumped = content.model_dump(by_alias=True, exclude_none=True, mode="json")
 
         assert "contentEntries" in dumped
+        assert len(dumped["contentEntries"]) == 1
         assert "activityMetadata" in dumped
         assert "deviceMetadata" in dumped
         assert "integratedAppMetadata" in dumped
@@ -221,7 +225,7 @@ class TestModelDeserialization:
         protected_app = ProtectedAppMetadata(name="Protected", version="1.0", application_location=location)
 
         content = ContentToProcess(
-            content_entries=[metadata],
+            content_entry=metadata,
             activity_metadata=activity_meta,
             device_metadata=device_meta,
             integrated_app_metadata=integrated_app,

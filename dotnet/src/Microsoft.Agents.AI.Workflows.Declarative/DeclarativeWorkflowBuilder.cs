@@ -74,6 +74,7 @@ public static class DeclarativeWorkflowBuilder
 
         WorkflowFormulaState state = new(options.CreateRecalcEngine());
         state.Initialize(workflowElement.WrapWithBot(), options.Configuration);
+        state.CaptureInitialState();
         DeclarativeWorkflowExecutor<TInput> rootExecutor =
             new(rootId,
                 options,
@@ -84,7 +85,13 @@ public static class DeclarativeWorkflowBuilder
         WorkflowElementWalker walker = new(visitor);
         walker.Visit(workflowElement);
 
-        return visitor.Complete();
+        Workflow workflow = visitor.Complete();
+
+#pragma warning disable MAAI001
+        FeatureUsage.MarkUsed((int)FeatureIndex.DeclarativeWorkflow);
+#pragma warning restore MAAI001
+
+        return workflow;
     }
 
     private static AdaptiveDialog ReadWorkflow(TextReader yamlReader)

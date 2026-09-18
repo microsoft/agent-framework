@@ -2,7 +2,7 @@
 # These are optional elements. Feel free to remove any of them.
 status: accepted
 contact: westey-m
-date: 2025-09-12 {YYYY-MM-DD when the decision was last updated}
+date: 2025-09-12
 deciders: sergeymenshykh, markwallace-microsoft, rogerbarreto, dmytrostruk, westey-m, eavanvalkenburg, stephentoub, peterychang
 consulted: 
 informed: 
@@ -25,7 +25,7 @@ See various features that would need to be supported via this type of mechanism,
 - Also see [the openai human-in-the-loop guide](https://openai.github.io/openai-agents-js/guides/human-in-the-loop/#approval-requests).
 - Also see [the openai MCP guide](https://openai.github.io/openai-agents-js/guides/mcp/#optional-approval-flow).
 - Also see [MCP Approval Requests from OpenAI](https://platform.openai.com/docs/guides/tools-remote-mcp#approvals).
-- Also see [Azure AI Foundry MCP Approvals](https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/tools/model-context-protocol-samples?pivots=rest#submit-your-approval).
+- Also see [Microsoft Foundry MCP Approvals](https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/tools/model-context-protocol-samples?pivots=rest#submit-your-approval).
 - Also see [MCP Elicitation requests](https://modelcontextprotocol.io/specification/draft/client/elicitation)
 
 ## Decision Drivers
@@ -390,7 +390,7 @@ Chosen option 5.
 1. Agent calls IChatClient with any functions registered on the agent.
    (IChatClient has FunctionInvokingChatClient)
 1. Model responds with FunctionCallContent indicating function calls required.
-1. FunctionInvokingChatClient decorator identifies any function calls that require user approval and returns an FunctionApprovalRequestContent.
+1. FunctionInvokingChatClient decorator identifies any function calls that require user approval and returns a FunctionApprovalRequestContent.
    (If there are multiple parallel function calls, all function calls will be returned as FunctionApprovalRequestContent even if only some require approval.)
 1. Agent updates the thread with the FunctionApprovalRequestContent (or this may have already been done by a service threaded agent).
 1. Agent returns the FunctionApprovalRequestContent to the caller which shows it to the user in the appropriate format.
@@ -510,7 +510,7 @@ sequenceDiagram
 
     note right of Developer: Developer approves one function call and rejects the other.
     Developer->>+ApprovalGeneratingChatClient: [FunctionApprovalResponseContent(GetMenu, approved=true)]<br/>[FunctionApprovalResponseContent(GetSpecials, approved=false)]
-    note right of ApprovalGeneratingChatClient: AGCC turns turns approval requests<br/>into FCC or failed function calls
+    note right of ApprovalGeneratingChatClient: AGCC turns approval requests<br/>into FCC or failed function calls
     ApprovalGeneratingChatClient->>+FunctionInvokingChatClient: [FunctionCallContent(GetMenu)]<br/>[FunctionCallContent(GetSpecials)<br/>[FunctionResultContent(GetSpecials, "Function invocation denied"))]
     note right of FunctionInvokingChatClient: FICC invokes GetMenu since it's the only remaining one.
     FunctionInvokingChatClient->>+ResponseChatClient: [FunctionCallContent(GetMenu)]<br/>[FunctionResultContent(GetMenu, "mains.... deserts...")]<br/>[FunctionCallContent(GetSpecials)<br/>[FunctionResultContent(GetSpecials, "Function invocation denied"))]

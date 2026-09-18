@@ -43,6 +43,7 @@ public sealed class ChatClientPromptAgentFactory : PromptAgentFactory
 
         var agent = new ChatClientAgent(this._chatClient, options, this._loggerFactory);
 
+        Declarative.FeatureUsageMarker.MarkUsed();
         return Task.FromResult<AIAgent?>(agent);
     }
 

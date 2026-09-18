@@ -75,7 +75,7 @@ async def main() -> None:
         credential=AzureCliCredential(),
     )
     # use the openai client from the foundry client to upload files for the code interpreter tool
-    openai_client = client.project_client.get_openai_client()
+    openai_client = getattr(client.project_client, "get_openai_client")()  # noqa: B009
     temp_file_path, file_id = await create_sample_file_and_upload(openai_client)
     # Create agent with code interpreter tool with file access
     agent = Agent(

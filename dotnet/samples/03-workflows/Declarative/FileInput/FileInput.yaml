@@ -1,0 +1,30 @@
+﻿#
+# This workflow demonstrates accepting file-based input as workflow input.
+#
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: workflow_demo
+  actions:
+
+    # Show that the workflow can inspect the text portion of the message.
+    # The uploaded file is already attached to the conversation and is available
+    # to agent-backed actions that use System.ConversationId.
+    - kind: SendActivity
+      id: announce_file_input
+      activity: |-
+        Received file-based workflow input.
+
+        Prompt:
+        {System.LastMessage.Text}
+
+    # Invoke an agent in the original conversation. The workflow root already added
+    # the file-bearing user message to this conversation before the first action ran.
+    - kind: InvokeAzureAgent
+      id: summarize_file
+      conversationId: =System.ConversationId
+      agent:
+        name: FileInputAgent
+      output:
+        autoSend: true

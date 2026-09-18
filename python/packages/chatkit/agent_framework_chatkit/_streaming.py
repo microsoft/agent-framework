@@ -7,6 +7,7 @@ from collections.abc import AsyncIterable, AsyncIterator, Callable
 from datetime import datetime
 
 from agent_framework import AgentResponseUpdate
+from agent_framework._telemetry import mark_feature_used
 from chatkit.types import (
     AssistantMessageContent,
     AssistantMessageContentPartTextDelta,
@@ -16,6 +17,8 @@ from chatkit.types import (
     ThreadItemUpdated,
     ThreadStreamEvent,
 )
+
+from ._feature_usage import FeatureIndex
 
 
 async def stream_agent_response(
@@ -44,6 +47,7 @@ async def stream_agent_response(
         ThreadStreamEvent: ChatKit events representing the agent's response,
                           including incremental text deltas for streaming display.
     """
+    mark_feature_used(FeatureIndex.CHATKIT)
     # Use provided ID generator or create default one
     if generate_id is None:
 

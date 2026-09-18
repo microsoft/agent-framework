@@ -1,4 +1,4 @@
-#requires -Version 7
+﻿#requires -Version 7
 <#
 .SYNOPSIS
   Local smoke test for the Hosted-AgentSkills sample.
@@ -11,12 +11,12 @@
   Prerequisites:
     - Docker
     - az login (token is fetched from the host)
-    - .env populated with AZURE_AI_PROJECT_ENDPOINT and model deployment
+    - .env populated with FOUNDRY_PROJECT_ENDPOINT and model deployment
     - Skills provisioned to Foundry (set PROVISION_SAMPLE_SKILLS=true on first run)
 .NOTES
-  This script is for local Docker debugging only. The Foundry platform supplies the
-  isolation keys for every inbound request in production and the dev fallback used here
-  must not be enabled in production deployments.
+  This script is for local Docker debugging only. Running locally the container needs no user
+  identity: per-user isolation simply is not triggered. On the Foundry platform the caller identity
+  (x-agent-user-id) is supplied automatically for every request.
 #>
 
 [CmdletBinding()]
@@ -30,7 +30,7 @@ $ErrorActionPreference = 'Stop'
 Set-Location -Path $PSScriptRoot/..
 
 if (-not (Test-Path .env)) {
-    throw '.env not found. Copy .env.example to .env and fill in AZURE_AI_PROJECT_ENDPOINT.'
+    throw '.env not found. Copy .env.example to .env and fill in FOUNDRY_PROJECT_ENDPOINT.'
 }
 
 Write-Host '==> Publishing sample for linux-musl-x64 ...'
@@ -50,8 +50,6 @@ function Start-Container {
     docker run -d --name $ContainerName -p ${Port}:8088 `
         -e AGENT_NAME=hosted-agent-skills `
         -e AZURE_BEARER_TOKEN=$bearer `
-        -e HOSTED_USER_ISOLATION_KEY=smoke-user `
-        -e HOSTED_CHAT_ISOLATION_KEY=smoke-chat-1 `
         --env-file .env `
         $ImageName | Out-Host
     if ($LASTEXITCODE -ne 0) { throw "docker run failed." }

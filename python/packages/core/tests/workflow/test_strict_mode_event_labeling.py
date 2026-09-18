@@ -25,7 +25,7 @@ async def _start(messages: list[Message], ctx: WorkflowContext[str, str]) -> Non
 
 
 @executor
-async def _downstream(message: str, ctx: WorkflowContext[Never, str]) -> None:
+async def _downstream(message: str, ctx: WorkflowContext[Never, str]) -> None:  # type: ignore[valid-type]
     await ctx.yield_output("from-downstream")
 
 

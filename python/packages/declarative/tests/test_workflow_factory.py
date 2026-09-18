@@ -2,8 +2,23 @@
 
 """Unit tests for WorkflowFactory."""
 
-import pytest
+from collections import UserDict
+from collections.abc import Iterator, ValuesView
+from copy import deepcopy
+from pathlib import Path
+from types import MappingProxyType
+from typing import Any, cast
+from unittest.mock import patch
 
+import pytest
+import yaml
+from agent_framework import Message
+
+from agent_framework_declarative._feature_usage import FeatureIndex
+from agent_framework_declarative._workflows._declarative_base import (
+    DeclarativeActionExecutor,
+    discover_env_references,
+)
 from agent_framework_declarative._workflows._errors import DeclarativeWorkflowError
 from agent_framework_declarative._workflows._factory import WorkflowFactory
 
@@ -63,6 +78,285 @@ actions:
 
         assert workflow is not None
         assert workflow.name == "minimal-workflow"
+
+    def test_valid_workflow_marks_declarative_workflow_used(self):
+        """Test that successful declarative workflow creation marks feature usage."""
+        factory = WorkflowFactory()
+
+        with patch("agent_framework_declarative._workflows._factory.mark_feature_used") as mark_feature_used:
+            factory.create_workflow_from_definition({
+                "name": "minimal-workflow",
+                "actions": [
+                    {
+                        "kind": "SetValue",
+                        "path": "Local.result",
+                        "value": "done",
+                    }
+                ],
+            })
+
+        mark_feature_used.assert_called_once_with(FeatureIndex.DECLARATIVE_WORKFLOW)
+
+
+class TestWorkflowEnvironmentDiscovery:
+    """Environment discovery preserves shared definitions without expanding them repeatedly."""
+
+    def test_shared_containers_are_scanned_once(self) -> None:
+        class CountingMapping(UserDict[str, Any]):
+            visits = 0
+
+            def values(self) -> ValuesView[Any]:
+                self.visits += 1
+                return super().values()
+
+        class CountingList(list[Any]):
+            visits = 0
+
+            def __iter__(self) -> Iterator[Any]:
+                self.visits += 1
+                return super().__iter__()
+
+        leaf = CountingMapping({"expression": "=Env.SHARED & Env.SHARED"})
+        shared_list = CountingList([leaf])
+        shared = [shared_list, shared_list, leaf, {"expression": "=Env.OTHER"}]
+        tree = [[dict(leaf)], [dict(leaf)], dict(leaf), {"expression": "=Env.OTHER"}]
+
+        assert discover_env_references(shared) == discover_env_references(tree) == {"SHARED", "OTHER"}
+        assert leaf.visits == 1
+        assert shared_list.visits == 1
+        assert shared == tree
+        assert shared[0] is shared[1]
+        assert shared_list[0] is leaf
+
+    def test_only_expression_values_contribute_names(self) -> None:
+        definition = {
+            "=Env.KEY": "Env.PLAIN",
+            "nested": [MappingProxyType({"value": "=Env.FIRST & Env.SECOND"}), {"value": "=Env.FIRST"}],
+            "ignored": [None, 7, False, " =Env.LEADING", "Env.TEXT"],
+        }
+
+        assert discover_env_references(definition) == {"FIRST", "SECOND"}
+
+    @pytest.mark.parametrize("source", ["definition", "yaml"])
+    @pytest.mark.parametrize("cycle_kind", ["mapping", "list"])
+    def test_cycles_raise_definition_error(self, source: str, cycle_kind: str) -> None:
+        metadata: dict[str, Any] = {"value": "not-for-error-output"}
+        if cycle_kind == "mapping":
+            metadata["child"] = {"parent": metadata}
+        else:
+            child: list[Any] = []
+            child.append(child)
+            metadata["child"] = child
+        definition = {
+            "name": "cycle-check",
+            "actions": [{"kind": "SendActivity", "activity": "done"}],
+            "metadata": metadata,
+        }
+        factory = WorkflowFactory()
+
+        with pytest.raises(DeclarativeWorkflowError) as exc_info:
+            if source == "yaml":
+                factory.create_workflow_from_yaml(yaml.safe_dump(definition))
+            else:
+                factory.create_workflow_from_definition(definition)
+
+        assert str(exc_info.value) == "Cyclic mappings or lists are not supported in workflow definitions."
+        assert metadata["value"] == "not-for-error-output"
+        if cycle_kind == "mapping":
+            mapping_child = metadata["child"]
+            assert isinstance(mapping_child, dict)
+            assert mapping_child["parent"] is metadata
+        else:
+            list_child = metadata["child"]
+            assert isinstance(list_child, list)
+            assert list_child[0] is list_child
+
+    @pytest.mark.parametrize("source", ["definition", "yaml"])
+    @pytest.mark.parametrize("restrict_env", [True, False])
+    def test_shared_aliases_preserve_env_configuration(
+        self, source: str, restrict_env: bool, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("DISCOVERY_CONFIG", "environment")
+        monkeypatch.setenv("DISCOVERY_FALLBACK", "fallback")
+        monkeypatch.setenv("DISCOVERY_UNREFERENCED", "not-exposed")
+        shared = {"value": "=Env.DISCOVERY_CONFIG & Env.DISCOVERY_FALLBACK"}
+        definition: dict[str, Any] = {
+            "name": "shared-references",
+            "trigger": {"actions": [{"kind": "SendActivity", "activity": "done"}]},
+            "metadata": [shared, shared],
+        }
+        original = deepcopy(definition)
+        factory = WorkflowFactory(
+            configuration={"DISCOVERY_CONFIG": "configured"},
+            restrict_env_to_configuration=restrict_env,
+        )
+        if source == "yaml":
+            workflow = factory.create_workflow_from_yaml(yaml.safe_dump(definition))
+        else:
+            workflow = factory.create_workflow_from_definition(definition)
+
+        executor = workflow.get_start_executor()
+        assert isinstance(executor, DeclarativeActionExecutor)
+        config = executor._declarative_env_config
+        assert config.referenced_names == {"DISCOVERY_CONFIG", "DISCOVERY_FALLBACK"}
+        expected = {"DISCOVERY_CONFIG": "configured"}
+        if not restrict_env:
+            expected["DISCOVERY_FALLBACK"] = "fallback"
+        assert config.resolve() == expected
+        assert definition == original
+        assert definition["metadata"][0] is definition["metadata"][1]
+        assert shared == original["metadata"][0]
+
+
+class TestWorkflowFactoryMessageInput:
+    """Tests for declarative workflows started with a single Message."""
+
+    async def test_entry_join_executor_initializes_workflow_inputs_message(self):
+        """Regression test for #7285: Entry JoinExecutor must accept a single Message input."""
+        from agent_framework_declarative._workflows._declarative_base import DECLARATIVE_STATE_KEY
+
+        factory = WorkflowFactory()
+        workflow = factory.create_workflow_from_yaml("""
+name: entry-message-inputs-test
+actions:
+  - kind: SendActivity
+    activity:
+      text: received
+""")
+
+        result = await workflow.run(Message(role="user", contents=["25"], message_id="message-25"))
+        outputs = result.get_outputs()
+        assert any("received" in str(output) for output in outputs)
+
+        state_data = workflow._runner.state.get(DECLARATIVE_STATE_KEY)
+        assert isinstance(state_data, dict)
+        assert state_data["Inputs"]["input"] == "25"
+        assert state_data["System"]["LastMessage"] == {"Text": "25", "Id": "message-25"}
+        assert state_data["System"]["LastMessageText"] == "25"
+
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_message_input_resets_prior_run_state(self, stream: bool) -> None:
+        """A fresh Message must not inherit state from a reused workflow instance."""
+        from agent_framework_declarative._workflows._declarative_base import DECLARATIVE_STATE_KEY
+
+        workflow = WorkflowFactory().create_workflow_from_yaml("""
+name: fresh-message-state-test
+actions:
+  - kind: SendActivity
+    activity:
+      text: received
+""")
+        await workflow.run(Message(role="user", contents=["first"]))
+        prior = workflow._runner.state.get(DECLARATIVE_STATE_KEY)
+        assert isinstance(prior, dict)
+        prior_conversation_id = prior["System"]["ConversationId"]
+        # Model values persisted by actions during the preceding run.
+        for namespace in ("Local", "System", "Outputs", "Agent", "Custom"):
+            prior[namespace]["tenant_secret"] = "first-conversation-only"
+        prior["Conversation"]["messages"] = [Message(role="assistant", contents=["private history"])]
+        prior["Conversation"]["history"] = list(prior["Conversation"]["messages"])
+        workflow._runner.state.set(DECLARATIVE_STATE_KEY, prior)
+        workflow._runner.state.commit()
+
+        message = Message(role="user", contents=["second"], message_id="second-message")
+        if stream:
+            events = [event async for event in workflow.run(message, stream=True)]
+            assert any(event.type == "output" for event in events)
+        else:
+            result = await workflow.run(message)
+            assert result.get_outputs()
+
+        current = workflow._runner.state.get(DECLARATIVE_STATE_KEY)
+        assert isinstance(current, dict)
+        for namespace in ("Local", "System", "Outputs", "Agent", "Custom"):
+            assert "tenant_secret" not in current[namespace], namespace
+        assert current["Conversation"] == {"messages": [], "history": []}
+        assert current["System"]["ConversationId"] != prior_conversation_id
+        assert prior_conversation_id not in current["System"]["conversations"]
+        assert current["Inputs"] == {"input": "second"}
+        assert current["System"]["LastMessage"] == {"Text": "second", "Id": "second-message"}
+        assert current["System"]["LastMessageText"] == "second"
+        assert current["System"]["LastMessageId"] == "second-message"
+
+    @pytest.mark.parametrize("restore_with_responses", [False, True])
+    @_requires_powerfx
+    async def test_message_input_checkpoint_restores_own_state(self, restore_with_responses: bool) -> None:
+        """Restoring a paused run must recover its state after another conversation ran."""
+        from agent_framework import InMemoryCheckpointStorage
+
+        from agent_framework_declarative._workflows import ExternalInputResponse
+        from agent_framework_declarative._workflows._declarative_base import DECLARATIVE_STATE_KEY
+
+        workflow = WorkflowFactory().create_workflow_from_yaml("""
+name: message-checkpoint-state-test
+actions:
+  - kind: SetValue
+    path: Local.tenant_secret
+    value: =System.LastMessageText
+  - kind: Question
+    question:
+      text: Continue?
+    variable: Local.answer
+  - kind: SendActivity
+    activity:
+      text: =Local.tenant_secret
+""")
+        first_storage = InMemoryCheckpointStorage()
+        first = await workflow.run(Message(role="user", contents=["first-secret"]), checkpoint_storage=first_storage)
+        first_request_id = first.get_request_info_events()[0].request_id
+        checkpoints = await first_storage.list_checkpoints(workflow_name=workflow.name)
+        # Wall-clock timestamps can tie on Windows. Select the checkpoint
+        # that actually contains this run's pending question, not an earlier step.
+        checkpoint = next(item for item in checkpoints if first_request_id in item.pending_request_info_events)
+        assert first_request_id in checkpoint.pending_request_info_events
+        first_state = workflow._runner.state.get(DECLARATIVE_STATE_KEY)
+        assert isinstance(first_state, dict)
+        first_conversation_id = first_state["System"]["ConversationId"]
+        await workflow.run(
+            responses={first_request_id: ExternalInputResponse(user_input="finish first")},
+            checkpoint_storage=first_storage,
+        )
+
+        second_storage = InMemoryCheckpointStorage()
+        second = await workflow.run(Message(role="user", contents=["second-secret"]), checkpoint_storage=second_storage)
+        second_request_id = second.get_request_info_events()[0].request_id
+        await workflow.run(
+            responses={second_request_id: ExternalInputResponse(user_input="finish second")},
+            checkpoint_storage=second_storage,
+        )
+
+        responses = {first_request_id: ExternalInputResponse(user_input="restored answer")}
+        if restore_with_responses:
+            restored = await workflow.run(
+                checkpoint_id=checkpoint.checkpoint_id, checkpoint_storage=first_storage, responses=responses
+            )
+        else:
+            await workflow.run(checkpoint_id=checkpoint.checkpoint_id, checkpoint_storage=first_storage)
+            restored = await workflow.run(responses=responses, checkpoint_storage=first_storage)
+
+        assert restored.get_outputs() == ["first-secret"]
+        restored_state = workflow._runner.state.get(DECLARATIVE_STATE_KEY)
+        assert isinstance(restored_state, dict)
+        assert restored_state["Local"] == {"tenant_secret": "first-secret", "answer": "restored answer"}
+        assert restored_state["Inputs"] == {"input": "first-secret"}
+        assert restored_state["System"]["ConversationId"] == first_conversation_id
+
+    @pytest.mark.parametrize(
+        ("age", "category"),
+        [(8, "child"), (16, "teenager"), (25, "adult"), (70, "senior")],
+    )
+    @_requires_powerfx
+    async def test_devui_declarative_workflow_categorizes_message_input(self, age: int, category: str):
+        """Regression test for #7285: The DevUI sample must categorize chat message input by age."""
+        workflow_path = (
+            Path(__file__).parents[3] / "samples" / "02-agents" / "devui" / "workflow_declarative" / "workflow.yaml"
+        )
+        workflow = WorkflowFactory().create_workflow_from_yaml_path(workflow_path)
+
+        result = await workflow.run(Message(role="user", contents=[str(age)]))
+        outputs = result.get_outputs()
+
+        assert any(f"categorized as: {category}" in str(output) for output in outputs)
 
 
 @_requires_powerfx
@@ -289,11 +583,11 @@ actions:
         # Stamp a marker into the declarative state between turns. The
         # continuation branch must preserve it; a state-clearing run would
         # wipe ``DECLARATIVE_STATE_KEY`` and force re-initialization.
-        state_data = workflow._state.get(DECLARATIVE_STATE_KEY)
+        state_data = workflow._runner.state.get(DECLARATIVE_STATE_KEY)
         assert isinstance(state_data, dict), "Expected declarative state to be initialized after turn 1"
         state_data["Local"] = {"persisted_marker": "kept-from-turn-1"}
-        workflow._state.set(DECLARATIVE_STATE_KEY, state_data)
-        workflow._state.commit()
+        workflow._runner.state.set(DECLARATIVE_STATE_KEY, state_data)
+        workflow._runner.state.commit()
 
         second = await agent.run("turn-2-msg")
         assert second.text == "turn-2-msg", (
@@ -303,7 +597,7 @@ actions:
         # The continuation branch in ``_ensure_state_initialized`` must:
         # 1. preserve the cross-turn marker we stamped above
         # 2. refresh Inputs.input and System.LastMessage* to the new turn
-        post_state = workflow._state.get(DECLARATIVE_STATE_KEY)
+        post_state = workflow._runner.state.get(DECLARATIVE_STATE_KEY)
         assert isinstance(post_state, dict), "declarative state vanished between turns"
         local = post_state.get("Local", {})
         assert local.get("persisted_marker") == "kept-from-turn-1", (
@@ -327,7 +621,7 @@ class TestWorkflowFactoryAgentRegistration:
             name = "mock-agent"
 
         factory = WorkflowFactory()
-        factory.register_agent("myAgent", MockAgent())
+        factory.register_agent("myAgent", cast(Any, MockAgent()))
 
         assert "myAgent" in factory._agents
 
@@ -369,6 +663,27 @@ actions:
 
         assert workflow is not None
         assert workflow.name == "file-workflow"
+
+    def test_load_from_file_reads_utf8(self, tmp_path):
+        """Test loading a workflow file explicitly uses UTF-8."""
+        workflow_file = tmp_path / "UnicodeWorkflow.yaml"
+        workflow_file.write_text(
+            """
+name: unicode-workflow
+actions:
+  - kind: SetValue
+    path: Local.message
+    value: 政务助手 🏛️
+""",
+            encoding="utf-8",
+        )
+
+        factory = WorkflowFactory()
+        with patch("builtins.open", wraps=open) as mock_open:
+            workflow = factory.create_workflow_from_yaml_path(workflow_file)
+
+        mock_open.assert_called_once_with(workflow_file, encoding="utf-8")
+        assert workflow.name == "unicode-workflow"
 
 
 @_requires_powerfx
@@ -1024,7 +1339,7 @@ actions:
         workflow = factory.create_workflow_from_yaml_path(workflow_file)
 
         assert workflow is not None
-        assert "TestAgent" in workflow._declarative_agents
+        assert "TestAgent" in cast(Any, workflow)._declarative_agents
 
     def test_agent_connection_definition_raises(self):
         """Test that connection-based agent definition raises error."""
@@ -1062,7 +1377,7 @@ actions:
         class MockAgent:
             name = "PreregisteredAgent"
 
-        factory = WorkflowFactory(agents={"TestAgent": MockAgent()})
+        factory = WorkflowFactory(agents={"TestAgent": cast(Any, MockAgent())})
         workflow = factory.create_workflow_from_yaml("""
 kind: Workflow
 agents:
@@ -1075,7 +1390,7 @@ actions:
     value: 1
 """)
 
-        assert workflow._declarative_agents["TestAgent"].name == "PreregisteredAgent"
+        assert cast(Any, workflow)._declarative_agents["TestAgent"].name == "PreregisteredAgent"
 
 
 class TestWorkflowFactoryInputSchema:
@@ -1099,7 +1414,7 @@ actions:
     value: 1
 """)
 
-        schema = workflow.input_schema
+        schema = cast(Any, workflow).input_schema
         assert schema["type"] == "object"
         assert "name" in schema["properties"]
         assert "age" in schema["properties"]
@@ -1126,7 +1441,7 @@ actions:
     value: 1
 """)
 
-        schema = workflow.input_schema
+        schema = cast(Any, workflow).input_schema
         assert "required_field" in schema["required"]
         assert "optional_field" not in schema["required"]
 
@@ -1145,7 +1460,7 @@ actions:
     value: 1
 """)
 
-        schema = workflow.input_schema
+        schema = cast(Any, workflow).input_schema
         assert schema["properties"]["greeting"]["default"] == "Hello"
 
     def test_inputs_schema_with_enum(self):
@@ -1166,7 +1481,7 @@ actions:
     value: 1
 """)
 
-        schema = workflow.input_schema
+        schema = cast(Any, workflow).input_schema
         assert schema["properties"]["color"]["enum"] == ["red", "green", "blue"]
 
     def test_inputs_schema_type_mappings(self):
@@ -1193,7 +1508,7 @@ actions:
     value: 1
 """)
 
-        schema = workflow.input_schema
+        schema = cast(Any, workflow).input_schema
         assert schema["properties"]["str_field"]["type"] == "string"
         assert schema["properties"]["int_field"]["type"] == "integer"
         assert schema["properties"]["float_field"]["type"] == "number"
@@ -1215,7 +1530,7 @@ actions:
     value: 1
 """)
 
-        schema = workflow.input_schema
+        schema = cast(Any, workflow).input_schema
         assert schema["properties"]["name"]["type"] == "string"
         assert schema["properties"]["count"]["type"] == "integer"
         assert "name" in schema["required"]
@@ -1234,7 +1549,11 @@ class TestWorkflowFactoryChaining:
         class MockAgent2:
             name = "Agent2"
 
-        factory = WorkflowFactory().register_agent("agent1", MockAgent1()).register_agent("agent2", MockAgent2())
+        factory = (
+            WorkflowFactory()
+            .register_agent("agent1", cast(Any, MockAgent1()))
+            .register_agent("agent2", cast(Any, MockAgent2()))
+        )
 
         assert "agent1" in factory._agents
         assert "agent2" in factory._agents
@@ -1267,7 +1586,7 @@ class TestWorkflowFactoryChaining:
 
         factory = (
             WorkflowFactory()
-            .register_agent("agent", MockAgent())
+            .register_agent("agent", cast(Any, MockAgent()))
             .register_tool("tool", my_tool)
             .register_binding("binding", my_binding)
         )

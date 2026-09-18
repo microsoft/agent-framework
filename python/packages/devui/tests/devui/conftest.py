@@ -12,7 +12,7 @@ This module provides reusable test fixtures including:
 import sys
 from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, Generic
+from typing import Any, Generic, TypedDict  # noqa: F401
 
 import pytest
 import pytest_asyncio

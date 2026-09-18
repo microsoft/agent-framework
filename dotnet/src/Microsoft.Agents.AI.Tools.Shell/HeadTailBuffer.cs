@@ -21,9 +21,10 @@ namespace Microsoft.Agents.AI.Tools.Shell;
 /// <para>
 /// The buffer counts UTF-8 bytes (matching the public <c>maxOutputBytes</c> contract
 /// and <see cref="ShellSession.TruncateHeadTail"/>). Append happens one rune at a time
-/// — when the head fills, the next rune's UTF-8 bytes go to the tail as an indivisible
-/// unit, and the oldest rune is dropped from the tail. This guarantees the final
-/// string never contains a split rune (no orphan surrogates, no invalid UTF-8).
+/// — once a complete rune no longer fits in the head, it and all later runes go to
+/// the tail as indivisible units. After the total exceeds the cap, the oldest tail
+/// runes are dropped. This guarantees the final string never contains a split rune
+/// (no orphan surrogates, no invalid UTF-8).
 /// </para>
 /// </remarks>
 internal sealed class HeadTailBuffer
@@ -37,6 +38,7 @@ internal sealed class HeadTailBuffer
     private readonly Queue<byte[]> _tail = new();
     private int _tailBytes;
     private long _totalBytes;
+    private bool _headSealed;
 
     public HeadTailBuffer(int cap)
     {
@@ -63,19 +65,22 @@ internal sealed class HeadTailBuffer
             var n = rune.EncodeToUtf8(scratch);
             this._totalBytes += n;
 
-            if (this._head.Count + n <= this._headCap)
+            if (!this._headSealed && this._head.Count + n <= this._headCap)
             {
                 for (var i = 0; i < n; i++) { this._head.Add(scratch[i]); }
                 continue;
             }
 
-            // Head is full — append to tail as a single rune-sized chunk.
+            // Once a complete rune cannot fit in the head, seal it and keep all later runes in the tail.
+            this._headSealed = true;
             var bytes = scratch[..n].ToArray();
             this._tail.Enqueue(bytes);
             this._tailBytes += n;
 
             // Evict whole runes from the front of the tail until we fit.
-            while (this._tailBytes > this._tailCap && this._tail.Count > 0)
+            while (this._totalBytes > this._cap &&
+                   this._tailBytes > this._tailCap &&
+                   this._tail.Count > 0)
             {
                 var dropped = this._tail.Dequeue();
                 this._tailBytes -= dropped.Length;

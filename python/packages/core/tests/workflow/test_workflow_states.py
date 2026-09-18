@@ -153,7 +153,7 @@ class Completer(Executor):
     """Executor that completes immediately with provided data for testing."""
 
     @handler
-    async def run(self, msg: str, ctx: WorkflowContext[Never, str]) -> None:  # pragma: no cover
+    async def run(self, msg: str, ctx: WorkflowContext[Never, str]) -> None:  # pragma: no cover  # type: ignore[valid-type]
         await ctx.yield_output(msg)
 
 

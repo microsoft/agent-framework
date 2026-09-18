@@ -27,11 +27,11 @@ Public modules must include a module-level docstring, including `__init__.py` fi
 
 ## Type Annotations
 
-We use typing as a helper, it is not a goal in and of itself, so be pragmatic about where and when to strictly type, versus when to use a targetted cast or ignore.
+We use typing as a helper, it is not a goal in and of itself, so be pragmatic about where and when to strictly type, versus when to use a targeted cast or ignore.
 In general, the public interfaces of our classes, are important to get right, internally it is okay to have loosely typed code, as long as tests cover the code itself.
 This includes making a conscious choice when to program defensively, you can always do `getattr(item, 'attribute')` but that might end up causing you issues down the road
 because the type of `item` in this case, should have that attribute and if it doesn't it points to a larger issue, so if the type is expected to have that attribute, you should
-use `item.attribute` to ensure it fails at that point, rather then somewhere downstream where a value is expected but none was found.
+use `item.attribute` to ensure it fails at that point, rather than somewhere downstream where a value is expected but none was found.
 
 ### Future Annotations
 
@@ -92,13 +92,25 @@ Use typing as a helper first and suppressions as a last resort:
 - **Prefer explicit typing before suppression**: Start with clearer type annotations, helper types, overloads,
   protocols, or refactoring dynamic code into typed helpers. Prioritize performance over completeness of typing, but make a good-faith effort to reduce uncertainty with typing before ignoring. Prefer to use a cast over a typeguard function since that does add overhead.
 - **Avoid redundant casts**: Do not add `cast(...)` if the type already matches; casts should be reserved for
-  unavoidable narrowing where the runtime contract is known, we will use mypy's check on redundant casts to enforce this.
+  unavoidable narrowing where the runtime contract is known.
 - **Avoid multiple assignments**: Avoid assigning multiple variables just to get typing to pass, that has performance impact while typing should not have that.
-- **Line-level pyright ignores only**: If suppression is still required, use a line-level rule-specific ignore
+- **Source vs tests/samples**: Source code (`agent_framework*`) is checked **by pyright in strict mode** — use
+  `# pyright: ignore[...]` there, never `# type: ignore` (strict pyright flags unnecessary ignores as errors). Tests
+  and samples are checked by pyright (relaxed `basic`), mypy, pyrefly, ty (and zuban on tests) in a relaxed/basic
+  profile; prefer real fixes (`isinstance`, `cast`, annotations, asserts for Optional access) over per-line ignores,
+  and keep test/sample bodies readable rather than over-annotated. When a relaxed-pyright suppression is genuinely
+  needed in tests/samples, use `# pyright: ignore[rule]`; the relaxed test/sample configs do not flag unnecessary
+  ignores, so combine with a mypy/zuban `# type: ignore[code]` on the same line only where both are required.
+- **Line-level pyright ignores only**: If suppression is still required in source, use a line-level rule-specific ignore
   (`# pyright: ignore[reportGeneralTypeIssues]`), file-level is allowed if there is a compelling reason for it, that should be documented right beneath the ignore.
-  Never change the global suppression flags for mypy and pyright unless the dev team okays it.
+  Never change the global suppression flags unless the dev team okays it.
 - **Private usage boundary**: Accessing private members across `agent_framework*` packages can be acceptable for this
-  codebase, but private member usage for non-Agent Framework dependencies should remain flagged.
+  codebase, but private member usage for non-Agent Framework dependencies should remain flagged. Do not make an
+  internal helper public merely to satisfy pyright private-usage checks inside the package; use a targeted
+  `# pyright: ignore[reportPrivateUsage]` when the internal dependency is intentional.
+- **Avoid typing-only wrappers**: Do not introduce trivial pass-through functions solely to satisfy typing or private
+  usage checks. Prefer a targeted ignore, cast, or clearer annotation over an extra one-line function that adds runtime
+  overhead without improving the design.
 
 ## Function Parameter Guidelines
 
@@ -228,6 +240,7 @@ AgentFrameworkException                          # Base for all AF exceptions
 │   └── AgentContentFilterException              # Agent content filter triggered
 │
 ├── ChatClientException                          # Chat client lifecycle and communication failures
+│   ├── ResponseInvalidatedException             # Provider invalidated partial response output
 │   ├── ChatClientInvalidAuthException           # Chat client auth failures
 │   ├── ChatClientInvalidRequestException        # Invalid request to chat client
 │   ├── ChatClientInvalidResponseException       # Invalid/unexpected response from chat client
@@ -258,6 +271,7 @@ AgentFrameworkException                          # Base for all AF exceptions
 │   └── ToolExecutionException                   # Failure during tool execution
 │
 ├── MiddlewareException                          # Middleware failures
+│   ├── MiddlewareFailure                        # Control-flow: fatal fail-closed abort of the run
 │   └── MiddlewareTermination                    # Control-flow: early middleware termination
 │
 └── SettingNotFoundError                         # Required setting not resolved from any source
@@ -271,6 +285,7 @@ AgentFrameworkException                          # Base for all AF exceptions
 | Object in wrong state (e.g., client not initialized) | `RuntimeError` |
 | External service returns 401/403 | `IntegrationInvalidAuthException` (or `ChatClient`/`Agent` variant) |
 | External service returns unexpected response | `IntegrationInvalidResponseException` (or variant) |
+| Chat provider invalidates partial response output containing local function calls | `ResponseInvalidatedException` |
 | Content filter blocks a request | `IntegrationContentFilterException` (or variant) |
 | Request validation fails before sending to service | `IntegrationInvalidRequestException` (or variant) |
 | Agent not found in registry | `AgentInvalidRequestException` |
@@ -307,7 +322,8 @@ python/
 │   │   ├── pyproject.toml      # Defines [all] extra that includes all connector packages
 │   │   ├── tests/              # Tests for core package
 │   │   └── agent_framework/
-│   │       ├── __init__.py     # Public API exports
+│   │       ├── __init__.py     # Lazy runtime public API exports
+│   │       ├── __init__.pyi    # Public API typing surface for lazy root exports
 │   │       ├── _agents.py      # Agent implementations
 │   │       ├── _clients.py     # Chat client protocols and base classes
 │   │       ├── _tools.py       # Tool definitions
@@ -342,6 +358,17 @@ python/
 ```
 
 ### Lazy Loading Pattern
+
+The root `agent_framework` package is a lazy public API surface. When adding, removing, or moving a root export:
+
+- Add the symbol to `_LAZY_MODULE_EXPORTS` in `agent_framework/__init__.py`.
+- Keep `_LAZY_EXPORTS` derived from `_LAZY_MODULE_EXPORTS`.
+- Keep the explicit runtime `__all__` synchronized; it is required for `from agent_framework import *`.
+- Add the same public symbol to `agent_framework/__init__.pyi` so type checkers and editors see the typed surface.
+- Put runtime deprecation behavior in the owning module using that module's `__getattr__`. Do not add one-off
+  deprecated-symbol branches to root `agent_framework.__getattr__`.
+- Validate root API changes with `uv run poe syntax -P core`, `uv run poe pyright -P core`, and import smoke tests
+  for both `from agent_framework import <symbol>` and `from agent_framework import *`.
 
 Provider folders in the core package use `__getattr__` to lazy load classes from their respective connector packages. This allows users to import from a consistent location while only loading dependencies when needed:
 
@@ -551,6 +578,10 @@ it should define ``__all__`` as well.
 Also avoid identity alias imports in ``__init__`` files. Use ``from ._module import Symbol`` instead of
 ``from ._module import Symbol as Symbol``.
 
+Exception: `.pyi` stubs that describe re-exported public APIs should use identity aliases (for example,
+`from ._agents import Agent as Agent`) so type checkers recognize the symbol as exported. This applies to the
+root `agent_framework/__init__.pyi`, which mirrors the lazy runtime exports from `agent_framework/__init__.py`.
+
 ```python
 # ✅ Preferred - explicit __all__ and named imports
 from ._agents import Agent
@@ -659,6 +690,20 @@ otel_messages.append(_to_otel_message(message)) # this already serializes
 message_data = message.to_dict(exclude_none=True)  # and this does so again!
 logger.info(message_data, extra={...})
 ```
+
+When converting arbitrary values for telemetry, protocol, or event payloads, reuse the optimized framework
+converter instead of adding a package-local recursive serializer:
+
+```python
+from agent_framework._serialization import make_json_safe  # pyright: ignore[reportPrivateUsage]
+
+payload = make_json_safe(value)
+```
+
+Use a model's `to_dict()` directly when its type is known. Use `make_json_safe()` for heterogeneous values that may
+contain framework models, Pydantic models, dataclasses, containers, or primitives. Keep provider-specific conversion
+local when an API requires exact aliases, JSON modes, or opaque JSON strings, and avoid `json.dumps()` followed by
+`json.loads()` unless crossing such a required wire-format boundary.
 
 ## Test Organization
 

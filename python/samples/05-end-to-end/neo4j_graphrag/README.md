@@ -16,7 +16,7 @@ For full documentation, see the [Neo4j GraphRAG integration guide on Microsoft L
 
 1. A Neo4j database with document chunks already loaded
 2. A Neo4j fulltext index over chunk text, such as `search_chunks`
-3. An Azure AI Foundry project endpoint and chat deployment
+3. A Microsoft Foundry project endpoint and chat deployment
 4. Azure CLI authentication via `az login`
 
 ## Environment variables

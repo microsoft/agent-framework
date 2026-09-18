@@ -1,4 +1,4 @@
-# Samples Structure & Design Choices — .NET
+﻿# Samples Structure & Design Choices — .NET
 
 > This file documents the structure and conventions of the .NET samples so that
 > agents (AI or human) can maintain them without rediscovering decisions.
@@ -7,28 +7,33 @@
 
 ```
 dotnet/samples/
-├── 01-get-started/                    # Progressive tutorial (steps 01–06)
+├── 01-get-started/                    # Progressive tutorial (steps 01–05)
 │   ├── 01_hello_agent/                # Create and run your first agent
 │   ├── 02_add_tools/                  # Add function tools
 │   ├── 03_multi_turn/                 # Multi-turn conversations with AgentSession
 │   ├── 04_memory/                     # Agent memory with AIContextProvider
-│   ├── 05_first_workflow/             # Build a workflow with executors and edges
-│   └── 06_host_your_agent/            # Host your agent via Azure Functions
+│   └── 05_first_workflow/             # Build a workflow with executors and edges
 ├── 02-agents/                         # Deep-dive concept samples
 │   ├── Agents/                        # Core agent patterns (tools, structured output,
 │   │                                  #   conversations, middleware, plugins, MCP, etc.)
-│   ├── AgentProviders/                # One project per provider (Azure OpenAI, OpenAI,
-│   │                                  #   Anthropic, Gemini, Ollama, ONNX, Foundry, etc.)
+│   ├── AgentProviders/                # Provider-grouped samples
+│   │   ├── a2a/                       # A2A provider sample
+│   │   ├── anthropic/                 # Anthropic provider samples
+│   │   ├── azure/                     # Azure/OpenAI/Foundry model provider samples
+│   │   ├── custom/                    # Custom agent implementation sample
+│   │   ├── foundry/                   # Microsoft Foundry agent samples
+│   │   ├── github-copilot/            # GitHub Copilot provider sample
+│   │   ├── google-gemini/             # Google Gemini provider sample
+│   │   ├── ollama/                    # Ollama provider sample
+│   │   ├── onnx/                      # ONNX Runtime provider sample
+│   │   └── openai/                    # OpenAI provider samples
 │   ├── AgentOpenTelemetry/            # OpenTelemetry integration
 │   ├── AgentSkills/                   # Agent skills patterns
-│   ├── AgentWithAnthropic/            # Anthropic-specific samples
-│   ├── AgentWithMemory/               # Memory providers (chat history, Mem0, Foundry)
-│   ├── AgentWithOpenAI/               # OpenAI-specific samples
+│   ├── AgentWithMemory/               # Memory providers (chat history, Mem0, Valkey, Foundry, AgentMemory)
 │   ├── AgentWithRAG/                  # RAG patterns (text, vector store, Foundry)
 │   ├── AGUI/                          # AG-UI protocol samples
 │   ├── DeclarativeAgents/             # Declarative agent definitions
 │   ├── DevUI/                         # DevUI samples
-│   ├── AgentsWithFoundry/             # Microsoft Foundry samples (FoundryAgent + AsAIAgent extensions)
 │   └── ModelContextProtocol/          # MCP server/client patterns
 ├── 03-workflows/                      # Workflow patterns
 │   ├── _StartHere/                    # Introductory workflow samples
@@ -44,9 +49,7 @@ dotnet/samples/
 │   └── Visualization/                 # Workflow visualization
 ├── 04-hosting/                        # Deployment & hosting
 │   ├── A2A/                           # Agent-to-Agent protocol
-│   └── DurableAgents/                 # Durable task framework
-│       ├── AzureFunctions/            #   Azure Functions hosting
-│       └── ConsoleApps/               #   Console app hosting
+│   └── FoundryHostedAgents/           # Foundry hosted agents
 ├── 05-end-to-end/                     # Complete applications
 │   ├── A2AClientServer/               # A2A client/server demo
 │   ├── AgentWebChat/                  # Aspire-based web chat
@@ -60,7 +63,7 @@ dotnet/samples/
 ## Design principles
 
 1. **Progressive complexity**: Sections 01→05 build from "hello world" to
-   production. Within 01-get-started, projects are numbered 01–06 and each step
+   production. Within 01-get-started, projects are numbered 01–05 and each step
    adds exactly one concept.
 
 2. **One concept per project** in 01-get-started. Each step is a standalone
@@ -74,32 +77,33 @@ dotnet/samples/
 
 ## Default provider
 
-All canonical samples (01-get-started) use **Azure OpenAI** via `AzureOpenAIClient`
-with `DefaultAzureCredential`:
+All canonical samples (01-get-started) use **Microsoft Foundry** via `AIProjectClient.AsAIAgent()` with `DefaultAzureCredential`:
 
 ```csharp
-using Azure.AI.OpenAI;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
-using OpenAI.Chat;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
-    ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
+var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
+    ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+var model = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
 
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-AIAgent agent = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential())
-    .GetChatClient(deploymentName)
-    .AsAIAgent(instructions: "...", name: "...");
+AIAgent agent = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential())
+    .AsAIAgent(model: model, instructions: "...", name: "...");
 ```
 
 Environment variables:
-- `AZURE_OPENAI_ENDPOINT` — Your Azure OpenAI endpoint
-- `AZURE_OPENAI_DEPLOYMENT_NAME` — Model deployment name (defaults to `gpt-5.4-mini`)
+- `FOUNDRY_PROJECT_ENDPOINT` — Your Foundry project endpoint
+- `FOUNDRY_MODEL` — Model name (defaults to `gpt-5.4-mini`)
 
 For authentication, run `az login` before running samples.
+
+**Note:** Use `FoundryAgent` only when demonstrating Foundry-managed (prompt) agents specifically — see `02-agents/AgentsWithFoundry/`. For all other samples, use `AIProjectClient.AsAIAgent()`.
+
+**Note:** For samples demonstrating other providers (Azure OpenAI, OpenAI, Anthropic, etc.), see `02-agents/AgentProviders/`.
 
 ## Snippet tags for docs integration
 
@@ -125,6 +129,7 @@ dotnet run
 - `AIAgent` is the primary agent abstraction (created via `ChatClient.AsAIAgent(...)`)
 - `AgentSession` manages multi-turn conversation state
 - `AIContextProvider` injects memory and context
-- Prefer `client.GetChatClient(deployment).AsAIAgent(...)` extension method pattern
-- Azure Functions hosting uses `ConfigureDurableAgents(options => options.AddAIAgent(agent))`
+- Prefer `AIProjectClient.AsAIAgent(...)` for Foundry-backed canonical samples
 - Workflows use `WorkflowBuilder` with `Executor<TIn, TOut>` and edge connections
+
+Durable agent and Azure Functions samples are maintained in the [Durable Agent Framework extension](https://github.com/microsoft/agent-framework-durable-extension/tree/main/dotnet/samples).

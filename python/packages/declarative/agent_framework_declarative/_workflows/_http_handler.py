@@ -23,7 +23,9 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
+from http.cookiejar import CookieJar, DefaultCookiePolicy
 from typing import Any, Protocol, runtime_checkable
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 import httpx
 
@@ -121,12 +123,18 @@ class DefaultHttpRequestHandler:
     Construction modes:
 
     1. ``DefaultHttpRequestHandler()`` — owns an internal client created lazily
-       on first ``send()``. Closed by :meth:`aclose`.
+       on first ``send()`` without response-cookie persistence. Closed by :meth:`aclose`.
     2. ``DefaultHttpRequestHandler(client=existing)`` — caller-owned client.
-       Not closed by :meth:`aclose`.
+       Retains its cookie behavior and is not closed by :meth:`aclose`.
     3. ``DefaultHttpRequestHandler(client_provider=cb)`` — per-request client
        lookup (parity with .NET's ``httpClientProvider`` callback). The
-       provider may return ``None`` to fall back to the owned/default client.
+       provider's clients retain their cookie behavior and are not closed by :meth:`aclose`.
+       Returning ``None`` falls back to ``client``, if supplied, then to the owned client.
+
+    Applications requiring persistent cookies must supply a client through ``client``
+    or ``client_provider`` scoped to one authenticated principal and manage its lifetime.
+    Explicit outbound ``Cookie`` headers and response ``Set-Cookie`` headers are preserved;
+    the owned-client policy only prevents automatic cookie persistence.
 
     .. warning::
 
@@ -173,16 +181,56 @@ class DefaultHttpRequestHandler:
                 # callers (not just the YAML executor) get sensible defaults.
                 headers["Content-Type"] = info.body_content_type or "text/plain"
 
-        params: Mapping[str, str] | None = info.query_parameters or None
+        # Compose the query as raw bytes rather than routing it through ``params=``.
+        # Anything that reaches ``httpx.QueryParams`` -- ``params=`` or the client's own
+        # ``AsyncClient.params`` merge -- is decoded and re-encoded. Measured against
+        # httpx 0.28.1, that rewrites ``%20`` in a value as ``+``, expands a bare
+        # ``download`` into ``download=``, and reorders interleaved duplicates
+        # (``x=1&y=2&x=3`` becomes ``x=1&x=3&y=2``), all of it even when nothing needed
+        # merging. Base64 and ``%3A`` round-trip unchanged, so a signature is not
+        # rewritten by itself, but any scheme that signs a value holding an encoded
+        # space is, and a server that distinguishes ``download`` from ``download=`` or
+        # reads repeated keys positionally sees a different request either way.
+        # Building the query here and writing it back over the request's ``raw_path``
+        # keeps the caller's bytes exactly as given.
+        raw = urlsplit(info.url)
 
-        response = await client.request(
+        # ``query_parameters`` append rather than replace, so a URL carrying
+        # ``filter=region&filter=status`` plus ``{"filter": "tenant"}`` sends all three,
+        # matching the .NET handler. Client-level params are defaults only: they apply
+        # for a key absent from both request-level sources.
+        explicit_pairs = [(key, value) for key, value in info.query_parameters.items() if key]
+        request_keys = {key for key, _ in parse_qsl(raw.query, keep_blank_values=True)}
+        request_keys.update(key for key, _ in explicit_pairs)
+        client_defaults = [(key, value) for key, value in client.params.multi_items() if key not in request_keys]
+
+        query_segments: list[str] = []
+        if raw.query:
+            query_segments.append(raw.query)
+        # ``quote_via=quote`` keeps spaces as ``%20`` instead of ``+``, so appended
+        # parameters are encoded the same way the preserved URL query is.
+        for pairs in (explicit_pairs, client_defaults):
+            if pairs:
+                query_segments.append(urlencode(pairs, quote_via=quote))
+        query = "&".join(segment for segment in query_segments if segment)
+
+        # Build without the query so the client's params merge has nothing to clobber --
+        # it drops the URL's query outright -- then overwrite the query httpx composed
+        # with ours. The fragment stays on the built URL; httpx does not send it.
+        request = client.build_request(
             method=info.method,
-            url=info.url,
-            params=params,
+            url=urlunsplit((raw.scheme, raw.netloc, raw.path, "", raw.fragment)),
             headers=headers or None,
             content=content,
-            timeout=timeout,  # type: ignore[arg-type]
+            timeout=timeout,
         )
+        # Reuse httpx's own path encoding and replace only the query part of ``raw_path``.
+        raw_path = request.url.raw_path.split(b"?", 1)[0]
+        if query:
+            raw_path += b"?" + _encode_query(query)
+        request.url = request.url.copy_with(raw_path=raw_path)
+
+        response = await client.send(request)
 
         # Preserve multi-value headers (e.g. multiple Set-Cookie) as list[str].
         # Normalize names to lowercase so lookups are consistent and case
@@ -221,7 +269,9 @@ class DefaultHttpRequestHandler:
             # one of them.
             async with self._owned_client_lock:
                 if self._owned_client is None:
-                    self._owned_client = httpx.AsyncClient()
+                    self._owned_client = httpx.AsyncClient(
+                        cookies=CookieJar(policy=DefaultCookiePolicy(allowed_domains=[])),
+                    )
         return self._owned_client
 
     async def __aenter__(self) -> DefaultHttpRequestHandler:
@@ -229,6 +279,23 @@ class DefaultHttpRequestHandler:
 
     async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
         await self.aclose()
+
+
+#: Characters a query string may carry literally: RFC 3986 sub-delims plus ``:@/?``, the
+#: square brackets many APIs use in key names, and ``%`` so escapes already in the
+#: caller's URL are left alone instead of being double-encoded. Everything legal stays
+#: as authored and only bytes that cannot appear in a URL get escaped.
+_QUERY_SAFE = "!$&'()*+,;=:@/?%[]~"
+
+
+def _encode_query(query: str) -> bytes:
+    """Return *query* as URL-safe bytes without disturbing what is already valid.
+
+    A caller can hand us a URL whose query holds non-ASCII text -- ``?q=café`` -- which
+    cannot go on the wire as-is. Percent-encoding only the characters that need it keeps
+    an already-valid query byte-identical, which is the point of composing it by hand.
+    """
+    return quote(query, safe=_QUERY_SAFE).encode("ascii")
 
 
 def _has_header(headers: Mapping[str, str], name: str) -> bool:

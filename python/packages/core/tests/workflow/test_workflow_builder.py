@@ -61,7 +61,7 @@ class DummyAgent(BaseAgent):
     async def _run_impl(self, messages: AgentRunInputs | None = None) -> AgentResponse:
         norm: list[Message] = []
         if messages:
-            for m in messages:  # type: ignore[union-attr]
+            for m in messages:  # type: ignore[union-attr]  # ty: ignore[not-iterable]
                 if isinstance(m, Message):
                     norm.append(m)
                 elif isinstance(m, str):
@@ -112,7 +112,7 @@ class MockAggregator(Executor):
 def test_workflow_builder_without_start_executor_throws():
     """Test creating a workflow builder without a start executor."""
     with pytest.raises(TypeError):
-        WorkflowBuilder()  # type: ignore[call-arg]
+        WorkflowBuilder()  # type: ignore[call-arg]  # ty: ignore[missing-argument]
 
 
 def test_workflow_builder_fluent_api():

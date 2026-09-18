@@ -1,0 +1,7 @@
+# dependencies
+/node_modules
+
+# build artifacts
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts

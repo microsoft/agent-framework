@@ -5,7 +5,7 @@ from typing import Any
 
 from agent_framework import Agent, Message
 from agent_framework.openai import OpenAIChatClient
-from agent_framework_tools.shell import LocalShellTool
+from agent_framework.tools import LocalShellTool
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -74,6 +74,8 @@ async def run_with_approvals(query: str, agent: Agent) -> Any:
         next_input: list[Any] = [query]
         rejected = False
         for user_input_needed in result.user_input_requests:
+            if user_input_needed.function_call is None:
+                continue
             print(
                 f"\nShell request: {user_input_needed.function_call.name}"
                 f"\nArguments: {user_input_needed.function_call.arguments}"

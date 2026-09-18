@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -15,9 +15,20 @@ public class GitHubCopilotAgentTests
 {
     private static void SkipIfCopilotNotConfigured()
     {
-        if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("COPILOT_GITHUB_TOKEN")))
+        bool actionsAuth =
+            string.Equals(Environment.GetEnvironmentVariable("GITHUB_ACTIONS"), "true", StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("GITHUB_TOKEN"));
+        bool localOptIn =
+            string.Equals(
+                Environment.GetEnvironmentVariable("RUN_COPILOT_INTEGRATION_TESTS"),
+                "true",
+                StringComparison.OrdinalIgnoreCase);
+
+        if (!actionsAuth && !localOptIn)
         {
-            Assert.Skip("COPILOT_GITHUB_TOKEN not set; skipping GitHub Copilot integration tests.");
+            Assert.Skip(
+                "GitHub Actions auth is unavailable and RUN_COPILOT_INTEGRATION_TESTS is not true; " +
+                "skipping GitHub Copilot integration tests.");
         }
     }
 
@@ -33,7 +44,7 @@ public class GitHubCopilotAgentTests
         await using CopilotClient client = new(new CopilotClientOptions());
         await client.StartAsync();
 
-        await using GitHubCopilotAgent agent = new(client, sessionConfig: new() { OnPermissionRequest = OnPermissionRequestAsync });
+        await using GitHubCopilotAgent agent = new(client, sessionConfig: null);
         AgentSession session = await agent.CreateSessionAsync();
 
         try
@@ -61,7 +72,7 @@ public class GitHubCopilotAgentTests
         await using CopilotClient client = new(new CopilotClientOptions());
         await client.StartAsync();
 
-        await using GitHubCopilotAgent agent = new(client, sessionConfig: new() { OnPermissionRequest = OnPermissionRequestAsync });
+        await using GitHubCopilotAgent agent = new(client, sessionConfig: null);
         AgentSession session = await agent.CreateSessionAsync();
 
         try
@@ -132,6 +143,63 @@ public class GitHubCopilotAgentTests
     }
 
     [Fact]
+    public async Task RunAsync_WithApprovalRequiredTool_AsksAndExecutesWhenPermissionApprovesAsync()
+    {
+        // Arrange
+        SkipIfCopilotNotConfigured();
+
+        bool toolInvoked = false;
+        bool permissionRequested = false;
+
+        AIFunction weatherTool = AIFunctionFactory.Create((string location) =>
+        {
+            toolInvoked = true;
+            return $"The weather in {location} is sunny with a high of 25C.";
+        }, "GetWeather", "Get the weather for a given location.");
+        ApprovalRequiredAIFunction approvalRequiredTool = new(weatherTool);
+
+        Task<PermissionDecision> OnPermissionRequestRecordingAsync(PermissionRequest request, PermissionInvocation invocation)
+        {
+            permissionRequested = true;
+            return Task.FromResult(PermissionDecision.ApproveOnce());
+        }
+
+        await using CopilotClient client = new(new CopilotClientOptions());
+        await client.StartAsync();
+
+        SessionConfig sessionConfig = new()
+        {
+            Tools = [approvalRequiredTool],
+            OnPermissionRequest = OnPermissionRequestRecordingAsync,
+            SystemMessage = new SystemMessageConfig
+            {
+                Mode = SystemMessageMode.Append,
+                Content = "You are a weather assistant. Always use the GetWeather tool to answer weather questions.",
+            },
+        };
+
+        await using GitHubCopilotAgent agent = new(client, sessionConfig);
+        AgentSession session = await agent.CreateSessionAsync();
+
+        try
+        {
+            // Act
+            AgentResponse response = await agent.RunAsync("What's the weather like in Seattle?", session);
+
+            // Assert - the provider-installed OnPreToolUse returns "ask" for the approval-required tool, routing the
+            // decision to OnPermissionRequest; the tool only runs because the permission handler approved it.
+            Assert.NotNull(response);
+            Assert.NotEmpty(response.Messages);
+            Assert.True(permissionRequested);
+            Assert.True(toolInvoked);
+        }
+        finally
+        {
+            await DeleteSessionAsync(client, session);
+        }
+    }
+
+    [Fact]
     public async Task RunAsync_WithSession_MaintainsContextAsync()
     {
         // Arrange
@@ -142,7 +210,6 @@ public class GitHubCopilotAgentTests
 
         await using GitHubCopilotAgent agent = new(
             client,
-            OnPermissionRequestAsync,
             instructions: "You are a helpful assistant. Keep your answers short.");
 
         AgentSession session = await agent.CreateSessionAsync();
@@ -179,7 +246,6 @@ public class GitHubCopilotAgentTests
 
         await using GitHubCopilotAgent agent1 = new(
             client1,
-            OnPermissionRequestAsync,
             instructions: "You are a helpful assistant. Keep your answers short.");
 
         AgentSession session1 = await agent1.CreateSessionAsync();
@@ -197,7 +263,6 @@ public class GitHubCopilotAgentTests
 
             await using GitHubCopilotAgent agent2 = new(
                 client2,
-                OnPermissionRequestAsync,
                 instructions: "You are a helpful assistant. Keep your answers short.");
 
             AgentSession session2 = await agent2.CreateSessionAsync(sessionId);

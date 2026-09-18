@@ -12,7 +12,7 @@ protocol.
 from __future__ import annotations
 
 import asyncio
-import subprocess  # noqa: S404  # nosec B404 - executing user shell commands is the whole point
+import subprocess  # ruff:ignore[suspicious-subprocess-import]  # nosec B404 - executing user shell commands is the whole point
 import sys
 import time
 from collections.abc import Mapping, Sequence
@@ -27,7 +27,7 @@ def _popen_kwargs_for_group() -> dict[str, object]:
     """Platform-specific process-group isolation so we can kill children too."""
     if sys.platform == "win32":
         # CREATE_NEW_PROCESS_GROUP lets CTRL_BREAK_EVENT hit the whole group.
-        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}  # type: ignore[attr-defined]
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
     return {"start_new_session": True}
 
 

@@ -149,7 +149,7 @@ public sealed class AgentInlineSkillTests
     }
 
     [Fact]
-    public async Task Content_DoesNotIncludeResourcesInBodyAsync()
+    public async Task Content_IncludesResourcesInBodyAsync()
     {
         // Arrange
         var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
@@ -158,12 +158,13 @@ public sealed class AgentInlineSkillTests
         // Act
         var content = await skill.GetContentAsync();
 
-        // Assert — resources are no longer rendered in the body; they're accessed via GetResourceAsync
-        Assert.DoesNotContain("<resources>", content);
+        // Assert — resources are rendered in the body so the model can discover them
+        Assert.Contains("<available_resources>", content);
+        Assert.Contains("<resource name=\"config\" description=\"A config resource.\"/>", content);
     }
 
     [Fact]
-    public async Task Content_DoesNotIncludeDelegateResourcesInBodyAsync()
+    public async Task Content_IncludesDelegateResourcesInBodyAsync()
     {
         // Arrange
         var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
@@ -172,8 +173,9 @@ public sealed class AgentInlineSkillTests
         // Act
         var content = await skill.GetContentAsync();
 
-        // Assert — resources are no longer rendered in the body
-        Assert.DoesNotContain("<resources>", content);
+        // Assert — resources are rendered in the body
+        Assert.Contains("<available_resources>", content);
+        Assert.Contains("<resource name=\"dynamic\"/>", content);
     }
 
     [Fact]
@@ -187,8 +189,8 @@ public sealed class AgentInlineSkillTests
         var content = await skill.GetContentAsync();
 
         // Assert
-        Assert.Contains("<script_schemas>", content);
-        Assert.Contains("run", content);
+        Assert.Contains("<available_scripts>", content);
+        Assert.Contains("<script name=\"run\"", content);
     }
 
     [Fact]
@@ -218,8 +220,9 @@ public sealed class AgentInlineSkillTests
         var content = await skill.GetContentAsync();
 
         // Assert
-        Assert.DoesNotContain("<resources>", content);
-        Assert.Contains("<script_schemas>", content);
+        Assert.Contains("<available_resources>", content);
+        Assert.Contains("r1", content);
+        Assert.Contains("<available_scripts>", content);
         Assert.Contains("s1", content);
     }
 
@@ -233,8 +236,9 @@ public sealed class AgentInlineSkillTests
         // Act
         var content = await skill.GetContentAsync();
 
-        // Assert — JSON schema should be present inside <schema> element (no extra wrapper) with preserved quotes
-        Assert.Contains("<schema script=\"search\">", content);
+        // Assert — JSON schema should be present inside <parameters_schema> element with preserved quotes
+        Assert.Contains("<script name=\"search\">", content);
+        Assert.Contains("<parameters_schema>", content);
         Assert.Contains("\"query\"", content);
         Assert.DoesNotContain("<![CDATA[", content);
     }
@@ -417,7 +421,7 @@ public sealed class AgentInlineSkillTests
     }
 
     [Fact]
-    public async Task Content_NoResourcesOrScripts_DoesNotContainResourcesOrScriptsTagsAsync()
+    public async Task Content_NoResourcesOrScripts_EmitsSelfClosingTagsAsync()
     {
         // Arrange
         var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
@@ -425,9 +429,9 @@ public sealed class AgentInlineSkillTests
         // Act
         var content = await skill.GetContentAsync();
 
-        // Assert
-        Assert.DoesNotContain("<resources>", content);
-        Assert.DoesNotContain("<script_schemas>", content);
+        // Assert — empty self-closing elements are emitted when no resources or scripts exist
+        Assert.Contains("<available_resources />", content);
+        Assert.Contains("<available_scripts />", content);
     }
 
     [Fact]
@@ -461,7 +465,7 @@ public sealed class AgentInlineSkillTests
     }
 
     [Fact]
-    public async Task Content_ScriptWithDescription_DoesNotEmitDescriptionAttributeAsync()
+    public async Task Content_ScriptWithDescription_EmitsDescriptionAttributeAsync()
     {
         // Arrange
         var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
@@ -470,10 +474,9 @@ public sealed class AgentInlineSkillTests
         // Act
         var content = await skill.GetContentAsync();
 
-        // Assert — description is no longer emitted in the script_schemas block;
-        // the block only contains parameter schemas for calling scripts.
-        Assert.Contains("<schema script=\"my-script\"", content);
-        Assert.DoesNotContain("description=\"Runs something.\"", content);
+        // Assert — the script description is emitted as an attribute
+        Assert.Contains("<script name=\"my-script\"", content);
+        Assert.Contains("description=\"Runs something.\"", content);
     }
 
     [Fact]
@@ -492,7 +495,7 @@ public sealed class AgentInlineSkillTests
     }
 
     [Fact]
-    public async Task Content_ResourceWithDescription_NotRenderedInBodyAsync()
+    public async Task Content_ResourceWithDescription_RenderedInBodyWithDescriptionAsync()
     {
         // Arrange
         var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
@@ -502,10 +505,10 @@ public sealed class AgentInlineSkillTests
         // Act
         var content = await skill.GetContentAsync();
 
-        // Assert — resources are no longer rendered in the body
-        Assert.DoesNotContain("<resources>", content);
-        Assert.DoesNotContain("with-desc", content);
-        Assert.DoesNotContain("no-desc", content);
+        // Assert — resources with descriptions include the attribute; those without omit it
+        Assert.Contains("<available_resources>", content);
+        Assert.Contains("<resource name=\"with-desc\" description=\"A described resource.\"/>", content);
+        Assert.Contains("<resource name=\"no-desc\"/>", content);
     }
 
     [Fact]

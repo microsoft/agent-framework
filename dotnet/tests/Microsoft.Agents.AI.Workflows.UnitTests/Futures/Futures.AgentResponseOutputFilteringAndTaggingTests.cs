@@ -5,7 +5,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using FluentAssertions;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests.Futures;
@@ -72,10 +71,10 @@ public static partial class FuturesTests
 
             List<WorkflowEvent> events = await RunAsync(workflow, "go");
 
-            AgentResponseEvent emitted = events.OfType<AgentResponseEvent>().Should().ContainSingle().Subject;
-            emitted.ExecutorId.Should().Be(SourceId);
-            emitted.Tags.Should().BeEmpty("legacy bypass attaches no tags");
-            emitted.IsIntermediate().Should().BeFalse();
+            AgentResponseEvent emitted = Assert.Single(events.OfType<AgentResponseEvent>());
+            Assert.Equal(SourceId, emitted.ExecutorId);
+            Assert.Empty(emitted.Tags ?? []);
+            Assert.False(emitted.IsIntermediate());
         }
 
         // F2
@@ -87,8 +86,8 @@ public static partial class FuturesTests
 
             List<WorkflowEvent> events = await RunAsync(workflow, "go");
 
-            AgentResponseUpdateEvent emitted = events.OfType<AgentResponseUpdateEvent>().Should().ContainSingle().Subject;
-            emitted.Tags.Should().BeEmpty();
+            AgentResponseUpdateEvent emitted = Assert.Single(events.OfType<AgentResponseUpdateEvent>());
+            Assert.Empty(emitted.Tags ?? []);
         }
 
         // F3
@@ -100,9 +99,9 @@ public static partial class FuturesTests
 
             List<WorkflowEvent> events = await RunAsync(workflow, "go");
 
-            AgentResponseEvent emitted = events.OfType<AgentResponseEvent>().Should().ContainSingle().Subject;
-            emitted.Tags.Should().BeEmpty("legacy bypass ignores the designation entirely");
-            emitted.IsIntermediate().Should().BeFalse("legacy bypass does not propagate tags");
+            AgentResponseEvent emitted = Assert.Single(events.OfType<AgentResponseEvent>());
+            Assert.Empty(emitted.Tags ?? []);
+            Assert.False(emitted.IsIntermediate());
         }
 
         // F4
@@ -114,7 +113,7 @@ public static partial class FuturesTests
 
             List<WorkflowEvent> events = await RunAsync(workflow, "go");
 
-            events.OfType<WorkflowOutputEvent>().Should().BeEmpty("POCO outputs always go through the filter; undesignated source is dropped");
+            Assert.Empty(events.OfType<WorkflowOutputEvent>() ?? []);
         }
 
         // F5
@@ -126,8 +125,7 @@ public static partial class FuturesTests
 
             List<WorkflowEvent> events = await RunAsync(workflow, "go");
 
-            events.OfType<WorkflowOutputEvent>().Should().BeEmpty(
-                "with the future on, AgentResponse must be designated to surface");
+            Assert.Empty(events.OfType<WorkflowOutputEvent>() ?? []);
         }
 
         // F6
@@ -139,9 +137,9 @@ public static partial class FuturesTests
 
             List<WorkflowEvent> events = await RunAsync(workflow, "go");
 
-            AgentResponseEvent emitted = events.OfType<AgentResponseEvent>().Should().ContainSingle().Subject;
-            emitted.Tags.Should().BeEmpty("terminal designation carries no tag");
-            emitted.IsIntermediate().Should().BeFalse();
+            AgentResponseEvent emitted = Assert.Single(events.OfType<AgentResponseEvent>());
+            Assert.Empty(emitted.Tags ?? []);
+            Assert.False(emitted.IsIntermediate());
         }
 
         // F7
@@ -153,9 +151,9 @@ public static partial class FuturesTests
 
             List<WorkflowEvent> events = await RunAsync(workflow, "go");
 
-            AgentResponseEvent emitted = events.OfType<AgentResponseEvent>().Should().ContainSingle().Subject;
-            emitted.Tags.Should().BeEquivalentTo(new[] { OutputTag.Intermediate });
-            emitted.IsIntermediate().Should().BeTrue();
+            AgentResponseEvent emitted = Assert.Single(events.OfType<AgentResponseEvent>());
+            Assert.Equivalent(new[] { OutputTag.Intermediate }, emitted.Tags);
+            Assert.True(emitted.IsIntermediate());
         }
 
         // F8
@@ -167,9 +165,9 @@ public static partial class FuturesTests
 
             List<WorkflowEvent> events = await RunAsync(workflow, "go");
 
-            AgentResponseUpdateEvent emitted = events.OfType<AgentResponseUpdateEvent>().Should().ContainSingle().Subject;
-            emitted.Tags.Should().BeEquivalentTo(new[] { OutputTag.Intermediate });
-            emitted.IsIntermediate().Should().BeTrue();
+            AgentResponseUpdateEvent emitted = Assert.Single(events.OfType<AgentResponseUpdateEvent>());
+            Assert.Equivalent(new[] { OutputTag.Intermediate }, emitted.Tags);
+            Assert.True(emitted.IsIntermediate());
         }
 
         // F9
@@ -185,10 +183,9 @@ public static partial class FuturesTests
 
             List<WorkflowEvent> events = await RunAsync(workflow, "go");
 
-            AgentResponseEvent emitted = events.OfType<AgentResponseEvent>().Should().ContainSingle().Subject;
-            emitted.Tags.Should().BeEquivalentTo(new[] { OutputTag.Intermediate },
-                "terminal+intermediate union is {{ Intermediate }} (terminal contributes the entry but no tag)");
-            emitted.IsIntermediate().Should().BeTrue();
+            AgentResponseEvent emitted = Assert.Single(events.OfType<AgentResponseEvent>());
+            Assert.Equivalent(new[] { OutputTag.Intermediate }, emitted.Tags);
+            Assert.True(emitted.IsIntermediate());
         }
 
         // F10
@@ -204,9 +201,9 @@ public static partial class FuturesTests
 
             List<WorkflowEvent> events = await RunAsync(workflow, "go");
 
-            AgentResponseEvent emitted = events.OfType<AgentResponseEvent>().Should().ContainSingle().Subject;
-            emitted.Tags.Should().BeEquivalentTo(new[] { OutputTag.Intermediate }, "designation order is irrelevant");
-            emitted.IsIntermediate().Should().BeTrue();
+            AgentResponseEvent emitted = Assert.Single(events.OfType<AgentResponseEvent>());
+            Assert.Equivalent(new[] { OutputTag.Intermediate }, emitted.Tags);
+            Assert.True(emitted.IsIntermediate());
         }
 
         // F11
@@ -218,10 +215,10 @@ public static partial class FuturesTests
 
             List<WorkflowEvent> events = await RunAsync(workflow, "go");
 
-            WorkflowOutputEvent emitted = events.OfType<WorkflowOutputEvent>().Should().ContainSingle().Subject;
-            emitted.Should().NotBeOfType<AgentResponseEvent>();
-            emitted.Tags.Should().BeEquivalentTo(new[] { OutputTag.Intermediate });
-            emitted.IsIntermediate().Should().BeTrue();
+            WorkflowOutputEvent emitted = Assert.Single(events.OfType<WorkflowOutputEvent>());
+            Assert.False(emitted is AgentResponseEvent);
+            Assert.Equivalent(new[] { OutputTag.Intermediate }, emitted.Tags);
+            Assert.True(emitted.IsIntermediate());
         }
 
         // F12
@@ -233,9 +230,9 @@ public static partial class FuturesTests
 
             List<WorkflowEvent> events = await RunAsync(workflow, "go");
 
-            WorkflowOutputEvent emitted = events.OfType<WorkflowOutputEvent>().Should().ContainSingle().Subject;
-            emitted.Tags.Should().BeEmpty();
-            emitted.IsIntermediate().Should().BeFalse();
+            WorkflowOutputEvent emitted = Assert.Single(events.OfType<WorkflowOutputEvent>());
+            Assert.Empty(emitted.Tags ?? []);
+            Assert.False(emitted.IsIntermediate());
         }
 
         // F13
@@ -251,8 +248,8 @@ public static partial class FuturesTests
 
             List<WorkflowEvent> events = await RunAsync(workflow, "go");
 
-            AgentResponseEvent emitted = events.OfType<AgentResponseEvent>().Should().ContainSingle().Subject;
-            emitted.Tags.Should().BeEmpty("repeated terminal designation contributes no tag");
+            AgentResponseEvent emitted = Assert.Single(events.OfType<AgentResponseEvent>());
+            Assert.Empty(emitted.Tags ?? []);
         }
 
         // ---- Executors -----------------------------------------------------------

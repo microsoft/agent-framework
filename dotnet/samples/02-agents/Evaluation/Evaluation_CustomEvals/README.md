@@ -1,4 +1,4 @@
-# Evaluation - Custom Evals
+﻿# Evaluation - Custom Evals
 
 This sample demonstrates writing custom domain-specific evaluation functions using `FunctionEvaluator.Create`. Custom evaluators run locally with no cloud evaluator service needed — useful for enforcing business rules, format requirements, or safety guardrails.
 
@@ -13,13 +13,13 @@ This sample demonstrates writing custom domain-specific evaluation functions usi
 ## Prerequisites
 
 - .NET 10 SDK or later
-- Azure CLI installed and authenticated (`az login`)
+- Azure authentication available to `DefaultAzureCredential` (for local development, run `az login`)
 
 Set the following environment variables:
 
 ```powershell
-$env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project"
-$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o-mini"
+$env:FOUNDRY_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project"
+$env:FOUNDRY_MODEL="gpt-4o-mini"
 ```
 
 ## Run the sample

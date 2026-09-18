@@ -2,6 +2,7 @@
 
 import builtins
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -9,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import yaml
 
+from agent_framework_declarative._loader import ProviderTypeMapping
 from agent_framework_declarative._models import (
     AgentDefinition,
     AgentManifest,
@@ -25,6 +27,7 @@ from agent_framework_declarative._models import (
     McpServerToolNeverRequireApprovalMode,
     McpServerToolSpecifyApprovalMode,
     McpTool,
+    Model,
     ModelResource,
     ObjectProperty,
     OpenApiTool,
@@ -490,6 +493,38 @@ class TestAgentFactoryCreateFromDict:
 
         assert agent is not None
 
+    def test_create_agent_from_dict_marks_declarative_agent_used(self):
+        """Test that successful declarative agent creation marks feature usage."""
+        from agent_framework_declarative import AgentFactory
+        from agent_framework_declarative._feature_usage import FeatureIndex
+
+        factory = AgentFactory(client=MagicMock())
+
+        with patch("agent_framework_declarative._loader.mark_feature_used") as mark_feature_used:
+            factory.create_agent_from_dict({
+                "kind": "Prompt",
+                "name": "TestAgent",
+                "instructions": "You are a helpful assistant.",
+            })
+
+        mark_feature_used.assert_called_once_with(FeatureIndex.DECLARATIVE_AGENT)
+
+    async def test_create_agent_from_dict_async_marks_declarative_agent_used(self):
+        """Test that successful async declarative agent creation marks feature usage."""
+        from agent_framework_declarative import AgentFactory
+        from agent_framework_declarative._feature_usage import FeatureIndex
+
+        factory = AgentFactory(client=MagicMock())
+
+        with patch("agent_framework_declarative._loader.mark_feature_used") as mark_feature_used:
+            await factory.create_agent_from_dict_async({
+                "kind": "Prompt",
+                "name": "TestAgent",
+                "instructions": "You are a helpful assistant.",
+            })
+
+        mark_feature_used.assert_called_once_with(FeatureIndex.DECLARATIVE_AGENT)
+
     def test_create_agent_from_dict_matches_yaml(self):
         """Test that create_agent_from_dict produces same result as create_agent_from_yaml."""
         from unittest.mock import MagicMock
@@ -706,6 +741,9 @@ model:
         token = _safe_mode_context.set(True)  # Ensure we're in safe mode
         try:
             result = agent_schema_dispatch(yaml_module.safe_load(yaml_content))
+            assert isinstance(result, PromptAgent)
+            assert isinstance(result.model, Model)
+            assert isinstance(result.model.connection, ApiKeyConnection)
 
             # The API key should NOT be resolved (still has the PowerFx expression)
             assert result.model.connection.apiKey == "=Env.MY_API_KEY"
@@ -741,6 +779,9 @@ model:
         token = _safe_mode_context.set(False)  # Disable safe mode
         try:
             result = agent_schema_dispatch(yaml_module.safe_load(yaml_content))
+            assert isinstance(result, PromptAgent)
+            assert isinstance(result.model, Model)
+            assert isinstance(result.model.connection, ApiKeyConnection)
 
             # The API key should be resolved from environment
             assert result.model.connection.apiKey == "secret-key-123"
@@ -1011,6 +1052,30 @@ instructions: Test agent from Path
 
         assert agent.name == "PathAgent"
 
+    def test_create_agent_from_yaml_path_reads_utf8(self, tmp_path):
+        """Test create_agent_from_yaml_path reads YAML as UTF-8."""
+        from unittest.mock import MagicMock
+
+        from agent_framework_declarative import AgentFactory
+
+        yaml_file = tmp_path / "unicode_agent.yaml"
+        yaml_file.write_text(
+            """
+kind: Prompt
+name: UnicodeAgent
+instructions: 政务助手 🏛️
+""",
+            encoding="utf-8",
+        )
+
+        mock_client = MagicMock()
+        factory = AgentFactory(client=mock_client)
+        with patch("builtins.open", wraps=builtins.open) as mock_open:
+            agent = factory.create_agent_from_yaml_path(yaml_file)
+
+        mock_open.assert_called_once_with(yaml_file, encoding="utf-8")
+        assert agent.name == "UnicodeAgent"
+
 
 class TestAgentFactoryAsyncMethods:
     """Tests for AgentFactory async methods."""
@@ -1098,6 +1163,41 @@ instructions: Test async path agent
 
         assert agent.name == "AsyncPathAgent"
 
+    async def test_create_agent_from_yaml_path_async_reads_utf8_off_event_loop(self, tmp_path):
+        """Test async path loading reads UTF-8 without blocking the event-loop thread."""
+        from unittest.mock import MagicMock
+
+        from agent_framework_declarative import AgentFactory
+
+        yaml_file = tmp_path / "async_unicode_agent.yaml"
+        yaml_file.write_text(
+            """
+kind: Prompt
+name: AsyncUnicodeAgent
+instructions: 政务助手 🏛️
+""",
+            encoding="utf-8",
+        )
+
+        event_loop_thread_id = threading.get_ident()
+        read_thread_id: int | None = None
+        original_read_text = Path.read_text
+
+        def tracked_read_text(path: Path, *args, **kwargs):
+            nonlocal read_thread_id
+            read_thread_id = threading.get_ident()
+            assert kwargs["encoding"] == "utf-8"
+            return original_read_text(path, *args, **kwargs)
+
+        mock_client = MagicMock()
+        factory = AgentFactory(client=mock_client)
+        with patch.object(Path, "read_text", autospec=True, side_effect=tracked_read_text):
+            agent = await factory.create_agent_from_yaml_path_async(yaml_file)
+
+        assert read_thread_id is not None
+        assert read_thread_id != event_loop_thread_id
+        assert agent.name == "AsyncUnicodeAgent"
+
 
 class TestAgentFactoryProviderLookup:
     """Tests for provider configuration lookup."""
@@ -1127,11 +1227,13 @@ model:
         from agent_framework_declarative import AgentFactory
 
         # Define a custom provider mapping
-        custom_mappings = {
+        custom_mappings: dict[str, ProviderTypeMapping] = {
             "CustomProvider.Chat": {
                 "package": "agent_framework.openai",
                 "name": "OpenAIChatClient",
                 "model_field": "model",
+                "endpoint_field": None,
+                "api_key_field": None,
             },
         }
 
@@ -1424,7 +1526,13 @@ class TestProviderResponseFormat:
         prompt_agent = self._make_mock_prompt_agent(with_output_schema=True)
         mock_provider_class, mock_provider_instance = self._make_mock_provider()
 
-        mapping = {"package": "some_module", "name": "SomeProvider"}
+        mapping: ProviderTypeMapping = {
+            "package": "some_module",
+            "name": "SomeProvider",
+            "model_field": "model",
+            "endpoint_field": None,
+            "api_key_field": None,
+        }
         factory = AgentFactory()
 
         original_import = builtins.__import__
@@ -1458,7 +1566,13 @@ class TestProviderResponseFormat:
         prompt_agent = self._make_mock_prompt_agent(with_output_schema=False)
         mock_provider_class, mock_provider_instance = self._make_mock_provider()
 
-        mapping = {"package": "some_module", "name": "SomeProvider"}
+        mapping: ProviderTypeMapping = {
+            "package": "some_module",
+            "name": "SomeProvider",
+            "model_field": "model",
+            "endpoint_field": None,
+            "api_key_field": None,
+        }
         factory = AgentFactory()
 
         original_import = builtins.__import__

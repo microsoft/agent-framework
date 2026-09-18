@@ -7,6 +7,7 @@ import pytest
 from agent_framework import Embedding, GeneratedEmbeddings
 
 from agent_framework_ollama import OllamaEmbeddingClient, OllamaEmbeddingOptions
+from agent_framework_ollama._feature_usage import FeatureIndex
 
 # region: Unit Tests
 
@@ -49,7 +50,10 @@ async def test_ollama_embedding_get_embeddings() -> None:
         "prompt_eval_count": 10,
     }
 
-    with patch("agent_framework_ollama._embedding_client.AsyncClient") as mock_client_cls:
+    with (
+        patch("agent_framework_ollama._embedding_client.AsyncClient") as mock_client_cls,
+        patch("agent_framework_ollama._embedding_client.mark_feature_used") as mark_feature_used,
+    ):
         mock_client = MagicMock()
         mock_client.embed = AsyncMock(return_value=mock_response)
         mock_client_cls.return_value = mock_client
@@ -57,6 +61,7 @@ async def test_ollama_embedding_get_embeddings() -> None:
         client = OllamaEmbeddingClient(model="nomic-embed-text")
         result = await client.get_embeddings(["hello", "world"])
 
+        mark_feature_used.assert_called_once_with(FeatureIndex.OLLAMA)
         assert isinstance(result, GeneratedEmbeddings)
         assert len(result) == 2
         assert result[0].vector == [0.1, 0.2, 0.3]

@@ -7,8 +7,7 @@ from __future__ import annotations
 from typing import Any
 
 from agent_framework import WorkflowBuilder, WorkflowContext, executor
-from event_stream import EventStream
-from typing_extensions import Never
+from event_stream import EventStream  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
 
 from agent_framework_ag_ui import AgentFrameworkWorkflow
 
@@ -31,7 +30,7 @@ async def test_workflow_agent_golden_sequence() -> None:
     """Workflow-as-agent: emits step events and text content."""
 
     @executor(id="generator")
-    async def generator(message: Any, ctx: WorkflowContext[Never, str]) -> None:
+    async def generator(message: Any, ctx: WorkflowContext[Any, str]) -> None:
         await ctx.yield_output("Here is your generated UI content!")
 
     workflow = WorkflowBuilder(start_executor=generator).build()
@@ -54,7 +53,7 @@ async def test_workflow_agent_step_names_match() -> None:
     """Step started/finished events reference the executor name."""
 
     @executor(id="my_executor")
-    async def my_executor(message: Any, ctx: WorkflowContext[Never, str]) -> None:
+    async def my_executor(message: Any, ctx: WorkflowContext[Any, str]) -> None:
         await ctx.yield_output("Done!")
 
     workflow = WorkflowBuilder(start_executor=my_executor).build()
@@ -71,7 +70,7 @@ async def test_workflow_agent_ordered_events() -> None:
     """Workflow events follow expected ordering: RUN_STARTED → STEP_STARTED → content → STEP_FINISHED → RUN_FINISHED."""
 
     @executor(id="my_step")
-    async def my_step(message: Any, ctx: WorkflowContext[Never, str]) -> None:
+    async def my_step(message: Any, ctx: WorkflowContext[Any, str]) -> None:
         await ctx.yield_output("Generated content")
 
     workflow = WorkflowBuilder(start_executor=my_step).build()

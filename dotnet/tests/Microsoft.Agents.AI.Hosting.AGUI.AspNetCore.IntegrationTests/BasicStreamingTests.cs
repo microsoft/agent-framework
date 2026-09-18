@@ -10,8 +10,8 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
-using FluentAssertions;
-using Microsoft.Agents.AI.AGUI;
+using AGUI.Abstractions;
+using AGUI.Client;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.TestHost;
@@ -30,7 +30,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
     {
         // Arrange
         await this.SetupTestServerAsync();
-        var chatClient = new AGUIChatClient(this._client!, "", null);
+        var chatClient = new AGUIChatClient(new(this._client!, ""));
         AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
         ChatClientAgentSession? session = (ChatClientAgentSession)await agent.CreateSessionAsync();
         ChatMessage userMessage = new(ChatRole.User, "hello");
@@ -44,16 +44,16 @@ public sealed class BasicStreamingTests : IAsyncDisposable
         }
 
         // Assert
-        session.Should().NotBeNull();
+        Assert.NotNull(session);
 
-        updates.Should().NotBeEmpty();
-        updates.Should().AllSatisfy(u => u.Role.Should().Be(ChatRole.Assistant));
+        Assert.NotEmpty(updates);
+        Assert.All(updates, u => Assert.Equal(ChatRole.Assistant, u.Role));
 
         // Verify assistant response message
         AgentResponse response = updates.ToAgentResponse();
-        response.Messages.Should().HaveCount(1);
-        response.Messages[0].Role.Should().Be(ChatRole.Assistant);
-        response.Messages[0].Text.Should().Be("Hello from fake agent!");
+        ChatMessage responseMessage = Assert.Single(response.Messages);
+        Assert.Equal(ChatRole.Assistant, responseMessage.Role);
+        Assert.Equal("Hello from fake agent!", responseMessage.Text);
     }
 
     [Fact]
@@ -61,7 +61,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
     {
         // Arrange
         await this.SetupTestServerAsync();
-        var chatClient = new AGUIChatClient(this._client!, "", null);
+        var chatClient = new AGUIChatClient(new(this._client!, ""));
         AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
         ChatClientAgentSession? session = (ChatClientAgentSession)await agent.CreateSessionAsync();
         ChatMessage userMessage = new(ChatRole.User, "test");
@@ -75,29 +75,39 @@ public sealed class BasicStreamingTests : IAsyncDisposable
         }
 
         // Assert - RunStarted should be the first update
-        updates.Should().NotBeEmpty();
-        updates[0].ResponseId.Should().NotBeNullOrEmpty();
+        Assert.NotEmpty(updates);
+        Assert.False(string.IsNullOrEmpty(updates[0].ResponseId));
         ChatResponseUpdate firstUpdate = updates[0].AsChatResponseUpdate();
-        string? threadId = firstUpdate.ConversationId;
+        // The AG-UI thread id is surfaced on the RUN_STARTED event (the new AGUI.Client keeps the
+        // client stateless and never populates ChatResponseUpdate.ConversationId).
+        string? threadId = (firstUpdate.RawRepresentation as RunStartedEvent)?.ThreadId;
         string? runId = updates[0].ResponseId;
-        threadId.Should().NotBeNullOrEmpty();
-        runId.Should().NotBeNullOrEmpty();
+        Assert.False(string.IsNullOrEmpty(threadId));
+        Assert.False(string.IsNullOrEmpty(runId));
 
         // Should have received text updates
-        updates.Should().Contain(u => !string.IsNullOrEmpty(u.Text));
+        Assert.Contains(updates, u => !string.IsNullOrEmpty(u.Text));
 
         // All text content updates should have the same message ID
         List<AgentResponseUpdate> textUpdates = updates.Where(u => !string.IsNullOrEmpty(u.Text)).ToList();
-        textUpdates.Should().NotBeEmpty();
+        Assert.NotEmpty(textUpdates);
         string? firstMessageId = textUpdates.FirstOrDefault()?.MessageId;
-        firstMessageId.Should().NotBeNullOrEmpty();
-        textUpdates.Should().AllSatisfy(u => u.MessageId.Should().Be(firstMessageId));
+        Assert.False(string.IsNullOrEmpty(firstMessageId));
+        Assert.All(textUpdates, u => Assert.Equal(firstMessageId, u.MessageId));
 
         // RunFinished should be the last update
         AgentResponseUpdate lastUpdate = updates[^1];
-        lastUpdate.ResponseId.Should().Be(runId);
+        Assert.Equal(runId, lastUpdate.ResponseId);
         ChatResponseUpdate lastChatUpdate = lastUpdate.AsChatResponseUpdate();
-        lastChatUpdate.ConversationId.Should().Be(threadId);
+        // The stateless client never populates ChatResponseUpdate.ConversationId; thread identity stays
+        // on the AG-UI wire events instead, so verify the RUN_FINISHED event carries the same ids.
+        Assert.Null(lastChatUpdate.ConversationId);
+        RunFinishedEvent? runFinished = updates
+            .Select(u => u.AsChatResponseUpdate().RawRepresentation as RunFinishedEvent)
+            .FirstOrDefault(e => e is not null);
+        Assert.NotNull(runFinished);
+        Assert.Equal(threadId, runFinished!.ThreadId);
+        Assert.Equal(runId, runFinished.RunId);
     }
 
     [Fact]
@@ -105,7 +115,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
     {
         // Arrange
         await this.SetupTestServerAsync();
-        var chatClient = new AGUIChatClient(this._client!, "", null);
+        var chatClient = new AGUIChatClient(new(this._client!, ""));
         AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
         ChatClientAgentSession? session = (ChatClientAgentSession)await agent.CreateSessionAsync();
         ChatMessage userMessage = new(ChatRole.User, "hello");
@@ -114,18 +124,18 @@ public sealed class BasicStreamingTests : IAsyncDisposable
         AgentResponse response = await agent.RunAsync([userMessage], session, new AgentRunOptions(), CancellationToken.None);
 
         // Assert
-        response.Messages.Should().NotBeEmpty();
-        response.Messages.Should().Contain(m => m.Role == ChatRole.Assistant);
-        response.Messages.Should().Contain(m => m.Text == "Hello from fake agent!");
+        Assert.NotEmpty(response.Messages);
+        Assert.Contains(response.Messages, m => m.Role == ChatRole.Assistant);
+        Assert.Contains(response.Messages, m => m.Text == "Hello from fake agent!");
     }
 
     [Fact]
-    public async Task MultiTurnConversationPreservesAllMessagesInSessionAsync()
+    public async Task AGUIChatClientBackedAgentUsesLocalChatHistoryAcrossTurnsAsync()
     {
         // Arrange
         await this.SetupTestServerAsync();
-        var chatClient = new AGUIChatClient(this._client!, "", null);
-        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
+        var chatClient = new AGUIChatClient(new(this._client!, ""));
+        ChatClientAgent agent = new(chatClient, instructions: null, name: "assistant", description: "Sample assistant", tools: []);
         ChatClientAgentSession chatClientSession = (ChatClientAgentSession)await agent.CreateSessionAsync();
         ChatMessage firstUserMessage = new(ChatRole.User, "First question");
 
@@ -137,7 +147,9 @@ public sealed class BasicStreamingTests : IAsyncDisposable
         }
 
         // Assert first turn completed
-        firstTurnUpdates.Should().Contain(u => !string.IsNullOrEmpty(u.Text));
+        Assert.Contains(firstTurnUpdates, u => !string.IsNullOrEmpty(u.Text));
+        Assert.All(firstTurnUpdates, u => Assert.Null(u.AsChatResponseUpdate().ConversationId));
+        Assert.Null(chatClientSession.ConversationId);
 
         // Act - Second turn with another message
         ChatMessage secondUserMessage = new(ChatRole.User, "Second question");
@@ -148,19 +160,34 @@ public sealed class BasicStreamingTests : IAsyncDisposable
         }
 
         // Assert second turn completed
-        secondTurnUpdates.Should().Contain(u => !string.IsNullOrEmpty(u.Text));
+        Assert.Contains(secondTurnUpdates, u => !string.IsNullOrEmpty(u.Text));
+        Assert.All(secondTurnUpdates, u => Assert.Null(u.AsChatResponseUpdate().ConversationId));
+        Assert.Null(chatClientSession.ConversationId);
 
-        // Verify first turn assistant response
+        // Verify the local provider retained both turns.
+        InMemoryChatHistoryProvider historyProvider = Assert.IsType<InMemoryChatHistoryProvider>(agent.ChatHistoryProvider);
+        List<ChatMessage> history = historyProvider.GetMessages(chatClientSession);
+        Assert.Equal(4, history.Count);
+        Assert.Equal(ChatRole.User, history[0].Role);
+        Assert.Equal("First question", history[0].Text);
+        Assert.Equal(ChatRole.Assistant, history[1].Role);
+        Assert.Equal("Hello from fake agent!", history[1].Text);
+        Assert.Equal(ChatRole.User, history[2].Role);
+        Assert.Equal("Second question", history[2].Text);
+        Assert.Equal(ChatRole.Assistant, history[3].Role);
+        Assert.Equal("Hello from fake agent!", history[3].Text);
+
+        // Verify first turn assistant response.
         AgentResponse firstResponse = firstTurnUpdates.ToAgentResponse();
-        firstResponse.Messages.Should().HaveCount(1);
-        firstResponse.Messages[0].Role.Should().Be(ChatRole.Assistant);
-        firstResponse.Messages[0].Text.Should().Be("Hello from fake agent!");
+        ChatMessage firstResponseMessage = Assert.Single(firstResponse.Messages);
+        Assert.Equal(ChatRole.Assistant, firstResponseMessage.Role);
+        Assert.Equal("Hello from fake agent!", firstResponseMessage.Text);
 
-        // Verify second turn assistant response
+        // Verify second turn assistant response.
         AgentResponse secondResponse = secondTurnUpdates.ToAgentResponse();
-        secondResponse.Messages.Should().HaveCount(1);
-        secondResponse.Messages[0].Role.Should().Be(ChatRole.Assistant);
-        secondResponse.Messages[0].Text.Should().Be("Hello from fake agent!");
+        ChatMessage secondResponseMessage = Assert.Single(secondResponse.Messages);
+        Assert.Equal(ChatRole.Assistant, secondResponseMessage.Role);
+        Assert.Equal("Hello from fake agent!", secondResponseMessage.Text);
     }
 
     [Fact]
@@ -168,7 +195,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
     {
         // Arrange
         await this.SetupTestServerAsync(useMultiMessageAgent: true);
-        var chatClient = new AGUIChatClient(this._client!, "", null);
+        var chatClient = new AGUIChatClient(new(this._client!, ""));
         AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
         ChatClientAgentSession chatClientSession = (ChatClientAgentSession)await agent.CreateSessionAsync();
         ChatMessage userMessage = new(ChatRole.User, "Tell me a story");
@@ -183,16 +210,16 @@ public sealed class BasicStreamingTests : IAsyncDisposable
 
         // Assert - Should have received text updates with different message IDs
         List<AgentResponseUpdate> textUpdates = updates.Where(u => !string.IsNullOrEmpty(u.Text)).ToList();
-        textUpdates.Should().NotBeEmpty();
+        Assert.NotEmpty(textUpdates);
 
         // Extract unique message IDs
         List<string> messageIds = textUpdates.Select(u => u.MessageId).Where(id => !string.IsNullOrEmpty(id)).Distinct().ToList()!;
-        messageIds.Should().HaveCountGreaterThan(1, "agent should send multiple messages");
+        Assert.True(messageIds.Count > 1);
 
         // Verify assistant messages from updates
         AgentResponse response = updates.ToAgentResponse();
-        response.Messages.Should().HaveCountGreaterThan(1);
-        response.Messages.Should().AllSatisfy(m => m.Role.Should().Be(ChatRole.Assistant));
+        Assert.True(response.Messages.Count > 1);
+        Assert.All(response.Messages, m => Assert.Equal(ChatRole.Assistant, m.Role));
     }
 
     [Fact]
@@ -200,7 +227,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
     {
         // Arrange
         await this.SetupTestServerAsync();
-        var chatClient = new AGUIChatClient(this._client!, "", null);
+        var chatClient = new AGUIChatClient(new(this._client!, ""));
         AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
         ChatClientAgentSession chatClientSession = (ChatClientAgentSession)await agent.CreateSessionAsync();
 
@@ -221,14 +248,35 @@ public sealed class BasicStreamingTests : IAsyncDisposable
         }
 
         // Assert - Should have received assistant response
-        updates.Should().Contain(u => !string.IsNullOrEmpty(u.Text));
-        updates.Should().Contain(u => u.Role == ChatRole.Assistant);
+        Assert.Contains(updates, u => !string.IsNullOrEmpty(u.Text));
+        Assert.Contains(updates, u => u.Role == ChatRole.Assistant);
 
         // Verify assistant response message
         AgentResponse response = updates.ToAgentResponse();
-        response.Messages.Should().HaveCount(1);
-        response.Messages[0].Role.Should().Be(ChatRole.Assistant);
-        response.Messages[0].Text.Should().Be("Hello from fake agent!");
+        ChatMessage responseMessage = Assert.Single(response.Messages);
+        Assert.Equal(ChatRole.Assistant, responseMessage.Role);
+        Assert.Equal("Hello from fake agent!", responseMessage.Text);
+    }
+
+    [Fact]
+    public async Task PostMalformedOrEmptyBody_ReturnsBadRequestAsync()
+    {
+        // Arrange
+        await this.SetupTestServerAsync();
+
+        var endpoint = new Uri("http://localhost/agent");
+
+        // Act - malformed JSON body
+        using var malformed = new StringContent("{ not valid json", System.Text.Encoding.UTF8, "application/json");
+        using HttpResponseMessage malformedResponse = await this._client!.PostAsync(endpoint, malformed);
+
+        // Act - empty body
+        using var empty = new StringContent(string.Empty, System.Text.Encoding.UTF8, "application/json");
+        using HttpResponseMessage emptyResponse = await this._client!.PostAsync(endpoint, empty);
+
+        // Assert - the hosting glue rejects both with 400 rather than 5xx.
+        Assert.Equal(System.Net.HttpStatusCode.BadRequest, malformedResponse.StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.BadRequest, emptyResponse.StatusCode);
     }
 
     private async Task SetupTestServerAsync(bool useMultiMessageAgent = false)
@@ -236,7 +284,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
 
-        builder.Services.AddAGUI();
+        builder.Services.AddAGUIServer();
 
         if (useMultiMessageAgent)
         {
@@ -253,7 +301,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
             ? this._app.Services.GetRequiredService<FakeMultiMessageAgent>()
             : this._app.Services.GetRequiredService<FakeChatClientAgent>();
 
-        this._app.MapAGUI("/agent", agent);
+        this._app.MapAGUIServer("/agent", agent);
 
         await this._app.StartAsync();
 

@@ -1,12 +1,14 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+#if !NET10_0_OR_GREATER
+
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.Shared;
+using AGUI.Abstractions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -147,3 +149,5 @@ public sealed class AGUIServerSentEventsResultTests
         await Assert.ThrowsAsync<ArgumentNullException>(() => result.ExecuteAsync(null!));
     }
 }
+
+#endif

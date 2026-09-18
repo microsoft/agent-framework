@@ -10,7 +10,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// <summary>
 /// JSON serialization utilities for hosted session identity types.
 /// </summary>
-[Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
+[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 internal static class HostedSessionJsonUtilities
 {
     /// <summary>
@@ -35,5 +35,5 @@ internal static class HostedSessionJsonUtilities
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
     WriteIndented = false)]
 [JsonSerializable(typeof(HostedSessionContext))]
-[Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
+[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 internal partial class HostedSessionJsonContext : JsonSerializerContext;

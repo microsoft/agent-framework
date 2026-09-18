@@ -5,9 +5,10 @@
 Unlike :class:`~agent_framework.MemoryContextProvider`, which provides
 session-scoped memory that may be isolated per session, :class:`FileAccessProvider`
 operates on a shared, persistent storage area whose contents are visible across
-sessions and agents. The provider exposes five tools — ``file_access_save_file``,
-``file_access_read_file``, ``file_access_delete_file``, ``file_access_list_files``,
-and ``file_access_search_files`` — by registering them on the per-invocation
+sessions and agents. The provider exposes tools — ``file_access_write``,
+``file_access_read``, ``file_access_read_lines``, ``file_access_delete``,
+``file_access_ls``, ``file_access_grep``, ``file_access_replace``, and
+``file_access_replace_lines`` — by registering them on the per-invocation
 :class:`~agent_framework.SessionContext` in :meth:`FileAccessProvider.before_run`.
 
 The store abstraction is generic so callers can plug in in-memory, local-disk, or
@@ -27,14 +28,19 @@ import logging
 import os
 import re
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Mapping, MutableMapping
+from collections.abc import Awaitable, Mapping, MutableMapping
 from pathlib import Path
-from typing import Any, cast
+from typing import Annotated, Any, ClassVar, cast
+
+from pydantic import BaseModel, Field
 
 from .._feature_stage import ExperimentalFeature, experimental
+from .._filesystem import _is_link_or_reparse_point  # pyright: ignore[reportPrivateUsage]
 from .._serialization import SerializationMixin
 from .._sessions import AgentSession, ContextProvider, SessionContext
+from .._telemetry import FeatureIndex, mark_feature_used
 from .._tools import ApprovalMode, tool
+from .._types import Content
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +54,14 @@ DEFAULT_FILE_ACCESS_INSTRUCTIONS = (
     "Use these tools to read input data provided by the user, write output "
     "artifacts, and manage any files the user has asked you to work with.\n\n"
     "- Never delete or overwrite existing files unless the user has explicitly "
-    "asked you to do so."
+    "asked you to do so.\n"
+    "- Files may be organized into subdirectories. Use `file_access_ls` "
+    "to explore the tree level by level, "
+    "or `file_access_grep` to search file contents recursively across "
+    "the whole store.\n"
+    "- To change part of a file, find the line numbers with `file_access_grep`, "
+    "read the range around them with `file_access_read_lines`, then edit with "
+    "`file_access_replace_lines`. Reading the whole file first is rarely necessary."
 )
 
 # Maximum number of characters of context to include on either side of the first
@@ -58,13 +71,24 @@ _SEARCH_SNIPPET_RADIUS = 50
 # Hard cap on the length of a user-supplied search regex. Python's ``re`` module
 # has no built-in timeout, so a catastrophic-backtracking pattern (such as
 # ``(a+)+$``) submitted by the model could spin the CPU indefinitely. The cap
-# alone does not stop short pathological patterns, so :meth:`search_files`
+# alone does not stop short pathological patterns, so :meth:`search`
 # additionally executes the regex scan in a worker thread and bounds the wall
 # clock with :data:`_SEARCH_TIMEOUT_SECONDS`. The thread itself cannot be
 # safely interrupted from Python, so a runaway scan continues until the
 # regex engine returns, but the caller and event loop stay responsive.
 _MAX_SEARCH_PATTERN_LENGTH = 256
 _SEARCH_TIMEOUT_SECONDS = 10.0
+
+# How much file content :meth:`AgentFileStore.search` accumulates before handing a batch
+# to a worker thread. Sized so the per-hop cost is negligible against the scan itself while
+# peak memory stays bounded no matter how many candidates a store returns.
+_SCAN_BATCH_CHARS = 4_000_000
+
+# Second flush condition, because content length alone does not bound the batch: empty files
+# add nothing to the character count, so a store returning many of them would retain a tuple
+# per candidate and never flush. Capping the count keeps the per-candidate overhead in the same
+# order as the character budget without costing a thread hop per file.
+_SCAN_BATCH_FILES = 10_000
 
 # Errno raised by POSIX ``open`` when ``O_NOFOLLOW`` was requested and the
 # leaf path component is a symbolic link. Used to translate the kernel-level
@@ -76,8 +100,13 @@ _ELOOP = errno.ELOOP
 def _compile_search_regex(pattern: str) -> re.Pattern[str]:
     """Compile a case-insensitive search regex, enforcing the length cap.
 
+    An invalid ``pattern`` raises :class:`re.error` unchanged so the search
+    tools surface it to the calling model, which can correct the pattern and
+    retry.
+
     Raises:
-        ValueError: When ``pattern`` exceeds ``_MAX_SEARCH_PATTERN_LENGTH`` characters.
+        ValueError: When ``pattern`` exceeds ``_MAX_SEARCH_PATTERN_LENGTH``
+            characters.
         re.error: When ``pattern`` is not a valid regular expression.
     """
     if len(pattern) > _MAX_SEARCH_PATTERN_LENGTH:
@@ -89,24 +118,32 @@ def _compile_search_regex(pattern: str) -> re.Pattern[str]:
 
 
 async def _run_search_with_timeout(
-    fn: Callable[[], list[FileSearchResult]],
+    work: Awaitable[list[FileSearchResult]],
 ) -> list[FileSearchResult]:
-    """Run ``fn`` in a worker thread with a bounded wall-clock timeout.
+    """Await ``work`` under a bounded wall-clock timeout.
+
+    The one bound covers both shapes of search: a whole scan offloaded with
+    :func:`asyncio.to_thread` (what the stores in this package do) and the base
+    :meth:`AgentFileStore.search` pipeline, which keeps store I/O on the event
+    loop and offloads only the per-file regex work. In both cases the
+    model-supplied pattern executes in a worker thread, never on the loop.
 
     Raises:
         ValueError: When the search does not complete within
             :data:`_SEARCH_TIMEOUT_SECONDS` seconds.
     """
     try:
-        return await asyncio.wait_for(asyncio.to_thread(fn), timeout=_SEARCH_TIMEOUT_SECONDS)
+        return await asyncio.wait_for(work, timeout=_SEARCH_TIMEOUT_SECONDS)
     except asyncio.TimeoutError as exc:
         # On Python 3.10 ``asyncio.wait_for`` raises ``asyncio.TimeoutError``
         # which is distinct from the builtin ``TimeoutError`` (the two were
         # unified in 3.11). Catching the asyncio alias works on every
         # supported version.
         raise ValueError(
-            f"Regex search did not complete within {_SEARCH_TIMEOUT_SECONDS:g} seconds. "
-            "Use a more specific pattern (avoid nested quantifiers such as '(a+)+')."
+            f"Search did not complete within {_SEARCH_TIMEOUT_SECONDS:g} seconds. The bound covers "
+            "the whole search, so this is either a pathological pattern (avoid nested quantifiers "
+            "such as '(a+)+') or a store too slow to read this many files in time. Narrow the "
+            "pattern, or search a smaller directory."
         ) from exc
 
 
@@ -119,6 +156,14 @@ def _normalize_relative_path(path: str, *, is_directory: bool = False) -> str:
     allowed and represents the root; otherwise an empty result is rejected and
     trailing separators are not accepted (so ``"foo/"`` does not silently
     become the file path ``"foo"``).
+
+    This is for *paths supplied as tool arguments*. It is deliberately lossy:
+    ``"a/"`` and ``"a//"`` both normalize to ``"a"``, as does the equivalent
+    backslash-terminated spelling. Never use it to derive a storage namespace
+    from an identifier that participates in an isolation boundary (a session ID,
+    owner ID, or memory scope) — distinct identifiers would share one location.
+    Use :func:`~agent_framework._filesystem._storage_key_segment` for that
+    instead.
 
     Args:
         path: The relative path to normalize.
@@ -175,17 +220,186 @@ def _normalize_relative_path(path: str, *, is_directory: bool = False) -> str:
     return result
 
 
-def _matches_glob(file_name: str, pattern: str | None) -> bool:
+def _matches_glob(file_name: str, glob_pattern: str | None) -> bool:
     """Return whether ``file_name`` matches the optional glob pattern (case-insensitive).
 
-    When ``pattern`` is ``None`` or blank this returns True so callers can skip
-    filtering by passing nothing. Matching uses :func:`fnmatch.fnmatchcase` over a
-    lowercased pattern/name pair to give consistent results across operating
-    systems (``fnmatch.fnmatch`` is case-sensitive on POSIX but not on Windows).
+    ``file_name`` is the forward-slash path of a file relative to the search
+    directory (for a direct child this is just its basename; for a recursive
+    search it may contain ``/`` separators). When ``pattern`` is ``None`` or blank
+    this returns True so callers can skip filtering by passing nothing. Matching
+    uses :func:`fnmatch.fnmatchcase` over a lowercased pattern/name pair to give
+    consistent results across operating systems (``fnmatch.fnmatch`` is
+    case-sensitive on POSIX but not on Windows). Note that with ``fnmatch`` a
+    ``*`` matches any characters **including** ``/``, so ``"*.md"`` matches
+    markdown files at any depth and ``"reports/*"`` matches everything under
+    ``reports``.
     """
-    if pattern is None or not pattern.strip():
+    if glob_pattern is None or not glob_pattern.strip():
         return True
-    return fnmatch.fnmatchcase(file_name.lower(), pattern.lower())
+    return fnmatch.fnmatchcase(file_name.lower(), glob_pattern.lower())
+
+
+def _combine_search_path(directory: str, relative: str) -> str:
+    """Join a search ``directory`` and a path relative to it into one store path.
+
+    Both sides may be blank (the root, or the directory itself), so the result is
+    trimmed rather than assembled with a bare ``/``.
+    """
+    base = directory.strip("/")
+    tail = relative.strip("/")
+    if not base:
+        return tail
+    return f"{base}/{tail}" if tail else base
+
+
+def _apply_replace(content: str, old_string: str, new_string: str, replace_all: bool) -> tuple[str, int]:
+    """Replace ``old_string`` with ``new_string`` in ``content``.
+
+    Returns the new content and the number of replacements made. Raises
+    :class:`ValueError` when ``old_string`` is not found, or when more than one
+    occurrence exists and ``replace_all`` is ``False``.
+    """
+    if not old_string:
+        raise ValueError("old_string must not be empty.")
+    count = content.count(old_string)
+    if count == 0:
+        raise ValueError(f"old_string not found: {old_string!r}.")
+    if count > 1 and not replace_all:
+        raise ValueError(
+            f"old_string occurs {count} times; pass replace_all=true to replace all, "
+            "or provide a more specific old_string."
+        )
+    return content.replace(old_string, new_string), count
+
+
+def _split_lines_keepends(content: str) -> list[str]:
+    r"""Split ``content`` into lines on ``\n`` only, keeping the terminator attached.
+
+    This is the single definition of a line used by ``read_lines``, ``replace_lines`` and the
+    :class:`AgentFileStore` implementations in this package, so for those stores a ``line_number``
+    obtained from ``grep`` always targets the same line in the others and stays in range. A custom
+    store supplies its own :meth:`AgentFileStore.search`, which must number by this split but does
+    not inherit it; nothing checks that at runtime, so a store numbering differently edits the
+    wrong line silently.
+
+    Splitting solely on ``\n`` (a trailing ``\r``
+    stays attached to the line) means the result has ``len(content.split("\n"))``
+    elements: a trailing ``\n`` yields a final empty (editable) line, and empty content
+    yields a single empty line. ``"".join(...)`` reproduces ``content`` verbatim.
+    """
+    segments = content.split("\n")
+    lines = [segment + "\n" for segment in segments[:-1]]
+    lines.append(segments[-1])
+    return lines
+
+
+def _strip_line_terminator(line: str) -> str:
+    r"""Return ``line`` without its trailing ``\r\n`` or ``\n``.
+
+    A lone ``\r`` is content under the ``\n``-only split :func:`_split_lines_keepends`
+    publishes, so it stays: removing it would let ``expected_line`` authorize an edit to a
+    line it does not actually equal, and would hide the character from a pattern matching it.
+    """
+    return line[:-2] if line.endswith("\r\n") else line.removesuffix("\n")
+
+
+def _apply_replace_lines(content: str, edits: list[tuple[int, str, str | None]]) -> str:
+    r"""Apply literal 1-based line replacements to ``content``.
+
+    Each ``new_line`` is written **verbatim** in place of the target line,
+    including any trailing newline the caller wants to keep — the editor never
+    adds a separator. An empty ``new_line`` deletes the line entirely (content
+    and its terminator), and a ``new_line`` containing embedded newlines expands
+    one line into several.
+
+    When an edit carries an ``expected_line``, the current text of the target
+    line must match it once both sides have their terminator stripped. That
+    turns a stale or mis-numbered edit into a refusal instead of a silent
+    overwrite of the wrong line.
+
+    The comparison is against the snapshot this call was given, and the write
+    that follows is unconditional, so it does not make the edit atomic. A writer
+    that changes the file after the provider's read still has its change
+    overwritten: the provider's lock serializes its own tools within one process,
+    not other processes or other providers sharing the store. Closing that would
+    need a conditional or versioned write on :class:`AgentFileStore` itself.
+
+    Raises :class:`ValueError` when no edits are provided, when any line number
+    is out of range, when a line number is targeted more than once, or when an
+    ``expected_line`` does not match.
+    """
+    if not edits:
+        raise ValueError("At least one line edit must be provided.")
+    lines = _split_lines_keepends(content)
+    seen: set[int] = set()
+    for line_number, _, expected_line in edits:
+        if line_number in seen:
+            raise ValueError(f"Duplicate line_number {line_number} in edits.")
+        seen.add(line_number)
+        if line_number < 1 or line_number > len(lines):
+            raise ValueError(f"line_number {line_number} is out of range (file has {len(lines)} lines).")
+        if expected_line is not None:
+            actual = _strip_line_terminator(lines[line_number - 1])
+            if actual != _strip_line_terminator(expected_line):
+                raise ValueError(
+                    f"line_number {line_number} does not match the expected text. "
+                    "Re-read the file to get current line numbers."
+                )
+    for line_number, new_line, _ in edits:
+        lines[line_number - 1] = new_line
+    return "".join(lines)
+
+
+def _line_edits(edits: list[Any]) -> list[tuple[int, str, str | None]]:
+    """Normalize ``replace_lines`` edits (pydantic models or dicts) to tuples.
+
+    Each tuple is ``(line_number, new_line, expected_line)``, where
+    ``expected_line`` is ``None`` when the caller did not supply one.
+    """
+    normalized: list[tuple[int, str, str | None]] = []
+    for edit in edits:
+        if isinstance(edit, Mapping):
+            mapping = cast("Mapping[str, Any]", edit)
+            expected = mapping.get("expected_line")
+            normalized.append((
+                int(mapping["line_number"]),
+                str(mapping["new_line"]),
+                None if expected is None else str(expected),
+            ))
+        else:
+            expected = getattr(edit, "expected_line", None)
+            normalized.append((
+                int(edit.line_number),
+                str(edit.new_line),
+                None if expected is None else str(expected),
+            ))
+    return normalized
+
+
+def _slice_lines(content: str, start_line: int, end_line: int | None) -> list[str]:
+    """Return the 1-based inclusive ``[start_line, end_line]`` slice of ``content``, terminators kept.
+
+    Uses :func:`_split_lines_keepends`, so a ``line_number`` from ``grep`` on one of this
+    package's stores addresses the same line here and in ``replace_lines``, including the
+    trailing empty line of a newline-terminated file. ``end_line`` of ``None`` reads to the end of the file, and an
+    ``end_line`` past the last line is clamped rather than rejected. Validating
+    ``start_line`` before clamping keeps every successful slice non-empty.
+
+    Raises:
+        ValueError: When ``start_line`` or ``end_line`` is not positive, when ``end_line``
+            precedes ``start_line``, or when ``start_line`` is past the last line.
+    """
+    lines = _split_lines_keepends(content)
+    total = len(lines)
+    if start_line < 1:
+        raise ValueError(f"start_line must be a positive integer, got {start_line}.")
+    if end_line is not None and end_line < 1:
+        raise ValueError(f"end_line must be a positive integer, got {end_line}.")
+    if end_line is not None and end_line < start_line:
+        raise ValueError(f"end_line ({end_line}) must not be less than start_line ({start_line}).")
+    if start_line > total:
+        raise ValueError(f"start_line {start_line} is out of range (file has {total} lines).")
+    return lines[start_line - 1 : total if end_line is None else min(end_line, total)]
 
 
 @experimental(feature_id=ExperimentalFeature.HARNESS)
@@ -194,14 +408,15 @@ class FileSearchMatch(SerializationMixin):
 
     line_number: int
     line: str
-    __slots__ = ("line", "line_number")
 
     def __init__(self, line_number: int, line: str) -> None:
         r"""Initialize one search match.
 
         Args:
             line_number: The 1-based line number where the match was found.
-            line: The content of the matching line (trailing ``\r`` removed).
+            line: The matching line. Implementers should report it verbatim, terminator
+                included, so it can be reused as a replacement line; unlike
+                ``line_number``, that is a recommendation rather than a requirement.
         """
         if line_number < 1:
             raise ValueError("line_number must be a positive integer.")
@@ -211,13 +426,12 @@ class FileSearchMatch(SerializationMixin):
     def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
         """Serialize this match to a JSON-compatible dictionary.
 
-        Overrides :meth:`SerializationMixin.to_dict` because this DTO is
-        declared with ``__slots__``: the base implementation iterates
-        ``self.__dict__`` which is empty for slotted classes and would emit
-        only the auto-injected ``type`` field. The ``exclude`` /
-        ``exclude_none`` arguments are accepted (and discarded) so the
-        signature remains drop-in compatible with the mixin — callers like
-        :meth:`SerializationMixin.to_json` always forward them.
+        Overrides :meth:`SerializationMixin.to_dict` to emit an explicit,
+        stable payload without the auto-injected ``type`` identifier field.
+        The ``exclude`` / ``exclude_none`` arguments are accepted (and
+        discarded) so the signature remains drop-in compatible with the
+        mixin — callers like :meth:`SerializationMixin.to_json` always
+        forward them.
         """
         del exclude, exclude_none
         return {"line_number": self.line_number, "line": self.line}
@@ -252,7 +466,6 @@ class FileSearchResult(SerializationMixin):
     file_name: str
     snippet: str
     matching_lines: list[FileSearchMatch]
-    __slots__ = ("file_name", "matching_lines", "snippet")
 
     def __init__(
         self,
@@ -275,10 +488,10 @@ class FileSearchResult(SerializationMixin):
         """Serialize this result to a JSON-compatible dictionary.
 
         Overrides :meth:`SerializationMixin.to_dict` for the same reason as
-        :meth:`FileSearchMatch.to_dict`: this DTO uses ``__slots__`` so the
-        base implementation cannot introspect the payload. The ``exclude`` /
-        ``exclude_none`` arguments are accepted and ignored to preserve
-        signature compatibility with the mixin.
+        :meth:`FileSearchMatch.to_dict`: to emit an explicit payload without
+        the auto-injected ``type`` field. The ``exclude`` / ``exclude_none``
+        arguments are accepted and ignored to preserve signature
+        compatibility with the mixin.
         """
         del exclude, exclude_none
         return {
@@ -321,30 +534,99 @@ class FileSearchResult(SerializationMixin):
         )
 
 
+@experimental(feature_id=ExperimentalFeature.HARNESS)
+class FileStoreEntry(SerializationMixin):
+    """Represent one entry in a directory listing: a file or a subdirectory."""
+
+    #: ``type`` value for a file entry.
+    FILE: ClassVar[str] = "file"
+    #: ``type`` value for a subdirectory entry.
+    DIRECTORY: ClassVar[str] = "directory"
+
+    name: str
+    type: str
+
+    def __init__(self, name: str, type: str) -> None:
+        """Initialize one directory-listing entry.
+
+        Args:
+            name: The entry's name (not a full path), relative to the directory
+                being listed.
+            type: Either ``"file"`` or ``"directory"`` (see :attr:`FILE` and
+                :attr:`DIRECTORY`).
+        """
+        if type not in (FileStoreEntry.FILE, FileStoreEntry.DIRECTORY):
+            raise ValueError(f"type must be {FileStoreEntry.FILE!r} or {FileStoreEntry.DIRECTORY!r}, got {type!r}.")
+        self.name = name
+        self.type = type
+
+    def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
+        """Serialize this entry to a JSON-compatible dictionary.
+
+        Overrides :meth:`SerializationMixin.to_dict` for the same reason as
+        :meth:`FileSearchResult.to_dict`: to emit an explicit payload without
+        the auto-injected ``type`` field. The ``exclude`` / ``exclude_none``
+        arguments are accepted and ignored to preserve signature
+        compatibility with the mixin.
+        """
+        del exclude, exclude_none
+        return {"name": self.name, "type": self.type}
+
+    @classmethod
+    def from_dict(
+        cls, raw_entry: MutableMapping[str, Any], /, *, dependencies: MutableMapping[str, Any] | None = None
+    ) -> FileStoreEntry:
+        """Parse one directory-listing entry from its dict representation."""
+        del dependencies
+        name = raw_entry.get("name", "")
+        entry_type = raw_entry.get("type")
+        if not isinstance(name, str):
+            raise ValueError("FileStoreEntry.name must be a string.")
+        if not isinstance(entry_type, str):
+            raise ValueError("FileStoreEntry.type must be a string.")
+        return cls(name=name, type=entry_type)
+
+    def __eq__(self, other: object) -> bool:
+        """Return whether two entries have the same values."""
+        return isinstance(other, FileStoreEntry) and self.to_dict() == other.to_dict()
+
+    def __repr__(self) -> str:
+        """Return a helpful debug representation."""
+        return f"FileStoreEntry(name={self.name!r}, type={self.type!r})"
+
+
 def _search_file_content(file_name: str, content: str, regex: re.Pattern[str]) -> FileSearchResult | None:
     r"""Search one file's content and return a :class:`FileSearchResult` if any lines match.
 
-    Lines are split on ``\n`` (so ``\r`` at the end of each line is stripped on
-    the matching line itself). A snippet of up to ``±_SEARCH_SNIPPET_RADIUS``
-    characters around the first match is included. Returns ``None`` when no
-    lines match.
+    Lines are split by :func:`_split_lines_keepends` and reported verbatim, terminator
+    included, so a match can be fed straight back to ``replace_lines`` as a ``new_line``
+    without losing a ``\r\n``. The pattern is matched against the line without its
+    trailing terminator, so ``$`` anchors to the end of the line's text even on a CRLF
+    file, and conversely a pattern matching a literal ``\r`` does not match the one a
+    CRLF line ends with. A snippet of up to ``±_SEARCH_SNIPPET_RADIUS`` characters around
+    the first match is included. Returns ``None`` when no lines match.
     """
-    lines = content.split("\n")
+    lines = _split_lines_keepends(content)
     matching_lines: list[FileSearchMatch] = []
     first_snippet: str | None = None
     line_start_offset = 0
 
     for line_number, line in enumerate(lines, start=1):
-        match = regex.search(line)
+        # Inlined rather than calling _strip_line_terminator: this runs once per line of
+        # every searched file, and the extra call is measurable on a large corpus.
+        # Same rule as _strip_line_terminator: a lone \r is content, so only a whole
+        # \r\n comes off.
+        scanned = line[:-2] if line.endswith("\r\n") else line.removesuffix("\n")
+        match = regex.search(scanned)
         if match is not None:
-            matching_lines.append(FileSearchMatch(line_number=line_number, line=line.rstrip("\r")))
+            matching_lines.append(FileSearchMatch(line_number=line_number, line=line))
             if first_snippet is None:
                 char_index = line_start_offset + match.start()
                 snippet_start = max(0, char_index - _SEARCH_SNIPPET_RADIUS)
                 snippet_end = min(len(content), char_index + (match.end() - match.start()) + _SEARCH_SNIPPET_RADIUS)
                 first_snippet = content[snippet_start:snippet_end]
-        # Advance past this line and the implied '\n' separator.
-        line_start_offset += len(line) + 1
+        # Advance past this line; its terminator is already part of its length.
+        line_start_offset += len(line)
 
     if not matching_lines:
         return None
@@ -367,7 +649,7 @@ class AgentFileStore(ABC):
     """
 
     @abstractmethod
-    async def write_file(self, path: str, content: str, *, overwrite: bool = True) -> None:
+    async def write(self, path: str, content: str, *, overwrite: bool = True) -> None:
         """Write ``content`` to the file at ``path``.
 
         Args:
@@ -386,7 +668,7 @@ class AgentFileStore(ABC):
         """
 
     @abstractmethod
-    async def read_file(self, path: str) -> str | None:
+    async def read(self, path: str) -> str | None:
         """Read the content of the file at ``path``.
 
         Args:
@@ -397,7 +679,7 @@ class AgentFileStore(ABC):
         """
 
     @abstractmethod
-    async def delete_file(self, path: str) -> bool:
+    async def delete(self, path: str) -> bool:
         """Delete the file at ``path``.
 
         Args:
@@ -408,14 +690,16 @@ class AgentFileStore(ABC):
         """
 
     @abstractmethod
-    async def list_files(self, directory: str = "") -> list[str]:
-        """List the direct child files of ``directory``.
+    async def list_children(self, directory: str = "") -> list[FileStoreEntry]:
+        """List the direct child files and subdirectories of ``directory``.
 
         Args:
             directory: The relative directory path to list. Use ``""`` for the root.
 
         Returns:
-            The list of file names (not full paths) in the specified directory.
+            The direct children of ``directory`` as :class:`FileStoreEntry`
+            instances (names only, not full paths), each tagged as a file or a
+            directory. Implementations should return subdirectories before files.
         """
 
     @abstractmethod
@@ -426,28 +710,217 @@ class AgentFileStore(ABC):
             path: The relative path of the file to check.
         """
 
-    @abstractmethod
-    async def search_files(
+    @staticmethod
+    def split_lines(content: str) -> list[str]:
+        r"""Split ``content`` into the lines this store's line numbers address.
+
+        This is the published definition of a line for the whole file-access
+        surface: ``read_lines``, ``replace_lines`` and every ``line_number``
+        reported by :meth:`search` are coordinates in this list. Splitting is on
+        ``\n`` only, with the terminator kept attached, so a trailing ``\r``
+        stays on its line, a trailing ``\n`` yields a final empty (editable)
+        line, and ``"".join(...)`` reproduces ``content`` verbatim.
+
+        A store that overrides :meth:`search` must number its matches by this
+        split — otherwise ``grep`` and the line editor disagree and an edit
+        lands on the wrong line. The rule is per-SDK: it is not required to
+        match the .NET implementation, only to be consistent within this one.
+        """
+        return _split_lines_keepends(content)
+
+    @staticmethod
+    def scan_content(file_name: str, content: str, regex: re.Pattern[str]) -> FileSearchResult | None:
+        """Find every line of ``content`` matching ``regex``, numbered by :meth:`split_lines`.
+
+        This is the numbering primitive the base :meth:`search` uses, published so a
+        store that supplies its own :meth:`search` can produce aligned results
+        rather than re-deriving them. Lines are reported verbatim, terminator
+        included; the pattern is matched against the line without its terminator.
+
+        Args:
+            file_name: The name recorded on the result, relative to the searched directory.
+            content: The file's full text.
+            regex: A compiled pattern, normally from the same source string passed
+                to :meth:`search`.
+
+        Returns:
+            The match metadata, or ``None`` when no line matches.
+        """
+        return _search_file_content(file_name, content, regex)
+
+    async def find_matching_files(
         self,
         directory: str,
         regex_pattern: str,
-        file_pattern: str | None = None,
+        glob_pattern: str | None = None,
+        *,
+        recursive: bool = False,
+    ) -> list[str]:
+        """Return the names of the files that **may** satisfy this search.
+
+        A candidate is a file whose content **may** contain text matching ``regex_pattern`` and
+        whose name **may** match ``glob_pattern``. This is the hook a store uses to narrow the
+        search to the files worth reading. Semantics are deliberately a **superset**:
+        returning a file that turns out not to match is harmless — the base
+        :meth:`search` re-scans every candidate and discards it — while omitting
+        a file loses the match. A backend with a native search index should
+        override this and push ``regex_pattern`` down to it, widening rather than
+        guessing where the dialect cannot express the pattern.
+
+        The default implementation has no index to narrow with, so it walks :meth:`list_children`
+        and returns every file in scope, leaving :meth:`search` to read and scan all of them.
+        Override this when the backing store can answer either question more cheaply than that —
+        a name index for ``glob_pattern``, a content or full-text index for ``regex_pattern`` — and
+        return the candidates it finds. That is the whole purpose of the hook: the store does the
+        narrowing it is good at, and the base keeps the scanning and the line numbering. Overriding
+        :meth:`search` instead is also supported, but then line numbering is the store's
+        responsibility (see :meth:`split_lines`), and nothing checks it at runtime.
+
+        Args:
+            directory: The relative directory to search. Use ``""`` for the root.
+            regex_pattern: The pattern :meth:`search` was called with, as a hint. It is the bare
+                source string: :meth:`search` compiles it **case-insensitively**, so an index
+                queried case-sensitively with it will miss files and silently lose those matches.
+            glob_pattern: The same optional glob :meth:`search` received, matched
+                against each file's path relative to ``directory``, also
+                **case-insensitively**. The same rule applies: widen rather than narrow when
+                the backend cannot reproduce that, since returning only case-exact names
+                drops files the caller would have got.
+
+        Keyword Args:
+            recursive: When ``False`` (default) only direct children are in scope.
+
+        Returns:
+            File paths relative to ``directory``, using forward slashes.
+        """
+        del regex_pattern  # No index to narrow with here; a native backend overrides this.
+        names: list[str] = []
+        pending: list[str] = [""]
+        while pending:
+            relative_dir = pending.pop()
+            listed = await self.list_children(_combine_search_path(directory, relative_dir))
+            for entry in listed:
+                child = f"{relative_dir}/{entry.name}".lstrip("/")
+                if entry.type == FileStoreEntry.DIRECTORY:
+                    if recursive:
+                        pending.append(child)
+                elif _matches_glob(child, glob_pattern):
+                    names.append(child)
+        return names
+
+    async def search(
+        self,
+        directory: str,
+        regex_pattern: str,
+        glob_pattern: str | None = None,
+        *,
+        recursive: bool = False,
     ) -> list[FileSearchResult]:
         """Search files in ``directory`` for content matching ``regex_pattern``.
+
+        The base implementation asks :meth:`find_matching_files` which files to
+        consider, then reads and scans each one itself, so every ``line_number``
+        it reports is a coordinate in :meth:`split_lines` by construction and a
+        number from ``grep`` always addresses the same line in ``read_lines`` and
+        ``replace_lines``. Store I/O stays on the event loop; only the
+        model-supplied regex runs in a worker thread.
+
+        Overriding this method is supported — a backend that can perform the
+        whole search natively should — but the override then owns line numbering.
+        An override must report ``line_number`` as a 1-based coordinate into
+        :meth:`split_lines` of the same content :meth:`read` returns, and should
+        report the matching line verbatim, terminator included;
+        :meth:`scan_content` produces both correctly. Numbering against anything
+        else is a bug with a silent failure mode: the search looks correct, and
+        the damage appears later when a line edit applies to a line the caller
+        never saw. Cover it with a test that greps and then edits by the reported
+        number.
 
         Args:
             directory: The relative directory to search. Use ``""`` for the root.
             regex_pattern: A regular expression matched against file contents
                 (case-insensitive). For example, ``"error|warning"`` matches lines
                 containing ``"error"`` or ``"warning"``.
-            file_pattern: An optional glob pattern (case-insensitive) used to
-                filter which files are searched. When ``None`` or blank, every
-                file in the directory is searched.
+            glob_pattern: An optional glob pattern (case-insensitive) used to
+                filter which files are searched. The pattern is matched against
+                each file's path **relative to** ``directory`` (forward slashes).
+                When ``None`` or blank, every file in scope is searched.
+
+        Keyword Args:
+            recursive: When ``False`` (default) only the direct children of
+                ``directory`` are searched. When ``True`` every descendant file is
+                searched.
 
         Returns:
             The list of files whose content matched, with snippet and matching
-            line metadata.
+            line metadata. Each result's ``file_name`` is the path relative to
+            ``directory`` (forward slashes).
+
+        Raises:
+            ValueError: When the search does not complete within
+                :data:`_SEARCH_TIMEOUT_SECONDS` seconds.
         """
+        regex = _compile_search_regex(regex_pattern)
+        return await _run_search_with_timeout(self._scan_candidate_files(directory, regex, glob_pattern, recursive))
+
+    async def _scan_candidate_files(
+        self,
+        directory: str,
+        regex: re.Pattern[str],
+        glob_pattern: str | None,
+        recursive: bool,
+    ) -> list[FileSearchResult]:
+        """Read and scan each candidate from :meth:`find_matching_files`.
+
+        The glob and the non-recursive rule are re-applied here so a store that
+        over-returns (which :meth:`find_matching_files` explicitly permits)
+        cannot widen the caller's scope.
+        """
+        names = await self.find_matching_files(directory, regex.pattern, glob_pattern, recursive=recursive)
+        results: list[FileSearchResult] = []
+        batch: list[tuple[str, str]] = []
+        batch_chars = 0
+
+        def scan_batch(pending: list[tuple[str, str]]) -> list[FileSearchResult]:
+            found: list[FileSearchResult] = []
+            for candidate_name, candidate_content in pending:
+                # Called on the class, not the instance: a store that overrides the public
+                # scan_content must not be able to skew the numbers while still counting as
+                # aligned by construction.
+                result = AgentFileStore.scan_content(candidate_name, candidate_content, regex)
+                if result is not None:
+                    found.append(result)
+            return found
+
+        for name in names:
+            if not _matches_glob(name, glob_pattern) or (not recursive and "/" in name):
+                continue
+            try:
+                content = await self.read(_combine_search_path(directory, name))
+            except (OSError, ValueError):
+                # ``read`` raises ValueError for non-UTF-8 bytes and for symlinked paths, and
+                # OSError for a file deleted or made unreadable under us. Skip either so one
+                # unreadable file cannot abort the whole search, mirroring
+                # FileSystemAgentFileStore's own behaviour.
+                logger.warning("Skipping unreadable file during search: %s", name)
+                continue
+            if content is None:
+                continue  # Deleted between enumeration and read.
+            batch.append((name, content))
+            batch_chars += len(content)
+            # Scan in batches rather than one file at a time: the offload exists to keep
+            # a pathological regex off the event loop, and one hop per file costs more
+            # than the scan itself once per-file work is sub-millisecond. Bounding the
+            # batch by size rather than count keeps peak memory independent of how many
+            # candidates the store returned, and the count cap covers the case where the
+            # content itself is empty.
+            if batch_chars >= _SCAN_BATCH_CHARS or len(batch) >= _SCAN_BATCH_FILES:
+                results.extend(await asyncio.to_thread(scan_batch, batch))
+                batch = []
+                batch_chars = 0
+        if batch:
+            results.extend(await asyncio.to_thread(scan_batch, batch))
+        return results
 
     @abstractmethod
     async def create_directory(self, path: str) -> None:
@@ -467,8 +940,8 @@ class InMemoryAgentFileStore(AgentFileStore):
         """Initialize an empty in-memory file store."""
         # Keys are case-insensitive (normalized + lowercased) so the store
         # behaves consistently on case-insensitive deployments. Each entry
-        # also records the *original* normalized path so ``list_files`` and
-        # ``search_files`` return display names that match what the caller
+        # also records the *original* normalized path so ``list_children`` and
+        # ``search`` return display names that match what the caller
         # wrote, mirroring how :class:`FileSystemAgentFileStore` preserves the
         # on-disk casing.
         self._files: dict[str, tuple[str, str]] = {}
@@ -478,7 +951,7 @@ class InMemoryAgentFileStore(AgentFileStore):
     def _key(path: str) -> str:
         return _normalize_relative_path(path).lower()
 
-    async def write_file(self, path: str, content: str, *, overwrite: bool = True) -> None:
+    async def write(self, path: str, content: str, *, overwrite: bool = True) -> None:
         """Write ``content`` to the file at ``path``.
 
         When ``overwrite`` is ``False`` the check-and-write happens under the
@@ -492,42 +965,57 @@ class InMemoryAgentFileStore(AgentFileStore):
                 raise FileExistsError(f"File already exists: {path!r}")
             self._files[key] = (display, content)
 
-    async def read_file(self, path: str) -> str | None:
+    async def read(self, path: str) -> str | None:
         """Return the file content, or ``None`` if the file does not exist."""
         key = self._key(path)
         async with self._lock:
             entry = self._files.get(key)
         return entry[1] if entry is not None else None
 
-    async def delete_file(self, path: str) -> bool:
+    async def delete(self, path: str) -> bool:
         """Delete the file and return whether anything was removed."""
         key = self._key(path)
         async with self._lock:
             return self._files.pop(key, None) is not None
 
-    async def list_files(self, directory: str = "") -> list[str]:
-        """Return the direct child files of ``directory``.
+    async def list_children(self, directory: str = "") -> list[FileStoreEntry]:
+        """Return the direct child files and subdirectories of ``directory``.
 
-        Returns the *original-case* file names that were written, so a caller
-        that does ``write_file("Plan.MD", ...)`` then ``list_files()`` gets
-        back ``["Plan.MD"]`` rather than ``["plan.md"]``. This matches the
-        behaviour of :class:`FileSystemAgentFileStore` on case-preserving
-        filesystems.
+        Subdirectories are returned before files. Entry names preserve the
+        *original-case* paths that were written, so a caller that does
+        ``write("Plan.MD", ...)`` then ``list_children()`` gets back ``"Plan.MD"``
+        rather than ``"plan.md"``. This matches the behaviour of
+        :class:`FileSystemAgentFileStore` on case-preserving filesystems.
+
+        A subdirectory is the first path segment of any stored key whose
+        remainder (after the directory prefix) still contains a ``/`` separator;
+        distinct first segments are de-duplicated case-insensitively.
         """
         prefix = _normalize_relative_path(directory, is_directory=True).lower()
         if prefix and not prefix.endswith("/"):
             prefix += "/"
         async with self._lock:
             entries = [(key, display) for key, (display, _) in self._files.items()]
-        results: list[str] = []
+        files: list[str] = []
+        directories: list[str] = []
+        seen_dirs: set[str] = set()
         for key, display in entries:
             if not key.startswith(prefix):
                 continue
-            if "/" in key[len(prefix) :]:
-                continue
-            # ``display`` is the original-case normalized path; strip the
-            # directory prefix using the same length we matched on ``key``.
-            results.append(display[len(prefix) :])
+            remainder = key[len(prefix) :]
+            separator_index = remainder.find("/")
+            if separator_index == -1:
+                # ``display`` is the original-case normalized path; strip the
+                # directory prefix using the same length we matched on ``key``.
+                files.append(display[len(prefix) :])
+            elif separator_index > 0:
+                segment_key = remainder[:separator_index]
+                if segment_key in seen_dirs:
+                    continue
+                seen_dirs.add(segment_key)
+                directories.append(display[len(prefix) : len(prefix) + separator_index])
+        results: list[FileStoreEntry] = [FileStoreEntry(name, FileStoreEntry.DIRECTORY) for name in directories]
+        results.extend(FileStoreEntry(name, FileStoreEntry.FILE) for name in files)
         return results
 
     async def file_exists(self, path: str) -> bool:
@@ -536,11 +1024,13 @@ class InMemoryAgentFileStore(AgentFileStore):
         async with self._lock:
             return key in self._files
 
-    async def search_files(
+    async def search(
         self,
         directory: str,
         regex_pattern: str,
-        file_pattern: str | None = None,
+        glob_pattern: str | None = None,
+        *,
+        recursive: bool = False,
     ) -> list[FileSearchResult]:
         """Search file contents for ``regex_pattern`` matches.
 
@@ -548,7 +1038,10 @@ class InMemoryAgentFileStore(AgentFileStore):
         to a worker thread with a bounded timeout so a pathological pattern
         cannot stall the event loop. Returned :class:`FileSearchResult`
         instances use the *original-case* file names so the result mirrors
-        what :class:`FileSystemAgentFileStore` would produce.
+        what :class:`FileSystemAgentFileStore` would produce. The glob and each
+        result's ``file_name`` are relative to ``directory``; when ``recursive``
+        is ``True`` all descendants are searched and the relative path may
+        contain ``/`` separators.
         """
         prefix = _normalize_relative_path(directory, is_directory=True).lower()
         if prefix and not prefix.endswith("/"):
@@ -564,17 +1057,17 @@ class InMemoryAgentFileStore(AgentFileStore):
                 if not key.startswith(prefix):
                     continue
                 relative_key = key[len(prefix) :]
-                if "/" in relative_key:
+                if not recursive and "/" in relative_key:
                     continue
                 relative_display = display[len(prefix) :]
-                if not _matches_glob(relative_display, file_pattern):
+                if not _matches_glob(relative_display, glob_pattern):
                     continue
-                result = _search_file_content(relative_display, file_content, regex)
+                result = AgentFileStore.scan_content(relative_display, file_content, regex)
                 if result is not None:
                     results.append(result)
             return results
 
-        return await _run_search_with_timeout(scan)
+        return await _run_search_with_timeout(asyncio.to_thread(scan))
 
     async def create_directory(self, path: str) -> None:
         """No-op: directories are implicit from file paths in the in-memory store."""
@@ -588,7 +1081,9 @@ class FileSystemAgentFileStore(AgentFileStore):
     All paths are resolved relative to the root directory provided at
     construction time. Lexical path traversal attempts (for example, via ``..``
     segments or absolute paths) are rejected with :class:`ValueError`. The root
-    directory is created automatically if it does not already exist.
+    directory is created lazily on the first write (or ``create_directory``)
+    rather than at construction, so constructing a store never touches the
+    filesystem and is safe in read-only working directories.
 
     Symbolic links and reparse points anywhere along the resolved path are
     rejected on read, write, delete, list, and existence checks. The check is
@@ -605,15 +1100,20 @@ class FileSystemAgentFileStore(AgentFileStore):
     def __init__(self, root_directory: str | os.PathLike[str]) -> None:
         """Initialize the file-system store.
 
+        The root directory is **not** created here; construction performs no
+        filesystem writes. The directory is created lazily on the first
+        ``write`` (or ``create_directory``) call, so a store can be
+        constructed in a read-only working directory and only fails if a write
+        is actually attempted.
+
         Args:
             root_directory: The directory under which all files are stored.
-                Created if it does not exist.
+                Created lazily on first write if it does not exist.
         """
         raw_root = os.fspath(root_directory)
         if not raw_root or not raw_root.strip():
             raise ValueError("root_directory must not be empty or whitespace-only.")
         root_path = Path(raw_root).resolve()
-        root_path.mkdir(parents=True, exist_ok=True)
         self._root_path = root_path
 
     @property
@@ -656,9 +1156,22 @@ class FileSystemAgentFileStore(AgentFileStore):
         Empty and whitespace-only inputs both resolve to the root directory,
         matching the behavior of ``_normalize_relative_path(..., is_directory=True)``
         and the convention used by :class:`InMemoryAgentFileStore`.
+
+        The root is screened here rather than trusted. Every other directory reaches
+        :meth:`_resolve_safe_path`, which rejects a link on any segment; the root itself
+        never passed through that, so a planted or swapped root was walked as-is. The
+        root is created lazily, so it can be a link before first use as easily as after.
         """
         normalized = _normalize_relative_path(relative_directory, is_directory=True)
         if not normalized:
+            # ``lexists`` rather than ``exists``: the root is created lazily, so a missing one is
+            # normal and must stay cheap, but a dangling link still has to be rejected rather than
+            # read as absent.
+            if os.path.lexists(self._root_path):
+                if _is_link_or_reparse_point(self._root_path):
+                    raise ValueError("Invalid path: the resolved path contains a symbolic link or reparse point.")
+                if self._root_path.resolve() != self._root_path:
+                    raise ValueError("Invalid path: the resolved path escapes the root directory.")
             return self._root_path
         return self._resolve_safe_path(normalized)
 
@@ -666,10 +1179,9 @@ class FileSystemAgentFileStore(AgentFileStore):
         """Reject any segment between the root and ``candidate`` that is a symlink/reparse point.
 
         Walks each ancestor down from the root on the *unresolved* candidate so
-        ``Path.is_symlink`` observes the on-disk entries instead of their
-        canonical targets. Stops once a segment does not exist on disk so write
-        scenarios remain allowed. ``Path.is_symlink`` detects both POSIX
-        symlinks and Windows reparse points (junctions).
+        ``Path.lstat`` observes the on-disk entries instead of their canonical
+        targets. Stops once a segment does not exist on disk so write scenarios
+        remain allowed.
         """
         try:
             relative_parts = candidate.relative_to(self._root_path).parts
@@ -683,20 +1195,21 @@ class FileSystemAgentFileStore(AgentFileStore):
         for segment in relative_parts:
             current = current / segment
             try:
-                is_link = current.is_symlink()
+                is_link = _is_link_or_reparse_point(current)
+            except FileNotFoundError:
+                break
             except OSError as exc:
                 # Fail closed: if we cannot verify whether a segment is a
                 # symlink/reparse point we refuse the operation rather than
                 # silently allow access that may escape the root.
+                probed_path = current.relative_to(self._root_path).as_posix()
                 raise ValueError(
-                    f"Invalid path: unable to verify whether '{segment}' is a symbolic link or reparse point."
+                    f"Invalid path: unable to verify whether {probed_path!r} is a symbolic link or reparse point."
                 ) from exc
             if is_link:
                 raise ValueError("Invalid path: the resolved path contains a symbolic link or reparse point.")
-            if not current.exists():
-                break
 
-    async def write_file(self, path: str, content: str, *, overwrite: bool = True) -> None:
+    async def write(self, path: str, content: str, *, overwrite: bool = True) -> None:
         """Write ``content`` to the file at ``path``.
 
         When ``overwrite`` is ``False`` the file is created using
@@ -718,9 +1231,9 @@ class FileSystemAgentFileStore(AgentFileStore):
             flags |= os.O_TRUNC
         else:
             flags |= os.O_EXCL
-        # ``O_NOFOLLOW`` is POSIX-only; on Windows ``Path.is_symlink`` /
-        # reparse-point detection in :meth:`_throw_if_contains_symlink` is the
-        # only line of defence for the leaf segment.
+        # ``O_NOFOLLOW`` is POSIX-only; on Windows the lstat/reparse-point
+        # detection in :meth:`_throw_if_contains_symlink` is the only line of
+        # defence for the leaf segment.
         nofollow = getattr(os, "O_NOFOLLOW", 0)
         flags |= nofollow
         try:
@@ -737,7 +1250,7 @@ class FileSystemAgentFileStore(AgentFileStore):
         with os.fdopen(fd, "wb") as handle:
             handle.write(encoded)
 
-    async def read_file(self, path: str) -> str | None:
+    async def read(self, path: str) -> str | None:
         """Return the file content, or ``None`` if the file does not exist.
 
         Raises :class:`ValueError` if the file exists but its bytes are not
@@ -766,7 +1279,7 @@ class FileSystemAgentFileStore(AgentFileStore):
         except UnicodeDecodeError as exc:
             raise ValueError(f"File '{full_path.name}' is not UTF-8 text and cannot be read.") from exc
 
-    async def delete_file(self, path: str) -> bool:
+    async def delete(self, path: str) -> bool:
         """Delete the file and return whether anything was removed."""
         full_path = self._resolve_safe_path(path)
         return await asyncio.to_thread(self._delete_file_sync, full_path)
@@ -778,22 +1291,35 @@ class FileSystemAgentFileStore(AgentFileStore):
         full_path.unlink()
         return True
 
-    async def list_files(self, directory: str = "") -> list[str]:
-        """Return the direct child files of ``directory``."""
+    async def list_children(self, directory: str = "") -> list[FileStoreEntry]:
+        """Return the direct child files and subdirectories of ``directory``.
+
+        Subdirectories are returned before files. Symlinked entries (and reparse
+        points on Windows) are excluded so a listing cannot surface a path that
+        escapes the root. An empty list is returned for a non-existent directory.
+        """
         full_dir = self._resolve_safe_directory_path(directory)
-        return await asyncio.to_thread(self._list_files_sync, full_dir)
+        return await asyncio.to_thread(self._list_sync, full_dir)
 
     @staticmethod
-    def _list_files_sync(full_dir: Path) -> list[str]:
+    def _list_sync(full_dir: Path) -> list[FileStoreEntry]:
         if not full_dir.is_dir():
             return []
-        names: list[str] = []
+        directories: list[FileStoreEntry] = []
+        files: list[FileStoreEntry] = []
         for entry in full_dir.iterdir():
-            if entry.is_symlink():
+            try:
+                is_link = _is_link_or_reparse_point(entry)
+            except OSError:
+                # Fail closed when an entry cannot be inspected.
                 continue
-            if entry.is_file():
-                names.append(entry.name)
-        return names
+            if is_link:
+                continue
+            if entry.is_dir():
+                directories.append(FileStoreEntry(entry.name, FileStoreEntry.DIRECTORY))
+            elif entry.is_file():
+                files.append(FileStoreEntry(entry.name, FileStoreEntry.FILE))
+        return directories + files
 
     async def file_exists(self, path: str) -> bool:
         """Return whether the file exists."""
@@ -804,11 +1330,13 @@ class FileSystemAgentFileStore(AgentFileStore):
     def _file_exists_sync(full_path: Path) -> bool:
         return full_path.is_file()
 
-    async def search_files(
+    async def search(
         self,
         directory: str,
         regex_pattern: str,
-        file_pattern: str | None = None,
+        glob_pattern: str | None = None,
+        *,
+        recursive: bool = False,
     ) -> list[FileSearchResult]:
         """Search file contents for ``regex_pattern`` matches.
 
@@ -816,39 +1344,86 @@ class FileSystemAgentFileStore(AgentFileStore):
         file does not abort the whole directory search). Each skip is logged at
         ``WARNING`` level and a summary is logged at ``INFO`` so operators can
         tell the difference between "no matches" and "the corpus was largely
-        not searchable".
+        not searchable". The glob and each result's ``file_name`` are the file's
+        path relative to ``directory`` (forward slashes); when ``recursive`` is
+        ``True`` all descendant files are searched, otherwise only the direct
+        children.
         """
         full_dir = self._resolve_safe_directory_path(directory)
         regex = _compile_search_regex(regex_pattern)
-        return await _run_search_with_timeout(lambda: self._search_files_sync(full_dir, regex, file_pattern))
+        return await _run_search_with_timeout(
+            asyncio.to_thread(self._search_files_sync, full_dir, regex, glob_pattern, recursive)
+        )
 
     @staticmethod
-    def _search_files_sync(full_dir: Path, regex: re.Pattern[str], file_pattern: str | None) -> list[FileSearchResult]:
+    def _enumerate_search_files(full_dir: Path, recursive: bool) -> list[tuple[str, Path]]:
+        """Enumerate ``(relative_name, path)`` for files to search under ``full_dir``.
+
+        Symlinked files and symlinked directories (reparse points on Windows)
+        are skipped so the search cannot read or descend outside the root.
+        ``relative_name`` is the file's path relative to ``full_dir`` using
+        forward slashes.
+        """
+        found: list[tuple[str, Path]] = []
+        directories: list[Path] = [full_dir]
+        while directories:
+            current = directories.pop()
+            for entry in current.iterdir():
+                try:
+                    is_link = _is_link_or_reparse_point(entry)
+                except OSError:
+                    # Fail closed when an entry cannot be inspected.
+                    continue
+                if is_link:
+                    continue
+                if entry.is_dir():
+                    if recursive:
+                        directories.append(entry)
+                    continue
+                if entry.is_file():
+                    relative_name = entry.relative_to(full_dir).as_posix()
+                    found.append((relative_name, entry))
+        return found
+
+    @staticmethod
+    def _search_files_sync(
+        full_dir: Path, regex: re.Pattern[str], glob_pattern: str | None, recursive: bool
+    ) -> list[FileSearchResult]:
         if not full_dir.is_dir():
             return []
         results: list[FileSearchResult] = []
         skipped: list[str] = []
-        for entry in full_dir.iterdir():
-            if entry.is_symlink() or not entry.is_file():
-                continue
-            file_name = entry.name
-            if not _matches_glob(file_name, file_pattern):
+        for relative_name, entry in FileSystemAgentFileStore._enumerate_search_files(full_dir, recursive):
+            if not _matches_glob(relative_name, glob_pattern):
                 continue
             try:
-                file_content = entry.read_text(encoding="utf-8")
-            except UnicodeDecodeError:
-                # Skip binary or otherwise non-UTF-8 files so a single
-                # un-decodable entry doesn't abort the whole directory search.
-                # Log per file so operators can audit which files were skipped.
-                logger.warning("Skipping non-UTF-8 file during search: %s", entry)
-                skipped.append(file_name)
+                # Re-checked here, not only during enumeration: a candidate can be swapped for a
+                # link in between. O_NOFOLLOW makes the read itself atomic where the platform has
+                # it, and this narrows the window on Windows, where it does not exist.
+                if _is_link_or_reparse_point(entry):
+                    logger.warning("Skipping symlinked file during search: %s", entry)
+                    skipped.append(relative_name)
+                    continue
+                # Read through the same no-follow reader the store's own read() uses; reopening
+                # by path would follow a link and return content from outside the root.
+                content_or_none = FileSystemAgentFileStore._read_file_sync(entry)
+                if content_or_none is None:
+                    continue
+                file_content = content_or_none
+            except (OSError, ValueError):
+                # _read_file_sync raises ValueError for non-UTF-8 content and for a path that
+                # became a symlink since enumeration, and OSError if it vanished. Skip the file
+                # either way, so one bad entry cannot abort the whole directory search, and log
+                # per file so operators can audit what was left out.
+                logger.warning("Skipping unreadable file during search: %s", entry)
+                skipped.append(relative_name)
                 continue
-            result = _search_file_content(file_name, file_content, regex)
+            result = AgentFileStore.scan_content(relative_name, file_content, regex)
             if result is not None:
                 results.append(result)
         if skipped:
             logger.info(
-                "Search under %s skipped %d non-UTF-8 file(s) (matched %d).",
+                "Search under %s skipped %d unreadable file(s) (matched %d).",
                 full_dir,
                 len(skipped),
                 len(results),
@@ -861,19 +1436,158 @@ class FileSystemAgentFileStore(AgentFileStore):
         await asyncio.to_thread(lambda: full_path.mkdir(parents=True, exist_ok=True))
 
 
+class _WriteFileInput(BaseModel):
+    """Input schema for ``file_access_write``."""
+
+    file_name: Annotated[str, Field(description="Name (relative path) of the file to write.")]
+    content: Annotated[str, Field(description="Full text content to write to the file.")]
+    overwrite: Annotated[
+        bool,
+        Field(default=False, description="When true, replace an existing file; otherwise writing fails if it exists."),
+    ] = False
+
+
+class _ReadFileInput(BaseModel):
+    """Input schema for ``file_access_read``."""
+
+    file_name: Annotated[str, Field(description="Name (relative path) of the file to read.")]
+
+
+class _ReadLinesInput(BaseModel):
+    """Input schema for ``file_access_read_lines``."""
+
+    file_name: Annotated[str, Field(description="Name (relative path) of the file to read.")]
+    start_line: Annotated[int, Field(description="1-based line number to read from, inclusive.")]
+    end_line: Annotated[
+        int | None,
+        Field(
+            default=None,
+            description=(
+                "1-based line number to read to, inclusive. Omit to read to the end of the file; "
+                "a value past the last line is clamped to it."
+            ),
+        ),
+    ] = None
+
+
+class _DeleteFileInput(BaseModel):
+    """Input schema for ``file_access_delete``."""
+
+    file_name: Annotated[str, Field(description="Name (relative path) of the file to delete.")]
+
+
+class _ListInput(BaseModel):
+    """Input schema for ``file_access_ls``."""
+
+    directory: Annotated[
+        str | None,
+        Field(default=None, description="Relative directory to list; omit or pass empty to list the root."),
+    ] = None
+    glob_pattern: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description='Optional glob (e.g. "*.md") matched against entry names to filter the listing.',
+        ),
+    ] = None
+
+
+class _ReplaceInput(BaseModel):
+    """Input schema for ``file_access_replace``."""
+
+    file_name: Annotated[str, Field(description="Name (relative path) of the file to modify.")]
+    old_string: Annotated[str, Field(description="Substring to find and replace.")]
+    new_string: Annotated[str, Field(description="Replacement text.")]
+    replace_all: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="When true, replace every occurrence; when false, fail unless exactly one occurrence exists.",
+        ),
+    ] = False
+
+
+class _LineEdit(BaseModel):
+    """A single literal line replacement for ``file_access_replace_lines``."""
+
+    line_number: Annotated[int, Field(description="1-based line number to replace.")]
+    new_line: Annotated[
+        str,
+        Field(
+            description=(
+                "Literal replacement text for the line, including any trailing newline you want to keep "
+                "(the editor does not add one). Set to an empty string to delete the line entirely, "
+                "including its line break."
+            )
+        ),
+    ]
+    expected_line: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=(
+                "Optional: the text you believe is currently on that line, as reported by "
+                "file_access_grep. Give the line's own text only: file_access_read_lines prefixes "
+                "each line with its number and a tab, and that prefix is not part of the line. "
+                "When supplied, the edit is rejected unless it matches, which catches an "
+                "out-of-date line number or a file that changed since you looked. The trailing "
+                "newline is ignored in the comparison."
+            ),
+        ),
+    ] = None
+
+
+class _ReplaceLinesInput(BaseModel):
+    """Input schema for ``file_access_replace_lines``."""
+
+    file_name: Annotated[str, Field(description="Name (relative path) of the file to modify.")]
+    edits: Annotated[
+        list[_LineEdit],
+        Field(description="List of 1-based line numbers and their literal replacement text."),
+    ]
+
+
+class _SearchFilesInput(BaseModel):
+    """Input schema for ``file_access_grep``."""
+
+    regex_pattern: Annotated[
+        str,
+        Field(description="Case-insensitive regex matched against file contents; 256 characters or fewer."),
+    ]
+    glob_pattern: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description='Optional glob to filter which files are searched (e.g. "*.md", "reports/*").',
+        ),
+    ] = None
+    directory: Annotated[
+        str | None,
+        Field(default=None, description="Optional relative directory to search; omit or pass empty for the root."),
+    ] = None
+
+
 @experimental(feature_id=ExperimentalFeature.HARNESS)
 class FileAccessProvider(ContextProvider):
     """Context provider that gives an agent CRUD/search access to a shared file store.
 
-    The provider exposes five tools to the agent via the per-invocation
+    The provider exposes the following tools to the agent via the per-invocation
     :class:`~agent_framework.SessionContext`:
 
-    - ``file_access_save_file`` — Save a file (refuses to overwrite by default).
-    - ``file_access_read_file`` — Read the content of a file by name.
-    - ``file_access_delete_file`` — Delete a file by name.
-    - ``file_access_list_files`` — List all file names at the store root.
-    - ``file_access_search_files`` — Search file contents using a case-insensitive
-      regex, optionally filtered by a glob pattern over file names.
+    - ``file_access_write`` — Write a file (refuses to overwrite by default).
+    - ``file_access_read`` — Read the content of a file by name.
+    - ``file_access_read_lines`` — Read a range of lines from a file by 1-based
+      inclusive line number.
+    - ``file_access_delete`` — Delete a file by name.
+    - ``file_access_ls`` — List the direct child files and subdirectories of a
+      directory, optionally filtered by a glob pattern.
+    - ``file_access_grep`` — Recursively search file contents using a
+      case-insensitive regex, optionally filtered by a glob pattern and base directory.
+    - ``file_access_replace`` — Replace occurrences of a substring within a file.
+    - ``file_access_replace_lines`` — Replace whole lines within a file.
+
+    When ``disable_write_tools`` is set, only the read-only tools (``file_access_read``,
+    ``file_access_read_lines``, ``file_access_ls``, ``file_access_grep``) are advertised.
 
     Unlike :class:`~agent_framework.MemoryContextProvider`, which provides
     session-scoped memory that may be isolated per session,
@@ -881,7 +1595,75 @@ class FileAccessProvider(ContextProvider):
     contents are visible across sessions and agents. The store is passed in by
     the caller and should already be scoped to the desired folder or storage
     location.
+
+    By default all tools require approval: each is registered with
+    ``approval_mode="always_require"`` so the host must approve every file
+    operation the model proposes. In the auto-invocation flow this means the
+    model's calls to these tools are converted into
+    ``function_approval_request`` items and the tool does **not** execute until
+    the host supplies a matching ``function_approval_response``. Consumers that
+    use the base agent directly must install
+    :class:`~agent_framework.ToolApprovalMiddleware` (or use
+    :func:`~agent_framework.create_harness_agent`, which wires it in by default)
+    to drive that handshake; otherwise these tools never run.
+
+    To run unattended you can disable approval at the source with
+    ``disable_readonly_tool_approval`` (read, read_lines, ls, grep) and/or
+    ``disable_write_tool_approval`` (write, delete, replace, replace_lines),
+    which register the affected tools with ``approval_mode="never_require"``.
+    Alternatively, keep approval on and supply one of the static auto-approval
+    rules to :class:`~agent_framework.ToolApprovalMiddleware` via its
+    ``auto_approval_rules``:
+
+    - :meth:`read_only_tools_auto_approval_rule` — auto-approves only the
+      read-only tools (read, read_lines, ls, grep), while still prompting for the tools that
+      modify the store (write, delete, replace, replace_lines).
+    - :meth:`all_tools_auto_approval_rule` — auto-approves every file-access
+      tool, including the write tools.
+
+    For example, to auto-approve only the read-only tools::
+
+        create_harness_agent(
+            chat_client,
+            auto_approval_rules=[FileAccessProvider.read_only_tools_auto_approval_rule],
+        )
     """
+
+    #: Name of the tool that writes a file.
+    WRITE_TOOL_NAME = "file_access_write"
+    #: Name of the tool that reads a file.
+    READ_TOOL_NAME = "file_access_read"
+    #: Name of the tool that reads a range of lines from a file.
+    READ_LINES_TOOL_NAME = "file_access_read_lines"
+    #: Name of the tool that deletes a file.
+    DELETE_TOOL_NAME = "file_access_delete"
+    #: Name of the tool that lists the files and subdirectories of a directory.
+    LS_TOOL_NAME = "file_access_ls"
+    #: Name of the tool that searches file contents.
+    GREP_TOOL_NAME = "file_access_grep"
+    #: Name of the tool that replaces a substring in a file.
+    REPLACE_TOOL_NAME = "file_access_replace"
+    #: Name of the tool that replaces whole lines in a file.
+    REPLACE_LINES_TOOL_NAME = "file_access_replace_lines"
+
+    #: Names of the tools that only read from (never modify) the file store.
+    _READ_ONLY_TOOL_NAMES: frozenset[str] = frozenset({
+        READ_TOOL_NAME,
+        READ_LINES_TOOL_NAME,
+        LS_TOOL_NAME,
+        GREP_TOOL_NAME,
+    })
+
+    #: Names of the tools that modify the file store.
+    _WRITE_TOOL_NAMES: frozenset[str] = frozenset({
+        WRITE_TOOL_NAME,
+        DELETE_TOOL_NAME,
+        REPLACE_TOOL_NAME,
+        REPLACE_LINES_TOOL_NAME,
+    })
+
+    #: Names of all tools exposed by this provider.
+    _ALL_TOOL_NAMES: frozenset[str] = _READ_ONLY_TOOL_NAMES | _WRITE_TOOL_NAMES
 
     def __init__(
         self,
@@ -889,7 +1671,9 @@ class FileAccessProvider(ContextProvider):
         *,
         source_id: str = DEFAULT_FILE_ACCESS_SOURCE_ID,
         instructions: str | None = None,
-        require_delete_approval: bool = True,
+        disable_write_tools: bool = False,
+        disable_readonly_tool_approval: bool = False,
+        disable_write_tool_approval: bool = False,
     ) -> None:
         """Initialize the file access provider.
 
@@ -902,17 +1686,123 @@ class FileAccessProvider(ContextProvider):
             source_id: Unique source ID for the provider.
             instructions: Optional instruction override. When ``None`` the
                 default file-access instructions are used.
-            require_delete_approval: When ``True`` (the default) the
-                ``file_access_delete_file`` tool is registered with
-                ``approval_mode="always_require"`` so the host must approve every
-                delete the model proposes. Set to ``False`` to opt out and allow
-                the agent to delete files autonomously (matching the .NET
-                ``FileAccessProvider``, which has no approval mechanism).
+            disable_write_tools: When ``True``, only the read-only tools
+                (``file_access_read``, ``file_access_read_lines``, ``file_access_ls``, ``file_access_grep``)
+                are advertised; the write tools (``file_access_write``,
+                ``file_access_delete``, ``file_access_replace``,
+                ``file_access_replace_lines``) are hidden from the model.
+            disable_readonly_tool_approval: When ``True``, the read-only tools
+                (``file_access_read``, ``file_access_read_lines``, ``file_access_ls``, ``file_access_grep``)
+                are registered with ``approval_mode="never_require"`` so they run
+                without host approval. Defaults to ``False`` (approval required).
+            disable_write_tool_approval: When ``True``, the write tools
+                (``file_access_write``, ``file_access_delete``,
+                ``file_access_replace``, ``file_access_replace_lines``) are
+                registered with ``approval_mode="never_require"`` so they run
+                without host approval. Defaults to ``False`` (approval required).
         """
         super().__init__(source_id)
         self.store = store
         self.instructions = instructions or DEFAULT_FILE_ACCESS_INSTRUCTIONS
-        self.require_delete_approval = require_delete_approval
+        self.disable_write_tools = disable_write_tools
+        self.disable_readonly_tool_approval = disable_readonly_tool_approval
+        self.disable_write_tool_approval = disable_write_tool_approval
+        # Serializes mutating tool operations (write/delete/replace/replace_lines).
+        # The provider is shared across sessions/agents, so read-modify-write tools
+        # (replace/replace_lines) could otherwise interleave and lose updates. Note
+        # this only serializes within a single event loop/process, not across
+        # processes sharing a FileSystemAgentFileStore on disk.
+        self._write_lock = asyncio.Lock()
+
+    @staticmethod
+    def _is_local_tool_call(function_call: Content) -> bool:
+        """Return whether a function call targets this provider's local tools.
+
+        Hosted-tool calls carry a ``server_label`` in their
+        ``additional_properties`` and are a separate server-scoped approval
+        boundary that must be passed through untouched (see
+        :func:`agent_framework._tools._is_hosted_tool_approval`). These rules
+        only ever auto-approve the provider's own local tools, so any call that
+        carries a ``server_label`` is rejected even if its name collides with a
+        file-access tool name.
+        """
+        return not function_call.additional_properties.get("server_label")
+
+    @staticmethod
+    def read_only_tools_auto_approval_rule(function_call: Content) -> bool:
+        """Auto-approval rule that approves only the read-only file-access tools.
+
+        The tools exposed by :class:`FileAccessProvider` always require approval.
+        Pass this rule to :class:`~agent_framework.ToolApprovalMiddleware` (via
+        ``auto_approval_rules``) to automatically approve the tools that read
+        from the store (``file_access_read``, ``file_access_read_lines``,
+        ``file_access_ls``, and ``file_access_grep``), while still prompting for
+        the tools that modify it (``file_access_write``, ``file_access_delete``,
+        ``file_access_replace``, and ``file_access_replace_lines``).
+
+        Hosted-tool calls (those carrying a ``server_label``) are never
+        auto-approved, even when their name matches a file-access tool, so the
+        rule stays scoped to this provider's local tools.
+
+        .. warning::
+            **Security — avoid tool-name collisions.** This rule approves local
+            tool calls by tool name only (``file_access_read``,
+            ``file_access_read_lines``, ``file_access_ls``, and
+            ``file_access_grep``). Any other local tool registered under one of
+            these names — for example a tool with a caller-configurable name such
+            as the shell tool — may also be auto-approved, bypassing the human
+            approval boundary. Ensure no other tool collides with these reserved
+            names.
+
+        Args:
+            function_call: The pending ``function_call`` content.
+
+        Returns:
+            ``True`` for read-only file-access tools, ``False`` otherwise so that
+            subsequent rules continue to be evaluated.
+        """
+        return (
+            FileAccessProvider._is_local_tool_call(function_call)
+            and function_call.name in FileAccessProvider._READ_ONLY_TOOL_NAMES
+        )
+
+    @staticmethod
+    def all_tools_auto_approval_rule(function_call: Content) -> bool:
+        """Auto-approval rule that approves every file-access tool.
+
+        The tools exposed by :class:`FileAccessProvider` always require approval.
+        Pass this rule to :class:`~agent_framework.ToolApprovalMiddleware` (via
+        ``auto_approval_rules``) to automatically approve every file-access tool,
+        including the tools that modify the store (``file_access_write``,
+        ``file_access_delete``, ``file_access_replace``, and
+        ``file_access_replace_lines``).
+
+        Hosted-tool calls (those carrying a ``server_label``) are never
+        auto-approved, even when their name matches a file-access tool, so the
+        rule stays scoped to this provider's local tools.
+
+        .. warning::
+            **Security — avoid tool-name collisions.** This rule approves local
+            tool calls by tool name only (``file_access_write``,
+            ``file_access_read``, ``file_access_read_lines``,
+            ``file_access_delete``, ``file_access_ls``, ``file_access_grep``,
+            ``file_access_replace``, and ``file_access_replace_lines``). Any
+            other local tool registered under one of these names — for example a
+            tool with a caller-configurable name such as the shell tool — may
+            also be auto-approved, bypassing the human approval boundary. Ensure
+            no other tool collides with these reserved names.
+
+        Args:
+            function_call: The pending ``function_call`` content.
+
+        Returns:
+            ``True`` for any file-access tool, ``False`` otherwise so that
+            subsequent rules continue to be evaluated.
+        """
+        return (
+            FileAccessProvider._is_local_tool_call(function_call)
+            and function_call.name in FileAccessProvider._ALL_TOOL_NAMES
+        )
 
     async def before_run(
         self,
@@ -923,87 +1813,178 @@ class FileAccessProvider(ContextProvider):
         state: dict[str, Any],
     ) -> None:
         """Inject file-access tools and instructions before the model runs."""
-        del agent, session, state
+        mark_feature_used(FeatureIndex.CORE_FILE_ACCESS_PROVIDER)
+        readonly_approval: ApprovalMode = "never_require" if self.disable_readonly_tool_approval else "always_require"
+        write_approval: ApprovalMode = "never_require" if self.disable_write_tool_approval else "always_require"
 
-        @tool(name="file_access_save_file", approval_mode="never_require")
-        async def file_access_save_file(file_name: str, content: str, overwrite: bool = False) -> str:
-            """Save a file with the given name and content. By default, does not overwrite an existing file unless overwrite is set to true."""  # noqa: E501
+        @tool(name=FileAccessProvider.WRITE_TOOL_NAME, schema=_WriteFileInput, approval_mode=write_approval)
+        async def file_access_write(file_name: str, content: str, overwrite: bool = False) -> str:
+            """Write a file with the given name and content. By default, does not overwrite an existing file unless overwrite is set to true."""  # ruff:ignore[line-too-long]
             try:
                 normalized = _normalize_relative_path(file_name)
-                await self.store.write_file(normalized, content, overwrite=overwrite)
+                async with self._write_lock:
+                    await self.store.write(normalized, content, overwrite=overwrite)
             except FileExistsError:
-                return f"File '{file_name}' already exists. To replace it, save again with overwrite set to true."
+                return f"File '{file_name}' already exists. To replace it, write again with overwrite set to true."
             except ValueError as exc:
-                return f"Could not save file '{file_name}': {exc}"
+                return f"Could not write file '{file_name}': {exc}"
             except OSError as exc:
-                return f"Could not save file '{file_name}': {exc.strerror or exc}"
-            return f"File '{file_name}' saved."
+                return f"Could not write file '{file_name}': {exc.strerror or exc}"
+            return f"File '{file_name}' written."
 
-        @tool(name="file_access_read_file", approval_mode="never_require")
-        async def file_access_read_file(file_name: str) -> str:
-            """Read the content of a file by name. Returns the file content or a message indicating the file could not be read."""  # noqa: E501
+        @tool(name=FileAccessProvider.READ_TOOL_NAME, schema=_ReadFileInput, approval_mode=readonly_approval)
+        async def file_access_read(file_name: str) -> str:
+            r"""Read the content of a file by name. Returns the file content or a message indicating the file could not be read. Line numbers count lines split on \n only: a lone \r never starts a new line, each line keeps its own terminator, and content ending in a newline has a final empty line."""  # ruff:ignore[line-too-long]
             try:
                 normalized = _normalize_relative_path(file_name)
-                content = await self.store.read_file(normalized)
+                content = await self.store.read(normalized)
             except ValueError as exc:
                 return f"Could not read file '{file_name}': {exc}"
             except OSError as exc:
                 return f"Could not read file '{file_name}': {exc.strerror or exc}"
             return content if content is not None else f"File '{file_name}' not found."
 
-        delete_approval_mode: ApprovalMode = "always_require" if self.require_delete_approval else "never_require"
+        @tool(
+            name=FileAccessProvider.READ_LINES_TOOL_NAME,
+            schema=_ReadLinesInput,
+            approval_mode=readonly_approval,
+        )
+        async def file_access_read_lines(file_name: str, start_line: int, end_line: int | None = None) -> str:
+            r"""Read part of a file by 1-based inclusive line number; omit end_line to read to the end of the file, and an end_line past the last line is clamped. Each line is prefixed with its number and a tab; everything after that tab is verbatim, including the line's own terminator, so it can be reused as a file_access_replace_lines new_line. Line numbers count lines split on \n only: a lone \r never starts a new line, each line keeps its own terminator, and content ending in a newline has a final empty line."""  # ruff:ignore[line-too-long]
+            try:
+                normalized = _normalize_relative_path(file_name)
+                content = await self.store.read(normalized)
+                if content is None:
+                    return f"File '{file_name}' not found."
+                sliced = _slice_lines(content, start_line, end_line)
+            except ValueError as exc:
+                return f"Could not read lines from file '{file_name}': {exc}"
+            except OSError as exc:
+                return f"Could not read lines from file '{file_name}': {exc.strerror or exc}"
+            # Each line keeps its terminator, so it doubles as the row separator.
+            return "".join(f"{number}\t{line}" for number, line in enumerate(sliced, start_line))
 
-        @tool(name="file_access_delete_file", approval_mode=delete_approval_mode)
-        async def file_access_delete_file(file_name: str) -> str:
+        @tool(name=FileAccessProvider.DELETE_TOOL_NAME, schema=_DeleteFileInput, approval_mode=write_approval)
+        async def file_access_delete(file_name: str) -> str:
             """Delete a file by name."""
             try:
                 normalized = _normalize_relative_path(file_name)
-                deleted = await self.store.delete_file(normalized)
+                async with self._write_lock:
+                    deleted = await self.store.delete(normalized)
             except ValueError as exc:
                 return f"Could not delete file '{file_name}': {exc}"
             except OSError as exc:
                 return f"Could not delete file '{file_name}': {exc.strerror or exc}"
             return f"File '{file_name}' deleted." if deleted else f"File '{file_name}' not found."
 
-        @tool(name="file_access_list_files", approval_mode="never_require")
-        async def file_access_list_files(directory: str | None = None) -> list[str] | str:
-            """List the direct child file names of a directory. Omit ``directory`` (or pass an empty string) to list the root. To enumerate files in a subdirectory, pass its relative path, for example ``"reports"`` or ``"reports/2024"``."""  # noqa: E501
+        @tool(name=FileAccessProvider.LS_TOOL_NAME, schema=_ListInput, approval_mode=readonly_approval)
+        async def file_access_ls(
+            directory: str | None = None,
+            glob_pattern: str | None = None,
+        ) -> list[dict[str, str]] | str:
+            """List the direct child files and subdirectories of a directory. Omit ``directory`` (or pass an empty string) to list the root. To enumerate a subdirectory, pass its relative path, for example ``"reports"`` or ``"reports/2024"``. Optionally filter entries with a ``glob_pattern`` (e.g. ``"*.md"``). Subdirectories are listed before files, and each entry is ``{"name": <name>, "type": "file"|"directory"}``."""  # ruff:ignore[line-too-long]
             target = directory if directory and directory.strip() else ""
             try:
-                return await self.store.list_files(target)
+                listed = await self.store.list_children(target)
             except ValueError as exc:
                 return f"Could not list directory '{directory or ''}': {exc}"
             except OSError as exc:
                 return f"Could not list directory '{directory or ''}': {exc.strerror or exc}"
+            return [
+                {"name": entry.name, "type": entry.type} for entry in listed if _matches_glob(entry.name, glob_pattern)
+            ]
 
-        @tool(name="file_access_search_files", approval_mode="never_require")
-        async def file_access_search_files(
+        @tool(name=FileAccessProvider.REPLACE_TOOL_NAME, schema=_ReplaceInput, approval_mode=write_approval)
+        async def file_access_replace(
+            file_name: str,
+            old_string: str,
+            new_string: str,
+            replace_all: bool = False,
+        ) -> str:
+            """Replace occurrences of old_string with new_string in a file. Fails if old_string is not found, or if it occurs more than once and replace_all is false. Returns the number of occurrences replaced."""  # ruff:ignore[line-too-long]
+            try:
+                normalized = _normalize_relative_path(file_name)
+                async with self._write_lock:
+                    content = await self.store.read(normalized)
+                    if content is None:
+                        return f"File '{file_name}' not found."
+                    new_content, count = _apply_replace(content, old_string, new_string, replace_all)
+                    await self.store.write(normalized, new_content, overwrite=True)
+            except ValueError as exc:
+                return f"Could not replace in file '{file_name}': {exc}"
+            except OSError as exc:
+                return f"Could not replace in file '{file_name}': {exc.strerror or exc}"
+            return f"Replaced {count} occurrence(s) in '{file_name}'."
+
+        @tool(
+            name=FileAccessProvider.REPLACE_LINES_TOOL_NAME,
+            schema=_ReplaceLinesInput,
+            approval_mode=write_approval,
+        )
+        async def file_access_replace_lines(file_name: str, edits: list[_LineEdit]) -> str:
+            r"""Replace lines in a file. Provide a list of edits, each with a 1-based line_number and a literal new_line (include your own trailing newline); an empty new_line deletes the line, including its line break. Fails on out-of-range or duplicate line numbers. Line numbers count lines split on \n only: a lone \r never starts a new line, each line keeps its own terminator, and content ending in a newline has a final empty line."""  # ruff:ignore[line-too-long]
+            try:
+                normalized = _normalize_relative_path(file_name)
+                async with self._write_lock:
+                    content = await self.store.read(normalized)
+                    if content is None:
+                        return f"File '{file_name}' not found."
+                    new_content = _apply_replace_lines(content, _line_edits(edits))
+                    await self.store.write(normalized, new_content, overwrite=True)
+            except ValueError as exc:
+                return f"Could not edit file '{file_name}': {exc}"
+            except OSError as exc:
+                return f"Could not edit file '{file_name}': {exc.strerror or exc}"
+            return f"Replaced {len(edits)} line(s) in '{file_name}'."
+
+        @tool(name=FileAccessProvider.GREP_TOOL_NAME, schema=_SearchFilesInput, approval_mode=readonly_approval)
+        async def file_access_grep(
             regex_pattern: str,
-            file_pattern: str | None = None,
+            glob_pattern: str | None = None,
             directory: str | None = None,
         ) -> list[dict[str, Any]] | str:
-            """Search file contents using a regular expression pattern (case-insensitive). Optionally filter which files to search using a glob pattern (e.g., "*.md", "research*"). Optionally scope the search to a subdirectory by passing its relative path; omit ``directory`` (or pass an empty string) to search the root. Returns matching file names, snippets, and matching lines with line numbers. The regex_pattern must be 256 characters or fewer."""  # noqa: E501
-            pattern = file_pattern if file_pattern and file_pattern.strip() else None
+            r"""Search the contents of files in the store using a case-insensitive regular expression.
+
+            The search runs recursively across all subdirectories. Optionally restrict the search to a
+            ``directory`` (relative path), and filter which files to search using a glob ``glob_pattern``
+            matched against each file's path relative to that directory.
+            The glob uses fnmatch semantics where ``*`` matches any characters including ``/``: use
+            ``"*.md"`` to match markdown files at any depth,
+            or ``"reports/*"`` to restrict the search to the ``reports`` subtree.
+            Leave empty or omit to search all files.
+            Returns matching results whose file_name values are paths relative to the store root
+            (directly usable with file_access_read), along with snippets and matching lines with line numbers.
+            Stores are expected to report each matching line verbatim, including its own line
+            terminator, so it can normally be reused as a file_access_replace_lines new_line; a
+            custom store may not, so prefer file_access_read_lines when the exact text matters.
+            Line numbers count lines split on \n only, with a final empty line when content ends in a
+            newline.
+            The regex_pattern must be 256 characters or fewer.
+            """
+            glob_filter = glob_pattern if glob_pattern and glob_pattern.strip() else None
             target = directory if directory and directory.strip() else ""
             try:
-                results = await self.store.search_files(target, regex_pattern, pattern)
+                results = await self.store.search(target, regex_pattern, glob_filter, recursive=True)
             except ValueError as exc:
                 return f"Could not search files: {exc}"
             except OSError as exc:
                 return f"Could not search files: {exc.strerror or exc}"
-            return [result.to_dict() for result in results]
+            # ``store.search`` returns ``file_name`` relative to ``target``; re-root it to the store
+            # root so the names compose directly with file_access_read/replace/delete.
+            prefix = target.strip("/")
+            output: list[dict[str, Any]] = []
+            for result in results:
+                entry = result.to_dict()
+                if prefix:
+                    entry["file_name"] = f"{prefix}/{entry['file_name']}"
+                output.append(entry)
+            return output
 
         context.extend_instructions(self.source_id, [self.instructions])
-        context.extend_tools(
-            self.source_id,
-            [
-                file_access_save_file,
-                file_access_read_file,
-                file_access_delete_file,
-                file_access_list_files,
-                file_access_search_files,
-            ],
-        )
+        tools = [file_access_read, file_access_read_lines, file_access_ls, file_access_grep]
+        if not self.disable_write_tools:
+            tools.extend([file_access_write, file_access_delete, file_access_replace, file_access_replace_lines])
+        context.extend_tools(self.source_id, tools)
 
 
 __all__ = [
@@ -1013,6 +1994,7 @@ __all__ = [
     "FileAccessProvider",
     "FileSearchMatch",
     "FileSearchResult",
+    "FileStoreEntry",
     "FileSystemAgentFileStore",
     "InMemoryAgentFileStore",
 ]

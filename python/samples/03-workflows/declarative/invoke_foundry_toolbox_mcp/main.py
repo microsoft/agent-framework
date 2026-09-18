@@ -29,7 +29,9 @@ from agent_framework.declarative import (
 from agent_framework.foundry import FoundryChatClient
 from azure.core.credentials import TokenCredential
 from azure.identity import AzureCliCredential, get_bearer_token_provider
-from toolbox_provisioning import FOUNDRY_FEATURES_HEADERS, create_sample_toolbox
+from toolbox_provisioning import (  # ty: ignore[unresolved-import]  # pyrefly: ignore[missing-import]
+    create_sample_toolbox,
+)
 
 AGENT_NAME = "FoundryToolboxMcpAgent"
 TOOLBOX_NAME = "declarative_foundry_toolbox_mcp"
@@ -77,14 +79,10 @@ async def main() -> None:
     chat_client = FoundryChatClient(project_endpoint=project_endpoint, model=model, credential=credential)
     summary_agent = Agent(client=chat_client, name=AGENT_NAME, instructions=AGENT_INSTRUCTIONS)
 
-    # ``headers=`` attaches the Foundry-Features preview flag on every
-    # request, including the MCP ``initialize`` handshake (the YAML's
-    # per-action ``headers`` only takes effect during ``call_tool``).
     # ``timeout=`` matches the MCP-recommended values; httpx's 5s
     # default breaks long-running tool calls.
     http_client = httpx.AsyncClient(
         auth=_BearerAuth(credential),
-        headers=FOUNDRY_FEATURES_HEADERS,
         timeout=httpx.Timeout(30.0, read=300.0),
         follow_redirects=True,
     )

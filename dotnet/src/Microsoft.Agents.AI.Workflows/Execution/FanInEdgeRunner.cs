@@ -97,14 +97,17 @@ internal sealed class FanInEdgeRunner(IRunnerContext runContext, FanInEdgeData e
 
     public ValueTask<PortableValue> ExportStateAsync()
     {
-        return new(new PortableValue(this._state));
+        return new(new PortableValue(this._state.Snapshot()));
     }
 
     public ValueTask ImportStateAsync(PortableValue state)
     {
         if (state.Is(out FanInEdgeState? importedState))
         {
-            this._state = importedState;
+            // Snapshot on the way in so subsequent ProcessMessage mutations cannot alias state
+            // that the checkpoint store may still be holding (e.g. an in-memory checkpoint that
+            // retains the live PortableValue reference).
+            this._state = importedState.Snapshot();
             return default;
         }
 

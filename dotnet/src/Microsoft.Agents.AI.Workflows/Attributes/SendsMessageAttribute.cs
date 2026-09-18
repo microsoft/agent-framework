@@ -18,6 +18,10 @@ namespace Microsoft.Agents.AI.Workflows;
 /// This attribute can be applied multiple times to declare multiple message types.
 /// It is inherited by derived classes, allowing base executors to declare common message types.
 /// </para>
+/// <para>
+/// When this attribute is applied to an executor class and the workflows source generator is referenced,
+/// the class must be declared <c>partial</c> so the generator can add its protocol configuration.
+/// </para>
 /// </remarks>
 /// <example>
 /// <code>

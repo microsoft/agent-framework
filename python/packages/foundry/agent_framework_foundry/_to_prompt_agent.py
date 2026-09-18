@@ -34,8 +34,6 @@ from agent_framework import FunctionTool
 from agent_framework._feature_stage import ExperimentalFeature, experimental
 from agent_framework._mcp import MCPTool
 
-from ._chat_client import RawFoundryChatClient
-
 if TYPE_CHECKING:
     from agent_framework import Agent
     from azure.ai.projects.models import (
@@ -44,6 +42,8 @@ if TYPE_CHECKING:
         StructuredInputDefinition,
         Tool,
     )
+
+    from ._chat_client import RawFoundryChatClient
 
 
 @experimental(feature_id=ExperimentalFeature.TO_PROMPT_AGENT)
@@ -81,6 +81,8 @@ def to_prompt_agent(
         tools, and generation parameters. Pass it to
         ``AIProjectClient.agents.create_version(...)`` to publish.
     """
+    from ._chat_client import RawFoundryChatClient
+
     if not isinstance(agent.client, RawFoundryChatClient):
         raise TypeError(
             "Creating a Foundry Prompt Agent requires an Agent whose client is a FoundryChatClient; "
@@ -168,7 +170,7 @@ def _prepare_prompt_agent_options(
         ToolChoiceAllowed,
         ToolChoiceFunction,
     )
-    from openai.lib._parsing._responses import (  # type: ignore[reportPrivateImportUsage]
+    from openai.lib._parsing._responses import (
         type_to_text_format_param,
     )
     from pydantic import BaseModel
@@ -320,4 +322,4 @@ def _validate_mapping_tool(tool_item: Mapping[str, Any]) -> Tool:
     # ``_deserialize`` is the SDK's discriminator-aware entry point. It is marked
     # protected by convention but is the standard way to rehydrate polymorphic
     # azure-sdk-for-python models from a raw mapping.
-    return cast("Tool", ProjectsTool._deserialize(dict(tool_item), []))  # type: ignore[no-untyped-call]  # pyright: ignore[reportPrivateUsage, reportUnknownMemberType]
+    return cast("Tool", ProjectsTool._deserialize(dict(tool_item), []))  # type: ignore[no-untyped-call]

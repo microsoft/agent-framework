@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Evaluate an agent using Azure AI Foundry's built-in evaluators.
+"""Evaluate an agent using Microsoft Foundry's built-in evaluators.
 
 This sample demonstrates three patterns:
 1. evaluate_agent(responses=...) — Evaluate a response you already have.
@@ -10,7 +10,7 @@ This sample demonstrates three patterns:
 See ``evaluate_tool_calls_sample.py`` for tool-call accuracy evaluation.
 
 Prerequisites:
-- An Azure AI Foundry project with a deployed model
+- A Microsoft Foundry project with a deployed model
 - Set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL in .env
 """
 

@@ -5,7 +5,6 @@
 // through the reserved tools/list operation, then calls microsoft_docs_search from the workflow.
 
 using System.ClientModel;
-using System.ClientModel.Primitives;
 using System.Collections.Concurrent;
 using System.Net.Http.Headers;
 using Azure.AI.Projects;
@@ -19,8 +18,6 @@ using Shared.Foundry;
 using Shared.Workflows;
 
 #pragma warning disable OPENAI001 // Experimental API
-#pragma warning disable AAIP001 // AgentToolboxes is experimental
-
 namespace Demo.Workflows.Declarative.InvokeFoundryToolboxMcp;
 
 /// <summary>
@@ -148,14 +145,12 @@ internal sealed class Program
 
     private static async Task<string> CreateSampleToolboxAsync(string name, string serverLabel, Uri foundryEndpoint, TokenCredential credential)
     {
-        AgentAdministrationClientOptions options = new();
-        options.AddPolicy(new FoundryFeaturesPolicy("Toolboxes=V1Preview"), PipelinePosition.PerCall);
-        AgentAdministrationClient adminClient = new(foundryEndpoint, credential, options);
+        AgentAdministrationClient adminClient = new(foundryEndpoint, credential);
         AgentToolboxes toolboxClient = adminClient.GetAgentToolboxes();
 
         try
         {
-            await toolboxClient.DeleteToolboxAsync(name);
+            await toolboxClient.DeleteAsync(name);
             Console.WriteLine($"Deleted existing toolbox '{name}'");
         }
         catch (ClientResultException ex) when (ex.Status == 404)
@@ -163,14 +158,15 @@ internal sealed class Program
             // Toolbox does not exist.
         }
 
-        ProjectsAgentTool webTool = ProjectsAgentTool.AsProjectTool(ResponseTool.CreateWebSearchTool());
+        WebSearchToolboxTool webTool = new();
 
-        ProjectsAgentTool mcpTool = ProjectsAgentTool.AsProjectTool(ResponseTool.CreateMcpTool(
-            serverLabel: serverLabel,
-            serverUri: new Uri("https://learn.microsoft.com/api/mcp"),
-            toolCallApprovalPolicy: new McpToolCallApprovalPolicy(GlobalMcpToolCallApprovalPolicy.NeverRequireApproval)));
+        MCPToolboxTool mcpTool = new(serverLabel)
+        {
+            ServerUri = new Uri("https://learn.microsoft.com/api/mcp"),
+            ToolCallApprovalPolicy = new McpToolCallApprovalPolicy(GlobalMcpToolCallApprovalPolicy.NeverRequireApproval),
+        };
 
-        ToolboxVersion created = (await toolboxClient.CreateToolboxVersionAsync(
+        ToolboxVersion created = (await toolboxClient.CreateVersionAsync(
             name: name,
             tools: [webTool, mcpTool],
             description: "Sample toolbox combining Foundry web search with the Microsoft Learn MCP tools for the declarative InvokeFoundryToolboxMcp sample.")).Value;
@@ -196,23 +192,6 @@ internal sealed class Program
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Token);
 
             return await base.SendAsync(request, cancellationToken);
-        }
-    }
-
-    private sealed class FoundryFeaturesPolicy(string feature) : PipelinePolicy
-    {
-        private const string FeatureHeader = "Foundry-Features";
-
-        public override void Process(PipelineMessage message, IReadOnlyList<PipelinePolicy> pipeline, int currentIndex)
-        {
-            message.Request.Headers.Add(FeatureHeader, feature);
-            ProcessNext(message, pipeline, currentIndex);
-        }
-
-        public override ValueTask ProcessAsync(PipelineMessage message, IReadOnlyList<PipelinePolicy> pipeline, int currentIndex)
-        {
-            message.Request.Headers.Add(FeatureHeader, feature);
-            return ProcessNextAsync(message, pipeline, currentIndex);
         }
     }
 }

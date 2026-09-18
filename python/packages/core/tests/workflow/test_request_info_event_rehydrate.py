@@ -1,8 +1,12 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import json
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
+
+import pytest
 
 from agent_framework import (
     FileCheckpointStorage,
@@ -45,6 +49,91 @@ class SlottedApproval:
 @dataclass
 class TimedApproval:
     issued_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+def test_workflow_event_from_dict_accepts_explicit_allowed_types() -> None:
+    """Request-info reconstruction accepts exact trusted custom types."""
+
+    @dataclass
+    class ExplicitRequest:
+        prompt: str
+
+    class ExplicitResponse:
+        pass
+
+    request_type_name = f"{ExplicitRequest.__module__}.{ExplicitRequest.__qualname__}"
+    response_type_name = f"{ExplicitResponse.__module__}.{ExplicitResponse.__qualname__}"
+    event = WorkflowEvent.from_dict(
+        {
+            "type": "request_info",
+            "data": ExplicitRequest(prompt="Approve?"),
+            "request_id": "request-123",
+            "source_executor_id": "review_gateway",
+            "request_type": request_type_name,
+            "response_type": response_type_name,
+        },
+        allowed_types={
+            request_type_name: ExplicitRequest,
+            response_type_name: ExplicitResponse,
+        },
+    )
+
+    assert type(event.data) is ExplicitRequest
+    assert event.request_type is ExplicitRequest
+    assert event.response_type is ExplicitResponse
+
+
+def _write_observable_type_module(tmp_path: Path, module_name: str) -> Path:
+    marker_path = tmp_path / f"{module_name}.imported"
+    module_path = tmp_path / f"{module_name}.py"
+    module_path.write_text(f"from pathlib import Path\nPath({str(marker_path)!r}).touch()\nclass Attack:\n    pass\n")
+    return marker_path
+
+
+def test_workflow_event_from_dict_does_not_import_request_type(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A request-type name cannot cause its module to be imported."""
+    module_name = "_request_info_untrusted_request_type"
+    marker_path = _write_observable_type_module(tmp_path, module_name)
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    with pytest.raises(ModuleNotFoundError, match=f"No module named '{module_name}'"):
+        WorkflowEvent.from_dict({
+            "type": "request_info",
+            "data": "Approve?",
+            "request_id": "request-123",
+            "source_executor_id": "review_gateway",
+            "request_type": f"{module_name}.Attack",
+            "response_type": "builtins.bool",
+        })
+
+    assert module_name not in sys.modules
+    assert not marker_path.exists()
+
+
+def test_workflow_event_from_dict_does_not_import_response_type(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A response-type name cannot cause its module to be imported."""
+    module_name = "_request_info_untrusted_response_type"
+    marker_path = _write_observable_type_module(tmp_path, module_name)
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    with pytest.raises(ModuleNotFoundError, match=f"No module named '{module_name}'"):
+        WorkflowEvent.from_dict({
+            "type": "request_info",
+            "data": "Approve?",
+            "request_id": "request-123",
+            "source_executor_id": "review_gateway",
+            "request_type": "builtins.str",
+            "response_type": f"{module_name}.Attack",
+        })
+
+    assert module_name not in sys.modules
+    assert not marker_path.exists()
 
 
 async def test_rehydrate_request_info_event() -> None:
@@ -385,3 +474,61 @@ async def test_checkpoint_restore_with_partial_responses_reemits_unhandled_reque
         assert final_status.state == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS, (
             f"Workflow should be IDLE_WITH_PENDING_REQUESTS, got {final_status.state}"
         )
+
+
+async def test_apply_checkpoint_drops_stale_events() -> None:
+    """apply_checkpoint should drop events left over from a prior run.
+
+    After restore, only the pending request_info events carried by the checkpoint are
+    re-emitted onto the event queue; unrelated events queued earlier must be discarded so
+    they don't leak into the resumed run.
+    """
+    # Build a checkpoint that carries a single pending request_info event.
+    source = InProcRunnerContext(InMemoryCheckpointStorage())
+    keep_event = WorkflowEvent.request_info(
+        request_id="keep-me",
+        source_executor_id="gateway",
+        request_data=MockRequest(),
+        response_type=bool,
+    )
+    await source.add_request_info_event(keep_event)
+    checkpoint_id = await source.create_checkpoint("test_name", "test_hash", State(), None, iteration_count=1)
+    checkpoint = await source.load_checkpoint(checkpoint_id)
+    assert checkpoint is not None
+
+    # Target context has a stale event queued from a prior run.
+    target = InProcRunnerContext(InMemoryCheckpointStorage())
+    stale_event = WorkflowEvent.request_info(
+        request_id="stale",
+        source_executor_id="old",
+        request_data=MockRequest(),
+        response_type=bool,
+    )
+    await target.add_event(stale_event)
+    assert await target.has_events()
+
+    await target.apply_checkpoint(checkpoint)
+
+    events = await target.drain_events()
+    request_ids = [event.request_id for event in events]
+    assert request_ids == ["keep-me"]
+    assert "stale" not in request_ids
+
+
+async def test_apply_checkpoint_preserves_streaming_flag() -> None:
+    """apply_checkpoint must not reset the streaming flag set before restore.
+
+    The run pipeline calls set_streaming() before restoring, so applying a checkpoint must
+    leave the flag untouched (unlike the deprecated reset_for_new_run, which clears it).
+    """
+    source = InProcRunnerContext(InMemoryCheckpointStorage())
+    checkpoint_id = await source.create_checkpoint("test_name", "test_hash", State(), None, iteration_count=1)
+    checkpoint = await source.load_checkpoint(checkpoint_id)
+    assert checkpoint is not None
+
+    target = InProcRunnerContext(InMemoryCheckpointStorage())
+    target.set_streaming(True)
+
+    await target.apply_checkpoint(checkpoint)
+
+    assert target.is_streaming() is True

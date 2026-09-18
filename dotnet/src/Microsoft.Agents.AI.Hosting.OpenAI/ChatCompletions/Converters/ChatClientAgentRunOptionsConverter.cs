@@ -12,35 +12,24 @@ internal static class ChatClientAgentRunOptionsConverter
 {
     private static readonly JsonElement s_emptyJson = JsonElement.Parse("{}");
 
-    public static ChatClientAgentRunOptions BuildOptions(this CreateChatCompletion request)
+    /// <summary>
+    /// Projects the request-supplied generation and tool settings into a public
+    /// <see cref="OpenAIChatCompletionRequestInfo"/> for use by a hosting-developer mapping callback.
+    /// </summary>
+    public static OpenAIChatCompletionRequestInfo ToRequestInfo(this CreateChatCompletion request) => new()
     {
-        ChatOptions chatOptions = new()
-        {
-            Temperature = request.Temperature,
-            MaxOutputTokens = request.MaxCompletionTokens,
-            FrequencyPenalty = request.FrequencyPenalty,
-            PresencePenalty = request.PresencePenalty,
-            Seed = request.Seed,
-            TopP = request.TopP,
-            StopSequences = request.Stop?.SequenceList ?? [],
-            ResponseFormat = request.ResponseFormat?.ToChatResponseFormat()
-        };
-
-        if (request.ToolChoice is not null)
-        {
-            chatOptions.ToolMode = request.ToolChoice.ToChatToolMode();
-        }
-
-        if (request.Tools?.Count > 0)
-        {
-            chatOptions.Tools = request.Tools.Select(x => x.ToAITool()).ToList();
-        }
-
-        return new()
-        {
-            ChatOptions = chatOptions
-        };
-    }
+        Temperature = request.Temperature,
+        TopP = request.TopP,
+        MaxOutputTokens = request.MaxCompletionTokens,
+        FrequencyPenalty = request.FrequencyPenalty,
+        PresencePenalty = request.PresencePenalty,
+        Seed = request.Seed,
+        StopSequences = request.Stop?.SequenceList is { Count: > 0 } sequences ? [.. sequences] : null,
+        ResponseFormat = request.ResponseFormat?.ToChatResponseFormat(),
+        Model = request.Model,
+        ToolChoice = request.ToolChoice?.ToChatToolMode(),
+        Tools = request.Tools is { Count: > 0 } tools ? tools.Select(x => x.ToAITool()).ToList() : null,
+    };
 
     private static ChatResponseFormat ToChatResponseFormat(this ResponseFormat responseFormat)
     {

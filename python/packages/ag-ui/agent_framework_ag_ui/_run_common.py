@@ -4,15 +4,18 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
-from collections.abc import Mapping
+from collections.abc import AsyncGenerator, AsyncIterable, Callable, Mapping
+from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import Any, TypeVar, cast
 
 from ag_ui.core import (
     BaseEvent,
     CustomEvent,
+    Interrupt,
     ReasoningEncryptedValueEvent,
     ReasoningEndEvent,
     ReasoningMessageContentEvent,
@@ -20,6 +23,7 @@ from ag_ui.core import (
     ReasoningMessageStartEvent,
     ReasoningStartEvent,
     RunFinishedEvent,
+    RunFinishedInterruptOutcome,
     StateSnapshotEvent,
     TextMessageContentEvent,
     TextMessageEndEvent,
@@ -29,16 +33,49 @@ from ag_ui.core import (
     ToolCallResultEvent,
     ToolCallStartEvent,
 )
-from agent_framework import Content
+from agent_framework import Content, ResponseStream
 
-from ._orchestration._predictive_state import PredictiveStateHandler
+from ._predictive_state import PredictiveStateHandler
 from ._state import TOOL_RESULT_DISPLAY_KEY, TOOL_RESULT_STATE_KEY
-from ._utils import generate_event_id, make_json_safe
+from ._utils import (
+    _approval_interrupt_id,
+    _extract_mcp_tool_result_host_payload,
+    _extract_tool_result_marker_values,
+    _mcp_host_history_fields,
+    _model_items_for_agui_replay,
+    _stringify_tool_result,
+    generate_event_id,
+    make_json_safe,
+    normalize_agui_role,
+)
 
 logger = logging.getLogger(__name__)
 
+_StreamItemT = TypeVar("_StreamItemT")
+
 # Sentinel for an unset display_result; distinguishes "caller didn't pass" from None/{}/"".
 _UNSET = object()
+
+
+async def _iterate_with_context(
+    stream: AsyncIterable[_StreamItemT],
+    context_factory: Callable[[], AbstractContextManager[Any]],
+) -> AsyncGenerator[_StreamItemT]:
+    """Advance a response stream with a fresh execution context for every pull."""
+    if isinstance(stream, ResponseStream):
+        stream.with_pull_context_manager(context_factory)
+        async for item in stream:
+            yield item
+        return
+
+    stream_iterator = aiter(stream)
+    while True:
+        with context_factory():
+            try:
+                item = await anext(stream_iterator)
+            except StopAsyncIteration:
+                return
+        yield item
 
 
 def _has_only_tool_calls(contents: list[Any]) -> bool:
@@ -68,23 +105,53 @@ def _normalize_resume_interrupts(resume_payload: Any) -> list[dict[str, Any]]:
 
     normalized: list[dict[str, Any]] = []
     for item in candidates:
+        model_dump = getattr(item, "model_dump", None)
+        if callable(model_dump):
+            item = model_dump(by_alias=True, exclude_none=True)
         if not isinstance(item, dict):
             continue
         item_dict = cast(dict[str, Any], item)
-        interrupt_id = item_dict.get("id") or item_dict.get("interruptId") or item_dict.get("toolCallId")
+        interrupt_id = (
+            item_dict.get("id")
+            or item_dict.get("interruptId")
+            or item_dict.get("interrupt_id")
+            or item_dict.get("toolCallId")
+        )
         if not interrupt_id:
             continue
 
-        if "value" in item_dict:
+        if "payload" in item_dict:
+            value = item_dict.get("payload")
+        elif "value" in item_dict:
             value = item_dict.get("value")
         elif "response" in item_dict:
             value = item_dict.get("response")
         else:
-            value = {k: v for k, v in item_dict.items() if k not in {"id", "interruptId", "toolCallId", "type"}}
+            value = {
+                k: v
+                for k, v in item_dict.items()
+                if k not in {"id", "interruptId", "interrupt_id", "toolCallId", "type", "status"}
+            }
 
-        normalized.append({"id": str(interrupt_id), "value": value})
+        normalized_entry = {"id": str(interrupt_id), "value": value}
+        status = item_dict.get("status")
+        if isinstance(status, str) and status:
+            normalized_entry["status"] = status
+        normalized.append(normalized_entry)
 
     return normalized
+
+
+def _cancelled_resume_interrupt_ids(resume_payload: Any) -> set[str]:
+    """Return cancelled canonical resume interrupt ids."""
+    interrupt_ids: set[str] = set()
+    for interrupt in _normalize_resume_interrupts(resume_payload):
+        if interrupt.get("status") != "cancelled":
+            continue
+        interrupt_id = interrupt.get("id")
+        if interrupt_id:
+            interrupt_ids.add(str(interrupt_id))
+    return interrupt_ids
 
 
 def _extract_resume_payload(input_data: dict[str, Any]) -> Any:
@@ -107,12 +174,339 @@ def _extract_resume_payload(input_data: dict[str, Any]) -> Any:
     return forwarded_props_dict.get("resume")
 
 
+def _strict_resume_entries(resume_payload: Any) -> tuple[list[dict[str, Any]], str | None]:
+    """Parse resume entries for pending interrupt contract validation."""
+    if isinstance(resume_payload, list):
+        candidates = resume_payload
+    elif isinstance(resume_payload, dict):
+        resume_dict = cast(dict[str, Any], resume_payload)
+        if isinstance(resume_dict.get("interrupts"), list):
+            candidates = cast(list[Any], resume_dict["interrupts"])
+        elif isinstance(resume_dict.get("interrupt"), list):
+            candidates = cast(list[Any], resume_dict["interrupt"])
+        else:
+            candidates = [resume_dict]
+    else:
+        return [], "Resume payload must be a list of entries or an object containing interrupt entries."
+
+    if not candidates:
+        return [], "Resume payload must include at least one interrupt entry."
+
+    entries: list[dict[str, Any]] = []
+    for item in candidates:
+        model_dump = getattr(item, "model_dump", None)
+        if callable(model_dump):
+            item = model_dump(by_alias=True, exclude_none=True)
+        if not isinstance(item, dict):
+            return [], "Each resume entry must be an object."
+
+        item_dict = cast(dict[str, Any], item)
+        interrupt_id = (
+            item_dict.get("interruptId")
+            or item_dict.get("interrupt_id")
+            or item_dict.get("id")
+            or item_dict.get("toolCallId")
+        )
+        if not interrupt_id:
+            return [], "Each resume entry must include interruptId."
+
+        status = item_dict.get("status") or "resolved"
+        if status not in {"resolved", "cancelled"}:
+            return [], f"Unsupported resume status '{status}'."
+
+        if "payload" in item_dict:
+            payload = item_dict.get("payload")
+        elif "value" in item_dict:
+            payload = item_dict.get("value")
+        elif "response" in item_dict:
+            payload = item_dict.get("response")
+        else:
+            payload = {
+                key: value
+                for key, value in item_dict.items()
+                if key not in {"id", "interruptId", "interrupt_id", "toolCallId", "type", "status"}
+            }
+
+        entries.append({"interrupt_id": str(interrupt_id), "status": str(status), "payload": payload})
+
+    return entries, None
+
+
+def _resume_contract_error(
+    resume_payload: Any,
+    pending_interrupt_ids: set[str],
+    *,
+    required_code: str,
+    invalid_code: str,
+    unknown_code: str,
+    missing_code: str,
+) -> tuple[list[dict[str, Any]], str | None, str | None]:
+    """Validate that resume entries address every pending interrupt exactly once."""
+    if not pending_interrupt_ids:
+        entries, error = _strict_resume_entries(resume_payload)
+        return entries, error, invalid_code if error else None
+
+    if resume_payload is None:
+        return [], "Pending interrupts require a resume entry for every interruptId.", required_code
+
+    entries, error = _strict_resume_entries(resume_payload)
+    if error is not None:
+        return [], error, invalid_code
+
+    seen: set[str] = set()
+    for entry in entries:
+        interrupt_id = str(entry["interrupt_id"])
+        if interrupt_id in seen:
+            return [], f"Resume includes duplicate interruptId '{interrupt_id}'.", invalid_code
+        seen.add(interrupt_id)
+
+    unknown = seen - pending_interrupt_ids
+    if unknown:
+        interrupt_id = sorted(unknown)[0]
+        return [], f"No pending interrupt found for resume interruptId '{interrupt_id}'.", unknown_code
+
+    missing = pending_interrupt_ids - seen
+    if missing:
+        interrupt_id = sorted(missing)[0]
+        return [], f"Resume omitted pending interruptId '{interrupt_id}'.", missing_code
+
+    return entries, None, None
+
+
+def _canonical_interrupt_message(value: Any) -> str | None:
+    """Extract a human-readable message from legacy interruption metadata."""
+    if isinstance(value, str):
+        return value
+    if not isinstance(value, Mapping):
+        return None
+    value_mapping = cast(Mapping[str, Any], value)
+    for key in ("message", "prompt", "question", "data"):
+        message = value_mapping.get(key)
+        if isinstance(message, str) and message:
+            return message
+    return None
+
+
+def _canonical_interrupt_tool_call_id(interrupt: Mapping[str, Any], value: Any) -> str | None:
+    """Extract a tool call id from canonical fields or legacy interruption metadata."""
+    direct_tool_call_id = interrupt.get("toolCallId") or interrupt.get("tool_call_id")
+    if direct_tool_call_id:
+        return str(direct_tool_call_id)
+
+    if not isinstance(value, Mapping):
+        return None
+    value_mapping = cast(Mapping[str, Any], value)
+    function_call = value_mapping.get("function_call") or value_mapping.get("functionCall")
+    if not isinstance(function_call, Mapping):
+        return None
+    function_call_mapping = cast(Mapping[str, Any], function_call)
+    tool_call_id = function_call_mapping.get("call_id") or function_call_mapping.get("callId")
+    return str(tool_call_id) if tool_call_id else None
+
+
+def _canonical_interrupt_reason(interrupt: Mapping[str, Any], value: Any) -> str:
+    """Infer the canonical AG-UI interrupt reason from existing interruption metadata."""
+    reason = interrupt.get("reason")
+    if isinstance(reason, str) and reason:
+        return reason
+    if isinstance(value, Mapping):
+        value_mapping = cast(Mapping[str, Any], value)
+        if value_mapping.get("type") == "function_approval_request" or value_mapping.get("function_call"):
+            return "tool_call"
+    return "input_required"
+
+
+def _canonical_interrupt_metadata(interrupt: Mapping[str, Any], value: Any) -> dict[str, Any] | None:
+    """Move framework-specific legacy interruption details under metadata."""
+    raw_metadata = interrupt.get("metadata")
+    metadata = dict(cast(Mapping[str, Any], raw_metadata)) if isinstance(raw_metadata, Mapping) else {}
+    if "value" in interrupt:
+        raw_agent_framework = metadata.get("agent_framework")
+        agent_framework = (
+            dict(cast(Mapping[str, Any], raw_agent_framework)) if isinstance(raw_agent_framework, Mapping) else {}
+        )
+        agent_framework.setdefault("value", make_json_safe(value))
+        metadata["agent_framework"] = agent_framework
+    return metadata or None
+
+
+def _canonical_interrupt(interrupt: Mapping[str, Any]) -> Interrupt | None:
+    """Convert a legacy or protocol-compatible interrupt mapping into an AG-UI Interrupt."""
+    interrupt_id = interrupt.get("id") or interrupt.get("interruptId")
+    if not interrupt_id:
+        return None
+
+    value = interrupt.get("value")
+    interrupt_data: dict[str, Any] = {
+        "id": str(interrupt_id),
+        "reason": _canonical_interrupt_reason(interrupt, value),
+    }
+
+    message = interrupt.get("message") or _canonical_interrupt_message(value)
+    if isinstance(message, str) and message:
+        interrupt_data["message"] = message
+
+    tool_call_id = _canonical_interrupt_tool_call_id(interrupt, value)
+    if tool_call_id:
+        interrupt_data["toolCallId"] = tool_call_id
+
+    response_schema = interrupt.get("responseSchema") or interrupt.get("response_schema")
+    if isinstance(response_schema, Mapping):
+        interrupt_data["responseSchema"] = dict(cast(Mapping[str, Any], response_schema))
+
+    expires_at = interrupt.get("expiresAt") or interrupt.get("expires_at")
+    if isinstance(expires_at, str) and expires_at:
+        interrupt_data["expiresAt"] = expires_at
+
+    metadata = _canonical_interrupt_metadata(interrupt, value)
+    if metadata is not None:
+        interrupt_data["metadata"] = metadata
+
+    return Interrupt.model_validate(interrupt_data)
+
+
+def _json_schema_for_value(value: Any) -> dict[str, Any]:
+    """Infer a lightweight JSON schema for an already-serialized value."""
+    if isinstance(value, bool):
+        return {"type": "boolean"}
+    if isinstance(value, int):
+        return {"type": "integer"}
+    if isinstance(value, float):
+        return {"type": "number"}
+    if isinstance(value, str):
+        return {"type": "string"}
+    if isinstance(value, list):
+        return {"type": "array"}
+    if isinstance(value, Mapping):
+        return {"type": "object", "additionalProperties": True}
+    return {}
+
+
+def _approval_response_schema(arguments: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Build the response schema generic AG-UI clients use to render approval input."""
+    reserved_properties = {"approved", "accepted", "editedArgs"}
+    properties: dict[str, Any] = {
+        "approved": {
+            "type": "boolean",
+            "description": "Whether the requested tool call is approved.",
+        },
+        "accepted": {
+            "type": "boolean",
+            "description": "Legacy alias for approved.",
+        },
+    }
+    if arguments is not None:
+        edited_argument_properties: dict[str, Any] = {}
+        for name, value in arguments.items():
+            argument_schema = _json_schema_for_value(value)
+            argument_schema["description"] = f"Optional edited value for the '{name}' tool argument."
+            if str(name) not in reserved_properties:
+                properties[str(name)] = argument_schema
+            edited_argument_properties[str(name)] = _json_schema_for_value(value)
+        properties["editedArgs"] = {
+            "type": "object",
+            "description": "Full replacement of the tool arguments. Not merged.",
+            "properties": edited_argument_properties,
+            "required": list(edited_argument_properties),
+            "additionalProperties": False,
+        }
+
+    return {
+        "type": "object",
+        "properties": properties,
+        "anyOf": [{"required": ["approved"]}, {"required": ["accepted"]}],
+        "additionalProperties": False,
+    }
+
+
+def _approval_steps_response_schema() -> dict[str, Any]:
+    """Build the response schema for step-based confirmation prompts."""
+    return {
+        "type": "object",
+        "properties": {
+            "accepted": {
+                "type": "boolean",
+                "description": "Whether the proposed tool changes are approved.",
+            },
+            "steps": {
+                "type": "array",
+                "description": "The approved and rejected steps.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "description": {"type": "string"},
+                        "status": {"type": "string", "enum": ["enabled", "disabled"]},
+                    },
+                    "required": ["description", "status"],
+                    "additionalProperties": True,
+                },
+            },
+        },
+        "required": ["accepted"],
+        "additionalProperties": False,
+    }
+
+
+def _function_call_interrupt_metadata(function_call: Content) -> dict[str, Any]:
+    """Build Agent Framework metadata for a tool-bound approval interrupt."""
+    parsed_arguments = make_json_safe(function_call.parse_arguments())
+    return {
+        "type": "function_approval_request",
+        "function_call": {
+            "call_id": function_call.call_id,
+            "name": function_call.name,
+            "arguments": parsed_arguments,
+        },
+    }
+
+
+def _approval_interrupt_for_function_call(
+    *,
+    interrupt_id: str,
+    function_call: Content,
+    message: str | None = None,
+    response_schema: Mapping[str, Any] | None = None,
+    metadata: Mapping[str, Any] | None = None,
+    tool_call_id: str | None = None,
+) -> dict[str, Any]:
+    """Build a canonical AG-UI interrupt descriptor for a tool approval pause."""
+    function_metadata = _function_call_interrupt_metadata(function_call)
+    parsed_arguments = function_metadata["function_call"]["arguments"]
+    argument_mapping = cast(Mapping[str, Any], parsed_arguments) if isinstance(parsed_arguments, Mapping) else {}
+    interrupt_message = message or f"Approve running {function_call.name or 'this tool'}?"
+    agent_framework_metadata = {**function_metadata, "value": function_metadata}
+    if metadata:
+        agent_framework_metadata.update(dict(metadata))
+    return {
+        "id": interrupt_id,
+        "reason": "tool_call",
+        "message": interrupt_message,
+        "toolCallId": tool_call_id or function_call.call_id,
+        "responseSchema": dict(response_schema or _approval_response_schema(argument_mapping)),
+        "metadata": {"agent_framework": agent_framework_metadata},
+    }
+
+
 def _build_run_finished_event(
     run_id: str, thread_id: str, interrupts: list[dict[str, Any]] | None = None
 ) -> RunFinishedEvent:
     """Create a RUN_FINISHED event, optionally carrying interrupt metadata."""
     if interrupts:
-        return RunFinishedEvent(run_id=run_id, thread_id=thread_id, interrupt=interrupts)  # type: ignore[call-arg]
+        canonical_interrupts = [
+            canonical for interrupt in interrupts if (canonical := _canonical_interrupt(interrupt)) is not None
+        ]
+        if canonical_interrupts:
+            return RunFinishedEvent(
+                run_id=run_id,
+                thread_id=thread_id,
+                outcome=RunFinishedInterruptOutcome(interrupts=canonical_interrupts),
+            )
+        logger.warning(
+            "run %s: %d interrupt(s) present but none carried an id/interruptId; "
+            "emitting RUN_FINISHED with no interrupt outcome",
+            run_id,
+            len(interrupts),
+        )
     return RunFinishedEvent(run_id=run_id, thread_id=thread_id)
 
 
@@ -134,6 +528,10 @@ class FlowState:
     reasoning_messages: list[dict[str, Any]] = field(default_factory=list)  # pyright: ignore[reportUnknownVariableType]
     accumulated_reasoning: dict[str, str] = field(default_factory=dict)  # pyright: ignore[reportUnknownVariableType]
     reasoning_message_id: str | None = None
+    # Ordered text/tool_calls/reasoning segment boundaries in the order the
+    # model emitted them, so MESSAGES_SNAPSHOT can preserve that order
+    # (issue #7223) instead of the fixed tool-calls -> results -> text layout.
+    snapshot_segments: list[dict[str, Any]] = field(default_factory=list)  # pyright: ignore[reportUnknownVariableType]
 
     def get_tool_name(self, call_id: str | None) -> str | None:
         """Get tool name by call ID."""
@@ -145,6 +543,53 @@ class FlowState:
     def get_pending_without_end(self) -> list[dict[str, Any]]:
         """Get tool calls that started but never received an end event (declaration-only)."""
         return [tc for tc in self.pending_tool_calls if tc.get("id") not in self.tool_calls_ended]
+
+
+def _open_text_segment(flow: FlowState, message_id: str) -> dict[str, Any]:
+    """Start a new snapshot text segment for a freshly opened text message."""
+    segment = {"kind": "text", "id": message_id, "text": ""}
+    flow.snapshot_segments.append(segment)
+    return segment
+
+
+def _text_segment_for(flow: FlowState, message_id: str) -> dict[str, Any] | None:
+    """Find the text segment belonging to the given message id."""
+    for segment in reversed(flow.snapshot_segments):
+        if segment["kind"] == "text" and segment["id"] == message_id:
+            return segment
+    return None
+
+
+def _new_tool_call_segment_id(flow: FlowState) -> str:
+    """Allocate a snapshot ID, reusing a tool-only opening ID at most once."""
+    segment_ids = {segment.get("id") for segment in flow.snapshot_segments if segment.get("id")}
+    if flow.message_id and flow.message_id not in segment_ids:
+        return flow.message_id
+    message_id = generate_event_id()
+    while message_id in segment_ids:
+        message_id = generate_event_id()
+    return message_id
+
+
+def _track_tool_call_segment(flow: FlowState, tool_call_id: str) -> str:
+    """Record a tool call and return the message ID used by its stream events."""
+    segment: dict[str, Any]
+    if flow.snapshot_segments and flow.snapshot_segments[-1]["kind"] == "tool_calls":
+        segment = flow.snapshot_segments[-1]
+        segment.setdefault("id", _new_tool_call_segment_id(flow))
+    else:
+        segment = {"kind": "tool_calls", "id": _new_tool_call_segment_id(flow), "call_ids": []}
+        flow.snapshot_segments.append(segment)
+    segment["call_ids"].append(tool_call_id)
+    return str(segment["id"])
+
+
+def _track_reasoning_segment(flow: FlowState, message_id: str) -> None:
+    """Record where a reasoning block sits in the snapshot emission order."""
+    for segment in flow.snapshot_segments:
+        if segment["kind"] == "reasoning" and segment["id"] == message_id:
+            return
+    flow.snapshot_segments.append({"kind": "reasoning", "id": message_id})
 
 
 def _emit_text(content: Content, flow: FlowState, skip_text: bool = False) -> list[BaseEvent]:
@@ -159,14 +604,36 @@ def _emit_text(content: Content, flow: FlowState, skip_text: bool = False) -> li
     if not flow.message_id:
         flow.message_id = generate_event_id()
         flow.accumulated_text = ""
+        _open_text_segment(flow, flow.message_id)
         events.append(TextMessageStartEvent(message_id=flow.message_id, role="assistant"))
     elif flow.accumulated_text and content.text == flow.accumulated_text:
         # Guard against full-message replay chunks that can appear after streaming deltas.
         logger.debug("Skipping duplicate full-text delta for message_id=%s", flow.message_id)
         return []
 
+    # A tool-only response may pre-open a message before its tool-call segment
+    # is tracked. If that segment claims the pre-opened ID, rotate to a fresh
+    # text message before recording the text so snapshot IDs stay unique.
+    current_message_id = flow.message_id
+    if current_message_id and any(
+        segment.get("kind") == "tool_calls" and segment.get("id") == current_message_id
+        for segment in flow.snapshot_segments
+    ):
+        flow.message_id = generate_event_id()
+        flow.accumulated_text = ""
+        events.append(TextMessageEndEvent(message_id=current_message_id))
+        events.append(TextMessageStartEvent(message_id=flow.message_id, role="assistant"))
+
+    # The message may have been pre-opened by the tool-only path, which never
+    # goes through this function, so the first text arriving later has no
+    # segment yet; without one the snapshot would drop it.
+    segment = _text_segment_for(flow, flow.message_id)
+    if segment is None:
+        segment = _open_text_segment(flow, flow.message_id)
+
     events.append(TextMessageContentEvent(message_id=flow.message_id, delta=content.text))
     flow.accumulated_text += content.text
+    segment["text"] = flow.accumulated_text
     return events
 
 
@@ -186,11 +653,12 @@ def _emit_tool_call(
         if predictive_handler:
             predictive_handler.reset_streaming()
 
+        tool_message_id = _track_tool_call_segment(flow, tool_call_id)
         events.append(
             ToolCallStartEvent(
                 tool_call_id=tool_call_id,
                 tool_call_name=content.name,
-                parent_message_id=flow.message_id,
+                parent_message_id=tool_message_id,
             )
         )
 
@@ -238,22 +706,6 @@ def _emit_tool_call(
     return events
 
 
-def _extract_tool_result_marker_values(content: Content, key: str) -> list[Any]:
-    """Extract marker values from outer and inner tool-result content."""
-    values: list[Any] = []
-
-    outer_ap = getattr(content, "additional_properties", None) or {}
-    if key in outer_ap:
-        values.append(outer_ap[key])
-
-    for item in content.items or ():
-        item_ap = getattr(item, "additional_properties", None) or {}
-        if key in item_ap:
-            values.append(item_ap[key])
-
-    return values
-
-
 def _extract_tool_result_state(content: Content) -> dict[str, Any] | None:
     """Extract a deterministic AG-UI state update from a tool-result ``Content``.
 
@@ -287,13 +739,17 @@ def _extract_tool_result_display(content: Content) -> Any:  # noqa: ANN401
     return display_values[-1] if display_values else _UNSET
 
 
-def _stringify_tool_result(raw_result: Any) -> str:  # noqa: ANN401
-    return raw_result if isinstance(raw_result, str) else json.dumps(make_json_safe(raw_result))
-
-
 def _resolve_ui_payload(llm_str: str, display_result: Any) -> str:  # noqa: ANN401
     """Pick the UI-bound string: the serialized display payload when set, else the LLM string."""
     return llm_str if display_result is _UNSET else _stringify_tool_result(display_result)
+
+
+def _resolve_tool_result_host_payload(content: Content, display_result: Any) -> tuple[bool, Any]:  # noqa: ANN401
+    """Resolve an MCP Host payload, preferring an explicit display projection."""
+    has_host_payload, host_payload = _extract_mcp_tool_result_host_payload(content)
+    if has_host_payload and display_result is not _UNSET:
+        host_payload = display_result
+    return has_host_payload, host_payload
 
 
 def _emit_tool_result_common(
@@ -304,33 +760,36 @@ def _emit_tool_result_common(
     *,
     state_update: Mapping[str, Any] | None = None,
     display_result: Any = _UNSET,  # noqa: ANN401
+    snapshot_result: Any = _UNSET,  # noqa: ANN401
+    model_items: list[dict[str, Any]] | None = None,
 ) -> list[BaseEvent]:
-    """Shared helper for emitting ToolCallEnd + ToolCallResult events and performing FlowState cleanup.
+    """Shared helper for emitting ToolCallResult (and ToolCallEnd when still open).
 
     Both ``_emit_tool_result`` (standard function results) and ``_emit_mcp_tool_result``
     (MCP server tool results) delegate to this function.
 
-    Args:
-        call_id: Tool call identifier.
-        raw_result: The stringified tool result content sent back to the LLM.
-        flow: Current ``FlowState``.
-        predictive_handler: Optional predictive state handler driven by
-            ``predict_state_config``.
-        state_update: Optional deterministic state snapshot produced by a tool
-            returning :func:`agent_framework_ag_ui.state_update`. When present,
-            it is merged into ``flow.current_state`` and a ``StateSnapshotEvent``
-            is emitted after the ``ToolCallResult`` event. When both
-            ``predictive_handler`` and ``state_update`` are active, predictive
-            updates are applied first, then the deterministic merge, and a
-            single coalesced ``StateSnapshotEvent`` is emitted.
+    ``TOOL_CALL_END`` is emitted only when ``call_id`` was opened in this run and
+    has not already been ended (including synthetic protocol closure before an
+    approval interrupt). On resume, a fresh ``FlowState`` never STARTs that id,
+    so only ``TOOL_CALL_RESULT`` is emitted — matching Agent approval resume.
     """
     events: list[BaseEvent] = []
 
-    events.append(ToolCallEndEvent(tool_call_id=call_id))
+    # Only end tool calls that were opened in this run and are still open.
+    # Synthetic protocol closure before an approval interrupt (Workflow
+    # ``_drain_open_tool_calls``, Agent ``_emit_approval_request``) already
+    # emitted TOOL_CALL_END; a later real function_result — including on a
+    # resumed run with a fresh FlowState that never STARTed this id — must not
+    # emit an unmatched or duplicate END. Match Agent approval resume, which
+    # surfaces TOOL_CALL_RESULT only via ``_make_approval_tool_result_events``.
+    tool_is_open = call_id in flow.tool_calls_by_id and call_id not in flow.tool_calls_ended
+    if tool_is_open:
+        events.append(ToolCallEndEvent(tool_call_id=call_id))
     flow.tool_calls_ended.add(call_id)
 
     result_content = _stringify_tool_result(raw_result)
     ui_result_content = _resolve_ui_payload(result_content, display_result)
+    snapshot_result_content = _resolve_ui_payload(result_content, snapshot_result)
     message_id = generate_event_id()
     events.append(
         ToolCallResultEvent(
@@ -341,15 +800,33 @@ def _emit_tool_result_common(
         )
     )
 
-    flow.tool_results.append(
-        {
-            "id": message_id,
-            "role": "tool",
-            "toolCallId": call_id,
-            "content": result_content,
-        }
-    )
+    snapshot_message: dict[str, Any] = {
+        "id": message_id,
+        "role": "tool",
+        "toolCallId": call_id,
+        "content": result_content,
+    }
+    event_replay_properties: dict[str, Any] = {}
+    if snapshot_result is not _UNSET:
+        event_replay_properties = _mcp_host_history_fields(
+            snapshot_result_content,
+            [{"type": "text", "text": result_content}] if model_items is None else model_items,
+        )
+        snapshot_message.update(event_replay_properties)
+        events[-1] = ToolCallResultEvent(
+            message_id=message_id,
+            tool_call_id=call_id,
+            content=ui_result_content,
+            role="tool",
+            **event_replay_properties,
+        )
+    flow.tool_results.append(snapshot_message)
+    # A result closes the current tool-call segment: a later call opens a new
+    # one, so `call A -> result A -> call B` snapshots as two call/result pairs
+    # in stream order instead of grouping B with A (moonbox3's replay concern).
+    flow.snapshot_segments.append({"kind": "tool_results"})
 
+    had_pending_predictive_updates = bool(predictive_handler and predictive_handler.pending_state_updates)
     if predictive_handler:
         predictive_handler.apply_pending_updates()
 
@@ -362,7 +839,7 @@ def _emit_tool_result_common(
         )
 
     # Emit a single coalesced snapshot when either mechanism updated state.
-    if (predictive_handler or state_update) and flow.current_state:
+    if (had_pending_predictive_updates or state_update) and flow.current_state:
         events.append(StateSnapshotEvent(snapshot=flow.current_state))
 
     flow.tool_call_id = None
@@ -388,6 +865,9 @@ def _emit_tool_result(
     raw_result = content.result if content.result is not None else ""
     state_update = _extract_tool_result_state(content)
     display_result = _extract_tool_result_display(content)
+    has_host_payload, host_payload = _resolve_tool_result_host_payload(content, display_result)
+    if has_host_payload and display_result is _UNSET:
+        display_result = host_payload
     return _emit_tool_result_common(
         content.call_id,
         raw_result,
@@ -395,6 +875,10 @@ def _emit_tool_result(
         predictive_handler,
         state_update=state_update,
         display_result=display_result,
+        snapshot_result=host_payload if has_host_payload else _UNSET,
+        model_items=(
+            _model_items_for_agui_replay(content, _stringify_tool_result(raw_result)) if has_host_payload else None
+        ),
     )
 
 
@@ -427,11 +911,12 @@ def _emit_approval_request(
         events.append(ToolCallEndEvent(tool_call_id=func_call_id))
         flow.tool_calls_ended.add(func_call_id)
 
+    interrupt_id = _approval_interrupt_id(content)
     events.append(
         CustomEvent(
             name="function_approval_request",
             value={
-                "id": content.id,
+                "id": interrupt_id,
                 "function_call": {
                     "call_id": func_call_id,
                     "name": func_name,
@@ -440,29 +925,24 @@ def _emit_approval_request(
             },
         )
     )
-    interrupt_id = func_call_id or content.id
     if interrupt_id:
+        response_schema = _approval_response_schema() if func_call.additional_properties.get("server_label") else None
         flow.interrupts.append(
-            {
-                "id": str(interrupt_id),
-                "value": {
-                    "type": "function_approval_request",
-                    "function_call": {
-                        "call_id": func_call_id,
-                        "name": func_name,
-                        "arguments": make_json_safe(func_call.parse_arguments()),
-                    },
-                },
-            }
+            _approval_interrupt_for_function_call(
+                interrupt_id=str(interrupt_id),
+                function_call=func_call,
+                response_schema=response_schema,
+            )
         )
 
     if require_confirmation:
         confirm_id = generate_event_id()
+        confirm_message_id = _track_tool_call_segment(flow, confirm_id)
         events.append(
             ToolCallStartEvent(
                 tool_call_id=confirm_id,
                 tool_call_name="confirm_changes",
-                parent_message_id=flow.message_id,
+                parent_message_id=confirm_message_id,
             )
         )
         args: dict[str, Any] = {
@@ -519,12 +999,13 @@ def _emit_mcp_tool_call(content: Content, flow: FlowState) -> list[BaseEvent]:
     tool_name = content.tool_name or "mcp_tool"
 
     display_name = tool_name
+    tool_message_id = _track_tool_call_segment(flow, tool_call_id)
 
     events.append(
         ToolCallStartEvent(
             tool_call_id=tool_call_id,
             tool_call_name=display_name,
-            parent_message_id=flow.message_id,
+            parent_message_id=tool_message_id,
         )
     )
 
@@ -562,6 +1043,9 @@ def _emit_mcp_tool_result(
     raw_output = content.output if content.output is not None else ""
     state_update = _extract_tool_result_state(content)
     display_result = _extract_tool_result_display(content)
+    has_host_payload, host_payload = _resolve_tool_result_host_payload(content, display_result)
+    if has_host_payload and display_result is _UNSET:
+        display_result = host_payload
     return _emit_tool_result_common(
         content.call_id,
         raw_output,
@@ -569,6 +1053,10 @@ def _emit_mcp_tool_result(
         predictive_handler,
         state_update=state_update,
         display_result=display_result,
+        snapshot_result=host_payload if has_host_payload else _UNSET,
+        model_items=(
+            _model_items_for_agui_replay(content, _stringify_tool_result(raw_output)) if has_host_payload else None
+        ),
     )
 
 
@@ -618,7 +1106,12 @@ def _emit_text_reasoning(content: Content, flow: FlowState | None = None) -> lis
     if not text and content.protected_data is None:
         return []
 
-    message_id = content.id or generate_event_id()
+    if content.id:
+        message_id = content.id
+    elif flow is not None and flow.reasoning_message_id:
+        message_id = flow.reasoning_message_id
+    else:
+        message_id = generate_event_id()
 
     events: list[BaseEvent] = []
 
@@ -689,6 +1182,7 @@ def _emit_text_reasoning(content: Content, flow: FlowState | None = None) -> lis
             if content.protected_data is not None:
                 reasoning_entry["encryptedValue"] = content.protected_data
             flow.reasoning_messages.append(reasoning_entry)
+            _track_reasoning_segment(flow, message_id)
         else:
             existing_entry["content"] = full_text
             if content.protected_data is not None:
@@ -733,3 +1227,173 @@ def _emit_content(
         return _emit_text_reasoning(content, flow)
     logger.debug("Skipping unsupported content type in AG-UI emitter: %s", content_type)
     return events
+
+
+def _canonical_snapshot_message(message: dict[str, Any]) -> dict[str, Any]:
+    """Normalize an AG-UI message for identity comparison without generated ids."""
+    from ._message_adapters import agui_messages_to_snapshot_format
+
+    normalized_message = agui_messages_to_snapshot_format([copy.deepcopy(message)])[0]
+    normalized_message.pop("id", None)
+    if "toolCalls" in normalized_message:
+        normalized_message["tool_calls"] = normalized_message.pop("toolCalls")
+    if "toolCallId" in normalized_message:
+        normalized_message["tool_call_id"] = normalized_message.pop("toolCallId")
+    if "encryptedValue" in normalized_message:
+        normalized_message["encrypted_value"] = normalized_message.pop("encryptedValue")
+    return cast(dict[str, Any], make_json_safe(normalized_message))
+
+
+def _snapshot_messages_match(stored_message: dict[str, Any], incoming_message: dict[str, Any]) -> bool:
+    """Return whether an incoming message already represents the stored snapshot message."""
+    stored_id = stored_message.get("id")
+    incoming_id = incoming_message.get("id")
+    if stored_id and incoming_id:
+        if str(stored_id) == str(incoming_id):
+            return True
+        if normalize_agui_role(stored_message.get("role", "user")) != "assistant":
+            return False
+    return _canonical_snapshot_message(stored_message) == _canonical_snapshot_message(incoming_message)
+
+
+def _snapshot_overlap_length(
+    stored_messages: list[dict[str, Any]],
+    incoming_messages: list[dict[str, Any]],
+    *,
+    start: int,
+) -> int:
+    """Return the contiguous incoming prefix matching stored history at ``start``."""
+    compared_count = min(len(stored_messages) - start, len(incoming_messages))
+    return next(
+        (
+            offset
+            for offset, (stored_message, incoming_message) in enumerate(zip(stored_messages[start:], incoming_messages))
+            if not _snapshot_messages_match(stored_message, incoming_message)
+        ),
+        compared_count,
+    )
+
+
+def _latest_user_message_index(messages: list[dict[str, Any]]) -> int | None:
+    """Find the newest incoming user message index."""
+    for index in range(len(messages) - 1, -1, -1):
+        if normalize_agui_role(messages[index].get("role", "user")) == "user":
+            return index
+    return None
+
+
+def _known_tool_call_ids(
+    stored_messages: list[dict[str, Any]],
+    stored_interrupt: list[dict[str, Any]] | None,
+) -> set[str]:
+    """Collect unanswered tool call ids the backend previously issued for this thread."""
+    known_ids: set[str] = set()
+    completed_ids: set[str] = set()
+    for message in stored_messages:
+        tool_calls = message.get("tool_calls") or message.get("toolCalls") or []
+        if not isinstance(tool_calls, list):
+            tool_calls = []
+        for tool_call in cast(list[Any], tool_calls):
+            if not isinstance(tool_call, dict):
+                continue
+            tool_call_id = cast(dict[str, Any], tool_call).get("id")
+            if tool_call_id:
+                known_ids.add(str(tool_call_id))
+        if normalize_agui_role(message.get("role", "user")) == "tool":
+            tool_call_id = message.get("toolCallId") or message.get("tool_call_id") or message.get("actionExecutionId")
+            if tool_call_id:
+                completed_ids.add(str(tool_call_id))
+    known_ids.difference_update(completed_ids)
+    for interrupt in stored_interrupt or []:
+        interrupt_id = interrupt.get("id")
+        if interrupt_id:
+            known_ids.add(str(interrupt_id))
+        canonical_tool_call_id = interrupt.get("toolCallId") or interrupt.get("tool_call_id")
+        if canonical_tool_call_id:
+            known_ids.add(str(canonical_tool_call_id))
+    return known_ids
+
+
+def _filter_untrusted_suffix(
+    incoming_suffix: list[dict[str, Any]],
+    *,
+    stored_messages: list[dict[str, Any]],
+    stored_interrupt: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Drop client-forged non-user messages before promoting them to stored history.
+
+    Only the user's own turns and tool results answering backend-issued tool calls
+    (including pending interrupts) may extend the authoritative thread history.
+    """
+    known_ids: set[str] | None = None
+    filtered: list[dict[str, Any]] = []
+    for message in incoming_suffix:
+        raw_role = str(message.get("role", "")).lower()
+        if raw_role == "user":
+            filtered.append(message)
+            continue
+        if raw_role == "tool":
+            tool_call_id = message.get("toolCallId") or message.get("tool_call_id") or message.get("actionExecutionId")
+            if known_ids is None:
+                known_ids = _known_tool_call_ids(stored_messages, stored_interrupt)
+            if tool_call_id and str(tool_call_id) in known_ids:
+                filtered.append(message)
+                continue
+        logger.warning(
+            "Dropping client-supplied %r message from the incoming thread suffix; "
+            "only user turns and tool results for backend-issued tool calls extend stored history.",
+            raw_role or "unknown",
+        )
+    return filtered
+
+
+def _reconstruct_messages_from_thread_snapshot(
+    *,
+    stored_messages: list[dict[str, Any]],
+    incoming_messages: list[dict[str, Any]],
+    stored_interrupt: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Combine backend-owned prior history with the request-owned new user turn."""
+    if not stored_messages or not incoming_messages:
+        return incoming_messages
+
+    overlap_candidates = [
+        (start, _snapshot_overlap_length(stored_messages, incoming_messages, start=start))
+        for start, stored_message in enumerate(stored_messages)
+        if _snapshot_messages_match(stored_message, incoming_messages[0])
+    ]
+    matched_count = max(
+        (
+            overlap
+            for start, overlap in overlap_candidates
+            if overlap >= 2
+            or (
+                stored_messages[start].get("id")
+                and incoming_messages[0].get("id")
+                and str(stored_messages[start]["id"]) == str(incoming_messages[0]["id"])
+            )
+        ),
+        default=0,
+    )
+    if (
+        matched_count == len(incoming_messages)
+        and matched_count
+        and normalize_agui_role(incoming_messages[-1].get("role", "user")) == "user"
+        and not incoming_messages[-1].get("id")
+    ):
+        matched_count -= 1
+    if matched_count:
+        incoming_suffix = incoming_messages[matched_count:]
+    else:
+        latest_user_index = _latest_user_message_index(incoming_messages)
+        incoming_suffix = incoming_messages if latest_user_index is None else incoming_messages[latest_user_index:]
+
+    incoming_suffix = _filter_untrusted_suffix(
+        incoming_suffix,
+        stored_messages=stored_messages,
+        stored_interrupt=stored_interrupt,
+    )
+
+    return [copy.deepcopy(message) for message in stored_messages] + [
+        copy.deepcopy(message) for message in incoming_suffix
+    ]

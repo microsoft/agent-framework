@@ -18,6 +18,7 @@ def test_core_ag_ui_lazy_exports_include_only_stable_api() -> None:
     assert hasattr(ag_ui, "AgentFrameworkAgent")
     assert hasattr(ag_ui, "AGUIChatClient")
     assert hasattr(ag_ui, "add_agent_framework_fastapi_endpoint")
+    assert hasattr(ag_ui, "state_carrier")
     assert hasattr(ag_ui, "state_update")
 
     assert not hasattr(ag_ui, "WorkflowFactory")
@@ -25,11 +26,27 @@ def test_core_ag_ui_lazy_exports_include_only_stable_api() -> None:
     assert not hasattr(ag_ui, "RunMetadata")
 
 
-def test_agent_framework_ag_ui_exports_state_update() -> None:
-    """Runtime package should export the ``state_update`` helper."""
-    from agent_framework_ag_ui import state_update
+def test_agent_framework_ag_ui_exports_state_helpers() -> None:
+    """Runtime package should export the AG-UI state helpers."""
+    from agent_framework_ag_ui import state_carrier, state_update
 
+    assert callable(state_carrier)
     assert callable(state_update)
+
+
+def test_agent_framework_ag_ui_exports_snapshot_primitives() -> None:
+    """Runtime package should export AG-UI Thread Snapshot primitives."""
+    from agent_framework_ag_ui import (
+        DEFAULT_MAX_THREAD_SNAPSHOTS,
+        AGUIThreadSnapshot,
+        AGUIThreadSnapshotStore,
+        InMemoryAGUIThreadSnapshotStore,
+    )
+
+    assert AGUIThreadSnapshot.__name__ == "AGUIThreadSnapshot"
+    assert AGUIThreadSnapshotStore.__name__ == "AGUIThreadSnapshotStore"
+    assert InMemoryAGUIThreadSnapshotStore.__name__ == "InMemoryAGUIThreadSnapshotStore"
+    assert DEFAULT_MAX_THREAD_SNAPSHOTS >= 1
 
 
 def test_core_ag_ui_lazy_exports_include_event_converter_and_http_service() -> None:
@@ -39,3 +56,13 @@ def test_core_ag_ui_lazy_exports_include_event_converter_and_http_service() -> N
     assert hasattr(ag_ui, "AGUIEventConverter")
     assert hasattr(ag_ui, "AGUIHttpService")
     assert hasattr(ag_ui, "__version__")
+
+
+def test_core_ag_ui_lazy_exports_include_snapshot_primitives() -> None:
+    """Core facade must expose snapshot primitives needed for endpoint configuration."""
+    from agent_framework import ag_ui
+
+    assert hasattr(ag_ui, "AGUIThreadSnapshot")
+    assert hasattr(ag_ui, "AGUIThreadSnapshotStore")
+    assert hasattr(ag_ui, "InMemoryAGUIThreadSnapshotStore")
+    assert hasattr(ag_ui, "SnapshotScopeResolver")

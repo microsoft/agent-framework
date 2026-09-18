@@ -20,10 +20,10 @@ class DictConvertible:
 
     @classmethod
     def from_dict(cls: type[ModelT], data: dict[str, Any]) -> ModelT:
-        return cls(**data)  # type: ignore[arg-type]
+        return cls(**data)
 
     def clone(self, *, deep: bool = True) -> Self:
-        return copy.deepcopy(self) if deep else copy.copy(self)  # type: ignore[return-value]
+        return copy.deepcopy(self) if deep else copy.copy(self)
 
     def to_json(self) -> str:
         import json

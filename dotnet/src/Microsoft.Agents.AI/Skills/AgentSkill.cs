@@ -1,9 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI;
 
@@ -20,7 +18,6 @@ namespace Microsoft.Agents.AI;
 /// Skill metadata follows the <see href="https://agentskills.io/specification">Agent Skills specification</see>.
 /// </para>
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public abstract class AgentSkill
 {
     /// <summary>

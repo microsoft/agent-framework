@@ -1,8 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from collections.abc import AsyncIterable, Awaitable
+from collections.abc import AsyncIterable, Awaitable, Sequence
 from typing import Any, Literal, overload
 
+import agent_framework._telemetry as telemetry
 import pytest
 from agent_framework import (
     AgentExecutorResponse,
@@ -20,9 +21,12 @@ from agent_framework import (
     WorkflowRunState,
     handler,
 )
+from agent_framework._telemetry import FeatureIndex as CoreFeatureIndex
+from agent_framework._telemetry import get_feature_token
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
 from agent_framework.orchestrations import SequentialBuilder
-from typing_extensions import Never
+
+from agent_framework_orchestrations._feature_usage import FeatureIndex
 
 
 class _EchoAgent(BaseAgent):
@@ -75,7 +79,7 @@ class _SummarizerTerminator(Executor):
     async def summarize(
         self,
         agent_response: AgentExecutorResponse,
-        ctx: WorkflowContext[Never, AgentResponse],
+        ctx: WorkflowContext[Any, AgentResponse],
     ) -> None:
         conversation = agent_response.full_conversation or []
         user_texts = [m.text for m in conversation if m.role == "user"]
@@ -92,9 +96,29 @@ class _InvalidExecutor(Executor):
         pass
 
 
+def test_sequential_builder_does_not_mark_custom_workflow() -> None:
+    with telemetry._feature_mask_lock:
+        telemetry._feature_mask = 0
+
+    SequentialBuilder(participants=[_EchoAgent(name="echo")]).build()
+
+    token = get_feature_token()
+    assert token is not None
+    mask = int(token.split(".", 1)[1], 16)
+    assert mask & (1 << FeatureIndex.ORCHESTRATION_SEQUENTIAL)
+    assert not mask & (1 << CoreFeatureIndex.CORE_WORKFLOW)
+
+
 def test_sequential_builder_rejects_empty_participants() -> None:
     with pytest.raises(ValueError):
         SequentialBuilder(participants=[])
+
+
+def test_sequential_builder_uses_stable_default_and_custom_name() -> None:
+    participant = _EchoAgent(name="echo")
+
+    assert SequentialBuilder(participants=[participant]).build().name == "Sequential"
+    assert SequentialBuilder(name="custom-sequential", participants=[participant]).build().name == "custom-sequential"
 
 
 def test_sequential_builder_validation_rejects_invalid_executor() -> None:
@@ -195,6 +219,7 @@ async def test_sequential_checkpoint_resume_round_trip() -> None:
 
     initial_agents = (_EchoAgent(id="agent1", name="A1"), _EchoAgent(id="agent2", name="A2"))
     wf = SequentialBuilder(participants=list(initial_agents), checkpoint_storage=storage).build()
+    assert wf.name == "Sequential"
 
     baseline_updates: list[AgentResponseUpdate] = []
     async for ev in wf.run("checkpoint sequential", stream=True):
@@ -356,7 +381,8 @@ class _CapturingAgent(BaseAgent):
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         captured: list[Message] = []
         if messages:
-            for m in messages:  # type: ignore[union-attr]
+            message_items = messages if isinstance(messages, Sequence) and not isinstance(messages, str) else [messages]
+            for m in message_items:
                 if isinstance(m, Message):
                     captured.append(m)
                 elif isinstance(m, str):
@@ -459,10 +485,11 @@ async def test_sequential_request_info_last_participant_emits_output() -> None:
             request_events.append(ev)
 
     # Approve each agent in sequence until the workflow completes
+    output_events: list[Any] = []
     while request_events:
         responses = {req.request_id: AgentRequestInfoResponse.approve() for req in request_events}
         request_events = []
-        output_events: list[Any] = []
+        output_events = []
         async for ev in wf.run(stream=True, responses=responses):
             if ev.type == "request_info" and isinstance(ev.data, AgentExecutorResponse):
                 request_events.append(ev)

@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
@@ -27,30 +28,45 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// such as Redis, SQL Server, or Azure Cosmos DB.
 /// </para>
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
+[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class InMemoryAgentSessionStore : AgentSessionStore
 {
-    private readonly ConcurrentDictionary<string, JsonElement> _sessions = new();
+    private readonly ConcurrentDictionary<(string AgentIdentity, AgentSessionStoreKey Key), JsonElement> _sessions = new();
 
     /// <inheritdoc/>
-    public override async ValueTask SaveSessionAsync(AIAgent agent, string conversationId, AgentSession session, CancellationToken cancellationToken = default)
+    public override async ValueTask SaveSessionAsync(
+        AIAgent agent,
+        AgentSessionStoreKey key,
+        AgentSession session,
+        CancellationToken cancellationToken = default)
     {
-        var key = GetKey(conversationId, agent.Id);
-        this._sessions[key] = await agent.SerializeSessionAsync(session, cancellationToken: cancellationToken).ConfigureAwait(false);
+        ArgumentNullException.ThrowIfNull(agent);
+        ArgumentNullException.ThrowIfNull(key);
+        ArgumentNullException.ThrowIfNull(session);
+
+        var storageKey = GetKey(agent, key);
+        this._sessions[storageKey] = await agent.SerializeSessionAsync(session, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc/>
-    public override async ValueTask<AgentSession> GetSessionAsync(AIAgent agent, string conversationId, CancellationToken cancellationToken = default)
+    public override async ValueTask<AgentSession?> GetSessionAsync(
+        AIAgent agent,
+        AgentSessionStoreKey key,
+        CancellationToken cancellationToken = default)
     {
-        var key = GetKey(conversationId, agent.Id);
-        JsonElement? sessionContent = this._sessions.TryGetValue(key, out var existingSession) ? existingSession : null;
+        ArgumentNullException.ThrowIfNull(agent);
+        ArgumentNullException.ThrowIfNull(key);
 
-        return sessionContent switch
+        if (!this._sessions.TryGetValue(GetKey(agent, key), out var existingSession))
         {
-            null => await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false),
-            _ => await agent.DeserializeSessionAsync(sessionContent.Value, cancellationToken: cancellationToken).ConfigureAwait(false),
-        };
+            return null;
+        }
+
+        return await agent.DeserializeSessionAsync(existingSession, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
-    private static string GetKey(string conversationId, string agentId) => $"{agentId}:{conversationId}";
+    private static (string AgentIdentity, AgentSessionStoreKey Key) GetKey(
+        AIAgent agent,
+        AgentSessionStoreKey key)
+        => (FoundryHostingAgent.GetSessionStorageIdentity(agent, allowInstanceId: true), key);
 }

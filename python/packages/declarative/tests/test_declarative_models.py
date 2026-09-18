@@ -3,6 +3,7 @@
 """Tests for MAML model classes."""
 
 import sys
+from typing import Any, cast
 
 import pytest
 
@@ -156,6 +157,7 @@ class TestArrayProperty:
         array_prop = ArrayProperty(name="test_array", kind="array", items=items, required=True)
         assert array_prop.name == "test_array"
         assert array_prop.kind == "array"
+        assert array_prop.items is not None
         assert array_prop.items.name == "item"
         assert array_prop.required is True
 
@@ -167,6 +169,7 @@ class TestArrayProperty:
             "required": True,
         }
         array_prop = ArrayProperty.from_dict(data)
+        assert isinstance(array_prop, ArrayProperty)
         assert array_prop.name == "test_array"
         assert array_prop.kind == "array"
         assert isinstance(array_prop.items, Property)
@@ -198,6 +201,7 @@ class TestObjectProperty:
             "required": True,
         }
         obj_prop = ObjectProperty.from_dict(data)
+        assert isinstance(obj_prop, ObjectProperty)
         assert obj_prop.name == "test_object"
         assert obj_prop.kind == "object"
         assert len(obj_prop.properties) == 2
@@ -215,6 +219,7 @@ class TestObjectProperty:
             },
         }
         obj_prop = ObjectProperty.from_dict(data)
+        assert isinstance(obj_prop, ObjectProperty)
         assert obj_prop.name == "person"
         assert obj_prop.kind == "object"
         assert len(obj_prop.properties) == 3
@@ -224,7 +229,7 @@ class TestObjectProperty:
         assert prop_names == {"name", "email", "age"}
 
         # Check specific property
-        name_prop = next(p for p in obj_prop.properties if p.name == "name")
+        name_prop = next(p for p in obj_prop.properties if p.name == "name")  # pyrefly: ignore[not-iterable]
         assert name_prop.kind == "string"
         assert name_prop.required is True
 
@@ -297,12 +302,86 @@ class TestPropertySchema:
         assert "required" not in json_schema["properties"]["language"]
         assert "required" not in json_schema["properties"]["answer"]
 
+    def test_property_schema_array_items_kind_renamed_recursively(self):
+        """Nested array 'items' schemas get kind -> type renamed and empty enums dropped."""
+        schema = PropertySchema.from_dict({
+            "properties": {
+                "issues": {"kind": "array", "items": {"kind": "string"}},
+            },
+        })
+
+        json_schema = schema.to_json_schema()
+
+        assert json_schema["properties"]["issues"]["type"] == "array"
+        assert json_schema["properties"]["issues"]["items"] == {"type": "string"}
+
+    def test_property_schema_nested_object_properties_kind_renamed_recursively(self):
+        """Nested object 'properties' (including arrays of objects) are converted at every depth."""
+        schema = PropertySchema.from_dict({
+            "properties": {
+                "picks": {
+                    "kind": "array",
+                    "items": {
+                        "kind": "object",
+                        "properties": {"ref": {"kind": "number"}},
+                    },
+                },
+            },
+        })
+
+        json_schema = schema.to_json_schema()
+
+        items = json_schema["properties"]["picks"]["items"]
+        assert items["type"] == "object"
+        assert items["properties"]["ref"] == {"type": "number"}
+        assert items["additionalProperties"] is False
+
+    def test_property_schema_object_nodes_get_additional_properties_false(self):
+        """Every object node below the root carries additionalProperties: false.
+
+        OpenAI strict structured outputs reject object nodes without it; chat
+        clients only inject it at the schema root.
+        """
+        schema = PropertySchema.from_dict({
+            "properties": {
+                "meta": {
+                    "kind": "object",
+                    "properties": {
+                        "inner": {"kind": "object", "properties": {"leaf": {"kind": "string"}}},
+                    },
+                },
+            },
+        })
+
+        json_schema = schema.to_json_schema()
+
+        meta = json_schema["properties"]["meta"]
+        assert meta["additionalProperties"] is False
+        assert meta["properties"]["inner"]["additionalProperties"] is False
+
+    def test_property_schema_unexpected_nested_properties_left_untouched(self):
+        """A nested properties list with an unexpected element is left fully unmodified."""
+        from agent_framework_declarative._models import _normalize_nested_schemas
+
+        node = {
+            "type": "object",
+            "properties": [
+                {"name": "ok", "kind": "string"},
+                "not-a-dict",
+            ],
+        }
+
+        _normalize_nested_schemas(node)
+
+        # No partial mutation: the well-formed first element keeps its original shape too.
+        assert node["properties"] == [{"name": "ok", "kind": "string"}, "not-a-dict"]
+
 
 class TestConnection:
     """Tests for Connection base class."""
 
     def test_connection_creation(self):
-        conn = Connection(kind="base")
+        conn = Connection(kind=cast("Any", "base"))
         assert conn.kind == "base"
 
     def test_connection_from_dict(self):
@@ -412,6 +491,7 @@ class TestModel:
         }
         model = Model.from_dict(data)
         assert model.id == "gpt-4"
+        assert model.connection is not None
         assert model.connection.kind == "reference"
 
 
@@ -720,6 +800,8 @@ class TestMcpTool:
         tool_full = McpTool.from_dict(data_full)
 
         # Both should produce the same result
+        assert tool_simplified.approvalMode is not None
+        assert tool_full.approvalMode is not None
         assert tool_simplified.approvalMode.kind == tool_full.approvalMode.kind
         assert tool_simplified.approvalMode.kind == "never"
 
@@ -800,8 +882,8 @@ class TestPromptAgent:
             "model": {"id": "gpt-4"},
         }
         agent = PromptAgent.from_dict(data)
+        assert isinstance(agent, PromptAgent)
         assert agent.name == "prompt-agent"
-        assert isinstance(agent.model, Model)
         assert isinstance(agent.model, Model)
 
     def test_prompt_agent_with_tools(self):
@@ -814,6 +896,8 @@ class TestPromptAgent:
             ],
         }
         agent = PromptAgent.from_dict(data)
+        assert isinstance(agent, PromptAgent)
+        assert agent.tools is not None
         assert len(agent.tools) == 2
         # Tools are converted via Tool.from_dict, type depends on 'kind'
         assert agent.tools[0].kind == "web_search"
@@ -850,6 +934,7 @@ class TestModelResource:
             "id": "gpt-4",
         }
         resource = ModelResource.from_dict(data)
+        assert isinstance(resource, ModelResource)
         assert resource.name == "my-model"
         assert resource.kind == "model"
         assert resource.id == "gpt-4"
@@ -871,6 +956,7 @@ class TestToolResource:
             "id": "search-tool",
         }
         resource = ToolResource.from_dict(data)
+        assert isinstance(resource, ToolResource)
         assert resource.name == "my-tool"
         assert resource.kind == "tool"
         assert resource.id == "search-tool"
@@ -927,7 +1013,7 @@ class TestTryPowerfxEval:
 
     def test_none_value_returns_none(self):
         """Test that None values are returned as None."""
-        assert _try_powerfx_eval(None) is None
+        assert _try_powerfx_eval(cast("str", None)) is None
 
     def test_empty_string_returns_empty(self):
         """Test that empty strings are returned as empty."""

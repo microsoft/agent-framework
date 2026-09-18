@@ -12,7 +12,7 @@ alongside deeper cloud-based quality evaluation (relevance, coherence)
 in one call.
 
 Prerequisites:
-- An Azure AI Foundry project with a deployed model
+- A Microsoft Foundry project with a deployed model
 - Set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL in .env
 """
 

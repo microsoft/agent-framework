@@ -18,7 +18,7 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import tool
-from agent_framework.github import GitHubCopilotAgent
+from agent_framework.github import GitHubCopilotAgent, GitHubCopilotOptions
 from copilot.session import PermissionHandler
 from dotenv import load_dotenv
 from pydantic import Field
@@ -43,10 +43,10 @@ async def non_streaming_example() -> None:
     """Example of non-streaming response (get the complete result at once)."""
     print("=== Non-streaming Response Example ===")
 
-    agent = GitHubCopilotAgent(
+    agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
         instructions="You are a helpful weather agent.",
         tools=[get_weather],
-        default_options={"on_permission_request": PermissionHandler.approve_all},
+        default_options=GitHubCopilotOptions(on_permission_request=PermissionHandler.approve_all),
     )
 
     async with agent:
@@ -60,10 +60,10 @@ async def streaming_example() -> None:
     """Example of streaming response (get results as they are generated)."""
     print("=== Streaming Response Example ===")
 
-    agent = GitHubCopilotAgent(
+    agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
         instructions="You are a helpful weather agent.",
         tools=[get_weather],
-        default_options={"on_permission_request": PermissionHandler.approve_all},
+        default_options=GitHubCopilotOptions(on_permission_request=PermissionHandler.approve_all),
     )
 
     async with agent:
@@ -80,10 +80,10 @@ async def runtime_options_example() -> None:
     """Example of overriding system message at runtime."""
     print("=== Runtime Options Example ===")
 
-    agent = GitHubCopilotAgent(
+    agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
         instructions="Always respond in exactly 3 words.",
         tools=[get_weather],
-        default_options={"on_permission_request": PermissionHandler.approve_all},
+        default_options=GitHubCopilotOptions(on_permission_request=PermissionHandler.approve_all),
     )
 
     async with agent:
@@ -98,15 +98,15 @@ async def runtime_options_example() -> None:
         # Second call overrides with runtime system_message in replace mode
         print("Using runtime system_message with replace mode (detailed response):")
         print(f"User: {query}")
-        result2 = await agent.run(
+        result2 = await agent.run(  # pyright: ignore[reportCallIssue]
             query,
-            options={
-                "system_message": {
+            options=GitHubCopilotOptions(  # pyright: ignore[reportArgumentType]
+                system_message={
                     "mode": "replace",
                     "content": "You are a weather expert. Provide detailed weather information "
                     "with temperature, and recommendations.",
                 }
-            },
+            ),
         )
         print(f"Agent: {result2}\n")
 

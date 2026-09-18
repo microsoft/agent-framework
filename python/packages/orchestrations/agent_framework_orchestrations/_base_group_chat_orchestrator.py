@@ -22,9 +22,9 @@ from typing_extensions import Never
 from ._orchestration_request_info import AgentApprovalExecutor
 
 if sys.version_info >= (3, 12):
-    from typing import override  # type: ignore # pragma: no cover
+    from typing import override  # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore # pragma: no cover
+    from typing_extensions import override  # pragma: no cover
 
 
 logger = logging.getLogger(__name__)
@@ -482,7 +482,7 @@ class BaseGroupChatOrchestrator(Executor, ABC):
             )
         else:
             # Custom executors receive full context envelope
-            request = GroupChatRequestMessage(additional_instruction=additional_instruction, metadata=metadata)  # type: ignore[assignment]
+            request = GroupChatRequestMessage(additional_instruction=additional_instruction, metadata=metadata)
             await ctx.send_message(request, target_id=target)
             await ctx.add_event(
                 WorkflowEvent(

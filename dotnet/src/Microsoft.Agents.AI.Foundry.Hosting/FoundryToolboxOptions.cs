@@ -9,7 +9,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// <summary>
 /// Options for Foundry Toolbox MCP integration.
 /// </summary>
-[Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
+[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class FoundryToolboxOptions
 {
     /// <summary>

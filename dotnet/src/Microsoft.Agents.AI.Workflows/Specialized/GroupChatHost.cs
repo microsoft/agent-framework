@@ -75,6 +75,15 @@ internal sealed class GroupChatHost(
         if (await this._manager.SelectNextAgentAsync(this._history, cancellationToken).ConfigureAwait(false) is AIAgent nextAgent &&
             this._agentMap.TryGetValue(nextAgent, out ExecutorBinding? executor))
         {
+            // If the manager selects the agent who just spoke, that agent was excluded from the
+            // broadcast of its own messages and has no new input to respond to. Treat it as
+            // termination — a well-designed manager should avoid this via ShouldTerminateAsync.
+            if (string.Equals(executor.Id, this._currentSpeakerExecutorId, StringComparison.Ordinal))
+            {
+                await this.CompleteAsync(context, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
             this._manager.IterationCount++;
             this._currentSpeakerExecutorId = executor.Id;
             await context.SendMessageAsync(new TurnToken(emitEvents), executor.Id, cancellationToken).ConfigureAwait(false);

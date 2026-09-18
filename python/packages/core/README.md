@@ -14,7 +14,7 @@ Highlights
 
 ```bash
 pip install agent-framework-core
-# Optional: Add Azure AI Foundry integration
+# Optional: Add Microsoft Foundry integration
 pip install agent-framework-foundry
 # Optional: Add OpenAI integration
 pip install agent-framework-openai
@@ -52,6 +52,17 @@ client = OpenAIChatClient(
     model="",
 )
 ```
+
+### Telemetry controls
+
+Agent Framework adds its package/version User-Agent to supported client
+requests. Approved Microsoft Foundry and Azure OpenAI request paths can also
+carry a documented feature-usage token.
+
+- `AGENT_FRAMEWORK_FEATURE_MASK_DISABLED=true` disables only the feature-usage
+  token while retaining the package/version User-Agent.
+- `AGENT_FRAMEWORK_USER_AGENT_DISABLED=true` disables the entire Agent Framework
+  User-Agent contribution, including the feature token.
 
 See the following [getting started samples](https://github.com/microsoft/agent-framework/tree/main/python/samples/01-get-started) for more information.
 
@@ -156,6 +167,21 @@ asyncio.run(main())
 ```
 
 You can explore additional agent samples [here](https://github.com/microsoft/agent-framework/tree/main/python/samples/02-agents).
+
+### MCP HTTP client ownership and cookies
+
+**Breaking change:** HTTP clients created by `MCPStreamableHTTPTool` no longer persist
+response cookies. This applies with or without a `header_provider`, including repeated
+calls within the same MCP session. Connection reuse, timeout and redirect defaults,
+and cleanup on close or reset are preserved. Explicit `Cookie` headers supplied through
+`static_headers` or a `header_provider` are still supported.
+
+Applications relying on cookie-based authentication, sessions, or load-balancer affinity
+must supply an `httpx.AsyncClient` through `http_client=`. Supplied clients retain their
+configuration and response-cookie handling and must be closed by the caller. Scope
+cookie-bearing clients and MCP tool sessions to one authenticated principal; do not
+share a user-specific cookie jar across users. Rejecting cookies does not partition
+MCP protocol sessions or other server-side state between principals.
 
 ## 5. Multi-Agent Orchestration
 

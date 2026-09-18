@@ -3,6 +3,7 @@
 """Tests for Purview client."""
 
 from collections.abc import AsyncGenerator
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -18,6 +19,7 @@ from agent_framework_purview._exceptions import (
     PurviewRequestError,
     PurviewServiceError,
 )
+from agent_framework_purview._feature_usage import FeatureIndex
 from agent_framework_purview._models import (
     ContentActivitiesRequest,
     ContentActivitiesResponse,
@@ -166,9 +168,13 @@ class TestPurviewClient:
         mock_response.headers = {}
         mock_response.json.return_value = {"id": "response-123", "protectionScopeState": "notModified"}
 
-        with patch.object(client._client, "post", return_value=mock_response):
+        with (
+            patch.object(client._client, "post", return_value=mock_response),
+            patch("agent_framework_purview._client.mark_feature_used") as mark_feature_used,
+        ):
             response = await client.process_content(request)
 
+            mark_feature_used.assert_called_once_with(FeatureIndex.PURVIEW)
             assert response.id == "response-123"
             assert response.protection_scope_state == "notModified"
 
@@ -199,7 +205,7 @@ class TestPurviewClient:
             user_id="user-123", tenant_id="tenant-456", locations=[location], correlation_id="corr-789"
         )
 
-        response_obj = ProtectionScopesResponse(**{"scopeIdentifier": "scope-from-body", "value": []})
+        response_obj = ProtectionScopesResponse(scope_identifier="scope-from-body", scopes=[])
 
         with patch.object(
             client,
@@ -219,7 +225,7 @@ class TestPurviewClient:
         settings = PurviewSettings(app_name="Test App", ignore_payment_required=True)
         client = PurviewClient(mock_credential, settings)
 
-        request = ProcessContentRequest(user_id="user-123", tenant_id="tenant-456", content_to_process=[])
+        request = ProcessContentRequest(user_id="user-123", tenant_id="tenant-456", content_to_process=cast(Any, []))
 
         resp = httpx.Response(402, text="Payment required", request=httpx.Request("POST", "http://test"))
 
@@ -234,7 +240,7 @@ class TestPurviewClient:
         from agent_framework_purview._models import ProcessContentResponse
 
         # correlation_id is optional and should be auto-generated when empty
-        request = ProcessContentRequest(user_id="user-123", tenant_id="tenant-456", content_to_process=[])
+        request = ProcessContentRequest(user_id="user-123", tenant_id="tenant-456", content_to_process=cast(Any, []))
         request.correlation_id = ""  # force auto-generation branch
 
         captured_headers: dict[str, str] = {}
@@ -270,7 +276,7 @@ class TestPurviewClient:
         settings = PurviewSettings(app_name="Test App", ignore_payment_required=True)
         client = PurviewClient(mock_credential, settings)
 
-        req = ProcessContentRequest(user_id="user-123", tenant_id="tenant-456", content_to_process=[])
+        req = ProcessContentRequest(user_id="user-123", tenant_id="tenant-456", content_to_process=cast(Any, []))
 
         mock_response = MagicMock(spec=httpx.Response)
         mock_response.status_code = 402
@@ -286,7 +292,7 @@ class TestPurviewClient:
         """Test that correlation_id is added to the active span when recording is enabled."""
         from agent_framework_purview._models import ProcessContentResponse
 
-        request = ProcessContentRequest(user_id="user-123", tenant_id="tenant-456", content_to_process=[])
+        request = ProcessContentRequest(user_id="user-123", tenant_id="tenant-456", content_to_process=cast(Any, []))
         request.correlation_id = "corr-123"
 
         class RecordingSpan:
@@ -325,7 +331,7 @@ class TestPurviewClient:
             def __init__(self, **data):
                 self.data = data
 
-        request = ProcessContentRequest(user_id="user-123", tenant_id="tenant-456", content_to_process=[])
+        request = ProcessContentRequest(user_id="user-123", tenant_id="tenant-456", content_to_process=cast(Any, []))
         request.correlation_id = "corr-123"
 
         with patch.object(
@@ -364,7 +370,7 @@ class TestPurviewClient:
 
     async def test_post_handles_invalid_json_response_body(self, client: PurviewClient) -> None:
         """Test that invalid JSON bodies fall back to an empty dict."""
-        request = ProcessContentRequest(user_id="user-123", tenant_id="tenant-456", content_to_process=[])
+        request = ProcessContentRequest(user_id="user-123", tenant_id="tenant-456", content_to_process=cast(Any, []))
         request.correlation_id = "corr-123"
 
         mock_response = MagicMock(spec=httpx.Response)
@@ -385,7 +391,7 @@ class TestPurviewClient:
             def model_validate(cls, value):
                 raise RuntimeError("boom")
 
-        request = ProcessContentRequest(user_id="user-123", tenant_id="tenant-456", content_to_process=[])
+        request = ProcessContentRequest(user_id="user-123", tenant_id="tenant-456", content_to_process=cast(Any, []))
         request.correlation_id = "corr-123"
 
         mock_response = MagicMock(spec=httpx.Response)
@@ -417,7 +423,7 @@ class TestPurviewClient:
         request = ProcessContentRequest(
             user_id="test-user",
             tenant_id="test-tenant",
-            content_to_process=[],
+            content_to_process=cast(Any, []),
             correlation_id="test-correlation-id",
         )
 
@@ -437,7 +443,7 @@ class TestPurviewClient:
         request = ProcessContentRequest(
             user_id="test-user",
             tenant_id="test-tenant",
-            content_to_process=[],
+            content_to_process=cast(Any, []),
             correlation_id="test-correlation-id",
         )
 
@@ -466,7 +472,7 @@ class TestPurviewClient:
             process_inline=True,
         )
 
-        posted_headers = {}
+        posted_headers: dict[str, str] = {}
         mock_response = MagicMock(spec=httpx.Response)
         mock_response.status_code = 200
         mock_response.headers = {}
@@ -494,7 +500,7 @@ class TestPurviewClient:
             process_inline=False,
         )
 
-        posted_headers = {}
+        posted_headers: dict[str, str] = {}
         mock_response = MagicMock(spec=httpx.Response)
         mock_response.status_code = 200
         mock_response.headers = {}
@@ -521,7 +527,7 @@ class TestPurviewClient:
             process_inline=None,
         )
 
-        posted_headers = {}
+        posted_headers: dict[str, str] = {}
         mock_response = MagicMock(spec=httpx.Response)
         mock_response.status_code = 200
         mock_response.headers = {}
@@ -561,7 +567,7 @@ class TestPurviewClient:
             scope_identifier="test-scope-id",
         )
 
-        posted_headers = {}
+        posted_headers: dict[str, str] = {}
         mock_response = MagicMock(spec=httpx.Response)
         mock_response.status_code = 200
         mock_response.headers = {}

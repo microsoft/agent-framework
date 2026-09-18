@@ -15,7 +15,7 @@ The workflow loops until the teacher gives congratulations or max turns reached.
 Prerequisites:
     - Azure OpenAI deployment with chat completion capability
     - Environment variables:
-        FOUNDRY_PROJECT_ENDPOINT: Your Azure AI Foundry Agent Service (V2) project endpoint
+        FOUNDRY_PROJECT_ENDPOINT: Your Microsoft Foundry Agent Service (V2) project endpoint
         FOUNDRY_MODEL: Your model deployment name
 """
 

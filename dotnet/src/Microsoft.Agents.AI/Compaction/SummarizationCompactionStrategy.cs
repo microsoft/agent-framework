@@ -32,6 +32,17 @@ namespace Microsoft.Agents.AI.Compaction;
 /// The <see cref="CompactionTrigger"/> predicate controls when compaction proceeds. Use
 /// <see cref="CompactionTriggers"/> for common trigger conditions such as token thresholds.
 /// </para>
+/// <para>
+/// <strong>Security considerations:</strong> Using this strategy is an explicit opt-in — it must be
+/// constructed with a summarization <see cref="IChatClient"/> and configured (e.g. via a harness
+/// agent's <c>CompactionStrategy</c> option or <see cref="CompactionProvider"/>). The
+/// summarized text produced by the summarization client permanently replaces the original messages in
+/// chat history and is trusted the same as any other assistant message going forward. A compromised or
+/// malicious summarization service could therefore return a summary containing unsafe instructions,
+/// which become a persistent part of the conversation — a form of indirect prompt injection that
+/// survives beyond the turn in which it was introduced. Only point <c>chatClient</c> at a summarization
+/// service you trust as much as the primary model.
+/// </para>
 /// </remarks>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class SummarizationCompactionStrategy : CompactionStrategy
@@ -58,7 +69,13 @@ public sealed class SummarizationCompactionStrategy : CompactionStrategy
     /// <summary>
     /// Initializes a new instance of the <see cref="SummarizationCompactionStrategy"/> class.
     /// </summary>
-    /// <param name="chatClient">The <see cref="IChatClient"/> to use for generating summaries. A smaller, faster model is recommended.</param>
+    /// <param name="chatClient">
+    /// The <see cref="IChatClient"/> to use for generating summaries. A smaller, faster model is
+    /// recommended. <strong>Security:</strong> Its output permanently replaces the original messages in
+    /// chat history, so only use a summarization service you trust as much as the primary model — see
+    /// the type-level security considerations for the indirect-prompt-injection risk of an untrusted
+    /// summarizer.
+    /// </param>
     /// <param name="trigger">
     /// The <see cref="CompactionTrigger"/> that controls when compaction proceeds.
     /// </param>

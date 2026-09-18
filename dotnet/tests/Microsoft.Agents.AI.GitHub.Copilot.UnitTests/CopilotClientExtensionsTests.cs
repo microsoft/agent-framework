@@ -1,10 +1,8 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
-using System.Threading.Tasks;
 using GitHub.Copilot;
-using GitHub.Copilot.Rpc;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.GitHub.Copilot.UnitTests;
@@ -14,9 +12,6 @@ namespace Microsoft.Agents.AI.GitHub.Copilot.UnitTests;
 /// </summary>
 public sealed class CopilotClientExtensionsTests
 {
-    private static readonly Func<PermissionRequest, PermissionInvocation, Task<PermissionDecision>> s_testPermissionHandler =
-        (_, _) => Task.FromResult(PermissionDecision.ApproveOnce());
-
     [Fact]
     public void AsAIAgent_WithAllParameters_ReturnsGitHubCopilotAgentWithSpecifiedProperties()
     {
@@ -28,7 +23,7 @@ public sealed class CopilotClientExtensionsTests
         const string TestDescription = "This is a test agent description";
 
         // Act
-        var agent = copilotClient.AsAIAgent(s_testPermissionHandler, ownsClient: false, id: TestId, name: TestName, description: TestDescription);
+        var agent = copilotClient.AsAIAgent(ownsClient: false, id: TestId, name: TestName, description: TestDescription, tools: null);
 
         // Assert
         Assert.NotNull(agent);
@@ -45,7 +40,7 @@ public sealed class CopilotClientExtensionsTests
         CopilotClient copilotClient = new(new CopilotClientOptions());
 
         // Act
-        var agent = copilotClient.AsAIAgent(s_testPermissionHandler);
+        var agent = copilotClient.AsAIAgent(ownsClient: false, tools: null);
 
         // Assert
         Assert.NotNull(agent);
@@ -59,7 +54,7 @@ public sealed class CopilotClientExtensionsTests
         CopilotClient? copilotClient = null;
 
         // Act & Assert
-        Assert.Throws<ArgumentNullException>(() => copilotClient!.AsAIAgent(new SessionConfig { OnPermissionRequest = s_testPermissionHandler }));
+        Assert.Throws<ArgumentNullException>(() => copilotClient!.AsAIAgent(sessionConfig: null));
     }
 
     [Fact]
@@ -69,7 +64,7 @@ public sealed class CopilotClientExtensionsTests
         CopilotClient copilotClient = new(new CopilotClientOptions());
 
         // Act
-        var agent = copilotClient.AsAIAgent(s_testPermissionHandler, ownsClient: true);
+        var agent = copilotClient.AsAIAgent(ownsClient: true, tools: null);
 
         // Assert
         Assert.NotNull(agent);
@@ -81,29 +76,10 @@ public sealed class CopilotClientExtensionsTests
     {
         // Arrange
         CopilotClient copilotClient = new(new CopilotClientOptions());
-        List<AITool> tools = [AIFunctionFactory.Create(() => "test", "TestFunc", "Test function")];
+        List<AIFunctionDeclaration> tools = [AIFunctionFactory.Create(() => "test", "TestFunc", "Test function")];
 
         // Act
-        var agent = copilotClient.AsAIAgent(s_testPermissionHandler, tools: tools);
-
-        // Assert
-        Assert.NotNull(agent);
-        Assert.IsType<GitHubCopilotAgent>(agent);
-    }
-
-    [Fact]
-    public void AsAIAgent_WithSessionConfig_ReturnsAgent()
-    {
-        // Arrange
-        CopilotClient copilotClient = new(new CopilotClientOptions());
-        var sessionConfig = new SessionConfig
-        {
-            OnPermissionRequest = s_testPermissionHandler,
-            GitHubToken = "per-session-token",
-        };
-
-        // Act
-        var agent = copilotClient.AsAIAgent(sessionConfig);
+        var agent = copilotClient.AsAIAgent(tools: tools);
 
         // Assert
         Assert.NotNull(agent);

@@ -52,7 +52,7 @@ def message_text(messages: Any) -> str:
     if isinstance(messages, list):
         # List of messages - concatenate all text
         texts: list[str] = []
-        message_list = cast(list[Any], messages)  # type: ignore[redundant-cast]
+        message_list = cast(list[Any], messages)
         for msg in message_list:
             if isinstance(msg, str):
                 texts.append(msg)

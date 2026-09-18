@@ -33,14 +33,14 @@ class AnthropicFoundrySettings(TypedDict, total=False):
 class RawAnthropicFoundryClient(RawAnthropicClient[AnthropicOptionsT], Generic[AnthropicOptionsT]):
     """Raw Anthropic Foundry chat client without middleware, telemetry, or function invocation support."""
 
-    OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai.foundry"  # type: ignore[reportIncompatibleVariableOverride, misc]
+    OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai.foundry"
 
     def __init__(
         self,
         *,
         model: str | None = None,
         resource: str | None = None,
-        api_key: str | None = None,
+        api_key: str | SecretString | None = None,
         azure_ad_token_provider: AnthropicFoundryAzureADTokenProvider | None = None,
         base_url: str | None = None,
         anthropic_client: AsyncAnthropicFoundry | None = None,
@@ -109,7 +109,7 @@ class RawAnthropicFoundryClient(RawAnthropicClient[AnthropicOptionsT], Generic[A
         )
 
 
-class AnthropicFoundryClient(  # type: ignore[misc]
+class AnthropicFoundryClient(
     FunctionInvocationLayer[AnthropicOptionsT],
     ChatMiddlewareLayer[AnthropicOptionsT],
     ChatTelemetryLayer[AnthropicOptionsT],
@@ -123,7 +123,7 @@ class AnthropicFoundryClient(  # type: ignore[misc]
         *,
         model: str | None = None,
         resource: str | None = None,
-        api_key: str | None = None,
+        api_key: str | SecretString | None = None,
         azure_ad_token_provider: AnthropicFoundryAzureADTokenProvider | None = None,
         base_url: str | None = None,
         anthropic_client: AsyncAnthropicFoundry | None = None,

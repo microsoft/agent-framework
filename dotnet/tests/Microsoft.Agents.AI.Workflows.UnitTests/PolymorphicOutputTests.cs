@@ -4,7 +4,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using FluentAssertions;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
@@ -161,18 +160,18 @@ public partial class PolymorphicOutputTests
         }
 
         // Assert
-        events.Should().NotBeEmpty("workflow should produce events");
+        Assert.NotEmpty(events);
 
         List<WorkflowOutputEvent> outputEvents = events.OfType<WorkflowOutputEvent>().ToList();
-        outputEvents.Should().ContainSingle("workflow should produce exactly one output event");
+        Assert.Single(outputEvents);
 
         WorkflowOutputEvent outputEvent = outputEvents.Single();
-        outputEvent.Data.Should().BeOfType<DerivedOutput>("output should be the derived type");
-        ((DerivedOutput)outputEvent.Data!).Name.Should().Be("DerivedOutput");
+        DerivedOutput derivedOutput = Assert.IsType<DerivedOutput>(outputEvent.Data);
+        Assert.Equal("DerivedOutput", derivedOutput.Name);
 
         // Verify no error events
         List<WorkflowErrorEvent> errorEvents = events.OfType<WorkflowErrorEvent>().ToList();
-        errorEvents.Should().BeEmpty("workflow should not produce error events");
+        Assert.Empty(errorEvents ?? []);
     }
 
     /// <summary>
@@ -195,18 +194,18 @@ public partial class PolymorphicOutputTests
         }
 
         // Assert
-        events.Should().NotBeEmpty("workflow should produce events");
+        Assert.NotEmpty(events);
 
         List<WorkflowOutputEvent> outputEvents = events.OfType<WorkflowOutputEvent>().ToList();
-        outputEvents.Should().ContainSingle("workflow should produce exactly one output event");
+        Assert.Single(outputEvents);
 
         WorkflowOutputEvent outputEvent = outputEvents.Single();
-        outputEvent.Data.Should().BeOfType<GrandchildOutput>("output should be the grandchild type");
-        ((GrandchildOutput)outputEvent.Data!).Name.Should().Be("GrandchildOutput");
+        GrandchildOutput grandchildOutput = Assert.IsType<GrandchildOutput>(outputEvent.Data);
+        Assert.Equal("GrandchildOutput", grandchildOutput.Name);
 
         // Verify no error events
         List<WorkflowErrorEvent> errorEvents = events.OfType<WorkflowErrorEvent>().ToList();
-        errorEvents.Should().BeEmpty("workflow should not produce error events");
+        Assert.Empty(errorEvents ?? []);
     }
 
     /// <summary>
@@ -231,12 +230,12 @@ public partial class PolymorphicOutputTests
 
         // Assert: Should have an error event with InvalidOperationException message
         List<WorkflowErrorEvent> errorEvents = events.OfType<WorkflowErrorEvent>().ToList();
-        errorEvents.Should().ContainSingle("workflow should produce exactly one error event");
+        Assert.Single(errorEvents);
 
         WorkflowErrorEvent errorEvent = errorEvents.Single();
         string errorMessage = errorEvent.Data?.ToString() ?? string.Empty;
-        errorMessage.Should().Contain("Cannot output object of type UnrelatedOutput");
-        errorMessage.Should().Contain("BaseOutput");
+        Assert.Contains("Cannot output object of type UnrelatedOutput", errorMessage);
+        Assert.Contains("BaseOutput", errorMessage);
     }
 
     /// <summary>
@@ -259,17 +258,17 @@ public partial class PolymorphicOutputTests
         }
 
         // Assert
-        events.Should().NotBeEmpty("workflow should produce events");
+        Assert.NotEmpty(events);
 
         List<WorkflowOutputEvent> outputEvents = events.OfType<WorkflowOutputEvent>().ToList();
-        outputEvents.Should().ContainSingle("workflow should produce exactly one output event");
+        Assert.Single(outputEvents);
 
         WorkflowOutputEvent outputEvent = outputEvents.Single();
-        outputEvent.Data.Should().BeOfType<BaseOutput>("output should be the exact base type");
+        Assert.IsType<BaseOutput>(outputEvent.Data);
 
         // Verify no error events
         List<WorkflowErrorEvent> errorEvents = events.OfType<WorkflowErrorEvent>().ToList();
-        errorEvents.Should().BeEmpty("workflow should not produce error events");
+        Assert.Empty(errorEvents ?? []);
     }
 
     #endregion

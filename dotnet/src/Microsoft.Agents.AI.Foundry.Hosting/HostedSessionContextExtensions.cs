@@ -18,7 +18,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// identity values; consumers (such as <see cref="AIContextProvider"/> implementations) read the values
 /// through the public <see cref="GetHostedContext"/> accessor.
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
+[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public static class HostedSessionContextExtensions
 {
     /// <summary>

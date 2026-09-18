@@ -114,6 +114,8 @@ async def main() -> None:
 
         # 3) Convert and publish. The version returned by Foundry includes the version label
         # we need when connecting back to that specific deployment.
+        if agent.name is None:
+            raise ValueError("Agent name is required to create a prompt agent version.")
         created = await project_client.agents.create_version(
             agent_name=agent.name,
             # note this line:

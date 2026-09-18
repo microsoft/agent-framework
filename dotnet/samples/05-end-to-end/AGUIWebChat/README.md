@@ -66,12 +66,15 @@ Features:
 The server (`Server/Program.cs`) creates a simple chat agent:
 
 ```csharp
-// Create Azure OpenAI client
-AzureOpenAIClient azureOpenAIClient = new AzureOpenAIClient(
-    new Uri(endpoint),
-    new DefaultAzureCredential());
+// Create OpenAI client targeting Azure OpenAI
+Uri openAIEndpoint = AzureOpenAIEndpoint.From(endpoint)
+    ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 
-ChatClient chatClient = azureOpenAIClient.GetChatClient(deploymentName);
+OpenAIClient openAIClient = new OpenAIClient(
+    new BearerTokenPolicy(new DefaultAzureCredential(), "https://ai.azure.com/.default"),
+    new OpenAIClientOptions { Endpoint = openAIEndpoint });
+
+ChatClient chatClient = openAIClient.GetChatClient(deploymentName);
 
 // Create AI agent
 ChatClientAgent agent = chatClient.AsAIAgent(
@@ -79,7 +82,7 @@ ChatClientAgent agent = chatClient.AsAIAgent(
     instructions: "You are a helpful assistant.");
 
 // Map AG-UI endpoint
-app.MapAGUI("/ag-ui", agent);
+app.MapAGUIServer("/ag-ui", agent);
 ```
 
 The server exposes the agent via the AG-UI protocol at `http://localhost:5100/ag-ui`.
@@ -93,8 +96,8 @@ string serverUrl = builder.Configuration["AGUI_SERVER_URL"] ?? "http://localhost
 
 builder.Services.AddHttpClient("aguiserver", httpClient => httpClient.BaseAddress = new Uri(serverUrl));
 
-builder.Services.AddChatClient(sp => new AGUIChatClient(
-    sp.GetRequiredService<IHttpClientFactory>().CreateClient("aguiserver"), "ag-ui"));
+builder.Services.AddChatClient(sp => new AGUIChatClient(new(
+    sp.GetRequiredService<IHttpClientFactory>().CreateClient("aguiserver"), "ag-ui")));
 ```
 
 The Blazor UI (`Client/Components/Pages/Chat/Chat.razor`) uses the `IChatClient` to:

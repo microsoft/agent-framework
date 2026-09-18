@@ -40,6 +40,46 @@ public class FoundryToolboxBearerTokenHandlerTests
     }
 
     [Fact]
+    public async Task SendAsync_ForwardsCallIdWhenSetAsync()
+    {
+        // Arrange
+        var (handler, _) = CreateHandlerPair();
+        using var invoker = new HttpMessageInvoker(handler);
+        HostedCallContext.CallId = "call-abc";
+
+        try
+        {
+            // Act
+            using var request = new HttpRequestMessage(HttpMethod.Get, "https://example.com/api");
+            using var response = await invoker.SendAsync(request, CancellationToken.None);
+
+            // Assert
+            Assert.True(request.Headers.TryGetValues("x-agent-foundry-call-id", out var values));
+            Assert.Equal("call-abc", values!.Single());
+        }
+        finally
+        {
+            HostedCallContext.CallId = null;
+        }
+    }
+
+    [Fact]
+    public async Task SendAsync_OmitsCallIdWhenAbsentAsync()
+    {
+        // Arrange
+        var (handler, _) = CreateHandlerPair();
+        using var invoker = new HttpMessageInvoker(handler);
+        HostedCallContext.CallId = null;
+
+        // Act
+        using var request = new HttpRequestMessage(HttpMethod.Get, "https://example.com/api");
+        using var response = await invoker.SendAsync(request, CancellationToken.None);
+
+        // Assert
+        Assert.False(request.Headers.Contains("x-agent-foundry-call-id"));
+    }
+
+    [Fact]
     public async Task SendAsync_InjectsBearerTokenAsync()
     {
         var (handler, _) = CreateHandlerPair();

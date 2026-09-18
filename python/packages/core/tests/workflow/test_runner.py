@@ -2,7 +2,7 @@
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -17,12 +17,12 @@ from agent_framework import (
     WorkflowContext,
     WorkflowConvergenceException,
     WorkflowEvent,
-    WorkflowRunnerException,
     WorkflowRunState,
     handler,
 )
-from agent_framework._workflows._const import EXECUTOR_STATE_KEY
-from agent_framework._workflows._edge import FanOutEdgeGroup, SingleEdgeGroup
+from agent_framework._workflows._const import EDGE_STATE_KEY, EXECUTOR_STATE_KEY
+from agent_framework._workflows._edge import FanInEdgeGroup, FanOutEdgeGroup, SingleEdgeGroup
+from agent_framework._workflows._edge_runner import FanInEdgeRunner
 from agent_framework._workflows._runner import Runner
 from agent_framework._workflows._runner_context import (
     InProcRunnerContext,
@@ -171,7 +171,7 @@ async def test_runner_run_iteration_preserves_message_order_per_edge_runner() ->
     runner = Runner([], {}, state, ctx, "test_name", graph_signature_hash="test_hash")
 
     edge_runner = RecordingEdgeRunner()
-    runner._edge_runner_map = {"source": [edge_runner]}  # type: ignore[assignment]
+    runner._edge_runner_map = {"source": [edge_runner]}  # type: ignore[assignment, list-item]  # ty: ignore[invalid-assignment]
 
     for index in range(5):
         await ctx.send_message(WorkflowMessage(data=MockMessage(data=index), source_id="source"))
@@ -216,7 +216,7 @@ async def test_runner_run_iteration_delivers_different_edge_runners_concurrently
 
     blocking_edge_runner = BlockingEdgeRunner()
     probe_edge_runner = ProbeEdgeRunner()
-    runner._edge_runner_map = {"source": [blocking_edge_runner, probe_edge_runner]}  # type: ignore[assignment]
+    runner._edge_runner_map = {"source": [blocking_edge_runner, probe_edge_runner]}  # type: ignore[assignment, list-item]  # ty: ignore[invalid-assignment]
 
     await ctx.send_message(WorkflowMessage(data=MockMessage(data=1), source_id="source"))
 
@@ -305,40 +305,62 @@ async def test_fanout_edge_runner_delivers_to_multiple_targets_concurrently() ->
     assert probe_target.call_count == 1
 
 
-async def test_runner_already_running():
-    """Test that running the runner while it is already running raises an error."""
+async def test_runner_run_until_convergence_runs_sequentially():
+    """run_until_convergence can be invoked back-to-back on the same Runner.
+
+    The Runner itself does not enforce concurrency; that responsibility lives on
+    :class:`Workflow`. This test simply confirms the Runner is reusable across
+    sequential runs.
+    """
+    runner = _make_runner()
+    async for _ in runner.run_until_convergence():
+        pass
+    async for _ in runner.run_until_convergence():
+        pass
+
+
+def _make_runner() -> Runner:
+    """Build a minimal runner for runner-level tests."""
+    return Runner(
+        [],
+        {},
+        State(),
+        InProcRunnerContext(),
+        "test_name",
+        graph_signature_hash="test_hash",
+    )
+
+
+async def test_runner_accepts_new_run_after_previous_failure():
+    """A failed run must not leave the Runner unable to start a new run.
+
+    After the first run raises, ``run_until_convergence()`` must be callable
+    again and not surface any lifecycle-related rejection.
+    """
     executor_a = MockExecutor(id="executor_a")
     executor_b = MockExecutor(id="executor_b")
-
-    # Create a loop
     edges = [
         SingleEdgeGroup(executor_a.id, executor_b.id),
         SingleEdgeGroup(executor_b.id, executor_a.id),
     ]
-
-    executors: dict[str, Executor] = {
-        executor_a.id: executor_a,
-        executor_b.id: executor_b,
-    }
+    executors: dict[str, Executor] = {executor_a.id: executor_a, executor_b.id: executor_b}
     state = State()
     ctx = InProcRunnerContext()
+    runner = Runner(edges, executors, state, ctx, "test_name", graph_signature_hash="test_hash", max_iterations=2)
 
-    runner = Runner(edges, executors, state, ctx, "test_name", graph_signature_hash="test_hash")
+    await executor_a.execute(MockMessage(data=0), ["START"], state, ctx)
 
-    await executor_a.execute(
-        MockMessage(data=0),
-        ["START"],  # source_executor_ids
-        state,  # state
-        ctx,  # runner_context
-    )
+    with pytest.raises(WorkflowConvergenceException):
+        async for _ in runner.run_until_convergence():
+            pass
 
-    with pytest.raises(WorkflowRunnerException, match="Runner is already running."):
-
-        async def _run():
-            async for _ in runner.run_until_convergence():
-                pass
-
-        await asyncio.gather(_run(), _run())
+    # A second run on the same Runner must not be blocked by stale lifecycle
+    # state from the failed run.
+    try:
+        async for _ in runner.run_until_convergence():
+            pass
+    except Exception as exc:
+        assert "Runner is already running" not in str(exc), "Runner stayed locked after a failed run"
 
 
 async def test_runner_emits_runner_completion_for_agent_response_without_targets():
@@ -477,6 +499,100 @@ async def test_runner_iteration_exception_drains_events():
     assert len(events) > 0
 
 
+async def test_runner_completion_does_not_require_a_timer(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A completed superstep must wake an otherwise idle event consumer."""
+    ctx = InProcRunnerContext()
+    runner = Runner([], {}, State(), ctx, "test", graph_signature_hash="test")
+    loop = asyncio.get_running_loop()
+    watchdog = loop.create_future()
+    # Schedule the test watchdog before deferring timers used by the runner.
+    watchdog_handle = loop.call_later(2, watchdog.set_result, None)
+    call_at = loop.call_at
+    monkeypatch.setattr(
+        loop, "call_at", lambda when, callback, *args, **kwargs: call_at(loop.time() + 3600, callback, *args, **kwargs)
+    )
+
+    async def consume() -> list[WorkflowEvent]:
+        return [event async for event in runner.run_until_convergence()]
+
+    task = asyncio.create_task(consume())
+    try:
+        done, _ = await asyncio.wait({task, watchdog}, return_when=asyncio.FIRST_COMPLETED)
+        assert task in done, "Iteration completion was waiting for a polling timer"
+        assert [event.type for event in task.result()] == ["superstep_started", "superstep_completed"]
+    finally:
+        watchdog_handle.cancel()
+        watchdog.cancel()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.parametrize("fail", [False, True])
+async def test_runner_streams_live_and_tail_events(monkeypatch: pytest.MonkeyPatch, fail: bool) -> None:
+    """Yield live events before completion and retain ordered tail events on success or failure."""
+    ctx = InProcRunnerContext()
+    runner = Runner([], {}, State(), ctx, "test", graph_signature_hash="test")
+    release = asyncio.Event()
+
+    async def iteration() -> None:
+        await ctx.add_event(WorkflowEvent(type="output", data="live", executor_id="test"))
+        await release.wait()
+        for value in ("tail_1", "tail_2"):
+            await ctx.add_event(WorkflowEvent(type="output", data=value, executor_id="test"))
+        if fail:
+            raise RuntimeError("iteration failed")
+
+    monkeypatch.setattr(runner, "_run_iteration", iteration)
+    stream = runner.run_until_convergence()
+    try:
+        assert (await anext(stream)).type == "superstep_started"
+        assert (await anext(stream)).data == "live"
+        release.set()
+        outputs = []
+        try:
+            async for event in stream:
+                if event.type == "output":
+                    outputs.append(event.data)
+        except RuntimeError as exc:
+            assert fail and str(exc) == "iteration failed"
+        else:
+            assert not fail
+        assert outputs == ["tail_1", "tail_2"]
+    finally:
+        await stream.aclose()
+
+
+async def test_runner_stream_close_stops_active_iteration(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Closing after a live event must not leave background executor work running."""
+    ctx = InProcRunnerContext()
+    runner = Runner([], {}, State(), ctx, "test", graph_signature_hash="test")
+    stopped = asyncio.Event()
+    iteration_task: asyncio.Task[Any] | None = None
+
+    async def iteration() -> None:
+        nonlocal iteration_task
+        iteration_task = asyncio.current_task()
+        try:
+            await ctx.add_event(WorkflowEvent(type="output", data="live", executor_id="test"))
+            await asyncio.Event().wait()
+        finally:
+            stopped.set()
+
+    monkeypatch.setattr(runner, "_run_iteration", iteration)
+    stream = runner.run_until_convergence()
+    try:
+        await anext(stream)
+        assert (await anext(stream)).data == "live"
+        await stream.aclose()
+        assert stopped.is_set()
+        assert iteration_task is not None and iteration_task.done()
+    finally:
+        await stream.aclose()
+        if iteration_task is not None:
+            iteration_task.cancel()
+            await asyncio.gather(iteration_task, return_exceptions=True)
+
+
 async def test_runner_reset_iteration_count():
     """Test that reset_iteration_count works correctly."""
     executor_a = MockExecutor(id="executor_a")
@@ -489,6 +605,391 @@ async def test_runner_reset_iteration_count():
     runner.reset_iteration_count()
 
     assert runner._iteration == 0  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_runner_capture_and_restore_checkpoint_object_roundtrip():
+    """build_checkpoint() then restore_checkpoint() must roundtrip.
+
+    Shared state and executor snapshots are captured into an in-memory ``WorkflowCheckpoint``
+    and restored from it without any storage backend (the path the parent WorkflowExecutor
+    uses to checkpoint a nested sub-workflow).
+    """
+
+    class CounterExecutor(Executor):
+        def __init__(self, id: str) -> None:
+            super().__init__(id=id)
+            self.count = 0
+
+        @handler
+        async def handle(self, message: MockMessage, ctx: WorkflowContext[Any, int]) -> None:
+            self.count += message.data
+
+        async def on_checkpoint_save(self) -> dict[str, Any]:
+            return {"count": self.count}
+
+        async def on_checkpoint_restore(self, state: dict[str, Any]) -> None:
+            self.count = int(state.get("count", 0))
+
+    executor = CounterExecutor(id="counter")
+    state = State()
+    ctx = InProcRunnerContext()
+    runner = Runner([], {executor.id: executor}, state, ctx, "test_name", graph_signature_hash="test_hash")
+
+    # Establish some state to capture.
+    executor.count = 7
+    state.set("shared_key", {"history": ["shared_value"]})
+    state.commit()
+
+    checkpoint = await runner.build_checkpoint()
+    assert checkpoint.graph_signature_hash == "test_hash"
+
+    # Mutate after capture; restoring must roll back to the captured snapshot.
+    executor.count = 999
+    shared_state = state.get("shared_key")
+    shared_state["history"].append("mutated")
+    state.set("shared_key", shared_state)
+    state.commit()
+
+    await runner.restore_checkpoint(checkpoint)
+
+    assert executor.count == 7
+    assert state.get("shared_key") == {"history": ["shared_value"]}
+    restored_state = state.get("shared_key")
+    restored_state["history"].append("restored-mutation")
+    state.set("shared_key", restored_state)
+    assert checkpoint.state["shared_key"] == {"history": ["shared_value"]}
+    assert runner._previous_checkpoint_id == checkpoint.checkpoint_id  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_save_executor_states_rejects_non_dict_on_checkpoint_save():
+    """Issue #8183: non-dict on_checkpoint_save must fail at save, not only at restore."""
+
+    class BadStateExecutor(Executor):
+        @handler
+        async def handle(self, message: MockMessage, ctx: WorkflowContext[Any, int]) -> None:
+            await ctx.yield_output(message.data)
+
+        async def on_checkpoint_save(self) -> dict[str, Any]:
+            return ["not", "a", "dict"]  # type: ignore[return-value]  # pyrefly: ignore[bad-return]  # ty: ignore[invalid-return-type]
+
+    executor = BadStateExecutor(id="bad")
+    state = State()
+    ctx = InProcRunnerContext()
+    runner = Runner([], {executor.id: executor}, state, ctx, "test_name", graph_signature_hash="test_hash")
+
+    with pytest.raises(WorkflowCheckpointException, match="is not a dict\\[str, Any\\]. Unable to save"):
+        await runner._save_executor_states()  # pyright: ignore[reportPrivateUsage]
+
+
+class CollectingExecutor(Executor):
+    """A fan-in target that records every aggregated batch it receives."""
+
+    def __init__(self, id: str) -> None:
+        super().__init__(id=id)
+        self.batches: list[list[int]] = []
+
+    @handler
+    async def collect(self, messages: list[MockMessage], ctx: WorkflowContext[Any, int]) -> None:
+        self.batches.append([message.data for message in messages])
+
+
+def _fan_in_runner(target: CollectingExecutor) -> tuple[Runner, InProcRunnerContext]:
+    """Build a runner for a two-source fan-in into ``target``."""
+    source_a = MockExecutor(id="source_a")
+    source_b = MockExecutor(id="source_b")
+    edge_group = FanInEdgeGroup([source_a.id, source_b.id], target.id)
+    executors: dict[str, Executor] = {source_a.id: source_a, source_b.id: source_b, target.id: target}
+    ctx = InProcRunnerContext()
+
+    return Runner([edge_group], executors, State(), ctx, "test_name", graph_signature_hash="test_hash"), ctx
+
+
+def test_edge_runner_state_key_distinguishes_ids_containing_separators():
+    """Executor ids are only required to be non-empty, so the key cannot join them with separators.
+
+    Both groups below hold three edges into ``t`` and differ only in where the source ids place
+    ``->`` and ``,``. Sharing a key would make one group's buffer overwrite the other's.
+    """
+    group_a = FanInEdgeGroup(["a", "b->t,c"], "t")
+    group_b = FanInEdgeGroup(["a->t,b", "c"], "t")
+
+    key_a = FanInEdgeRunner(group_a, {}).state_key
+    key_b = FanInEdgeRunner(group_b, {}).state_key
+
+    assert key_a != key_b
+
+
+async def test_runner_checkpoint_roundtrips_partially_filled_fan_in_buffer():
+    """A fan-in holding messages from a subset of its sources must checkpoint and restore them.
+
+    The runner context has already drained those messages, so the checkpoint is the only
+    place they still exist. A rebuilt workflow gets fresh ``EdgeGroup`` ids, so the restore
+    also has to find the buffer without relying on them.
+    """
+    target = CollectingExecutor(id="target")
+    runner, ctx = _fan_in_runner(target)
+
+    await ctx.send_message(WorkflowMessage(data=MockMessage(data=1), source_id="source_a"))
+    await runner._run_iteration()  # pyright: ignore[reportPrivateUsage]
+
+    # The fan-in is still waiting on source_b, so nothing has reached the target yet.
+    assert target.batches == []
+
+    checkpoint = await runner.build_checkpoint()
+    assert EDGE_STATE_KEY in checkpoint.state
+
+    # Resume on a fresh instance of the same workflow definition.
+    restored_target = CollectingExecutor(id="target")
+    restored_runner, restored_ctx = _fan_in_runner(restored_target)
+    await restored_runner.restore_checkpoint(checkpoint)
+
+    await restored_ctx.send_message(WorkflowMessage(data=MockMessage(data=2), source_id="source_b"))
+    await restored_runner._run_iteration()  # pyright: ignore[reportPrivateUsage]
+
+    assert restored_target.batches == [[1, 2]]
+
+
+async def test_runner_restore_clears_fan_in_buffer_left_by_an_interrupted_run():
+    """Messages buffered after the restored checkpoint must not survive the restore.
+
+    Their sources are re-executed once the run resumes, so keeping them would deliver the
+    same message twice and could fire the fan-in before the resumed superstep produced all
+    of its messages.
+    """
+    target = CollectingExecutor(id="target")
+    runner, ctx = _fan_in_runner(target)
+
+    # Captured while the fan-in buffer is empty, so the checkpoint carries no edge state at all -
+    # the same shape as a checkpoint written before edge state was captured.
+    checkpoint = await runner.build_checkpoint()
+    assert EDGE_STATE_KEY not in checkpoint.state
+
+    # A superstep that fails after the fan-in buffered source_a leaves that message behind.
+    await ctx.send_message(WorkflowMessage(data=MockMessage(data=1), source_id="source_a"))
+    await runner._run_iteration()  # pyright: ignore[reportPrivateUsage]
+    assert target.batches == []
+
+    await runner.restore_checkpoint(checkpoint)
+
+    # Both sources are re-executed after the resume; the target must see each message once.
+    await ctx.send_message(WorkflowMessage(data=MockMessage(data=1), source_id="source_a"))
+    await ctx.send_message(WorkflowMessage(data=MockMessage(data=2), source_id="source_b"))
+    await runner._run_iteration()  # pyright: ignore[reportPrivateUsage]
+
+    assert target.batches == [[1, 2]]
+
+
+async def test_runner_orphaned_delivery_cannot_repopulate_a_restored_fan_in_buffer():
+    """A sibling delivery still in flight when another source fails must not survive into a restore.
+
+    Reported on PR #7953 (@moonbox3): ``_run_iteration``'s ``asyncio.gather`` calls do not cancel their
+    other tasks when one raises - the others keep running as orphaned background tasks. If a fan-in
+    delivery is one of those orphans, it can resume after ``restore_checkpoint`` has already reset the
+    ``FanInEdgeRunner``'s buffer for the *next* run and append into it, so the buffer ends up holding a
+    message from the failed, never-checkpointed superstep. Once the caller redelivers that same source
+    as part of the normal resume flow, the fan-in can fire using the stale message instead of - or
+    alongside - the fresh redelivery.
+
+    The pre-restore (stale) and post-restore (fresh) ``source_b`` messages deliberately carry
+    different payloads (``99`` vs ``2``) so a fan-in that fires on the stale message is
+    distinguishable from one that correctly waits for the fresh redelivery; using the same payload
+    for both would let a buggy run and a correct run produce an identical-looking batch by
+    coincidence.
+    """
+    target = CollectingExecutor(id="target")
+    source_a = MockExecutor(id="source_a")
+    source_b = MockExecutor(id="source_b")
+    source_c = MockExecutor(id="source_c")
+    fan_in_group = FanInEdgeGroup([source_a.id, source_b.id], target.id)
+    executors: dict[str, Executor] = {
+        source_a.id: source_a,
+        source_b.id: source_b,
+        source_c.id: source_c,
+        target.id: target,
+    }
+    ctx = InProcRunnerContext()
+    runner = Runner([fan_in_group], executors, State(), ctx, "test_name", graph_signature_hash="test_hash")
+
+    real_fan_in_runner = cast(FanInEdgeRunner, runner._edge_runner_map["source_a"][0])  # pyright: ignore[reportPrivateUsage]
+    assert runner._edge_runner_map["source_b"][0] is real_fan_in_runner  # pyright: ignore[reportPrivateUsage]
+
+    entered_delay = asyncio.Event()
+    release = asyncio.Event()
+
+    class DelayedFanInDelivery:
+        """Wraps the real fan-in runner's delivery for source_b, pausing before it actually appends."""
+
+        async def send_message(self, message: WorkflowMessage, state: State, ctx: RunnerContext) -> bool:
+            entered_delay.set()
+            await release.wait()
+            return await real_fan_in_runner.send_message(message, state, ctx)
+
+    class FailingDelivery:
+        async def send_message(self, message: WorkflowMessage, state: State, ctx: RunnerContext) -> bool:
+            raise RuntimeError("source_c delivery failed")
+
+    runner._edge_runner_map["source_b"] = [DelayedFanInDelivery()]  # type: ignore[assignment, list-item]  # pyright: ignore[reportPrivateUsage]  # ty: ignore[invalid-assignment]
+    runner._edge_runner_map["source_c"] = [FailingDelivery()]  # type: ignore[assignment, list-item]  # pyright: ignore[reportPrivateUsage]  # ty: ignore[invalid-assignment]
+
+    # A checkpoint from before this superstep started: empty fan-in buffer, matching the last
+    # known-good superstep boundary that a real resume flow would restore to.
+    checkpoint = await runner.build_checkpoint()
+    assert EDGE_STATE_KEY not in checkpoint.state
+
+    await ctx.send_message(WorkflowMessage(data=MockMessage(data=1), source_id="source_a"))
+    await ctx.send_message(WorkflowMessage(data=MockMessage(data=99), source_id="source_b"))
+    await ctx.send_message(WorkflowMessage(data=MockMessage(data=-1), source_id="source_c"))
+
+    iteration_task = asyncio.create_task(runner._run_iteration())  # pyright: ignore[reportPrivateUsage]
+
+    # source_a's delivery completes immediately; source_b's is parked mid-flight, about to append
+    # into the *same* FanInEdgeRunner instance, when source_c's delivery fails.
+    await entered_delay.wait()
+
+    with pytest.raises(RuntimeError, match="source_c delivery failed"):
+        await iteration_task
+
+    # The app's resume flow restores the same runner from the last good checkpoint - this is exactly
+    # what a caller does after catching the failure above, per Workflow._execute_with_message_or_checkpoint.
+    await runner.restore_checkpoint(checkpoint)
+    assert real_fan_in_runner._buffer == {}  # pyright: ignore[reportPrivateUsage]
+
+    # Release the delayed delivery. If _run_iteration cancelled it when source_c failed (the fix),
+    # `release.wait()` raises CancelledError here and the real fan-in runner's send_message for the
+    # stale data=99 message is never reached at all; releasing an already-cancelled waiter is a no-op.
+    release.set()
+    await asyncio.sleep(0)  # yield so the orphaned task either appends or finishes cancelling
+
+    # The stale data=99 message from the failed, never-checkpointed superstep must not have reached
+    # the buffer the restore just reset for the next run.
+    assert real_fan_in_runner._buffer.get("source_b", []) == []  # pyright: ignore[reportPrivateUsage]
+
+    # The resume flow redelivers the failed superstep's sources with the correct payloads, as the
+    # existing test_runner_restore_clears_fan_in_buffer_left_by_an_interrupted_run models. source_b's
+    # fresh message (data=2) differs from the stale one (data=99) precisely so the assertion below can
+    # tell which one the fan-in actually used.
+    await ctx.send_message(WorkflowMessage(data=MockMessage(data=1), source_id="source_a"))
+    await ctx.send_message(WorkflowMessage(data=MockMessage(data=2), source_id="source_b"))
+    await runner._run_iteration()  # pyright: ignore[reportPrivateUsage]
+
+    # The target must see the fresh redelivery (source_a=1, source_b=2), not the stale pre-restore
+    # message (99) that the orphaned delivery left behind, and not both.
+    assert target.batches == [[1, 2]]
+
+
+async def test_runner_orphaned_fan_out_target_cannot_repopulate_a_restored_message_queue():
+    """The same orphaned-task race applies one level deeper, inside FanOutEdgeRunner.send_message.
+
+    Follow-up from @moonbox3 on PR #7948: ``_gather_cancelling_siblings_on_error`` wraps the two
+    ``gather()`` call sites in ``_run_iteration``, but ``FanOutEdgeRunner.send_message`` has its own,
+    separate ``asyncio.gather()`` across a single message's fan-out targets (``_edge_runner.py:322``).
+    When a fan-out has only one edge runner for its source (the common case), that inner gather is
+    the *only* level at which one target's failure has a sibling target to race against - the outer
+    per-source/per-edge-runner levels my fix wraps see just one task each, so there is nothing for
+    the fix to cancel there. A target still executing when a sibling target fails can call
+    ``WorkflowContext.send_message`` (via its own handler) after ``restore_checkpoint`` has already
+    cleared ``RunnerContext._messages`` for the resumed run, repopulating it with output from the
+    failed, never-checkpointed superstep.
+    """
+    entered_delay = asyncio.Event()
+    release = asyncio.Event()
+
+    class FailingTarget(Executor):
+        @handler
+        async def handle(self, message: MockMessage, ctx: WorkflowContext[Any, int]) -> None:
+            raise RuntimeError("target1 failed")
+
+    class BlockingTarget(Executor):
+        """Still executing when its fan-out sibling fails; emits a message once released."""
+
+        @handler
+        async def handle(self, message: MockMessage, ctx: WorkflowContext[Any, int]) -> None:
+            entered_delay.set()
+            await release.wait()
+            # A stale output from the failed superstep, sent after the sibling's failure surfaced.
+            await ctx.send_message(MockMessage(data=999))
+
+    source = MockExecutor(id="source")
+    target1 = FailingTarget(id="target1")
+    target2 = BlockingTarget(id="target2")
+    edge_group = FanOutEdgeGroup(source_id=source.id, target_ids=[target1.id, target2.id])
+    executors: dict[str, Executor] = {source.id: source, target1.id: target1, target2.id: target2}
+    ctx = InProcRunnerContext()
+    runner = Runner([edge_group], executors, State(), ctx, "test_name", graph_signature_hash="test_hash")
+
+    # A checkpoint from before this superstep started: no in-flight messages, matching the last
+    # known-good superstep boundary a real resume flow would restore to.
+    checkpoint = await runner.build_checkpoint()
+    assert not checkpoint.messages
+
+    await ctx.send_message(WorkflowMessage(data=MockMessage(data=1), source_id=source.id))
+
+    iteration_task = asyncio.create_task(runner._run_iteration())  # pyright: ignore[reportPrivateUsage]
+
+    # target2 is now parked mid-handler, about to call ctx.send_message once released, when target1
+    # raises inside the same FanOutEdgeRunner.send_message call's own internal gather.
+    await entered_delay.wait()
+
+    with pytest.raises(RuntimeError, match="target1 failed"):
+        await iteration_task
+
+    # The app's resume flow restores the same runner from the last good checkpoint.
+    await runner.restore_checkpoint(checkpoint)
+    assert not await ctx.has_messages()
+
+    # Release the parked target. If _run_iteration's fix reached this inner gather, target2's task
+    # would already be cancelled and this is a no-op; if it does not, target2 proceeds to call
+    # ctx.send_message with its stale output.
+    release.set()
+    await asyncio.sleep(0)  # yield so the orphaned target's send_message actually runs before we continue
+
+    # The message queue the restore just reset for the next run must not have picked up output from
+    # the failed, never-checkpointed superstep.
+    assert not await ctx.has_messages()
+
+
+async def test_runner_build_checkpoint_includes_in_flight_messages():
+    """build_checkpoint() must snapshot in-flight messages non-destructively."""
+    executor = MockExecutor(id="executor_a")
+    state = State()
+    ctx = InProcRunnerContext()
+    runner = Runner([], {executor.id: executor}, state, ctx, "test_name", graph_signature_hash="test_hash")
+
+    await ctx.send_message(WorkflowMessage(data=MockMessage(data=1), source_id="START"))
+
+    checkpoint = await runner.build_checkpoint()
+
+    # The in-flight message is captured in the snapshot ...
+    assert list(checkpoint.messages.keys()) == ["START"]
+    assert len(checkpoint.messages["START"]) == 1
+    # ... without draining it from the runner (capture is non-destructive).
+    assert await ctx.has_messages() is True
+
+
+async def test_runner_build_checkpoint_do_not_advance_previous_checkpoint_id():
+    """build_checkpoint() must not advance _previous_checkpoint_id so a later capture chains to it."""
+    executor = MockExecutor(id="executor_a")
+    state = State()
+    ctx = InProcRunnerContext()
+    runner = Runner([], {executor.id: executor}, state, ctx, "test_name", graph_signature_hash="test_hash")
+
+    # Pre-condition: nothing captured yet, so there is no parent to chain back to.
+    assert runner._previous_checkpoint_id is None  # pyright: ignore[reportPrivateUsage]
+
+    first = await runner.build_checkpoint()
+    assert first.previous_checkpoint_id is None
+
+    # Capturing advances the tracked checkpoint id to the newly-created checkpoint ...
+    assert runner._previous_checkpoint_id is None  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_runner_restore_checkpoint_rejects_graph_mismatch():
+    """restore_checkpoint() must reject a checkpoint from a different graph."""
+    runner = Runner([], {}, State(), InProcRunnerContext(), "test_name", graph_signature_hash="hash-a")
+
+    foreign = WorkflowCheckpoint(workflow_name="test_name", graph_signature_hash="hash-b")
+    with pytest.raises(WorkflowCheckpointException, match="Workflow graph has changed"):
+        await runner.restore_checkpoint(foreign)
 
 
 class CheckpointingContext(InProcRunnerContext):
@@ -520,7 +1021,7 @@ class CheckpointingContext(InProcRunnerContext):
         )
         return await self._storage.save(checkpoint)
 
-    async def load_checkpoint(self, checkpoint_id: str) -> WorkflowCheckpoint | None:  # pyright: ignore[reportIncompatibleMethodOverride]
+    async def load_checkpoint(self, checkpoint_id: str) -> WorkflowCheckpoint | None:  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]  # pyright: ignore[reportIncompatibleMethodOverride]
         try:
             return await self._storage.load(checkpoint_id)
         except WorkflowCheckpointException:
@@ -618,7 +1119,7 @@ async def test_runner_restore_from_checkpoint_with_external_storage():
     # Restore using external storage
     await runner.restore_from_checkpoint(checkpoint_id, checkpoint_storage=storage)
 
-    assert runner._resumed_from_checkpoint is True  # pyright: ignore[reportPrivateUsage]
+    assert runner._previous_checkpoint_id == checkpoint_id  # pyright: ignore[reportPrivateUsage]
     assert runner._iteration == 5  # pyright: ignore[reportPrivateUsage]
     assert state.get("test_key") == "test_value"
 
@@ -843,8 +1344,34 @@ async def test_runner_restore_executor_states_no_states():
     await runner._restore_executor_states()  # pyright: ignore[reportPrivateUsage]
 
 
-async def test_runner_checkpoint_with_resumed_flag():
-    """Test that resumed flag prevents initial checkpoint creation."""
+async def test_runner_mark_resumed_sets_previous_checkpoint_id():
+    """_mark_resumed must populate _previous_checkpoint_id so future checkpoints chain back to the resume point."""
+    runner = Runner(
+        [],
+        {},
+        State(),
+        InProcRunnerContext(),
+        "test_name",
+        graph_signature_hash="test_hash",
+    )
+
+    # Pre-condition: nothing to chain back to
+    assert runner._previous_checkpoint_id is None  # pyright: ignore[reportPrivateUsage]
+
+    resumed_checkpoint = WorkflowCheckpoint(
+        checkpoint_id="resumed-cp-id",
+        workflow_name="test_name",
+        graph_signature_hash="test_hash",
+        iteration_count=3,
+    )
+    runner._mark_resumed(resumed_checkpoint)  # pyright: ignore[reportPrivateUsage]
+
+    assert runner._iteration == 3  # pyright: ignore[reportPrivateUsage]
+    assert runner._previous_checkpoint_id == "resumed-cp-id"  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_runner_post_resume_checkpoint_chains_to_resumed_checkpoint():
+    """After resuming, the next checkpoint created must reference the resumed checkpoint as its parent."""
     storage = InMemoryCheckpointStorage()
     ctx = CheckpointingContext(storage)
     executor_a = MockExecutor(id="executor_a")
@@ -862,24 +1389,38 @@ async def test_runner_checkpoint_with_resumed_flag():
     state = State()
 
     runner = Runner(edges, executors, state, ctx, "test_name", graph_signature_hash="test_hash")
-    runner._mark_resumed(5)  # pyright: ignore[reportPrivateUsage]
 
-    # Add a message to trigger the checkpoint creation path
-    await ctx.send_message(WorkflowMessage(data=MockMessage(data=8), source_id="START"))
-
-    await executor_a.execute(
-        MockMessage(data=8),
-        ["START"],
-        state,
-        ctx,
+    # Simulate having resumed from a prior checkpoint
+    resumed_checkpoint = WorkflowCheckpoint(
+        checkpoint_id="parent-checkpoint-id",
+        workflow_name="test_name",
+        graph_signature_hash="test_hash",
+        iteration_count=1,
     )
+    runner._mark_resumed(resumed_checkpoint)  # pyright: ignore[reportPrivateUsage]
 
-    # Run until convergence
+    # Seed a message so the runner has work to do (and creates checkpoints at superstep boundaries)
+    await ctx.send_message(WorkflowMessage(data=MockMessage(data=8), source_id=executor_a.id))
+
     async for _ in runner.run_until_convergence():
         pass
 
-    # After completing, resumed flag should be reset
-    assert runner._resumed_from_checkpoint is False  # pyright: ignore[reportPrivateUsage]
+    # Find the first checkpoint created after the resume point (across all workflows tracked by storage)
+    new_checkpoints = sorted(
+        await storage.list_checkpoints(workflow_name="test_name"),
+        key=lambda c: c.timestamp,
+    )
+    assert new_checkpoints, "Resuming and running should produce at least one new checkpoint"
+
+    # The first new checkpoint must chain to the resumed-from checkpoint, not to None
+    assert new_checkpoints[0].previous_checkpoint_id == "parent-checkpoint-id", (
+        "First post-resume checkpoint must chain to the resumed checkpoint id; "
+        f"got {new_checkpoints[0].previous_checkpoint_id!r}"
+    )
+
+    # Subsequent post-resume checkpoints continue the chain
+    for i in range(1, len(new_checkpoints)):
+        assert new_checkpoints[i].previous_checkpoint_id == new_checkpoints[i - 1].checkpoint_id
 
 
 class ExecutorThatFailsWithEvents(Executor):
@@ -949,6 +1490,51 @@ async def test_runner_drains_events_on_iteration_exception():
     output_events = [e for e in events if e.type == "output"]
     # Should have drained the pending events before propagating the exception
     assert len(output_events) >= 1
+
+
+async def test_runner_creates_exactly_one_checkpoint_per_superstep():
+    """The runner creates exactly one checkpoint per completed superstep, with a consistent lineage.
+
+    Driving a loop that converges in a known number of supersteps must yield one checkpoint per
+    superstep - iteration counts ``1..N`` with no gaps or duplicates - and each checkpoint must
+    chain to its immediate predecessor, the first beginning a fresh lineage with no parent. The
+    runner never creates an entry (iteration-0) checkpoint; that is the ``Workflow``'s responsibility.
+    """
+    storage = InMemoryCheckpointStorage()
+    ctx = CheckpointingContext(storage)
+    executor_a = MockExecutor(id="executor_a")
+    executor_b = MockExecutor(id="executor_b")
+    edges = [
+        SingleEdgeGroup(executor_a.id, executor_b.id),
+        SingleEdgeGroup(executor_b.id, executor_a.id),
+    ]
+    executors: dict[str, Executor] = {executor_a.id: executor_a, executor_b.id: executor_b}
+    state = State()
+    runner = Runner(edges, executors, state, ctx, "test_name", graph_signature_hash="test_hash")
+
+    # executor_a seeds the loop; the runner then drives supersteps until the value reaches 10.
+    await executor_a.execute(MockMessage(data=0), ["START"], state, ctx)
+    superstep_completed = 0
+    async for event in runner.run_until_convergence():
+        if event.type == "superstep_completed":
+            superstep_completed += 1
+
+    checkpoints = sorted(
+        await storage.list_checkpoints(workflow_name="test_name"),
+        key=lambda c: c.iteration_count,
+    )
+
+    # Exactly one checkpoint per completed superstep, with contiguous iteration counts 1..N and no entry checkpoint.
+    assert superstep_completed == runner._iteration  # pyright: ignore[reportPrivateUsage]
+    assert len(checkpoints) == superstep_completed
+    assert [cp.iteration_count for cp in checkpoints] == list(range(1, superstep_completed + 1))
+
+    # Lineage: the first checkpoint begins a fresh chain; each subsequent one chains to its predecessor.
+    assert checkpoints[0].previous_checkpoint_id is None
+    for prev, cur in zip(checkpoints, checkpoints[1:]):
+        assert cur.previous_checkpoint_id == prev.checkpoint_id, (
+            f"Checkpoint at iteration {cur.iteration_count} must chain to iteration {prev.iteration_count}"
+        )
 
 
 class SlowEventEmittingExecutor(Executor):

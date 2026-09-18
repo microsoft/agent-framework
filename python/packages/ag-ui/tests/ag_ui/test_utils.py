@@ -64,7 +64,7 @@ def test_merge_state_deep_copy():
 
     result["recipe"]["ingredients"].append("eggs")
 
-    assert "eggs" not in current["recipe"]["ingredients"]
+    assert "eggs" not in current["recipe"]["ingredients"]  # type: ignore[operator]  # pyrefly: ignore[not-iterable]
     assert current["recipe"]["ingredients"] == ["flour", "sugar"]
     assert result["recipe"]["ingredients"] == ["flour", "sugar", "eggs"]
 

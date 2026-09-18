@@ -107,6 +107,12 @@ def test_process_response_parses_tool_use_and_result() -> None:
     assert chat_response.finish_reason == client._map_finish_reason("tool_use")
 
 
+def test_map_finish_reason_maps_guardrail_intervention() -> None:
+    client = _build_client()
+
+    assert client._map_finish_reason("guardrail_intervened") == "content_filter"
+
+
 def test_process_response_parses_tool_result() -> None:
     client = _build_client()
     response = {

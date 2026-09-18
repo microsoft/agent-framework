@@ -210,11 +210,11 @@ public sealed class AnthropicBetaServiceExtensionsTests
         // When tools are provided, ChatOptions is created but instructions remain null
         Assert.Null(agent.Instructions);
 
-        // Verify that tools are registered in the FunctionInvokingChatClient
-        var functionInvokingClient = agent.GetService<FunctionInvokingChatClient>();
-        Assert.NotNull(functionInvokingClient);
-        Assert.NotNull(functionInvokingClient.AdditionalTools);
-        Assert.Contains(functionInvokingClient.AdditionalTools, t => t is AIFunction func && func.Name == "TestFunction");
+        // Verify that tools are registered on the agent's ChatOptions, which are merged into the
+        // invocation-scoped ChatOptions on every call (see ChatClientAgent.CreateConfiguredChatOptions).
+        var agentTools = agent.GetService<ChatOptions>()?.Tools;
+        Assert.NotNull(agentTools);
+        Assert.Contains(agentTools, t => t is AIFunction func && func.Name == "TestFunction");
     }
 
     /// <summary>
@@ -310,11 +310,11 @@ public sealed class AnthropicBetaServiceExtensionsTests
         Assert.Equal("Test Agent", agent.Name);
         Assert.Equal("Test instructions", agent.Instructions);
 
-        // Verify that tools are registered in the FunctionInvokingChatClient
-        var functionInvokingClient = agent.GetService<FunctionInvokingChatClient>();
-        Assert.NotNull(functionInvokingClient);
-        Assert.NotNull(functionInvokingClient.AdditionalTools);
-        Assert.Contains(functionInvokingClient.AdditionalTools, t => t is AIFunction func && func.Name == "TestFunction");
+        // Verify that tools are registered on the agent's ChatOptions, which are merged into the
+        // invocation-scoped ChatOptions on every call (see ChatClientAgent.CreateConfiguredChatOptions).
+        var agentTools = agent.GetService<ChatOptions>()?.Tools;
+        Assert.NotNull(agentTools);
+        Assert.Contains(agentTools, t => t is AIFunction func && func.Name == "TestFunction");
     }
 
     /// <summary>
@@ -339,7 +339,7 @@ public sealed class AnthropicBetaServiceExtensionsTests
         // With empty tools and no instructions, agent instructions remain null
         Assert.Null(agent.Instructions);
 
-        // Verify that FunctionInvokingChatClient has no additional tools assigned
+        // Verify that the FunctionInvokingChatClient is not used as a fallback tool store.
         var functionInvokingClient = agent.GetService<FunctionInvokingChatClient>();
         Assert.NotNull(functionInvokingClient);
         Assert.True(functionInvokingClient.AdditionalTools is null or { Count: 0 });
@@ -443,12 +443,17 @@ public sealed class AnthropicBetaServiceExtensionsTests
         public string? ApiKey { get => throw new NotImplementedException(); init => throw new NotImplementedException(); }
         public string? AuthToken { get => throw new NotImplementedException(); init => throw new NotImplementedException(); }
         public string? WebhookKey { get => throw new NotImplementedException(); init => throw new NotImplementedException(); }
+        public IReadOnlyList<DelegatingHandler> Handlers { get => throw new NotImplementedException(); init => throw new NotImplementedException(); }
 
         public IAnthropicClientWithRawResponse WithRawResponse => throw new NotImplementedException();
 
         public IMessageService Messages => throw new NotImplementedException();
 
         public IModelService Models => throw new NotImplementedException();
+
+        public IFileService Files => throw new NotImplementedException();
+
+        public ISkillService Skills => throw new NotImplementedException();
 
         public IBetaService Beta => this.BetaService;
 
@@ -490,6 +495,10 @@ public sealed class AnthropicBetaServiceExtensionsTests
 
             public global::Anthropic.Services.Beta.ISessionService Sessions => throw new NotImplementedException();
 
+            public global::Anthropic.Services.Beta.IDeploymentService Deployments => throw new NotImplementedException();
+
+            public global::Anthropic.Services.Beta.IDeploymentRunService DeploymentRuns => throw new NotImplementedException();
+
             public global::Anthropic.Services.Beta.IVaultService Vaults => throw new NotImplementedException();
 
             public global::Anthropic.Services.Beta.IMemoryStoreService MemoryStores => throw new NotImplementedException();
@@ -497,6 +506,12 @@ public sealed class AnthropicBetaServiceExtensionsTests
             public global::Anthropic.Services.Beta.IWebhookService Webhooks => throw new NotImplementedException();
 
             public global::Anthropic.Services.Beta.IUserProfileService UserProfiles => throw new NotImplementedException();
+
+            public global::Anthropic.Services.Beta.IDreamService Dreams => throw new NotImplementedException();
+
+            public global::Anthropic.Services.Beta.ITunnelService Tunnels => throw new NotImplementedException();
+
+            public global::Anthropic.Services.Beta.IOrganizationService Organization => throw new NotImplementedException();
 
             public IBetaService WithOptions(Func<ClientOptions, ClientOptions> modifier)
             {

@@ -1,6 +1,6 @@
 # Foundry Provider Samples
 
-This folder contains Azure AI Foundry and Foundry Local samples for Agent Framework.
+This folder contains Microsoft Foundry and Foundry Local samples for Agent Framework.
 
 ## FoundryAgent Samples
 
@@ -10,6 +10,7 @@ This folder contains Azure AI Foundry and Foundry Local samples for Agent Framew
 | [`foundry_agent_custom_client.py`](foundry_agent_custom_client.py) | Foundry Agent custom client configuration |
 | [`foundry_agent_hosted.py`](foundry_agent_hosted.py) | Foundry Agent for hosted agents |
 | [`foundry_agent_with_function_tools.py`](foundry_agent_with_function_tools.py) | Foundry Agent with local function tools |
+| [`foundry_agent_tracing.py`](../../observability/foundry_agent_tracing.py) | Connected client and service traces for an existing Foundry agent, with optional streaming |
 
 ## FoundryChatClient Samples
 

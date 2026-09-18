@@ -1,0 +1,6 @@
+﻿#nullable enable
+Microsoft.Agents.AI.Workflows.Declarative.Mcp.DefaultMcpToolHandler
+Microsoft.Agents.AI.Workflows.Declarative.Mcp.DefaultMcpToolHandler.DefaultMcpToolHandler(System.Func<string!, System.Threading.CancellationToken, System.Threading.Tasks.Task<System.Net.Http.HttpClient?>!>? httpClientProvider = null) -> void
+Microsoft.Agents.AI.Workflows.Declarative.Mcp.DefaultMcpToolHandler.DisposeAsync() -> System.Threading.Tasks.ValueTask
+Microsoft.Agents.AI.Workflows.Declarative.Mcp.DefaultMcpToolHandler.InvokeToolAsync(string! serverUrl, string? serverLabel, string! toolName, System.Collections.Generic.IDictionary<string!, object?>? arguments, System.Collections.Generic.IDictionary<string!, string!>? headers, string? connectionName, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<Microsoft.Extensions.AI.McpServerToolResultContent!>!
+const Microsoft.Agents.AI.Workflows.Declarative.Mcp.DefaultMcpToolHandler.ListToolsToolName = "tools/list" -> string!

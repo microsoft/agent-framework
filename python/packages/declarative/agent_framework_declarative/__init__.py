@@ -5,7 +5,7 @@
 Release stage:
 
 * The declarative-workflows surface (``WorkflowFactory``, executors, handlers,
-  etc.) is at release-candidate stability.
+  etc.) is stable.
 * The declarative-agents surface (``AgentFactory`` and the YAML agent
   loading/parsing path: ``DeclarativeLoaderError``, ``ProviderLookupError``,
   ``ProviderTypeMapping``) is *experimental* and may change or be removed in

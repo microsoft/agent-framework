@@ -87,6 +87,6 @@ public sealed class GroupChatWorkflowBuilder : OrchestrationBuilderBase<GroupCha
             }
         });
 
-        return builder.Build();
+        return builder.BuildForFeature((int)FeatureIndex.OrchestrationGroupChat);
     }
 }

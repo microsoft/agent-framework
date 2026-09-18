@@ -19,16 +19,18 @@ from agent_framework import (
     UsageDetails,
     load_settings,
 )
-from agent_framework._telemetry import get_user_agent
+from agent_framework._telemetry import get_user_agent, mark_feature_used
 from agent_framework.observability import EmbeddingTelemetryLayer
 from boto3.session import Session as Boto3Session
 from botocore.client import BaseClient
 from botocore.config import Config as BotoConfig
 
+from ._feature_usage import FeatureIndex
+
 if sys.version_info >= (3, 13):
-    from typing import TypeVar  # type: ignore # pragma: no cover
+    from typing import TypeVar  # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import TypeVar  # pragma: no cover
 
 
 logger = logging.getLogger("agent_framework.bedrock")
@@ -99,9 +101,9 @@ class RawBedrockEmbeddingClient(
         *,
         region: str | None = None,
         model: str | None = None,
-        access_key: str | None = None,
-        secret_key: str | None = None,
-        session_token: str | None = None,
+        access_key: str | SecretString | None = None,
+        secret_key: str | SecretString | None = None,
+        session_token: str | SecretString | None = None,
         client: BaseClient | None = None,
         boto3_session: Boto3Session | None = None,
         additional_properties: dict[str, Any] | None = None,
@@ -143,7 +145,7 @@ class RawBedrockEmbeddingClient(
                 config=BotoConfig(user_agent_extra=get_user_agent()),
             )
 
-        self.model: str = settings["embedding_model"]  # type: ignore[assignment]  # pyright: ignore[reportTypedDictNotRequiredAccess]
+        self.model: str = settings["embedding_model"]  # type: ignore[assignment]
         self.region = resolved_region
         super().__init__(additional_properties=additional_properties)
 
@@ -180,6 +182,7 @@ class RawBedrockEmbeddingClient(
         if not model:
             raise ValueError("model is required")
 
+        mark_feature_used(FeatureIndex.BEDROCK)
         embedding_results = await asyncio.gather(
             *(self._generate_embedding_for_text(opts, model, text) for text in values)
         )
@@ -261,16 +264,16 @@ class BedrockEmbeddingClient(
             print(result[0].vector)
     """
 
-    OTEL_PROVIDER_NAME: ClassVar[str] = "aws.bedrock"  # type: ignore[reportIncompatibleVariableOverride, misc]
+    OTEL_PROVIDER_NAME: ClassVar[str] = "aws.bedrock"
 
     def __init__(
         self,
         *,
         region: str | None = None,
         model: str | None = None,
-        access_key: str | None = None,
-        secret_key: str | None = None,
-        session_token: str | None = None,
+        access_key: str | SecretString | None = None,
+        secret_key: str | SecretString | None = None,
+        session_token: str | SecretString | None = None,
         client: BaseClient | None = None,
         boto3_session: Boto3Session | None = None,
         otel_provider_name: str | None = None,

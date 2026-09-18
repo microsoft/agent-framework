@@ -9,7 +9,6 @@ using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using System.Threading;
 using System.Threading.Tasks;
-using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Execution;
 using Microsoft.Agents.AI.Workflows.Specialized;
@@ -45,7 +44,7 @@ public class JsonSerializationTests
         {
             if (predicate is not null)
             {
-                deserialized.Should().Match(predicate);
+                AssertMatches(deserialized, predicate);
             }
 
             return deserialized;
@@ -53,6 +52,18 @@ public class JsonSerializationTests
 
         Debug.Fail($"Could not roundtrip type '{typeof(T).Name}'. JSON = '{element}'.");
         throw new NotSupportedException($"Could not roundtrip type '{typeof(T).Name}'.");
+    }
+
+    private static void AssertMatches<T>(T actual, Expression<Func<T, bool>> predicate)
+        => Assert.True(predicate.Compile()(actual));
+
+    private static void AssertMessageEqual(object expected, object actual)
+    {
+        object? normalizedActual = actual is PortableValue portableValue && expected is not PortableValue
+            ? portableValue.AsType(expected.GetType())
+            : actual;
+
+        Assert.Equivalent(expected, normalizedActual);
     }
 
     [Fact]
@@ -184,14 +195,14 @@ public class JsonSerializationTests
         ValidateExecutorDictionary(prototype.Executors, prototype.Edges, actual.Executors, actual.Edges);
         ValidateRequestPorts(prototype.RequestPorts, actual.RequestPorts);
 
-        actual.InputType.Should().Match(prototype.InputType.CreateValidator());
-        actual.StartExecutorId.Should().Be(prototype.StartExecutorId);
+        AssertMatches(actual.InputType!, prototype.InputType.CreateValidator());
+        Assert.Equal(prototype.StartExecutorId, actual.StartExecutorId);
 
-        actual.OutputExecutorIds.Should().HaveCount(prototype.OutputExecutorIds.Count);
+        Assert.Equal(prototype.OutputExecutorIds.Count, actual.OutputExecutorIds.Count);
         foreach (KeyValuePair<string, HashSet<OutputTag>> kvp in prototype.OutputExecutorIds)
         {
-            actual.OutputExecutorIds.Should().ContainKey(kvp.Key);
-            actual.OutputExecutorIds[kvp.Key].Should().BeEquivalentTo(kvp.Value);
+            HashSet<OutputTag> actualTags = Assert.Contains(kvp.Key, actual.OutputExecutorIds);
+            Assert.Equivalent(kvp.Value, actualTags);
         }
 
         void ValidateExecutorDictionary(Dictionary<string, ExecutorInfo> expected,
@@ -199,23 +210,21 @@ public class JsonSerializationTests
                                         Dictionary<string, ExecutorInfo> actual,
                                         Dictionary<string, List<EdgeInfo>> actualEdges)
         {
-            actual.Should().HaveCount(expected.Count);
-            actualEdges.Should().HaveCount(expectedEdges.Count);
+            Assert.Equal(expected.Count, actual.Count);
+            Assert.Equal(expectedEdges.Count, actualEdges.Count);
 
             foreach (string key in expected.Keys)
             {
-                actual.Should().ContainKey(key);
+                Assert.Contains(key, actual);
 
                 ExecutorInfo actualValue = actual[key];
                 ExecutorInfo expectedValue = expected[key];
 
-                actualValue.Should().Match(expectedValue.CreateValidator());
+                AssertMatches(actualValue, expectedValue.CreateValidator());
 
                 if (expectedEdges.TryGetValue(key, out List<EdgeInfo>? expectedEdgeList))
                 {
-                    List<EdgeInfo>? actualEdgeList = actualEdges.Should().ContainKey(key).WhoseValue;
-                    actualEdgeList.Should().NotBeNull();
-
+                    List<EdgeInfo> actualEdgeList = Assert.Contains(key, actualEdges);
                     ValidateExecutorEdges(expectedEdgeList, actualEdgeList);
                 }
             }
@@ -223,15 +232,18 @@ public class JsonSerializationTests
 
         void ValidateExecutorEdges(List<EdgeInfo> expected, List<EdgeInfo> actual)
         {
-            actual.Should().HaveCount(expected.Count);
+            Assert.Equal(expected.Count, actual.Count);
             foreach (EdgeInfo expectedEdge in expected)
             {
-                actual.Should().ContainSingle(edge => edge.CreatePolyValidator().Compile()(edge));
+                Assert.Single(actual);
             }
         }
 
         void ValidateRequestPorts(HashSet<RequestPortInfo> expected, HashSet<RequestPortInfo> actual)
-            => actual.Should().HaveCount(expected.Count).And.IntersectWith(expected);
+        {
+            Assert.Equal(expected.Count, actual.Count);
+            Assert.All(expected, item => Assert.Contains(item, actual));
+        }
     }
 
     [Fact]
@@ -282,7 +294,7 @@ public class JsonSerializationTests
     public void SanityCheck_JsonTypeInfo()
     {
         JsonTypeInfo? info = WorkflowsJsonUtilities.JsonContext.Default.GetTypeInfo(typeof(string));
-        info.Should().NotBeNull();
+        Assert.NotNull(info);
     }
 
     [Fact]
@@ -291,15 +303,15 @@ public class JsonSerializationTests
         PortableValue value = new("TestString");
         PortableValue result = RunJsonRoundtrip(value);
 
-        result.Should().Be(value);
+        Assert.Equivalent(value, result);
 
         // Also validate that we can extract the value as the correct type
         string? extracted = result.As<string>();
 
-        extracted.Should().Be("TestString");
+        Assert.Equal("TestString", extracted);
 
         // And that we can't extract it as an incorrect type
-        result.Is<int>().Should().BeFalse();
+        Assert.False(result.Is<int>());
     }
 
     [Fact]
@@ -310,17 +322,17 @@ public class JsonSerializationTests
         PortableValue value = new(message);
         PortableValue result = RunJsonRoundtrip(value);
 
-        result.Should().Be(value);
+        Assert.Equivalent(value, result);
 
         // Also validate that we can extract the value as the correct type
         ChatMessage? chatMessage = result.As<ChatMessage>();
 
-        chatMessage.Should().NotBeNull();
-        chatMessage.Role.Should().Be(ChatRole.User);
-        chatMessage.Text.Should().Be("Hello, world!");
+        Assert.NotNull(chatMessage);
+        Assert.Equal(ChatRole.User, chatMessage.Role);
+        Assert.Equal("Hello, world!", chatMessage.Text);
 
         // And that we can't extract it as an incorrect type
-        result.Is<int>().Should().BeFalse();
+        Assert.False(result.Is<int>());
     }
 
     [Fact]
@@ -331,17 +343,17 @@ public class JsonSerializationTests
         PortableValue value = new(test);
         PortableValue result = RunJsonRoundtrip(value, TestCustomSerializedJsonOptions);
 
-        result.Should().Be(value);
+        Assert.Equivalent(value, result);
 
         // Also validate that we can extract the value as the correct type
         TestJsonSerializable? extracted = result.As<TestJsonSerializable>();
 
-        extracted.Should().NotBeNull();
-        extracted.Id.Should().Be(42);
-        extracted.Name.Should().Be("Test");
+        Assert.NotNull(extracted);
+        Assert.Equal(42, extracted.Id);
+        Assert.Equal("Test", extracted.Name);
 
         // And that we can't extract it as an incorrect type
-        result.Is<int>().Should().BeFalse();
+        Assert.False(result.Is<int>());
     }
 
     private static void ValidateExternalRequest(ExternalRequest actual, ExternalRequest expected)
@@ -350,9 +362,9 @@ public class JsonSerializationTests
         bool isPortEqual = actual.PortInfo == expected.PortInfo;
         bool isDataEqual = actual.Data == expected.Data;
 
-        isIdEqual.Should().BeTrue();
-        isPortEqual.Should().BeTrue();
-        isDataEqual.Should().BeTrue();
+        Assert.True(isIdEqual);
+        Assert.True(isPortEqual);
+        Assert.True(isDataEqual);
     }
 
     [Fact]
@@ -373,9 +385,9 @@ public class JsonSerializationTests
         bool isPortEqual = result.PortInfo == TestExternalResponse.PortInfo;
         bool isDataEqual = result.Data == TestExternalResponse.Data;
 
-        isIdEqual.Should().BeTrue();
-        isPortEqual.Should().BeTrue();
-        isDataEqual.Should().BeTrue();
+        Assert.True(isIdEqual);
+        Assert.True(isPortEqual);
+        Assert.True(isDataEqual);
     }
 
     [Fact]
@@ -391,15 +403,15 @@ public class JsonSerializationTests
         bool isTargetEqual = result.TargetId == value.TargetId;
         bool isMessageEqual = result.Message == value.Message;
 
-        isTypeEqual.Should().BeTrue();
-        isTargetEqual.Should().BeTrue();
-        isMessageEqual.Should().BeTrue();
+        Assert.True(isTypeEqual);
+        Assert.True(isTargetEqual);
+        Assert.True(isMessageEqual);
 
         MessageEnvelope reconstructed = result.ToMessageEnvelope();
 
-        reconstructed.MessageType.Should().Be(envelope.MessageType);
-        reconstructed.TargetId.Should().Be(envelope.TargetId);
-        reconstructed.Message.Should().Be(envelope.Message);
+        Assert.Equal(envelope.MessageType, reconstructed.MessageType);
+        Assert.Equal(envelope.TargetId, reconstructed.TargetId);
+        AssertMessageEqual(envelope.Message, reconstructed.Message);
     }
 
     [Fact]
@@ -415,22 +427,21 @@ public class JsonSerializationTests
         bool isTargetEqual = result.TargetId == value.TargetId;
         bool isMessageEqual = result.Message == value.Message;
 
-        isTypeEqual.Should().BeTrue();
-        isTargetEqual.Should().BeTrue();
-        isMessageEqual.Should().BeTrue();
+        Assert.True(isTypeEqual);
+        Assert.True(isTargetEqual);
+        Assert.True(isMessageEqual);
 
         MessageEnvelope reconstructed = result.ToMessageEnvelope();
 
-        reconstructed.MessageType.Should().Be(envelope.MessageType);
-        reconstructed.TargetId.Should().Be(envelope.TargetId);
+        Assert.Equal(envelope.MessageType, reconstructed.MessageType);
+        Assert.Equal(envelope.TargetId, reconstructed.TargetId);
 
         // Unfortunately, ChatMessage does not contain an "equality" comparer, so we need to explicitly pull it out
         // Simulate what PortableValue does in .Equals()
         Type expectedType = envelope.Message.GetType();
         object? maybeReconstructedMessage = ((PortableValue)reconstructed.Message)!.AsType(expectedType);
-        maybeReconstructedMessage.Should().NotBeNull()
-                                      .And.BeOfType<ChatMessage>()
-                                      .And.Match(message.CreateValidatorCheckingText());
+        ChatMessage reconstructedMessage = Assert.IsType<ChatMessage>(maybeReconstructedMessage);
+        AssertMatches(reconstructedMessage, message.CreateValidatorCheckingText());
     }
 
     [Fact]
@@ -446,15 +457,15 @@ public class JsonSerializationTests
         bool isTargetEqual = result.TargetId == value.TargetId;
         bool isMessageEqual = result.Message == value.Message;
 
-        isTypeEqual.Should().BeTrue();
-        isTargetEqual.Should().BeTrue();
-        isMessageEqual.Should().BeTrue();
+        Assert.True(isTypeEqual);
+        Assert.True(isTargetEqual);
+        Assert.True(isMessageEqual);
 
         MessageEnvelope reconstructed = result.ToMessageEnvelope();
 
-        reconstructed.MessageType.Should().Be(envelope.MessageType);
-        reconstructed.TargetId.Should().Be(envelope.TargetId);
-        reconstructed.Message.Should().Be(envelope.Message);
+        Assert.Equal(envelope.MessageType, reconstructed.MessageType);
+        Assert.Equal(envelope.TargetId, reconstructed.TargetId);
+        AssertMessageEqual(envelope.Message, reconstructed.Message);
     }
 
     private static RunnerStateData TestRunnerStateData
@@ -484,28 +495,28 @@ public class JsonSerializationTests
         Assert.Collection(result.InstantiatedExecutors,
                           prototype.InstantiatedExecutors.Select(
                               prototype =>
-                              (Action<string>)(actual => actual.Should().Be(prototype))).ToArray());
+                              (Action<string>)(actual => Assert.Equal(prototype, actual))).ToArray());
 
-        result.QueuedMessages.Should().HaveCount(prototype.QueuedMessages.Count);
+        Assert.Equal(prototype.QueuedMessages.Count, result.QueuedMessages.Count);
         foreach (string key in prototype.QueuedMessages.Keys)
         {
-            result.QueuedMessages.Should().ContainKey(key);
+            Assert.Contains(key, result.QueuedMessages);
 
             List<PortableMessageEnvelope> actualList = result.QueuedMessages[key];
             List<PortableMessageEnvelope> expectedList = prototype.QueuedMessages[key];
 
-            actualList.Should().HaveCount(expectedList.Count);
+            Assert.Equal(expectedList.Count, actualList.Count);
             for (int i = 0; i < expectedList.Count; i++)
             {
                 PortableMessageEnvelope actual = actualList[i];
                 PortableMessageEnvelope expected = expectedList[i];
-                actual.MessageType.Should().Be(expected.MessageType);
-                actual.TargetId.Should().Be(expected.TargetId);
-                actual.Message.Should().Be(expected.Message);
+                Assert.Equal(expected.MessageType, actual.MessageType);
+                Assert.Equal(expected.TargetId, actual.TargetId);
+                AssertMessageEqual(expected.Message, actual.Message);
             }
         }
 
-        result.OutstandingRequests.Should().HaveCount(prototype.OutstandingRequests.Count);
+        Assert.Equal(prototype.OutstandingRequests.Count, result.OutstandingRequests.Count);
 
         Assert.Collection(result.OutstandingRequests,
                           prototype.OutstandingRequests.Select(
@@ -548,14 +559,15 @@ public class JsonSerializationTests
 
     private static void ValidateEdgeStateData(Dictionary<EdgeId, PortableValue> result, Dictionary<EdgeId, PortableValue> prototype)
     {
-        result.Should().HaveCount(prototype.Count);
+        Assert.Equal(prototype.Count, result.Count);
         foreach (EdgeId id in prototype.Keys)
         {
-            result.Should().ContainKey(id)
-                       .And.Subject[id].Should().Be(prototype[id])
-                       .And.Subject.As<PortableValue>()
-                                   .As<FanInEdgeState>().Should().NotBeNull()
-                                                             .And.Match(CreateValidator(prototype[id].As<FanInEdgeState>()!));
+            Assert.Contains(id, result);
+            PortableValue state = result[id];
+            Assert.Equivalent(prototype[id], state);
+            FanInEdgeState? fanInEdgeState = state.As<FanInEdgeState>();
+            Assert.NotNull(fanInEdgeState);
+            AssertMatches(fanInEdgeState, CreateValidator(prototype[id].As<FanInEdgeState>()!));
         }
         Expression<Func<FanInEdgeState, bool>> CreateValidator(FanInEdgeState prototype)
         {
@@ -598,26 +610,24 @@ public class JsonSerializationTests
 
     private static void ValidateStateData(Dictionary<ScopeKey, PortableValue> result, Dictionary<ScopeKey, PortableValue> prototype)
     {
-        result.Should().HaveCount(prototype.Count);
+        Assert.Equal(prototype.Count, result.Count);
 
         foreach (ScopeKey key in prototype.Keys)
         {
-            PortableValue state =
-                result.Should().ContainKey(key)
-                           .And.Subject[key].Should().Be(prototype[key])
-                           .And.Subject.As<PortableValue>();
+            PortableValue state = Assert.Contains(key, result);
+            Assert.Equivalent(prototype[key], state);
             switch (key.Key)
             {
                 case "Key1":
-                    state.As<string>().Should().Be("Lorem Ipsum");
+                    Assert.Equal("Lorem Ipsum", state.As<string>());
                     break;
                 case "Key2":
                     ChatMessage? maybeMessage = state.As<ChatMessage>();
-                    maybeMessage.Should().NotBeNull()
-                                     .And.Match(TestUserMessage.CreateValidatorCheckingText());
+                    Assert.NotNull(maybeMessage);
+                    AssertMatches(maybeMessage, TestUserMessage.CreateValidatorCheckingText());
                     break;
                 case "Key3":
-                    state.As<TestJsonSerializable>().Should().Be(TestCustomSerializable);
+                    Assert.Equal(TestCustomSerializable, state.As<TestJsonSerializable>());
                     break;
                 default:
                     throw new NotImplementedException($"Missing validation for key '{key.Key}'");
@@ -641,9 +651,9 @@ public class JsonSerializationTests
 
     private static void ValidateCheckpoint(Checkpoint result, Checkpoint prototype)
     {
-        result.Should().Match((Checkpoint checkpoint) => checkpoint.StepNumber == prototype.StepNumber);
+        Assert.Equal(prototype.StepNumber, result.StepNumber);
 
-        result.Parent.Should().Be(prototype.Parent);
+        Assert.Equal(prototype.Parent, result.Parent);
 
         ValidateWorkflowInfo(result.Workflow, prototype.Workflow);
         ValidateRunnerStateData(result.RunnerData, prototype.RunnerData);
@@ -697,15 +707,15 @@ public class JsonSerializationTests
         WorkflowSession.SessionState result = RunJsonRoundtrip(prototype);
 
         // Assert
-        result.SessionId.Should().Be(prototype.SessionId);
-        result.LastCheckpoint.Should().Be(prototype.LastCheckpoint);
-        result.StateBag.Should().NotBeNull();
-        result.PendingRequests.Should().NotBeNull()
-            .And.HaveCount(pendingRequests.Count);
+        Assert.Equal(prototype.SessionId, result.SessionId);
+        Assert.Equal(prototype.LastCheckpoint, result.LastCheckpoint);
+        Assert.NotNull(result.StateBag);
+        Assert.NotNull(result.PendingRequests);
+        Assert.Equal(pendingRequests.Count, result.PendingRequests.Count);
 
         foreach (string key in pendingRequests.Keys)
         {
-            result.PendingRequests.Should().ContainKey(key);
+            Assert.Contains(key, result.PendingRequests);
             ValidateExternalRequest(result.PendingRequests![key], pendingRequests[key]);
         }
     }
@@ -722,9 +732,9 @@ public class JsonSerializationTests
         WorkflowSession.SessionState result = RunJsonRoundtrip(prototype);
 
         // Assert
-        result.SessionId.Should().Be(prototype.SessionId);
-        result.LastCheckpoint.Should().BeNull();
-        result.PendingRequests.Should().BeNull();
+        Assert.Equal(prototype.SessionId, result.SessionId);
+        Assert.Null(result.LastCheckpoint);
+        Assert.Null(result.PendingRequests);
     }
 
     [Fact]
@@ -737,8 +747,8 @@ public class JsonSerializationTests
         HandoffSharedState result = RunJsonRoundtrip(prototype);
 
         // Assert
-        result.PreviousAgentId.Should().Be(prototype.PreviousAgentId);
-        result.Conversation.CloneHistory().Should().BeEquivalentTo(prototype.Conversation.CloneHistory());
+        Assert.Equal(prototype.PreviousAgentId, result.PreviousAgentId);
+        Assert.Equivalent(prototype.Conversation.CloneHistory(), result.Conversation.CloneHistory());
     }
 
     [Fact]
@@ -754,8 +764,8 @@ public class JsonSerializationTests
         HandoffSharedState result = RunJsonRoundtrip(prototype);
 
         // Assert
-        result.PreviousAgentId.Should().Be(prototype.PreviousAgentId);
-        result.Conversation.CloneHistory().Should().BeEquivalentTo(prototype.Conversation.CloneHistory());
+        Assert.Equal(prototype.PreviousAgentId, result.PreviousAgentId);
+        Assert.Equivalent(prototype.Conversation.CloneHistory(), result.Conversation.CloneHistory());
     }
 
     [Fact]
@@ -772,9 +782,9 @@ public class JsonSerializationTests
         HandoffAgentHostState result = RunJsonRoundtrip(prototype);
 
         // Assert
-        result.IncomingState.Should().BeEquivalentTo(prototype.IncomingState);
-        result.ConversationBookmark.Should().Be(prototype.ConversationBookmark);
-        result.IsTakingTurn.Should().Be(prototype.IsTakingTurn);
+        Assert.Equivalent(prototype.IncomingState, result.IncomingState);
+        Assert.Equal(prototype.ConversationBookmark, result.ConversationBookmark);
+        Assert.Equal(prototype.IsTakingTurn, result.IsTakingTurn);
     }
 
     [Fact]
@@ -787,9 +797,9 @@ public class JsonSerializationTests
         HandoffAgentHostState result = RunJsonRoundtrip(prototype);
 
         // Assert
-        result.IncomingState.Should().BeEquivalentTo(prototype.IncomingState);
-        result.ConversationBookmark.Should().Be(prototype.ConversationBookmark);
-        result.IsTakingTurn.Should().Be(prototype.IsTakingTurn);
+        Assert.Equivalent(prototype.IncomingState, result.IncomingState);
+        Assert.Equal(prototype.ConversationBookmark, result.ConversationBookmark);
+        Assert.Equal(prototype.IsTakingTurn, result.IsTakingTurn);
     }
 
     [Fact]
@@ -802,8 +812,8 @@ public class JsonSerializationTests
         GroupChatManagerState result = RunJsonRoundtrip(prototype);
 
         // Assert
-        result.Should().Be(prototype);
-        result.IterationCount.Should().Be(prototype.IterationCount);
+        Assert.Equal(prototype, result);
+        Assert.Equal(prototype.IterationCount, result.IterationCount);
     }
 
     [Fact]
@@ -816,8 +826,8 @@ public class JsonSerializationTests
         RoundRobinGroupChatManagerState result = RunJsonRoundtrip(prototype);
 
         // Assert
-        result.Should().Be(prototype);
-        result.NextIndex.Should().Be(prototype.NextIndex);
+        Assert.Equal(prototype, result);
+        Assert.Equal(prototype.NextIndex, result.NextIndex);
     }
 
     /// <summary>
@@ -841,9 +851,9 @@ public class JsonSerializationTests
 
         // Act & Assert - Without the option, deserialization should fail
         JsonElement reorderedElement = JsonDocument.Parse(reorderedJson).RootElement;
-        Action act = () => marshaller.Marshal<EdgeInfo>(reorderedElement);
+        void act() => marshaller.Marshal<EdgeInfo>(reorderedElement);
 
-        act.Should().Throw<JsonException>();
+        Assert.Throws<JsonException>(act);
     }
 
     /// <summary>
@@ -873,7 +883,7 @@ public class JsonSerializationTests
         EdgeInfo deserialized = marshallerWithOption.Marshal<EdgeInfo>(reorderedElement);
 
         // Assert
-        deserialized.Should().Match(edgeInfo.CreatePolyValidator());
+        AssertMatches(deserialized, edgeInfo.CreatePolyValidator());
     }
 
     private static string ReorderJsonPropertiesToMoveTypeDiscriminatorLast(string json)

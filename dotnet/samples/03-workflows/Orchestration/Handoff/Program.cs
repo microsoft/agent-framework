@@ -6,9 +6,9 @@ using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
 
-string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")
-            ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
-string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
+string endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
+            ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
 
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
@@ -59,6 +59,10 @@ static async Task RunWorkflowAsync(Workflow workflow)
         }
 
         await run.TrySendMessageAsync(userInput);
+
+        // Agents are wrapped as executors that cache incoming messages and only run when they receive a TurnToken,
+        // so the turn must be triggered explicitly after sending the user input.
+        await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
         string? speakingAgent = null;
         await foreach (WorkflowEvent evt in run.WatchStreamAsync(cts.Token))
         {

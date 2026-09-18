@@ -64,6 +64,6 @@ For most use cases, use the fully-featured public client classes which already h
 - `OpenAIChatClient` - OpenAI Responses API with all layers
 - `OpenAIChatCompletionClient` - Azure OpenAI Chat Completions with all layers
 - `OpenAIChatClient` - Azure OpenAI Responses with all layers
-- `FoundryChatClient` - Azure AI Foundry project-backed chat with all layers
+- `FoundryChatClient` - Microsoft Foundry project-backed chat with all layers
 
 These clients handle the layer composition correctly and provide the full feature set out of the box.

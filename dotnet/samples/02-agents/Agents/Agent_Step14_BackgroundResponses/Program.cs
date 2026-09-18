@@ -1,23 +1,24 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample shows how to use background responses with ChatClientAgent and Azure OpenAI Responses.
+// Background Responses — Asynchronous agent execution with polling
+//
+// This sample shows how to use background responses with ChatClientAgent
+// and Microsoft Foundry for non-blocking agent execution.
 
-using Azure.AI.OpenAI;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
-using OpenAI.Responses;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
+var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
 
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-AIAgent agent = new AzureOpenAIClient(
+AIAgent agent = new AIProjectClient(
     new Uri(endpoint),
     new DefaultAzureCredential())
-     .GetResponsesClient()
-     .AsAIAgent(model: deploymentName);
+     .AsAIAgent(model: deploymentName, instructions: "You are a helpful assistant.");
 
 // Enable background responses (only supported by OpenAI Responses at this time).
 AgentRunOptions options = new() { AllowBackgroundResponses = true };
@@ -53,8 +54,13 @@ await foreach (AgentResponseUpdate update in agent.RunStreamingAsync("Write a ve
     // Output each update.
     Console.Write(update.Text);
 
-    // Track last update.
-    lastReceivedUpdate = update;
+    // Track the last update that carries a resumable continuation token.
+    // Lifecycle events like response.completed return null tokens (response is finished),
+    // so we only update our reference when a token is actually present.
+    if (update.ContinuationToken is not null)
+    {
+        lastReceivedUpdate = update;
+    }
 
     // Simulate connection loss after first piece of content received.
     if (update.Text.Length > 0)

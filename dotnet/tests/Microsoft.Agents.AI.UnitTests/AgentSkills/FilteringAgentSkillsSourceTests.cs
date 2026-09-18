@@ -20,10 +20,10 @@ public sealed class FilteringAgentSkillsSourceTests
             new AgentInlineSkill("skill-a", "A", "Instructions A."),
             new AgentInlineSkill("skill-b", "B", "Instructions B."),
         });
-        var source = new FilteringAgentSkillsSource(inner, _ => true);
+        var source = new FilteringAgentSkillsSource(inner, (_, _) => true);
 
         // Act
-        var result = await source.GetSkillsAsync(CancellationToken.None);
+        var result = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
 
         // Assert
         Assert.Equal(2, result.Count);
@@ -38,10 +38,10 @@ public sealed class FilteringAgentSkillsSourceTests
             new AgentInlineSkill("skill-a", "A", "Instructions A."),
             new AgentInlineSkill("skill-b", "B", "Instructions B."),
         });
-        var source = new FilteringAgentSkillsSource(inner, _ => false);
+        var source = new FilteringAgentSkillsSource(inner, (_, _) => false);
 
         // Act
-        var result = await source.GetSkillsAsync(CancellationToken.None);
+        var result = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
 
         // Assert
         Assert.Empty(result);
@@ -59,10 +59,10 @@ public sealed class FilteringAgentSkillsSourceTests
         });
         var source = new FilteringAgentSkillsSource(
             inner,
-            skill => skill.Frontmatter.Name.StartsWith("keep", StringComparison.OrdinalIgnoreCase));
+            (skill, context) => skill.Frontmatter.Name.StartsWith("keep", StringComparison.OrdinalIgnoreCase));
 
         // Act
-        var result = await source.GetSkillsAsync(CancellationToken.None);
+        var result = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
 
         // Assert
         Assert.Equal(2, result.Count);
@@ -70,14 +70,43 @@ public sealed class FilteringAgentSkillsSourceTests
     }
 
     [Fact]
+    public async Task GetSkillsAsync_PassesContextToPredicateAsync()
+    {
+        // Arrange
+        var inner = new AgentInMemorySkillsSource(new AgentSkill[]
+        {
+            new AgentInlineSkill("skill-a", "A", "Instructions A."),
+        });
+        var expectedContext = TestAgentSkillsSourceContextFactory.Create();
+        AgentSkillsSourceContext? actualSkillsSourceContext = null;
+        AgentSkill? actualSkill = null;
+        var source = new FilteringAgentSkillsSource(
+            inner,
+            (skill, context) =>
+            {
+                actualSkill = skill;
+                actualSkillsSourceContext = context;
+                return true;
+            });
+
+        // Act
+        var result = await source.GetSkillsAsync(expectedContext, CancellationToken.None);
+
+        // Assert
+        var skill = Assert.Single(result);
+        Assert.Same(skill, actualSkill);
+        Assert.Same(expectedContext, actualSkillsSourceContext);
+    }
+
+    [Fact]
     public async Task GetSkillsAsync_EmptySource_ReturnsEmptyAsync()
     {
         // Arrange
         var inner = new AgentInMemorySkillsSource(Array.Empty<AgentSkill>());
-        var source = new FilteringAgentSkillsSource(inner, _ => true);
+        var source = new FilteringAgentSkillsSource(inner, (_, _) => true);
 
         // Act
-        var result = await source.GetSkillsAsync(CancellationToken.None);
+        var result = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
 
         // Assert
         Assert.Empty(result);
@@ -97,7 +126,7 @@ public sealed class FilteringAgentSkillsSourceTests
     public void Constructor_NullInnerSource_Throws()
     {
         // Act & Assert
-        Assert.Throws<ArgumentNullException>(() => new FilteringAgentSkillsSource(null!, _ => true));
+        Assert.Throws<ArgumentNullException>(() => new FilteringAgentSkillsSource(null!, (_, _) => true));
     }
 
     [Fact]
@@ -115,10 +144,10 @@ public sealed class FilteringAgentSkillsSourceTests
         // Keep only alpha and gamma
         var source = new FilteringAgentSkillsSource(
             inner,
-            skill => skill.Frontmatter.Name is "alpha" or "gamma");
+            (skill, context) => skill.Frontmatter.Name is "alpha" or "gamma");
 
         // Act
-        var result = await source.GetSkillsAsync(CancellationToken.None);
+        var result = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
 
         // Assert
         Assert.Equal(2, result.Count);

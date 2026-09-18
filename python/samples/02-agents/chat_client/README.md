@@ -56,7 +56,7 @@ Depending on the selected client, set the appropriate environment variables:
 - `AZURE_OPENAI_API_KEY` (optional): Azure OpenAI API key if you are not using `AzureCliCredential`
 
 **For Foundry client (`foundry_chat`):**
-- `FOUNDRY_PROJECT_ENDPOINT`: Your Azure AI Foundry project endpoint
+- `FOUNDRY_PROJECT_ENDPOINT`: Your Microsoft Foundry project endpoint
 - `FOUNDRY_MODEL`: The Foundry deployment used by the sample
 
 **For OpenAI clients:**
