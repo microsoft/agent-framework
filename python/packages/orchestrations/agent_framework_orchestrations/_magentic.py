@@ -1419,7 +1419,7 @@ class MagenticBuilder:
         task_ledger_plan_update_prompt: str | None = None,
         progress_ledger_prompt: str | None = None,
         final_answer_prompt: str | None = None,
-        max_stall_count: int | Sentinel = UNSET,  # type: ignore[reportArgumentType]
+        max_stall_count: int | Sentinel = UNSET,
         max_reset_count: int | None = None,
         max_round_count: int | None = None,
         # Existing params
@@ -1632,7 +1632,7 @@ class MagenticBuilder:
         progress_ledger_prompt: str | None = None,
         final_answer_prompt: str | None = None,
         # Limits
-        max_stall_count: int | Sentinel = UNSET,  # type: ignore[reportArgumentType]
+        max_stall_count: int | Sentinel = UNSET,
         max_reset_count: int | None = None,
         max_round_count: int | None = None,
     ) -> None:
