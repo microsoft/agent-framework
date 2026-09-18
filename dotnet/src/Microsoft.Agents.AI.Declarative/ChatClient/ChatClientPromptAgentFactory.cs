@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.ObjectModel;
@@ -26,52 +25,19 @@ public sealed class ChatClientPromptAgentFactory : PromptAgentFactory
     /// <param name="engine">Optional Power Fx engine used to evaluate declarative expressions.</param>
     /// <param name="configuration">Optional configuration used to resolve explicitly allowed environment variables referenced by the agent definition.</param>
     /// <param name="loggerFactory">Optional logger factory used by created agents.</param>
+    /// <param name="allowedConfigurationVariables">Optional explicitly allowed environment variables referenced by the agent definition.</param>
     public ChatClientPromptAgentFactory(
         IChatClient chatClient,
         IList<AIFunction>? functions = null,
         RecalcEngine? engine = null,
         IConfiguration? configuration = null,
-        ILoggerFactory? loggerFactory = null)
-        : this(
-            chatClient,
-            functions,
-            new ChatClientPromptAgentFactoryOptions()
-            {
-                Engine = engine,
-                Configuration = configuration,
-                AllowedConfigurationVariables = configuration?.AsEnumerable().Select(static pair => pair.Key),
-                LoggerFactory = loggerFactory,
-            },
-            isValidated: true)
+        ILoggerFactory? loggerFactory = null,
+        IEnumerable<string>? allowedConfigurationVariables = null)
+        : base(engine, configuration, allowedConfigurationVariables)
     {
-    }
-
-    /// <summary>
-    /// Creates a new instance of the <see cref="ChatClientPromptAgentFactory"/> class.
-    /// </summary>
-    /// <param name="chatClient">The chat client used by created agents.</param>
-    /// <param name="options">Options used to configure the created agents and declarative expression evaluation.</param>
-    /// <param name="functions">Optional functions exposed as tools to created agents.</param>
-    /// <returns>The configured <see cref="ChatClientPromptAgentFactory"/> instance.</returns>
-    public static ChatClientPromptAgentFactory Create(
-        IChatClient chatClient,
-        ChatClientPromptAgentFactoryOptions options,
-        IList<AIFunction>? functions = null) =>
-        new(chatClient, functions, ValidateOptions(options), isValidated: true);
-
-    private ChatClientPromptAgentFactory(
-        IChatClient chatClient,
-        IList<AIFunction>? functions,
-        ChatClientPromptAgentFactoryOptions options,
-        bool isValidated) :
-        base(options.Engine, options.Configuration, options.AllowedConfigurationVariables, options.MaximumExpressionLength, options.MaximumCallDepth)
-    {
-        _ = isValidated;
-        Throw.IfNull(chatClient);
-
         this._chatClient = chatClient;
         this._functions = functions;
-        this._loggerFactory = options.LoggerFactory;
+        this._loggerFactory = loggerFactory;
     }
 
     /// <inheritdoc/>
@@ -99,7 +65,5 @@ public sealed class ChatClientPromptAgentFactory : PromptAgentFactory
     private readonly IList<AIFunction>? _functions;
     private readonly ILoggerFactory? _loggerFactory;
 
-    private static ChatClientPromptAgentFactoryOptions ValidateOptions(ChatClientPromptAgentFactoryOptions? options) =>
-        Throw.IfNull(options);
     #endregion
 }

@@ -138,13 +138,10 @@ public sealed class ChatClientAgentFactoryTests
             })
             .Build();
         GptComponentMetadata promptAgent = AgentBotElementYaml.FromYaml(PromptAgents.AgentWithVariableReferences);
-        ChatClientPromptAgentFactory factory = ChatClientPromptAgentFactory.Create(
+        ChatClientPromptAgentFactory factory = new(
             this._mockChatClient.Object,
-            options: new ChatClientPromptAgentFactoryOptions()
-            {
-                Configuration = configuration,
-                AllowedConfigurationVariables = ["Temperature", "TopP", "OpenAIEndpoint", "OpenAIApiKey"],
-            });
+            configuration: configuration,
+            allowedConfigurationVariables: ["Temperature", "TopP", "OpenAIEndpoint", "OpenAIApiKey"]);
 
         // Act
         AIAgent? agent = await factory.TryCreateAsync(promptAgent);
