@@ -47,6 +47,53 @@ $env:APPLICATIONINSIGHTS_CONNECTION_STRING="InstrumentationKey=XXXX;IngestionEnd
 
 ## Running the Demo
 
+### Configure message capture in a host-owned telemetry pipeline
+
+The .NET agent instrumentation entry point is `UseOpenTelemetry`. Its
+`EnableSensitiveData` setting controls raw input/output capture; it is not a
+direct equivalent of Python's `enable_message_events` switch.
+
+```csharp
+// chatClient is the application's IChatClient.
+AIAgent agent = chatClient.AsAIAgent()
+    .AsBuilder()
+    .UseOpenTelemetry(
+        sourceName: "MyCompany.BusinessAgent",
+        configure: options => options.EnableSensitiveData = false)
+    .Build();
+```
+
+Configure the host's existing OpenTelemetry tracing pipeline to subscribe to
+`MyCompany.BusinessAgent` with `AddSource`, and its metrics pipeline with
+`AddMeter` if collecting the corresponding metrics. Keep provider/exporter
+creation, lifetime, and disposal in the host or its distribution. Calling
+`UseOpenTelemetry` instruments the agent; it does not install an exporter or
+replace an existing `TracerProvider`.
+
+Setting `EnableSensitiveData = false` explicitly overrides the
+`OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT` environment-variable default.
+It suppresses raw message content on the agent instrumentation and its
+automatically instrumented inner chat client while retaining operation metadata.
+It does not disable tracing, suppress every event, or redact arbitrary telemetry
+emitted by tools, application logging, or other instrumentation. Tool definitions
+can still be emitted. Review that metadata before exporting it.
+
+If the application already wraps its `IChatClient` with telemetry, configure that
+wrapper's sensitive-data setting too: the agent avoids wrapping an already
+instrumented client, and does not take ownership of its configuration.
+
+This demo explicitly enables sensitive data at both chat and agent levels for
+inspection. Change both settings in `Program.cs` when applying the configuration
+above. Reuse your host's telemetry setup instead of copying this standalone
+demo's provider construction into an application that already owns providers.
+
+For Microsoft OpenTelemetry Distro integration, first identify the .NET package,
+version, signal, and instrumentation producing the unwanted event. Content
+suppression and event suppression are different requirements; this configuration
+establishes the existing .NET content control, not a guarantee that a
+distribution-specific event switch exists. The remaining integration question is
+tracked in [#8444](https://github.com/microsoft/agent-framework/issues/8444).
+
 ### Quick Start (Using Script)
 
 The easiest way to run the demo is using the provided PowerShell script:
