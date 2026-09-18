@@ -1439,7 +1439,36 @@ async def test_switch_case_edge_group_send_message_condition_error_propagates() 
         assert mock_send.call_count == 0
 
 
-async def test_fan_out_edge_group_skips_selection_for_unhandleable_message() -> None:
+async def test_fan_out_edge_group_send_message_with_target_outside_group() -> None:
+    """A message addressed to an executor outside the group never reaches the selection function."""
+    source = MockExecutor(id="source_executor")
+    target1 = MockExecutor(id="target_executor_1")
+    target2 = MockExecutor(id="target_executor_2")
+
+    def broken_condition(message: MockMessage) -> bool:
+        raise ValueError("condition is broken")
+
+    edge_group = SwitchCaseEdgeGroup(
+        source_id=source.id,
+        cases=[
+            SwitchCaseEdgeGroupCase(condition=broken_condition, target_id=target1.id),
+            SwitchCaseEdgeGroupDefault(target_id=target2.id),
+        ],
+    )
+    executors: dict[str, Executor] = {source.id: source, target1.id: target1, target2.id: target2}
+    edge_runner = create_edge_runner(edge_group, executors)
+
+    # RunnerImpl fans every message out to all of the source's edge runners, so a message
+    # addressed to an executor reached through a different edge still arrives here. It must be
+    # dropped as a target mismatch, not evaluated -- raising would cancel its real delivery.
+    message = WorkflowMessage(data=MockMessage(data=1), source_id=source.id, target_id="unrelated_executor")
+
+    success = await edge_runner.send_message(message, State(), InProcRunnerContext())
+
+    assert success is False
+
+
+async def test_fan_out_edge_group_send_message_with_unhandleable_data() -> None:
     """A message no target can handle is dropped before the selection function runs."""
     source = MockExecutor(id="source_executor")
     target1 = MockExecutor(id="target_executor_1")
