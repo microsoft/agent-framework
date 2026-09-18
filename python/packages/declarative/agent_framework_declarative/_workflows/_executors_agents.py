@@ -615,8 +615,8 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
 
         return arguments, messages, external_loop_when, max_iterations
 
-    def _get_output_config(self) -> tuple[str | None, str | None, str | None, bool]:
-        """Parse output configuration.
+    def _get_output_config(self, state: DeclarativeWorkflowState) -> tuple[str | None, str | None, str | None, bool]:
+        """Parse output bindings and evaluate autoSend against the current state.
 
         Returns:
             Tuple of (messages var, responseObject var, resultProperty, autoSend)
@@ -637,7 +637,7 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
         property_val: Any = output_dict.get("property")
         property_var: str | None = str(property_val) if property_val is not None else None
         auto_send_val: Any = output_dict.get("autoSend", True)
-        auto_send: bool = bool(auto_send_val)
+        auto_send: bool = bool(state.eval_if_expression(auto_send_val))
 
         return messages_var, response_obj_var, property_var or result_property, auto_send
 
@@ -925,7 +925,7 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
         logger.debug("handle_action: starting agent '%s'", agent_name)
 
         arguments, messages_expr, external_loop_when, max_iterations = self._get_input_config()
-        messages_var, response_obj_var, result_property, auto_send = self._get_output_config()
+        messages_var, response_obj_var, result_property, auto_send = self._get_output_config(state)
 
         # Get conversation-specific messages path if conversationId is specified
         conversation_id_expr = self._get_conversation_id()
