@@ -17,6 +17,13 @@ public static class HostedWorkflowBuilderExtensions
     /// <param name="lifetime">The DI service lifetime for the agent registration. Defaults to <see cref="ServiceLifetime.Singleton"/>.</param>
     /// <param name="includeWorkflowOutputsInResponse">If <see langword="true"/>, workflow outputs are included in the agent response.</param>
     /// <returns>An <see cref="IHostedAgentBuilder"/> that can be used to further configure the agent.</returns>
+    /// <remarks>
+    /// The agent is registered as a keyed service with the agent name as the service key. Resolve it with
+    /// <c>[FromKeyedServices(name)]</c> on an injected parameter (for example a constructor or minimal API
+    /// endpoint parameter), or with <c>GetRequiredKeyedService&lt;AIAgent&gt;(name)</c>.
+    /// Call <see cref="HostedAgentBuilderExtensions.AsDefault(IHostedAgentBuilder)"/> on the returned builder to also make
+    /// the agent resolvable without a service key.
+    /// </remarks>
     public static IHostedAgentBuilder AddAsAIAgent(
         this IHostedWorkflowBuilder builder,
         ServiceLifetime lifetime = ServiceLifetime.Singleton,
@@ -31,6 +38,13 @@ public static class HostedWorkflowBuilderExtensions
     /// <param name="lifetime">The DI service lifetime for the agent registration. Defaults to <see cref="ServiceLifetime.Singleton"/>.</param>
     /// <param name="includeWorkflowOutputsInResponse">If <see langword="true"/>, workflow outputs are included in the agent response.</param>
     /// <returns>An <see cref="IHostedAgentBuilder"/> that can be used to further configure the agent.</returns>
+    /// <remarks>
+    /// The agent is registered as a keyed service with the agent name as the service key. Resolve it with
+    /// <c>[FromKeyedServices(name)]</c> on an injected parameter (for example a constructor or minimal API
+    /// endpoint parameter), or with <c>GetRequiredKeyedService&lt;AIAgent&gt;(name)</c>.
+    /// Call <see cref="HostedAgentBuilderExtensions.AsDefault(IHostedAgentBuilder)"/> on the returned builder to also make
+    /// the agent resolvable without a service key.
+    /// </remarks>
     public static IHostedAgentBuilder AddAsAIAgent(
         this IHostedWorkflowBuilder builder,
         string? name,

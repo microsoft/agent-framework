@@ -468,6 +468,28 @@ public class HostApplicationBuilderWorkflowExtensionsTests
     }
 
     /// <summary>
+    /// Verifies that a workflow registered as an AI agent can be marked as the default, non-keyed agent,
+    /// and that the keyed and non-keyed resolutions return the same instance.
+    /// </summary>
+    [Fact]
+    public void AddAsAIAgent_AsDefault_ResolvesWorkflowAgentWithoutKey()
+    {
+        // Arrange
+        var builder = new HostApplicationBuilder();
+        const string WorkflowName = "outputWorkflow";
+        builder.AddWorkflow(WorkflowName, (sp, key) => ChatMessageOutputWorkflow.Build(key))
+            .AddAsAIAgent()
+            .AsDefault();
+        using var host = builder.Build();
+
+        // Act
+        AIAgent defaultAgent = host.Services.GetRequiredService<AIAgent>();
+
+        // Assert
+        Assert.Same(host.Services.GetRequiredKeyedService<AIAgent>(WorkflowName), defaultAgent);
+    }
+
+    /// <summary>
     /// Helper method to create a simple test workflow with a given name.
     /// </summary>
     private static Workflow CreateTestWorkflow(string name)
