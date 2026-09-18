@@ -147,7 +147,7 @@ public sealed class ShellPolicy
     /// would stall the authorization path itself. The timeout makes that failure bounded and
     /// recoverable rather than a hang.
     /// </summary>
-    private static readonly TimeSpan PatternMatchTimeout = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan s_patternMatchTimeout = TimeSpan.FromSeconds(1);
 
     private readonly IReadOnlyList<Regex> _denyList;
     private readonly IReadOnlyList<Regex>? _allowList;
@@ -178,11 +178,11 @@ public sealed class ShellPolicy
         Func<ShellRequest, ShellPolicyOutcome?>? custom = null)
     {
         this._denyList = denyList?
-            .Select(pattern => new Regex(pattern, RegexOptions.Compiled | RegexOptions.IgnoreCase, PatternMatchTimeout))
+            .Select(pattern => new Regex(pattern, RegexOptions.Compiled | RegexOptions.IgnoreCase, s_patternMatchTimeout))
             .ToArray() ?? Array.Empty<Regex>();
 
         this._allowList = allowList?
-            .Select(pattern => new Regex(pattern, RegexOptions.Compiled | RegexOptions.IgnoreCase, PatternMatchTimeout))
+            .Select(pattern => new Regex(pattern, RegexOptions.Compiled | RegexOptions.IgnoreCase, s_patternMatchTimeout))
             .ToArray();
 
         this._custom = custom;
