@@ -1793,10 +1793,15 @@ async def test_chat_agent_as_tool_fails_closed_for_unresolved_child_approval() -
 
 
 @pytest.mark.parametrize("stream", [False, True])
-async def test_chat_agent_as_tool_child_approval_does_not_dispatch_same_named_parent_tool(stream: bool) -> None:
+@pytest.mark.parametrize("propagate_session", [False, True])
+async def test_chat_agent_as_tool_child_approval_does_not_dispatch_same_named_parent_tool(
+    stream: bool,
+    propagate_session: bool,
+) -> None:
     """Test that child approval cannot escape and bind to a same-named parent tool."""
     child_executions = 0
     parent_executions = 0
+    observed_approval_requests: list[Content] = []
 
     @tool(name="guarded_write", approval_mode="always_require")
     def child_guarded_write() -> str:
@@ -1833,6 +1838,10 @@ async def test_chat_agent_as_tool_child_approval_does_not_dispatch_same_named_pa
         name="delegate",
         arguments={"task": "write"},
     )
+
+    def observe_child_updates(update: AgentResponseUpdate) -> None:
+        observed_approval_requests.extend(update.user_input_requests)
+
     if stream:
         parent_client.streaming_responses = [
             [ChatResponseUpdate(role="assistant", contents=[parent_call])],
@@ -1842,6 +1851,7 @@ async def test_chat_agent_as_tool_child_approval_does_not_dispatch_same_named_pa
                     contents=[Content.from_text("The delegated write was blocked.")],
                 )
             ],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("The stale approval was ignored.")])],
         ]
     else:
         parent_client.run_responses = [
@@ -1857,23 +1867,37 @@ async def test_chat_agent_as_tool_child_approval_does_not_dispatch_same_named_pa
                     contents=[Content.from_text("The delegated write was blocked.")],
                 )
             ),
+            ChatResponse(
+                messages=Message(
+                    role="assistant",
+                    contents=[Content.from_text("The stale approval was ignored.")],
+                )
+            ),
         ]
     parent_agent = Agent(
         client=parent_client,
         name="ParentAgent",
-        tools=[child_agent.as_tool(name="delegate"), parent_guarded_write],
+        tools=[
+            child_agent.as_tool(
+                name="delegate",
+                propagate_session=propagate_session,
+                stream_callback=observe_child_updates,
+            ),
+            parent_guarded_write,
+        ],
     )
+    parent_session = AgentSession()
 
     if stream:
         result = await parent_agent.run(
             "Delegate the write.",
-            session=AgentSession(),
+            session=parent_session,
             stream=True,
         ).get_final_response()
     else:
         result = await parent_agent.run(
             "Delegate the write.",
-            session=AgentSession(),
+            session=parent_session,
             stream=False,
         )
 
@@ -1881,6 +1905,92 @@ async def test_chat_agent_as_tool_child_approval_does_not_dispatch_same_named_pa
     assert parent_executions == 0
     assert not result.user_input_requests
     assert result.text == "The delegated write was blocked."
+
+    if propagate_session:
+        assert len(observed_approval_requests) == 1
+        tool_approval_state = parent_session.state.get("tool_approval", {})
+        assert isinstance(tool_approval_state, dict)
+        assert not tool_approval_state.get("pending_approval_requests")
+
+        stale_approval = observed_approval_requests[0].to_function_approval_response(approved=True)
+        if stream:
+            stale_result = await parent_agent.run(
+                stale_approval,
+                session=parent_session,
+                stream=True,
+            ).get_final_response()
+        else:
+            stale_result = await parent_agent.run(
+                stale_approval,
+                session=parent_session,
+                stream=False,
+            )
+
+        assert stale_result.text == "The stale approval was ignored."
+        assert child_executions == 0
+        assert parent_executions == 0
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_chat_agent_as_tool_preserves_non_approval_requests_from_mixed_child_batch(stream: bool) -> None:
+    """Test that fail-closed child approvals do not discard other user-input requests."""
+
+    @tool(name="guarded_write", approval_mode="always_require")
+    def guarded_write() -> str:
+        raise AssertionError("Unapproved child tool must not execute.")
+
+    child_client = MockBaseChatClient()
+    child_client.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="child-write", name="guarded_write", arguments={}),
+                    Content.from_oauth_consent_request(consent_link="https://example.com/consent"),
+                ],
+            )
+        ]
+    ]
+    child_agent = Agent(client=child_client, name="ChildAgent", tools=[guarded_write])
+
+    parent_client = MockBaseChatClient()
+    parent_call = Content.from_function_call(
+        call_id="delegate-call",
+        name="delegate",
+        arguments={"task": "write"},
+    )
+    if stream:
+        parent_client.streaming_responses = [[ChatResponseUpdate(role="assistant", contents=[parent_call])]]
+    else:
+        parent_client.run_responses = [
+            ChatResponse(messages=Message(role="assistant", contents=[parent_call])),
+        ]
+    parent_agent = Agent(
+        client=parent_client,
+        name="ParentAgent",
+        tools=[child_agent.as_tool(name="delegate", propagate_session=True)],
+    )
+    parent_session = AgentSession()
+
+    if stream:
+        result = await parent_agent.run(
+            "Delegate the write.",
+            session=parent_session,
+            stream=True,
+        ).get_final_response()
+    else:
+        result = await parent_agent.run(
+            "Delegate the write.",
+            session=parent_session,
+            stream=False,
+        )
+
+    assert len(result.user_input_requests) == 1
+    assert result.user_input_requests[0].type == "oauth_consent_request"
+    assert result.user_input_requests[0].consent_link == "https://example.com/consent"
+    tool_approval_state = parent_session.state.get("tool_approval", {})
+    assert isinstance(tool_approval_state, dict)
+    assert not tool_approval_state.get("pending_approval_requests")
 
 
 async def test_chat_agent_as_tool_with_stream_callback(
@@ -1995,13 +2105,14 @@ async def test_chat_agent_as_tool_propagate_session_true(client: SupportsChatGet
         )
     )
 
-    # Child receives a separate AgentSession (not the parent object) to isolate
-    # service_session_id, but shares the same state dict and session_id.
+    # Child receives a separate AgentSession and state mapping so framework
+    # continuation state stays isolated while application state propagates.
     assert captured_session is not None
     assert captured_session is not parent_session
     assert captured_session.session_id == "parent-session-123"
-    assert captured_session.state is parent_session.state
+    assert captured_session.state is not parent_session.state
     assert captured_session.state["shared_key"] == "shared_value"
+    assert parent_session.state["shared_key"] == "shared_value"
     assert captured_session.service_session_id is None
 
 
@@ -2143,8 +2254,8 @@ async def test_chat_agent_as_tool_propagate_session_clears_service_session_id(cl
         assert captured_session is not None
         assert captured_session is not parent_session
         assert captured_session.service_session_id is None
-        # But shares the same state dict by reference
-        assert captured_session.state is parent_session.state
+        # Application state is copied into the child and merged back afterward.
+        assert captured_session.state is not parent_session.state
         assert captured_session.state["data"] == "shared"
         return original_run(*args, **kwargs)
 
