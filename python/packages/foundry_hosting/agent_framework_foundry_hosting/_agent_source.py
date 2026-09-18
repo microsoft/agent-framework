@@ -12,7 +12,7 @@ AgentSource: TypeAlias = SupportsAgentRun | Callable[[], SupportsAgentRun | Awai
 
 
 def is_agent(value: object) -> TypeGuard[SupportsAgentRun]:
-    return not inspect.isclass(value) and hasattr(value, "run") and hasattr(value, "create_session")
+    return not inspect.isclass(value) and isinstance(value, SupportsAgentRun)
 
 
 def validate_agent_source(source: object) -> None:

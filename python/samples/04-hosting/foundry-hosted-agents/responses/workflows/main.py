@@ -11,8 +11,14 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-def create_workflow_agent(client: FoundryChatClient) -> WorkflowAgent:
+def create_workflow_agent() -> WorkflowAgent:
     """Create a fresh workflow agent for one hosted request."""
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=DefaultAzureCredential(),
+    )
+
     writer_agent = Agent(
         client=client,
         instructions=("You are an excellent slogan writer. You create new slogans based on the given topic."),
@@ -59,13 +65,7 @@ def create_workflow_agent(client: FoundryChatClient) -> WorkflowAgent:
 
 
 def main() -> None:
-    client = FoundryChatClient(
-        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-        credential=DefaultAzureCredential(),
-    )
-
-    server = ResponsesHostServer(agent=lambda: create_workflow_agent(client))
+    server = ResponsesHostServer(agent=create_workflow_agent)
     server.run()
 
 

@@ -141,6 +141,42 @@ async def _raising_updates(
     raise RuntimeError(message)
 
 
+class _AgentProtocolMock(MagicMock):
+    id = "test-agent"
+    name: str | None = "Test Agent"
+    description: str | None = "A mock agent for testing"
+    run: Any = None
+    create_session: Any = None
+    get_session: Any = None
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.run = MagicMock()
+        self.create_session = MagicMock(side_effect=lambda *, session_id=None: AgentSession(session_id=session_id))
+        self.get_session = MagicMock(
+            side_effect=lambda service_session_id, *, session_id=None: AgentSession(
+                service_session_id=service_session_id,
+                session_id=session_id,
+            )
+        )
+
+
+class _RawAgentMock(_AgentProtocolMock, RawAgent):
+    pass
+
+
+class _WorkflowAgentMock(_AgentProtocolMock, WorkflowAgent):
+    _workflow_value: Any = None
+
+    @property
+    def workflow(self) -> Any:
+        return self._workflow_value
+
+    @workflow.setter
+    def workflow(self, value: Any) -> None:
+        self._workflow_value = value
+
+
 def _make_agent(
     *,
     response: AgentResponse | None = None,
@@ -153,7 +189,7 @@ def _make_agent(
     tests that only care about complete output messages: the helper converts those messages into streamed updates.
     ``stream_updates`` is for tests that need explicit chunk boundaries to verify streaming event behavior.
     """
-    agent = MagicMock(spec=RawAgent) if raw_agent else MagicMock()
+    agent = _RawAgentMock() if raw_agent else _AgentProtocolMock()
     agent.id = "test-agent"
     agent.name = "Test Agent"
     agent.description = "A mock agent for testing"
@@ -165,7 +201,8 @@ def _make_agent(
     def create_session(*, session_id: str | None = None) -> AgentSession:
         return AgentSession(session_id=session_id)
 
-    agent.create_session.side_effect = create_session
+    agent.create_session = MagicMock(side_effect=create_session)
+    agent.run = MagicMock()
 
     if response is not None:
 
@@ -208,6 +245,14 @@ class _StrictCustomAgent:
 
     def create_session(self, *, session_id: str | None = None) -> AgentSession:
         return AgentSession(session_id=session_id)
+
+    def get_session(
+        self,
+        service_session_id: str | ServiceSessionId,
+        *,
+        session_id: str | None = None,
+    ) -> AgentSession:
+        return AgentSession(service_session_id=service_session_id, session_id=session_id)
 
     def run(
         self,
@@ -3535,7 +3580,7 @@ def _make_multi_response_agent(
     stream_updates_list: list[list[AgentResponseUpdate]] | None = None,
 ) -> MagicMock:
     """Create a mock agent that returns different responses on successive calls."""
-    agent = MagicMock(spec=RawAgent)
+    agent = _RawAgentMock()
     agent.id = "test-agent"
     agent.name = "Test Agent"
     agent.description = "A mock agent for testing"
@@ -3547,7 +3592,7 @@ def _make_multi_response_agent(
     def create_session(*, session_id: str | None = None) -> AgentSession:
         return AgentSession(session_id=session_id)
 
-    agent.create_session.side_effect = create_session
+    agent.create_session = MagicMock(side_effect=create_session)
 
     call_index = [0]
 
@@ -4751,7 +4796,8 @@ class TestCheckpointContextValidation:
         context_field: str,
         bad_id: str,
     ) -> None:
-        agent = MagicMock(spec=WorkflowAgent)
+        agent = _WorkflowAgentMock()
+        agent.run = MagicMock()
         agent.context_providers = []
         agent.workflow = MagicMock()
         agent.workflow.name = "workflow"
@@ -5253,7 +5299,7 @@ class TestResponseFailedSurfacing:
             yield AgentResponseUpdate(contents=[Content.from_text("partial ")], role="assistant")
             raise RuntimeError("stream kaboom")
 
-        agent = MagicMock(spec=RawAgent)
+        agent = _RawAgentMock()
         agent.id = "test-agent"
         agent.name = "Test Agent"
         agent.description = "A mock agent for testing"
@@ -5265,7 +5311,7 @@ class TestResponseFailedSurfacing:
         def create_session(*, session_id: str | None = None) -> AgentSession:
             return AgentSession(session_id=session_id)
 
-        agent.create_session.side_effect = create_session
+        agent.create_session = MagicMock(side_effect=create_session)
 
         def run_streaming(*args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
             del args
@@ -5304,7 +5350,7 @@ class TestResponseFailedSurfacing:
             yield AgentResponseUpdate(contents=[Content.from_text("hello ")], role="assistant")
             raise RuntimeError("mid-item kaboom")
 
-        agent = MagicMock(spec=RawAgent)
+        agent = _RawAgentMock()
         agent.id = "test-agent"
         agent.name = "Test Agent"
         agent.description = "A mock agent for testing"
@@ -5316,7 +5362,7 @@ class TestResponseFailedSurfacing:
         def create_session(*, session_id: str | None = None) -> AgentSession:
             return AgentSession(session_id=session_id)
 
-        agent.create_session.side_effect = create_session
+        agent.create_session = MagicMock(side_effect=create_session)
 
         def run_streaming(*args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
             del args, kwargs
