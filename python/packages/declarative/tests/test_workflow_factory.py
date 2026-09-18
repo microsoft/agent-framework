@@ -180,7 +180,7 @@ class TestWorkflowEnvironmentDiscovery:
         monkeypatch.setenv("DISCOVERY_FALLBACK", "fallback")
         monkeypatch.setenv("DISCOVERY_UNREFERENCED", "not-exposed")
         shared = {"value": "=Env.DISCOVERY_CONFIG & Env.DISCOVERY_FALLBACK"}
-        definition = {
+        definition: dict[str, Any] = {
             "name": "shared-references",
             "trigger": {"actions": [{"kind": "SendActivity", "activity": "done"}]},
             "metadata": [shared, shared],
