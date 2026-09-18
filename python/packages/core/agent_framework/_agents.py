@@ -707,8 +707,16 @@ class BaseAgent(SerializationMixin):
                 # keyed by this specific outer tool call, so a later resume for that
                 # same call continues the same sub-agent run instead of restarting it
                 # from the original task text.
+                # Only load a stored snapshot when this call is actually replaying an approval
+                # response. The function-calling loop's own contract permits a provider call_id
+                # to be reused by an unrelated later call once an earlier one has completed (see
+                # docs/specs/004-python-function-calling-loop.md, "Reused id after completion").
+                # A fresh invocation must never inherit a session left behind under that same id
+                # by an earlier, possibly abandoned (never approved or rejected) call -- doing so
+                # would silently continue a stranger's conversation instead of starting this
+                # task's own.
                 child_sessions = parent_session.state.setdefault(_AGENT_TOOL_CHILD_SESSIONS_STATE_KEY, {})
-                stored_session = child_sessions.get(owner_call_id)
+                stored_session = child_sessions.get(owner_call_id) if nested_approval_responses is not None else None
                 session = AgentSession.from_dict(stored_session) if stored_session is not None else AgentSession()
             else:
                 session = None

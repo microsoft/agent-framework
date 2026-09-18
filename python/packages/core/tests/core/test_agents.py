@@ -3115,6 +3115,153 @@ async def test_as_tool_resumes_nested_pause_discovered_via_hidden_mixed_batch_si
     assert final_response.text == "Both done."
 
 
+async def test_as_tool_resumes_correctly_after_reused_call_id_from_abandoned_chain() -> None:
+    """A reused provider call_id must not inherit bookkeeping from an earlier, abandoned use.
+
+    Regression test: docs/specs/004-python-function-calling-loop.md documents that a provider
+    call_id may be reused by an unrelated later call once an earlier one has completed ("Reused
+    id after completion"). _try_resume_nested_tool_approval_group tracks, per owner call_id,
+    whether it has already emitted the owner's pairing placeholder result -- but that flag was
+    only ever cleared when its chain fully resolved. If an earlier chain paused twice (setting
+    the flag) and was then abandoned (never resolved) before a later, unrelated call reused the
+    same call_id and itself needed two rounds of nested approval, the later call's own first
+    pairing placeholder was silently skipped, leaving its wrapper call dangling with no result.
+    """
+    calls = {"a": 0, "b": 0, "c": 0, "d": 0}
+
+    def make_tool(key: str) -> Any:
+        @tool(name=f"tool_{key}", approval_mode="always_require")
+        def _tool() -> str:
+            calls[key] += 1
+            return key
+
+        return _tool
+
+    inner_client = MockBaseChatClient()
+    outer_client = MockBaseChatClient()
+    inner_agent = Agent(
+        client=inner_client,
+        name="worker",
+        tools=[make_tool("a"), make_tool("b"), make_tool("c"), make_tool("d")],
+    )
+    outer_agent = Agent(
+        client=outer_client,
+        name="coordinator",
+        tools=[inner_agent.as_tool(name="worker_tool", approval_mode="never_require", propagate_session=False)],
+    )
+    session = AgentSession()
+
+    # Task A: pauses twice on call_id "shared-call" (the second pause sets the owner's
+    # placeholder-emitted flag), then is abandoned -- tool_b's approval is never answered.
+    outer_client.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="shared-call", name="worker_tool", arguments='{"task": "A"}')
+                ],
+            )
+        )
+    ]
+    inner_client.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                role="assistant", contents=[Content.from_function_call(call_id="a-call", name="tool_a", arguments="{}")]
+            )
+        ]
+    ]
+    first_response = await outer_agent.run("Task A", session=session)
+    first_request = first_response.user_input_requests[0]
+
+    inner_client.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                role="assistant", contents=[Content.from_function_call(call_id="b-call", name="tool_b", arguments="{}")]
+            )
+        ]
+    ]
+    await outer_agent.run(
+        Message(role="user", contents=[first_request.to_function_approval_response(True)]), session=session
+    )
+    assert session.state.get("_af_nested_owner_placeholder_emitted", {}).get("shared-call") is True
+
+    # Task B: a later, unrelated call reuses the exact same call_id and needs two rounds of
+    # its own nested approval. It must get its own pairing placeholder, not inherit task A's.
+    outer_client.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="shared-call", name="worker_tool", arguments='{"task": "B"}')
+                ],
+            )
+        )
+    ]
+    inner_client.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                role="assistant", contents=[Content.from_function_call(call_id="c-call", name="tool_c", arguments="{}")]
+            )
+        ]
+    ]
+    second_response = await outer_agent.run("Task B", session=session)
+    second_request = second_response.user_input_requests[0]
+
+    inner_client.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                role="assistant", contents=[Content.from_function_call(call_id="d-call", name="tool_d", arguments="{}")]
+            )
+        ]
+    ]
+    third_response = await outer_agent.run(
+        Message(role="user", contents=[second_request.to_function_approval_response(True)]), session=session
+    )
+    third_request = third_response.user_input_requests[0]
+
+    inner_client.streaming_responses = [
+        [ChatResponseUpdate(role="assistant", contents=[Content.from_text("all done")])]
+    ]
+    outer_client.run_responses = [ChatResponse(messages=Message(role="assistant", contents=["Task B complete."]))]
+
+    sent_batches: list[list[Message]] = []
+    original_get_non_streaming = outer_client._get_non_streaming_response
+
+    async def capturing_non_streaming(
+        *, messages: MutableSequence[Message], options: dict[str, Any], **kwargs: Any
+    ) -> ChatResponse:
+        sent_batches.append(list(messages))
+        return await original_get_non_streaming(messages=messages, options=options, **kwargs)
+
+    outer_client._get_non_streaming_response = capturing_non_streaming  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+
+    final_response = await outer_agent.run(
+        Message(role="user", contents=[third_request.to_function_approval_response(True)]), session=session
+    )
+
+    assert calls["c"] == 1
+    assert not final_response.user_input_requests
+    assert final_response.text == "Task B complete."
+
+    # Task B's own "shared-call" occurrence (the second assistant turn using that id) must
+    # have its own matching function_result immediately after it -- not be silently skipped
+    # because an earlier, abandoned chain already consumed the placeholder-emitted flag for
+    # that same reused id.
+    last_batch = sent_batches[-1]
+    task_b_turn_index = next(
+        i
+        for i, m in enumerate(last_batch)
+        if any(c.type == "function_call" and c.call_id == "c-call" for c in m.contents)
+    )
+    task_b_turn = last_batch[task_b_turn_index]
+    assert any(c.type == "function_call" and c.call_id == "shared-call" for c in task_b_turn.contents)
+    task_b_result_message = last_batch[task_b_turn_index + 1]
+    result_call_ids = {c.call_id for c in task_b_result_message.contents if c.type == "function_result"}
+    assert "shared-call" in result_call_ids, (
+        "task B's own shared-call occurrence must get a matching result, not inherit task A's stale placeholder flag"
+    )
+
+
 async def test_chat_agent_as_mcp_server_basic(client: SupportsChatGetResponse) -> None:
     """Test basic as_mcp_server functionality."""
     agent = Agent(client=client, name="TestAgent", description="Test agent for MCP")

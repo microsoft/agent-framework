@@ -2092,7 +2092,14 @@ async def _try_resume_nested_tool_approval_group(
         # frames remain, rather than letting _execute_single_function_call's generic handler
         # derive a frame from this round's inner call (which would tag the wrong, transient
         # identity and lose the chain back to the real owner).
-        repropagated = [item for item in exc.contents if isinstance(item, Content)] if exc.contents else []
+        #
+        # Copy before mutating: when the owner tool shares its session with the caller (e.g.
+        # Agent.as_tool(propagate_session=True)), these are the very same Content objects the
+        # owner's own history provider already persisted as part of its own turn. Mutating
+        # call_id/id/additional_properties on the original object would retroactively corrupt
+        # that already-saved message, and the copy returned here would then be saved a second
+        # time under its own message, producing two entries for the same call in history.
+        repropagated = [copy.copy(item) for item in exc.contents if isinstance(item, Content)] if exc.contents else []
         for item in repropagated:
             item.call_id = owner_call_id
             if not item.id:
@@ -2523,7 +2530,24 @@ async def _execute_single_function_call(
         # group. Anything landing here is a genuinely fresh pause, so tag it accordingly.
         source_function_call = _underlying_function_call(function_call)
         call_id = source_function_call.call_id
-        propagated_contents = [item for item in exc.contents if isinstance(item, Content)] if exc.contents else []
+        # A fresh pause on this call_id starts a new chain. The function-calling loop's own
+        # contract permits a provider call_id to be reused by an unrelated later call once an
+        # earlier one has completed (see docs/specs/004-python-function-calling-loop.md, "Reused
+        # id after completion"), and _try_resume_nested_tool_approval_group's placeholder-emitted
+        # flag for that id is only cleared when its chain fully resolves -- an earlier, abandoned
+        # chain that reused this same id would otherwise leave a stale flag behind, causing this
+        # call's own first pairing placeholder to be silently skipped later.
+        if invocation_session is not None and call_id is not None:
+            invocation_session.state.get(_NESTED_OWNER_PLACEHOLDER_EMITTED_STATE_KEY, {}).pop(call_id, None)
+        # Copy before mutating: when the tool that raised this shares its session with the
+        # caller (e.g. Agent.as_tool(propagate_session=True)), these are the very same Content
+        # objects that tool's own history provider already persisted as part of its own turn.
+        # Mutating call_id/id/additional_properties on the original object would retroactively
+        # corrupt that already-saved message, and the mutated copy returned here would then be
+        # saved a second time under its own message, producing two entries for the same call.
+        propagated_contents = (
+            [copy.copy(item) for item in exc.contents if isinstance(item, Content)] if exc.contents else []
+        )
         for item in propagated_contents:
             item.call_id = call_id
             if not item.id:
@@ -2750,10 +2774,40 @@ async def _try_execute_function_call_groups(
                 host_payload_budget=host_payload_budget,
             )
         except MiddlewareTermination as exc:
-            if isinstance(exc.result, Content):
-                return [([exc.result], True)]
-            source_call_id = calls[0].function_call.call_id if calls[0].function_call is not None else None
-            return [([Content.from_function_result(call_id=source_call_id, result=exc.result)], True)]  # type: ignore[arg-type]
+            stack = _nested_owner_stack(calls[0])
+            owner_call_id = stack[-1].get("call_id") if stack else None
+            inner_call_ids = [
+                call.function_call.call_id
+                for call in calls
+                if call.function_call is not None and call.function_call.call_id is not None
+            ]
+            if not isinstance(owner_call_id, str) or len(inner_call_ids) != len(calls):
+                # Not a well-formed tracked group (shouldn't happen: _nested_owner_key
+                # already validated this) -- fall back to the single-call best effort.
+                if isinstance(exc.result, Content):
+                    return [([exc.result], True)]
+                source_call_id = calls[0].function_call.call_id if calls[0].function_call is not None else None
+                return [([Content.from_function_result(call_id=source_call_id, result=exc.result)], True)]  # type: ignore[arg-type]
+
+            # Middleware terminated mid-resume, inside the synthetic owner call built by
+            # _try_resume_nested_tool_approval_group. Every response in this group, plus the
+            # owner's own still-pending call, needs its own matching function_result -- a
+            # single shared result can satisfy at most one of them, leaving the rest dangling
+            # with no result at all, unlike this function's other return paths.
+            result_payload = (
+                getattr(exc.result, "result", exc.result) if isinstance(exc.result, Content) else exc.result
+            )
+            already_paired = bool(
+                invocation_session is not None
+                and invocation_session.state.get(_NESTED_OWNER_PLACEHOLDER_EMITTED_STATE_KEY, {}).get(owner_call_id)
+            )
+            result_groups: list[list[Content]] = [
+                [Content.from_function_result(call_id=inner_call_id, result=result_payload)]
+                for inner_call_id in inner_call_ids
+            ]
+            if not already_paired:
+                result_groups[-1].append(Content.from_function_result(call_id=owner_call_id, result=result_payload))
+            return [(group, True) for group in result_groups]
         if nested_groups is None:
             # Not actually a tracked nested pause (shouldn't happen: _nested_owner_key
             # already validated this), so fall back per-item to the ordinary path.
@@ -3044,8 +3098,17 @@ def _get_tool_approval_state(invocation_session: AgentSession | None, *, create:
 
     if isinstance(raw_state, ToolApprovalState):
         serialized_state = raw_state.to_dict(exclude={"type"})
+        discarded_pending_state = False
+        for key in ("queued_approval_requests", "collected_approval_responses"):
+            if serialized_state.pop(key, None) is not None:
+                discarded_pending_state = True
         serialized_state[_TOOL_APPROVAL_STATE_VERSION_KEY] = _TOOL_APPROVAL_STATE_VERSION
         authoritative_session.state[_TOOL_APPROVAL_STATE_KEY] = serialized_state
+        if discarded_pending_state:
+            logger.warning(
+                "Discarded unversioned pending approval state because it cannot be resumed with trusted nested "
+                "ownership; rerun the paused operation to issue a new approval request."
+            )
         return serialized_state
     if raw_state is not None:
         raise TypeError(
