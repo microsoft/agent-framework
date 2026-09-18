@@ -100,7 +100,6 @@ logger = logging.getLogger("agent_framework")
 # nested ``agent.run()`` (fresh options, its own session) keeps its own turn,
 # and nothing leaks into the caller's context while a stream is paused.
 _LOOP_ITERATION_TOKEN_KEY = "_agent_loop_iteration"  # nosec B105 - a context-options key, not a credential  # ruff: ignore[hardcoded-password-string]
-_TOOL_APPROVAL_SOURCE_IDS_KEY = "_agent_tool_approval_source_ids"
 _DELEGATED_STATE_MISSING = object()
 
 
@@ -729,16 +728,10 @@ class BaseAgent(SerializationMixin):
             """
             parent_session = ctx.session
             session = AgentSession()
+            child_approval_source_ids = _tool_approval_source_ids(self.middleware)
 
             if propagate_session and parent_session is not None:
-                raw_parent_approval_source_ids = ctx.kwargs.get(_TOOL_APPROVAL_SOURCE_IDS_KEY)
-                parent_approval_source_ids: frozenset[str]
-                if isinstance(raw_parent_approval_source_ids, frozenset):
-                    parent_approval_source_ids = cast("frozenset[str]", raw_parent_approval_source_ids)
-                else:
-                    parent_approval_source_ids = frozenset()
-                child_approval_source_ids = _tool_approval_source_ids(self.middleware)
-                overlapping_source_ids = child_approval_source_ids.intersection(parent_approval_source_ids)
+                overlapping_source_ids = child_approval_source_ids.intersection(parent_session.state)
                 if overlapping_source_ids:
                     formatted_source_ids = ", ".join(repr(source_id) for source_id in sorted(overlapping_source_ids))
                     raise ToolExecutionException(
@@ -765,6 +758,7 @@ class BaseAgent(SerializationMixin):
                     _TOOL_APPROVAL_STATE_KEY,
                     _FUNCTION_INVOCATION_BUDGET_STATE_KEY,
                     _FUNCTION_RESULT_PAYLOAD_BUDGET_STATE_KEY,
+                    *child_approval_source_ids,
                 })
                 parent_state = parent_session.state
                 child_state = {key: value for key, value in parent_state.items() if key not in excluded_state_keys}
@@ -1614,8 +1608,6 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 mcp_server.functions,
                 duplicate_error_message=mcp_duplicate_message,
             )
-
-        additional_function_arguments[_TOOL_APPROVAL_SOURCE_IDS_KEY] = _tool_approval_source_ids(self.middleware)
 
         model = opts.pop("model", None)
 

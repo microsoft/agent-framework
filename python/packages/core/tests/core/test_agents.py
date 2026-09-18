@@ -2173,6 +2173,62 @@ async def test_chat_agent_as_tool_shared_session_requires_distinct_tool_approval
     assert result.text == "Done."
 
 
+async def test_chat_agent_as_tool_does_not_restore_custom_approval_queue_on_fresh_delegation() -> None:
+    """Test that custom child approval state cannot leak through a shared parent session."""
+
+    @tool(name="first_write", approval_mode="always_require")
+    def first_write() -> str:
+        raise AssertionError("Unapproved child tool must not execute.")
+
+    @tool(name="second_write", approval_mode="always_require")
+    def second_write() -> str:
+        raise AssertionError("Unapproved child tool must not execute.")
+
+    child_client = MockBaseChatClient()
+    child_client.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="first-write", name="first_write", arguments={}),
+                    Content.from_function_call(call_id="second-write", name="second_write", arguments={}),
+                ],
+            )
+        ],
+        [ChatResponseUpdate(role="assistant", contents=[Content.from_text("Fresh delegation completed.")])],
+    ]
+    child_agent = Agent(
+        client=child_client,
+        name="ChildAgent",
+        tools=[first_write, second_write],
+        middleware=[ToolApprovalMiddleware(source_id="child_approval")],
+    )
+    delegated_tool = child_agent.as_tool(propagate_session=True)
+    parent_session = AgentSession()
+
+    with raises(ToolExecutionException, match="sub-agent requested approval"):
+        await delegated_tool.invoke(
+            context=FunctionInvocationContext(
+                function=delegated_tool,
+                arguments={"task": "First delegation"},
+                session=parent_session,
+            )
+        )
+
+    assert "child_approval" not in parent_session.state
+
+    result = await delegated_tool.invoke(
+        context=FunctionInvocationContext(
+            function=delegated_tool,
+            arguments={"task": "Fresh delegation"},
+            session=parent_session,
+        )
+    )
+
+    assert result[0].text == "Fresh delegation completed."
+    assert not child_client.streaming_responses
+
+
 async def test_chat_agent_as_tool_uses_private_session_by_default(client: SupportsChatGetResponse) -> None:
     """Test that the default private session supports child middleware without sharing parent state."""
     agent = Agent(client=client, name="SubAgent", description="Sub agent")
