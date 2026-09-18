@@ -153,9 +153,10 @@ uv run --group test python samples\02-agents\observability\foundry_agent_tracing
 uv run --group test python samples\02-agents\observability\foundry_agent_tracing.py --stream
 ```
 
-Set `FOUNDRY_PROJECT_ENDPOINT`, `FOUNDRY_AGENT_NAME`, and optionally
-`FOUNDRY_AGENT_VERSION`, and ensure Application Insights is connected to that
-project. No client-side project ARM ID override is needed for this setup.
+Set `FOUNDRY_PROJECT_ENDPOINT` and `FOUNDRY_AGENT_NAME`. Set
+`FOUNDRY_AGENT_VERSION` for PromptAgents; it is optional for HostedAgents.
+Ensure Application Insights is connected to that project. No client-side
+project ARM ID override is needed for this setup.
 In Foundry, open **Build > Agents > your agent > Traces**, select the appropriate
 agent version and time range, and open the printed trace ID. Check that the
 waterfall contains both client and service spans in one connected tree; export

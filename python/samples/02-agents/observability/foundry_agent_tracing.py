@@ -38,7 +38,7 @@ Add --stream for streaming output. Message-content recording remains disabled.
 Environment variables:
     FOUNDRY_PROJECT_ENDPOINT -- Foundry project endpoint.
     FOUNDRY_AGENT_NAME       -- Existing prompt or hosted agent name.
-    FOUNDRY_AGENT_VERSION    -- Optional agent version.
+    FOUNDRY_AGENT_VERSION    -- Required for PromptAgents; optional for HostedAgents.
 
 After running, open Build > Agents > your agent > Traces in Foundry. Select the
 agent version and a time range covering the run, then open the printed trace ID.
