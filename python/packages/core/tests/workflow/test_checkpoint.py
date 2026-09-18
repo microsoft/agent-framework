@@ -1844,3 +1844,30 @@ async def test_file_checkpoint_storage_roundtrip_empty_collections():
 
 
 # endregion
+
+
+async def test_memory_get_latest_ties_broken_by_lineage_not_save_order():
+    """Identical timestamps must resolve via the lineage chain, not dict order."""
+    from datetime import datetime, timezone
+
+    ts = datetime(2026, 9, 18, 10, 0, 0, tzinfo=timezone.utc).isoformat()
+    parent = WorkflowCheckpoint(
+        workflow_name="w", graph_signature_hash="h", checkpoint_id="parent", timestamp=ts, iteration_count=1
+    )
+    child = WorkflowCheckpoint(
+        workflow_name="w",
+        graph_signature_hash="h",
+        checkpoint_id="child",
+        timestamp=ts,
+        iteration_count=1,
+        previous_checkpoint_id="parent",
+    )
+
+    for save_order in ([parent, child], [child, parent]):
+        storage = InMemoryCheckpointStorage()
+        for cp in save_order:
+            await storage.save(cp)
+        latest = await storage.get_latest(workflow_name="w")
+        assert latest.checkpoint_id == "child", (
+            f"save order {[cp.checkpoint_id for cp in save_order]} picked {latest.checkpoint_id}"
+        )
