@@ -1,8 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
-# type: ignore
-# Because the Bedrock boto3 client (bedrock-agent-runtime) does not ship type stubs, its
-# methods and responses are untyped, so we ignore type issues in this module. This matches
-# the convention already used in _chat_client.py.
+# Copyright (c) Microsoft. All rights reserved.
 
 """Amazon Bedrock Knowledge Base retrieval tool for Agent Framework."""
 
@@ -11,9 +8,10 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, TypedDict
 
 from agent_framework import FunctionTool
+from agent_framework._settings import SecretString, load_settings
 from agent_framework._telemetry import get_user_agent, mark_feature_used
 from pydantic import BaseModel, Field
 
@@ -23,7 +21,7 @@ if TYPE_CHECKING:
     from botocore.client import BaseClient
 
 try:
-    import boto3
+    from boto3.session import Session as Boto3Session
     from botocore.config import Config as BotoConfig
 except ImportError as e:
     raise ImportError(
@@ -32,10 +30,78 @@ except ImportError as e:
 
 logger = logging.getLogger("agent_framework.bedrock")
 
+DEFAULT_REGION = "us-east-1"
+
 # Bedrock RetrievalResultContent.type values whose payload is binary (in byteContent),
 # not text. A text retrieval tool renders these as placeholders. The full enum is
 # TEXT | IMAGE | AUDIO | VIDEO | ROW; ROW is handled separately.
 _BINARY_MEDIA_CONTENT_TYPES = frozenset({"IMAGE", "AUDIO", "VIDEO"})
+
+
+class _KnowledgeBaseSettings(TypedDict, total=False):
+    """Bedrock KB settings resolved from constructor args, env vars, or .env files.
+
+    Mirrors ``BedrockSettings`` / ``BedrockEmbeddingSettings`` so the KB tool and
+    provider resolve region and credentials the same way as ``BedrockChatClient``
+    and the embedding client (env prefix ``BEDROCK_``).
+    """
+
+    region: str | None
+    access_key: SecretString | None
+    secret_key: SecretString | None
+    session_token: SecretString | None
+
+
+def _build_kb_client(
+    *,
+    client: BaseClient | None,
+    boto3_session: Boto3Session | None,
+    region: str | None,
+    access_key: str | None,
+    secret_key: str | None,
+    session_token: str | None,
+    env_file_path: str | None,
+    env_file_encoding: str | None,
+) -> BaseClient:
+    """Build a ``bedrock-agent-runtime`` client using the shared Bedrock settings path.
+
+    Resolves ``BEDROCK_REGION`` / ``BEDROCK_ACCESS_KEY`` / ``BEDROCK_SECRET_KEY`` /
+    ``BEDROCK_SESSION_TOKEN`` (and .env files) the same way as ``BedrockChatClient``
+    and the embedding client, and accepts a caller-supplied ``client`` or
+    ``boto3_session`` so the KB tool/provider and a configured chat client can share
+    region and credentials instead of silently diverging.
+    """
+    if client is not None:
+        return client
+
+    settings = load_settings(
+        _KnowledgeBaseSettings,
+        env_prefix="BEDROCK_",
+        region=region,
+        access_key=access_key,
+        secret_key=secret_key,
+        session_token=session_token,
+        env_file_path=env_file_path,
+        env_file_encoding=env_file_encoding,
+    )
+    resolved_region = settings.get("region") or DEFAULT_REGION
+
+    if boto3_session is None:
+        session_kwargs: dict[str, Any] = {}
+        if region_setting := settings.get("region"):
+            session_kwargs["region_name"] = region_setting
+        if (ak := settings.get("access_key")) and (sk := settings.get("secret_key")):
+            session_kwargs["aws_access_key_id"] = ak.get_secret_value()
+            session_kwargs["aws_secret_access_key"] = sk.get_secret_value()
+        if st := settings.get("session_token"):
+            session_kwargs["aws_session_token"] = st.get_secret_value()
+        boto3_session = Boto3Session(**session_kwargs)
+
+    return boto3_session.client(
+        "bedrock-agent-runtime",
+        region_name=boto3_session.region_name or resolved_region,
+        config=BotoConfig(user_agent_extra=f"{get_user_agent()} bedrock-kb"),
+    )
 
 
 def _get_source_uri(result: dict[str, Any]) -> str:
@@ -128,18 +194,21 @@ def _retrieve_standard_passages(
     passages (the tool) or filter by score and frame them as context (the
     provider) without duplicating the request or the extraction.
     """
-    response = client.retrieve(
+    # bedrock-agent-runtime is dynamically typed by botocore (no stubs); annotate the
+    # response so the extraction below is typed.
+    response: dict[str, Any] = client.retrieve(  # pyright: ignore[reportUnknownMemberType]
         knowledgeBaseId=knowledge_base_id,
         retrievalQuery={"text": query},
         retrievalConfiguration={"managedSearchConfiguration": {"numberOfResults": number_of_results}},
     )
+    results: list[dict[str, Any]] = response.get("retrievalResults", [])
     return [
         _KnowledgeBasePassage(
             content=_extract_content_text(r),
             source=_get_source_uri(r),
             score=r.get("score", 0),
         )
-        for r in response.get("retrievalResults", [])
+        for r in results
     ]
 
 
@@ -166,10 +235,16 @@ class BedrockKnowledgeBaseTool(FunctionTool):
         self,
         *,
         knowledge_base_id: str,
-        region_name: str = "us-east-1",
+        region_name: str | None = None,
         number_of_results: int = 5,
         use_agentic_retrieval: bool = True,
         client: BaseClient | None = None,
+        boto3_session: Boto3Session | None = None,
+        access_key: str | None = None,
+        secret_key: str | None = None,
+        session_token: str | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
         name: str = "bedrock_knowledge_base",
         description: str = (
             "Retrieves relevant documents from an Amazon Bedrock Knowledge Base. "
@@ -178,28 +253,42 @@ class BedrockKnowledgeBaseTool(FunctionTool):
     ) -> None:
         """Create a Bedrock Knowledge Base tool.
 
+        Region and credentials are resolved the same way as ``BedrockChatClient`` and
+        the embedding client — from these arguments, then the ``BEDROCK_*`` environment
+        variables (``BEDROCK_REGION``, ``BEDROCK_ACCESS_KEY``, ``BEDROCK_SECRET_KEY``,
+        ``BEDROCK_SESSION_TOKEN``), then an optional .env file — so a KB tool and a
+        configured ``BedrockChatClient()`` target the same region/credentials by default.
+
         Args:
             knowledge_base_id: The Bedrock Knowledge Base ID.
-            region_name: AWS region name.
+            region_name: AWS region name; falls back to ``BEDROCK_REGION`` then us-east-1.
             number_of_results: Maximum number of results to return.
             use_agentic_retrieval: Use AgenticRetrieveStream for query decomposition + reranking.
-            client: Pre-configured bedrock-agent-runtime client. If not provided, one is created.
+            client: Pre-configured bedrock-agent-runtime client. If given, it is used as-is.
+            boto3_session: Optional boto3 Session to build the client from.
+            access_key: Optional AWS access key; falls back to ``BEDROCK_ACCESS_KEY``.
+            secret_key: Optional AWS secret key; falls back to ``BEDROCK_SECRET_KEY``.
+            session_token: Optional AWS session token; falls back to ``BEDROCK_SESSION_TOKEN``.
+            env_file_path: Optional path to a .env file to load settings from.
+            env_file_encoding: Encoding for the .env file.
             name: Tool name for model registration.
             description: Tool description for model context.
         """
         self.knowledge_base_id = knowledge_base_id
-        self.region_name = region_name
         self.number_of_results = number_of_results
         self.use_agentic_retrieval = use_agentic_retrieval
 
-        if client is not None:
-            self._client = client
-        else:
-            self._client = boto3.client(
-                "bedrock-agent-runtime",
-                region_name=self.region_name,
-                config=BotoConfig(user_agent_extra=f"{get_user_agent()} bedrock-kb"),
-            )
+        self._client = _build_kb_client(
+            client=client,
+            boto3_session=boto3_session,
+            region=region_name,
+            access_key=access_key,
+            secret_key=secret_key,
+            session_token=session_token,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+        )
+        self.region_name = self._client.meta.region_name
 
         super().__init__(
             name=name,
@@ -234,7 +323,7 @@ class BedrockKnowledgeBaseTool(FunctionTool):
 
     def _agentic_retrieve(self, query: str) -> list[dict[str, Any]]:
         """Use AgenticRetrieveStream for query decomposition + managed reranking."""
-        response = self._client.agentic_retrieve_stream(
+        response: dict[str, Any] = self._client.agentic_retrieve_stream(  # pyright: ignore[reportUnknownMemberType]
             messages=[{"content": {"text": query}, "role": "user"}],
             # This tool returns retrieval passages only; the agent's own model
             # generates the final answer. AgenticRetrieveStream defaults to
@@ -256,7 +345,7 @@ class BedrockKnowledgeBaseTool(FunctionTool):
                 "rerankingModelType": "MANAGED",
             },
         )
-        results = []
+        results: list[dict[str, Any]] = []
         for event in response.get("stream", []):
             if "result" in event and "results" in event["result"]:
                 for r in event["result"]["results"]:

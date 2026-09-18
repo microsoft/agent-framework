@@ -114,10 +114,13 @@ class TestBedrockKnowledgeBaseTool:
     def test_client_uses_get_user_agent(self):
         from agent_framework_bedrock._knowledge_base import BedrockKnowledgeBaseTool
 
-        with patch("agent_framework_bedrock._knowledge_base.boto3.client") as mock_boto:
-            mock_boto.return_value = MagicMock()
+        # The client is built via a boto3 Session (shared _build_kb_client), so patch the
+        # Session and assert the user-agent extra is set on the session.client() config.
+        with patch("agent_framework_bedrock._knowledge_base.Boto3Session") as mock_session_cls:
+            mock_session = MagicMock()
+            mock_session_cls.return_value = mock_session
             _ = BedrockKnowledgeBaseTool(knowledge_base_id="TEST_KB", region_name="us-west-2")
-            config = mock_boto.call_args.kwargs["config"]
+            config = mock_session.client.call_args.kwargs["config"]
             ua = getattr(config, "user_agent_extra", "")
             assert "bedrock-kb" in ua
 
