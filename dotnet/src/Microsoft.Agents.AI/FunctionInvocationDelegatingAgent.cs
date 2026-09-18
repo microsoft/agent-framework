@@ -11,7 +11,7 @@ using Microsoft.Extensions.AI;
 namespace Microsoft.Agents.AI;
 
 /// <summary>
-/// Internal agent decorator that adds function invocation middleware logic.
+/// Internal agent wrapper that gives callbacks control over function calls.
 /// </summary>
 internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
 {
@@ -28,11 +28,12 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
     protected override IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
         => this.InnerAgent.RunStreamingAsync(messages, session, this.AgentRunOptionsWithFunctionMiddleware(options), cancellationToken);
 
-    // Decorate options to add the middleware function
+    // Work on a per-run copy so adding callback support does not change options that the caller may reuse.
     private ChatClientAgentRunOptions AgentRunOptionsWithFunctionMiddleware(AgentRunOptions? options)
     {
         if (options is null || options.GetType() == typeof(AgentRunOptions))
         {
+            // Plain agent options cannot hold a chat-client factory, so copy their shared values to chat-specific options.
             options = new ChatClientAgentRunOptions()
             {
                 ResponseFormat = options?.ResponseFormat,
@@ -52,6 +53,7 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
         }
 
         var originalFactory = aco.ChatClientFactory;
+        // Apply the original factory before adding our wrapper so even a replacement client keeps these callbacks.
         aco.ChatClientFactory = chatClient => FunctionMiddlewarePreservingChatClient.Build(chatClient, originalFactory, this);
 
         return aco;
@@ -63,6 +65,7 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
     private sealed class FunctionMiddlewarePreservingChatClient(
         IChatClient innerClient, FunctionInvocationDelegatingAgent[] middlewareChain) : DelegatingChatClient(innerClient)
     {
+        // Concurrent runs must not combine the callbacks collected while their clients are built.
         private static readonly AsyncLocal<PipelineBuildScope?> s_buildScope = new();
         private readonly FunctionInvocationDelegatingAgent[] _middlewareChain = middlewareChain;
 
@@ -70,9 +73,11 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
             IChatClient chatClient, Func<IChatClient, IChatClient>? originalFactory, FunctionInvocationDelegatingAgent middleware)
         {
             var previous = s_buildScope.Value;
+            // Nested agent wrappers build one client synchronously. Share their list only within the same run.
             var scope = previous is not null && ReferenceEquals(previous.RunContext, CurrentRunContext)
                 ? previous
                 : new PipelineBuildScope(CurrentRunContext);
+            // Function wrapping reverses this list, so insert at the front to keep callbacks in registration order.
             scope.Middleware.Insert(0, middleware);
             s_buildScope.Value = scope;
             try
@@ -87,7 +92,7 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
             }
             finally
             {
-                // Factory composition is synchronous; restore its construction scope before returning.
+                // Restore the previous list so a later client build cannot reuse callbacks from this one.
                 s_buildScope.Value = previous;
             }
         }
@@ -107,9 +112,11 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
 
         private ChatOptions ConfigureOptions(ChatOptions? options)
         {
+            // Each request gets its own options object, leaving caller-owned options unchanged.
             options = options?.Clone() ?? new();
             if (options.Tools is { } tools)
             {
+                // This collection also wraps functions that are added or replaced later in the same run.
                 options.Tools = new MiddlewareEnabledTools(tools, this._middlewareChain);
             }
 
@@ -128,6 +135,7 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
         internal MiddlewareEnabledTools(IList<AITool> tools, FunctionInvocationDelegatingAgent[] middleware)
         {
             this.MiddlewareChain = middleware;
+            // Add also wraps the functions already present, just as it will wrap functions added later.
             foreach (var tool in tools)
             {
                 this.Add(tool);
@@ -138,6 +146,7 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
 
         internal static void ApplyTo(ChatOptions options, FunctionInvocationDelegatingAgent[] middleware)
         {
+            // Keep the current collection only when it already uses this exact callback list.
             if (options.Tools is { } tools &&
                 (tools is not MiddlewareEnabledTools existing || !ReferenceEquals(existing.MiddlewareChain, middleware)))
             {
@@ -145,6 +154,7 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
             }
         }
 
+        // Route later additions and replacements through the same callback wrapping.
         protected override void InsertItem(int index, AITool item) => base.InsertItem(index, this.Wrap(item));
 
         protected override void SetItem(int index, AITool item) => base.SetItem(index, this.Wrap(item));
@@ -170,12 +180,14 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
         FunctionInvocationDelegatingAgent middleware,
         FunctionInvocationDelegatingAgent[] middlewareChain) : DelegatingAIFunction(innerFunction)
     {
+        // Keep active callbacks with the current asynchronous operation instead of sharing process-wide state.
         private static readonly AsyncLocal<InvocationScope?> s_invocationScope = new();
         private readonly FunctionInvocationDelegatingAgent _middleware = middleware;
         private readonly FunctionInvocationDelegatingAgent[] _middlewareChain = middlewareChain;
 
         internal static AIFunction Wrap(AIFunction function, FunctionInvocationDelegatingAgent middleware, FunctionInvocationDelegatingAgent[] middlewareChain)
         {
+            // Do not add the callback again when the function exposes an existing wrapper for it.
             for (var existing = function.GetService<MiddlewareEnabledFunction>();
                  existing is not null;
                  existing = existing.InnerFunction.GetService<MiddlewareEnabledFunction>())
@@ -192,7 +204,8 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
         protected override async ValueTask<object?> InvokeCoreAsync(AIFunctionArguments arguments, CancellationToken cancellationToken)
         {
             var context = FunctionInvokingChatClient.CurrentContext
-                ?? new FunctionInvocationContext() // When there is no ambient context, create a new one to hold the arguments
+                // Direct function calls have no context from FunctionInvokingChatClient, so create the values the callback expects.
+                ?? new FunctionInvocationContext()
                 {
                     Arguments = arguments,
                     Function = this.InnerFunction,
@@ -200,6 +213,7 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
                 };
 
             var previous = s_invocationScope.Value;
+            // A custom function wrapper can lead back to this callback during the same call. Run it only once.
             for (var active = previous; active is not null; active = active.Parent)
             {
                 if (ReferenceEquals(active.Context, context) && ReferenceEquals(active.Middleware, this._middleware))
@@ -208,10 +222,11 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
                 }
             }
 
-            // An opaque decorator can reach an already active callback for the same invocation.
+            // Record the callback while it runs, including through wrappers that do not expose their inner function.
             s_invocationScope.Value = new(context, this._middleware, previous);
 
-            // Function wrappers survive ChatOptions.Clone even when the middleware-aware collection does not.
+            // ChatOptions.Clone keeps function wrappers but copies the tool list into a plain collection.
+            // In that case, use the callback list saved on this function.
             var middlewareChain = (context.Options?.Tools as MiddlewareEnabledTools)?.MiddlewareChain ?? this._middlewareChain;
             try
             {
@@ -219,13 +234,14 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
             }
             finally
             {
-                // A function or middleware can replace the entire collection during invocation.
+                // A function or callback can replace the entire tool list. Wrap the replacement before the next call.
                 if (context.Options is { } options)
                 {
                     MiddlewareEnabledTools.ApplyTo(options, middlewareChain);
                 }
             }
 
+            // Continue with the next function wrapper using any arguments changed by the callback.
             ValueTask<object?> CoreLogicAsync(FunctionInvocationContext ctx, CancellationToken cancellationToken)
                 => base.InvokeCoreAsync(ctx.Arguments, cancellationToken);
         }
