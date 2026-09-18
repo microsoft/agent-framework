@@ -681,8 +681,13 @@ public sealed class OpenAIChatCompletionsConformanceTests : ConformanceTestBase
         // unconditionally. This captures what the server actually wrote to the response body, which
         // does distinguish the two.
 
-        // Arrange - a host whose response body is tee'd into a buffer we can inspect afterwards
-        var recorded = new MemoryStream();
+        // Arrange - a host whose response body is tee'd into a buffer we can inspect afterwards.
+        // The host is built here rather than through ConformanceTestBase.CreateTestServerAsync
+        // because this test needs response-body middleware and a throwing chat client, and neither
+        // belongs in the shared harness for a single caller. If the base class's wiring changes,
+        // this setup does not follow it automatically -- keep them in step deliberately.
+        string requestJson = LoadChatCompletionsTraceFile("streaming/request.json");
+        using var recorded = new MemoryStream();
         using var failingChatClient = new FailingStreamChatClient(updatesBeforeFailure: 2);
 
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
@@ -715,7 +720,7 @@ public sealed class OpenAIChatCompletionsConformanceTests : ConformanceTestBase
         // Act - the agent yields two updates and then throws partway through the body
         try
         {
-            using HttpResponseMessage response = await this.SendChatCompletionRequestAsync(client, "failing-agent", LoadChatCompletionsTraceFile("streaming/request.json"));
+            using HttpResponseMessage response = await this.SendChatCompletionRequestAsync(client, "failing-agent", requestJson);
             _ = await response.Content.ReadAsStringAsync();
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException)
