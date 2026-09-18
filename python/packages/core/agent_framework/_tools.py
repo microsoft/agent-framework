@@ -2974,6 +2974,7 @@ def _match_mixed_pause_responses(
     responses: Sequence[Content],
     *,
     approval_response_binder: Callable[[Content], Content | None] | None = None,
+    allow_idless_host_duplicates: bool = True,
 ) -> tuple[set[int], bool, list[Content], set[int]]:
     """Match one complete mixed pause batch without depending on its storage source."""
     approval_items: dict[str, int | None] = {}
@@ -3041,7 +3042,7 @@ def _match_mixed_pause_responses(
                     ]
                     if len(unanswered_indexes) == 1:
                         item_index = unanswered_indexes[0]
-                    elif not unanswered_indexes:
+                    elif not unanswered_indexes and allow_idless_host_duplicates:
                         duplicate_indexes = [
                             pending_index
                             for pending_index in host_items_by_call[response.call_id]
@@ -3312,7 +3313,11 @@ def _stateless_mixed_pause_batch_status(
     matched_host_result_ids = set(reserved_host_result_ids)
     for batch_index, (_, items, _) in enumerate(request_batches):
         responses = responses_by_batch[batch_index]
-        match = _match_mixed_pause_responses(items, responses)
+        match = _match_mixed_pause_responses(
+            items,
+            responses,
+            allow_idless_host_duplicates=False,
+        )
         batch_matches.append(match)
         matched_response_ids = match[0]
         for response in responses:

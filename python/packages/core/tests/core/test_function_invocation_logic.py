@@ -4346,10 +4346,10 @@ async def test_completed_stateless_mixed_batch_with_reused_call_id_is_inert(
     assert chat_client_base.call_count == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
 
-async def test_duplicate_idless_host_result_remains_host_owned_in_reused_call_mixed_batch(
+async def test_equal_idless_terminal_result_does_not_reexecute_completed_stateless_mixed_approval(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:
-    """An equivalent Host-result replay cannot consume the approval decision."""
+    """An ambiguous id-less result cannot restore stateless approval authority."""
     from agent_framework import FunctionTool
 
     calls = 0
@@ -4358,8 +4358,64 @@ async def test_duplicate_idless_host_result_remains_host_owned_in_reused_call_mi
     def approval_func() -> str:
         nonlocal calls
         calls += 1
-        return "approved"
+        return "same result"
 
+    approval_call = Content.from_function_call(
+        call_id="shared",
+        name="approval_func",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    host_request = Content.from_function_call(
+        call_id="shared",
+        name="host_func",
+        arguments={},
+        id="host-occurrence",
+    )
+    host_request.user_input_request = True
+    host_result = Content.from_function_result(call_id="shared", result="same result")
+    approval_result = Content.from_function_result(call_id="shared", result="same result")
+    host_func = FunctionTool(name="host_func", func=None, description="Handled by the caller")
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=["later response"])),
+    ]
+    messages = [
+        Message(role="assistant", contents=[approval_request, host_request]),
+        Message(
+            role="user",
+            contents=[
+                approval_request.to_function_approval_response(approved=True),
+                host_result,
+            ],
+        ),
+        Message(role="tool", contents=[approval_result]),
+        Message(role="assistant", contents=["done"]),
+        Message(role="user", contents=["later"]),
+    ]
+
+    response = await chat_client_base.get_response(
+        messages,
+        options={"tools": [approval_func, host_func]},
+    )
+
+    assert response.text == "later response"
+    assert calls == 0
+    assert chat_client_base.call_count == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+
+def test_stateful_mixed_batch_accepts_equivalent_idless_host_result_replay() -> None:
+    """Authoritative session state can recognize an equivalent Host-result replay."""
+    from agent_framework._tools import (
+        _stage_pending_mixed_pause_responses,
+        _store_pending_approval_requests,
+        _store_pending_mixed_pause_batch,
+    )
+
+    session = AgentSession()
     approval_call = Content.from_function_call(
         call_id="shared",
         name="approval_func",
@@ -4379,12 +4435,9 @@ async def test_duplicate_idless_host_result_remains_host_owned_in_reused_call_mi
     host_request.user_input_request = True
     host_result = Content.from_function_result(call_id="shared", result="host result")
     duplicate_host_result = Content.from_function_result(call_id="shared", result="host result")
-    host_func = FunctionTool(name="host_func", func=None, description="Handled by the caller")
-    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
-        ChatResponse(messages=Message(role="assistant", contents=["done"])),
-    ]
+    _store_pending_approval_requests(session, [approval_request])
+    _store_pending_mixed_pause_batch(session, [[approval_request], [host_request]])
     messages = [
-        Message(role="assistant", contents=[approval_request, host_request]),
         Message(
             role="user",
             contents=[
@@ -4392,17 +4445,18 @@ async def test_duplicate_idless_host_result_remains_host_owned_in_reused_call_mi
                 host_result,
                 duplicate_host_result,
             ],
-        ),
+        )
     ]
 
-    response = await chat_client_base.get_response(
-        messages,
-        options={"tools": [approval_func, host_func]},
-    )
+    incomplete, completed, host_result_ids = _stage_pending_mixed_pause_responses(messages, session)
 
-    assert response.text == "done"
-    assert calls == 1
-    assert chat_client_base.call_count == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert incomplete is False
+    assert completed is True
+    assert [(content.type, content.result) for content in messages[-1].contents] == [
+        ("function_approval_response", None),
+        ("function_result", "host result"),
+    ]
+    assert host_result_ids == {id(messages[-1].contents[1])}
 
 
 @pytest.mark.parametrize("identified_first", [True, False], ids=["identified-first", "idless-first"])
