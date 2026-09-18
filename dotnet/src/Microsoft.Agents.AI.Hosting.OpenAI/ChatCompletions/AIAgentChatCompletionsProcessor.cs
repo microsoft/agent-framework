@@ -182,8 +182,11 @@ internal static class AIAgentChatCompletionsProcessor
                 yield return new(chunk);
             }
 
-            // OpenAI-compatible clients detect completion from a final "data: [DONE]" frame and
-            // otherwise wait for the connection to drop, which reads as a hang or a timeout.
+            // The OpenAI wire format ends a streaming chat completion with a literal
+            // "data: [DONE]" frame, and consumers that treat that sentinel -- rather than
+            // end-of-body -- as the completion signal cannot recognize the stream as finished
+            // without it. This repo ships one such consumer: SseResponseIdCapture in the DevUI
+            // Aspire integration matches "[DONE]"u8 explicitly.
             //
             // Emitted after the loop so it only follows a stream that ran to completion: if the
             // agent throws, or the caller aborts the request, the exception propagates out of the

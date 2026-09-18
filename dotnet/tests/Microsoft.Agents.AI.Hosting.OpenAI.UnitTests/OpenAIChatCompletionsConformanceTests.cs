@@ -1,12 +1,23 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net.Http;
+using System.Runtime.CompilerServices;
+using System.Text;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Hosting.OpenAI.Tests;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI.UnitTests;
 
@@ -253,18 +264,18 @@ public sealed class OpenAIChatCompletionsConformanceTests : ConformanceTestBase
         // trimmed body would pass even if the final frame were left unterminated.
         Assert.Equal("text/event-stream", httpResponse.Content.Headers.ContentType?.MediaType);
         Assert.Contains("data: [DONE]", responseSse);
-        Assert.EndsWith("data: [DONE]\n\n", responseSse, System.StringComparison.Ordinal);
+        Assert.EndsWith("data: [DONE]\n\n", responseSse, StringComparison.Ordinal);
 
         var dataLines = responseSse.Split('\n')
             .Select(line => line.TrimEnd('\r'))
-            .Where(line => line.StartsWith("data: ", System.StringComparison.Ordinal))
+            .Where(line => line.StartsWith("data: ", StringComparison.Ordinal))
             .ToList();
         Assert.Single(dataLines, line => line == "data: [DONE]");
 
         // Assert - the terminator follows the payload chunks rather than replacing them, so a
         // client that stops reading at [DONE] still receives the whole completion.
         Assert.True(dataLines.Count > 1, "the stream should carry chat completion chunks before the terminator");
-        Assert.All(dataLines[..^1], line => Assert.StartsWith("data: {", line, System.StringComparison.Ordinal));
+        Assert.All(dataLines[..^1], line => Assert.StartsWith("data: {", line, StringComparison.Ordinal));
     }
 
     [Fact]
@@ -380,7 +391,7 @@ public sealed class OpenAIChatCompletionsConformanceTests : ConformanceTestBase
         AssertJsonPropertyEquals(systemMessage, "role", "system");
         AssertJsonPropertyExists(systemMessage, "content");
         string systemContent = systemMessage.GetProperty("content").GetString()!;
-        Assert.Contains("pirate", systemContent, System.StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("pirate", systemContent, StringComparison.OrdinalIgnoreCase);
 
         var userMessage = messages[1];
         AssertJsonPropertyEquals(userMessage, "role", "user");
@@ -635,7 +646,7 @@ public sealed class OpenAIChatCompletionsConformanceTests : ConformanceTestBase
         {
             var line = lines[i].TrimEnd('\r');
 
-            if (line.StartsWith("data: ", System.StringComparison.Ordinal))
+            if (line.StartsWith("data: ", StringComparison.Ordinal))
             {
                 var jsonData = line.Substring("data: ".Length);
 
@@ -658,5 +669,133 @@ public sealed class OpenAIChatCompletionsConformanceTests : ConformanceTestBase
         }
 
         return chunks;
+    }
+
+    [Fact]
+    public async Task StreamingResponseOmitsDoneSentinelWhenAgentStreamFailsAsync()
+    {
+        // The sentinel must only ever follow a stream that ran to completion; a truncated response
+        // must never be marked complete. Asserting that from the client does not work: when the
+        // agent throws, the server aborts and the client receives no body at all, so a client-side
+        // check passes even against a try/finally refactor that writes the terminator
+        // unconditionally. This captures what the server actually wrote to the response body, which
+        // does distinguish the two.
+
+        // Arrange - a host whose response body is tee'd into a buffer we can inspect afterwards
+        var recorded = new MemoryStream();
+        using var failingChatClient = new FailingStreamChatClient(updatesBeforeFailure: 2);
+
+        WebApplicationBuilder builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        builder.Services.AddKeyedSingleton<IChatClient>("chat-client", failingChatClient);
+        builder.AddAIAgent("failing-agent", "You are a helpful assistant.", chatClientServiceKey: "chat-client");
+        builder.AddOpenAIChatCompletions();
+
+        await using WebApplication app = builder.Build();
+        app.Use(async (context, next) =>
+        {
+            Stream original = context.Response.Body;
+            context.Response.Body = new TeeStream(original, recorded);
+            try
+            {
+                await next(context);
+            }
+            finally
+            {
+                context.Response.Body = original;
+            }
+        });
+        AIAgent agent = app.Services.GetRequiredKeyedService<AIAgent>("failing-agent");
+        app.MapOpenAIChatCompletions(agent, path: null, PermissiveMapOptions.ChatCompletions());
+        await app.StartAsync();
+
+        TestServer testServer = (TestServer)app.Services.GetRequiredService<IServer>();
+        using HttpClient client = testServer.CreateClient();
+
+        // Act - the agent yields two updates and then throws partway through the body
+        try
+        {
+            using HttpResponseMessage response = await this.SendChatCompletionRequestAsync(client, "failing-agent", LoadChatCompletionsTraceFile("streaming/request.json"));
+            _ = await response.Content.ReadAsStringAsync();
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException)
+        {
+            // Expected: the server aborts the response rather than completing it.
+        }
+
+        await app.StopAsync();
+
+        // Assert - the server wrote payload frames but never the terminator
+        string written = Encoding.UTF8.GetString(recorded.ToArray());
+        Assert.Contains("chat.completion.chunk", written);
+        Assert.DoesNotContain("[DONE]", written);
+    }
+
+    /// <summary>A chat client whose streaming response yields a few updates and then throws.</summary>
+    private sealed class FailingStreamChatClient(int updatesBeforeFailure) : IChatClient
+    {
+        public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
+            => throw new InvalidOperationException("mock streaming failure");
+
+        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+            IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            for (int i = 0; i < updatesBeforeFailure; i++)
+            {
+                await Task.Delay(1, cancellationToken);
+                yield return new ChatResponseUpdate { Contents = [new TextContent($"chunk{i} ")], Role = ChatRole.Assistant };
+            }
+
+            throw new InvalidOperationException("mock streaming failure");
+        }
+
+        public object? GetService(Type serviceType, object? serviceKey = null) => serviceType.IsInstanceOfType(this) ? this : null;
+
+        public void Dispose()
+        {
+        }
+    }
+
+    /// <summary>
+    /// Forwards writes to the real response body while copying them into a buffer. The copy happens
+    /// first so that bytes the server attempted to write are recorded even if the real write fails
+    /// because the response is already being torn down.
+    /// </summary>
+    private sealed class TeeStream(Stream inner, Stream capture) : Stream
+    {
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override void Write(byte[] buffer, int offset, int count)
+        {
+            capture.Write(buffer, offset, count);
+            inner.Write(buffer, offset, count);
+        }
+
+        public override void Write(ReadOnlySpan<byte> buffer)
+        {
+            capture.Write(buffer);
+            inner.Write(buffer);
+        }
+
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            await capture.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
+            await inner.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
+        }
+
+        public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+            => this.WriteAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
+
+        public override void Flush() => inner.Flush();
+        public override Task FlushAsync(CancellationToken cancellationToken) => inner.FlushAsync(cancellationToken);
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
     }
 }
