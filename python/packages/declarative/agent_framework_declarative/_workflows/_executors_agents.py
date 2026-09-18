@@ -1095,6 +1095,9 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
                 f"Agent '{agent_name}' invocation failed: not found during loop resumption"
             )
 
+        _, _, _, auto_send = self._get_output_config(state)
+        loop_state.auto_send = auto_send
+
         try:
             accumulated_response, all_messages, tool_calls = await self._invoke_agent_and_store_results(
                 agent=agent,
@@ -1105,7 +1108,7 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
                 messages_var=loop_state.messages_var,
                 response_obj_var=loop_state.response_obj_var,
                 result_property=loop_state.result_property,
-                auto_send=loop_state.auto_send,
+                auto_send=auto_send,
                 messages_path=loop_state.messages_path,
             )
         except (AgentInvalidRequestException, AgentInvalidResponseException):

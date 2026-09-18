@@ -36,8 +36,10 @@ A false value suppresses automatic workflow output, not the invocation or storag
 of its results. Output variables and agent conversation history remain available;
 later actions such as `SendActivity` can explicitly emit those results.
 
-Tool actions evaluate the setting again when resuming after approval. Agent
-external loops retain the evaluated setting for the duration of the loop.
+Tool actions evaluate the setting immediately before invoking the tool, including
+when resuming after approval. Rejected calls store the rejection and complete
+without evaluating `autoSend`. Agent external loops reevaluate the setting
+against the current state before each resumed invocation.
 
 ## HTTP request client ownership and cookies
 

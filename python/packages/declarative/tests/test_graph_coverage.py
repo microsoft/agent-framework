@@ -1870,11 +1870,46 @@ class TestAgentExternalLoopCoverage:
         )
 
         assert agent.run.await_count == 2
-        if send:
+        if not send:
             mock_context.yield_output.assert_awaited_once_with("hello")
         else:
             mock_context.yield_output.assert_not_awaited()
         assert state.get("Local.result") == "hello"
+
+    @_requires_powerfx
+    async def test_agent_auto_send_error_on_external_loop_resume(
+        self, mock_context: MagicMock, mock_state: MagicMock
+    ) -> None:
+        from agent_framework_declarative._workflows._executors_agents import (
+            AgentExternalInputResponse,
+            InvokeAzureAgentExecutor,
+        )
+
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+        state.set("Local.send", 1)
+        agent = MagicMock(run=AsyncMock(return_value="hello"))
+        executor = InvokeAzureAgentExecutor(
+            {
+                "kind": "InvokeAzureAgent",
+                "agent": "TestAgent",
+                "input": {"externalLoop": {"when": "=true"}},
+                "output": {"autoSend": "=Local.send + 1 > 0"},
+            },
+            agents={"TestAgent": agent},
+        )
+        await executor.handle_action(ActionTrigger(), mock_context)
+        request = mock_context.request_info.call_args[0][0]
+        state.set("Local.send", {"unexpected": "record"})
+        mock_context.yield_output.reset_mock()
+
+        with pytest.raises(ValueError):
+            await executor.handle_external_input_response(
+                request, AgentExternalInputResponse(user_input="continue"), mock_context
+            )
+
+        agent.run.assert_awaited_once()
+        mock_context.yield_output.assert_not_awaited()
 
     @_requires_powerfx
     @pytest.mark.parametrize("kind", ["InvokeFunctionTool", "InvokeAzureAgent"])

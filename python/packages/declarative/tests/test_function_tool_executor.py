@@ -844,7 +844,7 @@ class TestNonDictOutputConfig:
     """Tests for non-dict output config handling."""
 
     @pytest.mark.asyncio
-    async def test_output_as_string_is_ignored(self, mock_state: MagicMock):
+    async def test_output_as_string_is_ignored(self):
         """When output is a string instead of dict, both vars should be None."""
 
         def noop() -> str:
@@ -859,13 +859,13 @@ class TestNonDictOutputConfig:
         }
 
         executor = InvokeFunctionToolExecutor(action_def, tools={"noop": noop})
-        messages_var, result_var, auto_send = executor._get_output_config(DeclarativeWorkflowState(mock_state))
+        messages_var, result_var, auto_send = executor._get_output_config()
         assert messages_var is None
         assert result_var is None
         assert auto_send is True
 
     @pytest.mark.asyncio
-    async def test_output_as_list_is_ignored(self, mock_state: MagicMock):
+    async def test_output_as_list_is_ignored(self):
         """When output is a list instead of dict, both vars should be None."""
 
         def noop() -> str:
@@ -880,7 +880,7 @@ class TestNonDictOutputConfig:
         }
 
         executor = InvokeFunctionToolExecutor(action_def, tools={"noop": noop})
-        messages_var, result_var, auto_send = executor._get_output_config(DeclarativeWorkflowState(mock_state))
+        messages_var, result_var, auto_send = executor._get_output_config()
         assert messages_var is None
         assert result_var is None
         assert auto_send is True
@@ -1098,6 +1098,54 @@ class TestApprovalFlow:
         else:
             mock_context.yield_output.assert_not_awaited()
         mock_context.send_message.assert_awaited_once()
+
+    @pytest.mark.parametrize("approved", [False, True])
+    @pytest.mark.parametrize("missing_engine", [False, True])
+    async def test_auto_send_error_after_approval_request(
+        self,
+        mock_state: MagicMock,
+        mock_context: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+        approved: bool,
+        missing_engine: bool,
+    ) -> None:
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+        state.set("Local.send", 1)
+        tool = MagicMock(return_value="hello")
+        executor = InvokeFunctionToolExecutor(
+            {
+                "kind": "InvokeFunctionTool",
+                "functionName": "echo",
+                "requireApproval": True,
+                "output": {
+                    "result": "Local.result",
+                    "messages": "Local.messages",
+                    "autoSend": "=Local.send + 1 > 0",
+                },
+            },
+            tools={"echo": tool},
+        )
+        await executor.handle_action(ActionTrigger(), mock_context)
+        request = mock_context.request_info.call_args[0][0]
+        if missing_engine:
+            monkeypatch.setattr("agent_framework_declarative._workflows._declarative_base.Engine", None)
+        else:
+            state.set("Local.send", {"unexpected": "record"})
+        response = ToolApprovalResponse(approved=approved, reason="Declined")
+
+        if approved:
+            with pytest.raises(RuntimeError if missing_engine else ValueError):
+                await executor.handle_approval_response(request, response, mock_context)
+            mock_context.send_message.assert_not_awaited()
+        else:
+            await executor.handle_approval_response(request, response, mock_context)
+            assert state.get("Local.result") == {"approved": False, "rejected": True, "reason": "Declined"}
+            assert len(state.get("Local.messages")) == 1
+            mock_context.send_message.assert_awaited_once()
+            assert isinstance(mock_context.send_message.call_args[0][0], ActionComplete)
+        tool.assert_not_called()
+        mock_context.yield_output.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_approval_required_emits_request(self, mock_state, mock_context):
