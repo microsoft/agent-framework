@@ -810,3 +810,21 @@ class TestParallelToolCallUniqueness:
         assert formatted[0].tool_name == "search:advanced", (
             f"Expected bare name 'search:advanced', got '{formatted[0].tool_name}'"
         )
+
+    def test_mixed_policy_approval_roles_preserve_tool_result(self) -> None:
+        """Role-separated policy output keeps the safe sibling visible to Ollama."""
+        client = OllamaChatClient(host="http://localhost:12345", model="test-model")
+        function_call = Content.from_function_call(call_id="guarded", name="sink", arguments="{}")
+        approval_request = Content.from_function_approval_request(id="guarded", function_call=function_call)
+        messages = [
+            Message(
+                role="tool",
+                contents=[Content.from_function_result(call_id="safe", result="safe result")],
+            ),
+            Message(role="assistant", contents=[approval_request]),
+        ]
+
+        prepared = client._prepare_messages_for_ollama(messages)
+
+        assert [message.role for message in prepared] == ["tool", "assistant"]
+        assert prepared[0].content == "safe result"

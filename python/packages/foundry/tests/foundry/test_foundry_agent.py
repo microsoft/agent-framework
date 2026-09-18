@@ -6,14 +6,13 @@ import inspect
 import json
 import os
 import sys
-from asyncio import CancelledError
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from importlib import import_module
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from uuid import uuid4
 
-import httpx
 import pytest
 from agent_framework import (
     Agent,
@@ -25,6 +24,7 @@ from agent_framework import (
     ChatMiddleware,
     ChatResponse,
     ChatResponseUpdate,
+    Content,
     FunctionInvocationContext,
     FunctionMiddleware,
     Message,
@@ -32,15 +32,16 @@ from agent_framework import (
     WorkflowBuilder,
     tool,
 )
+from agent_framework._types import ResponseStream
 from agent_framework.foundry import FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY
 from agent_framework_ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
 from agent_framework_openai._chat_client import RawOpenAIChatClient
 from agent_framework_openai._feature_usage import FeatureIndex as OpenAIFeatureIndex
 from azure.ai.projects import models as projects_models
-from azure.core.exceptions import HttpResponseError, ResourceNotFoundError, ServiceRequestError, ServiceResponseError
+from azure.core.exceptions import ResourceNotFoundError
 from azure.identity import AzureCliCredential
 from azure.identity.aio import AzureCliCredential as AsyncAzureCliCredential
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, DefaultAsyncHttpxClient
 
 from agent_framework_foundry._agent import (
     FoundryAgent,
@@ -50,6 +51,8 @@ from agent_framework_foundry._agent import (
 )
 from agent_framework_foundry._chat_client import FoundryChatClient
 from agent_framework_foundry._feature_usage import FeatureIndex, FeatureUsagePolicy
+
+_OPENAI_HTTPX = cast(Any, import_module(DefaultAsyncHttpxClient.__mro__[1].__module__.partition(".")[0]))
 
 skip_if_foundry_agent_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("FOUNDRY_PROJECT_ENDPOINT", "") in ("", "https://test-project.services.ai.azure.com/")
@@ -948,120 +951,6 @@ def test_raw_foundry_agent_init_creates_client() -> None:
 
     assert agent.client is not None
     assert cast(Any, agent.client).agent_name == "test-agent"
-    assert agent.name == "test-agent"
-
-
-async def test_get_foundry_project_arm_id_from_application_insights_connection() -> None:
-    """Test that project attribution uses the public project-scoped connection ID."""
-
-    project_arm_id = (
-        "/subscriptions/test-sub/resourceGroups/test-rg/providers/"
-        "Microsoft.CognitiveServices/accounts/test-account/projects/test-project"
-    )
-    project_client = MagicMock()
-
-    async def connections():
-        yield SimpleNamespace(id=f"{project_arm_id}/connections/appinsights", name="appinsights")
-
-    project_client.connections.list.return_value = connections()
-    agent = RawFoundryAgent(project_client=project_client, agent_name="test-agent")
-
-    assert await agent._get_foundry_project_arm_id() == project_arm_id
-    project_client.connections.list.assert_called_once_with(
-        connection_type=projects_models.ConnectionType.APPLICATION_INSIGHTS
-    )
-
-
-async def test_get_foundry_project_arm_id_rejects_unexpected_connection_id() -> None:
-    """Test that malformed connection metadata does not silently disable portal attribution."""
-
-    project_client = MagicMock()
-
-    async def connections():
-        yield SimpleNamespace(id="appinsights", name="appinsights")
-
-    project_client.connections.list.return_value = connections()
-    agent = RawFoundryAgent(project_client=project_client, agent_name="test-agent")
-
-    with pytest.raises(ValueError, match="unexpected format"):
-        await agent._get_foundry_project_arm_id()
-
-
-@pytest.mark.parametrize("agent_type", [RawFoundryAgent, FoundryAgent])
-def test_foundry_agent_explicit_project_arm_id(agent_type: type[RawFoundryAgent]) -> None:
-    project_arm_id = (
-        "/subscriptions/test-sub/resourceGroups/test-rg/providers/"
-        "Microsoft.CognitiveServices/accounts/test-account/projects/test-project"
-    )
-    project_client = MagicMock()
-    agent = agent_type(project_client=project_client, agent_name="test-agent", project_arm_id=project_arm_id)
-
-    assert agent._foundry_project_arm_id == project_arm_id
-    project_client.connections.list.assert_not_called()
-    project_client.telemetry.get_application_insights_connection_string.assert_not_called()
-    if isinstance(agent, FoundryAgent):
-        assert agent._get_additional_otel_agent_attributes() == {"microsoft.foundry.project.id": project_arm_id}
-
-
-@pytest.mark.parametrize(
-    "project_arm_id",
-    [
-        "",
-        "test-project",
-        "https://test-account.services.ai.azure.com/api/projects/test-project",
-        "/subscriptions/test-sub/resourceGroups/test-rg/providers/Microsoft.CognitiveServices/accounts/test-account",
-        (
-            "/subscriptions/test-sub/resourceGroups/test-rg/providers/"
-            "Microsoft.CognitiveServices/accounts/test-account/projects/test-project/connections/appinsights"
-        ),
-    ],
-)
-def test_foundry_agent_rejects_invalid_explicit_project_arm_id(project_arm_id: str) -> None:
-    project_client = MagicMock()
-    with pytest.raises(ValueError, match="full Foundry project ARM resource ID"):
-        FoundryAgent(project_client=project_client, agent_name="test-agent", project_arm_id=project_arm_id)
-    project_client.get_openai_client.assert_not_called()
-
-
-def test_foundry_agent_project_attribution_is_per_instance() -> None:
-    prefix = (
-        "/subscriptions/test-sub/resourceGroups/test-rg/providers/"
-        "Microsoft.CognitiveServices/accounts/test-account/projects/"
-    )
-    agents = [
-        FoundryAgent(project_client=MagicMock(), agent_name="test-agent", project_arm_id=f"{prefix}{name}")
-        for name in ("first", "second")
-    ]
-    assert [agent._get_additional_otel_agent_attributes() for agent in agents] == [
-        {"microsoft.foundry.project.id": f"{prefix}first"},
-        {"microsoft.foundry.project.id": f"{prefix}second"},
-    ]
-    unconfigured = FoundryAgent(project_client=MagicMock(), agent_name="test-agent")
-    assert unconfigured._get_additional_otel_agent_attributes() == {}
-
-
-async def test_get_foundry_project_arm_id_rejects_account_scoped_connection() -> None:
-    project_client = MagicMock()
-
-    async def connections():
-        yield SimpleNamespace(
-            id="/subscriptions/test-sub/resourceGroups/test-rg/providers/"
-            "Microsoft.CognitiveServices/accounts/test-account/connections/appinsights",
-            name="appinsights",
-        )
-
-    project_client.connections.list.return_value = connections()
-    agent = RawFoundryAgent(project_client=project_client, agent_name="test-agent")
-    with pytest.raises(ValueError, match="full Foundry project ARM resource ID"):
-        await agent._get_foundry_project_arm_id()
-
-
-async def test_get_foundry_project_arm_id_requires_connection() -> None:
-    project_client = MagicMock()
-    project_client.connections.list.return_value.__aiter__.return_value = []
-    agent = RawFoundryAgent(project_client=project_client, agent_name="test-agent")
-    with pytest.raises(ValueError, match="does not have an Application Insights connection"):
-        await agent._get_foundry_project_arm_id()
 
 
 def test_raw_foundry_agent_init_passes_default_headers_to_client() -> None:
@@ -1206,6 +1095,134 @@ def test_raw_foundry_agent_init_with_function_tools() -> None:
     )
 
     assert agent.default_options.get("tools") is not None
+
+
+async def test_agui_request_state_cannot_choose_foundry_hosted_agent_sandbox() -> None:
+    """A client must not be able to pick which Foundry sandbox the server's credentialed call addresses.
+
+    Reproduces the full reported chain without network access: an ordinary AG-UI request carries
+    ``foundry_hosted_agent_session_id`` in its client-owned ``state``, and the resulting session is then used to
+    prepare the outbound Foundry Responses call. ``agent_session_id`` selects a VM-isolated sandbox with a
+    persistent filesystem, so honouring a caller-supplied value would run the server's own credentialed request
+    inside another session's sandbox.
+    """
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock()
+    foundry_agent = RawFoundryAgent(project_client=mock_project, agent_name="test-agent")
+
+    observed_state: list[dict[str, Any]] = []
+
+    def fake_run(messages: Any = None, **kwargs: Any) -> Any:
+        session = kwargs.get("session")
+        observed_state.append(dict(session.state) if session is not None else {})
+
+        async def _stream() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(contents=[Content.from_text(text="ok")], role="assistant")
+
+        return ResponseStream(_stream(), finalizer=AgentResponse.from_updates)
+
+    foundry_agent.run = fake_run  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+
+    runner = AgentFrameworkAgent(agent=foundry_agent)
+    events = [
+        event
+        async for event in runner.run({
+            "runId": "attacker-run",
+            "threadId": "attacker-thread",
+            "messages": [{"role": "user", "content": "hello"}],
+            "state": {
+                FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY: "VICTIM-SANDBOX-9f31c2",
+                "benign": "ok",
+            },
+        })
+    ]
+
+    assert not [event for event in events if getattr(event, "type", None) == "RUN_ERROR"]
+    # The sandbox handle is stripped, while ordinary client Shared State still reaches the agent.
+    assert observed_state == [{"benign": "ok"}]
+
+    # The outbound Foundry call therefore pins no sandbox at all.
+    session = AgentSession()
+    session.state.update(observed_state[0])
+    with patch(
+        "agent_framework._agents.RawAgent._prepare_run_context",
+        new=AsyncMock(return_value={"ok": True}),
+    ) as mock_prepare_run_context:
+        await foundry_agent._prepare_run_context(
+            messages="hi",
+            session=session,
+            tools=None,
+            options={},
+            compaction_strategy=None,
+            tokenizer=None,
+            function_invocation_kwargs=None,
+            client_kwargs=None,
+        )
+
+    assert mock_prepare_run_context.await_args
+    assert "agent_session_id" not in mock_prepare_run_context.await_args.kwargs["options"].get("extra_body", {})
+
+
+async def test_agui_request_state_cannot_overwrite_established_foundry_sandbox() -> None:
+    """A server-established sandbox handle stays authoritative when a later request tries to replace it."""
+    store = InMemoryAGUIThreadSnapshotStore()
+    mock_project = MagicMock()
+    mock_openai = MagicMock()
+    mock_openai.conversations.create = AsyncMock(return_value=SimpleNamespace(id="conv_server_owned"))
+    mock_project.get_openai_client.return_value = mock_openai
+    foundry_agent = RawFoundryAgent(project_client=mock_project, agent_name="test-agent")
+
+    observed_state: list[dict[str, Any]] = []
+
+    def fake_run(messages: Any = None, **kwargs: Any) -> Any:
+        session = kwargs.get("session")
+        observed_state.append(dict(session.state) if session is not None else {})
+
+        async def _stream() -> AsyncIterator[AgentResponseUpdate]:
+            # The provider establishes the real sandbox handle, exactly as a live response would.
+            if session is not None:
+                session.state[FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY] = "server-owned-sandbox"
+            yield AgentResponseUpdate(contents=[Content.from_text(text="ok")], role="assistant")
+
+        return ResponseStream(_stream(), finalizer=AgentResponse.from_updates)
+
+    foundry_agent.run = fake_run  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+
+    runner = AgentFrameworkAgent(
+        agent=foundry_agent,
+        use_service_session=True,
+        snapshot_store=store,
+    )
+    payload: dict[str, Any] = {
+        "threadId": "victim-thread",
+        "__ag_ui_snapshot_scope": "scope",
+        "messages": [{"role": "user", "content": "hello"}],
+    }
+    _ = [event async for event in runner.run({**payload, "runId": "run-1"})]
+
+    attacker_payload = {
+        **payload,
+        "runId": "run-2",
+        "state": {FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY: "attacker-chosen-sandbox"},
+    }
+    _ = [event async for event in runner.run(attacker_payload)]
+
+    assert observed_state[0] == {}
+    # The second turn resumes the server's own sandbox and ignores the attacker's value.
+    assert observed_state[1] == {FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY: "server-owned-sandbox"}
+
+
+def test_foundry_agents_declare_hosted_agent_session_id_as_server_owned() -> None:
+    """The hosted-agent session ID must stay server-owned so hosts reject client-supplied values.
+
+    ``agent_session_id`` selects the Foundry hosted-agent runtime session, which is a VM-isolated sandbox with a
+    persistent filesystem. A caller-supplied value would redirect the server's own credentialed call into another
+    session's sandbox, so hosts discover this key through ``service_session_state_keys`` and refuse to let
+    untrusted input populate it. Without this test nothing fails if the declaration is dropped.
+    """
+    assert FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY in RawFoundryAgent.service_session_state_keys
+    # FoundryAgent is the recommended production class, so it must inherit the same protection.
+    assert FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY in FoundryAgent.service_session_state_keys
 
 
 async def test_raw_foundry_agent_prepare_run_context_injects_agent_session_id_from_state() -> None:
@@ -1358,8 +1375,6 @@ def test_foundry_agent_init() -> None:
 
     assert agent.client is not None
     assert cast(Any, agent.client).agent_name == "test-agent"
-    assert agent.name == "test-agent"
-    assert agent._should_capture_agent_response_id()
 
 
 def test_foundry_agent_init_with_middleware() -> None:
@@ -1381,8 +1396,7 @@ def test_foundry_agent_init_with_middleware() -> None:
     assert agent.client is not None
 
 
-@pytest.mark.parametrize("explicit_project_id", [False, True])
-async def test_foundry_agent_configure_azure_monitor(explicit_project_id: bool) -> None:
+async def test_foundry_agent_configure_azure_monitor() -> None:
     """Test configure_azure_monitor delegates through the underlying client."""
 
     mock_project = MagicMock()
@@ -1390,19 +1404,12 @@ async def test_foundry_agent_configure_azure_monitor(explicit_project_id: bool) 
     mock_project.telemetry.get_application_insights_connection_string = AsyncMock(
         return_value="InstrumentationKey=test-key;IngestionEndpoint=https://test.endpoint"
     )
+    agent = FoundryAgent(project_client=mock_project, agent_name="test-agent")
+
     mock_configure = MagicMock()
     mock_views = MagicMock(return_value=[])
     mock_resource = MagicMock()
     mock_enable = MagicMock()
-    project_arm_id = (
-        "/subscriptions/test-sub/resourceGroups/test-rg/providers/"
-        "Microsoft.CognitiveServices/accounts/test-account/projects/test-project"
-    )
-    agent = FoundryAgent(
-        project_client=mock_project,
-        agent_name="test-agent",
-        project_arm_id=project_arm_id if explicit_project_id else None,
-    )
 
     with (
         patch.dict(
@@ -1412,82 +1419,15 @@ async def test_foundry_agent_configure_azure_monitor(explicit_project_id: bool) 
         patch("agent_framework.observability.create_metric_views", mock_views),
         patch("agent_framework.observability.create_resource", return_value=mock_resource),
         patch("agent_framework.observability.enable_instrumentation", mock_enable),
-        patch(
-            "agent_framework_foundry._agent.RawFoundryAgent._get_foundry_project_arm_id",
-            new_callable=AsyncMock,
-            return_value=project_arm_id,
-        ) as mock_get_project_arm_id,
     ):
         await agent.configure_azure_monitor(enable_sensitive_data=True)
-        await agent.configure_azure_monitor(enable_sensitive_data=True)
 
-    assert mock_project.telemetry.get_application_insights_connection_string.await_count == 2
-    if explicit_project_id:
-        mock_get_project_arm_id.assert_not_awaited()
-    else:
-        mock_get_project_arm_id.assert_awaited_once_with()
+    mock_project.telemetry.get_application_insights_connection_string.assert_called_once()
     call_kwargs = mock_configure.call_args.kwargs
     assert call_kwargs["connection_string"] == "InstrumentationKey=test-key;IngestionEndpoint=https://test.endpoint"
     assert call_kwargs["views"] == []
     assert call_kwargs["resource"] is mock_resource
-    assert mock_enable.call_count == 2
-    mock_enable.assert_called_with(enable_sensitive_data=True)
-    assert agent._get_additional_otel_agent_attributes() == {
-        "microsoft.foundry.project.id": project_arm_id,
-    }
-
-
-@pytest.mark.parametrize(
-    "lookup_error",
-    [
-        ValueError("Unexpected connection ID"),
-        HttpResponseError("Forbidden"),
-        ResourceNotFoundError("Connection not found"),
-        ServiceRequestError("Connection unavailable"),
-        ServiceResponseError("Incomplete response"),
-    ],
-)
-async def test_foundry_agent_configure_azure_monitor_project_lookup_failure(
-    lookup_error: Exception, caplog: pytest.LogCaptureFixture
-) -> None:
-    mock_project = MagicMock()
-    mock_project.telemetry.get_application_insights_connection_string = AsyncMock(return_value="test-connection-string")
-    agent = FoundryAgent(project_client=mock_project, agent_name="test-agent")
-    mock_configure = MagicMock()
-    mock_enable = MagicMock()
-
-    with (
-        patch.dict("sys.modules", {"azure.monitor.opentelemetry": MagicMock(configure_azure_monitor=mock_configure)}),
-        patch("agent_framework.observability.create_metric_views", return_value=[]),
-        patch("agent_framework.observability.create_resource"),
-        patch("agent_framework.observability.enable_instrumentation", mock_enable),
-        patch.object(agent, "_get_foundry_project_arm_id", side_effect=lookup_error),
-        caplog.at_level("WARNING", logger="agent_framework.foundry"),
-    ):
-        await agent.configure_azure_monitor()
-
-    mock_configure.assert_called_once()
-    assert mock_configure.call_args.kwargs["connection_string"] == "test-connection-string"
-    mock_enable.assert_called_once_with(enable_sensitive_data=False)
-    assert agent._get_additional_otel_agent_attributes() == {}
-    assert "export will continue without project attribution" in caplog.text
-    assert "project_arm_id" in caplog.text
-
-
-@pytest.mark.parametrize("lookup_error", [RuntimeError("Programming failure"), CancelledError()])
-async def test_foundry_agent_project_lookup_does_not_swallow_unexpected_errors(lookup_error: BaseException) -> None:
-    mock_project = MagicMock()
-    mock_project.telemetry.get_application_insights_connection_string = AsyncMock(return_value="test-connection-string")
-    agent = FoundryAgent(project_client=mock_project, agent_name="test-agent")
-    mock_configure = MagicMock()
-
-    with (
-        patch.dict("sys.modules", {"azure.monitor.opentelemetry": MagicMock(configure_azure_monitor=mock_configure)}),
-        patch.object(agent, "_get_foundry_project_arm_id", side_effect=lookup_error),
-        pytest.raises(type(lookup_error)),
-    ):
-        await agent.configure_azure_monitor()
-    mock_configure.assert_not_called()
+    mock_enable.assert_called_once_with(enable_sensitive_data=True)
 
 
 async def test_foundry_agent_configure_azure_monitor_resource_not_found() -> None:
@@ -1564,12 +1504,12 @@ async def test_foundry_agent_workflow_replays_parallel_reasoning_function_group(
             "tools": [],
         }
 
-    async def foundry_responses_boundary(request: httpx.Request) -> httpx.Response:
+    async def foundry_responses_boundary(request: Any) -> Any:
         payload = json.loads(request.content)
         agent_name = payload["agent_reference"]["name"]
 
         if agent_name == "research-agent" and "previous_response_id" not in payload:
-            return httpx.Response(
+            return _OPENAI_HTTPX.Response(
                 200,
                 json=_response(
                     "resp_research_tool",
@@ -1601,7 +1541,7 @@ async def test_foundry_agent_workflow_replays_parallel_reasoning_function_group(
             )
 
         if agent_name == "research-agent":
-            return httpx.Response(
+            return _OPENAI_HTTPX.Response(
                 200,
                 json=_response(
                     "resp_research_final",
@@ -1613,7 +1553,7 @@ async def test_foundry_agent_workflow_replays_parallel_reasoning_function_group(
         summary_inputs.append(input_items)
         input_types = {item.get("type") for item in input_items if isinstance(item, dict)}
         if "function_call" in input_types and "reasoning" not in input_types:
-            return httpx.Response(
+            return _OPENAI_HTTPX.Response(
                 400,
                 json={
                     "error": {
@@ -1627,7 +1567,7 @@ async def test_foundry_agent_workflow_replays_parallel_reasoning_function_group(
                 },
             )
 
-        return httpx.Response(
+        return _OPENAI_HTTPX.Response(
             200,
             json=_response(
                 "resp_summary",
@@ -1654,10 +1594,10 @@ async def test_foundry_agent_workflow_replays_parallel_reasoning_function_group(
                 raise MiddlewareTermination("Policy blocked tool execution")
             await call_next()
 
-    transport = httpx.MockTransport(foundry_responses_boundary)
+    transport = _OPENAI_HTTPX.MockTransport(foundry_responses_boundary)
     responses_client = AsyncOpenAI(
         api_key="test-key",
-        http_client=httpx.AsyncClient(transport=transport),
+        http_client=DefaultAsyncHttpxClient(transport=transport),
         max_retries=0,
     )
     project_client = MagicMock()

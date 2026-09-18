@@ -26,6 +26,7 @@ from agent_framework import (
     Message,
     ResponseStream,
     WorkflowBuilder,
+    WorkflowCheckpoint,
     WorkflowCheckpointException,
     WorkflowContext,
     WorkflowConvergenceException,
@@ -109,6 +110,24 @@ class MockExecutorRequestApproval(Executor):
             await ctx.yield_output(data)
         else:
             await ctx.send_message(NumberMessage(data=data))
+
+
+def test_coerce_request_info_response_converts_content() -> None:
+    """Request responses should use the shared Content conversion path."""
+    from agent_framework._workflows._workflow import _coerce_request_info_response
+
+    response = _coerce_request_info_response("hello", Content, "content")
+
+    assert isinstance(response, Content)
+    assert response.text == "hello"
+
+
+def test_coerce_request_info_response_rejects_mismatched_type() -> None:
+    """Request responses that cannot be validated should report their request ID."""
+    from agent_framework._workflows._workflow import _coerce_request_info_response
+
+    with pytest.raises(ValueError, match="Response type mismatch for request ID typed"):
+        _coerce_request_info_response("not-an-int", int, "typed")
 
 
 async def test_fresh_message_while_pending_advances_state_without_abandoning_requests(
@@ -834,8 +853,17 @@ async def test_workflow_with_simple_cycle_and_exit_condition():
 
 async def test_workflow_concurrent_execution_prevention():
     """Test that concurrent workflow executions are prevented."""
-    # Create a simple workflow that takes some time to execute
-    executor = IncrementExecutor(id="slow_executor", limit=3, increment=1)
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class GatedExecutor(Executor):
+        @handler
+        async def handle(self, message: NumberMessage, ctx: WorkflowContext[NumberMessage, int]) -> None:
+            started.set()
+            await release.wait()
+            await ctx.yield_output(message.data)
+
+    executor = GatedExecutor(id="gated_executor")
     workflow = WorkflowBuilder(start_executor=executor).build()
 
     # Create a task that will run the workflow
@@ -845,17 +873,17 @@ async def test_workflow_concurrent_execution_prevention():
     # Start the first workflow execution
     task1 = asyncio.create_task(run_workflow())
 
-    # Give it a moment to start
-    await asyncio.sleep(0.01)
-
-    # Try to start a second concurrent execution - this should fail
-    with pytest.raises(
-        WorkflowException, match="Workflow is already running; concurrent runs are not allowed on the same instance."
-    ):
-        await workflow.run(NumberMessage(data=0))
-
-    # Wait for the first task to complete
-    result = await task1
+    try:
+        await started.wait()
+        # The first run stays active regardless of how quickly the runner schedules work.
+        with pytest.raises(
+            WorkflowException,
+            match="Workflow is already running; concurrent runs are not allowed on the same instance.",
+        ):
+            await workflow.run(NumberMessage(data=0))
+    finally:
+        release.set()
+        result = await task1
     assert result.get_final_state() == WorkflowRunState.IDLE
 
     # After the first execution completes, we should be able to run again
@@ -994,6 +1022,49 @@ async def test_workflow_unconsumed_stream_releases_run_lock() -> None:
     # The runner should be back to IDLE; a fresh run must succeed.
     result = await workflow.run(NumberMessage(data=0))
     assert result.get_final_state() == WorkflowRunState.IDLE
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [False], indirect=True)
+async def test_workflow_abandoned_stream_finalizes_without_context_errors(
+    caplog: pytest.LogCaptureFixture, span_exporter: Any
+) -> None:
+    """Abandoning a partially consumed graph stream must clean up without context errors."""
+    executor = IncrementExecutor(id="abandoned_stream_exec", limit=3, increment=1)
+    workflow = WorkflowBuilder(start_executor=executor).build()
+    loop = asyncio.get_running_loop()
+    loop_errors: list[BaseException] = []
+    original_handler = loop.get_exception_handler()
+
+    def capture_loop_exception(_loop: asyncio.AbstractEventLoop, context: dict[str, Any]) -> None:
+        exc = context.get("exception")
+        if isinstance(exc, BaseException):
+            loop_errors.append(exc)
+        if original_handler is not None:
+            original_handler(_loop, context)
+
+    loop.set_exception_handler(capture_loop_exception)
+    try:
+        with caplog.at_level(logging.ERROR, logger="opentelemetry"):
+            stream = workflow.run(NumberMessage(data=0), stream=True)
+            async for event in stream:
+                assert event.type == "started"
+                break
+
+            del stream
+            gc.collect()
+            for _ in range(5):
+                await asyncio.sleep(0)
+    finally:
+        loop.set_exception_handler(original_handler)
+
+    assert loop_errors == [], f"Abandoned stream leaked loop exceptions: {loop_errors!r}"
+    otel_errors = [
+        rec.getMessage()
+        for rec in caplog.records
+        if "Failed to detach context" in rec.getMessage() or "was created in a different Context" in rec.getMessage()
+    ]
+    assert otel_errors == [], f"Abandoned stream leaked OpenTelemetry errors: {otel_errors!r}"
+    assert any(span.name == "workflow.run" for span in span_exporter.get_finished_spans())
 
 
 async def test_workflow_unawaited_run_coroutine_releases_run_lock() -> None:
@@ -1699,3 +1770,109 @@ async def test_output_executors_filtering_with_run_responses_streaming() -> None
 
 
 # endregion
+
+
+# ---------------------------------------------------------------------------
+# Pause checkpoint resolution (AG-UI interrupt metadata)
+# ---------------------------------------------------------------------------
+
+
+class _ApprovalExecutor(Executor):
+    def __init__(self) -> None:
+        super().__init__(id="approval_executor")
+
+    @handler
+    async def start(self, message: Any, ctx: WorkflowContext) -> None:
+        del message
+        function_call = Content.from_function_call(
+            call_id="refund-call",
+            name="submit_refund",
+            arguments={"order_id": "12345"},
+        )
+        approval_request = Content.from_function_approval_request(id="approval-1", function_call=function_call)
+        await ctx.request_info(approval_request, Content, request_id="approval-1")
+
+    @response_handler
+    async def handle_approval(self, original_request: Content, response: Content, ctx: WorkflowContext) -> None:
+        del original_request, response
+        await ctx.yield_output("done")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+
+
+@pytest.mark.asyncio
+async def test_resolve_pause_checkpoint_id_prefers_runner_over_shared_latest() -> None:
+    storage = InMemoryCheckpointStorage()
+    workflow = WorkflowBuilder(start_executor=_ApprovalExecutor(), checkpoint_storage=storage).build()
+    async for _ in workflow.run("go", stream=True):
+        pass
+
+    pause_id = workflow.get_last_checkpoint_id()
+    assert pause_id is not None
+
+    competing = WorkflowCheckpoint(
+        workflow_name=workflow.name,
+        graph_signature_hash="competing",
+        pending_request_info_events={},
+        timestamp="9999-01-01T00:00:00+00:00",
+    )
+    await storage.save(competing)
+
+    # Workflow owns the run baseline captured at run() start.
+    resolved = await workflow.resolve_pause_checkpoint_id(
+        {"approval-1"},
+        checkpoint_storage=storage,
+    )
+    assert resolved == pause_id
+
+
+@pytest.mark.asyncio
+async def test_resolve_pause_checkpoint_id_requires_run_scoped_change_without_storage() -> None:
+    workflow = WorkflowBuilder(start_executor=_ApprovalExecutor()).build()
+    workflow._runner._previous_checkpoint_id = "leftover"  # pyright: ignore[reportPrivateUsage]
+    workflow._run_baseline_checkpoint_id = "leftover"  # pyright: ignore[reportPrivateUsage]
+
+    assert await workflow.resolve_pause_checkpoint_id({"approval-1"}) is None
+    assert (
+        await workflow.resolve_pause_checkpoint_id(
+            {"approval-1"},
+            baseline_checkpoint_id=None,
+        )
+        == "leftover"
+    )
+
+
+@pytest.mark.asyncio
+async def test_resolve_pause_checkpoint_id_excludes_restored_checkpoint() -> None:
+    """After resume, the restored id must not be re-advertised if a new pause save fails."""
+    storage = InMemoryCheckpointStorage()
+    workflow = WorkflowBuilder(start_executor=_ApprovalExecutor(), checkpoint_storage=storage).build()
+
+    async for _ in workflow.run("go", stream=True):
+        pass
+    restored = workflow.get_last_checkpoint_id()
+    assert restored is not None
+
+    # Simulate a resume that restored `restored` but did not persist a newer pause.
+    workflow._run_baseline_checkpoint_id = restored  # pyright: ignore[reportPrivateUsage]
+    workflow._restored_checkpoint_id = restored  # pyright: ignore[reportPrivateUsage]
+    workflow._runner._previous_checkpoint_id = restored  # pyright: ignore[reportPrivateUsage]
+
+    assert (
+        await workflow.resolve_pause_checkpoint_id(
+            {"approval-1"},
+            checkpoint_storage=storage,
+            known_checkpoint_id=restored,
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_resolve_pause_checkpoint_id_uses_builder_storage() -> None:
+    storage = InMemoryCheckpointStorage()
+    workflow = WorkflowBuilder(start_executor=_ApprovalExecutor(), checkpoint_storage=storage).build()
+    async for _ in workflow.run("go", stream=True):
+        pass
+
+    pause_id = workflow.get_last_checkpoint_id()
+    resolved = await workflow.resolve_pause_checkpoint_id({"approval-1"})
+    assert resolved == pause_id

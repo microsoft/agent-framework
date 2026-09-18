@@ -5,7 +5,6 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
-using System.Security;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -23,9 +22,13 @@ namespace Microsoft.Agents.AI;
 /// <remarks>
 /// Searches directories recursively (up to 2 levels deep) for SKILL.md files.
 /// Symbolic links and reparse points below configured roots are not followed during skill discovery.
-/// Each file is validated for YAML frontmatter. Resource and script files are discovered by scanning the skill
+/// Recognized top-level frontmatter fields must use lowercase names and must not be repeated.
+/// Within the optional metadata mapping, keys are compared case-insensitively. The first
+/// value is retained for duplicate keys, and subsequent entries produce warnings without rejecting the skill.
+/// Resource and script files are discovered by scanning the skill
 /// directory for files with matching extensions. Invalid resources are skipped with logged warnings.
 /// Resource and script paths are checked against path traversal and symlink escape attacks.
+/// Discovered files are revalidated against their trusted skill directory immediately before use.
 /// </remarks>
 public sealed partial class AgentFileSkillsSource : AgentSkillsSource
 {
@@ -36,19 +39,31 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
     private static readonly string[] s_defaultScriptExtensions = [".py", ".js", ".sh", ".ps1", ".cs", ".csx"];
     private static readonly string[] s_defaultResourceExtensions = [".md", ".json", ".yaml", ".yml", ".csv", ".xml", ".txt"];
 
+    // Case-insensitive lookup identifies known fields; values preserve the required spelling for validation.
+    private static readonly Dictionary<string, string> s_frontmatterFieldNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["name"] = "name",
+        ["description"] = "description",
+        ["license"] = "license",
+        ["compatibility"] = "compatibility",
+        ["metadata"] = "metadata",
+        ["allowed-tools"] = "allowed-tools",
+    };
+
     // Matches YAML frontmatter delimited by "---" lines. Group 1 = content between delimiters.
     // Multiline makes ^/$ match line boundaries; Singleline makes . match newlines across the block.
     // The \uFEFF? prefix allows an optional UTF-8 BOM that some editors prepend.
     private static readonly Regex s_frontmatterRegex = new(@"\A\uFEFF?^---\s*$(.+?)^---\s*$", RegexOptions.Multiline | RegexOptions.Singleline | RegexOptions.Compiled, TimeSpan.FromSeconds(5));
 
-    // Matches top-level YAML "key: value" lines. Group 1 = key (supports hyphens for keys like allowed-tools),
-    // Group 2 = quoted value, Group 3 = unquoted value.
-    // Accepts single or double quotes; the lazy quantifier trims trailing whitespace on unquoted values.
-    private static readonly Regex s_yamlKeyValueRegex = new(@"^([\w-]+)\s*:\s*(?:[""'](.+?)[""']|(.+?))\s*$", RegexOptions.Multiline | RegexOptions.Compiled, TimeSpan.FromSeconds(5));
+    // Matches top-level YAML "key: value" lines. Group 1 = key (including quotes),
+    // Group 2 = quoted value, Group 3 = unquoted value (possibly empty for keys such as "metadata:").
+    // A value may start on a later indented line, but cannot consume another top-level field.
+    // Retain trailing whitespace matching so block-scalar parsing handles leading blank lines as before.
+    private static readonly Regex s_yamlKeyValueRegex = new(@"^([\w-]+|""[\w-]+""|'[\w-]+')[ \t]*:[ \t]*(?:\r?\n(?:[ \t]*\r?\n)*[ \t]+)?(?:[""']([^\r\n]+?)[""']|([^\r\n]*?))\s*$", RegexOptions.Multiline | RegexOptions.Compiled, TimeSpan.FromSeconds(5));
 
-    // Matches a "metadata:" line followed by indented sub-key/value pairs.
+    // Matches a metadata block, allowing quotes around the root key.
     // Group 1 captures the entire indented block beneath the metadata key.
-    private static readonly Regex s_yamlMetadataBlockRegex = new(@"^metadata\s*:\s*$\n((?:[ \t]+\S.*\n?)+)", RegexOptions.Multiline | RegexOptions.Compiled, TimeSpan.FromSeconds(5));
+    private static readonly Regex s_yamlMetadataBlockRegex = new(@"^(?:metadata|""metadata""|'metadata')\s*:\s*$\n((?:[ \t]+\S.*\n?)+)", RegexOptions.Multiline | RegexOptions.Compiled, TimeSpan.FromSeconds(5));
 
     // Matches indented YAML "key: value" lines within a metadata block.
     // Group 1 = key (supports hyphens), Group 2 = quoted value, Group 3 = unquoted value.
@@ -126,9 +141,9 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
 
         var skills = new List<AgentSkill>();
 
-        foreach (string skillPath in discoveredPaths)
+        foreach (AgentFileSkillPathScope scope in discoveredPaths)
         {
-            AgentFileSkill? skill = this.ParseSkillDirectory(skillPath);
+            AgentFileSkill? skill = this.ParseSkillDirectory(scope);
             if (skill is null)
             {
                 continue;
@@ -144,9 +159,9 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
         return Task.FromResult(skills as IList<AgentSkill>);
     }
 
-    private List<string> DiscoverSkillDirectories(IEnumerable<string> skillPaths)
+    private List<AgentFileSkillPathScope> DiscoverSkillDirectories(IEnumerable<string> skillPaths)
     {
-        var discoveredPaths = new List<string>();
+        var discoveredPaths = new List<AgentFileSkillPathScope>();
 
         foreach (string rootDirectory in skillPaths)
         {
@@ -155,18 +170,18 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
                 continue;
             }
 
-            this.SearchDirectoriesForSkills(rootDirectory, discoveredPaths, currentDepth: 0);
+            this.SearchDirectoriesForSkills(rootDirectory, Path.GetFullPath(rootDirectory), discoveredPaths, currentDepth: 0);
         }
 
         return discoveredPaths;
     }
 
-    private void SearchDirectoriesForSkills(string directory, List<string> results, int currentDepth)
+    private void SearchDirectoriesForSkills(string directory, string trustedRootFullPath, List<AgentFileSkillPathScope> results, int currentDepth)
     {
         string skillFilePath = Path.Combine(directory, SkillFileName);
         if (File.Exists(skillFilePath))
         {
-            if (IsLinkOrReparsePointOrInaccessible(skillFilePath))
+            if (AgentFileSkillPathValidator.IsLinkOrReparsePointOrInaccessible(skillFilePath))
             {
                 LogUnsafeSkillDiscoveryPath(this._logger, SanitizePathForLog(skillFilePath));
                 return;
@@ -174,7 +189,7 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
 
             // Once a SKILL.md is found, this directory is the skill root.
             // Subdirectories are part of this skill and should not be treated as independent skill roots.
-            results.Add(Path.GetFullPath(directory));
+            results.Add(new AgentFileSkillPathScope(trustedRootFullPath, directory));
             return;
         }
 
@@ -185,19 +200,19 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
 
         foreach (string subdirectory in this.SafeEnumerateDirectories(directory, attributesToSkip: 0))
         {
-            if (IsLinkOrReparsePointOrInaccessible(subdirectory))
+            if (AgentFileSkillPathValidator.IsLinkOrReparsePointOrInaccessible(subdirectory))
             {
                 LogUnsafeSkillDiscoveryPath(this._logger, SanitizePathForLog(subdirectory));
                 continue;
             }
 
-            this.SearchDirectoriesForSkills(subdirectory, results, currentDepth + 1);
+            this.SearchDirectoriesForSkills(subdirectory, trustedRootFullPath, results, currentDepth + 1);
         }
     }
 
-    private AgentFileSkill? ParseSkillDirectory(string skillDirectoryFullPath)
+    private AgentFileSkill? ParseSkillDirectory(AgentFileSkillPathScope scope)
     {
-        string skillFilePath = Path.Combine(skillDirectoryFullPath, SkillFileName);
+        string skillFilePath = Path.Combine(scope.SkillDirectoryPath, SkillFileName);
         string content = File.ReadAllText(skillFilePath, Encoding.UTF8);
 
         if (!this.TryParseFrontmatter(content, skillFilePath, out AgentSkillFrontmatter? frontmatter))
@@ -205,18 +220,13 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
             return null;
         }
 
-        // Append a trailing separator so path-containment checks don't false-match
-        // sibling directories. e.g. "/skills/myskill" matches "/skills/myskill-evil/",
-        // but "/skills/myskill/" does not.
-        string normalizedSkillDirectoryFullPath = skillDirectoryFullPath + Path.DirectorySeparatorChar;
-
-        var resources = this.DiscoverResourceFiles(normalizedSkillDirectoryFullPath, frontmatter.Name);
-        var scripts = this.DiscoverScriptFiles(normalizedSkillDirectoryFullPath, frontmatter.Name);
+        var resources = this.DiscoverResourceFiles(scope, frontmatter.Name);
+        var scripts = this.DiscoverScriptFiles(scope, frontmatter.Name);
 
         return new AgentFileSkill(
             frontmatter: frontmatter,
             content: content,
-            path: skillDirectoryFullPath,
+            path: scope.SkillDirectoryPath,
             resources: resources,
             scripts: scripts);
     }
@@ -240,30 +250,59 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
         string? compatibility = null;
         string? allowedTools = null;
 
+        // Recognized fields use exact lowercase names, with optional quotes. Reject casing variants and
+        // duplicates rather than silently changing which value the skill exposes.
+        var seenFields = new HashSet<string>(StringComparer.Ordinal);
         foreach (Match kvMatch in s_yamlKeyValueRegex.Matches(yamlContent))
         {
             string key = kvMatch.Groups[1].Value;
+            key = key[0] is '"' or '\'' ? key.Substring(1, key.Length - 2) : key;
+
+            // Unknown fields are intentionally excluded from this validation for forward compatibility.
+            if (!s_frontmatterFieldNames.TryGetValue(key, out string? canonicalKey))
+            {
+                continue;
+            }
+
+            if (!string.Equals(key, canonicalKey, StringComparison.Ordinal))
+            {
+                LogIncorrectlyCasedFrontmatterField(this._logger, skillFilePath, key, canonicalKey);
+                return false;
+            }
+
+            if (!seenFields.Add(key))
+            {
+                LogDuplicateFrontmatterField(this._logger, skillFilePath, key);
+                return false;
+            }
+
+            // Empty declarations participate in key validation, but leave optional scalar fields unset.
+            if (!kvMatch.Groups[2].Success && kvMatch.Groups[3].Length == 0)
+            {
+                continue;
+            }
+
             string value = kvMatch.Groups[2].Success
                 ? kvMatch.Groups[2].Value
                 : ParseYamlScalarValue(yamlContent, kvMatch);
 
-            if (string.Equals(key, "name", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(key, "name", StringComparison.Ordinal))
             {
                 name = value;
             }
-            else if (string.Equals(key, "description", StringComparison.OrdinalIgnoreCase))
+            else if (string.Equals(key, "description", StringComparison.Ordinal))
             {
                 description = value;
             }
-            else if (string.Equals(key, "license", StringComparison.OrdinalIgnoreCase))
+            else if (string.Equals(key, "license", StringComparison.Ordinal))
             {
                 license = value;
             }
-            else if (string.Equals(key, "compatibility", StringComparison.OrdinalIgnoreCase))
+            else if (string.Equals(key, "compatibility", StringComparison.Ordinal))
             {
                 compatibility = value;
             }
-            else if (string.Equals(key, "allowed-tools", StringComparison.OrdinalIgnoreCase))
+            else if (string.Equals(key, "allowed-tools", StringComparison.Ordinal))
             {
                 allowedTools = value;
             }
@@ -277,7 +316,14 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
             metadata = [];
             foreach (Match kvMatch in s_yamlIndentedKeyValueRegex.Matches(metadataMatch.Groups[1].Value))
             {
-                metadata[kvMatch.Groups[1].Value] = kvMatch.Groups[2].Success ? kvMatch.Groups[2].Value : kvMatch.Groups[3].Value;
+                string key = kvMatch.Groups[1].Value;
+                string value = kvMatch.Groups[2].Success ? kvMatch.Groups[2].Value : kvMatch.Groups[3].Value;
+
+                // Keep the first value and key spelling using the dictionary's case-insensitive comparison.
+                if (!metadata.TryAdd(key, value))
+                {
+                    LogDuplicateMetadataKey(this._logger, skillFilePath, key);
+                }
             }
         }
 
@@ -323,29 +369,29 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
     /// If a <see cref="AgentFileSkillsSourceOptions.ResourceFilter"/> predicate is configured, files
     /// that do not satisfy it are excluded.
     /// </remarks>
-    private List<AgentFileSkillResource> DiscoverResourceFiles(string skillDirectoryFullPath, string skillName)
+    private List<AgentFileSkillResource> DiscoverResourceFiles(AgentFileSkillPathScope scope, string skillName)
     {
         var resources = new List<AgentFileSkillResource>();
 
-        this.ScanDirectoryForResources(skillDirectoryFullPath, skillDirectoryFullPath, skillName, resources, currentDepth: 1);
+        this.ScanDirectoryForResources(scope.SkillDirectoryPrefix, scope, skillName, resources, currentDepth: 1);
 
         return resources;
     }
 
-    private void ScanDirectoryForResources(string targetDirectory, string skillDirectoryFullPath, string skillName, List<AgentFileSkillResource> resources, int currentDepth)
+    private void ScanDirectoryForResources(string targetDirectory, AgentFileSkillPathScope scope, string skillName, List<AgentFileSkillResource> resources, int currentDepth)
     {
         if (currentDepth > this._searchDepth)
         {
             return;
         }
 
-        bool isRootDirectory = string.Equals(targetDirectory, skillDirectoryFullPath, StringComparison.OrdinalIgnoreCase);
+        bool isRootDirectory = string.Equals(targetDirectory, scope.SkillDirectoryPrefix, StringComparison.OrdinalIgnoreCase);
 
         // Directory-level symlink check: skip if targetDirectory (or any intermediate
         // segment) is a reparse point or cannot be inspected. The root directory is excluded —
         // it's a caller-supplied trusted path, and the security boundary guards files within it,
         // not the path itself.
-        if (!isRootDirectory && HasSymlinkInPath(targetDirectory, skillDirectoryFullPath))
+        if (!isRootDirectory && AgentFileSkillPathValidator.HasLinkOrReparsePointInPath(targetDirectory, scope.SkillDirectoryPrefix))
         {
             if (this._logger.IsEnabled(LogLevel.Warning))
             {
@@ -394,7 +440,7 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
 
             // Path containment: reject if the resolved path escapes the skill directory.
             // e.g. "/etc/shadow".StartsWith("/skills/myskill/") → false → skip
-            if (!resolvedFilePath.StartsWith(skillDirectoryFullPath, StringComparison.OrdinalIgnoreCase))
+            if (!resolvedFilePath.StartsWith(scope.SkillDirectoryPrefix, StringComparison.OrdinalIgnoreCase))
             {
                 if (this._logger.IsEnabled(LogLevel.Warning))
                 {
@@ -407,7 +453,7 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
             // Per-file symlink check: detects if the file (or any intermediate segment)
             // is a reparse point or cannot be inspected.
             // e.g. "references/secret.md" → symlink to "/etc/shadow"
-            if (HasSymlinkInPath(resolvedFilePath, skillDirectoryFullPath))
+            if (AgentFileSkillPathValidator.HasLinkOrReparsePointInPath(resolvedFilePath, scope.SkillDirectoryPrefix))
             {
                 if (this._logger.IsEnabled(LogLevel.Warning))
                 {
@@ -419,7 +465,7 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
 
             // Compute relative path and normalize separators.
             // e.g. "/skills/myskill/references/guide.md" → "references/guide.md"
-            string relativePath = NormalizePath(resolvedFilePath.Substring(skillDirectoryFullPath.Length));
+            string relativePath = NormalizePath(resolvedFilePath.Substring(scope.SkillDirectoryPrefix.Length));
 
             // Apply user-provided filter predicate
             if (this._resourceFilter is not null && !this._resourceFilter(new AgentFileSkillFilterContext(skillName, relativePath)))
@@ -427,7 +473,7 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
                 continue;
             }
 
-            resources.Add(new AgentFileSkillResource(relativePath, resolvedFilePath));
+            resources.Add(new AgentFileSkillResource(relativePath, resolvedFilePath, scope));
         }
 
         // Recurse into subdirectories if within depth limit
@@ -435,7 +481,7 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
         {
             foreach (string subdirectory in this.SafeEnumerateDirectories(targetDirectory, FileAttributes.ReparsePoint))
             {
-                this.ScanDirectoryForResources(subdirectory, skillDirectoryFullPath, skillName, resources, currentDepth + 1);
+                this.ScanDirectoryForResources(subdirectory, scope, skillName, resources, currentDepth + 1);
             }
         }
     }
@@ -449,29 +495,29 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
     /// If a <see cref="AgentFileSkillsSourceOptions.ScriptFilter"/> predicate is configured, files
     /// that do not satisfy it are excluded.
     /// </remarks>
-    private List<AgentFileSkillScript> DiscoverScriptFiles(string skillDirectoryFullPath, string skillName)
+    private List<AgentFileSkillScript> DiscoverScriptFiles(AgentFileSkillPathScope scope, string skillName)
     {
         var scripts = new List<AgentFileSkillScript>();
 
-        this.ScanDirectoryForScripts(skillDirectoryFullPath, skillDirectoryFullPath, skillName, scripts, currentDepth: 1);
+        this.ScanDirectoryForScripts(scope.SkillDirectoryPrefix, scope, skillName, scripts, currentDepth: 1);
 
         return scripts;
     }
 
-    private void ScanDirectoryForScripts(string targetDirectory, string skillDirectoryFullPath, string skillName, List<AgentFileSkillScript> scripts, int currentDepth)
+    private void ScanDirectoryForScripts(string targetDirectory, AgentFileSkillPathScope scope, string skillName, List<AgentFileSkillScript> scripts, int currentDepth)
     {
         if (currentDepth > this._searchDepth)
         {
             return;
         }
 
-        bool isRootDirectory = string.Equals(targetDirectory, skillDirectoryFullPath, StringComparison.OrdinalIgnoreCase);
+        bool isRootDirectory = string.Equals(targetDirectory, scope.SkillDirectoryPrefix, StringComparison.OrdinalIgnoreCase);
 
         // Directory-level symlink check: skip if targetDirectory (or any intermediate
         // segment) is a reparse point or cannot be inspected. The root directory is excluded —
         // it's a caller-supplied trusted path, and the security boundary guards files within it,
         // not the path itself.
-        if (!isRootDirectory && HasSymlinkInPath(targetDirectory, skillDirectoryFullPath))
+        if (!isRootDirectory && AgentFileSkillPathValidator.HasLinkOrReparsePointInPath(targetDirectory, scope.SkillDirectoryPrefix))
         {
             if (this._logger.IsEnabled(LogLevel.Warning))
             {
@@ -507,7 +553,7 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
 
             // Path containment: reject if the resolved path escapes the skill directory.
             // e.g. "/etc/shadow".StartsWith("/skills/myskill/") → false → skip
-            if (!resolvedFilePath.StartsWith(skillDirectoryFullPath, StringComparison.OrdinalIgnoreCase))
+            if (!resolvedFilePath.StartsWith(scope.SkillDirectoryPrefix, StringComparison.OrdinalIgnoreCase))
             {
                 if (this._logger.IsEnabled(LogLevel.Warning))
                 {
@@ -520,7 +566,7 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
             // Per-file symlink check: detects if the file (or any intermediate segment)
             // is a reparse point or cannot be inspected.
             // e.g. "scripts/run.py" → symlink to "/etc/shadow"
-            if (HasSymlinkInPath(resolvedFilePath, skillDirectoryFullPath))
+            if (AgentFileSkillPathValidator.HasLinkOrReparsePointInPath(resolvedFilePath, scope.SkillDirectoryPrefix))
             {
                 if (this._logger.IsEnabled(LogLevel.Warning))
                 {
@@ -532,7 +578,7 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
 
             // Compute relative path and normalize separators.
             // e.g. "/skills/myskill/scripts/parsepdf.py" → "scripts/parsepdf.py"
-            string relativePath = NormalizePath(resolvedFilePath.Substring(skillDirectoryFullPath.Length));
+            string relativePath = NormalizePath(resolvedFilePath.Substring(scope.SkillDirectoryPrefix.Length));
 
             // Apply user-provided filter predicate
             if (this._scriptFilter is not null && !this._scriptFilter(new AgentFileSkillFilterContext(skillName, relativePath)))
@@ -540,7 +586,7 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
                 continue;
             }
 
-            scripts.Add(new AgentFileSkillScript(relativePath, resolvedFilePath, this._scriptRunner));
+            scripts.Add(new AgentFileSkillScript(relativePath, resolvedFilePath, scope, this._scriptRunner));
         }
 
         // Recurse into subdirectories if within depth limit
@@ -548,52 +594,9 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
         {
             foreach (string subdirectory in this.SafeEnumerateDirectories(targetDirectory, FileAttributes.ReparsePoint))
             {
-                this.ScanDirectoryForScripts(subdirectory, skillDirectoryFullPath, skillName, scripts, currentDepth + 1);
+                this.ScanDirectoryForScripts(subdirectory, scope, skillName, scripts, currentDepth + 1);
             }
         }
-    }
-
-    /// <summary>
-    /// Checks whether any segment in the path (relative to the directory) is a symlink,
-    /// reparse point, or cannot be inspected.
-    /// </summary>
-    private static bool HasSymlinkInPath(string pathToCheck, string trustedBasePath)
-    {
-        string relativePath = pathToCheck.Substring(trustedBasePath.Length);
-        string[] segments = relativePath.Split(
-            [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
-            StringSplitOptions.RemoveEmptyEntries);
-
-        string currentPath = trustedBasePath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-
-        foreach (string segment in segments)
-        {
-            currentPath = Path.Combine(currentPath, segment);
-
-            if (IsLinkOrReparsePointOrInaccessible(currentPath))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private static bool IsLinkOrReparsePointOrInaccessible(string path)
-    {
-        try
-        {
-            return (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0;
-        }
-        catch (Exception ex) when (IsFileSystemInspectionFailure(ex))
-        {
-            return true;
-        }
-    }
-
-    private static bool IsFileSystemInspectionFailure(Exception exception)
-    {
-        return exception is IOException or UnauthorizedAccessException or SecurityException;
     }
 
     /// <summary>
@@ -619,7 +622,7 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
             return Directory.GetDirectories(path);
 #endif
         }
-        catch (Exception ex) when (IsFileSystemInspectionFailure(ex))
+        catch (Exception ex) when (AgentFileSkillPathValidator.IsFileSystemInspectionFailure(ex))
         {
             if (this._logger.IsEnabled(LogLevel.Warning))
             {
@@ -769,6 +772,15 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
 
     [LoggerMessage(LogLevel.Error, "SKILL.md at '{SkillFilePath}' has an invalid '{FieldName}' value: {Reason}")]
     private static partial void LogInvalidFieldValue(ILogger logger, string skillFilePath, string fieldName, string reason);
+
+    [LoggerMessage(LogLevel.Error, "SKILL.md at '{SkillFilePath}' contains duplicate frontmatter field '{FieldName}'")]
+    private static partial void LogDuplicateFrontmatterField(ILogger logger, string skillFilePath, string fieldName);
+
+    [LoggerMessage(LogLevel.Warning, "SKILL.md at '{SkillFilePath}' contains duplicate metadata key '{Key}'; keeping the first value")]
+    private static partial void LogDuplicateMetadataKey(ILogger logger, string skillFilePath, string key);
+
+    [LoggerMessage(LogLevel.Error, "SKILL.md at '{SkillFilePath}' uses incorrectly cased frontmatter field '{FieldName}'; expected '{ExpectedFieldName}'")]
+    private static partial void LogIncorrectlyCasedFrontmatterField(ILogger logger, string skillFilePath, string fieldName, string expectedFieldName);
 
     [LoggerMessage(LogLevel.Error, "SKILL.md at '{SkillFilePath}': skill name '{SkillName}' does not match parent directory name '{DirectoryName}'")]
     private static partial void LogNameDirectoryMismatch(ILogger logger, string skillFilePath, string skillName, string directoryName);

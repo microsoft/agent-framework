@@ -17,7 +17,6 @@
 
   <ItemGroup>
     <PackageReference Remove="xunit.v3.mtp-v2" />
-    <PackageReference Remove="xunit.runner.visualstudio" />
     <PackageReference Remove="Moq" />
     <PackageReference Remove="xRetry.v3" />
     <PackageReference Remove="Microsoft.Testing.Extensions.CodeCoverage" />

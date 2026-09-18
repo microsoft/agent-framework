@@ -105,6 +105,20 @@ The `AGUIChatClient` supports:
 - Integration with `Agent` for client-side history management
 - Canonical interrupt/resume passthrough (`availableInterrupts` and `resume`)
 
+#### HTTP client ownership and cookies
+
+**Breaking change:** `AGUIChatClient` and `AGUIHttpService` reuse an internally owned HTTP client
+for connection pooling but no longer persist response cookies. This applies to all runs,
+including repeated requests with the same thread ID. Closing the AG-UI client or leaving
+its async context manager closes its internally owned HTTP client.
+
+Applications that need cookies for upstream authentication, sessions, or load-balancer affinity, including those migrating from
+the previous default of retaining response cookies, must supply an `httpx.AsyncClient`
+through `http_client`. Supplied clients retain their headers, cookies, timeout, transport,
+and response-cookie handling, and must be closed by the caller. Scope a cookie-bearing
+client to a single authenticated principal; do not share it across users. AG-UI thread IDs
+are correlation identifiers, not authentication boundaries.
+
 ## Tool Return Helpers
 
 Use `state_update` when a backend tool needs to send different payloads to the model, the UI, and shared state. The `text` value remains the LLM-bound tool result, `tool_result` becomes the AG-UI `ToolCallResultEvent.content` for frontend rendering, and `state` is merged into durable shared state.
@@ -210,6 +224,12 @@ arguments. For compatibility with existing MAF clients, `accepted` remains an al
 argument fields remain supported as partial edits. Cancellation is a normal terminal decision: cancelled calls do
 not execute, while resolved siblings in the same complete resume continue normally. The same tool-approval shape and
 resume payloads apply when an agent approval is surfaced through a workflow `request_info` event.
+
+For built-in Agents, validated approvals resume through the normal `Agent.run()` path. Agent middleware still
+controls admission and scheduling, and provider and function middleware still apply before tool execution.
+For example, `ToolApprovalMiddleware` collects queued decisions before releasing the batch; AG-UI does not
+execute an individually approved tool ahead of that middleware. Completed results remain replayable without
+repeating tool execution.
 
 ```json
 {
@@ -387,11 +407,20 @@ AG-UI events and snapshot operations. When using `AgentFrameworkWorkflow(workflo
 also scopes the in-memory workflow cache even without a snapshot store; provide it in multi-user deployments so two
 users who submit the same `threadId` do not share a live `Workflow` instance.
 
+Authenticate and authorize the current scope on every request, including hydration and approval resume, rather than
+trusting a scope supplied through Shared State or forwarded properties. A configured resolver must return a non-empty
+string. Returning `None`, an empty string, or another type fails the request with a generic HTTP 500 configuration
+error before accessing snapshots, approval state, or context providers. Resolver failures never fall back to unscoped
+operation. Valid scope strings are used exactly as returned, without trimming or normalization. An endpoint without a
+resolver remains intentionally unscoped; it must not share session-keyed storage across distinct authorization scopes.
+Use endpoint authentication dependencies to reject unauthorized requests before scope resolution.
+
 Existing applications that need time to migrate provider records from raw Thread-id keys can temporarily wrap the
 agent with `AgentFrameworkAgent(..., legacy_session_id_from_thread_id=True)`. This deprecated compatibility option
-emits a `DeprecationWarning` and disables Snapshot Scope isolation for context-provider state. Remove it after
-migrating only records whose scope provenance can be established; do not merge or fall back to legacy records that
-may already contain data from multiple scopes.
+emits a `DeprecationWarning` and disables Snapshot Scope isolation for context-provider state. It is not safe for a
+shared multi-tenant deployment, even with a trusted resolver. Keep it disabled when establishing scope isolation.
+
+### Request state and snapshot authority
 
 For hosted agents, request Shared State is also available through `AgentSession.state` during that run, whether or
 not snapshot persistence is configured. Request values are untrusted per-run context: they overlay ordinary restored

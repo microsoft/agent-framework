@@ -3,7 +3,9 @@
 """Tests for native workflow AG-UI runner."""
 
 import json
+import logging
 from collections.abc import AsyncIterator
+from contextlib import aclosing
 from dataclasses import dataclass, make_dataclass
 from enum import Enum
 from types import SimpleNamespace
@@ -23,6 +25,7 @@ from agent_framework import (
     Message,
     WorkflowBuilder,
     WorkflowContext,
+    WorkflowErrorDetails,
     WorkflowEvent,
     executor,
     handler,
@@ -93,6 +96,227 @@ def _interrupt_metadata_value(interrupt: dict[str, Any]) -> dict[str, Any]:
     value = agent_framework_metadata.get("value")
     assert isinstance(value, dict)
     return cast(dict[str, Any], value)
+
+
+def test_attach_checkpoint_id_to_interrupts_setdefault() -> None:
+    """Issue #8150: attach pause checkpoint_id without overwriting an existing one."""
+    from agent_framework_ag_ui._workflow_run import _attach_checkpoint_id_to_interrupts
+
+    empty = _attach_checkpoint_id_to_interrupts([{"id": "r1"}], None)
+    assert empty == [{"id": "r1"}]
+
+    attached = _attach_checkpoint_id_to_interrupts(
+        [{"id": "r1", "metadata": {"agent_framework": {"type": "workflow_request_info"}}}],
+        "cp-123",
+    )
+    assert attached[0]["metadata"]["agent_framework"]["checkpoint_id"] == "cp-123"
+    assert attached[0]["metadata"]["agent_framework"]["type"] == "workflow_request_info"
+
+    preserved = _attach_checkpoint_id_to_interrupts(attached, "cp-other")
+    assert preserved[0]["metadata"]["agent_framework"]["checkpoint_id"] == "cp-123"
+
+
+@pytest.mark.asyncio
+async def test_pause_checkpoint_id_ignores_competing_shared_latest() -> None:
+    """Prefer this runner's pause checkpoint over a newer shared get_latest() winner."""
+    from agent_framework import WorkflowCheckpoint
+
+    from agent_framework_ag_ui._run_common import _build_run_finished_event
+    from agent_framework_ag_ui._workflow_run import (
+        _interrupts_with_pause_checkpoint,
+        _pause_checkpoint_id_for_interrupts,
+    )
+
+    class ApprovalExecutor(Executor):
+        def __init__(self) -> None:
+            super().__init__(id="approval_executor")
+
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext) -> None:
+            del message
+            function_call = Content.from_function_call(
+                call_id="refund-call",
+                name="submit_refund",
+                arguments={"order_id": "12345"},
+            )
+            approval_request = Content.from_function_approval_request(id="approval-1", function_call=function_call)
+            await ctx.request_info(approval_request, Content, request_id="approval-1")
+
+        @response_handler
+        async def handle_approval(self, original_request: Content, response: Content, ctx: WorkflowContext) -> None:
+            del original_request, response
+            await ctx.yield_output("done")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+
+    storage = InMemoryCheckpointStorage()
+    workflow = WorkflowBuilder(start_executor=ApprovalExecutor(), checkpoint_storage=storage).build()
+    first_events = [
+        event
+        async for event in run_workflow_stream(
+            {"messages": [{"role": "user", "content": "go"}]},
+            workflow,
+            checkpoint_storage=storage,
+        )
+    ]
+    first_finished = [event for event in first_events if event.type == "RUN_FINISHED"][0]
+    interrupt_payload = _interrupts_from_run_finished(first_finished)
+    pause_id = interrupt_payload[0]["metadata"]["agent_framework"]["checkpoint_id"]
+
+    # Inject a newer shared checkpoint that does not cover this interrupt (other owner / stale).
+    competing = WorkflowCheckpoint(
+        workflow_name=workflow.name,
+        graph_signature_hash="competing",
+        pending_request_info_events={},
+        timestamp="9999-01-01T00:00:00+00:00",
+    )
+    await storage.save(competing)
+    latest = await storage.get_latest(workflow_name=workflow.name)
+    assert latest is not None
+    assert latest.checkpoint_id == competing.checkpoint_id
+
+    # Workflow-owned baseline from the pause run should already allow advertising pause_id.
+    resolved = await _pause_checkpoint_id_for_interrupts(
+        workflow=workflow,
+        checkpoint_storage=storage,
+        interrupts=interrupt_payload,
+    )
+    assert resolved == pause_id
+
+    rebuilt = _build_run_finished_event(
+        "run-1",
+        "thread-1",
+        interrupts=await _interrupts_with_pause_checkpoint(
+            interrupts=interrupt_payload,
+            workflow=workflow,
+            checkpoint_storage=storage,
+        ),
+    )
+    rebuilt_interrupts = _interrupts_from_run_finished(rebuilt)
+    assert rebuilt_interrupts[0]["metadata"]["agent_framework"]["checkpoint_id"] == pause_id
+
+
+@pytest.mark.asyncio
+async def test_builder_checkpoint_storage_attaches_id_without_run_arg() -> None:
+    """WorkflowBuilder(checkpoint_storage=...) alone must still advertise pause checkpoint_id."""
+
+    class ApprovalExecutor(Executor):
+        def __init__(self) -> None:
+            super().__init__(id="approval_executor")
+
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext) -> None:
+            del message
+            function_call = Content.from_function_call(
+                call_id="refund-call",
+                name="submit_refund",
+                arguments={"order_id": "12345"},
+            )
+            approval_request = Content.from_function_approval_request(id="approval-1", function_call=function_call)
+            await ctx.request_info(approval_request, Content, request_id="approval-1")
+
+        @response_handler
+        async def handle_approval(self, original_request: Content, response: Content, ctx: WorkflowContext) -> None:
+            del original_request, response
+            await ctx.yield_output("done")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+
+    storage = InMemoryCheckpointStorage()
+    workflow = WorkflowBuilder(start_executor=ApprovalExecutor(), checkpoint_storage=storage).build()
+    # Deliberately omit checkpoint_storage= on the AG-UI entrypoint (builder path only).
+    events = [event async for event in run_workflow_stream({"messages": [{"role": "user", "content": "go"}]}, workflow)]
+    finished = [event for event in events if event.type == "RUN_FINISHED"][0]
+    interrupt_payload = _interrupts_from_run_finished(finished)
+    checkpoints = await storage.list_checkpoints(workflow_name=workflow.name)
+    assert checkpoints
+    assert interrupt_payload[0]["metadata"]["agent_framework"]["checkpoint_id"] == checkpoints[-1].checkpoint_id
+
+
+@pytest.mark.asyncio
+async def test_builder_checkpoint_storage_resume_round_trips_without_agui_storage() -> None:
+    """Pause IDs from builder storage must resume with resume payload even without AG-UI storage."""
+
+    class ApprovalExecutor(Executor):
+        def __init__(self) -> None:
+            super().__init__(id="approval_executor")
+
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext) -> None:
+            del message
+            await ctx.request_info("need-input", str, request_id="req-1")
+
+        @response_handler
+        async def handle(self, original_request: str, response: str, ctx: WorkflowContext) -> None:
+            del original_request
+            await ctx.yield_output(f"got:{response}")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+
+    storage = InMemoryCheckpointStorage()
+    workflow = WorkflowBuilder(start_executor=ApprovalExecutor(), checkpoint_storage=storage).build()
+
+    pause_events = [
+        event async for event in run_workflow_stream({"messages": [{"role": "user", "content": "go"}]}, workflow)
+    ]
+    finished = [event for event in pause_events if event.type == "RUN_FINISHED"][0]
+    pause_id = _interrupts_from_run_finished(finished)[0]["metadata"]["agent_framework"]["checkpoint_id"]
+
+    # Cold resume: omit AG-UI checkpoint_storage; rely on builder storage only.
+    resume_events = [
+        event
+        async for event in run_workflow_stream(
+            {
+                "messages": [],
+                "resume": {"interrupts": [{"id": "req-1", "value": "ok"}]},
+                "forwarded_props": {"checkpoint_id": pause_id},
+            },
+            workflow,
+        )
+    ]
+    assert "RUN_ERROR" not in [event.type for event in resume_events]
+    assert "RUN_FINISHED" in [event.type for event in resume_events]
+    text = "".join(getattr(event, "delta", "") for event in resume_events if event.type == "TEXT_MESSAGE_CONTENT")
+    assert "got:ok" in text
+
+
+@pytest.mark.asyncio
+async def test_resolve_pause_checkpoint_id_is_run_scoped_without_storage() -> None:
+    """Stale runner ids must not be advertised when baseline shows this run did not persist."""
+
+    class ApprovalExecutor(Executor):
+        def __init__(self) -> None:
+            super().__init__(id="approval_executor")
+
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext) -> None:
+            del message
+            await ctx.request_info("need-input", str, request_id="req-1")
+
+        @response_handler
+        async def handle(self, original_request: str, response: str, ctx: WorkflowContext) -> None:
+            del original_request, response
+            await ctx.yield_output("done")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+
+    workflow = WorkflowBuilder(start_executor=ApprovalExecutor()).build()
+    # Simulate a leftover id from a prior run on a workflow with no checkpoint storage.
+    workflow._runner._previous_checkpoint_id = "stale-from-prior-run"  # pyright: ignore[reportPrivateUsage]
+
+    from agent_framework_ag_ui._workflow_run import _pause_checkpoint_id_for_interrupts
+
+    interrupts = [{"id": "req-1", "value": "need-input"}]
+    workflow._run_baseline_checkpoint_id = "stale-from-prior-run"  # pyright: ignore[reportPrivateUsage]
+    assert (
+        await _pause_checkpoint_id_for_interrupts(
+            workflow=workflow,
+            checkpoint_storage=None,
+            interrupts=interrupts,
+        )
+        is None
+    )
+    assert (
+        await _pause_checkpoint_id_for_interrupts(
+            workflow=workflow,
+            checkpoint_storage=None,
+            interrupts=interrupts,
+            baseline_checkpoint_id=None,
+        )
+        == "stale-from-prior-run"
+    )
 
 
 async def test_workflow_run_maps_custom_and_text_events():
@@ -470,6 +694,164 @@ async def test_workflow_run_request_info_closes_open_text_message() -> None:
     assert content_index < end_index < request_start_index
 
 
+async def test_workflow_run_approval_pause_closes_open_real_tool_call() -> None:
+    """Streamed function calls must receive TOOL_CALL_END before approval interrupt.
+
+    Regression for microsoft/agent-framework#8244: Workflow AG-UI clients reject
+    RUN_FINISHED while a real tool call id is still open after request_info.
+    """
+
+    @executor(id="approval_with_streamed_tool")
+    async def approval_with_streamed_tool(message: Any, ctx: WorkflowContext[Any, AgentResponseUpdate]) -> None:
+        del message
+        function_call = Content.from_function_call(
+            call_id="weather-call",
+            name="api_getWeather",
+            arguments={"city": "Seattle"},
+        )
+        await ctx.yield_output(AgentResponseUpdate(contents=[function_call], role=None))
+        approval_request = Content.from_function_approval_request(id="approval-1", function_call=function_call)
+        await ctx.request_info(approval_request, Content, request_id="approval-1")
+
+    workflow = WorkflowBuilder(start_executor=approval_with_streamed_tool).build()
+    events = [event async for event in run_workflow_stream({"messages": [{"role": "user", "content": "go"}]}, workflow)]
+
+    real_tool_start_index = next(
+        i
+        for i, event in enumerate(events)
+        if event.type == "TOOL_CALL_START" and getattr(event, "tool_call_id", None) == "weather-call"
+    )
+    real_tool_end_index = next(
+        i
+        for i, event in enumerate(events)
+        if event.type == "TOOL_CALL_END" and getattr(event, "tool_call_id", None) == "weather-call"
+    )
+    request_info_start_index = next(
+        i
+        for i, event in enumerate(events)
+        if event.type == "TOOL_CALL_START"
+        and getattr(event, "tool_call_name", None) == "request_info"
+        and getattr(event, "tool_call_id", None) == "approval-1"
+    )
+    request_info_end_index = next(
+        i
+        for i, event in enumerate(events)
+        if event.type == "TOOL_CALL_END" and getattr(event, "tool_call_id", None) == "approval-1"
+    )
+    run_finished_index = next(i for i, event in enumerate(events) if event.type == "RUN_FINISHED")
+
+    assert real_tool_start_index < real_tool_end_index
+    assert real_tool_end_index < request_info_start_index
+    assert request_info_start_index < request_info_end_index < run_finished_index
+
+    open_tool_ids: set[str] = set()
+    for event in events[: run_finished_index + 1]:
+        tool_call_id = getattr(event, "tool_call_id", None)
+        if not isinstance(tool_call_id, str):
+            continue
+        if event.type == "TOOL_CALL_START":
+            open_tool_ids.add(tool_call_id)
+        elif event.type == "TOOL_CALL_END":
+            open_tool_ids.discard(tool_call_id)
+    assert open_tool_ids == set(), f"Tool calls still open at RUN_FINISHED: {sorted(open_tool_ids)}"
+
+    finished = events[run_finished_index]
+    interrupts = _interrupts_from_run_finished(finished)
+    assert interrupts[0]["id"] == "approval-1"
+
+
+async def test_workflow_run_approval_resume_skips_unmatched_tool_call_end() -> None:
+    """After synthetic close, resume must not re-END the original tool call id.
+
+    Regression for PR review on #8373 / #8244: a fresh FlowState on resume would
+    otherwise emit TOOL_CALL_END via _emit_tool_result_common without a matching
+    TOOL_CALL_START in that run. Match Agent approval resume (RESULT only).
+    """
+
+    class ApprovalWithStreamedTool(Executor):
+        def __init__(self) -> None:
+            super().__init__(id="approval_with_streamed_tool")
+
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext[Any, AgentResponseUpdate]) -> None:
+            del message
+            function_call = Content.from_function_call(
+                call_id="weather-call",
+                name="api_getWeather",
+                arguments={"city": "Seattle"},
+            )
+            await ctx.yield_output(AgentResponseUpdate(contents=[function_call], role=None))
+            approval_request = Content.from_function_approval_request(id="approval-1", function_call=function_call)
+            await ctx.request_info(approval_request, Content, request_id="approval-1")
+
+        @response_handler
+        async def handle_approval(
+            self, original_request: Content, response: Content, ctx: WorkflowContext[Any, AgentResponseUpdate | str]
+        ) -> None:
+            del original_request
+            call_id = "weather-call"
+            if bool(response.approved):
+                await ctx.yield_output(
+                    AgentResponseUpdate(
+                        contents=[Content.from_function_result(call_id=call_id, result="Sunny in Seattle")],
+                        role="tool",
+                    )
+                )
+                await ctx.yield_output("Weather tool approved.")
+            else:
+                await ctx.yield_output("Weather tool rejected.")
+
+    workflow = WorkflowBuilder(start_executor=ApprovalWithStreamedTool()).build()
+    first_events = [
+        event async for event in run_workflow_stream({"messages": [{"role": "user", "content": "go"}]}, workflow)
+    ]
+    first_finished = [event for event in first_events if event.type == "RUN_FINISHED"][0]
+    interrupt_payload = _interrupts_from_run_finished(first_finished)
+    interrupt_value = _interrupt_metadata_value(interrupt_payload[0])
+
+    # Interrupt turn must close the real tool id before RUN_FINISHED.
+    assert any(
+        event.type == "TOOL_CALL_END" and getattr(event, "tool_call_id", None) == "weather-call"
+        for event in first_events
+    )
+
+    resumed_events: list[Any] = [
+        event
+        async for event in run_workflow_stream(
+            {
+                "messages": [],
+                "resume": [
+                    {
+                        "interruptId": "approval-1",
+                        "status": "resolved",
+                        "payload": {
+                            "type": "function_approval_response",
+                            "approved": True,
+                            "id": "approval-1",
+                            "function_call": interrupt_value.get("function_call"),
+                        },
+                    }
+                ],
+            },
+            workflow,
+        )
+    ]
+
+    assert "RUN_ERROR" not in [event.type for event in resumed_events]
+    assert not any(
+        event.type in {"TOOL_CALL_START", "TOOL_CALL_ARGS", "TOOL_CALL_END"}
+        and getattr(event, "tool_call_id", None) == "weather-call"
+        for event in resumed_events
+    ), "Resume must not re-open or re-end the synthetically closed tool call id"
+    result_events = [
+        event
+        for event in resumed_events
+        if event.type == "TOOL_CALL_RESULT" and getattr(event, "tool_call_id", None) == "weather-call"
+    ]
+    assert len(result_events) == 1
+    assert "Sunny" in result_events[0].content  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+
 async def test_workflow_run_request_info_interrupt_uses_raw_dict_value():
     """Dict request payloads should be preserved in canonical interrupt metadata."""
 
@@ -682,6 +1064,8 @@ async def test_workflow_run_resume_content_response_after_checkpoint_restore() -
     )
     assert checkpoints, "expected the interrupted run to create a checkpoint"
     resume_checkpoint_id = checkpoints[-1].checkpoint_id
+    # Issue #8150: interrupt metadata must carry the pause checkpoint for multi-worker resume.
+    assert interrupt_payload[0]["metadata"]["agent_framework"]["checkpoint_id"] == resume_checkpoint_id
 
     # Resume on a FRESH workflow instance so no pending requests exist in memory until
     # the checkpoint is restored -- a cold restore, as after a process restart.
@@ -1581,16 +1965,24 @@ def test_coerce_response_for_request_builds_pydantic_model_from_json() -> None:
     assert _coerce_response_for_request(request, {"approved": "not-a-bool"}) is None
 
 
-async def test_workflow_run_emits_run_error_when_stream_raises() -> None:
-    """Unexpected stream exceptions should be converted into RUN_ERROR events."""
+@pytest.mark.parametrize("emit_started", [False, True])
+async def test_workflow_run_emits_run_error_when_stream_raises(
+    emit_started: bool, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Stream failures retain server diagnostics, not exception text on the wire."""
+    private_detail = "SYNTHETIC_BACKEND_RESPONSE"
+    failure = RuntimeError(f"workflow stream exploded: {private_detail}")
+    caplog.set_level(logging.ERROR, logger="agent_framework_ag_ui._workflow_run")
 
     class FailingWorkflow:
-        def run(self, **kwargs: Any):
+        def run(self, **kwargs: Any) -> AsyncIterator[WorkflowEvent]:
             del kwargs
 
-            async def _stream():
-                raise RuntimeError("workflow stream exploded")
-                yield  # pragma: no cover
+            async def _stream() -> AsyncIterator[WorkflowEvent]:
+                if emit_started:
+                    yield WorkflowEvent("started")
+                    yield WorkflowEvent("output", data="Public progress")
+                raise failure
 
             return _stream()
 
@@ -1604,9 +1996,20 @@ async def test_workflow_run_emits_run_error_when_stream_raises() -> None:
 
     event_types = [event.type for event in events]
     assert event_types[0] == "RUN_STARTED"
-    assert "RUN_ERROR" in event_types
+    assert event_types[-1] == "RUN_ERROR"
+    assert event_types.count("RUN_ERROR") == 1
+    assert "RUN_FINISHED" not in event_types
+    if emit_started:
+        assert event_types.index("TEXT_MESSAGE_END") < event_types.index("RUN_ERROR")
     run_error = next(event for event in events if event.type == "RUN_ERROR")
-    assert "workflow stream exploded" in run_error.message
+    assert run_error.code == "RuntimeError"
+    assert run_error.message == "Workflow execution failed."
+    records = [record for record in caplog.records if record.name == "agent_framework_ag_ui._workflow_run"]
+    assert len(records) == 1
+    assert records[0].exc_info and records[0].exc_info[1] is failure
+    wire = "\n".join(event.model_dump_json(by_alias=True, exclude_none=True) for event in events)
+    assert private_detail not in wire
+    assert "workflow stream exploded" not in wire
 
 
 # ── Helper function unit tests ──
@@ -2580,32 +2983,48 @@ async def test_workflow_run_available_interrupts_logged():
     assert "RUN_ERROR" not in event_types
 
 
-async def test_workflow_run_failed_event():
-    """Workflow 'failed' event should produce RUN_ERROR."""
+@pytest.mark.parametrize("close_on_error", [False, True])
+async def test_workflow_run_failed_event(close_on_error: bool, caplog: pytest.LogCaptureFixture) -> None:
+    """Structured failures preserve their code and log details only server-side."""
+    private_detail = "SYNTHETIC_FAILURE_MESSAGE"
+    details = WorkflowErrorDetails(
+        message=private_detail,
+        error_type="TestError",
+        traceback="SYNTHETIC_FAILURE_TRACEBACK",
+        extra={"response": "SYNTHETIC_FAILURE_EXTRA"},
+    )
+    caplog.set_level(logging.ERROR, logger="agent_framework_ag_ui._workflow_run")
 
     class FailingWorkflow:
-        def run(self, **kwargs: Any):
-            async def _stream():
-                yield SimpleNamespace(type="started")
-                yield SimpleNamespace(
-                    type="failed", details=SimpleNamespace(message="it broke", error_type="TestError")
-                )
+        def run(self, **kwargs: Any) -> AsyncIterator[WorkflowEvent]:
+            async def _stream() -> AsyncIterator[WorkflowEvent]:
+                yield WorkflowEvent("started")
+                yield WorkflowEvent.failed(details)
 
             return _stream()
 
-    events: list[Any] = [
-        event
-        async for event in run_workflow_stream(
-            {"messages": [{"role": "user", "content": "go"}]}, cast(Any, FailingWorkflow())
-        )
-    ]
+    events: list[Any] = []
+    async with aclosing(
+        run_workflow_stream({"messages": [{"role": "user", "content": "go"}]}, cast(Any, FailingWorkflow()))
+    ) as stream:
+        async for event in stream:
+            events.append(event)
+            if close_on_error and event.type == "RUN_ERROR":
+                break
 
     event_types = [event.type for event in events]
-    assert "RUN_STARTED" in event_types
-    assert "RUN_ERROR" in event_types
+    assert event_types == ["RUN_STARTED", "RUN_ERROR"]
     error_event = next(e for e in events if e.type == "RUN_ERROR")
-    assert error_event.message == "it broke"
+    assert error_event.message == "Workflow execution failed."
     assert error_event.code == "TestError"
+    wire = "\n".join(event.model_dump_json(by_alias=True, exclude_none=True) for event in events)
+    assert private_detail not in wire
+    assert "SYNTHETIC_FAILURE_TRACEBACK" not in wire
+    assert "SYNTHETIC_FAILURE_EXTRA" not in wire
+    assert private_detail in caplog.text
+    assert "SYNTHETIC_FAILURE_TRACEBACK" in caplog.text
+    assert "SYNTHETIC_FAILURE_EXTRA" not in caplog.text
+    assert sum(record.name == "agent_framework_ag_ui._workflow_run" for record in caplog.records) == 1
 
 
 async def test_workflow_run_status_enum_state():
@@ -2660,18 +3079,25 @@ async def test_workflow_run_executor_invoked_drains_text():
     assert text_end_idx < step_start_idx
 
 
-async def test_workflow_run_executor_failed_event():
-    """executor_failed event should emit activity snapshot with failed status."""
+@pytest.mark.parametrize("emit_failed", [False, True])
+async def test_workflow_run_executor_failed_event(emit_failed: bool, caplog: pytest.LogCaptureFixture) -> None:
+    """Executor failure activity must not bypass public error sanitization."""
+    details = WorkflowErrorDetails(
+        message="SYNTHETIC_EXECUTOR_MESSAGE",
+        error_type="TestError",
+        traceback="SYNTHETIC_EXECUTOR_TRACEBACK",
+        extra={"response": "SYNTHETIC_EXECUTOR_EXTRA"},
+        executor_id="agent_1",
+    )
+    caplog.set_level(logging.ERROR, logger="agent_framework_ag_ui._workflow_run")
 
     class ExecutorFailWorkflow:
-        def run(self, **kwargs: Any):
-            async def _stream():
-                yield SimpleNamespace(type="started")
-                yield SimpleNamespace(
-                    type="executor_failed",
-                    executor_id="agent_1",
-                    details=SimpleNamespace(message="agent crashed"),
-                )
+        def run(self, **kwargs: Any) -> AsyncIterator[WorkflowEvent]:
+            async def _stream() -> AsyncIterator[WorkflowEvent]:
+                yield WorkflowEvent("started")
+                yield WorkflowEvent.executor_failed("agent_1", details)
+                if emit_failed:
+                    yield WorkflowEvent.failed(details)
 
             return _stream()
 
@@ -2685,7 +3111,28 @@ async def test_workflow_run_executor_failed_event():
     activity = [e for e in events if e.type == "ACTIVITY_SNAPSHOT"]
     assert len(activity) == 1
     assert activity[0].content["status"] == "failed"
-    assert activity[0].content["details"]["message"] == "agent crashed"
+    assert activity[0].content["executor_id"] == "agent_1"
+    assert activity[0].content["details"] == {
+        "message": "Workflow execution failed.",
+        "error_type": "TestError",
+    }
+    if emit_failed:
+        assert events[-1].type == "RUN_ERROR"
+        assert sum(event.type == "RUN_ERROR" for event in events) == 1
+        assert not any(event.type == "RUN_FINISHED" for event in events)
+    else:
+        assert events[-1].type == "RUN_FINISHED"
+        assert not any(event.type == "RUN_ERROR" for event in events)
+    activity_wire = activity[0].model_dump_json(by_alias=True, exclude_none=True)
+    assert "SYNTHETIC_EXECUTOR_MESSAGE" not in activity_wire
+    assert "SYNTHETIC_EXECUTOR_TRACEBACK" not in activity_wire
+    assert "SYNTHETIC_EXECUTOR_EXTRA" not in activity_wire
+    assert details.message in caplog.text
+    assert "SYNTHETIC_EXECUTOR_TRACEBACK" in caplog.text
+    assert "SYNTHETIC_EXECUTOR_EXTRA" not in caplog.text
+    assert sum(record.name == "agent_framework_ag_ui._workflow_run" for record in caplog.records) == 1
+    assert details.message == "SYNTHETIC_EXECUTOR_MESSAGE"
+    assert details.extra == {"response": "SYNTHETIC_EXECUTOR_EXTRA"}
 
 
 async def test_workflow_run_list_base_event_output():

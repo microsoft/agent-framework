@@ -115,7 +115,8 @@ def add_agent_framework_fastapi_endpoint(
         snapshot_scope_resolver: Optional resolver for the application-defined Snapshot Scope. Required whenever
             a snapshot store is configured because an AG-UI Thread id is not an authorization boundary. Also scopes
             the internal Agent Session id used by context providers and in-memory workflow_factory instances when
-            provided without a snapshot store.
+            provided without a snapshot store. A configured resolver must return a non-empty string derived from
+            authorized request context; invalid results fail the request before accessing state or invoking the runner.
         checkpoint_storage: Optional workflow checkpoint storage, applied when the endpoint exposes a workflow.
             When provided, each run creates a checkpoint at the end of every superstep, and a run may resume from
             a persisted checkpoint by supplying its id in the AG-UI forwarded props
@@ -180,6 +181,8 @@ def add_agent_framework_fastapi_endpoint(
                 snapshot_scope = snapshot_scope_resolver(request_body)
                 if isawaitable(snapshot_scope):
                     snapshot_scope = await snapshot_scope
+                if not isinstance(snapshot_scope, str) or not snapshot_scope:
+                    raise ValueError("snapshot_scope_resolver must return a non-empty string.")
                 input_data[_APPROVAL_SCOPE_INPUT_KEY] = snapshot_scope
                 input_data[_SNAPSHOT_SCOPE_INPUT_KEY] = snapshot_scope
             if default_state:

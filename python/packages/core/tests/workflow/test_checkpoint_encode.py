@@ -108,6 +108,43 @@ def test_encode_dict_with_non_string_keys() -> None:
     assert result == {"1": "one", "2": "two"}
 
 
+def test_encode_dict_with_stringified_key_collision_uses_pickle() -> None:
+    """Distinct keys that collide after str() must not silently overwrite values."""
+    data = {1: "integer-key", "1": "string-key"}
+    result = encode_checkpoint_value(data)
+    assert isinstance(result, dict)
+    assert _PICKLE_MARKER in result
+    assert _TYPE_MARKER in result
+    restored = decode_checkpoint_value(result, allowed_types=frozenset())
+    assert restored == data
+    assert restored[1] == "integer-key"
+    assert restored["1"] == "string-key"
+
+
+def test_encode_dict_stringifies_each_key_once_for_stateful_str() -> None:
+    """Reserved/collision checks and encoding must reuse one str(key) per entry."""
+
+    class FlipStr:
+        def __init__(self) -> None:
+            self.n = 0
+
+        def __str__(self) -> str:
+            self.n += 1
+            return "stable" if self.n == 1 else "other"
+
+        def __hash__(self) -> int:
+            return id(self)
+
+        def __eq__(self, other: object) -> bool:
+            return self is other
+
+    key = FlipStr()
+    data = {key: "value"}
+    result = encode_checkpoint_value(data)
+    # First str() was "stable" for all checks; must not disagree across passes.
+    assert result == {"stable": "value"}
+
+
 def test_encode_empty_list() -> None:
     """Test encoding an empty list."""
     assert encode_checkpoint_value([]) == []

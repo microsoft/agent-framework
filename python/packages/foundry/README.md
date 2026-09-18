@@ -2,72 +2,37 @@
 
 This package contains the Microsoft Foundry integrations for Microsoft Agent Framework, including Foundry chat clients, preconfigured Foundry agents, Foundry embedding clients, and Foundry memory providers.
 
+## SDK compatibility
+
+This package supports `azure-ai-projects>=2.2.0,<2.7.0`. Projects 2.5 and later require
+`openai>=3.0.0`, so `agent-framework-foundry` requires `agent-framework-openai>=1.14.2`,
+which supports both OpenAI 2.x and 3.x.
+
 ## Tracing an existing Foundry agent
 
-Telemetry export and project attribution are separate concerns. For an existing
-prompt or hosted agent, `FoundryAgent.configure_azure_monitor()` configures the
-exporter and, unless supplied explicitly, discovers the project's ARM resource
-ID from its Application Insights connection. Discovery is cached per agent.
+Install `azure-monitor-opentelemetry>=1.8.10,<2` alongside this package to
+connect client and service traces:
 
-```python
-import os
-
-from agent_framework.foundry import FoundryAgent
-from azure.identity.aio import AzureCliCredential
-
-async with AzureCliCredential() as credential, FoundryAgent(
-    project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-    agent_name=os.environ["FOUNDRY_AGENT_NAME"],
-    credential=credential,
-) as agent:
-    await agent.configure_azure_monitor()
-    response = await agent.run("Hello!")
+```shell
+pip install --upgrade agent-framework-foundry "azure-monitor-opentelemetry>=1.8.10,<2"
 ```
 
-If your application already configures OpenTelemetry providers/exporters, pass
-`project_arm_id` when constructing each `FoundryAgent` instead of calling the
-helper again. This sets `microsoft.foundry.project.id` on that agent's invocation
-span without changing global exporters or making a discovery request:
+Use `await agent.configure_azure_monitor()` before invoking a `FoundryAgent`.
+The helper retrieves the project's connected Application Insights connection
+string and configures Azure Monitor and Agent Framework instrumentation.
+Azure Monitor 1.8.10 adds HTTPX/HTTPX2 auto-instrumentation, which propagates the
+client's trace context on the OpenAI SDK's outgoing requests. Older versions can
+export client spans while leaving Foundry service spans in a separate trace.
 
-```python
-import os
-
-from agent_framework.foundry import FoundryAgent
-from azure.identity.aio import AzureCliCredential
-
-# The application has already configured its OpenTelemetry exporters.
-async with AzureCliCredential() as credential, FoundryAgent(
-    project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-    project_arm_id=os.environ["FOUNDRY_PROJECT_ARM_ID"],
-    agent_name=os.environ["FOUNDRY_AGENT_NAME"],
-    credential=credential,
-) as agent:
-    response = await agent.run("Hello!")
-```
-
-The sample environment variable is read explicitly by the application, not
-automatically by `FoundryAgent`. Use the full **project** ARM ID:
-`/subscriptions/{subscription}/resourceGroups/{group}/providers/Microsoft.CognitiveServices/accounts/{account}/projects/{project}`.
-The project endpoint and Application Insights connection string are not substitutes.
-Keep each agent's project identity consistent with its endpoint; do not use one
-process-wide project attribute when agents address different projects.
-
-If optional discovery fails, the helper logs a warning and still configures Azure
-Monitor. Telemetry can reach Application Insights without appearing in Foundry's
-project/agent view. Supply the project ARM ID explicitly or repair the connection
-metadata before relying on portal attribution. The SDK exposure gap is tracked in
-[Azure/azure-sdk-for-python#48825](https://github.com/Azure/azure-sdk-for-python/issues/48825).
-
-`FoundryAgent` also retains its own chat operation's response ID on the invocation
-span, including streaming, without changing public history/continuation behavior.
-An unrelated model call from a context provider cannot replace that identity.
-The invocation span may itself be a child of an application span; there is no
-requirement for your application parent to carry the same attributes.
+This setup does not require a client-supplied project ARM ID or custom agent
+identity attributes. If your application configures Azure Monitor itself,
+use the same minimum version and the project's connected Application Insights
+destination instead of configuring a second exporter.
 
 See [the existing-agent tracing sample](../../samples/02-agents/observability/foundry_agent_tracing.py)
-for helper/manual setup and streaming. This differs from tracing a local
-`Agent(client=FoundryChatClient(...))`: calling the chat client's helper does not
-initialize identity on a separate `FoundryAgent` instance.
+for streaming and non-streaming calls. In Foundry, navigate to
+**Build > Agents > your agent > Traces**, select the agent version and a time
+range covering the run, and open the trace to inspect the client/server tree.
 
 ## Evaluations
 
@@ -116,7 +81,9 @@ Toolboxes can be authored two ways:
 - **Foundry portal** — create and version toolboxes through the UI without touching code.
 - **Programmatically** — use the [`azure-ai-projects`](https://pypi.org/project/azure-ai-projects/) SDK to create, update, and version toolboxes from Python.
 
-> Toolbox authoring APIs (`ToolboxVersionObject`, `ToolboxObject`, `project_client.beta.toolboxes.*`) require `azure-ai-projects>=2.1.0`. Earlier versions can only consume toolboxes that already exist.
+> In `azure-ai-projects` 2.2, toolbox authoring is available through
+> `project_client.beta.toolboxes`. Projects 2.3 and later expose stable
+> `project_client.toolboxes` operations.
 
 ### Using toolboxes with `FoundryAgent`
 

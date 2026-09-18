@@ -10,7 +10,6 @@ that connect to existing PromptAgents or HostedAgents in Foundry. Use
 from __future__ import annotations
 
 import logging
-import re
 import sys
 import warnings
 from collections.abc import Awaitable, Callable, Mapping, MutableMapping, Sequence
@@ -37,13 +36,12 @@ from agent_framework._telemetry import IS_TELEMETRY_ENABLED, get_user_agent
 from agent_framework.observability import AgentTelemetryLayer, ChatTelemetryLayer
 from agent_framework_openai._chat_client import OpenAIChatOptions, RawOpenAIChatClient
 from azure.ai.projects.aio import AIProjectClient
-from azure.ai.projects.models import ConnectionType
 from azure.core.credentials import TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
-from azure.core.exceptions import HttpResponseError, ServiceRequestError, ServiceResponseError
 
 from agent_framework_foundry._oauth_helpers import try_parse_oauth_consent_event
 
+from ._constants import FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY
 from ._feature_usage import (
     FeatureIndex,
     create_feature_usage_policy,
@@ -95,25 +93,6 @@ class FoundryAgentSettings(TypedDict, total=False):
     project_endpoint: str | None
     agent_name: str | None
     agent_version: str | None
-
-
-FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY = "foundry_hosted_agent_session_id"
-_FOUNDRY_PROJECT_ARM_ID_ATTRIBUTE = "microsoft.foundry.project.id"
-_FOUNDRY_PROJECT_ARM_ID_PATTERN = re.compile(
-    r"/subscriptions/[^/]+/resourceGroups/[^/]+/providers/"
-    r"Microsoft\.CognitiveServices/accounts/[^/]+/projects/[^/]+",
-    re.IGNORECASE,
-)
-
-
-def _validate_project_arm_id(project_arm_id: str) -> str:
-    if not _FOUNDRY_PROJECT_ARM_ID_PATTERN.fullmatch(project_arm_id):
-        raise ValueError(
-            "project_arm_id must be the full Foundry project ARM resource ID: "
-            "/subscriptions/{subscription}/resourceGroups/{group}/providers/"
-            "Microsoft.CognitiveServices/accounts/{account}/projects/{project}."
-        )
-    return project_arm_id
 
 
 class FoundryAgentOptions(OpenAIChatOptions, total=False):
@@ -679,12 +658,19 @@ class RawFoundryAgent(
     """
 
     service_session_state_keys: ClassVar[frozenset[str]] = frozenset({FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY})
+    """Session-state keys this agent owns, which untrusted input must never supply.
+
+    Holds the Foundry hosted-agent session ID. Despite the attribute name, that value is not a conversation or
+    an ``AgentSession.service_session_id``: it identifies the hosted agent's *runtime session*, a VM-isolated
+    sandbox with a persistent filesystem. Hosts such as AG-UI read this to reject client-supplied values, since
+    honouring one would run the server's own credentialed call inside another session's sandbox. Hosts are
+    expected to reserve this key independently as well, because a wrapper agent may not forward this attribute.
+    """
 
     def __init__(
         self,
         *,
         project_endpoint: str | None = None,
-        project_arm_id: str | None = None,
         agent_name: str | None = None,
         agent_version: str | None = None,
         credential: AzureCredentialTypes | None = None,
@@ -714,10 +700,6 @@ class RawFoundryAgent(
         Keyword Args:
             project_endpoint: The Foundry project endpoint URL.
                 Can also be set via environment variable FOUNDRY_PROJECT_ENDPOINT.
-            project_arm_id: Full Foundry project ARM resource ID used by ``FoundryAgent``
-                for telemetry attribution, independently of exporter configuration.
-                Supply this when configuring exporters yourself. When omitted,
-                ``configure_azure_monitor()`` attempts to discover it from project connections.
             agent_name: The name of the Foundry agent to connect to.
                 Can also be set via environment variable FOUNDRY_AGENT_NAME.
             agent_version: The version of the agent (required for PromptAgents, optional for HostedAgents).
@@ -747,7 +729,6 @@ class RawFoundryAgent(
             timeout: HTTP timeout in seconds for requests. When not provided, the
                 OpenAI SDK default is used (connect: 5s, total: 600s).
         """
-        self._foundry_project_arm_id = _validate_project_arm_id(project_arm_id) if project_arm_id is not None else None
         # Create the client
         actual_client_type = client_type or _FoundryAgentChatClient
         if not issubclass(actual_client_type, RawFoundryAgentChatClient):
@@ -866,22 +847,6 @@ class RawFoundryAgent(
         if session is not None and isinstance(agent_session_id, str) and agent_session_id:
             session.state[FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY] = agent_session_id
 
-    async def _get_foundry_project_arm_id(self) -> str:
-        """Get the Foundry project ARM ID from its Application Insights connection."""
-        client = cast(RawFoundryAgentChatClient, self.client)
-        # AIProjectClient does not expose the project ARM ID directly. Derive it from the
-        # project-scoped connection until https://github.com/Azure/azure-sdk-for-python/issues/48825 is addressed.
-        connections = client.project_client.connections.list(connection_type=ConnectionType.APPLICATION_INSIGHTS)
-        async for connection in connections:
-            connection_suffix = f"/connections/{connection.name}"
-            if not connection.id.lower().endswith(connection_suffix.lower()):
-                raise ValueError(
-                    f"The Foundry Application Insights connection ID has an unexpected format: {connection.id!r}."
-                )
-            return _validate_project_arm_id(connection.id[: -len(connection_suffix)])
-
-        raise ValueError("The Foundry project does not have an Application Insights connection.")
-
     async def configure_azure_monitor(
         self,
         enable_sensitive_data: bool = False,
@@ -891,14 +856,8 @@ class RawFoundryAgent(
 
         This method configures Azure Monitor for telemetry collection using the
         connection string from the Foundry project client (accessed via the internal client).
-        If ``project_arm_id`` was not supplied at construction, it also discovers and
-        caches project identity for this agent. If that optional lookup fails, a
-        warning is logged and export continues without project attribution; client
-        traces may then be absent from the Foundry portal.
-
-        Applications that configure their own exporters can instead supply
-        ``project_arm_id`` at construction without calling this helper. Project
-        identity belongs to each agent, not to the process-wide exporter.
+        Use azure-monitor-opentelemetry>=1.8.10,<2 for HTTPX/HTTPX2
+        auto-instrumentation that connects client and service traces.
 
         Args:
             enable_sensitive_data: Enable sensitive data logging (prompts, responses).
@@ -906,7 +865,7 @@ class RawFoundryAgent(
             **kwargs: Additional arguments passed to configure_azure_monitor().
 
         Raises:
-            ImportError: If azure-monitor-opentelemetry-exporter is not installed.
+            ImportError: If azure-monitor-opentelemetry is not installed.
         """
         from agent_framework.observability import (
             OBSERVABILITY_SETTINGS,
@@ -943,20 +902,8 @@ class RawFoundryAgent(
         except ImportError as exc:
             raise ImportError(
                 "azure-monitor-opentelemetry is required for Azure Monitor integration. "
-                "Install it with: pip install azure-monitor-opentelemetry"
+                'Install it with: pip install "azure-monitor-opentelemetry>=1.8.10,<2"'
             ) from exc
-
-        if self._foundry_project_arm_id is None:
-            try:
-                self._foundry_project_arm_id = await self._get_foundry_project_arm_id()
-            except (HttpResponseError, ServiceRequestError, ServiceResponseError, ValueError) as exc:
-                logger.warning(
-                    "Could not resolve the Foundry project ARM ID: %s. "
-                    "Azure Monitor export will continue without project attribution; "
-                    "client traces may not appear in Foundry. Supply project_arm_id on the agent "
-                    "to configure attribution without this lookup.",
-                    exc,
-                )
 
         if "resource" not in kwargs:
             kwargs["resource"] = create_resource()
@@ -1012,23 +959,10 @@ class FoundryAgent(  # type: ignore[misc]
             )
     """
 
-    @override
-    def _get_additional_otel_agent_attributes(self) -> Mapping[str, Any]:
-        """Return Foundry attributes required to discover the agent trace."""
-        if self._foundry_project_arm_id:
-            return {_FOUNDRY_PROJECT_ARM_ID_ATTRIBUTE: self._foundry_project_arm_id}
-        return {}
-
-    @override
-    def _should_capture_agent_response_id(self) -> bool:
-        """Keep the response ID on the client agent span for Foundry trace discovery."""
-        return True
-
     def __init__(
         self,
         *,
         project_endpoint: str | None = None,
-        project_arm_id: str | None = None,
         agent_name: str | None = None,
         agent_version: str | None = None,
         credential: AzureCredentialTypes | None = None,
@@ -1071,10 +1005,6 @@ class FoundryAgent(  # type: ignore[misc]
 
         Keyword Args:
             project_endpoint: The Foundry project endpoint URL.
-            project_arm_id: Full Foundry project ARM resource ID for telemetry attribution.
-                Supply this when configuring exporters yourself; no Azure Monitor setup
-                or network lookup is performed by the constructor. When omitted,
-                ``configure_azure_monitor()`` attempts discovery and caches the result.
             agent_name: The name of the Foundry agent to connect to.
             agent_version: The version of the agent (for PromptAgents).
             credential: Azure credential for authentication.
@@ -1106,7 +1036,6 @@ class FoundryAgent(  # type: ignore[misc]
         """
         super().__init__(
             project_endpoint=project_endpoint,
-            project_arm_id=project_arm_id,
             agent_name=agent_name,
             agent_version=agent_version,
             credential=credential,

@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
@@ -75,7 +74,7 @@ internal sealed partial class ApprovalNotRequiredFunctionBypassingChatClient : D
             return await base.GetResponseAsync(messages, options, cancellationToken).ConfigureAwait(false);
         }
 
-        var autoApprovableNames = this.GetAutoApprovableToolNames(options);
+        var autoApprovableNames = ApprovalRequirement.GetApprovalNotRequiredToolNames(this, options);
 
         messages = InjectPendingAutoApprovals(messages, session);
 
@@ -102,7 +101,7 @@ internal sealed partial class ApprovalNotRequiredFunctionBypassingChatClient : D
             yield break;
         }
 
-        var autoApprovableNames = this.GetAutoApprovableToolNames(options);
+        var autoApprovableNames = ApprovalRequirement.GetApprovalNotRequiredToolNames(this, options);
 
         messages = InjectPendingAutoApprovals(messages, session);
         List<ToolApprovalRequestContent>? autoApproved = null;
@@ -186,47 +185,6 @@ internal sealed partial class ApprovalNotRequiredFunctionBypassingChatClient : D
     }
 
     /// <summary>
-    /// Builds a set of tool names that do not require approval and can be auto-approved,
-    /// by checking all available tools from <see cref="ChatOptions.Tools"/> and
-    /// <see cref="FunctionInvokingChatClient.AdditionalTools"/>.
-    /// </summary>
-    private HashSet<string> GetAutoApprovableToolNames(ChatOptions? options)
-    {
-        var ficc = this.GetService<FunctionInvokingChatClient>();
-
-        var allTools = (options?.Tools ?? Enumerable.Empty<AITool>())
-            .Concat(ficc?.AdditionalTools ?? Enumerable.Empty<AITool>());
-
-        return new HashSet<string>(
-            allTools
-                .OfType<AIFunction>()
-                .Where(static f => f.GetService<ApprovalRequiredAIFunction>() is null)
-                .Select(static f => f.Name),
-            StringComparer.Ordinal);
-    }
-
-    /// <summary>
-    /// Determines whether a <see cref="ToolApprovalRequestContent"/> can be auto-approved because
-    /// the underlying tool is not an <see cref="ApprovalRequiredAIFunction"/>.
-    /// </summary>
-    /// <returns>
-    /// <see langword="true"/> if the approval request is for a known tool that does not require approval
-    /// and can be auto-approved; <see langword="false"/> otherwise.
-    /// </returns>
-    private static bool IsAutoApprovable(ToolApprovalRequestContent approval, HashSet<string> autoApprovableNames)
-    {
-        if (approval.ToolCall is not FunctionCallContent fcc)
-        {
-            // Non-function tool calls cannot be auto-approved.
-            return false;
-        }
-
-        // Auto-approve only if the tool is known and explicitly does NOT require approval.
-        // Unknown tools are not in the set and are treated as approval-required (safe default).
-        return autoApprovableNames.Contains(fcc.Name);
-    }
-
-    /// <summary>
     /// Scans response messages for auto-approvable <see cref="ToolApprovalRequestContent"/> items,
     /// removes them from the messages, and stores them in the session for the next request.
     /// </summary>
@@ -245,7 +203,7 @@ internal sealed partial class ApprovalNotRequiredFunctionBypassingChatClient : D
             for (int j = message.Contents.Count - 1; j >= 0; j--)
             {
                 if (message.Contents[j] is ToolApprovalRequestContent approval
-                    && IsAutoApprovable(approval, autoApprovableNames))
+                    && ApprovalRequirement.IsApprovalNotRequired(approval.ToolCall, autoApprovableNames))
                 {
                     (autoApproved ??= []).Add(approval);
                     message.Contents.RemoveAt(j);
@@ -294,7 +252,7 @@ internal sealed partial class ApprovalNotRequiredFunctionBypassingChatClient : D
             {
                 hasApprovalContent = true;
 
-                if (IsAutoApprovable(approval, autoApprovableNames))
+                if (ApprovalRequirement.IsApprovalNotRequired(approval.ToolCall, autoApprovableNames))
                 {
                     (autoApproved ??= []).Add(approval);
                     removedAny = true;

@@ -2,7 +2,7 @@
 # requires-python = ">=3.10"
 # dependencies = [
 #     "agent-framework-foundry",
-#     "azure-monitor-opentelemetry",
+#     "azure-monitor-opentelemetry>=1.8.10,<2",
 # ]
 # ///
 # Run with any PEP 723 compatible runner, e.g.:
@@ -30,8 +30,8 @@ This sample shows how to setup telemetry in Microsoft Foundry for a custom agent
 using ``FoundryChatClient.configure_azure_monitor()``.
 
 For an existing Foundry prompt or hosted agent, see ``foundry_agent_tracing.py``
-instead. A separate FoundryAgent needs its own project attribution; configuring
-this chat client's exporter does not initialize that agent's project identity.
+instead. Azure Monitor 1.8.10 or later instruments the HTTP transport so client
+and service spans can share a trace.
 
 First ensure you have a Foundry workspace with Application Insights enabled.
 And use the Operate tab to Register an Agent.

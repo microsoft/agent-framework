@@ -64,10 +64,7 @@ from ._types import (
     normalize_messages,
 )
 from .exceptions import AgentInvalidRequestException, AgentInvalidResponseException, UserInputRequiredException
-from .observability import (
-    AgentTelemetryLayer,
-    _capture_agent_response_id,  # pyright: ignore[reportPrivateUsage]
-)
+from .observability import AgentTelemetryLayer
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
@@ -1222,7 +1219,6 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         if not response:
             raise AgentInvalidResponseException("Chat client did not return a response.")
 
-        _capture_agent_response_id(self, response)
         for message in response.messages:
             if message.author_name is None:
                 message.author_name = context["agent_name"]
@@ -1294,9 +1290,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 response_format=context["chat_options"].get("response_format"),
             )
 
-        # Capture the completed chat operation, including finalizer-only metadata,
-        # before mapping to the public response and invoking after-run providers.
-        stream = stream_response.with_result_hook(partial(_capture_agent_response_id, self)).map(
+        stream = stream_response.map(
             transform=partial(
                 map_chat_to_agent_update,
                 agent_name=self.name,
@@ -1411,8 +1405,10 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             self.context_providers.append(InMemoryHistoryProvider())
 
         active_session = session
+        framework_created_session = False
         if active_session is None and self.context_providers:
             active_session = AgentSession()
+            framework_created_session = True
 
         per_service_call_history_providers = self._resolve_per_service_call_history_providers(
             session=active_session,
@@ -1461,12 +1457,22 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         # Normalize tools
         normalized_tools = _normalize_tools(tools_)
 
+        # Extract additional function arguments
+        effective_function_invocation_kwargs = (
+            dict(function_invocation_kwargs) if function_invocation_kwargs is not None else {}
+        )
+        additional_function_arguments = {**effective_function_invocation_kwargs, **existing_additional_args}
+
         # Resolve final tool list (configured tools + runtime provided tools + local MCP server tools)
         final_tools = list(base_tools)
         for tool in normalized_tools:
             if isinstance(tool, MCPTool):
+                await tool._prepare_for_run(additional_function_arguments)  # pyright: ignore[reportPrivateUsage]
                 if not tool.is_connected:
+                    # The handshake and discovery requests are issued before any tool call, so the run's
+                    # kwargs must reach header_provider here or those requests go out unauthenticated.
                     await self._async_exit_stack.enter_async_context(tool)
+                    await tool._prepare_for_run(additional_function_arguments)  # pyright: ignore[reportPrivateUsage]
                 _append_unique_tools(
                     final_tools,
                     tool.functions,
@@ -1476,18 +1482,17 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 _append_unique_tools(final_tools, [tool])
 
         for mcp_server in self.mcp_tools:
+            await mcp_server._prepare_for_run(additional_function_arguments)  # pyright: ignore[reportPrivateUsage]
             if not mcp_server.is_connected:
                 await self._async_exit_stack.enter_async_context(mcp_server)
+                await mcp_server._prepare_for_run(  # pyright: ignore[reportPrivateUsage]
+                    additional_function_arguments
+                )
             _append_unique_tools(
                 final_tools,
                 mcp_server.functions,
                 duplicate_error_message=mcp_duplicate_message,
             )
-
-        effective_function_invocation_kwargs = (
-            dict(function_invocation_kwargs) if function_invocation_kwargs is not None else {}
-        )
-        additional_function_arguments = {**effective_function_invocation_kwargs, **existing_additional_args}
 
         model = opts.pop("model", None)
 
@@ -1526,8 +1531,12 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         session_messages: list[Message] = session_context.get_messages(include_input=True)
 
         effective_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
+        from ._tools import _APPROVAL_SESSION_IS_AUTHORITATIVE_KEY  # pyright: ignore[reportPrivateUsage]
+
+        effective_client_kwargs.pop(_APPROVAL_SESSION_IS_AUTHORITATIVE_KEY, None)
         if active_session is not None:
             effective_client_kwargs["session"] = active_session
+            effective_client_kwargs[_APPROVAL_SESSION_IS_AUTHORITATIVE_KEY] = not framework_created_session
         per_service_call_history_middleware: PerServiceCallHistoryPersistingMiddleware | None = None
         if per_service_call_history_providers and active_session is not None:
             per_service_call_history_middleware = PerServiceCallHistoryPersistingMiddleware(

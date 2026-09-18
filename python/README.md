@@ -6,13 +6,14 @@ We recommend two common installation paths depending on your use case.
 
 ### 1. Development mode
 
-If you are exploring or developing locally, install the entire framework with all sub-packages:
+If you are exploring or developing locally, install the standard framework package set:
 
 ```bash
 pip install agent-framework
 ```
 
-This installs the core and every integration package, making sure that all features are available without additional steps. This is the simplest way to get started.
+This installs the core and the standard integration packages. Experimental Lab modules are installed separately
+with `pip install agent-framework-lab`.
 
 ### 2. Selective install
 

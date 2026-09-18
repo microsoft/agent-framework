@@ -88,6 +88,18 @@ from microsoft.opentelemetry import use_microsoft_opentelemetry
 use_microsoft_opentelemetry(enable_azure_monitor=True)
 ```
 
+To disable Agent Framework's baseline GenAI message events without changing providers or exporters configured by a third party, use the instrumentation-only API:
+
+```python
+from agent_framework.observability import enable_instrumentation
+
+enable_instrumentation(enable_message_events=False)
+```
+
+An explicit `True` or `False` overrides the current message-event setting, including a value read from `ENABLE_MESSAGE_EVENTS`. Omitting the argument or passing `None` preserves the current setting without re-reading the environment, including settings established by `configure_otel_providers()` or an earlier explicit call.
+
+This flag controls baseline v1.36.0 events such as `gen_ai.user.message` and `gen_ai.choice`; it does not disable experimental message span attributes, spans, or metrics. Message events still require sensitive-data capture to be enabled separately. Existing `enable_sensitive_data` behavior is unchanged, and [sticky disable](#disabling-instrumentation) still requires `force=True` to re-enable instrumentation.
+
 ```python
 from azure.monitor.opentelemetry import configure_azure_monitor
 from agent_framework.observability import create_resource, enable_sensitive_telemetry
@@ -121,26 +133,36 @@ await client.configure_azure_monitor(enable_sensitive_data=True)
 ```
 
 For calls to an **existing prompt or hosted agent**, use
-[`foundry_agent_tracing.py`](foundry_agent_tracing.py). It shows two supported paths:
+[`foundry_agent_tracing.py`](foundry_agent_tracing.py) and
+`await agent.configure_azure_monitor()`.
 
-- `await agent.configure_azure_monitor()` configures Azure Monitor and discovers
-  project attribution for that `FoundryAgent` instance.
-- For application-managed exporters, supply the full `project_arm_id` when
-  constructing the `FoundryAgent`; the constructor does not configure exporters.
+Use **`azure-monitor-opentelemetry>=1.8.10,<2`** for HTTPX/HTTPX2
+auto-instrumentation. The OpenAI SDK uses these transports; their instrumentation
+injects W3C `traceparent` headers so Foundry's service spans join the client trace.
+Older Azure Monitor versions can export client spans successfully but leave the
+service spans in a separate trace. Upgrade an existing installation with:
+
+```shell
+pip install --upgrade "azure-monitor-opentelemetry>=1.8.10,<2"
+```
 
 Run from `python/` using the workspace packages:
 
 ```powershell
-uv run python samples\02-agents\observability\foundry_agent_tracing.py
-uv run python samples\02-agents\observability\foundry_agent_tracing.py --manual-setup --stream
+uv run --group test python samples\02-agents\observability\foundry_agent_tracing.py
+uv run --group test python samples\02-agents\observability\foundry_agent_tracing.py --stream
 ```
 
-Manual setup requires `FOUNDRY_PROJECT_ARM_ID` and
-`APPLICATIONINSIGHTS_CONNECTION_STRING` in addition to the endpoint and agent
-name. These are explicitly read by the sample. Optional discovery failures warn
-and preserve Application Insights export, but may prevent Foundry discovery.
-Confirm the printed trace ID appears under the agent in Foundry, not merely in
-Application Insights. Keep the agent available during inspection.
+Set `FOUNDRY_PROJECT_ENDPOINT`, `FOUNDRY_AGENT_NAME`, and optionally
+`FOUNDRY_AGENT_VERSION`, and ensure Application Insights is connected to that
+project. No client-side project ARM ID override is needed for this setup.
+In Foundry, open **Build > Agents > your agent > Traces**, select the appropriate
+agent version and time range, and open the printed trace ID. Check that the
+waterfall contains both client and service spans in one connected tree; export
+to Application Insights alone does not prove correlation. Keep the agent
+available during inspection. If using application-managed exporters, configure
+Azure Monitor once with the same minimum version and the project's connected
+Application Insights destination before invoking the agent.
 
 Or with [Langfuse](https://langfuse.com/integrations/frameworks/microsoft-agent-framework):
 

@@ -2,11 +2,11 @@
 # requires-python = ">=3.10"
 # dependencies = [
 #     "agent-framework-foundry",
-#     "azure-monitor-opentelemetry",
+#     "azure-monitor-opentelemetry>=1.8.10,<2",
 # ]
 # ///
 # Run from python/ with the workspace environment:
-#   uv run python samples/02-agents/observability/foundry_agent_tracing.py
+#   uv run --group test python samples/02-agents/observability/foundry_agent_tracing.py
 
 # Copyright (c) Microsoft. All rights reserved.
 
@@ -17,72 +17,58 @@ import asyncio
 import os
 
 from agent_framework.foundry import FoundryAgent
-from agent_framework.observability import create_resource, get_tracer
+from agent_framework.observability import get_tracer
 from azure.identity.aio import AzureCliCredential
-from azure.monitor.opentelemetry import configure_azure_monitor
 from dotenv import load_dotenv
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 
 """
-Trace calls to an existing Foundry agent without coupling identity to exporter setup.
+Trace calls to an existing Foundry agent, including the client and service spans.
 
-Default: the agent helper configures Azure Monitor and discovers the project's ARM ID.
-With --manual-setup: configure the exporter yourself and pass project_arm_id to the agent.
+Azure Monitor 1.8.10 or later instruments HTTPX and HTTPX2, which the OpenAI SDK
+uses to send requests. The resulting traceparent header connects client spans
+to Foundry's service spans. Older Azure Monitor versions can export the client
+spans to Application Insights while leaving them in a separate trace.
+
+The helper configures Azure Monitor using the project's connected Application
+Insights resource. No project ARM ID or custom span attributes are needed.
 Add --stream for streaming output. Message-content recording remains disabled.
 
 Environment variables:
     FOUNDRY_PROJECT_ENDPOINT -- Foundry project endpoint.
     FOUNDRY_AGENT_NAME       -- Existing prompt or hosted agent name.
     FOUNDRY_AGENT_VERSION    -- Optional agent version.
-    FOUNDRY_PROJECT_ARM_ID   -- Full project ARM ID; required for --manual-setup.
-    APPLICATIONINSIGHTS_CONNECTION_STRING -- Required for --manual-setup; must target
-        the Application Insights resource connected to the agent's Foundry project.
 
-The sample reads FOUNDRY_PROJECT_ARM_ID explicitly; FoundryAgent does not automatically
-read that environment variable. The ARM ID includes subscription, resource group,
-account and project, and is different from the data-plane endpoint.
-
-After running, open the existing agent in Foundry, select Traces, and search for the
-printed trace ID. Look for the client invoke_agent and chat spans. The sample does not
-create or delete the agent, so it remains available for inspection.
+After running, open Build > Agents > your agent > Traces in Foundry. Select the
+agent version and a time range covering the run, then open the printed trace ID.
+The waterfall should contain this application's parent span, client invoke_agent
+and chat spans, the HTTP request, and the service spans in one connected tree.
+The sample does not create or delete the agent, so it remains available for inspection.
 """
 
 load_dotenv()
 
 
 async def main() -> None:
-    parser = argparse.ArgumentParser(description="Compare helper and application-managed Foundry tracing setup.")
-    parser.add_argument("--manual-setup", action="store_true", help="Configure Azure Monitor outside the agent helper.")
+    parser = argparse.ArgumentParser(description="Trace client and service calls to an existing Foundry agent.")
     parser.add_argument("--stream", action="store_true", help="Stream the agent response.")
     args = parser.parse_args()
-    project_arm_id = os.getenv("FOUNDRY_PROJECT_ARM_ID")
-    if args.manual_setup and not project_arm_id:
-        parser.error("--manual-setup requires FOUNDRY_PROJECT_ARM_ID.")
 
-    # 1. Application-managed exporters are configured once, independently of agent identity.
-    if args.manual_setup:
-        configure_azure_monitor(
-            connection_string=os.environ["APPLICATIONINSIGHTS_CONNECTION_STRING"],
-            resource=create_resource(),
-        )
-
+    # 1. Connect to an existing agent without changing its definition.
     async with (
         AzureCliCredential() as credential,
         FoundryAgent(
             project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-            project_arm_id=project_arm_id,
             agent_name=os.environ["FOUNDRY_AGENT_NAME"],
             agent_version=os.getenv("FOUNDRY_AGENT_VERSION"),
             credential=credential,
         ) as agent,
     ):
-        # 2. Alternatively, discover attribution and configure Azure Monitor through the agent.
-        # A supplied project_arm_id bypasses discovery in either setup.
-        if not args.manual_setup:
-            await agent.configure_azure_monitor()
+        # 2. Configure export and HTTP trace-context propagation before invoking the agent.
+        await agent.configure_azure_monitor(enable_live_metrics=False)
 
-        # 3. Group the client operation beneath an application span without project attributes.
+        # 3. Group the client operation beneath an application span.
         with get_tracer().start_as_current_span("foundry-agent-tracing") as span:
             print(f"Trace ID: {span.get_span_context().trace_id:032x}")
             if args.stream:
