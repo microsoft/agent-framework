@@ -265,6 +265,12 @@ public abstract class Executor : IIdentified
                                               .ConfigureAwait(false);
 
         ExecutorEvent executionResult;
+        if (result is { IsSuccess: false } && cancellationToken.IsCancellationRequested &&
+            (result.IsCancelled || result.Exception is OperationCanceledException))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+
         if (result?.IsSuccess is not false)
         {
             executionResult = new ExecutorCompletedEvent(this.Id, result?.Result);
