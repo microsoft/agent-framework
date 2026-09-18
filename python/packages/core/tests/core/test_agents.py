@@ -2005,6 +2005,63 @@ async def test_chat_agent_as_tool_propagate_session_true(client: SupportsChatGet
     assert captured_session.service_session_id is None
 
 
+@pytest.mark.parametrize(
+    ("child_source_id", "child_should_run"),
+    [
+        ("tool_approval", False),
+        ("child_tool_approval", True),
+    ],
+)
+async def test_chat_agent_as_tool_shared_session_requires_distinct_tool_approval_source_ids(
+    child_source_id: str,
+    child_should_run: bool,
+) -> None:
+    """Test that shared parent and child approval state cannot use the same key."""
+    child_client = MockBaseChatClient()
+    child_agent = Agent(
+        client=child_client,
+        name="ChildAgent",
+        middleware=[ToolApprovalMiddleware(source_id=child_source_id)],
+    )
+    child_run_called = False
+    original_child_run = child_agent.run
+
+    def capturing_child_run(*args: Any, **kwargs: Any) -> Any:
+        nonlocal child_run_called
+        child_run_called = True
+        return original_child_run(*args, **kwargs)
+
+    child_agent.run = capturing_child_run  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+
+    parent_client = MockBaseChatClient()
+    parent_client.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="delegate-call",
+                        name="delegate",
+                        arguments={"task": "Complete the child task"},
+                    )
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=[Content.from_text("Done.")])),
+    ]
+    parent_agent = Agent(
+        client=parent_client,
+        name="ParentAgent",
+        middleware=[ToolApprovalMiddleware()],
+        tools=[child_agent.as_tool(name="delegate", propagate_session=True)],
+    )
+
+    result = await parent_agent.run("Delegate the task.", session=AgentSession())
+
+    assert child_run_called is child_should_run
+    assert result.text == "Done."
+
+
 async def test_chat_agent_as_tool_uses_private_session_by_default(client: SupportsChatGetResponse) -> None:
     """Test that the default private session supports child middleware without sharing parent state."""
     agent = Agent(client=client, name="SubAgent", description="Sub agent")

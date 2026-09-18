@@ -100,6 +100,15 @@ logger = logging.getLogger("agent_framework")
 # nested ``agent.run()`` (fresh options, its own session) keeps its own turn,
 # and nothing leaks into the caller's context while a stream is paused.
 _LOOP_ITERATION_TOKEN_KEY = "_agent_loop_iteration"  # nosec B105 - a context-options key, not a credential  # ruff: ignore[hardcoded-password-string]
+_TOOL_APPROVAL_SOURCE_IDS_KEY = "_agent_tool_approval_source_ids"
+
+
+def _tool_approval_source_ids(middleware: Sequence[MiddlewareTypes] | None) -> frozenset[str]:
+    """Return session-state keys owned by ToolApprovalMiddleware instances."""
+    from ._harness._tool_approval import ToolApprovalMiddleware
+
+    return frozenset(item.source_id for item in middleware or () if isinstance(item, ToolApprovalMiddleware))
+
 
 if TYPE_CHECKING:
     ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
@@ -645,7 +654,8 @@ class BaseAgent(SerializationMixin):
 
             When parent and child both use ToolApprovalMiddleware with
             ``propagate_session=True``, configure distinct middleware ``source_id``
-            values so their shared session state does not overlap.
+            values. The delegated call raises ToolExecutionException before running
+            the child when their shared session-state keys overlap.
 
         Examples:
             .. code-block:: python
@@ -695,6 +705,23 @@ class BaseAgent(SerializationMixin):
             """
             parent_session = ctx.session
             session = AgentSession()
+
+            if propagate_session and parent_session is not None:
+                raw_parent_approval_source_ids = ctx.kwargs.get(_TOOL_APPROVAL_SOURCE_IDS_KEY)
+                parent_approval_source_ids: frozenset[str]
+                if isinstance(raw_parent_approval_source_ids, frozenset):
+                    parent_approval_source_ids = cast("frozenset[str]", raw_parent_approval_source_ids)
+                else:
+                    parent_approval_source_ids = frozenset()
+                child_approval_source_ids = _tool_approval_source_ids(self.middleware)
+                overlapping_source_ids = child_approval_source_ids.intersection(parent_approval_source_ids)
+                if overlapping_source_ids:
+                    formatted_source_ids = ", ".join(repr(source_id) for source_id in sorted(overlapping_source_ids))
+                    raise ToolExecutionException(
+                        f"Agent tool {tool_name!r} cannot share its parent session because parent and child "
+                        f"ToolApprovalMiddleware instances use the same source_id: {formatted_source_ids}. "
+                        "Configure distinct source_id values or set propagate_session=False."
+                    )
 
             # Create a child session that shares the parent's state dict but has
             # an isolated service_session_id. This avoids mutating the parent
@@ -1496,6 +1523,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             dict(function_invocation_kwargs) if function_invocation_kwargs is not None else {}
         )
         additional_function_arguments = {**effective_function_invocation_kwargs, **existing_additional_args}
+        additional_function_arguments[_TOOL_APPROVAL_SOURCE_IDS_KEY] = _tool_approval_source_ids(self.middleware)
 
         # Resolve final tool list (configured tools + runtime provided tools + local MCP server tools)
         final_tools = list(base_tools)
