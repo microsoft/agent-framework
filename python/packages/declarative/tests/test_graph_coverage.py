@@ -556,8 +556,20 @@ class TestBasicExecutorsCoverage:
         assert state.get("Local.a") is None
         assert state.get("Local.b") is None
 
-    async def test_send_activity_with_dict_activity(self, mock_context, mock_state):
-        """Test SendActivityExecutor with dict activity containing text field."""
+    @_requires_powerfx
+    @pytest.mark.parametrize(
+        "activity",
+        [
+            "Hello, {Local.name}!",
+            {"text": "Hello, {Local.name}!"},
+            '="Hello, " & Local.name & "!"',
+            {"text": '="Hello, " & Local.name & "!"'},
+        ],
+    )
+    async def test_send_activity_with_authored_greeting(
+        self, mock_context: MagicMock, mock_state: MagicMock, activity: str | dict[str, str]
+    ) -> None:
+        """Authored templates and explicit expressions support the same greeting."""
         from agent_framework_declarative._workflows._executors_basic import (
             SendActivityExecutor,
         )
@@ -568,12 +580,12 @@ class TestBasicExecutorsCoverage:
 
         action_def = {
             "kind": "SendActivity",
-            "activity": {"text": "Hello, {Local.name}!"},
+            "activity": activity,
         }
         executor = SendActivityExecutor(action_def)
         await executor.handle_action(ActionTrigger(), mock_context)
 
-        mock_context.yield_output.assert_called_once_with("Hello, Alice!")
+        mock_context.yield_output.assert_awaited_once_with("Hello, Alice!")
 
     async def test_send_activity_with_string_activity(self, mock_context, mock_state):
         """Test SendActivityExecutor with string activity."""

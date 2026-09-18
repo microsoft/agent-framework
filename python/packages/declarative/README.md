@@ -21,6 +21,32 @@ This package ships at two different stability levels:
 
 The declarative packages provides support for building agents based on a declarative yaml specification.
 
+## SendActivity expression output
+
+**Breaking change:** `SendActivity` no longer applies template interpolation to
+the result of an expression. Authored text starting with `=` is evaluated once
+and its result is emitted as data. For example, if `Local.message` contains
+`Hello, {Local.name}!`, `activity: =Local.message` now outputs those braces
+literally. There is no second variable lookup in the returned text.
+
+If a workflow relied on that second pass, move the template into the activity
+definition or construct the final text in the expression. Given `Local.name`
+set to `Alice`, either of these activities emits `Hello, Alice!`:
+
+```yaml
+- kind: SendActivity
+  activity: "Hello, {Local.name}!"
+- kind: SendActivity
+  activity:
+    text: '="Hello, " & Local.name & "!"'
+```
+
+Both string activities and mappings with a `text` field support either form.
+Existing directly authored templates retain their variable-resolution and
+missing-value behavior. Expression recognition still requires `=` to be the
+first character; leading whitespace is not removed. Non-string output conversion
+and suppression of falsey results are unchanged.
+
 ## HTTP request client ownership and cookies
 
 **Breaking change:** The HTTP client created by `DefaultHttpRequestHandler` no longer
