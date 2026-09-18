@@ -21,6 +21,20 @@ This package ships at two different stability levels:
 
 The declarative packages provides support for building agents based on a declarative yaml specification.
 
+## Workflow environment-reference discovery
+
+`WorkflowFactory` scans nested mapping and list values for `Env.NAME` references
+in strings beginning with `=`. Shared containers, including finite YAML aliases,
+are scanned once by identity without changing the definition. Mapping keys and
+plain-text values do not contribute references. Cyclic mappings or lists encountered
+during discovery raise `DeclarativeWorkflowError`.
+
+This avoids repeatedly expanding shared containers during discovery; it does not
+impose a document-size, depth, parsing-time, or workflow-execution budget.
+Process-environment fallback remains opt-in through
+`restrict_env_to_configuration=False`, limited to discovered names, with
+caller-supplied `configuration` values taking precedence.
+
 ## HTTP request client ownership and cookies
 
 **Breaking change:** The HTTP client created by `DefaultHttpRequestHandler` no longer
