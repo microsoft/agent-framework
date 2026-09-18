@@ -56,5 +56,24 @@ async def main() -> None:
     print(f"Assistant: {response.text}")
 
 
+"""
+Expected Output:
+============================================================
+User: What is our return policy for electronics?
+Assistant: According to the knowledge base, electronics can be returned within 30
+days of purchase with the original receipt. Items must be in their original
+packaging and undamaged. Opened software and consumables are non-refundable.
+============================================================
+
+Notes:
+- With use_agentic_retrieval=True, the tool calls AgenticRetrieveStream, which
+  decomposes the query, retrieves per sub-query, and applies managed reranking;
+  results carry no numeric relevance score.
+- If the agentic call is not authorized (see the IAM policy in README.md), the
+  tool logs a debug message and falls back to a single-pass Retrieve, whose
+  results do carry a numeric score.
+"""
+
+
 if __name__ == "__main__":
     asyncio.run(main())

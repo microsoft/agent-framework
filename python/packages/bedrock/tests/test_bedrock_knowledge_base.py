@@ -164,6 +164,49 @@ class TestBedrockKnowledgeBaseTool:
         assert "Invoked result" in (result[0].text or "")
 
 
+class TestExtractContentText:
+    """Tests for the shared _extract_content_text helper (TEXT and ROW content types)."""
+
+    def test_text_content(self):
+        from agent_framework_bedrock._knowledge_base import _extract_content_text
+
+        result = {"content": {"type": "TEXT", "text": "hello world"}}
+        assert _extract_content_text(result) == "hello world"
+
+    def test_text_content_default_type(self):
+        from agent_framework_bedrock._knowledge_base import _extract_content_text
+
+        # type omitted defaults to TEXT
+        assert _extract_content_text({"content": {"text": "no type field"}}) == "no type field"
+
+    def test_row_content_renders_columns(self):
+        """A SQL knowledge base returns ROW content with no `text` field.
+
+        Reading only `content.text` would emit an empty passage and discard every
+        column value; the helper must render the row's columns instead.
+        """
+        from agent_framework_bedrock._knowledge_base import _extract_content_text
+
+        result = {
+            "content": {
+                "type": "ROW",
+                "row": [
+                    {"columnName": "service", "columnValue": "checkout"},
+                    {"columnName": "rto_minutes", "columnValue": "15"},
+                ],
+            }
+        }
+        rendered = _extract_content_text(result)
+        assert "service: checkout" in rendered
+        assert "rto_minutes: 15" in rendered
+
+    def test_row_content_skips_empty_columns(self):
+        from agent_framework_bedrock._knowledge_base import _extract_content_text
+
+        result = {"content": {"type": "ROW", "row": [{}, {"columnName": "k", "columnValue": "v"}]}}
+        assert _extract_content_text(result) == "k: v"
+
+
 class TestBedrockKnowledgeBaseProvider:
     def test_is_context_provider_subclass(self):
         from agent_framework_bedrock._knowledge_base_provider import BedrockKnowledgeBaseProvider

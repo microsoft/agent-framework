@@ -51,19 +51,25 @@ All configuration is via constructor parameters:
   "Statement": [
     {
       "Effect": "Allow",
-      "Action": "bedrock:Retrieve",
+      "Action": [
+        "bedrock:Retrieve",
+        "bedrock:GetDocumentContent"
+      ],
       "Resource": "arn:aws:bedrock:<region>:<account-id>:knowledge-base/<kb-id>"
     },
     {
       "Effect": "Allow",
-      "Action": "bedrock:AgenticRetrieveStream",
+      "Action": [
+        "bedrock:AgenticRetrieveStream",
+        "bedrock:InvokeModelWithResponseStream"
+      ],
       "Resource": "*"
     }
   ]
 }
 ```
 
-> Note: `bedrock:AgenticRetrieveStream` has no resource-level permission type, so it must be granted with `Resource: "*"`. Scoping it to a Knowledge Base ARN implicitly denies the call and silently forces a fallback to standard `Retrieve`. `bedrock:Retrieve` remains scoped to the Knowledge Base ARN.
+> Note: `bedrock:AgenticRetrieveStream` and `bedrock:InvokeModelWithResponseStream` have no resource-level permission type, so they must be granted with `Resource: "*"`. Scoping `AgenticRetrieveStream` to a Knowledge Base ARN implicitly denies the call and silently forces a fallback to standard `Retrieve`, so the default tool never performs the advertised query decomposition. `bedrock:Retrieve` and `bedrock:GetDocumentContent` remain scoped to the Knowledge Base ARN — `GetDocumentContent` is required because agentic retrieval calls it during a `FullDocumentExpansion` step, and a policy without it fails partway through a query. This matches the [AWS agentic-retrieval permissions reference](https://docs.aws.amazon.com/bedrock/latest/userguide/kb-test-agentic-retrieve.html). `AgenticRetrieveStream`/`GetDocumentContent`/`InvokeModelWithResponseStream` are only required when using `use_agentic_retrieval=True`.
 
 ## References
 - [Build a Managed Knowledge Base](https://docs.aws.amazon.com/bedrock/latest/userguide/kb-build-managed.html)

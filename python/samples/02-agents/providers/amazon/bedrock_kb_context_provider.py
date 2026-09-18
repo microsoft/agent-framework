@@ -57,5 +57,22 @@ async def main() -> None:
     print(f"Assistant: {response.text}")
 
 
+"""
+Expected Output:
+============================================================
+User: What data sources does Bedrock support?
+Assistant: Based on the retrieved knowledge base context, Amazon Bedrock managed
+knowledge bases support multiple data source connectors, including Amazon S3, Web
+Crawler, Confluence, SharePoint, Google Drive, and OneDrive.
+============================================================
+
+Notes:
+- The provider retrieves passages in before_run() and injects them as an
+  untrusted user-role context message (not as system instructions), so retrieved
+  content cannot silently override the agent's instructions.
+- Passages below the configured min_score are dropped before injection.
+"""
+
+
 if __name__ == "__main__":
     asyncio.run(main())

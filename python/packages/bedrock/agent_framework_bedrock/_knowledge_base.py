@@ -63,6 +63,29 @@ def _get_source_uri(result: dict[str, Any]) -> str:
     return ""
 
 
+def _extract_content_text(result: dict[str, Any]) -> str:
+    """Extract passage text from a Retrieve result, handling every content type.
+
+    The Bedrock ``RetrievalResultContent`` union has a ``type`` of ``TEXT``, ``IMAGE``,
+    or ``ROW`` (SQL knowledge bases). A ``ROW`` result carries no ``text`` field — its
+    data is in ``row`` as a list of ``{columnName, columnValue}`` entries — so reading
+    only ``content.text`` would emit an empty passage and discard every column value.
+    This renders ROW columns as ``columnName: columnValue`` lines instead.
+    """
+    content = result.get("content", {}) or {}
+    content_type = content.get("type", "TEXT")
+    if content_type == "ROW":
+        columns = content.get("row", []) or []
+        rendered = [
+            f"{col.get('columnName', '')}: {col.get('columnValue', '')}"
+            for col in columns
+            if col.get("columnName") or col.get("columnValue")
+        ]
+        return "\n".join(rendered)
+    # TEXT (and IMAGE, which exposes its caption/text in the same field when present)
+    return content.get("text", "")
+
+
 class _BedrockKBQueryInput(BaseModel):
     """Input schema for the Bedrock Knowledge Base tool."""
 
@@ -202,7 +225,7 @@ class BedrockKnowledgeBaseTool(FunctionTool):
         results = []
         for r in response.get("retrievalResults", []):
             results.append({
-                "content": r.get("content", {}).get("text", ""),
+                "content": _extract_content_text(r),
                 "source": _get_source_uri(r),
                 "score": r.get("score", 0),
             })

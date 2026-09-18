@@ -28,7 +28,7 @@ except ImportError as e:
     ) from e
 
 from ._feature_usage import FeatureIndex
-from ._knowledge_base import _get_source_uri
+from ._knowledge_base import _extract_content_text, _get_source_uri
 
 logger = logging.getLogger("agent_framework.bedrock")
 
@@ -153,7 +153,7 @@ class BedrockKnowledgeBaseProvider(ContextProvider):
         for r in response.get("retrievalResults", []):
             score = r.get("score", 0)
             if score >= self.min_score:
-                content = r.get("content", {}).get("text", "")
+                content = _extract_content_text(r)
                 source = _get_source_uri(r)
                 passages.append(f"[Source: {source}]\n{content}")
 
