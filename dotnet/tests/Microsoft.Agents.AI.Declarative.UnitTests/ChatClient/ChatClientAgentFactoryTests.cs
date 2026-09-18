@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -153,7 +154,7 @@ public sealed class ChatClientAgentFactoryTests
     }
 
     [Fact]
-    public async Task TryCreateAsync_WithLegacyConfiguration_LoadsReferencedConfigurationAsync()
+    public async Task TryCreateAsync_WithLegacyConfiguration_ThrowsAsync()
     {
         // Arrange
         IConfiguration configuration = new ConfigurationBuilder()
@@ -169,16 +170,14 @@ public sealed class ChatClientAgentFactoryTests
         ChatClientPromptAgentFactory factory = new(this._mockChatClient.Object, configuration: configuration);
 
         // Act
-        AIAgent? agent = await factory.TryCreateAsync(promptAgent);
+        var exception = await Assert.ThrowsAsync<AggregateException>(async () => await factory.TryCreateAsync(promptAgent));
 
         // Assert
-        ChatClientAgent chatClientAgent = Assert.IsType<ChatClientAgent>(agent);
-        Assert.Equal(0.9F, chatClientAgent.ChatOptions?.Temperature);
-        Assert.Equal(0.8F, chatClientAgent.ChatOptions?.TopP);
+        Assert.Contains("Name isn't valid. 'Temperature' isn't recognized.", exception.Message);
     }
 
     [Fact]
-    public async Task ProtectedConstructor_WithLegacyConfiguration_LoadsReferencedConfigurationAsync()
+    public async Task ProtectedConstructor_WithLegacyConfiguration_ThrowsAsync()
     {
         // Arrange
         IConfiguration configuration = new ConfigurationBuilder()
@@ -194,16 +193,14 @@ public sealed class ChatClientAgentFactoryTests
 
         // Act
         await factory.TryCreateAsync(promptAgent);
+        var exception = Assert.Throws<AggregateException>(() => factory.Evaluate("Temperature"));
 
         // Assert
-        StringValue temperature = Assert.IsType<StringValue>(factory.Evaluate("Temperature"));
-        Assert.Equal("0.9", temperature.Value);
-        StringValue topP = Assert.IsType<StringValue>(factory.Evaluate("TopP"));
-        Assert.Equal("0.8", topP.Value);
+        Assert.Contains("Name isn't valid. 'Temperature' isn't recognized.", exception.Message);
     }
 
     [Fact]
-    public async Task CreateAsync_WithLegacyConfiguration_InitializesVariablesBeforeTryCreateAsync()
+    public async Task CreateAsync_WithLegacyConfiguration_ThrowsCreateAsync()
     {
         // Arrange
         IConfiguration configuration = new ConfigurationBuilder()
@@ -216,11 +213,10 @@ public sealed class ChatClientAgentFactoryTests
         CreateAsyncInspectingPromptAgentFactory factory = new(configuration, this._mockChatClient.Object);
 
         // Act
-        AIAgent agent = await factory.CreateAsync(promptAgent);
+        var exception = await Assert.ThrowsAsync<AggregateException>(async () => await factory.CreateAsync(promptAgent));
 
         // Assert
-        Assert.NotNull(agent);
-        Assert.Equal("0.9", factory.TemperatureValue);
+        Assert.Contains("Name isn't valid. 'Temperature' isn't recognized.", exception.Message);
     }
 
     [Fact]
