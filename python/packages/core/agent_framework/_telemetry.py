@@ -212,6 +212,16 @@ def prepend_agent_framework_to_user_agent(headers: dict[str, Any] | None = None)
     user_agent = get_user_agent()
     if not headers:
         return {USER_AGENT_KEY: user_agent}
-    headers[USER_AGENT_KEY] = f"{user_agent} {headers[USER_AGENT_KEY]}" if USER_AGENT_KEY in headers else user_agent
+    # HTTP header names are case-insensitive; detect an existing User-Agent entry
+    # regardless of casing so the framework value is prepended to it instead of
+    # creating a second, duplicate User-Agent header.
+    existing_key = next(
+        (key for key in headers if isinstance(key, str) and key.lower() == USER_AGENT_KEY.lower()),
+        None,
+    )
+    if existing_key is None:
+        headers[USER_AGENT_KEY] = user_agent
+    else:
+        headers[existing_key] = f"{user_agent} {headers[existing_key]}"
 
     return headers
