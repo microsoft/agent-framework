@@ -9,7 +9,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 from agent_framework import Content, SecretString
-from agent_framework._telemetry import get_user_agent
+from agent_framework._telemetry import USER_AGENT_KEY, get_user_agent
 from azure.core.credentials import AzureKeyCredential
 from azure.identity.aio import AzureCliCredential
 
@@ -229,8 +229,8 @@ class TestRawFoundryEmbeddingClient:
         assert result[0].dimensions == 3
         assert result[0].model == "test-model"
         assert result.usage == {"input_token_count": 10, "total_token_count": 10}
-        assert client.service_url() == "https://test.services.ai.azure.com/openai/v1/"
-        assert str(openai_client.base_url) == "https://test.services.ai.azure.com/openai/v1/"
+        assert client.service_url() == "https://test.openai.azure.com/openai/v1/"
+        assert str(openai_client.base_url) == "https://test.openai.azure.com/openai/v1/"
 
         await client.close()
         openai_client.close.assert_awaited_once()
@@ -553,15 +553,21 @@ class TestFoundryEmbeddingClient:
         openai_client = _make_openai_client()
         project_client = MagicMock()
         project_client.get_openai_client.return_value = openai_client
+        default_headers = {
+            "X-Test": "value",
+            USER_AGENT_KEY: "custom-user-agent",
+        }
         client = FoundryEmbeddingClient(
             model="text-embedding-3-small",
             project_client=project_client,
+            default_headers=default_headers,
         )
 
         serialized = client.to_dict()
 
         assert "OTEL_PROVIDER_NAME" not in serialized
         assert "project_client" not in serialized
+        assert serialized["default_headers"] == {"X-Test": "value"}
         assert serialized["otel_provider_name"] == "azure.ai.foundry"
 
         restored_openai_client = _make_openai_client()
@@ -578,6 +584,7 @@ class TestFoundryEmbeddingClient:
 
         assert restored.project_client is restored_project_client
         assert restored.otel_provider_name == "azure.ai.foundry"
+        restored_project_client.get_openai_client.assert_called_once_with(default_headers={"X-Test": "value"})
 
 
 _SKIP_REASON = "Foundry inference integration tests disabled"

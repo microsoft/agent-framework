@@ -33,11 +33,13 @@ Set `FOUNDRY_PROJECT_ENDPOINT` to the project endpoint and `FOUNDRY_EMBEDDING_MO
 name. When an `AIProjectClient` is already available, pass it as `project_client` and omit the endpoint and
 credential.
 
-The client uses the project for authentication and automatically sends embedding requests to the resource-scoped
-`/openai/v1/` model route. The existing `FOUNDRY_MODELS_ENDPOINT` and `FOUNDRY_MODELS_API_KEY` configuration remains
-available for Foundry Models inference endpoints. A Models endpoint is required for image embedding models. If both
-project and Models endpoints are configured only through environment variables, the Models endpoint is retained for
-backward compatibility; pass `project_endpoint` explicitly to select the project OpenAI deployment.
+The client uses the project for authentication and converts a
+`https://<resource>.services.ai.azure.com/api/projects/<project>` endpoint to the documented resource-scoped
+`https://<resource>.openai.azure.com/openai/v1/` model route. The existing `FOUNDRY_MODELS_ENDPOINT` and
+`FOUNDRY_MODELS_API_KEY` configuration remains available for Foundry Models inference endpoints. A Models endpoint is
+required for image embedding models. If both project and Models endpoints are configured only through environment
+variables, the Models endpoint is retained for backward compatibility; pass `project_endpoint` explicitly to select
+the project OpenAI deployment.
 
 ## Evaluations
 

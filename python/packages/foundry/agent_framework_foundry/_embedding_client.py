@@ -21,7 +21,7 @@ from agent_framework import (
     UsageDetails,
     load_settings,
 )
-from agent_framework._telemetry import IS_TELEMETRY_ENABLED, get_user_agent, mark_feature_used
+from agent_framework._telemetry import IS_TELEMETRY_ENABLED, USER_AGENT_KEY, get_user_agent, mark_feature_used
 from agent_framework.observability import EmbeddingTelemetryLayer
 from azure.ai.inference.aio import EmbeddingsClient, ImageEmbeddingsClient
 from azure.ai.inference.models import ImageEmbeddingInput
@@ -50,11 +50,12 @@ _IMAGE_MEDIA_PREFIXES = ("image/",)
 
 
 def _get_openai_model_base_url(endpoint: str) -> str:
-    """Get the resource-scoped OpenAI model inference URL from a Foundry endpoint."""
+    """Get the documented resource-scoped OpenAI model URL from a Foundry endpoint."""
     parts = urlsplit(endpoint)
     if not parts.scheme or not parts.netloc:
         raise ValueError(f"Invalid Foundry endpoint: {endpoint!r}")
-    return urlunsplit((parts.scheme, parts.netloc, "/openai/v1/", "", ""))
+    openai_netloc = parts.netloc.replace(".services.ai.", ".openai.", 1)
+    return urlunsplit((parts.scheme, openai_netloc, "/openai/v1/", "", ""))
 
 
 class FoundryEmbeddingOptions(EmbeddingGenerationOptions, total=False):
@@ -213,6 +214,9 @@ class RawFoundryEmbeddingClient(
         self._openai_client: AsyncOpenAI | None = None
         self._text_client: EmbeddingsClient | None = None
         self._image_client: ImageEmbeddingsClient | None = None
+        self.default_headers = (
+            {key: value for key, value in default_headers.items() if key != USER_AGENT_KEY} if default_headers else None
+        )
 
         if use_project_client:
             if text_client is not None or image_client is not None:

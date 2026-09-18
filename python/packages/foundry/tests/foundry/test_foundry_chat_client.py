@@ -53,12 +53,19 @@ class OutputStruct(BaseModel):
     weather: str | None = None
 
 
-def test_foundry_feature_usage_policy_refreshes_user_agent() -> None:
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://project.services.ai.azure.com/api/projects/test",
+        "https://project.openai.azure.com/openai/v1/embeddings",
+    ],
+)
+def test_foundry_feature_usage_policy_refreshes_user_agent(url: str) -> None:
     with telemetry._feature_mask_lock:
         telemetry._feature_mask = 0
     mark_feature_used(FeatureIndex.FOUNDRY_CHAT_CLIENT)
     request = MagicMock()
-    request.http_request.url = "https://project.services.ai.azure.com/api/projects/test"
+    request.http_request.url = url
     request.http_request.headers = {"User-Agent": "azsdk-python-ai-projects/1.0 agent-framework-python/1.0"}
     FeatureUsagePolicy().on_request(request)
 
