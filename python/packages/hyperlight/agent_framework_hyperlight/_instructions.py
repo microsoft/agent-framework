@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping, Sequence
-from typing import Literal
+from collections.abc import Sequence
 
 from agent_framework import FunctionTool
-from agent_framework._tools import _format_tool_parameters  # pyright: ignore[reportPrivateUsage]
+from agent_framework._tools import (
+    _format_tool_parameters,  # pyright: ignore[reportPrivateUsage]
+    _NormalizedToolDescriptionFormat,  # pyright: ignore[reportPrivateUsage]
+)
 
 from ._types import AllowedDomain
 
@@ -15,7 +17,7 @@ from ._types import AllowedDomain
 def _format_tool_summaries(
     tools: Sequence[FunctionTool],
     *,
-    tool_description_format: Literal["compact", "json"] | Mapping[str, Literal["compact", "json"]] = "compact",
+    tool_description_format: _NormalizedToolDescriptionFormat = "compact",
 ) -> str:
     if not tools:
         return "- No tools are currently registered inside the sandbox."
@@ -136,7 +138,7 @@ def build_execute_code_description(
     workspace_enabled: bool,
     mounted_paths: Sequence[str],
     allowed_domains: Sequence[AllowedDomain],
-    tool_description_format: Literal["compact", "json"] | Mapping[str, Literal["compact", "json"]] = "compact",
+    tool_description_format: _NormalizedToolDescriptionFormat = "compact",
 ) -> str:
     """Build the dynamic execute_code tool description for standalone usage."""
     filesystem_text = _format_filesystem_capabilities(

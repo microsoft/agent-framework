@@ -21,6 +21,7 @@ from agent_framework._middleware import FunctionInvocationContext
 from agent_framework._tools import (
     _auto_invoke_function,
     _format_tool_parameters,
+    _normalize_tool_description_format,
     _parse_annotation,
     _parse_inputs,
     normalize_function_invocation_configuration,
@@ -28,6 +29,30 @@ from agent_framework._tools import (
 from agent_framework.observability import OtelAttr
 
 # region FunctionTool and tool decorator tests
+
+
+def test_normalize_tool_description_format_returns_detached_mapping():
+    formats = {"lookup": "json"}
+
+    normalized = _normalize_tool_description_format(formats)
+    formats.clear()
+
+    assert normalized == {"lookup": "json"}
+
+
+@pytest.mark.parametrize(
+    ("value", "error_type"),
+    [
+        ("yaml", ValueError),
+        (None, TypeError),
+        ({1: "json"}, TypeError),
+        ({"lookup": 1}, TypeError),
+        ({"lookup": "yaml"}, ValueError),
+    ],
+)
+def test_normalize_tool_description_format_rejects_invalid_values(value, error_type):
+    with pytest.raises(error_type, match="tool_description_format"):
+        _normalize_tool_description_format(value)
 
 
 def test_format_tool_parameters_compact_preserves_scalar_metadata():

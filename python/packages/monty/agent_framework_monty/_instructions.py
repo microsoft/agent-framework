@@ -5,11 +5,13 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping, Sequence
-from typing import Literal
+from collections.abc import Sequence
 
 from agent_framework import FunctionTool
-from agent_framework._tools import _format_tool_parameters  # pyright: ignore[reportPrivateUsage]
+from agent_framework._tools import (
+    _format_tool_parameters,  # pyright: ignore[reportPrivateUsage]
+    _NormalizedToolDescriptionFormat,  # pyright: ignore[reportPrivateUsage]
+)
 
 from ._types import FileMount
 
@@ -17,7 +19,7 @@ from ._types import FileMount
 def _format_tool_summaries(
     tools: Sequence[FunctionTool],
     *,
-    tool_description_format: Literal["compact", "json"] | Mapping[str, Literal["compact", "json"]] = "compact",
+    tool_description_format: _NormalizedToolDescriptionFormat = "compact",
 ) -> str:
     if not tools:
         return "- No tools are currently registered."
@@ -85,7 +87,7 @@ def build_codeact_instructions(
     tools: Sequence[FunctionTool],
     tools_visible_to_model: bool,
     mounts: Sequence[FileMount] = (),
-    tool_description_format: Literal["compact", "json"] | Mapping[str, Literal["compact", "json"]] = "compact",
+    tool_description_format: _NormalizedToolDescriptionFormat = "compact",
 ) -> str:
     """Build dynamic CodeAct instructions for the effective Monty tool set."""
     tool_summaries = _format_tool_summaries(tools, tool_description_format=tool_description_format)
@@ -129,7 +131,7 @@ def build_execute_code_description(
     *,
     tools: Sequence[FunctionTool],
     mounts: Sequence[FileMount] = (),
-    tool_description_format: Literal["compact", "json"] | Mapping[str, Literal["compact", "json"]] = "compact",
+    tool_description_format: _NormalizedToolDescriptionFormat = "compact",
 ) -> str:
     """Build the dynamic ``execute_code`` tool description for standalone usage."""
     tool_summaries = _format_tool_summaries(tools, tool_description_format=tool_description_format)

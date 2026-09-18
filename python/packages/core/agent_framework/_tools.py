@@ -400,11 +400,40 @@ def _annotation_includes_function_invocation_context(annotation: Any) -> bool:
     )
 
 
+_ToolParameterFormat: TypeAlias = Literal["compact", "json"]
+_ToolDescriptionFormat: TypeAlias = _ToolParameterFormat | Mapping[str, _ToolParameterFormat]
+_NormalizedToolDescriptionFormat: TypeAlias = _ToolParameterFormat | dict[str, _ToolParameterFormat]
+_TOOL_DESCRIPTION_FORMAT_ERROR = "tool_description_format must be 'compact', 'json', or a tool-name mapping."
+
+
+def _normalize_tool_description_format(  # pyright: ignore[reportUnusedFunction]
+    value: object,
+) -> _NormalizedToolDescriptionFormat:
+    """Validate and detach model-facing tool parameter description settings."""
+    if isinstance(value, str):
+        if value not in ("compact", "json"):
+            raise ValueError(_TOOL_DESCRIPTION_FORMAT_ERROR)
+        return value
+    if not isinstance(value, Mapping):
+        raise TypeError(_TOOL_DESCRIPTION_FORMAT_ERROR)
+
+    normalized: dict[str, _ToolParameterFormat] = {}
+    for name, choice in cast(Mapping[object, object], value).items():
+        if not isinstance(name, str):
+            raise TypeError("tool_description_format mapping keys must be strings.")
+        if not isinstance(choice, str):
+            raise TypeError(f"tool_description_format[{name!r}] must be a string ('compact' or 'json').")
+        if choice not in ("compact", "json"):
+            raise ValueError(f"tool_description_format[{name!r}] must be 'compact' or 'json'; got {choice!r}.")
+        normalized[name] = choice
+    return normalized
+
+
 def _format_tool_parameters(  # pyright: ignore[reportUnusedFunction]
     parameters: dict[str, Any],
     *,
-    parameter_format: Literal["compact", "json"],
-) -> tuple[Literal["compact", "json"], dict[str, Any]]:
+    parameter_format: _ToolParameterFormat,
+) -> tuple[_ToolParameterFormat, dict[str, Any]]:
     """Return the effective format and detached parameter data for tool descriptions.
 
     Compact data maps parameter names to scalar type, requiredness, and optional

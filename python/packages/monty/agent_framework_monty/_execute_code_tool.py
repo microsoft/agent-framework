@@ -14,13 +14,19 @@ from __future__ import annotations
 
 import json
 import mimetypes
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from functools import partial
 from pathlib import Path, PurePosixPath
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 from agent_framework import Content, FunctionTool
-from agent_framework._tools import ApprovalMode, normalize_tools
+from agent_framework._tools import (
+    ApprovalMode,
+    _normalize_tool_description_format,  # pyright: ignore[reportPrivateUsage]
+    _NormalizedToolDescriptionFormat,  # pyright: ignore[reportPrivateUsage]
+    _ToolDescriptionFormat,  # pyright: ignore[reportPrivateUsage]
+    normalize_tools,
+)
 
 from ._instructions import build_codeact_instructions, build_execute_code_description
 from ._monty_bridge import InlineCodeBridge, generate_type_stubs
@@ -66,27 +72,6 @@ def _collect_tools(*tool_groups: Any) -> list[FunctionTool]:
             tools_by_name[tool_obj.name] = tool_obj
 
     return list(tools_by_name.values())
-
-
-def _normalize_tool_description_format(
-    value: object,
-) -> Literal["compact", "json"] | dict[str, Literal["compact", "json"]]:
-    if isinstance(value, str):
-        if value not in ("compact", "json"):
-            raise ValueError("tool_description_format must be 'compact', 'json', or a mapping of tool names to these.")
-        return value
-    if not isinstance(value, Mapping):
-        raise TypeError("tool_description_format must be a string or a mapping of tool names to 'compact' or 'json'.")
-    normalized: dict[str, Literal["compact", "json"]] = {}
-    for name, choice in cast("Mapping[object, object]", value).items():
-        if not isinstance(name, str):
-            raise TypeError("tool_description_format mapping keys must be strings.")
-        if not isinstance(choice, str):
-            raise TypeError(f"tool_description_format[{name!r}] must be a string ('compact' or 'json').")
-        if choice not in ("compact", "json"):
-            raise ValueError(f"tool_description_format[{name!r}] must be 'compact' or 'json'; got {choice!r}.")
-        normalized[name] = choice
-    return normalized
 
 
 def _resolve_execute_code_approval_mode(
@@ -226,7 +211,7 @@ class MontyExecuteCodeTool(FunctionTool):
         workspace_root: str | Path | None = None,
         file_mounts: FileMountInput | Sequence[FileMountInput] | None = None,
         resource_limits: dict[str, Any] | None = None,
-        tool_description_format: Literal["compact", "json"] | Mapping[str, Literal["compact", "json"]] = "compact",
+        tool_description_format: _ToolDescriptionFormat = "compact",
     ) -> None:
         super().__init__(
             name=EXECUTE_CODE_TOOL_NAME,
@@ -236,8 +221,8 @@ class MontyExecuteCodeTool(FunctionTool):
             input_model=EXECUTE_CODE_INPUT_SCHEMA,
         )
         self._default_approval_mode: ApprovalMode = approval_mode or "never_require"
-        self._tool_description_format: Literal["compact", "json"] | dict[str, Literal["compact", "json"]] = (
-            _normalize_tool_description_format(tool_description_format)
+        self._tool_description_format: _NormalizedToolDescriptionFormat = _normalize_tool_description_format(
+            tool_description_format
         )
         self._managed_tools: list[FunctionTool] = []
         self._workspace_root: Path | None = (

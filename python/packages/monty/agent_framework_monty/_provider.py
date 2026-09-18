@@ -4,13 +4,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from agent_framework import AgentSession, ContextProvider, FunctionTool, SessionContext
 from agent_framework._telemetry import mark_feature_used
-from agent_framework._tools import ApprovalMode
+from agent_framework._tools import ApprovalMode, _ToolDescriptionFormat  # pyright: ignore[reportPrivateUsage]
 
 from ._execute_code_tool import MontyExecuteCodeTool
 from ._feature_usage import FeatureIndex
@@ -44,7 +44,7 @@ class MontyCodeActProvider(ContextProvider):
         workspace_root: str | Path | None = None,
         file_mounts: FileMountInput | Sequence[FileMountInput] | None = None,
         resource_limits: dict[str, Any] | None = None,
-        tool_description_format: Literal["compact", "json"] | Mapping[str, Literal["compact", "json"]] = "compact",
+        tool_description_format: _ToolDescriptionFormat = "compact",
     ) -> None:
         super().__init__(source_id)
         self._execute_code_tool = MontyExecuteCodeTool(
