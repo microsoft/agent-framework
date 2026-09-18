@@ -4346,6 +4346,173 @@ async def test_completed_stateless_mixed_batch_with_reused_call_id_is_inert(
     assert chat_client_base.call_count == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
 
+async def test_duplicate_idless_host_result_remains_host_owned_in_reused_call_mixed_batch(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """An equivalent Host-result replay cannot consume the approval decision."""
+    from agent_framework import FunctionTool
+
+    calls = 0
+
+    @tool(name="approval_func", approval_mode="always_require")
+    def approval_func() -> str:
+        nonlocal calls
+        calls += 1
+        return "approved"
+
+    approval_call = Content.from_function_call(
+        call_id="shared",
+        name="approval_func",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    host_request = Content.from_function_call(
+        call_id="shared",
+        name="host_func",
+        arguments={},
+        id="host-occurrence",
+    )
+    host_request.user_input_request = True
+    host_result = Content.from_function_result(call_id="shared", result="host result")
+    duplicate_host_result = Content.from_function_result(call_id="shared", result="host result")
+    host_func = FunctionTool(name="host_func", func=None, description="Handled by the caller")
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+    messages = [
+        Message(role="assistant", contents=[approval_request, host_request]),
+        Message(
+            role="user",
+            contents=[
+                approval_request.to_function_approval_response(approved=True),
+                host_result,
+                duplicate_host_result,
+            ],
+        ),
+    ]
+
+    response = await chat_client_base.get_response(
+        messages,
+        options={"tools": [approval_func, host_func]},
+    )
+
+    assert response.text == "done"
+    assert calls == 1
+    assert chat_client_base.call_count == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+
+@pytest.mark.parametrize("identified_first", [True, False], ids=["identified-first", "idless-first"])
+def test_stateful_mixed_batch_assigns_idless_equal_result_to_unanswered_occurrence(
+    identified_first: bool,
+) -> None:
+    """Occurrence-identified Host results reserve their slots before id-less matching."""
+    from agent_framework._tools import (
+        _stage_pending_mixed_pause_responses,
+        _store_pending_approval_requests,
+        _store_pending_mixed_pause_batch,
+    )
+
+    session = AgentSession()
+    approval_call = Content.from_function_call(
+        call_id="approval",
+        name="approval_func",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    first_host_request = Content.from_function_call(
+        call_id="shared",
+        name="host_func",
+        arguments={},
+        id="first-host-occurrence",
+    )
+    first_host_request.user_input_request = True
+    second_host_request = Content.from_function_call(
+        call_id="shared",
+        name="host_func",
+        arguments={},
+        id="second-host-occurrence",
+    )
+    second_host_request.user_input_request = True
+    identified_result = Content.from_function_result(call_id="shared", result="same result")
+    identified_result.id = "first-host-occurrence"
+    idless_result = Content.from_function_result(call_id="shared", result="same result")
+    host_results = [identified_result, idless_result] if identified_first else [idless_result, identified_result]
+    _store_pending_approval_requests(session, [approval_request])
+    _store_pending_mixed_pause_batch(
+        session,
+        [[approval_request], [first_host_request], [second_host_request]],
+    )
+    messages = [
+        Message(
+            role="user",
+            contents=[
+                approval_request.to_function_approval_response(approved=True),
+                *host_results,
+            ],
+        )
+    ]
+
+    incomplete, completed, host_result_ids = _stage_pending_mixed_pause_responses(messages, session)
+
+    assert incomplete is False
+    assert completed is True
+    assert [(content.type, content.id, content.result) for content in messages[-1].contents] == [
+        ("function_approval_response", "approval-occurrence", None),
+        ("function_result", "first-host-occurrence", "same result"),
+        ("function_result", None, "same result"),
+    ]
+    assert host_result_ids == {id(messages[-1].contents[1]), id(messages[-1].contents[2])}
+
+
+def test_stateless_mixed_batch_rejects_conflicting_identified_host_results() -> None:
+    """Conflicting results for one identified Host occurrence fail closed."""
+    from agent_framework._tools import _stateless_mixed_pause_batch_status
+
+    approval_call = Content.from_function_call(
+        call_id="approval",
+        name="approval_func",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    host_request = Content.from_function_call(
+        call_id="host",
+        name="host_func",
+        arguments={},
+        id="host-occurrence",
+    )
+    host_request.user_input_request = True
+    first_result = Content.from_function_result(call_id="host", result="first result")
+    first_result.id = "host-occurrence"
+    conflicting_result = Content.from_function_result(call_id="host", result="conflicting result")
+    conflicting_result.id = "host-occurrence"
+    messages = [
+        Message(role="assistant", contents=[approval_request, host_request]),
+        Message(
+            role="user",
+            contents=[
+                approval_request.to_function_approval_response(approved=True),
+                first_result,
+                conflicting_result,
+            ],
+        ),
+    ]
+
+    with pytest.raises(RuntimeError, match="Conflicting response for mixed pause occurrence 'host-occurrence'"):
+        _stateless_mixed_pause_batch_status(messages)
+
+
 def test_active_mixed_pause_ignores_historical_host_requests() -> None:
     """Only the session-recorded mixed batch participates in response correlation."""
     from agent_framework._tools import (

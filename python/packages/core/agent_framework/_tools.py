@@ -3000,63 +3000,73 @@ def _match_mixed_pause_responses(
                 host_items_by_occurrence[request.id] = index
 
     matched_content_ids: set[int] = set()
-    for response in responses:
-        item_index: int | None = None
-        if response.type == "function_approval_response":
-            candidate = approval_response_binder(response) if approval_response_binder is not None else response
-            if candidate is None:
+    for match_idless_host_results in (False, True):
+        for response in responses:
+            is_idless_host_result = response.type == "function_result" and response.id is None
+            if is_idless_host_result != match_idless_host_results:
                 continue
-            response_identities = {
-                str(identity)
-                for identity in (
-                    candidate.additional_properties.get(_APPROVAL_REQUEST_ID_KEY),
-                    candidate.id,
-                )
-                if identity is not None
-            }
-            matching_indexes = {
-                matched_index
-                for identity in response_identities
-                if (matched_index := approval_items.get(identity)) is not None
-            }
-            if len(matching_indexes) == 1:
-                item_index = matching_indexes.pop()
-        elif response.type == "function_result" and response.call_id in host_items_by_call:
-            candidate = response
-            if response.id is not None:
-                item_index = host_items_by_occurrence.get(response.id)
-                request = _content_from_state(items[item_index].get("request")) if item_index is not None else None
-                if request is None or request.call_id != response.call_id:
-                    item_index = None
-            else:
-                matching_indexes = [
-                    pending_index
-                    for pending_index in host_items_by_call[response.call_id]
-                    if items[pending_index].get("response") is None
-                    or (
-                        isinstance(items[pending_index].get("response"), Mapping)
-                        and _same_mixed_pause_response(
-                            cast(Mapping[str, Any], items[pending_index]["response"]),
-                            response.to_dict(),
-                        )
-                    )
-                ]
-                if len(matching_indexes) == 1:
-                    item_index = matching_indexes[0]
-        else:
-            continue
 
-        if item_index is None:
-            continue
-        candidate_state = candidate.to_dict()
-        stored_response = items[item_index].get("response")
-        if stored_response is not None and (
-            not isinstance(stored_response, Mapping)
-            or not _same_mixed_pause_response(cast(Mapping[str, Any], stored_response), candidate_state)
-        ):
-            raise RuntimeError(f"Conflicting response for mixed pause occurrence {candidate.id!r}.")
-        items[item_index]["response"] = candidate_state
-        matched_content_ids.add(id(response))
+            item_index: int | None = None
+            if response.type == "function_approval_response":
+                candidate = approval_response_binder(response) if approval_response_binder is not None else response
+                if candidate is None:
+                    continue
+                response_identities = {
+                    str(identity)
+                    for identity in (
+                        candidate.additional_properties.get(_APPROVAL_REQUEST_ID_KEY),
+                        candidate.id,
+                    )
+                    if identity is not None
+                }
+                matching_indexes = {
+                    matched_index
+                    for identity in response_identities
+                    if (matched_index := approval_items.get(identity)) is not None
+                }
+                if len(matching_indexes) == 1:
+                    item_index = matching_indexes.pop()
+            elif response.type == "function_result" and response.call_id in host_items_by_call:
+                candidate = response
+                if response.id is not None:
+                    item_index = host_items_by_occurrence.get(response.id)
+                    request = _content_from_state(items[item_index].get("request")) if item_index is not None else None
+                    if request is None or request.call_id != response.call_id:
+                        item_index = None
+                else:
+                    unanswered_indexes = [
+                        pending_index
+                        for pending_index in host_items_by_call[response.call_id]
+                        if items[pending_index].get("response") is None
+                    ]
+                    if len(unanswered_indexes) == 1:
+                        item_index = unanswered_indexes[0]
+                    elif not unanswered_indexes:
+                        duplicate_indexes = [
+                            pending_index
+                            for pending_index in host_items_by_call[response.call_id]
+                            if isinstance(items[pending_index].get("response"), Mapping)
+                            and _same_mixed_pause_response(
+                                cast(Mapping[str, Any], items[pending_index]["response"]),
+                                response.to_dict(),
+                            )
+                        ]
+                        if len(duplicate_indexes) == 1:
+                            item_index = duplicate_indexes[0]
+            else:
+                continue
+
+            if item_index is None:
+                continue
+            candidate_state = candidate.to_dict()
+            stored_response = items[item_index].get("response")
+            if stored_response is not None and (
+                not isinstance(stored_response, Mapping)
+                or not _same_mixed_pause_response(cast(Mapping[str, Any], stored_response), candidate_state)
+            ):
+                raise RuntimeError(f"Conflicting response for mixed pause occurrence {candidate.id!r}.")
+            items[item_index]["response"] = candidate_state
+            matched_content_ids.add(id(response))
 
     if any(item.get("response") is None for item in items):
         return matched_content_ids, True, [], set()
@@ -3209,9 +3219,8 @@ def _stateless_mixed_pause_batch_status(
     latest_host_by_occurrence: dict[tuple[str, str], int] = {}
     latest_host_by_call: dict[str, int] = {}
     latest_idless_host_by_call: dict[str, int] = {}
-    host_request_counts: dict[tuple[int, str], int] = {}
-    owned_host_result_counts: dict[tuple[int, str], int] = {}
-    matched_host_result_ids: set[int] = set()
+    reserved_host_result_ids: set[int] = set()
+    response_content_indices: dict[int, int] = {}
     host_result_content_indices: dict[int, int] = {}
     next_batch_index = 0
 
@@ -3231,8 +3240,6 @@ def _stateless_mixed_pause_batch_status(
                 if function_call is not None and function_call.call_id is not None:
                     latest_approval_by_call[function_call.call_id] = batch_index
             elif item.get("kind") == "host" and request.call_id is not None:
-                batch_call = (batch_index, request.call_id)
-                host_request_counts[batch_call] = host_request_counts.get(batch_call, 0) + 1
                 latest_host_by_call[request.call_id] = batch_index
                 if request.id is None:
                     latest_idless_host_by_call[request.call_id] = batch_index
@@ -3295,25 +3302,24 @@ def _stateless_mixed_pause_batch_status(
                 owner_candidates,
                 key=lambda candidate: (candidate[0], candidate[1] == "host"),
             )
-        if (
-            content.type == "function_result"
-            and content.call_id is not None
-            and owner_kind == "host"
-            and approval_batch_index == owner_batch_index
-            and host_batch_index == owner_batch_index
-            and (
-                content.id is None or latest_host_by_occurrence.get((content.call_id, content.id)) != owner_batch_index
-            )
-            and owned_host_result_counts.get((owner_batch_index, content.call_id), 0)
-            >= host_request_counts.get((owner_batch_index, content.call_id), 0)
-        ):
-            owner_kind = "approval"
         responses_by_batch[owner_batch_index].append(content)
-        if owner_kind == "host":
-            matched_host_result_ids.add(id(content))
+        response_content_indices[id(content)] = response_index
+        if owner_kind == "host" and (exact_host_batch_index is not None or approval_batch_index != owner_batch_index):
+            reserved_host_result_ids.add(id(content))
             host_result_content_indices[id(content)] = response_index
-            batch_call = (owner_batch_index, cast(str, content.call_id))
-            owned_host_result_counts[batch_call] = owned_host_result_counts.get(batch_call, 0) + 1
+
+    batch_matches: list[tuple[set[int], bool, list[Content], set[int]]] = []
+    matched_host_result_ids = set(reserved_host_result_ids)
+    for batch_index, (_, items, _) in enumerate(request_batches):
+        responses = responses_by_batch[batch_index]
+        match = _match_mixed_pause_responses(items, responses)
+        batch_matches.append(match)
+        matched_response_ids = match[0]
+        for response in responses:
+            response_id = id(response)
+            if response.type == "function_result" and response_id in matched_response_ids:
+                matched_host_result_ids.add(response_id)
+                host_result_content_indices[response_id] = response_content_indices[response_id]
 
     pending_approval_response_ids = {
         id(response)
@@ -3337,12 +3343,8 @@ def _stateless_mixed_pause_batch_status(
         if first_pending_approval_content_index is not None and response_index > first_pending_approval_content_index
     }
     for batch_index in range(len(request_batches) - 1, -1, -1):
-        _, items, kinds = request_batches[batch_index]
-        responses = responses_by_batch[batch_index]
-        matched_response_ids, incomplete, ordered_responses, ordered_host_result_ids = _match_mixed_pause_responses(
-            items,
-            responses,
-        )
+        _, _, kinds = request_batches[batch_index]
+        matched_response_ids, incomplete, ordered_responses, ordered_host_result_ids = batch_matches[batch_index]
         if kinds != {"approval", "host"}:
             continue
         if incomplete:
