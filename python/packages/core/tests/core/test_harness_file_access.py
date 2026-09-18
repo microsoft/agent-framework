@@ -12,6 +12,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import regex
 
 from agent_framework import (
     Agent,
@@ -254,7 +255,7 @@ async def test_in_memory_store_search_rejects_invalid_and_oversize_regex() -> No
     store = InMemoryAgentFileStore()
     await store.write("a.md", "hello")
 
-    with pytest.raises(re.error):
+    with pytest.raises(regex.error):
         await store.search("", "[unclosed")
 
     with pytest.raises(ValueError, match="too long"):
@@ -989,6 +990,7 @@ async def _assert_search_is_bounded(
     finally:
         stop.set()
         beating.cancel()
+        await asyncio.gather(beating, return_exceptions=True)
 
     # Generous ceiling: the point is that the deadline is enforced at all, not that it is
     # precise. An unguarded scan overshoots by orders of magnitude, not by a factor of ten.
@@ -1170,7 +1172,7 @@ async def test_file_access_tool_wrappers_surface_value_error_as_message(
 
     # An invalid regex is surfaced to the caller (the model) as a raised error
     # so it can correct the pattern and retry.
-    with pytest.raises(re.error):
+    with pytest.raises(regex.error):
         await search.invoke(arguments={"regex_pattern": "[unclosed"})
 
 

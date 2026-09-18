@@ -3,6 +3,8 @@
 import re
 import time
 
+import regex
+
 from agent_framework_tools.shell import ShellDecision, ShellPolicy, ShellRequest
 
 # Representative destructive-rm patterns used to exercise the deny-list
@@ -120,3 +122,23 @@ def test_precompiled_re_pattern_still_supported() -> None:
     policy = ShellPolicy(denylist=[re.compile(r"^ssh\b", re.IGNORECASE)])
     assert _decide(policy, "ssh host").decision == "deny"
     assert _decide(policy, "ls").decision == "allow"
+
+
+def test_precompiled_regex_pattern_is_supported_and_bounded() -> None:
+    """A pre-compiled ``regex`` pattern is accepted and still matched under the timeout.
+
+    This is the pattern type the class docstring recommends for callers who want to compile
+    ahead of time without giving up the match bound, so it has to work end to end.
+    """
+    policy = ShellPolicy(denylist=[regex.compile(r"^ssh\b", regex.IGNORECASE)])
+    assert _decide(policy, "ssh host").decision == "deny"
+    assert _decide(policy, "ls").decision == "allow"
+
+    bounded = ShellPolicy(denylist=[regex.compile(_REDOS_PATTERN)])
+    started = time.monotonic()
+    decision = _decide(bounded, _REDOS_COMMAND)
+    elapsed = time.monotonic() - started
+
+    assert decision.decision == "deny"
+    assert "could not be evaluated in time" in decision.reason
+    assert elapsed < 5.0, f"policy evaluation overran: {elapsed:.2f}s"

@@ -26,14 +26,13 @@ import errno
 import fnmatch
 import logging
 import os
-import re
 import time
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Mapping, MutableMapping
 from pathlib import Path
 from typing import Annotated, Any, ClassVar, Protocol, cast
 
-import regex as regex_module
+import regex
 from pydantic import BaseModel, Field
 
 from .._feature_stage import ExperimentalFeature, experimental
@@ -178,27 +177,24 @@ def _compile_search_regex(pattern: str) -> _BoundedSearchPattern:
     finally returns. ``regex`` checks a deadline mid-match and releases the GIL while
     matching, which is what makes the bound real and keeps the event loop responsive.
 
-    An invalid ``pattern`` raises :class:`re.error` unchanged so the search tools surface
-    it to the calling model, which can correct the pattern and retry. ``regex`` reports
-    syntax errors with its own ``regex.error``, which is *not* a subclass of ``re.error``,
-    so it is translated here to keep that contract.
+    An invalid ``pattern`` raises :class:`regex.error` unchanged so the search tools surface
+    it to the calling model, which can correct the pattern and retry. Note that
+    ``regex.error`` is *not* a subclass of the standard library's ``re.error``.
 
     Raises:
         ValueError: When ``pattern`` exceeds ``_MAX_SEARCH_PATTERN_LENGTH``
             characters.
-        re.error: When ``pattern`` is not a valid regular expression.
+        regex.error: When ``pattern`` is not a valid regular expression.
     """
     if len(pattern) > _MAX_SEARCH_PATTERN_LENGTH:
         raise ValueError(
             f"Regex pattern is too long ({len(pattern)} characters). "
             f"Maximum supported length is {_MAX_SEARCH_PATTERN_LENGTH} characters."
         )
-    try:
-        # VERSION0 keeps ``regex`` in its ``re``-compatible dialect, so a pattern that
-        # worked against the standard library keeps the same meaning here.
-        compiled = regex_module.compile(pattern, flags=regex_module.IGNORECASE | regex_module.VERSION0)
-    except regex_module.error as exc:
-        raise re.error(str(exc)) from exc
+    # VERSION1 is selected explicitly rather than left to ``regex.DEFAULT_VERSION``, which is
+    # a mutable process global: any library in the process can flip it and silently change how
+    # these patterns parse.
+    compiled = regex.compile(pattern, flags=regex.IGNORECASE | regex.VERSION1)
     # The deadline starts here, not at first match: the budget covers the whole search,
     # including the file reads the scan is interleaved with.
     return _BoundedSearchPattern(compiled, pattern, time.monotonic() + _SEARCH_TIMEOUT_SECONDS)
@@ -691,7 +687,7 @@ class FileStoreEntry(SerializationMixin):
         return f"FileStoreEntry(name={self.name!r}, type={self.type!r})"
 
 
-def _search_file_content(file_name: str, content: str, regex: _SearchPattern) -> FileSearchResult | None:
+def _search_file_content(file_name: str, content: str, search_pattern: _SearchPattern) -> FileSearchResult | None:
     r"""Search one file's content and return a :class:`FileSearchResult` if any lines match.
 
     Lines are split by :func:`_split_lines_keepends` and reported verbatim, terminator
@@ -713,7 +709,7 @@ def _search_file_content(file_name: str, content: str, regex: _SearchPattern) ->
         # Same rule as _strip_line_terminator: a lone \r is content, so only a whole
         # \r\n comes off.
         scanned = line[:-2] if line.endswith("\r\n") else line.removesuffix("\n")
-        match = regex.search(scanned)
+        match = search_pattern.search(scanned)
         if match is not None:
             matching_lines.append(FileSearchMatch(line_number=line_number, line=line))
             if first_snippet is None:
@@ -960,13 +956,15 @@ class AgentFileStore(ABC):
             ValueError: When the search does not complete within
                 :data:`_SEARCH_TIMEOUT_SECONDS` seconds.
         """
-        regex = _compile_search_regex(regex_pattern)
-        return await _run_search_with_timeout(self._scan_candidate_files(directory, regex, glob_pattern, recursive))
+        search_pattern = _compile_search_regex(regex_pattern)
+        return await _run_search_with_timeout(
+            self._scan_candidate_files(directory, search_pattern, glob_pattern, recursive)
+        )
 
     async def _scan_candidate_files(
         self,
         directory: str,
-        regex: _SearchPattern,
+        search_pattern: _SearchPattern,
         glob_pattern: str | None,
         recursive: bool,
     ) -> list[FileSearchResult]:
@@ -976,7 +974,7 @@ class AgentFileStore(ABC):
         over-returns (which :meth:`find_matching_files` explicitly permits)
         cannot widen the caller's scope.
         """
-        names = await self.find_matching_files(directory, regex.pattern, glob_pattern, recursive=recursive)
+        names = await self.find_matching_files(directory, search_pattern.pattern, glob_pattern, recursive=recursive)
         results: list[FileSearchResult] = []
         batch: list[tuple[str, str]] = []
         batch_chars = 0
@@ -987,7 +985,7 @@ class AgentFileStore(ABC):
                 # Called on the class, not the instance: a store that overrides the public
                 # scan_content must not be able to skew the numbers while still counting as
                 # aligned by construction.
-                result = AgentFileStore.scan_content(candidate_name, candidate_content, regex)
+                result = AgentFileStore.scan_content(candidate_name, candidate_content, search_pattern)
                 if result is not None:
                     found.append(result)
             return found
@@ -1146,7 +1144,7 @@ class InMemoryAgentFileStore(AgentFileStore):
         prefix = _normalize_relative_path(directory, is_directory=True).lower()
         if prefix and not prefix.endswith("/"):
             prefix += "/"
-        regex = _compile_search_regex(regex_pattern)
+        search_pattern = _compile_search_regex(regex_pattern)
 
         async with self._lock:
             entries = [(key, display, content) for key, (display, content) in self._files.items()]
@@ -1162,7 +1160,7 @@ class InMemoryAgentFileStore(AgentFileStore):
                 relative_display = display[len(prefix) :]
                 if not _matches_glob(relative_display, glob_pattern):
                     continue
-                result = AgentFileStore.scan_content(relative_display, file_content, regex)
+                result = AgentFileStore.scan_content(relative_display, file_content, search_pattern)
                 if result is not None:
                     results.append(result)
             return results
@@ -1450,9 +1448,9 @@ class FileSystemAgentFileStore(AgentFileStore):
         children.
         """
         full_dir = self._resolve_safe_directory_path(directory)
-        regex = _compile_search_regex(regex_pattern)
+        search_pattern = _compile_search_regex(regex_pattern)
         return await _run_search_with_timeout(
-            asyncio.to_thread(self._search_files_sync, full_dir, regex, glob_pattern, recursive)
+            asyncio.to_thread(self._search_files_sync, full_dir, search_pattern, glob_pattern, recursive)
         )
 
     @staticmethod
@@ -1487,7 +1485,7 @@ class FileSystemAgentFileStore(AgentFileStore):
 
     @staticmethod
     def _search_files_sync(
-        full_dir: Path, regex: _SearchPattern, glob_pattern: str | None, recursive: bool
+        full_dir: Path, search_pattern: _SearchPattern, glob_pattern: str | None, recursive: bool
     ) -> list[FileSearchResult]:
         if not full_dir.is_dir():
             return []
@@ -1518,7 +1516,7 @@ class FileSystemAgentFileStore(AgentFileStore):
                 logger.warning("Skipping unreadable file during search: %s", entry)
                 skipped.append(relative_name)
                 continue
-            result = AgentFileStore.scan_content(relative_name, file_content, regex)
+            result = AgentFileStore.scan_content(relative_name, file_content, search_pattern)
             if result is not None:
                 results.append(result)
         if skipped:

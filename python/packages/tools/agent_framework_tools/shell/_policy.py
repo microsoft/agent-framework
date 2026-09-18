@@ -42,11 +42,11 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal, Union
 
-import regex as regex_module
+import regex
 
 logger = logging.getLogger(__name__)
 
-PatternLike = Union[str, re.Pattern[str]]
+PatternLike = Union[str, re.Pattern[str], regex.Pattern[str]]
 
 # Wall-clock bound on a single pattern match.
 #
@@ -99,17 +99,21 @@ class ShellDecision:
 def _compile_patterns(patterns: Sequence[PatternLike]) -> tuple[Any, ...]:
     """Compile policy patterns, preferring the interruptible ``regex`` engine.
 
-    A pattern given as a string is compiled with ``regex`` in its ``re``-compatible
-    dialect, so the match can be bounded by :func:`_search`. A caller who hands over an
-    already-compiled :class:`re.Pattern` keeps it verbatim -- re-compiling would silently
-    reinterpret whichever flags they set -- and forgoes the bound.
+    A pattern given as a string is compiled with ``regex``, so the match can be bounded by
+    :func:`_search`. An already-compiled pattern is kept verbatim -- re-compiling would
+    silently reinterpret whichever flags the caller set. A pre-compiled :class:`regex.Pattern`
+    is still bounded; a pre-compiled :class:`re.Pattern` is not, because ``re`` offers no way
+    to interrupt a match.
     """
     compiled: list[Any] = []
     for pat in patterns:
-        if isinstance(pat, re.Pattern):
+        if isinstance(pat, (re.Pattern, regex.Pattern)):
             compiled.append(pat)
         else:
-            compiled.append(regex_module.compile(pat, flags=regex_module.IGNORECASE | regex_module.VERSION0))
+            # VERSION1 is selected explicitly rather than left to ``regex.DEFAULT_VERSION``,
+            # which is a mutable process global: any library in the process can flip it and
+            # silently change how these patterns parse.
+            compiled.append(regex.compile(pat, flags=regex.IGNORECASE | regex.VERSION1))
     return tuple(compiled)
 
 
@@ -132,6 +136,19 @@ class ShellPolicy:
     Supply ``denylist`` and/or ``allowlist`` explicitly to enable filtering.
     See the module docstring for why the framework does not ship default
     deny patterns.
+
+    .. warning::
+        Policy patterns are **developer-authored code**, not model or user input, so
+        testing them is the developer's responsibility. A pattern with nested or
+        ambiguous quantifiers (``(a|a)*``, ``(a+)+``) can be pushed into catastrophic
+        backtracking by a crafted command, and the command *is* model-generated.
+
+        Prefer plain ``str`` patterns: the framework compiles those on the ``regex``
+        engine and bounds every match at one second, failing closed on timeout. A
+        pre-compiled :class:`regex.Pattern` is bounded the same way. A pre-compiled
+        :class:`re.Pattern` is honoured verbatim and is **not** bounded -- the standard
+        library offers no way to interrupt a match -- so an expensive pattern supplied
+        that way can stall the calling thread indefinitely.
     """
 
     denylist: Sequence[PatternLike] = field(default_factory=tuple)

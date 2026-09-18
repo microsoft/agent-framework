@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Diagnostics;
 
 namespace Microsoft.Agents.AI.Tools.Shell.UnitTests;
