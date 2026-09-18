@@ -333,7 +333,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "azure-cosmos-agent-memory", specifier = ">=0.2.0b3" },
+    { name = "azure-cosmos-agent-memory", specifier = ">=0.2.0b3,<0.4" },
     { name = "prompty", specifier = ">=2.0.0a9" },
 ]
 
@@ -1469,7 +1469,7 @@ wheels = [
 
 [[package]]
 name = "azure-cosmos-agent-memory"
-version = "0.3.0b1"
+version = "0.3.0b2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -1482,9 +1482,9 @@ dependencies = [
     { name = "tiktoken", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "typing-extensions", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/71/85/f66f7e5989125428eba72917224fbdb4fb22671de3a39ec8d24446f93b2b/azure_cosmos_agent_memory-0.3.0b1.tar.gz", hash = "sha256:4dd017bd4c69895f3e053511c549ee8b215e5eb98f684152cf852ebbb69199b3", size = 169559, upload-time = "2026-07-24T21:37:19.433Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/59/98/1bba425448cfe620e27818c5cc770a5c5ca69d76b8e5989c0ff69daef01d/azure_cosmos_agent_memory-0.3.0b2.tar.gz", hash = "sha256:5f3d4590b74fd15da2973d09217d9eefc2a3787c03d283210b875b05f06e68e3", size = 189529, upload-time = "2026-08-17T23:09:33.819Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f6/f5/18be23d17aee288562adb9ef66826829524077e7024e2b5535615c82f621/azure_cosmos_agent_memory-0.3.0b1-py3-none-any.whl", hash = "sha256:7d36e28cba2adfc1567a94d8b057c018e7195bf3d5cec14e92747cb23b27465b", size = 187471, upload-time = "2026-07-24T21:37:18.268Z" },
+    { url = "https://files.pythonhosted.org/packages/e0/b4/d18966a12e3ba2c99dca4a3888bd0b35c1d1fd2c341690bd926e80550018/azure_cosmos_agent_memory-0.3.0b2-py3-none-any.whl", hash = "sha256:2af5d6e30b485052f52abc8980be980632e2ace5750eb6329e2af8ca66c5aaa9", size = 216786, upload-time = "2026-08-17T23:09:32.666Z" },
 ]
 
 [[package]]

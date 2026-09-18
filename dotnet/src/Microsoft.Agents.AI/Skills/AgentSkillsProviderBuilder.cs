@@ -130,6 +130,14 @@ public sealed class AgentSkillsProviderBuilder
     /// <see cref="UseSource(Func{ILoggerFactory?, AgentSkillsSource})"/> overload, which creates a fresh
     /// source per build, or pass the source directly to an <see cref="AgentSkillsProvider"/> constructor
     /// with <c>ownsSource: false</c> to retain ownership.
+    /// <para>
+    /// Custom sources are cached by default. Unless
+    /// <see cref="CachingAgentSkillsSourceOptions.CacheIsolationKeySelector"/> returns a non-null key,
+    /// the cached skill list is shared by all invocations of the provider. If this source returns
+    /// skills that vary by session, user, tenant, or another security boundary, call
+    /// <see cref="DisableCaching"/> or configure an appropriate cache isolation key through
+    /// <see cref="UseCachingOptions"/>.
+    /// </para>
     /// </remarks>
     /// <param name="source">The custom skill source.</param>
     /// <returns>This builder instance for chaining.</returns>
@@ -145,6 +153,14 @@ public sealed class AgentSkillsProviderBuilder
     /// at build time. Use this overload when the source needs logging and should not require the
     /// caller to pass an <see cref="ILoggerFactory"/> explicitly.
     /// </summary>
+    /// <remarks>
+    /// Custom sources are cached by default. Unless
+    /// <see cref="CachingAgentSkillsSourceOptions.CacheIsolationKeySelector"/> returns a non-null key,
+    /// the cached skill list is shared by all invocations of the provider. If the created source
+    /// returns skills that vary by session, user, tenant, or another security boundary, call
+    /// <see cref="DisableCaching"/> or configure an appropriate cache isolation key through
+    /// <see cref="UseCachingOptions"/>.
+    /// </remarks>
     /// <param name="factory">A factory that creates the skill source given an optional logger factory.</param>
     /// <returns>This builder instance for chaining.</returns>
     public AgentSkillsProviderBuilder UseSource(Func<ILoggerFactory?, AgentSkillsSource> factory)
@@ -246,6 +262,14 @@ public sealed class AgentSkillsProviderBuilder
     /// <remarks>
     /// The returned provider owns the source pipeline constructed by this builder, so disposing the
     /// provider disposes the pipeline (including any sources added to this builder).
+    /// <para>
+    /// The source pipeline is cached by default. Unless
+    /// <see cref="CachingAgentSkillsSourceOptions.CacheIsolationKeySelector"/> returns a non-null key,
+    /// the cached skill list is shared by all invocations of the provider. Sources that return skills
+    /// that vary by session, user, tenant, or another security boundary must use
+    /// <see cref="DisableCaching"/> or configure an appropriate cache isolation key through
+    /// <see cref="UseCachingOptions"/>.
+    /// </para>
     /// <para>
     /// Build more than one provider from the same builder only when every source it produces is
     /// independent per build (for example, sources added via
