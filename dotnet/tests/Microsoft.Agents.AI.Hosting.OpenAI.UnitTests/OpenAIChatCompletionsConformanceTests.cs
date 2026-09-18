@@ -231,6 +231,43 @@ public sealed class OpenAIChatCompletionsConformanceTests : ConformanceTestBase
     }
 
     [Fact]
+    public async Task StreamingResponseEndsWithDoneSentinelAsync()
+    {
+        // The recorded OpenAI trace for this endpoint ends with "data: [DONE]", and
+        // OpenAI-compatible clients use that frame to detect completion rather than waiting for
+        // the connection to drop. StreamingRequestResponseAsync above cannot catch a missing
+        // terminator: it asserts through ParseChatCompletionChunksFromSse, which skips the
+        // "[DONE]" line because it is not JSON.
+
+        // Arrange
+        string requestJson = LoadChatCompletionsTraceFile("streaming/request.json");
+        HttpClient client = await this.CreateTestServerAsync("done-sentinel-agent", "You are a helpful assistant.", "Hello there.");
+
+        // Act
+        HttpResponseMessage httpResponse = await this.SendChatCompletionRequestAsync(client, "done-sentinel-agent", requestJson);
+        string responseSse = await httpResponse.Content.ReadAsStringAsync();
+
+        // Assert - the terminator is present, is the final frame, and is not duplicated.
+        // The body must end with the blank line that closes the frame: a client reading frame by
+        // frame never sees a "data: [DONE]" that is not followed by "\n\n", so asserting on a
+        // trimmed body would pass even if the final frame were left unterminated.
+        Assert.Equal("text/event-stream", httpResponse.Content.Headers.ContentType?.MediaType);
+        Assert.Contains("data: [DONE]", responseSse);
+        Assert.EndsWith("data: [DONE]\n\n", responseSse, System.StringComparison.Ordinal);
+
+        var dataLines = responseSse.Split('\n')
+            .Select(line => line.TrimEnd('\r'))
+            .Where(line => line.StartsWith("data: ", System.StringComparison.Ordinal))
+            .ToList();
+        Assert.Single(dataLines, line => line == "data: [DONE]");
+
+        // Assert - the terminator follows the payload chunks rather than replacing them, so a
+        // client that stops reading at [DONE] still receives the whole completion.
+        Assert.True(dataLines.Count > 1, "the stream should carry chat completion chunks before the terminator");
+        Assert.All(dataLines[..^1], line => Assert.StartsWith("data: {", line, System.StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task FunctionCallingRequestResponseAsync()
     {
         // Arrange
