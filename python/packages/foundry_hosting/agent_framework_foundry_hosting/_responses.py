@@ -17,6 +17,7 @@ from urllib.parse import urlparse
 
 from agent_framework import (
     AgentResponseUpdate,
+    AgentSession,
     ChatOptions,
     CheckpointStorage,
     Content,
@@ -387,6 +388,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         checkpoint_store_provider: ContextScopedStoreProvider[CheckpointStorage] | None = None,
         function_approval_store_provider: StoreProvider[FunctionApprovalStore] | None = None,
         history_source: Literal["agent_server", "agent"] = "agent_server",
+        defer_session_persistence: bool = False,
         **kwargs: Any,
     ) -> None:
         """Initialize a ResponsesHostServer.
@@ -409,6 +411,17 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 `"agent"` passes only the current request input and preserves the agent's normal
                 history-provider or service-storage behavior. AgentServer still manages Responses
                 API persistence through `store` in both modes.
+            defer_session_persistence: When True, persist the `AgentSession` after the response
+                completes instead of before it, moving the tail session write off the response
+                critical path (lower TTLB). Only valid with `history_source="agent_server"`, where
+                AgentServer already holds the durable transcript, so a still-pending write is
+                redundant with it; requesting it with `history_source="agent"` raises RuntimeError.
+                Read-your-writes and per-session write ordering are preserved -- a later turn for the
+                same session awaits the pending write before loading -- and a graceful shutdown drains
+                pending writes. The only relaxed guarantee versus the default: after an abrupt,
+                non-graceful termination in the brief window after `response.completed`, the last
+                turn's session write may be lost, and it is rebuilt from the AgentServer transcript on
+                the next turn. Defaults to False (persist synchronously before completing).
             **kwargs: Additional keyword arguments.
 
         Note:
@@ -437,11 +450,19 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         Raises:
             ValueError: If `history_source` is not supported.
             RuntimeError: If the agent configuration conflicts with the selected history source,
-                `resilient_background=True` is requested for a non-workflow agent, or
-                `steerable_conversations=True` is requested for a workflow agent.
+                `resilient_background=True` is requested for a non-workflow agent,
+                `steerable_conversations=True` is requested for a workflow agent, or
+                `defer_session_persistence=True` is requested with `history_source='agent'`.
         """
         if history_source not in ("agent_server", "agent"):
             raise ValueError("history_source must be either 'agent_server' or 'agent'.")
+
+        if defer_session_persistence and history_source != "agent_server":
+            raise RuntimeError(
+                "defer_session_persistence=True is only supported with history_source='agent_server', "
+                "where AgentServer holds the durable transcript. With history_source='agent' the session "
+                "can be the sole record of the turn, so its persistence must complete before the response."
+            )
 
         is_workflow_agent = isinstance(agent, WorkflowAgent)
         if is_workflow_agent and agent.workflow._runner_context.has_checkpointing():  # pyright: ignore[reportPrivateUsage]
@@ -549,6 +570,13 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         self._agent_stack: AsyncExitStack | None = None
         self._agent_init_lock = asyncio.Lock()
 
+        # Deferred session persistence (opt-in, agent_server-history only): move the tail
+        # session write off the response critical path on the success path. In-flight writes
+        # are tracked so the load-path barrier keeps read-your-writes and per-session ordering,
+        # and `_cleanup_agent` drains them so a graceful shutdown stays durable.
+        self._defer_session_writes = defer_session_persistence and self._uses_agent_server_history
+        self._pending_session_writes: dict[str, asyncio.Task[None]] = {}
+
         self.shutdown_handler(self._cleanup_agent)
         self.response_handler(self._handle_response)
 
@@ -576,11 +604,75 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             self._agent_stack = stack
 
     async def _cleanup_agent(self) -> None:
-        """Close the agent's async context. Registered as the server shutdown handler."""
+        """Drain deferred session writes, then close the agent's async context.
+
+        Registered as the server shutdown handler. Draining first keeps a graceful
+        shutdown durable: any session write still in flight from a completed turn is
+        awaited before the process exits.
+        """
+        await self._drain_pending_session_writes()
         stack = self._agent_stack
         if stack is not None:
             self._agent_stack = None
             await stack.aclose()
+
+    def _schedule_session_write(
+        self,
+        session_id: str,
+        session: AgentSession,
+        session_storage: SessionStore,
+    ) -> None:
+        """Persist ``session`` off the response critical path.
+
+        The write is chained after any still-pending write for the same session so
+        per-session persistence stays ordered, tracked in ``_pending_session_writes`` so
+        the load-path barrier and shutdown drain can await it, and its failures are logged
+        rather than silently dropped. Only used on the success path of agent_server-history
+        turns; see the call site for the durability rationale.
+        """
+        previous = self._pending_session_writes.get(session_id)
+
+        async def _persist() -> None:
+            if previous is not None:
+                # Preserve per-session ordering; the prior write logs its own failures.
+                with suppress(BaseException):
+                    await previous
+            await session_storage.set(session_id, session)
+
+        task = asyncio.ensure_future(_persist())
+        self._pending_session_writes[session_id] = task
+
+        def _on_done(completed: asyncio.Task[None]) -> None:
+            if self._pending_session_writes.get(session_id) is completed:
+                del self._pending_session_writes[session_id]
+            if completed.cancelled():
+                return
+            error = completed.exception()
+            if error is not None:
+                logger.error(
+                    "Failed to persist the Agent Framework session in the background",
+                    exc_info=(type(error), error, error.__traceback__),
+                )
+
+        task.add_done_callback(_on_done)
+
+    async def _await_pending_session_write(self, session_id: str) -> None:
+        """Await an in-flight deferred write for ``session_id`` before it is read.
+
+        Guarantees read-your-writes and per-session ordering. A failed background write has
+        already been logged by :meth:`_schedule_session_write`; it is not re-raised here so a
+        prior turn's persistence error does not fail this turn's load.
+        """
+        pending = self._pending_session_writes.get(session_id)
+        if pending is not None:
+            with suppress(BaseException):
+                await pending
+
+    async def _drain_pending_session_writes(self) -> None:
+        """Await all in-flight deferred writes so a graceful shutdown stays durable."""
+        pending = list(self._pending_session_writes.values())
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
 
     async def _handle_response(
         self,
@@ -791,7 +883,14 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
             previous_response_id = request.get("previous_response_id")
             session_load_id = context.conversation_id or previous_response_id
-            session = await session_storage.get(session_load_id) if session_load_id is not None else None
+            if session_load_id is not None:
+                # Read-your-writes: a prior turn's deferred persist for this session may still be
+                # in flight (a no-op unless defer_session_persistence is enabled). Await it before
+                # loading so this turn observes the latest state and per-session writes stay ordered.
+                await self._await_pending_session_write(session_load_id)
+                session = await session_storage.get(session_load_id)
+            else:
+                session = None
             if session is None:
                 if previous_response_id is not None and context.conversation_id is None:
                     raise RuntimeError(
@@ -882,18 +981,32 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 logger.error("%s", misconfigured)
                 if request_failure is None and not request_interrupted:
                     request_failure = misconfigured
-            try:
-                if not stored_output_violation:
-                    await session_storage.set(session_save_id, session)
-            except Exception as save_error:
-                save_failure = save_error
-                if request_interrupted:
-                    message = "Failed to persist the Agent Framework session while unwinding an interrupted request"
-                elif request_failure is not None:
-                    message = "Failed to persist the Agent Framework session after an agent failure"
+            if not stored_output_violation:
+                defer_write = self._defer_session_writes and request_failure is None and not request_interrupted
+                if defer_write:
+                    # Success path only: AgentServer already holds the durable transcript, so the
+                    # session write is redundant with it. Move it off the response critical path --
+                    # the client sees response.completed without waiting on this round-trip.
+                    # Read-your-writes and per-session ordering are preserved by the load-path
+                    # barrier above, and graceful-shutdown durability by the drain in
+                    # `_cleanup_agent`. Only an abrupt (non-graceful) termination in the brief
+                    # post-completed window can drop this write, and the next turn then rebuilds
+                    # context from the AgentServer transcript.
+                    self._schedule_session_write(session_save_id, session, session_storage)
                 else:
-                    message = "Failed to persist the Agent Framework session after a successful request"
-                logger.error(message, exc_info=(type(save_error), save_error, save_error.__traceback__))
+                    try:
+                        await session_storage.set(session_save_id, session)
+                    except Exception as save_error:
+                        save_failure = save_error
+                        if request_interrupted:
+                            message = (
+                                "Failed to persist the Agent Framework session while unwinding an interrupted request"
+                            )
+                        elif request_failure is not None:
+                            message = "Failed to persist the Agent Framework session after an agent failure"
+                        else:
+                            message = "Failed to persist the Agent Framework session after a successful request"
+                        logger.error(message, exc_info=(type(save_error), save_error, save_error.__traceback__))
 
         if request_failure is not None and save_failure is not None:
             raise RuntimeError(
