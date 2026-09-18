@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Concurrent;
 using System.Threading;
 using System.Threading.Tasks;
 using Moq;
@@ -163,6 +164,60 @@ public class IsolationKeyScopedAgentSessionStoreTests
         this._innerStoreMock.VerifyAll();
     }
 
+    [Fact]
+    public async Task BindIsolationKey_NestedIsolationStore_UsesCapturedKeyAsync()
+    {
+        // Arrange
+        var expectedSession = new TestAgentSession();
+        var recordingStore = new RecordingSessionStore(expectedSession);
+        var isolationStore = new IsolationKeyScopedAgentSessionStore(
+            recordingStore,
+            new TestAgentIsolationKeyProvider(key: null),
+            new IsolationKeyScopedAgentSessionStoreOptions { Strict = true });
+        var outerStore = new TestDelegatingAgentSessionStore(isolationStore);
+        var hostAgent = new AIHostAgent(this._agentMock.Object, outerStore);
+
+        // Act
+        AIHostAgent boundAgent = hostAgent.BindIsolationKey("captured-user");
+        AgentSession session = await boundAgent.GetOrCreateSessionAsync("session-1");
+
+        // Assert
+        Assert.Same(expectedSession, session);
+        Assert.Equal(1, outerStore.GetSessionCount);
+        AgentSessionStoreKey key = Assert.Single(recordingStore.Keys);
+        Assert.Equal("captured-user", key.Partitions!["isolation"]);
+    }
+
+    [Fact]
+    public async Task BindIsolationKey_ConcurrentOperations_KeepCapturedKeysSeparateAsync()
+    {
+        // Arrange
+        var recordingStore = new RecordingSessionStore(session: null);
+        var isolationStore = new IsolationKeyScopedAgentSessionStore(
+            recordingStore,
+            new TestAgentIsolationKeyProvider(key: null),
+            new IsolationKeyScopedAgentSessionStoreOptions { Strict = true });
+        var outerStore = new PausingDelegatingAgentSessionStore(isolationStore);
+        var hostAgent = new AIHostAgent(this._agentMock.Object, outerStore);
+        AIHostAgent aliceAgent = hostAgent.BindIsolationKey("alice");
+        AIHostAgent bobAgent = hostAgent.BindIsolationKey("bob");
+        var session = new TestAgentSession();
+
+        // Act
+        await Task.WhenAll(
+            aliceAgent.SaveSessionAsync("alice-session", session).AsTask(),
+            bobAgent.SaveSessionAsync("bob-session", session).AsTask());
+
+        // Assert
+        Assert.Equal(2, outerStore.SaveSessionCount);
+        Assert.Contains(
+            recordingStore.Keys,
+            key => key.SessionId == "alice-session" && key.Partitions!["isolation"] == "alice");
+        Assert.Contains(
+            recordingStore.Keys,
+            key => key.SessionId == "bob-session" && key.Partitions!["isolation"] == "bob");
+    }
+
     private IsolationKeyScopedAgentSessionStore CreateStore(
         string? isolationKey,
         IsolationKeyScopedAgentSessionStoreOptions? options = null)
@@ -178,4 +233,68 @@ public class IsolationKeyScopedAgentSessionStoreTests
     }
 
     private sealed class TestAgentSession : AgentSession;
+
+    private sealed class TestDelegatingAgentSessionStore(AgentSessionStore innerStore)
+        : DelegatingAgentSessionStore(innerStore)
+    {
+        public int GetSessionCount { get; private set; }
+
+        public override ValueTask<AgentSession?> GetSessionAsync(
+            AIAgent agent,
+            AgentSessionStoreKey key,
+            CancellationToken cancellationToken = default)
+        {
+            this.GetSessionCount++;
+            return base.GetSessionAsync(agent, key, cancellationToken);
+        }
+    }
+
+    private sealed class PausingDelegatingAgentSessionStore(AgentSessionStore innerStore)
+        : DelegatingAgentSessionStore(innerStore)
+    {
+        private readonly TaskCompletionSource _bothSavesStarted =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _saveSessionCount;
+
+        public int SaveSessionCount => this._saveSessionCount;
+
+        public override async ValueTask SaveSessionAsync(
+            AIAgent agent,
+            AgentSessionStoreKey key,
+            AgentSession session,
+            CancellationToken cancellationToken = default)
+        {
+            if (Interlocked.Increment(ref this._saveSessionCount) == 2)
+            {
+                this._bothSavesStarted.TrySetResult();
+            }
+
+            await this._bothSavesStarted.Task.WaitAsync(cancellationToken);
+            await base.SaveSessionAsync(agent, key, session, cancellationToken);
+        }
+    }
+
+    private sealed class RecordingSessionStore(AgentSession? session) : AgentSessionStore
+    {
+        public ConcurrentBag<AgentSessionStoreKey> Keys { get; } = [];
+
+        public override ValueTask<AgentSession?> GetSessionAsync(
+            AIAgent agent,
+            AgentSessionStoreKey key,
+            CancellationToken cancellationToken = default)
+        {
+            this.Keys.Add(key);
+            return new(session);
+        }
+
+        public override ValueTask SaveSessionAsync(
+            AIAgent agent,
+            AgentSessionStoreKey key,
+            AgentSession session,
+            CancellationToken cancellationToken = default)
+        {
+            this.Keys.Add(key);
+            return ValueTask.CompletedTask;
+        }
+    }
 }
