@@ -136,34 +136,24 @@ For calls to an **existing prompt or hosted agent**, use
 [`foundry_agent_tracing.py`](foundry_agent_tracing.py) and
 `await agent.configure_azure_monitor()`.
 
-Use **`azure-monitor-opentelemetry>=1.8.10,<2`** for HTTPX/HTTPX2
-auto-instrumentation. The OpenAI SDK uses these transports; their instrumentation
-injects W3C `traceparent` headers so Foundry's service spans join the client trace.
-Older Azure Monitor versions can export client spans successfully but leave the
-service spans in a separate trace. Upgrade an existing installation with:
+Install Azure Monitor 1.8.10 or later to connect client and service traces:
 
 ```shell
 pip install --upgrade "azure-monitor-opentelemetry>=1.8.10,<2"
 ```
 
-Run from `python/` using the workspace packages:
+Connect Application Insights to your project and set `FOUNDRY_PROJECT_ENDPOINT`
+and `FOUNDRY_AGENT_NAME`. `FOUNDRY_AGENT_VERSION` is required for PromptAgents
+and optional for HostedAgents. Run from `python/` using the workspace packages:
 
 ```powershell
 uv run --group test python samples\02-agents\observability\foundry_agent_tracing.py
 uv run --group test python samples\02-agents\observability\foundry_agent_tracing.py --stream
 ```
 
-Set `FOUNDRY_PROJECT_ENDPOINT` and `FOUNDRY_AGENT_NAME`. Set
-`FOUNDRY_AGENT_VERSION` for PromptAgents; it is optional for HostedAgents.
-Ensure Application Insights is connected to that project. No client-side
-project ARM ID override is needed for this setup.
-In Foundry, open **Build > Agents > your agent > Traces**, select the appropriate
-agent version and time range, and open the printed trace ID. Check that the
-waterfall contains both client and service spans in one connected tree; export
-to Application Insights alone does not prove correlation. Keep the agent
-available during inspection. If using application-managed exporters, configure
-Azure Monitor once with the same minimum version and the project's connected
-Application Insights destination before invoking the agent.
+View the connected trace under **Build > Agents > your agent > Traces** in
+Foundry. Select the agent version and a time range covering the run, then open
+the printed trace ID.
 
 Or with [Langfuse](https://langfuse.com/integrations/frameworks/microsoft-agent-framework):
 

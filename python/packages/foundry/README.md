@@ -10,29 +10,16 @@ which supports both OpenAI 2.x and 3.x.
 
 ## Tracing an existing Foundry agent
 
-Install `azure-monitor-opentelemetry>=1.8.10,<2` alongside this package to
-connect client and service traces:
+Install Azure Monitor to connect client and service traces:
 
 ```shell
 pip install --upgrade agent-framework-foundry "azure-monitor-opentelemetry>=1.8.10,<2"
 ```
 
-Use `await agent.configure_azure_monitor()` before invoking a `FoundryAgent`.
-The helper retrieves the project's connected Application Insights connection
-string and configures Azure Monitor and Agent Framework instrumentation.
-Azure Monitor 1.8.10 adds HTTPX/HTTPX2 auto-instrumentation, which propagates the
-client's trace context on the OpenAI SDK's outgoing requests. Older versions can
-export client spans while leaving Foundry service spans in a separate trace.
-
-This setup does not require a client-supplied project ARM ID or custom agent
-identity attributes. If your application configures Azure Monitor itself,
-use the same minimum version and the project's connected Application Insights
-destination instead of configuring a second exporter.
-
-See [the existing-agent tracing sample](../../samples/02-agents/observability/foundry_agent_tracing.py)
-for streaming and non-streaming calls. In Foundry, navigate to
-**Build > Agents > your agent > Traces**, select the agent version and a time
-range covering the run, and open the trace to inspect the client/server tree.
+With Application Insights connected to your project, call
+`await agent.configure_azure_monitor()` before invoking a `FoundryAgent`.
+See [the tracing sample](../../samples/02-agents/observability/foundry_agent_tracing.py)
+for streaming and non-streaming examples.
 
 ## Evaluations
 
