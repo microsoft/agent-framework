@@ -138,7 +138,15 @@ public sealed class CompactionProvider : AIContextProvider
             return context.AIContext;
         }
 
-        List<ChatMessage> messageList = allMessages as List<ChatMessage> ?? [.. allMessages];
+        List<ChatMessage> messageList =
+        [
+            .. allMessages.Select(message =>
+            {
+                ChatMessage clone = message.Clone();
+                clone.AdditionalProperties = message.AdditionalProperties?.Clone();
+                return clone;
+            })
+        ];
 
         State state = this._sessionState.GetOrInitializeState(session);
 

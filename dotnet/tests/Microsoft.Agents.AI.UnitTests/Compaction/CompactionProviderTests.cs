@@ -443,5 +443,42 @@ public sealed class CompactionProviderTests
         Assert.NotEqual(AgentRequestMessageSourceType.ChatHistory, resultList3[6].GetAgentRequestMessageSourceType());
     }
 
+    [Fact]
+    public async Task InvokingAsyncDoesNotMutateInputMessagesWhenMarkingChatHistoryAsync()
+    {
+        // Arrange
+        TruncationCompactionStrategy strategy = new(CompactionTriggers.TokensExceed(100000));
+        CompactionProvider provider = new(strategy);
+        Mock<AIAgent> mockAgent = new() { CallBase = true };
+        TestAgentSession session = new();
+        AdditionalPropertiesDictionary originalProperties = new() { ["custom"] = "value" };
+        ChatMessage userMessage = new(ChatRole.User, "Q1") { AdditionalProperties = originalProperties };
+
+        // Act — first invocation stores a copy of the input message in the compaction index.
+        await provider.InvokingAsync(new AIContextProvider.InvokingContext(
+            mockAgent.Object,
+            session,
+            new AIContext { Messages = new List<ChatMessage> { userMessage } }));
+
+        AIContext result = await provider.InvokingAsync(new AIContextProvider.InvokingContext(
+            mockAgent.Object,
+            session,
+            new AIContext
+            {
+                Messages = new List<ChatMessage>
+                {
+                    userMessage,
+                    new ChatMessage(ChatRole.Assistant, "A1")
+                }
+            }));
+
+        // Assert — marking the indexed copy as chat history must not mutate the caller's message or properties.
+        List<ChatMessage> resultMessages = [.. result.Messages!];
+        Assert.Same(originalProperties, userMessage.AdditionalProperties);
+        Assert.Equal("value", userMessage.AdditionalProperties!["custom"]);
+        Assert.NotEqual(AgentRequestMessageSourceType.ChatHistory, userMessage.GetAgentRequestMessageSourceType());
+        Assert.Equal(AgentRequestMessageSourceType.ChatHistory, resultMessages[0].GetAgentRequestMessageSourceType());
+    }
+
     private sealed class TestAgentSession : AgentSession;
 }
