@@ -243,8 +243,8 @@ class BaseToolExecutor(DeclarativeActionExecutor):
 
         return None
 
-    def _get_output_config(self) -> tuple[str | None, str | None, bool]:
-        """Parse output configuration from action definition.
+    def _get_output_config(self, state: DeclarativeWorkflowState) -> tuple[str | None, str | None, bool]:
+        """Parse output bindings and evaluate autoSend against the current state.
 
         Returns:
             Tuple of (messages_var, result_var, auto_send)
@@ -256,7 +256,7 @@ class BaseToolExecutor(DeclarativeActionExecutor):
 
         messages_var = output_config.get("messages")
         result_var = output_config.get("result")
-        auto_send = bool(output_config.get("autoSend", True))
+        auto_send = bool(state.eval_if_expression(output_config.get("autoSend", True)))
         return (
             str(messages_var) if messages_var else None,
             str(result_var) if result_var else None,
@@ -443,7 +443,7 @@ class BaseToolExecutor(DeclarativeActionExecutor):
         state = await self._ensure_state_initialized(ctx, trigger)
 
         # Parse output configuration early so we can store errors
-        messages_var, result_var, auto_send = self._get_output_config()
+        messages_var, result_var, auto_send = self._get_output_config(state)
 
         # Get and evaluate function name (required)
         function_name_expr = self._action_def.get("functionName")
@@ -526,7 +526,7 @@ class BaseToolExecutor(DeclarativeActionExecutor):
 
         function_name = original_request.function_name
         arguments = original_request.arguments
-        messages_var, result_var, auto_send = self._get_output_config()
+        messages_var, result_var, auto_send = self._get_output_config(state)
 
         # Check if approved
         if response.approved is not True:

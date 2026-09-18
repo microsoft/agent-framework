@@ -836,7 +836,9 @@ class TestAgentExecutorsCoverage:
         }
         executor = InvokeAzureAgentExecutor(action_def)
 
-        messages_var, response_obj, result_prop, auto_send = executor._get_output_config()
+        messages_var, response_obj, result_prop, auto_send = executor._get_output_config(
+            DeclarativeWorkflowState(mock_state)
+        )
         assert messages_var is None
         assert response_obj is None
         assert result_prop == "Local.result"
@@ -860,7 +862,9 @@ class TestAgentExecutorsCoverage:
         }
         executor = InvokeAzureAgentExecutor(action_def)
 
-        messages_var, response_obj, result_prop, auto_send = executor._get_output_config()
+        messages_var, response_obj, result_prop, auto_send = executor._get_output_config(
+            DeclarativeWorkflowState(mock_state)
+        )
         assert messages_var == "Local.ResponseMessages"
         assert response_obj == "Local.ParsedResponse"
         assert result_prop == "Local.result"
@@ -1773,6 +1777,143 @@ class TestHumanInputExecutorsCoverage:
 
 class TestAgentExternalLoopCoverage:
     """Tests for agent executor external loop handling."""
+
+    @_requires_powerfx
+    @pytest.mark.parametrize("string_result", [False, True])
+    @pytest.mark.parametrize(
+        ("output_config", "expected_auto_send"),
+        [
+            ({}, True),
+            ({"autoSend": True}, True),
+            ({"autoSend": False}, False),
+            ({"autoSend": None}, False),
+            ({"autoSend": "=true"}, True),
+            ({"autoSend": "=false"}, False),
+            ({"autoSend": "=Local.send"}, False),
+            ({"autoSend": "=Not(Local.send)"}, True),
+            ({"autoSend": "=Blank()"}, False),
+            ({"autoSend": "=Local.missing"}, False),
+            ({"autoSend": "false"}, True),
+        ],
+    )
+    async def test_agent_auto_send(
+        self,
+        mock_context: MagicMock,
+        mock_state: MagicMock,
+        output_config: dict[str, Any],
+        expected_auto_send: bool,
+        string_result: bool,
+    ) -> None:
+        from types import SimpleNamespace
+
+        from agent_framework_declarative._workflows._executors_agents import InvokeAzureAgentExecutor
+
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+        state.set("Local.send", False)
+        result = "hello" if string_result else SimpleNamespace(text="hello", messages=[], tool_calls=[])
+        agent = MagicMock(run=AsyncMock(return_value=result))
+        executor = InvokeAzureAgentExecutor(
+            {
+                "kind": "InvokeAzureAgent",
+                "agent": "TestAgent",
+                "input": "question",
+                "resultProperty": "Local.result",
+                "output": {"messages": "Local.messages", **output_config},
+            },
+            agents={"TestAgent": agent},
+        )
+
+        await executor.handle_action(ActionTrigger(), mock_context)
+
+        agent.run.assert_awaited_once()
+        if expected_auto_send:
+            mock_context.yield_output.assert_awaited_once_with("hello")
+        else:
+            mock_context.yield_output.assert_not_awaited()
+        assert state.get("Local.result") == "hello"
+        assert state.get("Local.messages") == "hello"
+        assert state.get("Conversation.messages")[-1].text == "hello"
+        mock_context.send_message.assert_awaited_once()
+
+    @_requires_powerfx
+    @pytest.mark.parametrize("send", [False, True])
+    async def test_agent_auto_send_on_external_loop_resume(
+        self, mock_context: MagicMock, mock_state: MagicMock, send: bool
+    ) -> None:
+        from agent_framework_declarative._workflows._executors_agents import (
+            AgentExternalInputResponse,
+            InvokeAzureAgentExecutor,
+        )
+
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+        state.set("Local.send", send)
+        agent = MagicMock(run=AsyncMock(return_value="hello"))
+        executor = InvokeAzureAgentExecutor(
+            {
+                "kind": "InvokeAzureAgent",
+                "agent": "TestAgent",
+                "input": {"externalLoop": {"when": "=true"}},
+                "output": {"property": "Local.result", "autoSend": "=Local.send"},
+            },
+            agents={"TestAgent": agent},
+        )
+
+        await executor.handle_action(ActionTrigger(), mock_context)
+        request = mock_context.request_info.call_args[0][0]
+        state.set("Local.send", not send)
+        mock_context.yield_output.reset_mock()
+
+        await executor.handle_external_input_response(
+            request, AgentExternalInputResponse(user_input="continue"), mock_context
+        )
+
+        assert agent.run.await_count == 2
+        if send:
+            mock_context.yield_output.assert_awaited_once_with("hello")
+        else:
+            mock_context.yield_output.assert_not_awaited()
+        assert state.get("Local.result") == "hello"
+
+    @_requires_powerfx
+    @pytest.mark.parametrize("kind", ["InvokeFunctionTool", "InvokeAzureAgent"])
+    @pytest.mark.parametrize("missing_engine", [False, True])
+    async def test_auto_send_evaluation_error_prevents_invocation(
+        self,
+        mock_context: MagicMock,
+        mock_state: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+        kind: str,
+        missing_engine: bool,
+    ) -> None:
+        from agent_framework_declarative._workflows._executors_agents import InvokeAzureAgentExecutor
+        from agent_framework_declarative._workflows._executors_tools import InvokeFunctionToolExecutor
+
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+        tool = MagicMock(return_value="hello")
+        agent = MagicMock(run=AsyncMock(return_value="hello"))
+        action_def = {
+            "kind": kind,
+            "agent": "TestAgent",
+            "functionName": "echo",
+            "output": {"autoSend": "=true" if missing_engine else "=1 +"},
+        }
+        executor = (
+            InvokeFunctionToolExecutor(action_def, tools={"echo": tool})
+            if kind == "InvokeFunctionTool"
+            else InvokeAzureAgentExecutor(action_def, agents={"TestAgent": agent})
+        )
+        if missing_engine:
+            monkeypatch.setattr("agent_framework_declarative._workflows._declarative_base.Engine", None)
+
+        with pytest.raises(RuntimeError if missing_engine else ValueError):
+            await executor.handle_action(ActionTrigger(), mock_context)
+
+        tool.assert_not_called()
+        agent.run.assert_not_awaited()
+        mock_context.yield_output.assert_not_awaited()
 
     @_requires_powerfx
     async def test_agent_executor_with_external_loop(self, mock_context, mock_state):
