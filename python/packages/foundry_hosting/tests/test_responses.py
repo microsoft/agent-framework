@@ -11,12 +11,13 @@ the registered _handle_create handler.
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import logging
 import os
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Mapping, Sequence
-from contextlib import asynccontextmanager
+from contextlib import aclosing, asynccontextmanager
 from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
@@ -73,12 +74,14 @@ from typing_extensions import Any
 from agent_framework_foundry_hosting import ResponsesHostServer
 from agent_framework_foundry_hosting._responses import (
     _INCOMPLETE_REASON_KEY,  # pyright: ignore[reportPrivateUsage]
+    _LATEST_CHECKPOINT_ID_KEY,  # pyright: ignore[reportPrivateUsage]
     CONSENT_ERROR_CODE,
     ConsentError,
     _item_to_message,  # pyright: ignore[reportPrivateUsage]
     _json_safe_to_str,  # pyright: ignore[reportPrivateUsage]
     _output_item_to_message,  # pyright: ignore[reportPrivateUsage]
     _OutputItemTracker,  # pyright: ignore[reportPrivateUsage]
+    _SignalledIterator,  # pyright: ignore[reportPrivateUsage]
     _stringify_mcp_output,  # pyright: ignore[reportPrivateUsage]
     consent_url_from_error,
 )
@@ -6467,6 +6470,84 @@ class TestResilientBackgroundCheckpointing:
 
         checkpoint_events = [e for e in events if isinstance(e, ResponseCheckpointEvent)]
         assert checkpoint_events, "expected at least one checkpoint event yielded for a resilient background run"
+
+    async def test_signalled_iterator_stamps_items_when_produced(self) -> None:
+        """The stamp reflects state as of production, not consumption.
+
+        The driver runs one item ahead: once the consumer holds item k, the wrapped iterator may
+        already have resumed and created a checkpoint after it. The stamp taken right after item k
+        was produced must not see that later checkpoint.
+        """
+        checkpoints: list[int] = []
+
+        async def produce() -> AsyncIterator[int]:
+            for k in range(1, 4):
+                yield k
+                # Runs when the iterator is resumed to produce the next item, i.e. after item k
+                # was handed over, mirroring the runner checkpointing at the end of a superstep.
+                checkpoints.append(k)
+
+        async def stamp() -> int:
+            return len(checkpoints)
+
+        seen: list[tuple[int, int, int]] = []
+        it = _SignalledIterator(produce(), asyncio.Event(), stamp=stamp)
+        async with aclosing(it):
+            async for item in it:
+                # Give the driver every chance to run ahead before we look at the stamp.
+                for _ in range(5):
+                    await asyncio.sleep(0)
+                seen.append((item, it.stamp, len(checkpoints)))
+
+        assert [(item, stamped) for item, stamped, _ in seen] == [(1, 0), (2, 1), (3, 2)]
+        # Consumption-time state had already moved past the stamped one for every item.
+        assert all(consumed > stamped for _, stamped, consumed in seen)
+
+    async def test_snapshots_pair_output_with_the_checkpoint_it_follows(self, tmp_path: Path) -> None:
+        """Every persisted snapshot must contain exactly the output emitted before it, and the final
+        snapshot must carry the full output and the incomplete reason.
+        """
+        workflow_agent = _build_text_workflow_agent("filtered by workflow", finish_reason="content_filter")
+        server = _make_server(
+            workflow_agent,
+            response_store=FileResponseStore(storage_dir=tmp_path),
+            options=ResponsesServerOptions(resilient_background=True),
+        )
+        request = CreateResponse(model="m", input="hi", background=True, stream=True, store=True)
+        context = ResponseContext(response_id="response-current", mode_flags=MagicMock())
+
+        emitted_text = ""
+        snapshots: list[tuple[str, dict[str, Any]]] = []
+        async for event in server._handle_response(  # pyright: ignore[reportPrivateUsage]
+            request, context, asyncio.Event()
+        ):
+            if isinstance(event, ResponseCheckpointEvent):
+                # The event references the live response; copy it as it is at persistence time.
+                snapshots.append((emitted_text, copy.deepcopy(dict(event.response))))
+            elif isinstance(event, Mapping) and event.get("type") == "response.output_text.delta":
+                emitted_text += str(event["delta"])
+
+        assert emitted_text == "filtered by workflow"
+        assert snapshots, "expected the completed workflow to be snapshotted"
+        checkpoint_ids: list[str] = []
+        for text_before, response in snapshots:
+            internal = json.loads(response["metadata"]["_internal_metadata"])
+            checkpoint_ids.append(internal[_LATEST_CHECKPOINT_ID_KEY])
+            snapshot_text = "".join(
+                part["text"]
+                for item in response["output"]
+                if item["type"] == "message"
+                for part in item["content"]
+                if part["type"] == "output_text"
+            )
+            assert snapshot_text == text_before
+        assert len(set(checkpoint_ids)) == len(checkpoint_ids), "each checkpoint is snapshotted once"
+
+        # The last snapshot is paired with the workflow's final checkpoint and carries everything.
+        final_text, final_response = snapshots[-1]
+        assert final_text == "filtered by workflow"
+        assert json.loads(final_response["metadata"]["_internal_metadata"])[_INCOMPLETE_REASON_KEY] == "content_filter"
+        assert final_response["status"] == "in_progress"
 
 
 # endregion

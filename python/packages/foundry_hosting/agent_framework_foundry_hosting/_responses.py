@@ -172,15 +172,27 @@ class _SignalledIterator(Generic[_T]):
     task -- and the real agent/workflow run it's pumping -- would otherwise be silently abandoned.
     """
 
-    def __init__(self, iterator: AsyncIterator[_T], *events: asyncio.Event) -> None:
+    def __init__(
+        self,
+        iterator: AsyncIterator[_T],
+        *events: asyncio.Event,
+        stamp: Callable[[], Awaitable[Any]] | None = None,
+    ) -> None:
         """Wrap an async iterator, stopping early if any of ``events`` fires.
 
         Args:
             iterator: The async iterator to wrap.
             events: One or more asyncio.Event objects to watch for. If any of them is set, iteration stops early.
+            stamp: Optional coroutine function the driver awaits right after the wrapped iterator produces an
+                item and before it is advanced again. Its result is exposed as :attr:`stamp` while that item
+                is the current one, which lets a consumer observe state (e.g. the latest persisted workflow
+                checkpoint) as it was when the item was produced rather than when it is consumed: the driver
+                runs one item ahead, so by consumption time the wrapped iterator may already have moved on.
         """
         self._iterator = iterator
         self._events = events
+        self._stamp_fn = stamp
+        self._stamp: Any = None
         self._signalled = False
         # The queue is used to communicate items from the background driver task to the main iteration loop.
         self._queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=1)
@@ -196,6 +208,11 @@ class _SignalledIterator(Generic[_T]):
         """
         return self._signalled
 
+    @property
+    def stamp(self) -> Any:
+        """The ``stamp`` result taken when the current item was produced (``None`` without a ``stamp``)."""
+        return self._stamp
+
     def __aiter__(self) -> _SignalledIterator[_T]:
         return self
 
@@ -205,13 +222,14 @@ class _SignalledIterator(Generic[_T]):
             while True:
                 try:
                     item: Any = await self._iterator.__anext__()
+                    stamp = await self._stamp_fn() if self._stamp_fn is not None else None
                 except StopAsyncIteration:
                     await self._queue.put(_STOP_SENTINEL)
                     return
                 except Exception as exc:
                     await self._queue.put(exc)
                     return
-                await self._queue.put(item)
+                await self._queue.put((item, stamp))
         finally:
             iterator: AsyncIterator[_T] = self._iterator
             if isinstance(iterator, ResponseStream):
@@ -252,6 +270,7 @@ class _SignalledIterator(Generic[_T]):
             raise StopAsyncIteration
         if isinstance(item, Exception):
             raise item
+        item, self._stamp = item
         return cast(_T, item)
 
     async def aclose(self) -> None:
@@ -969,12 +988,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             )
             async with aclosing(agent_stream):
                 async for update in agent_stream:
-                    tracker.record_finish_reason(update.finish_reason)
-                    for content in update.contents:
-                        async for event in tracker.handle(
-                            content, message_id=update.message_id, approval_storage=approval_storage
-                        ):
-                            yield event
+                    async for event in tracker.handle_update(update, approval_storage=approval_storage):
+                        yield event
         except (asyncio.CancelledError, GeneratorExit):
             request_interrupted = True
             raise
@@ -1167,42 +1182,57 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     checkpoint_storage=checkpoint_storage,
                 )
 
-            main_iter = _SignalledIterator(run_stream, context.shutdown, cancellation_signal)
+            workflow_name = agent.workflow.name
+
+            async def latest_checkpoint_id() -> str | None:
+                latest = await checkpoint_storage.get_latest(workflow_name=workflow_name)
+                return latest.checkpoint_id if latest is not None else None
+
+            def snapshot_response(
+                checkpoint_id: str | None,
+            ) -> Generator[ResponseStreamEvent | ResponseCheckpointEvent, None, None]:
+                # Pair the response output emitted so far with the workflow checkpoint it corresponds
+                # to, so recovery from that checkpoint replays exactly the updates that came after it.
+                if checkpoint_id is None or checkpoint_id == response_event_stream.internal_metadata.get(
+                    _LATEST_CHECKPOINT_ID_KEY
+                ):
+                    return
+                yield from tracker.close()
+                response_event_stream.internal_metadata[_LATEST_CHECKPOINT_ID_KEY] = checkpoint_id
+                yield response_event_stream.checkpoint()
+
+            main_iter = _SignalledIterator(
+                run_stream,
+                context.shutdown,
+                cancellation_signal,
+                # The runner creates a checkpoint at the end of each superstep, inside the generator
+                # that produces the updates (see RunnerImpl.run_until_convergence). Stamping each
+                # update with the latest checkpoint as it was produced tells which checkpoint the
+                # update follows; the driver runs one update ahead, so by the time an update is
+                # consumed the workflow may already have checkpointed past it.
+                stamp=latest_checkpoint_id if self._resilient_background else None,
+            )
             async with aclosing(main_iter):
                 async for update in main_iter:
                     if self._resilient_background:
-                        latest_checkpoint = await checkpoint_storage.get_latest(workflow_name=agent.workflow.name)
-                        if (
-                            latest_checkpoint is not None
-                            and latest_checkpoint.checkpoint_id
-                            != response_event_stream.internal_metadata.get(_LATEST_CHECKPOINT_ID_KEY)
-                        ):
-                            # A new checkpoint is created when we pull the next item from the stream
-                            # (see RunnerImpl.run_until_convergence). We only take a snapshot of the
-                            # response (response_event_stream.checkpoint()) once the checkpoint is
-                            # durably persisted. This means all items from the previous superstep
-                            # has been pulled thus we can safely close the tracker. The latest checkpoint
-                            # now reflects the state of the workflow that matches the response output.
-                            # Note that if a workflow crashes before any update is created, no response
-                            # snapshot is taken. However, upon recovery the workflow will still be resumed
-                            # from the latest checkpoint.
-                            for event in tracker.close():
-                                yield event
-                            response_event_stream.internal_metadata[_LATEST_CHECKPOINT_ID_KEY] = (
-                                latest_checkpoint.checkpoint_id
-                            )
-                            yield response_event_stream.checkpoint()
-
-                    tracker.record_finish_reason(update.finish_reason)
-                    for content in update.contents:
-                        async for event in tracker.handle(
-                            content, message_id=update.message_id, approval_storage=approval_storage
-                        ):
+                        # Every update before this one belongs to the stamped checkpoint (or an
+                        # earlier one), so the output so far can be snapshotted against it. If the
+                        # workflow crashes before any update is produced, no snapshot is taken and
+                        # recovery still resumes from the latest workflow checkpoint.
+                        for event in snapshot_response(main_iter.stamp):
                             yield event
+
+                    async for event in tracker.handle_update(update, approval_storage=approval_storage):
+                        yield event
             # Cancellation needs no extra action here (the loop above already stopped); shutdown
             # does, but only if it's what actually stopped the loop, not a natural completion.
             if main_iter.signalled and context.shutdown.is_set():
                 await context.exit_for_recovery()
+            elif self._resilient_background and not main_iter.signalled:
+                # The workflow ran to completion: pair its final checkpoint with the full output, so
+                # recovery after this point does not replay the last superstep.
+                for event in snapshot_response(await latest_checkpoint_id()):
+                    yield event
         except Exception:
             logger.exception("Failed to produce response for workflow agent")
             raise
@@ -1366,6 +1396,22 @@ class _OutputItemTracker:
         else:
             return
         self._stream.internal_metadata[_INCOMPLETE_REASON_KEY] = self._incomplete_reason.value
+
+    async def handle_update(
+        self,
+        update: AgentResponseUpdate,
+        *,
+        approval_storage: FunctionApprovalStore | None = None,
+    ) -> AsyncGenerator[ResponseStreamEvent]:
+        """Process one agent update: note its finish reason, then handle each of its contents.
+
+        This is the single entry point for both the plain-agent and the workflow loops, so the
+        finish reason cannot be forgotten on one of them.
+        """
+        self.record_finish_reason(update.finish_reason)
+        for content in update.contents:
+            async for event in self.handle(content, message_id=update.message_id, approval_storage=approval_storage):
+                yield event
 
     async def handle(
         self,
