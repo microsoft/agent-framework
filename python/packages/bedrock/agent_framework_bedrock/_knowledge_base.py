@@ -1,0 +1,288 @@
+# Copyright (c) Microsoft. All rights reserved.
+# type: ignore
+# Because the Bedrock boto3 client (bedrock-agent-runtime) does not ship type stubs, its
+# methods and responses are untyped, so we ignore type issues in this module. This matches
+# the convention already used in _chat_client.py.
+
+"""Amazon Bedrock Knowledge Base retrieval tool for Agent Framework."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Annotated, Any
+
+from agent_framework import FunctionTool
+from agent_framework._telemetry import get_user_agent, mark_feature_used
+from pydantic import BaseModel, Field
+
+from ._feature_usage import FeatureIndex
+
+if TYPE_CHECKING:
+    from botocore.client import BaseClient
+
+try:
+    import boto3
+    from botocore.config import Config as BotoConfig
+except ImportError as e:
+    raise ImportError(
+        "boto3 is required for BedrockKnowledgeBaseTool. Install it with: pip install boto3>=1.43.32"
+    ) from e
+
+logger = logging.getLogger("agent_framework.bedrock")
+
+
+def _get_source_uri(result: dict[str, Any]) -> str:
+    """Extract source URI from a standard Retrieve result location.
+
+    Handles every location variant in the Bedrock Retrieve response union
+    (per the boto3 >= 1.43.32 schema). Agentic results use a different schema
+    and derive their source from ``metadata._source_uri`` instead.
+    """
+    location = result.get("location", {})
+    if "s3Location" in location:
+        return location["s3Location"].get("uri", "")
+    if "webLocation" in location:
+        return location["webLocation"].get("url", "")
+    if "confluenceLocation" in location:
+        return location["confluenceLocation"].get("url", "")
+    if "sharePointLocation" in location:
+        return location["sharePointLocation"].get("url", "")
+    if "googleDriveLocation" in location:
+        return location["googleDriveLocation"].get("url", "")
+    if "oneDriveLocation" in location:
+        return location["oneDriveLocation"].get("url", "")
+    if "salesforceLocation" in location:
+        return location["salesforceLocation"].get("url", "")
+    if "kendraDocumentLocation" in location:
+        return location["kendraDocumentLocation"].get("uri", "")
+    if "sqlLocation" in location:
+        return location["sqlLocation"].get("query", "")
+    if "customDocumentLocation" in location:
+        return location["customDocumentLocation"].get("id", "")
+    return ""
+
+
+def _extract_content_text(result: dict[str, Any]) -> str:
+    """Extract passage text from a Retrieve result, handling every content type.
+
+    The Bedrock ``RetrievalResultContent`` union has a ``type`` of ``TEXT``, ``IMAGE``,
+    or ``ROW`` (SQL knowledge bases). A ``ROW`` result carries no ``text`` field — its
+    data is in ``row`` as a list of ``{columnName, columnValue}`` entries — so reading
+    only ``content.text`` would emit an empty passage and discard every column value.
+    This renders ROW columns as ``columnName: columnValue`` lines instead. An ``IMAGE``
+    result carries binary data in ``byteContent`` (not text); since this is a text
+    retrieval tool, it is rendered as a short placeholder rather than an empty string,
+    so it does not surface as a blank numbered result or a source header with no body.
+    """
+    content = result.get("content", {}) or {}
+    content_type = content.get("type", "TEXT")
+    if content_type == "ROW":
+        columns = content.get("row", []) or []
+        rendered = [
+            f"{col.get('columnName', '')}: {col.get('columnValue', '')}"
+            for col in columns
+            if col.get("columnName") or col.get("columnValue")
+        ]
+        return "\n".join(rendered)
+    if content_type == "IMAGE":
+        # Image payload lives in content.byteContent, not content.text. A text tool
+        # cannot render bytes, so emit a placeholder instead of an empty passage.
+        return "[image content omitted]"
+    # Default handling for the TEXT content type.
+    return content.get("text", "")
+
+
+@dataclass
+class _KnowledgeBasePassage:
+    """A single normalized passage from a standard Bedrock ``Retrieve`` response.
+
+    Shared representation so the tool and the context provider extract content,
+    source, and score in exactly one place. ``score`` is the numeric relevance
+    score standard ``Retrieve`` returns per chunk (agentic results have none).
+    """
+
+    content: str
+    source: str
+    score: float
+
+
+def _retrieve_standard_passages(
+    client: BaseClient,
+    knowledge_base_id: str,
+    query: str,
+    number_of_results: int,
+) -> list[_KnowledgeBasePassage]:
+    """Run the standard ``Retrieve`` API and normalize the results.
+
+    Single source of truth for the standard-retrieval request shape
+    (``managedSearchConfiguration``) and response normalization, so retrieval
+    options or SDK response changes are updated in one place. Callers format the
+    passages (the tool) or filter by score and frame them as context (the
+    provider) without duplicating the request or the extraction.
+    """
+    response = client.retrieve(
+        knowledgeBaseId=knowledge_base_id,
+        retrievalQuery={"text": query},
+        retrievalConfiguration={"managedSearchConfiguration": {"numberOfResults": number_of_results}},
+    )
+    return [
+        _KnowledgeBasePassage(
+            content=_extract_content_text(r),
+            source=_get_source_uri(r),
+            score=r.get("score", 0),
+        )
+        for r in response.get("retrievalResults", [])
+    ]
+
+
+class _BedrockKBQueryInput(BaseModel):
+    """Input schema for the Bedrock Knowledge Base tool."""
+
+    query: Annotated[str, Field(description="The search query to find relevant documents in the knowledge base.")]
+
+
+class BedrockKnowledgeBaseTool(FunctionTool):
+    """Tool that retrieves documents from Amazon Bedrock Knowledge Bases.
+
+    Subclasses FunctionTool so it can be passed directly to any Agent or ChatClient.
+
+    Usage:
+        from agent_framework_bedrock import BedrockKnowledgeBaseTool, BedrockChatClient
+        from agent_framework import Agent
+
+        tool = BedrockKnowledgeBaseTool(knowledge_base_id="YOUR_KB_ID")
+        agent = Agent(client=BedrockChatClient(model="..."), tools=[tool])
+    """
+
+    def __init__(
+        self,
+        *,
+        knowledge_base_id: str,
+        region_name: str = "us-east-1",
+        number_of_results: int = 5,
+        use_agentic_retrieval: bool = True,
+        client: BaseClient | None = None,
+        name: str = "bedrock_knowledge_base",
+        description: str = (
+            "Retrieves relevant documents from an Amazon Bedrock Knowledge Base. "
+            "Use this to answer questions that require specific knowledge or context."
+        ),
+    ) -> None:
+        """Create a Bedrock Knowledge Base tool.
+
+        Args:
+            knowledge_base_id: The Bedrock Knowledge Base ID.
+            region_name: AWS region name.
+            number_of_results: Maximum number of results to return.
+            use_agentic_retrieval: Use AgenticRetrieveStream for query decomposition + reranking.
+            client: Pre-configured bedrock-agent-runtime client. If not provided, one is created.
+            name: Tool name for model registration.
+            description: Tool description for model context.
+        """
+        self.knowledge_base_id = knowledge_base_id
+        self.region_name = region_name
+        self.number_of_results = number_of_results
+        self.use_agentic_retrieval = use_agentic_retrieval
+
+        if client is not None:
+            self._client = client
+        else:
+            self._client = boto3.client(
+                "bedrock-agent-runtime",
+                region_name=self.region_name,
+                config=BotoConfig(user_agent_extra=f"{get_user_agent()} bedrock-kb"),
+            )
+
+        super().__init__(
+            name=name,
+            description=description,
+            func=self._retrieve,
+            input_model=_BedrockKBQueryInput,
+        )
+
+    async def _retrieve(self, query: str) -> str:
+        """Retrieve documents from the knowledge base.
+
+        Args:
+            query: The search query.
+
+        Returns:
+            Formatted string of retrieval results.
+        """
+        mark_feature_used(FeatureIndex.BEDROCK)
+
+        if self.use_agentic_retrieval:
+            try:
+                results = await asyncio.to_thread(self._agentic_retrieve, query)
+                if results:
+                    return self._format_results(results)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.debug("Agentic retrieval failed, falling back: %s", e)
+
+        results = await asyncio.to_thread(self._standard_retrieve, query)
+        return self._format_results(results)
+
+    def _agentic_retrieve(self, query: str) -> list[dict[str, Any]]:
+        """Use AgenticRetrieveStream for query decomposition + managed reranking."""
+        response = self._client.agentic_retrieve_stream(
+            messages=[{"content": {"text": query}, "role": "user"}],
+            # This tool returns retrieval passages only; the agent's own model
+            # generates the final answer. AgenticRetrieveStream defaults to
+            # generating a response (streamed responseEvents we would discard),
+            # so disable it explicitly to avoid unnecessary generation latency/cost.
+            generateResponse=False,
+            retrievers=[
+                {
+                    "configuration": {
+                        "knowledgeBase": {
+                            "knowledgeBaseId": self.knowledge_base_id,
+                            "retrievalOverrides": {"maxNumberOfResults": self.number_of_results},
+                        }
+                    }
+                }
+            ],
+            agenticRetrieveConfiguration={
+                "foundationModelType": "MANAGED",
+                "rerankingModelType": "MANAGED",
+            },
+        )
+        results = []
+        for event in response.get("stream", []):
+            if "result" in event and "results" in event["result"]:
+                for r in event["result"]["results"]:
+                    # AgenticRetrieveStream results use a different schema than standard
+                    # Retrieve: they expose `content`/`metadata`/`sourceRetriever` and do
+                    # NOT include `score` or `location`. The source URI lives in metadata,
+                    # and managed reranking orders results without exposing a numeric score.
+                    metadata = r.get("metadata", {}) or {}
+                    results.append({
+                        "content": r.get("content", {}).get("text", ""),
+                        "source": metadata.get("_source_uri", ""),
+                        "score": None,
+                    })
+        return results
+
+    def _standard_retrieve(self, query: str) -> list[dict[str, Any]]:
+        """Use standard Retrieve API with managed search configuration."""
+        passages = _retrieve_standard_passages(self._client, self.knowledge_base_id, query, self.number_of_results)
+        return [{"content": p.content, "source": p.source, "score": p.score} for p in passages]
+
+    @staticmethod
+    def _format_results(results: list[dict[str, Any]]) -> str:
+        """Format retrieval results as a readable string."""
+        if not results:
+            return "No relevant documents found."
+        parts = []
+        for i, r in enumerate(results, 1):
+            source = r.get("source", "")
+            content = r.get("content", "")
+            score = r.get("score")
+            # Standard Retrieve results carry a numeric relevance score; agentic
+            # (managed reranking) results do not, so only render it when present.
+            header = f"[{i}] (score: {score:.3f})" if isinstance(score, (int, float)) else f"[{i}]"
+            parts.append(f"{header} {content}\n    Source: {source}")
+        return "\n\n".join(parts)

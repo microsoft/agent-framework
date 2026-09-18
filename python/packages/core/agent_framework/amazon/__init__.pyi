@@ -8,6 +8,8 @@ from agent_framework_bedrock import (
     BedrockEmbeddingOptions,
     BedrockEmbeddingSettings,
     BedrockGuardrailConfig,
+    BedrockKnowledgeBaseProvider,
+    BedrockKnowledgeBaseTool,
     BedrockSettings,
 )
 
@@ -19,6 +21,8 @@ __all__ = [
     "BedrockEmbeddingOptions",
     "BedrockEmbeddingSettings",
     "BedrockGuardrailConfig",
+    "BedrockKnowledgeBaseProvider",
+    "BedrockKnowledgeBaseTool",
     "BedrockSettings",
     "RawAnthropicBedrockClient",
 ]
