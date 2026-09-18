@@ -232,6 +232,10 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
   available, approval requests for known non-approval-required tools are treated as already approved, hidden, stored
   in session state keyed to the visible approval request ids from that batch, and reinjected only when that visible
   approval flow resumes.
+- Once a mixed approval/Host pause batch is complete, its ordered provider input and locally produced results remain
+  in a serializable two-phase outbox until the provider accepts them. Provider invalidation preserves the approval
+  authority, outbox, service continuation, and charged budget; retry replays the stored results without re-executing
+  local side effects.
 - Approval resume is an immutable response boundary: the function invocation layer normalizes a private copy of
   caller messages, returns approved and rejected terminal results in the resumed response (and stream) before any
   final assistant message, and does not mutate the caller's approval `Message` or the earlier approval-request

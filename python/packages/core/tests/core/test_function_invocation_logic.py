@@ -1186,16 +1186,23 @@ async def test_response_invalidation_short_circuits_current_iteration(
 
 
 @pytest.mark.parametrize("streaming", [False, True], ids=["non_streaming", "streaming"])
+@pytest.mark.parametrize("authoritative", [True, False], ids=["authoritative", "temporary"])
 async def test_response_invalidation_restores_structured_continuation_snapshot(
     chat_client_base: SupportsChatGetResponse,
     streaming: bool,
+    authoritative: bool,
 ) -> None:
     """Cleanup restores a copy when a provider mutates structured continuation state in place."""
     from agent_framework._sessions import AgentSession
+    from agent_framework._tools import _APPROVAL_SESSION_IS_AUTHORITATIVE_KEY
 
     original_service_session_id = {"conversation_id": "valid", "metadata": {"generation": 1}}
     session = AgentSession(service_session_id=original_service_session_id)
     invalidated = ResponseInvalidatedException("provider invalidated partial response output")
+    client_kwargs = {
+        "session": session,
+        _APPROVAL_SESSION_IS_AUTHORITATIVE_KEY: authoritative,
+    }
 
     def mutate_continuation() -> None:
         service_session_id = session.service_session_id
@@ -1222,7 +1229,7 @@ async def test_response_invalidation_restores_structured_continuation_snapshot(
             [Message(role="user", contents=["run"])],
             options={"tools": []},
             stream=True,
-            client_kwargs={"session": session},
+            client_kwargs=client_kwargs,
         )
         with pytest.raises(ResponseInvalidatedException):
             async for _ in stream:
@@ -1239,7 +1246,7 @@ async def test_response_invalidation_restores_structured_continuation_snapshot(
             await chat_client_base.get_response(
                 [Message(role="user", contents=["run"])],
                 options={"tools": []},
-                client_kwargs={"session": session},
+                client_kwargs=client_kwargs,
             )
 
     assert session.service_session_id == {"conversation_id": "valid", "metadata": {"generation": 1}}
@@ -2327,9 +2334,10 @@ async def test_stateless_sequential_approval_replay_preserves_model_order(
         for content in message.contents
         if content.type == "function_approval_request"
     ]
-    assert [
-        request.function_call.name for request in approval_requests if request.function_call is not None
-    ] == ["first_write", "second_write"]
+    assert [request.function_call.name for request in approval_requests if request.function_call is not None] == [
+        "first_write",
+        "second_write",
+    ]
 
     await chat_client_base.get_response(
         [
@@ -4708,8 +4716,64 @@ def test_stateless_mixed_batch_rejects_conflicting_identified_host_results() -> 
         ),
     ]
 
-    with pytest.raises(RuntimeError, match="Conflicting response for mixed pause occurrence 'host-occurrence'"):
+    with pytest.raises(RuntimeError, match="Conflicting Host response.*host-occurrence"):
         _stateless_mixed_pause_batch_status(messages)
+
+
+@pytest.mark.parametrize("identified", [False, True], ids=["idless", "identified"])
+def test_completed_stateless_mixed_batch_is_inert_when_later_turn_reuses_host_identity(identified: bool) -> None:
+    """A later id-less result with a reused call ID does not reopen a completed mixed batch."""
+    from agent_framework._tools import _stateless_mixed_pause_batch_status
+
+    approval_call = Content.from_function_call(
+        call_id="approval",
+        name="approval_func",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    host_request = Content.from_function_call(
+        call_id="reused-host",
+        name="host_func",
+        arguments={"round": 1},
+        id="host-occurrence",
+    )
+    host_request.user_input_request = True
+    host_result = Content.from_function_result(call_id="reused-host", result="first round")
+    host_result.id = "host-occurrence"
+    approval_result = Content.from_function_result(call_id="approval", result="approved")
+    later_host_request = Content.from_function_call(
+        call_id="reused-host",
+        name="host_func",
+        arguments={"round": 2},
+        id="host-occurrence" if identified else "later-host-occurrence",
+    )
+    later_host_request.user_input_request = True
+    later_host_result = Content.from_function_result(call_id="reused-host", result="second round")
+    if identified:
+        later_host_result.id = "host-occurrence"
+    messages = [
+        Message(role="assistant", contents=[approval_request, host_request]),
+        Message(
+            role="user",
+            contents=[
+                approval_request.to_function_approval_response(approved=True),
+                host_result,
+            ],
+        ),
+        Message(role="tool", contents=[approval_result]),
+        Message(role="assistant", contents=[later_host_request]),
+        Message(role="user", contents=[later_host_result]),
+    ]
+
+    incomplete, host_result_ids = _stateless_mixed_pause_batch_status(messages)
+
+    assert incomplete is False
+    assert host_result_ids == set()
+    assert messages[-1].contents == [later_host_result]
 
 
 def test_active_mixed_pause_ignores_historical_host_requests() -> None:
@@ -4782,6 +4846,670 @@ def test_active_mixed_pause_ignores_historical_host_requests() -> None:
         ("function_result", "current-host-occurrence"),
     ]
     assert host_result_ids == {id(messages[-1].contents[-1])}
+
+
+@pytest.mark.parametrize("identified_first", [True, False], ids=["identified-first", "idless-first"])
+def test_stateful_mixed_pause_matches_equal_identified_and_idless_host_responses(
+    identified_first: bool,
+) -> None:
+    """An identified Host result reserves its occurrence before an equal id-less sibling."""
+    from agent_framework._tools import (
+        _stage_pending_mixed_pause_responses,
+        _store_pending_approval_requests,
+        _store_pending_mixed_pause_batch,
+    )
+
+    session = AgentSession()
+    approval_call = Content.from_function_call(
+        call_id="approval-call",
+        name="approval_func",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    host_requests: list[Content] = []
+    for occurrence in (1, 2):
+        request = Content.from_function_call(
+            call_id="reused-call",
+            name="host_func",
+            arguments={"value": occurrence},
+            id=f"host-occurrence-{occurrence}",
+        )
+        request.user_input_request = True
+        host_requests.append(request)
+    _store_pending_approval_requests(session, [approval_request])
+    _store_pending_mixed_pause_batch(session, [[host_requests[0]], [approval_request], [host_requests[1]]])
+
+    identified = Content.from_function_result(call_id="reused-call", result={"same": True})
+    identified.id = "host-occurrence-2"
+    idless = Content.from_function_result(call_id="reused-call", result={"same": True})
+    host_results = [identified, idless] if identified_first else [idless, identified]
+    messages = [
+        Message(
+            role="user",
+            contents=[approval_request.to_function_approval_response(approved=True), *host_results],
+        )
+    ]
+
+    incomplete, completed, host_result_ids = _stage_pending_mixed_pause_responses(messages, session)
+
+    assert incomplete is False
+    assert completed is True
+    assert host_result_ids == {id(content) for content in messages[-1].contents if content.type == "function_result"}
+    assert [(content.type, content.id) for content in messages[-1].contents] == [
+        ("function_result", None),
+        ("function_approval_response", "approval-occurrence"),
+        ("function_result", "host-occurrence-2"),
+    ]
+
+
+def test_stateful_mixed_pause_matches_cross_turn_equal_identified_and_idless_host_responses() -> None:
+    """A later id-less result fills the sole unanswered occurrence instead of replaying an answered one."""
+    from agent_framework._tools import (
+        _stage_pending_mixed_pause_responses,
+        _store_pending_approval_requests,
+        _store_pending_mixed_pause_batch,
+    )
+
+    session = AgentSession()
+    approval_call = Content.from_function_call(
+        call_id="approval-call",
+        name="approval_func",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    host_requests: list[Content] = []
+    for occurrence in (1, 2):
+        request = Content.from_function_call(
+            call_id="reused-call",
+            name="host_func",
+            arguments={"value": occurrence},
+            id=f"host-occurrence-{occurrence}",
+        )
+        request.user_input_request = True
+        host_requests.append(request)
+    _store_pending_approval_requests(session, [approval_request])
+    _store_pending_mixed_pause_batch(session, [[host_requests[0]], [approval_request], [host_requests[1]]])
+
+    identified = Content.from_function_result(call_id="reused-call", result={"same": True})
+    identified.id = "host-occurrence-2"
+    approval_response = approval_request.to_function_approval_response(approved=True)
+    first_turn = [Message(role="user", contents=[approval_response, identified])]
+    incomplete, completed, _ = _stage_pending_mixed_pause_responses(first_turn, session)
+    assert incomplete is True
+    assert completed is False
+
+    idless = Content.from_function_result(call_id="reused-call", result={"same": True})
+    second_turn = [
+        Message(role="user", contents=[approval_response, identified]),
+        Message(role="user", contents=[idless]),
+    ]
+    incomplete, completed, host_result_ids = _stage_pending_mixed_pause_responses(second_turn, session)
+
+    assert incomplete is False
+    assert completed is True
+    assert host_result_ids == {id(content) for content in second_turn[-1].contents if content.type == "function_result"}
+    assert [(content.type, content.id) for content in second_turn[-1].contents] == [
+        ("function_result", None),
+        ("function_approval_response", "approval-occurrence"),
+        ("function_result", "host-occurrence-2"),
+    ]
+
+
+def test_stateless_conflicting_host_results_for_same_occurrence_fail_closed() -> None:
+    """Conflicting identified Host results cannot both claim one stateless occurrence."""
+    from agent_framework._tools import _stateless_mixed_pause_batch_status
+
+    approval_call = Content.from_function_call(
+        call_id="approval-call",
+        name="approval_func",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    host_request = Content.from_function_call(
+        call_id="host-call",
+        name="host_func",
+        arguments={},
+        id="host-occurrence",
+    )
+    host_request.user_input_request = True
+    first = Content.from_function_result(call_id="host-call", result="first")
+    first.id = "host-occurrence"
+    conflicting = Content.from_function_result(call_id="host-call", result="second")
+    conflicting.id = "host-occurrence"
+
+    with pytest.raises(RuntimeError, match="Conflicting Host response.*host-occurrence"):
+        _stateless_mixed_pause_batch_status([
+            Message(role="assistant", contents=[approval_call, approval_request, host_request]),
+            Message(
+                role="user",
+                contents=[
+                    approval_request.to_function_approval_response(approved=True),
+                    first,
+                    conflicting,
+                ],
+            ),
+        ])
+
+
+@pytest.mark.parametrize("stateful", [False, True], ids=["stateless", "stateful"])
+def test_extra_idless_conflicting_host_result_fails_closed(stateful: bool) -> None:
+    """An extra id-less result cannot bypass conflict detection after all Host occurrences are answered."""
+    from agent_framework._tools import (
+        _stage_pending_mixed_pause_responses,
+        _stateless_mixed_pause_batch_status,
+        _store_pending_approval_requests,
+        _store_pending_mixed_pause_batch,
+    )
+
+    approval_call = Content.from_function_call(
+        call_id="approval-call",
+        name="approval_func",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    host_requests: list[Content] = []
+    for occurrence in (1, 2):
+        request = Content.from_function_call(
+            call_id="reused-call",
+            name="host_func",
+            arguments={"value": occurrence},
+            id=f"host-occurrence-{occurrence}",
+        )
+        request.user_input_request = True
+        host_requests.append(request)
+    first = Content.from_function_result(call_id="reused-call", result="first")
+    second = Content.from_function_result(call_id="reused-call", result="second")
+    second.id = "host-occurrence-2"
+    conflicting = Content.from_function_result(call_id="reused-call", result="conflicting")
+    response_message = Message(
+        role="user",
+        contents=[
+            approval_request.to_function_approval_response(approved=True),
+            first,
+            second,
+            conflicting,
+        ],
+    )
+
+    with pytest.raises(RuntimeError, match="Conflicting Host response.*reused-call"):
+        if stateful:
+            session = AgentSession()
+            _store_pending_approval_requests(session, [approval_request])
+            _store_pending_mixed_pause_batch(
+                session,
+                [[host_requests[0]], [approval_request], [host_requests[1]]],
+            )
+            _stage_pending_mixed_pause_responses([response_message], session)
+        else:
+            _stateless_mixed_pause_batch_status([
+                Message(role="assistant", contents=[approval_request, *host_requests]),
+                response_message,
+            ])
+
+
+@pytest.mark.parametrize("stateful", [False, True], ids=["stateless", "stateful"])
+@pytest.mark.parametrize("equal_payloads", [False, True], ids=["distinct-payloads", "equal-payloads"])
+def test_extra_idless_equivalent_host_result_is_deduplicated(stateful: bool, equal_payloads: bool) -> None:
+    """An extra id-less replay is removed when it is equivalent to an accepted Host result."""
+    from agent_framework._tools import (
+        _stage_pending_mixed_pause_responses,
+        _stateless_mixed_pause_batch_status,
+        _store_pending_approval_requests,
+        _store_pending_mixed_pause_batch,
+    )
+
+    approval_call = Content.from_function_call(
+        call_id="approval-call",
+        name="approval_func",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    host_requests: list[Content] = []
+    for occurrence in (1, 2):
+        request = Content.from_function_call(
+            call_id="reused-call",
+            name="host_func",
+            arguments={"value": occurrence},
+            id=f"host-occurrence-{occurrence}",
+        )
+        request.user_input_request = True
+        host_requests.append(request)
+    first = Content.from_function_result(call_id="reused-call", result="first")
+    second_result = "first" if equal_payloads else "second"
+    second = Content.from_function_result(call_id="reused-call", result=second_result)
+    second.id = "host-occurrence-2"
+    replay = Content.from_function_result(call_id="reused-call", result="first")
+    response_message = Message(
+        role="user",
+        contents=[
+            approval_request.to_function_approval_response(approved=True),
+            first,
+            second,
+            replay,
+        ],
+    )
+    messages = [response_message]
+
+    if stateful:
+        session = AgentSession()
+        _store_pending_approval_requests(session, [approval_request])
+        _store_pending_mixed_pause_batch(
+            session,
+            [[host_requests[0]], [approval_request], [host_requests[1]]],
+        )
+        incomplete, completed, _ = _stage_pending_mixed_pause_responses(messages, session)
+        assert incomplete is False
+        assert completed is True
+    else:
+        messages.insert(0, Message(role="assistant", contents=[approval_request, *host_requests]))
+        incomplete, _ = _stateless_mixed_pause_batch_status(messages)
+        assert incomplete is False
+
+    normalized_results = [
+        content
+        for message in messages
+        for content in message.contents
+        if content.type == "function_result" and content.call_id == "reused-call"
+    ]
+    assert [(result.id, result.result) for result in normalized_results] == [
+        (None, "first"),
+        ("host-occurrence-2", second_result),
+    ]
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non_streaming", "streaming"])
+async def test_completed_mixed_batch_replays_serialized_outbox_after_provider_invalidation(
+    chat_client_base: SupportsChatGetResponse,
+    streaming: bool,
+) -> None:
+    """Invalidated delivery replays persisted results without repeating the approved side effect."""
+    from agent_framework import FunctionTool
+    from agent_framework._tools import (
+        _FUNCTION_INVOCATION_BUDGET_STATE_KEY,
+        _PENDING_APPROVAL_REQUESTS_KEY,
+        _PENDING_MIXED_PAUSE_BATCH_KEY,
+        _PENDING_PROVIDER_OUTBOX_KEY,
+        _TOOL_APPROVAL_STATE_KEY,
+    )
+
+    approved_calls = 0
+    provider_inputs: list[list[Message]] = []
+    published_results: list[tuple[str | None, Any]] = []
+    invalidated = ResponseInvalidatedException("provider invalidated result delivery")
+
+    @tool(name="approval_func", approval_mode="always_require")
+    def approval_func() -> str:
+        nonlocal approved_calls
+        approved_calls += 1
+        return "approved result"
+
+    host_func = FunctionTool(name="host_func", func=None, description="A Host-owned function")
+    host_call = Content.from_function_call(
+        call_id="host-call",
+        name="host_func",
+        arguments={},
+        id="host-occurrence",
+    )
+    approval_call = Content.from_function_call(
+        call_id="approval-call",
+        name="approval_func",
+        arguments={},
+        id="approval-occurrence",
+    )
+
+    def record_request(messages: Sequence[Message]) -> int:
+        provider_inputs.append([Message.from_dict(message.to_dict()) for message in messages])
+        return len(provider_inputs)
+
+    if streaming:
+
+        def scripted_stream(
+            *,
+            messages: Sequence[Message],
+            **kwargs: Any,
+        ) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+            del kwargs
+            call_number = record_request(messages)
+
+            async def updates() -> AsyncIterable[ChatResponseUpdate]:
+                if call_number == 1:
+                    yield ChatResponseUpdate(
+                        role="assistant",
+                        contents=[host_call, approval_call],
+                        finish_reason="tool_calls",
+                        conversation_id="mixed-continuation",
+                    )
+                elif call_number == 2:
+                    raise invalidated
+                    yield  # pragma: no cover
+                else:
+                    yield ChatResponseUpdate(
+                        role="assistant",
+                        contents=[Content.from_text("done")],
+                        finish_reason="stop",
+                        conversation_id="completed-continuation",
+                    )
+
+            return ResponseStream(updates(), finalizer=ChatResponse.from_updates)
+
+        chat_client_base._get_streaming_response = scripted_stream  # type: ignore[attr-defined, method-assign]  # ty: ignore[unresolved-attribute]
+    else:
+
+        async def scripted_response(
+            *,
+            messages: Sequence[Message],
+            **kwargs: Any,
+        ) -> ChatResponse:
+            del kwargs
+            call_number = record_request(messages)
+            if call_number == 1:
+                return ChatResponse(
+                    messages=Message(role="assistant", contents=[host_call, approval_call]),
+                    finish_reason="tool_calls",
+                    conversation_id="mixed-continuation",
+                )
+            if call_number == 2:
+                raise invalidated
+            return ChatResponse(
+                messages=Message(role="assistant", contents=["done"]),
+                finish_reason="stop",
+                conversation_id="completed-continuation",
+            )
+
+        chat_client_base._get_non_streaming_response = scripted_response  # type: ignore[attr-defined, method-assign]  # ty: ignore[unresolved-attribute]
+
+    chat_client_base.function_invocation_configuration["max_function_calls"] = 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    session = AgentSession()
+
+    async def run(contents: list[Content]) -> ChatResponse:
+        options: ChatOptions = {"tool_choice": "auto", "tools": [approval_func, host_func]}
+        if isinstance(session.service_session_id, str):
+            options["conversation_id"] = session.service_session_id
+        if not streaming:
+            return await chat_client_base.get_response(
+                [Message(role="user", contents=contents)],
+                options=options,
+                client_kwargs={"session": session},
+            )
+        response_stream = chat_client_base.get_response(
+            [Message(role="user", contents=contents)],
+            stream=True,
+            options=options,
+            client_kwargs={"session": session},
+        )
+        async for update in response_stream:
+            published_results.extend(
+                (content.call_id, content.result) for content in update.contents if content.type == "function_result"
+            )
+        return await response_stream.get_final_response()
+
+    first_response = await run([Content.from_text("go")])
+    approval_request = next(
+        content
+        for message in first_response.messages
+        for content in message.contents
+        if content.type == "function_approval_request"
+    )
+    host_request = next(
+        content
+        for message in first_response.messages
+        for content in message.contents
+        if content.type == "function_call" and content.user_input_request
+    )
+    host_result = Content.from_function_result(call_id="host-call", result="host result")
+    host_result.id = host_request.id
+
+    with pytest.raises(ResponseInvalidatedException):
+        await run([approval_request.to_function_approval_response(approved=True), host_result])
+    assert approved_calls == 1
+    tool_state = session.state[_TOOL_APPROVAL_STATE_KEY]
+    assert isinstance(tool_state, dict)
+    assert _PENDING_MIXED_PAUSE_BATCH_KEY in tool_state
+    assert _PENDING_APPROVAL_REQUESTS_KEY in tool_state
+    assert _PENDING_PROVIDER_OUTBOX_KEY in tool_state
+    budget_state = session.state[_FUNCTION_INVOCATION_BUDGET_STATE_KEY]
+    assert isinstance(budget_state, dict)
+    assert budget_state["total_function_calls"] == 1
+
+    session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+    final_response = await run([Content.from_text("retry")])
+
+    assert final_response.text == "done"
+    assert approved_calls == 1
+    assert len(provider_inputs) == 3
+    delivered_results = [
+        [
+            (content.call_id, content.result)
+            for message in request_messages
+            for content in message.contents
+            if content.type == "function_result"
+        ]
+        for request_messages in provider_inputs[1:]
+    ]
+    assert delivered_results == [
+        [("host-call", "host result"), ("approval-call", "approved result")],
+        [("host-call", "host result"), ("approval-call", "approved result")],
+    ]
+    assert published_results == ([("approval-call", "approved result")] if streaming else [])
+    final_tool_state = session.state[_TOOL_APPROVAL_STATE_KEY]
+    assert isinstance(final_tool_state, dict)
+    assert _PENDING_MIXED_PAUSE_BATCH_KEY not in final_tool_state
+    assert _PENDING_PROVIDER_OUTBOX_KEY not in final_tool_state
+    assert _FUNCTION_INVOCATION_BUDGET_STATE_KEY not in session.state
+
+
+@pytest.mark.parametrize(
+    "restored_time_ns",
+    [1_005_000_000_000, 995_000_000_000],
+    ids=["wall-clock-advanced", "wall-clock-rewound"],
+)
+def test_serialized_provider_outbox_rebases_duration_budget_across_monotonic_epochs(
+    monkeypatch: pytest.MonkeyPatch,
+    restored_time_ns: int,
+) -> None:
+    """A restored outbox preserves elapsed duration without comparing unrelated monotonic clocks."""
+    from agent_framework import _tools
+    from agent_framework._tools import (
+        _PENDING_PROVIDER_OUTBOX_KEY,
+        _TOOL_APPROVAL_STATE_KEY,
+        _apply_batch_limit_decision,
+        _persist_pending_provider_outbox_budget,
+        _restore_pending_provider_outbox_budget,
+    )
+
+    session = AgentSession()
+    session.state[_TOOL_APPROVAL_STATE_KEY] = {
+        _PENDING_PROVIDER_OUTBOX_KEY: {},
+    }
+    budget_state: dict[str, Any] = {
+        "start_time": 100.0,
+        "attempt_count": 1,
+        "total_function_calls": 1,
+    }
+    monkeypatch.setattr(_tools, "perf_counter", lambda: 110.0)
+    monkeypatch.setattr(_tools, "time_ns", lambda: 1_000_000_000_000)
+    _persist_pending_provider_outbox_budget(session, budget_state)
+
+    restored_budget: dict[str, Any] = {}
+    monkeypatch.setattr(_tools, "perf_counter", lambda: 5.0)
+    monkeypatch.setattr(_tools, "time_ns", lambda: restored_time_ns)
+    _restore_pending_provider_outbox_budget(session, restored_budget)
+    options: dict[str, Any] = {"tool_choice": "auto"}
+    _apply_batch_limit_decision(
+        "continue",
+        options,
+        restored_budget,
+        total_function_calls=1,
+        max_function_calls=None,
+        max_duration_seconds=12.0,
+    )
+
+    assert options["tool_choice"] == "none"
+    assert restored_budget["truncated"] is True
+    _persist_pending_provider_outbox_budget(session, restored_budget)
+    json.dumps(session.to_dict(), allow_nan=False)
+
+
+@pytest.mark.parametrize(
+    "serialized_budget",
+    [
+        {"start_time": 1_000_000.0, "attempt_count": 1, "total_function_calls": 1},
+        {
+            "elapsed_duration_seconds": -1.0,
+            "saved_at_time_ns": 1_000,
+            "attempt_count": 1,
+            "total_function_calls": 1,
+        },
+        {
+            "elapsed_duration_seconds": 1.0,
+            "saved_at_time_ns": 2_000,
+            "attempt_count": 1,
+            "total_function_calls": 1,
+        },
+    ],
+    ids=["legacy-monotonic", "negative-elapsed", "future-wall-clock"],
+)
+def test_untrusted_provider_outbox_duration_budget_fails_closed_after_restore(
+    monkeypatch: pytest.MonkeyPatch,
+    serialized_budget: dict[str, Any],
+) -> None:
+    """Untrusted duration metadata cannot relax the invocation budget."""
+    from agent_framework import _tools
+    from agent_framework._tools import (
+        _PENDING_PROVIDER_OUTBOX_KEY,
+        _TOOL_APPROVAL_STATE_KEY,
+        _apply_batch_limit_decision,
+        _restore_pending_provider_outbox_budget,
+    )
+
+    session = AgentSession()
+    session.state[_TOOL_APPROVAL_STATE_KEY] = {
+        _PENDING_PROVIDER_OUTBOX_KEY: {
+            "budget_state": serialized_budget,
+        },
+    }
+    monkeypatch.setattr(_tools, "perf_counter", lambda: 5.0)
+    monkeypatch.setattr(_tools, "time_ns", lambda: 1_000)
+    restored_budget: dict[str, Any] = {}
+    _restore_pending_provider_outbox_budget(session, restored_budget)
+    options: dict[str, Any] = {"tool_choice": "auto"}
+
+    _apply_batch_limit_decision(
+        "continue",
+        options,
+        restored_budget,
+        total_function_calls=1,
+        max_function_calls=None,
+        max_duration_seconds=12.0,
+    )
+
+    assert options["tool_choice"] == "none"
+    assert restored_budget["truncated"] is True
+
+
+@pytest.mark.parametrize(
+    "serialized_budget",
+    [
+        None,
+        [],
+        {"attempt_count": -1, "total_function_calls": 1},
+        {"attempt_count": 1, "total_function_calls": False},
+        {"attempt_count": "1", "total_function_calls": 1},
+    ],
+    ids=["missing", "non-mapping", "negative-attempt", "boolean-total", "string-attempt"],
+)
+def test_malformed_provider_outbox_budget_is_rejected(serialized_budget: Any) -> None:
+    """A pending outbox cannot replay with missing or invalid charged counters."""
+    from agent_framework._tools import (
+        _PENDING_PROVIDER_OUTBOX_KEY,
+        _TOOL_APPROVAL_STATE_KEY,
+        _restore_pending_provider_outbox_budget,
+    )
+
+    session = AgentSession()
+    session.state[_TOOL_APPROVAL_STATE_KEY] = {
+        _PENDING_PROVIDER_OUTBOX_KEY: {
+            "budget_state": serialized_budget,
+        },
+    }
+
+    with pytest.raises(RuntimeError, match="provider outbox contains an invalid budget"):
+        _restore_pending_provider_outbox_budget(session, {})
+
+
+@pytest.mark.parametrize("errors_in_a_row", [-1, False, "1", 1.5])
+def test_malformed_provider_outbox_error_counter_is_rejected(errors_in_a_row: Any) -> None:
+    """A restored outbox cannot weaken the consecutive-error limit with an invalid counter."""
+    from agent_framework._tools import (
+        _PENDING_PROVIDER_OUTBOX_KEY,
+        _TOOL_APPROVAL_STATE_KEY,
+        _FunctionProcessingResult,
+        _restore_pending_provider_outbox,
+        _store_pending_provider_outbox,
+    )
+
+    session = AgentSession()
+    _store_pending_provider_outbox(
+        session,
+        prepared_messages=[Message(role="user", contents=["provider input"])],
+        processing_result=_FunctionProcessingResult(
+            errors_in_a_row=1,
+            response_messages=(Message(role="tool", contents=["tool result"]),),
+        ),
+    )
+    approval_state = session.state[_TOOL_APPROVAL_STATE_KEY]
+    approval_state[_PENDING_PROVIDER_OUTBOX_KEY]["errors_in_a_row"] = errors_in_a_row
+
+    with pytest.raises(RuntimeError, match="provider outbox has an invalid error counter"):
+        _restore_pending_provider_outbox([], session)
+
+
+def test_missing_provider_outbox_error_counter_defaults_to_zero() -> None:
+    """An older outbox without an error counter resumes from the documented default."""
+    from agent_framework._tools import (
+        _PENDING_PROVIDER_OUTBOX_KEY,
+        _TOOL_APPROVAL_STATE_KEY,
+        _FunctionProcessingResult,
+        _restore_pending_provider_outbox,
+        _store_pending_provider_outbox,
+    )
+
+    session = AgentSession()
+    _store_pending_provider_outbox(
+        session,
+        prepared_messages=[Message(role="user", contents=["provider input"])],
+        processing_result=_FunctionProcessingResult(
+            errors_in_a_row=1,
+            response_messages=(Message(role="tool", contents=["tool result"]),),
+        ),
+    )
+    approval_state = session.state[_TOOL_APPROVAL_STATE_KEY]
+    del approval_state[_PENDING_PROVIDER_OUTBOX_KEY]["errors_in_a_row"]
+
+    restored = _restore_pending_provider_outbox([], session)
+
+    assert restored is not None
+    assert restored.errors_in_a_row == 0
 
 
 async def test_function_invocation_config_additional_tools(chat_client_base: SupportsChatGetResponse):
