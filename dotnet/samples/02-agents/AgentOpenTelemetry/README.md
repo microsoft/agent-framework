@@ -64,8 +64,12 @@ AIAgent agent = chatClient.AsAIAgent()
 ```
 
 Configure the host's existing OpenTelemetry tracing pipeline to subscribe to
-`MyCompany.BusinessAgent` with `AddSource`, and its metrics pipeline with
-`AddMeter` if collecting the corresponding metrics. Keep provider/exporter
+`MyCompany.BusinessAgent` with `AddSource`. For the underlying chat-client metrics,
+configure the metrics pipeline with `AddMeter("Experimental.Microsoft.Extensions.AI")`.
+The tracing `sourceName` does not rename this meter. This demo also creates an
+application meter named `SourceName`; its `AddMeter(SourceName)` registration
+collects those custom application metrics, not the chat-client metrics.
+Keep provider/exporter
 creation, lifetime, and disposal in the host or its distribution. Calling
 `UseOpenTelemetry` instruments the agent; it does not install an exporter or
 replace an existing `TracerProvider`.
