@@ -201,6 +201,8 @@ def discover_env_references(node: Any) -> set[str]:
     convention enforced by :meth:`DeclarativeWorkflowState.eval`).
     Shared containers are scanned once by identity without Python recursion.
     Cyclic mappings and lists are rejected rather than silently skipped.
+    This avoids repeated container traversal, but does not impose a definition-size,
+    depth, parsing-time, or execution budget.
 
     Args:
         node: A parsed workflow definition (typically the dict produced by
