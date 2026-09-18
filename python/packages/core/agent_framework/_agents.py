@@ -63,7 +63,12 @@ from ._types import (
     map_chat_to_agent_update,
     normalize_messages,
 )
-from .exceptions import AgentInvalidRequestException, AgentInvalidResponseException, UserInputRequiredException
+from .exceptions import (
+    AgentInvalidRequestException,
+    AgentInvalidResponseException,
+    ToolExecutionException,
+    UserInputRequiredException,
+)
 from .observability import AgentTelemetryLayer
 
 if sys.version_info >= (3, 13):
@@ -625,10 +630,22 @@ class BaseAgent(SerializationMixin):
             stream_callback: Optional callback for streaming responses. If provided, uses run(..., stream=True).
             propagate_session: If True, the parent agent's session is forwarded
                 to this sub-agent's ``run()`` call so both agents share the
-                same session. Defaults to False.
+                same state. Defaults to False. The sub-agent always receives an
+                AgentSession so session-backed middleware can run. When False,
+                that session is private to this invocation.
 
         Returns:
             A FunctionTool that can be used as a tool by other agents.
+
+        Note:
+            Child function approvals are not propagated into the calling agent.
+            Configure ToolApprovalMiddleware with runtime auto-approval rules on
+            the child for immediate policy decisions. Use a workflow when approval
+            is interactive, delayed, or durable.
+
+            When parent and child both use ToolApprovalMiddleware with
+            ``propagate_session=True``, configure distinct middleware ``source_id``
+            values so their shared session state does not overlap.
 
         Examples:
             .. code-block:: python
@@ -676,17 +693,16 @@ class BaseAgent(SerializationMixin):
                 ctx: the function invocation context used
                 **kwargs: only used to dynamically load the argument that is defined for this tool.
             """
-            session = ctx.session if propagate_session else None
+            parent_session = ctx.session
+            session = AgentSession()
 
             # Create a child session that shares the parent's state dict but has
             # an isolated service_session_id. This avoids mutating the parent
             # session in-place, which would race under concurrent asyncio.gather
             # tool invocations sharing the same session.
-            if session is not None:
-                child_session = AgentSession(session_id=session.session_id)
-                child_session.state = session.state  # shared by reference
-                child_session.service_session_id = None
-                session = child_session
+            if propagate_session and parent_session is not None:
+                session = AgentSession(session_id=parent_session.session_id)
+                session.state = parent_session.state  # shared by reference
 
             stream = self.run(
                 str(kwargs.get(arg_name, "")),
@@ -705,6 +721,24 @@ class BaseAgent(SerializationMixin):
                     if isawaitable(callback_result):
                         await callback_result
             final_response = await stream.get_final_response()
+            approval_requests = [
+                request for request in final_response.user_input_requests if request.type == "function_approval_request"
+            ]
+            if approval_requests:
+                requested_tools = sorted(
+                    {
+                        request.function_call.name or "<unknown>"
+                        for request in approval_requests
+                        if request.function_call is not None
+                    }
+                    or {"<unknown>"}
+                )
+                raise ToolExecutionException(
+                    f"Agent tool {tool_name!r} cannot continue because its sub-agent requested approval for "
+                    f"{', '.join(requested_tools)}. Configure ToolApprovalMiddleware with auto_approval_rules on "
+                    "the sub-agent for immediate policy decisions. Use a workflow for interactive, delayed, or "
+                    "durable approval."
+                )
             if final_response.user_input_requests:
                 raise UserInputRequiredException(contents=final_response.user_input_requests)
             # TODO(Copilot): update once #4331 merges

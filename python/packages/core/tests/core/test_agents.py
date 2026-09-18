@@ -41,6 +41,7 @@ from agent_framework import (
     SlidingWindowStrategy,
     SupportsAgentRun,
     SupportsChatGetResponse,
+    ToolApprovalMiddleware,
     ToolResultCompactionStrategy,
     TruncationStrategy,
     VectorStoreHistoryProvider,
@@ -51,7 +52,11 @@ from agent_framework import (
 from agent_framework._agents import _get_tool_name, _merge_options, _sanitize_agent_name
 from agent_framework._mcp import MCPTool, _build_prefixed_mcp_name, _normalize_mcp_name
 from agent_framework._middleware import FunctionInvocationContext
-from agent_framework.exceptions import AgentInvalidRequestException, ChatClientInvalidResponseException
+from agent_framework.exceptions import (
+    AgentInvalidRequestException,
+    ChatClientInvalidResponseException,
+    ToolExecutionException,
+)
 
 from .conftest import MockBaseChatClient
 
@@ -1698,6 +1703,186 @@ async def test_chat_agent_as_tool_function_execution(
     assert result[0].text == "test streaming response another update"  # From mock streaming client
 
 
+async def test_chat_agent_as_tool_auto_approves_child_tool_with_middleware() -> None:
+    """Test that child ToolApprovalMiddleware policies resolve approval during the delegated invocation."""
+    executions: list[str] = []
+    observed_calls: list[Content] = []
+
+    @tool(name="read_weather", approval_mode="always_require")
+    def read_weather(location: str) -> str:
+        executions.append(location)
+        return f"Weather for {location}"
+
+    def approve_weather(function_call: Content) -> bool:
+        observed_calls.append(function_call)
+        return function_call.name == "read_weather" and function_call.parse_arguments() == {"location": "Amsterdam"}
+
+    client = MockBaseChatClient()
+    client.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="weather-call",
+                        name="read_weather",
+                        arguments={"location": "Amsterdam"},
+                    )
+                ],
+            )
+        ],
+        [ChatResponseUpdate(role="assistant", contents=[Content.from_text("The weather is cloudy.")])],
+    ]
+    agent = Agent(
+        client=client,
+        name="WeatherAgent",
+        tools=[read_weather],
+        middleware=[ToolApprovalMiddleware(auto_approval_rules=[approve_weather])],
+    )
+
+    result = await agent.as_tool().invoke(arguments={"task": "Check Amsterdam weather"})
+
+    assert executions == ["Amsterdam"]
+    assert len(observed_calls) == 1
+    assert observed_calls[0].parse_arguments() == {"location": "Amsterdam"}
+    assert result[0].text == "The weather is cloudy."
+
+
+async def test_chat_agent_as_tool_fails_closed_for_unresolved_child_approval() -> None:
+    """Test that an unresolved child approval cannot escape into the caller's tool registry."""
+    executions = 0
+
+    @tool(name="delete_weather_data", approval_mode="always_require")
+    def delete_weather_data() -> str:
+        nonlocal executions
+        executions += 1
+        return "deleted"
+
+    client = MockBaseChatClient()
+    client.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="delete-call",
+                        name="delete_weather_data",
+                        arguments={},
+                    )
+                ],
+            )
+        ]
+    ]
+    agent = Agent(
+        client=client,
+        name="WeatherAgent",
+        tools=[delete_weather_data],
+        middleware=[ToolApprovalMiddleware(auto_approval_rules=[lambda function_call: False])],
+    )
+
+    with raises(
+        ToolExecutionException,
+        match=(
+            "sub-agent requested approval for delete_weather_data.*"
+            "ToolApprovalMiddleware.*Use a workflow for interactive, delayed, or durable approval"
+        ),
+    ):
+        await agent.as_tool().invoke(arguments={"task": "Delete weather data"})
+
+    assert executions == 0
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_chat_agent_as_tool_child_approval_does_not_dispatch_same_named_parent_tool(stream: bool) -> None:
+    """Test that child approval cannot escape and bind to a same-named parent tool."""
+    child_executions = 0
+    parent_executions = 0
+
+    @tool(name="guarded_write", approval_mode="always_require")
+    def child_guarded_write() -> str:
+        nonlocal child_executions
+        child_executions += 1
+        return "child"
+
+    @tool(name="guarded_write", approval_mode="never_require")
+    def parent_guarded_write() -> str:
+        nonlocal parent_executions
+        parent_executions += 1
+        return "parent"
+
+    child_client = MockBaseChatClient()
+    child_client.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="child-write",
+                        name="guarded_write",
+                        arguments={},
+                    )
+                ],
+            )
+        ]
+    ]
+    child_agent = Agent(client=child_client, name="ChildAgent", tools=[child_guarded_write])
+
+    parent_client = MockBaseChatClient()
+    parent_call = Content.from_function_call(
+        call_id="delegate-call",
+        name="delegate",
+        arguments={"task": "write"},
+    )
+    if stream:
+        parent_client.streaming_responses = [
+            [ChatResponseUpdate(role="assistant", contents=[parent_call])],
+            [
+                ChatResponseUpdate(
+                    role="assistant",
+                    contents=[Content.from_text("The delegated write was blocked.")],
+                )
+            ],
+        ]
+    else:
+        parent_client.run_responses = [
+            ChatResponse(
+                messages=Message(
+                    role="assistant",
+                    contents=[parent_call],
+                )
+            ),
+            ChatResponse(
+                messages=Message(
+                    role="assistant",
+                    contents=[Content.from_text("The delegated write was blocked.")],
+                )
+            ),
+        ]
+    parent_agent = Agent(
+        client=parent_client,
+        name="ParentAgent",
+        tools=[child_agent.as_tool(name="delegate"), parent_guarded_write],
+    )
+
+    if stream:
+        result = await parent_agent.run(
+            "Delegate the write.",
+            session=AgentSession(),
+            stream=True,
+        ).get_final_response()
+    else:
+        result = await parent_agent.run(
+            "Delegate the write.",
+            session=AgentSession(),
+            stream=False,
+        )
+
+    assert child_executions == 0
+    assert parent_executions == 0
+    assert not result.user_input_requests
+    assert result.text == "The delegated write was blocked."
+
+
 async def test_chat_agent_as_tool_with_stream_callback(
     client: SupportsChatGetResponse,
 ) -> None:
@@ -1820,8 +2005,8 @@ async def test_chat_agent_as_tool_propagate_session_true(client: SupportsChatGet
     assert captured_session.service_session_id is None
 
 
-async def test_chat_agent_as_tool_propagate_session_false_by_default(client: SupportsChatGetResponse) -> None:
-    """Test that propagate_session defaults to False and does not forward the session."""
+async def test_chat_agent_as_tool_uses_private_session_by_default(client: SupportsChatGetResponse) -> None:
+    """Test that the default private session supports child middleware without sharing parent state."""
     agent = Agent(client=client, name="SubAgent", description="Sub agent")
     tool = agent.as_tool()  # default: propagate_session=False
 
@@ -1845,7 +2030,10 @@ async def test_chat_agent_as_tool_propagate_session_false_by_default(client: Sup
         )
     )
 
-    assert captured_session is None
+    assert captured_session is not None
+    assert captured_session is not parent_session
+    assert captured_session.state is not parent_session.state
+    assert captured_session.service_session_id is None
 
 
 async def test_chat_agent_as_tool_propagate_session_shares_state(client: SupportsChatGetResponse) -> None:
