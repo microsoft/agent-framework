@@ -521,6 +521,8 @@ class BaseToolExecutor(DeclarativeActionExecutor):
         ``function_name`` and ``arguments`` are sourced from
         ``original_request`` (the payload the reviewer approved); output
         configuration is re-derived from the executor's action definition.
+        Rejected calls store the rejection and complete without evaluating
+        ``autoSend``.
         """
         state = self._get_state(ctx.state)
 
@@ -572,6 +574,12 @@ class BaseToolExecutor(DeclarativeActionExecutor):
 
 class InvokeFunctionToolExecutor(BaseToolExecutor):
     """Executor that invokes a Python function as a tool.
+
+    ``output.autoSend`` defaults to true and accepts a Boolean or a
+    ``=``-prefixed PowerFx Boolean expression, such as ``=Local.publishResult``.
+    Expressions use current state immediately before direct or approved
+    invocation. False suppresses automatic output, not tool execution or result
+    storage; later actions can explicitly emit the stored results.
 
     This executor supports invoking registered Python functions with:
     - Expression evaluation for functionName and arguments

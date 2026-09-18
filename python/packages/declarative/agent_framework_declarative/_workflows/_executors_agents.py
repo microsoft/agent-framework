@@ -506,6 +506,13 @@ def _normalize_variable_path(variable: str) -> str:
 class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
     """Executor that invokes a Microsoft Foundry agent.
 
+    ``output.autoSend`` defaults to true and accepts a Boolean or a
+    ``=``-prefixed PowerFx Boolean expression, such as ``=Local.publishResult``.
+    Expressions use current state before each invocation, including resumed
+    external-loop turns. False suppresses automatic output, not invocation,
+    result storage or conversation history; later actions can explicitly emit
+    the stored results.
+
     This executor supports both Python-style and .NET-style YAML schemas:
 
     Python-style (simple):

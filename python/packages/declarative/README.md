@@ -21,26 +21,6 @@ This package ships at two different stability levels:
 
 The declarative packages provides support for building agents based on a declarative yaml specification.
 
-## Workflow automatic output
-
-For `InvokeFunctionTool` and `InvokeAzureAgent`, `output.autoSend` accepts a
-Boolean or a `=`-prefixed PowerFx Boolean expression evaluated against the current
-workflow state. Omitting it defaults to `true`.
-
-```yaml
-output:
-  autoSend: =Local.publishResult
-```
-
-A false value suppresses automatic workflow output, not the invocation or storage
-of its results. Output variables and agent conversation history remain available;
-later actions such as `SendActivity` can explicitly emit those results.
-
-Tool actions evaluate the setting immediately before invoking the tool, including
-when resuming after approval. Rejected calls store the rejection and complete
-without evaluating `autoSend`. Agent external loops reevaluate the setting
-against the current state before each resumed invocation.
-
 ## HTTP request client ownership and cookies
 
 **Breaking change:** The HTTP client created by `DefaultHttpRequestHandler` no longer
