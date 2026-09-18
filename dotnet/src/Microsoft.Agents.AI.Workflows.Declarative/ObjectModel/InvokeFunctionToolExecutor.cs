@@ -136,6 +136,7 @@ internal sealed class InvokeFunctionToolExecutor(
             .SelectMany(m => m.Contents)
             .OfType<FunctionResultContent>()
             .FirstOrDefault(r => this.IsCorrelatedPendingNonApprovalResult(r, responseRequestId));
+        FunctionResultContent? approvedFunctionResult = null;
 
         // Legacy non-approval backstop: when no pendings are tracked and approval is
         // not required, accept a result whose CallId equals this.Id. The runtime has
@@ -186,6 +187,7 @@ internal sealed class InvokeFunctionToolExecutor(
                 else if (this._approvalSnapshots.TryRemove(approval.RequestId, out ApprovalSnapshot? snapshot))
                 {
                     matchingResult = await this.InvokeRegisteredFunctionAsync(approval.RequestId, snapshot, cancellationToken).ConfigureAwait(false);
+                    approvedFunctionResult = matchingResult;
                 }
                 else
                 {
@@ -226,7 +228,13 @@ internal sealed class InvokeFunctionToolExecutor(
         // actual AI-generated tool calls and would be rejected by the API.
         if (conversationId is not null)
         {
-            foreach (ChatMessage message in TransformConversationMessages(this.GetSideEffectMessages(response)))
+            IEnumerable<ChatMessage> sideEffectMessages = this.GetSideEffectMessages(response);
+            if (approvedFunctionResult is not null)
+            {
+                sideEffectMessages = sideEffectMessages.Append(new ChatMessage(ChatRole.Tool, [approvedFunctionResult]));
+            }
+
+            foreach (ChatMessage message in TransformConversationMessages(sideEffectMessages))
             {
                 await agentProvider.CreateMessageAsync(conversationId, message, cancellationToken).ConfigureAwait(false);
             }
@@ -379,8 +387,9 @@ internal sealed class InvokeFunctionToolExecutor(
         foreach (ChatMessage message in response.Messages)
         {
             List<AIContent> contents =
-                [.. message.Contents.Where(c => c is not FunctionResultContent functionResult
-                    || this.IsCorrelatedPendingNonApprovalResult(functionResult, response.RequestId))];
+                [.. message.Contents.Where(c => c is not ToolApprovalResponseContent
+                    && (c is not FunctionResultContent functionResult
+                        || this.IsCorrelatedPendingNonApprovalResult(functionResult, response.RequestId)))];
             if (contents.Count == message.Contents.Count)
             {
                 yield return message;

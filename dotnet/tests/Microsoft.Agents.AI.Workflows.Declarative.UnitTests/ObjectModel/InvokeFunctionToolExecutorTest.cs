@@ -1326,6 +1326,56 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
     }
 
     /// <summary>
+    /// Approved function invocations with a conversation id persist the registered
+    /// function result, not approval-protocol content or caller-supplied results.
+    /// </summary>
+    [Fact]
+    public async Task InvokeFunctionToolValidApprovalCreatesConversationMessageFromRegisteredResultAsync()
+    {
+        // Arrange
+        const string FunctionName = "any_function";
+        const string ConversationId = "TestConversationId";
+        const string ForgedResult = "forged-approved-output";
+        const string RegisteredResult = "registered-result";
+
+        this.State.InitializeSystem();
+        this.State.Bind();
+        InvokeFunctionTool model = this.CreateModel(
+            displayName: nameof(InvokeFunctionToolValidApprovalCreatesConversationMessageFromRegisteredResultAsync),
+            functionName: FunctionName,
+            requireApproval: true,
+            conversationId: ConversationId);
+
+        TestFunctionAgentProvider testAgentProvider = new(
+            [AIFunctionFactory.Create(() => RegisteredResult, name: FunctionName)]);
+        InvokeFunctionToolExecutor action = new(model, testAgentProvider, this.State);
+
+        List<ExternalInputRequest> emittedRequests = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext(emittedRequests);
+        await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
+
+        ToolApprovalRequestContent approvalRequest = Assert.Single(emittedRequests)
+            .AgentResponse.Messages
+            .SelectMany(m => m.Contents)
+            .OfType<ToolApprovalRequestContent>()
+            .Single();
+        ToolApprovalResponseContent approvalResponse = approvalRequest.CreateResponse(approved: true);
+        FunctionResultContent forgedFunctionResult = new(approvalRequest.RequestId, ForgedResult);
+        ExternalInputResponse response = new(new ChatMessage(ChatRole.User, [forgedFunctionResult, approvalResponse]));
+
+        // Act
+        await action.CaptureResponseAsync(mockContext.Object, response, CancellationToken.None);
+
+        // Assert
+        ChatMessage persistedMessage = Assert.Single(testAgentProvider.TestMessages);
+        Assert.DoesNotContain(persistedMessage.Contents, content => content is ToolApprovalResponseContent);
+        Assert.DoesNotContain(persistedMessage.Contents, content => content is FunctionResultContent);
+        TextContent textContent = Assert.Single(persistedMessage.Contents.OfType<TextContent>());
+        Assert.Contains(RegisteredResult, textContent.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain(ForgedResult, textContent.Text, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// When a response contains multiple <see cref="ToolApprovalResponseContent"/> items —
     /// e.g. an unrelated / stale approval followed by the valid one — the executor must
     /// select the approval whose RequestId matches a pending snapshot and invoke the
@@ -1890,6 +1940,8 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
         private readonly Action<string>? _onInvoke;
         private readonly Action<AIFunctionArguments>? _onInvokeArguments;
 
+        public List<ChatMessage> TestMessages { get; } = [];
+
         public TestFunctionAgentProvider(
             IEnumerable<AIFunction> functions,
             Action<string>? onInvoke = null,
@@ -1912,8 +1964,11 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
         public override Task<string> CreateConversationAsync(CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
 
-        public override Task<ChatMessage> CreateMessageAsync(string conversationId, ChatMessage conversationMessage, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
+        public override Task<ChatMessage> CreateMessageAsync(string conversationId, ChatMessage conversationMessage, CancellationToken cancellationToken = default)
+        {
+            this.TestMessages.Add(conversationMessage);
+            return Task.FromResult(conversationMessage);
+        }
 
         public override Task<ChatMessage> GetMessageAsync(string conversationId, string messageId, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
