@@ -46,6 +46,7 @@ from agent_framework.security import (
     VariableReferenceContent,
     combine_labels,
     get_current_middleware,
+    rewritten_arguments,
     store_untrusted_content,
 )
 
@@ -7569,3 +7570,242 @@ class TestVariableArgumentPolicy:
 
         assert executed is True
         assert replay.metadata["user_approved_violation"] is True
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_no_rewrites():
+    """Verify normal/non-expanded path returns empty dict."""
+    tracker = LabelTrackingFunctionMiddleware()
+    captured = {}
+
+    async def my_tool(files: list[str]):
+        captured["rewritten"] = rewritten_arguments()
+        return "ok"
+
+    tool = FunctionTool(
+        name="my_tool",
+        func=my_tool,
+        additional_properties={"accepts_untrusted": True},
+    )
+
+    context = FunctionInvocationContext(
+        function=tool,
+        arguments={"files": ["one.txt", "two.txt"]},
+    )
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+
+    assert captured["rewritten"] == {}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_explicit_context():
+    """Verify the explicit context API works inside a tool."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id = store.store("payload", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+
+    captured = {}
+
+    async def my_tool(files: list[str], context: FunctionInvocationContext):
+        captured["explicit"] = rewritten_arguments(context)
+        captured["implicit"] = rewritten_arguments()
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(function=tool, arguments={"files": [f"[{var_id}]", "safe.txt"]})
+
+    async def call_next():
+        await tool.func(files=context.arguments["files"], context=context)
+
+    await tracker.process(context, call_next)
+
+    assert captured["explicit"] == {"files": {0}}
+    assert captured["implicit"] == {"files": {0}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_multiple_args():
+    """Verify tracking works across multiple top-level arguments."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id1 = store.store("file_content", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+    var_id2 = store.store("msg_content", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+
+    captured = {}
+
+    async def my_tool(files: list[str], message: str):
+        captured["rewritten"] = rewritten_arguments()
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(
+        function=tool, arguments={"files": [f"[{var_id1}]", "safe.txt"], "message": f"[{var_id2}]"}
+    )
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+
+    assert captured["rewritten"] == {"files": {0}, "message": {-1}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_duplicate_equal_values():
+    """Test that duplicate/equal final values are tracked per position."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+
+    var_id1 = store.store("same_string", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+    var_id2 = store.store("same_string", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+
+    captured = {}
+
+    async def my_tool(files: list[str]):
+        captured["rewritten"] = rewritten_arguments()
+        captured["received"] = files
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(
+        function=tool, arguments={"files": [f"[{var_id1}]", f"[{var_id2}]", "normal.txt"]}
+    )
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+
+    assert captured["received"] == ["same_string", "same_string", "normal.txt"]
+    assert captured["rewritten"] == {"files": {0, 1}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_multiple_list_positions():
+    """Test multiple list positions alongside untouched positions."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id = store.store("payload", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+
+    captured = {}
+
+    async def my_tool(files: list[str]):
+        captured["rewritten"] = rewritten_arguments()
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(
+        function=tool, arguments={"files": [f"[{var_id}]", "untouched.txt", f"[{var_id}]"]}
+    )
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+
+    assert captured["rewritten"] == {"files": {0, 2}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_scalar():
+    """Test scalar (non-list) arguments."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id = store.store("payload", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+
+    captured = {}
+
+    async def my_tool(text: str):
+        captured["rewritten"] = rewritten_arguments()
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(function=tool, arguments={"text": f"[{var_id}]"})
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+
+    assert captured["rewritten"] == {"text": {-1}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_nested_dict_semantics():
+    """Test that nested rewrites are reported against the top-level argument."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id = store.store("payload", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+
+    captured = {}
+
+    async def my_tool(config: dict):
+        captured["rewritten"] = rewritten_arguments()
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(function=tool, arguments={"config": {"path": f"[{var_id}]", "safe": "txt"}})
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+
+    assert captured["rewritten"] == {"config": {-1}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_asyncio_to_thread():
+    """Verify async/thread/context behavior with asyncio.to_thread."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id = store.store("thread_content", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+
+    captured = {}
+
+    async def threaded_tool(files: list[str]):
+        def worker():
+            return rewritten_arguments()
+
+        captured["rewritten"] = await asyncio.to_thread(worker)
+        return "ok"
+
+    tool = FunctionTool(name="threaded_tool", func=threaded_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(function=tool, arguments={"files": [f"[{var_id}]", "safe.txt"]})
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+
+    assert captured["rewritten"] == {"files": {0}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_integer_keyed_dict():
+    """Test that integer-keyed dictionaries are not treated as lists."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id = store.store("payload", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+
+    captured = {}
+
+    async def my_tool(config: dict):
+        captured["rewritten"] = rewritten_arguments()
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(
+        function=tool,
+        arguments={"config": {0: f"[{var_id}]", 1: "safe.txt"}},
+    )
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+    assert captured["rewritten"] == {"config": {-1}}
