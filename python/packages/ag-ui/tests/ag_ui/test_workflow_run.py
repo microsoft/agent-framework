@@ -221,9 +221,7 @@ async def test_builder_checkpoint_storage_attaches_id_without_run_arg() -> None:
     storage = InMemoryCheckpointStorage()
     workflow = WorkflowBuilder(start_executor=ApprovalExecutor(), checkpoint_storage=storage).build()
     # Deliberately omit checkpoint_storage= on the AG-UI entrypoint (builder path only).
-    events = [
-        event async for event in run_workflow_stream({"messages": [{"role": "user", "content": "go"}]}, workflow)
-    ]
+    events = [event async for event in run_workflow_stream({"messages": [{"role": "user", "content": "go"}]}, workflow)]
     finished = [event for event in events if event.type == "RUN_FINISHED"][0]
     interrupt_payload = _interrupts_from_run_finished(finished)
     checkpoints = await storage.list_checkpoints(workflow_name=workflow.name)

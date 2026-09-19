@@ -138,7 +138,7 @@ _TELEMETRY_CONVERSATION_ID: Final[contextvars.ContextVar[str | None]] = contextv
 
 
 @contextlib.contextmanager
-def _use_telemetry_conversation_id(  # pyright: ignore[reportUnusedFunction]
+def _use_telemetry_conversation_id(
     conversation_id: str | None,
 ) -> Generator[None]:
     """Set an application-managed OTel conversation id for the current execution."""

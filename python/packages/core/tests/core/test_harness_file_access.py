@@ -12,6 +12,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import regex
 
 from agent_framework import (
     Agent,
@@ -254,7 +255,7 @@ async def test_in_memory_store_search_rejects_invalid_and_oversize_regex() -> No
     store = InMemoryAgentFileStore()
     await store.write("a.md", "hello")
 
-    with pytest.raises(re.error):
+    with pytest.raises(regex.error):
         await store.search("", "[unclosed")
 
     with pytest.raises(ValueError, match="too long"):
@@ -929,6 +930,102 @@ async def test_run_search_with_timeout_raises_value_error(monkeypatch: pytest.Mo
         await _run_search_with_timeout(slow_pipeline())
 
 
+# region ReDoS guard
+
+# A pattern that forces catastrophic backtracking, plus a subject it cannot match.
+#
+# ``(a+)+$`` is the textbook example and the one the .NET suite uses, but it is useless
+# here: the ``regex`` engine optimises it away and returns instantly, so it would pass
+# against an unguarded implementation and prove nothing. ``(a|a)*$`` still backtracks
+# exponentially under both engines, so it actually exercises the guard.
+#
+# The trap is sized so an unguarded ``re`` scan takes tens of seconds -- long enough to
+# fail the assertions below decisively, short enough that a regression cannot wedge CI
+# forever. Every doubling of the length doubles the unguarded runtime.
+_REDOS_PATTERN = r"(a|a)*$"
+_REDOS_TRAP = "a" * 26 + "!"
+
+# Deadline used by the guard tests. Short, because a working guard returns at the
+# deadline; only a broken one runs long.
+_REDOS_TIMEOUT_SECONDS = 0.3
+
+
+async def _assert_search_is_bounded(
+    store: AgentFileStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Assert a ReDoS pattern is refused promptly without stalling the event loop.
+
+    Two properties are checked, because either one alone can pass against a broken
+    implementation:
+
+    * The search returns (as a ``ValueError``) close to the deadline rather than
+      running the match to completion.
+    * A concurrent task keeps being scheduled *throughout* the search. This is the
+      property the original report turned on: offloading the scan to a worker thread
+      bounds nothing on its own, because CPython's ``re`` engine holds the GIL for the
+      duration of a single match, so the timeout cannot fire and unrelated work on the
+      same loop stops.
+    """
+    monkeypatch.setattr(_file_access_module, "_SEARCH_TIMEOUT_SECONDS", _REDOS_TIMEOUT_SECONDS)
+    await store.write("trap.txt", _REDOS_TRAP)
+
+    beats = 0
+    stop = asyncio.Event()
+
+    async def heartbeat() -> None:
+        nonlocal beats
+        while not stop.is_set():
+            await asyncio.sleep(_REDOS_TIMEOUT_SECONDS / 10)
+            beats += 1
+
+    beating = asyncio.create_task(heartbeat())
+    # Let the heartbeat reach its first await so the count reflects the search window only.
+    await asyncio.sleep(0)
+    started = time.monotonic()
+    try:
+        with pytest.raises(ValueError, match="did not complete"):
+            await store.search("", _REDOS_PATTERN)
+        elapsed = time.monotonic() - started
+    finally:
+        stop.set()
+        beating.cancel()
+        await asyncio.gather(beating, return_exceptions=True)
+
+    # Generous ceiling: the point is that the deadline is enforced at all, not that it is
+    # precise. An unguarded scan overshoots by orders of magnitude, not by a factor of ten.
+    assert elapsed < _REDOS_TIMEOUT_SECONDS * 10, f"search overran its deadline: {elapsed:.2f}s"
+    assert beats >= 2, f"event loop stalled during the search: {beats} heartbeat(s)"
+
+
+async def test_in_memory_store_search_bounds_catastrophic_backtracking(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A ReDoS pattern must not wedge the in-memory store's scan."""
+    await _assert_search_is_bounded(InMemoryAgentFileStore(), monkeypatch)
+
+
+async def test_filesystem_store_search_bounds_catastrophic_backtracking(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A ReDoS pattern must not wedge the filesystem store's scan."""
+    await _assert_search_is_bounded(FileSystemAgentFileStore(tmp_path), monkeypatch)
+
+
+async def test_base_search_pipeline_bounds_catastrophic_backtracking(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The inherited ``search`` pipeline must be bounded too.
+
+    A store that implements only the mandatory members gets this pipeline for free, so
+    it is the shape most third-party stores will run.
+    """
+    await _assert_search_is_bounded(_ContentOnlyStore(), monkeypatch)
+
+
+# endregion
+
+
 async def test_filesystem_store_symlink_probe_fails_closed_on_oserror(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1075,7 +1172,7 @@ async def test_file_access_tool_wrappers_surface_value_error_as_message(
 
     # An invalid regex is surfaced to the caller (the model) as a raised error
     # so it can correct the pattern and retry.
-    with pytest.raises(re.error):
+    with pytest.raises(regex.error):
         await search.invoke(arguments={"regex_pattern": "[unclosed"})
 
 

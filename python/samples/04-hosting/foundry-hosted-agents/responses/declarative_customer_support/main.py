@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from typing import Any, Literal
 
-from agent_framework import Agent
+from agent_framework import Agent, WorkflowAgent
 from agent_framework.foundry import FoundryChatClient, ResponsesHostServer
 from agent_framework_declarative import WorkflowFactory
 from agent_framework_openai import OpenAIChatOptions
@@ -86,15 +86,8 @@ ask for them one at a time. Keep responses short and polite.
 # --- Host setup ------------------------------------------------------------------
 
 
-def main() -> None:
-    workflow_path = Path(__file__).parent / "workflow.yaml"
-
-    client = FoundryChatClient(
-        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-        credential=DefaultAzureCredential(),
-    )
-
+def create_workflow_agent(client: FoundryChatClient, workflow_path: Path) -> WorkflowAgent:
+    """Create a fresh declarative workflow agent for one hosted request."""
     # The workflow's InvokeAzureAgent actions reference these agents by name.
     triage_agent = Agent(
         client=client,
@@ -128,7 +121,7 @@ def main() -> None:
     # Wrap the declarative workflow as an AIAgent so it can be served behind
     # the Responses protocol. Each user turn re-runs the workflow with the
     # full conversation history available via Conversation.messages.
-    workflow_agent = workflow.as_agent(
+    return workflow.as_agent(
         name="declarative-customer-support",
         description=(
             "A multi-turn customer-support triage workflow that routes "
@@ -137,7 +130,16 @@ def main() -> None:
         ),
     )
 
-    ResponsesHostServer(workflow_agent).run()
+
+def main() -> None:
+    workflow_path = Path(__file__).parent / "workflow.yaml"
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=DefaultAzureCredential(),
+    )
+
+    ResponsesHostServer(agent=lambda: create_workflow_agent(client, workflow_path)).run()
 
 
 if __name__ == "__main__":
