@@ -55,11 +55,23 @@ internal sealed class FoundryToolboxBearerTokenHandler : DelegatingHandler
         request.Headers.TryAddWithoutValidation("Foundry-Features", BuildFeaturesHeaderValue(this._additionalFeaturesHeaderValue));
 
         // Per PlatformContext, forward the platform per-request call id (x-agent-foundry-call-id,
-        // container protocol 2.0.0) so the toolbox proxy can resolve the server-side caller context.
+        // container protocol 2.0.0) and user id (x-agent-user-id) so the toolbox proxy can resolve the server-side caller context.
         var callId = HostedCallContext.CallId;
-        if (!string.IsNullOrWhiteSpace(callId) && !request.Headers.Contains("x-agent-foundry-call-id"))
+        if (!string.IsNullOrWhiteSpace(callId))
         {
+            // This header is a trusted, request-scoped platform context. Do not let a header copied
+            // from a reused request message win over the live context: that could bind an OAuth
+            // consent session to a different caller (or to a previous request's managed-identity
+            // context). The proxy uses this value to resolve the human caller behind the container.
+            request.Headers.Remove("x-agent-foundry-call-id");
             request.Headers.TryAddWithoutValidation("x-agent-foundry-call-id", callId);
+        }
+
+        var userId = HostedCallContext.UserId;
+        if (!string.IsNullOrWhiteSpace(userId))
+        {
+            request.Headers.Remove("x-agent-user-id");
+            request.Headers.TryAddWithoutValidation("x-agent-user-id", userId);
         }
 
         PropagateTraceContext(request);
