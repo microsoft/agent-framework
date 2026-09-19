@@ -111,6 +111,23 @@ def _get_additional_properties(obj: Any) -> dict[str, Any]:
     return cast(dict[str, Any], props) if isinstance(props, dict) else {}
 
 
+def _top_level_argument_value(context: FunctionInvocationContext, arg_name: str) -> tuple[Any, str | None]:
+    """Locate a top-level argument value in either context.arguments or context.kwargs.
+
+    Returns the value and a string indicating its source ('arguments' or 'kwargs'),
+    or (None, None) if not found.
+    """
+    args = cast(Any, context.arguments)
+    if isinstance(args, Mapping) and arg_name in args:
+        return cast(Any, args[arg_name]), "arguments"
+
+    kwargs = cast(Any, context.kwargs)
+    if isinstance(kwargs, Mapping) and arg_name in kwargs:
+        return cast(Any, kwargs[arg_name]), "kwargs"
+
+    return None, None
+
+
 @dataclass(frozen=True, order=True, slots=True)
 class _Principal:
     """Canonical tenant/user identity used internally for comparisons."""
@@ -1628,10 +1645,20 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         for path in rewritten_paths:
             if not path or not isinstance(path[0], str):
                 continue
+
             arg_name = path[0]
             if arg_name not in rewritten_args:
                 rewritten_args[arg_name] = set()
-            if len(path) > 1 and isinstance(path[1], int):
+
+            arg_value, arg_source = _top_level_argument_value(context, arg_name)
+
+            if (
+                arg_source is not None
+                and len(path) > 1
+                and isinstance(path[1], int)
+                and not isinstance(path[1], bool)
+                and isinstance(arg_value, (list, tuple))
+            ):
                 rewritten_args[arg_name].add(path[1])
             else:
                 rewritten_args[arg_name].add(-1)

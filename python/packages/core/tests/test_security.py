@@ -7783,3 +7783,29 @@ async def test_rewritten_arguments_asyncio_to_thread():
     await tracker.process(context, call_next)
 
     assert captured["rewritten"] == {"files": {0}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_integer_keyed_dict():
+    """Test that integer-keyed dictionaries are not treated as lists."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id = store.store("payload", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+
+    captured = {}
+
+    async def my_tool(config: dict):
+        captured["rewritten"] = rewritten_arguments()
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(
+        function=tool,
+        arguments={"config": {0: f"[{var_id}]", 1: "safe.txt"}},
+    )
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+    assert captured["rewritten"] == {"config": {-1}}
