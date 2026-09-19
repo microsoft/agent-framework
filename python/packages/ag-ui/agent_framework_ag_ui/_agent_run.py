@@ -3341,13 +3341,40 @@ async def _run_agent_stream(
     if state_schema and flow.current_state:
         messages = _inject_state_context(messages, flow.current_state, state_schema)
 
-    # Stream from agent - emit RunStarted after first update to get service IDs
+    # RunStarted waits for the first update only when the request omitted an ID the
+    # service could supply. With both IDs supplied it is emitted before the agent runs,
+    # so clients see the run start while context providers and the first model call
+    # are still working.
     run_started_emitted = False
+    first_update_seen = False
     provider_thread_id: str | None = None
     all_updates: list[Any] = []  # Collect for structured output processing
     latest_state_snapshot: dict[str, Any] | None = (
         cast(dict[str, Any], make_json_safe(flow.current_state)) if flow.current_state else None
     )
+
+    def _run_start_events() -> list[BaseEvent]:
+        """RunStarted and the events that follow it once the run IDs are final."""
+        nonlocal latest_state_snapshot
+        events: list[BaseEvent] = [RunStartedEvent(run_id=run_id, thread_id=thread_id)]
+        # Emit PredictState custom event if configured
+        if predict_state_config:
+            predict_state_value = [
+                {
+                    "state_key": state_key,
+                    "tool": cfg["tool"],
+                    "tool_argument": cfg["tool_argument"],
+                }
+                for state_key, cfg in predict_state_config.items()
+            ]
+            events.append(CustomEvent(name="PredictState", value=predict_state_value))
+        # Emit initial state snapshot only if we have both state_schema and state
+        if state_schema and flow.current_state:
+            latest_state_snapshot = cast(dict[str, Any], make_json_safe(flow.current_state))
+            events.append(StateSnapshotEvent(snapshot=flow.current_state))
+        events.extend(_make_approval_tool_result_events(resolved_approval_results))
+        return events
+
     # Agent middleware can defer the inner run until streaming begins, so the
     # telemetry override must cover construction, stream resolution, and every pull.
     # Drive the A2UI runner when one is active (see the gate above); the original agent
@@ -3357,6 +3384,11 @@ async def _run_agent_stream(
     stream_completed = False
     native_approval_flow_result_ids: set[int] = set()
     try:
+        if supplied_thread_id is not None and supplied_run_id is not None:
+            for event in _run_start_events():
+                yield event
+            run_started_emitted = True
+
         with telemetry_context():
             for queued_executions in forwarded_executions.values():
                 for owner, intent, _ in queued_executions:
@@ -3373,36 +3405,20 @@ async def _run_agent_stream(
 
             # Use service-generated IDs only when the AG-UI request omitted them. Client-supplied
             # IDs remain authoritative for lifecycle correlation and thread-scoped persistence.
-            if not run_started_emitted:
+            if not first_update_seen:
+                first_update_seen = True
                 conv_id = get_conversation_id_from_update(update)
                 if conv_id:
                     provider_thread_id = conv_id
-                if supplied_thread_id is None and conv_id:
-                    thread_id = conv_id
-                    snapshot_session.rebind_thread_id(thread_id)
-                if supplied_run_id is None and update.response_id:
-                    run_id = update.response_id
-                # NOW emit RunStarted with proper IDs
-                yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
-                # Emit PredictState custom event if configured
-                if predict_state_config:
-                    predict_state_value = [
-                        {
-                            "state_key": state_key,
-                            "tool": cfg["tool"],
-                            "tool_argument": cfg["tool_argument"],
-                        }
-                        for state_key, cfg in predict_state_config.items()
-                    ]
-                    yield CustomEvent(name="PredictState", value=predict_state_value)
-                # Emit initial state snapshot only if we have both state_schema and state
-                if state_schema and flow.current_state:
-                    latest_state_snapshot = cast(dict[str, Any], make_json_safe(flow.current_state))
-                    yield StateSnapshotEvent(snapshot=flow.current_state)
-                run_started_emitted = True
-
-                for event in _make_approval_tool_result_events(resolved_approval_results):
-                    yield event
+                if not run_started_emitted:
+                    if supplied_thread_id is None and conv_id:
+                        thread_id = conv_id
+                        snapshot_session.rebind_thread_id(thread_id)
+                    if supplied_run_id is None and update.response_id:
+                        run_id = update.response_id
+                    for event in _run_start_events():
+                        yield event
+                    run_started_emitted = True
 
             # Feature #4: Detect tool-only messages (no text content)
             # Emit TextMessageStartEvent to create message context for tool calls
