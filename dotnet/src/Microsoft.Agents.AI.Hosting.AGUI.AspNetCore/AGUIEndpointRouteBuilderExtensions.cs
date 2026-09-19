@@ -134,6 +134,7 @@ public static class AGUIEndpointRouteBuilderExtensions
             var streamOptions = context.GetEndpoint()?.Metadata.GetMetadata<AGUIStreamOptions>()
                 ?? context.RequestServices.GetService<IOptions<AGUIStreamOptions>>()?.Value;
 
+            RemoveReasoningMessages(input);
             var ctx = input.ToChatRequestContext(jsonSerializerOptions, streamOptions);
 
             // AG-UI continuation is keyed by thread id. When the client does not supply one, generate a
@@ -177,6 +178,22 @@ public static class AGUIEndpointRouteBuilderExtensions
 #pragma warning disable MAAI001
         FeatureUsage.MarkUsed((int)FeatureIndex.HostingAGUI);
 #pragma warning restore MAAI001
+    }
+
+    /// <summary>
+    /// Removes <see cref="AGUIReasoningMessage"/> entries from the request history. Clients such as CopilotKit
+    /// echo reasoning back on follow-up turns, but the AG-UI SDK cannot map the <c>reasoning</c> role to a
+    /// <see cref="ChatMessage"/> and throws.
+    /// </summary>
+    internal static void RemoveReasoningMessages(RunAgentInput input)
+    {
+        for (int i = input.Messages.Count - 1; i >= 0; i--)
+        {
+            if (input.Messages[i] is AGUIReasoningMessage)
+            {
+                input.Messages.RemoveAt(i);
+            }
+        }
     }
 
     private static async IAsyncEnumerable<BaseEvent> SaveSessionAfterStreamingAsync(
