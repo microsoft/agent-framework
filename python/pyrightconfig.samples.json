@@ -10,6 +10,7 @@
         "**/harness/**",
         "**/local_telegram/**",
         "**/foundry-hosted-agents/invocations/telegram/**",
+        "**/providers/typesafe/**",
         "**/agent_with_foundry_tracing.py",
         "**/azure_responses_client_with_foundry.py"
     ],
