@@ -73,7 +73,6 @@ from agent_framework._types import (
     validate_tool_mode,
 )
 from agent_framework.exceptions import (
-    ChatClientException,
     ChatClientInvalidRequestException,
 )
 from agent_framework.observability import ChatTelemetryLayer
@@ -110,7 +109,7 @@ from openai.types.responses.tool_param import (
 from openai.types.responses.web_search_tool_param import WebSearchToolParam
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
-from ._exceptions import OpenAIContentFilterException
+from ._exceptions import OpenAIContentFilterException, _OpenAIChatClientException
 from ._feature_usage import FeatureIndex
 from ._shared import (
     AzureTokenProvider,
@@ -795,19 +794,39 @@ class RawOpenAIChatClient(
         run_options = await self._prepare_options(messages, validated_options)
         return client, run_options, validated_options
 
-    def _handle_request_error(self, ex: Exception) -> NoReturn:
+    @staticmethod
+    def _response_headers_from_error(ex: Exception) -> dict[str, str]:
+        response = getattr(ex, "response", None)
+        headers = getattr(response, "headers", None)
+        if headers is None:
+            return {}
+        try:
+            return {str(key): str(value) for key, value in headers.items()}
+        except (AttributeError, TypeError, ValueError):
+            return {}
+
+    def _handle_request_error(
+        self,
+        ex: Exception,
+        *,
+        response_headers: Mapping[str, str] | None = None,
+    ) -> NoReturn:
         """Convert exceptions to appropriate service exceptions. Always raises."""
         if isinstance(ex, BadRequestError) and ex.code == "content_filter":
             raise OpenAIContentFilterException(
                 f"{type(self)} service encountered a content error: {ex}",
                 inner_exception=ex,
             ) from ex
-        raise ChatClientException(
+        captured_headers = self._response_headers_from_error(ex)
+        if response_headers is not None:
+            captured_headers.update((str(key), str(value)) for key, value in response_headers.items())
+        raise _OpenAIChatClientException(
             maybe_append_azure_endpoint_guidance(
                 f"{type(self)} service failed to complete the prompt: {ex}",
                 azure_endpoint=self.azure_endpoint,
             ),
             inner_exception=ex,
+            response_headers=captured_headers,
         ) from ex
 
     @override
@@ -847,6 +866,7 @@ class RawOpenAIChatClient(
                     validated_options = await self._validate_options(options)
                     validated_options[_SEEN_FUNCTION_CALL_OUTPUT_IDS_OPTION] = seen_function_call_output_ids
                     response_format = validated_options.get("response_format")
+                    retrieve_response_headers: Mapping[str, str] | None = None
                     try:
                         raw_stream_response = await client.responses.with_raw_response.retrieve(
                             continuation_token["response_id"],
@@ -857,7 +877,8 @@ class RawOpenAIChatClient(
                         # experimental tracing) wrap the streaming response in objects that do not
                         # proxy ``.headers``. Degrade gracefully so the served-model surfacing is
                         # best-effort instead of crashing the whole call.
-                        served_model = self._extract_served_model(getattr(raw_stream_response, "headers", None))
+                        retrieve_response_headers = getattr(raw_stream_response, "headers", None)
+                        served_model = self._extract_served_model(retrieve_response_headers)
                         async with _open_event_stream(raw_stream_response) as stream_response:
                             async for chunk in stream_response:
                                 update = self._parse_chunk_from_openai(
@@ -883,7 +904,7 @@ class RawOpenAIChatClient(
                                     options.pop("continuation_token", None)
                                 yield update
                     except Exception as ex:
-                        self._handle_request_error(ex)
+                        self._handle_request_error(ex, response_headers=retrieve_response_headers)
                 else:
                     (
                         client,
@@ -894,6 +915,7 @@ class RawOpenAIChatClient(
                     if extra_headers is not None:
                         run_options["extra_headers"] = dict(extra_headers)
                     response_format = validated_options.get("response_format")
+                    create_response_headers: Mapping[str, str] | None = None
                     try:
                         if "text_format" in run_options:
                             # The SDK's ``responses.stream(text_format=...)`` helper preserves
@@ -915,7 +937,8 @@ class RawOpenAIChatClient(
                                 stream=True, **run_options
                             )
                             # See note above on ``raw_stream_response.headers``.
-                            served_model = self._extract_served_model(getattr(raw_create_response, "headers", None))
+                            create_response_headers = getattr(raw_create_response, "headers", None)
+                            served_model = self._extract_served_model(create_response_headers)
                             async with _open_event_stream(raw_create_response) as stream_response:
                                 async for chunk in stream_response:
                                     update = self._parse_chunk_from_openai(
@@ -928,7 +951,7 @@ class RawOpenAIChatClient(
                                         update.model = served_model
                                     yield update
                     except Exception as ex:
-                        self._handle_request_error(ex)
+                        self._handle_request_error(ex, response_headers=create_response_headers)
 
             return ResponseStream(_stream(), finalizer=_finalize_with_captured_format)
 
@@ -940,14 +963,16 @@ class RawOpenAIChatClient(
                 if self._FEATURE_USAGE_INDEX is not None:
                     mark_feature_used(self._FEATURE_USAGE_INDEX)
                 validated_options = await self._validate_options(options)
+                retrieve_response_headers: Mapping[str, str] | None = None
                 try:
                     raw_response = await client.responses.with_raw_response.retrieve(
                         continuation_token["response_id"],
                         extra_headers=extra_headers,
                     )
+                    retrieve_response_headers = getattr(raw_response, "headers", None)
                     response = raw_response.parse()
                 except Exception as ex:
-                    self._handle_request_error(ex)
+                    self._handle_request_error(ex, response_headers=retrieve_response_headers)
                 chat_response = self._parse_response_from_openai(response, options=validated_options)
                 # See note above on ``raw_stream_response.headers``.
                 served_model = self._extract_served_model(getattr(raw_response, "headers", None))
@@ -965,14 +990,16 @@ class RawOpenAIChatClient(
             client, run_options, validated_options = await self._prepare_request(messages, options)
             if extra_headers is not None:
                 run_options["extra_headers"] = dict(extra_headers)
+            create_response_headers: Mapping[str, str] | None = None
             try:
                 if "text_format" in run_options:
                     raw_response = await client.responses.with_raw_response.parse(stream=False, **run_options)
                 else:
                     raw_response = await client.responses.with_raw_response.create(stream=False, **run_options)
+                create_response_headers = getattr(raw_response, "headers", None)
                 response = raw_response.parse()
             except Exception as ex:
-                self._handle_request_error(ex)
+                self._handle_request_error(ex, response_headers=create_response_headers)
             chat_response = self._parse_response_from_openai(response, options=validated_options)
             # See note above on ``raw_stream_response.headers``.
             served_model = self._extract_served_model(getattr(raw_response, "headers", None))
