@@ -3097,6 +3097,35 @@ async def test_executor_activity_ids_are_scoped_to_run(terminal_type: str) -> No
     )
 
 
+async def test_executor_activity_ids_do_not_collide_with_delimiters() -> None:
+    """Unrestricted run and executor IDs must not alias another pair."""
+
+    class ActivityWorkflow:
+        def __init__(self, executor_id: str) -> None:
+            self.executor_id = executor_id
+
+        def run(self, **kwargs: Any) -> AsyncIterator[Any]:
+            async def stream() -> AsyncIterator[Any]:
+                yield SimpleNamespace(type="executor_invoked", executor_id=self.executor_id, data=None)
+
+            return stream()
+
+    message_ids: list[str] = []
+    for run_id, executor_id in (("a", "b:executor:c"), ("a:executor:b", "c")):
+        events = [
+            event
+            async for event in run_workflow_stream(
+                {"thread_id": "same-thread", "run_id": run_id, "messages": [{"role": "user", "content": "go"}]},
+                cast(Any, ActivityWorkflow(executor_id)),
+            )
+        ]
+        activities = [event for event in events if event.type == EventType.ACTIVITY_SNAPSHOT]
+        assert len(activities) == 1
+        message_ids.append(activities[0].message_id)
+
+    assert message_ids[0] != message_ids[1]
+
+
 async def test_workflow_run_executor_invoked_drains_text():
     """executor_invoked should drain any open text message."""
 
