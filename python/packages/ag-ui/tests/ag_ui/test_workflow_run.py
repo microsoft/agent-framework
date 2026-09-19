@@ -3053,6 +3053,50 @@ async def test_workflow_run_status_enum_state():
     assert "RUN_FINISHED" in event_types
 
 
+@pytest.mark.parametrize("terminal_type", ["executor_completed", "executor_failed"])
+async def test_executor_activity_ids_are_scoped_to_run(terminal_type: str) -> None:
+    """Progress replaces its own activity, without overwriting a previous run."""
+
+    class ActivityWorkflow:
+        def run(self, **kwargs: Any) -> AsyncIterator[Any]:
+            async def stream() -> AsyncIterator[Any]:
+                for executor_id in ("researcher", "writer"):
+                    yield SimpleNamespace(type="executor_invoked", executor_id=executor_id, data=None)
+                    yield SimpleNamespace(type=terminal_type, executor_id=executor_id, data=None)
+
+            return stream()
+
+    activities_by_run: list[list[Any]] = []
+    for run_id in ("first-run", "second-run"):
+        events = [
+            event
+            async for event in run_workflow_stream(
+                {
+                    "thread_id": "same-thread",
+                    "run_id": run_id,
+                    "messages": [{"role": "user", "content": "go"}],
+                },
+                cast(Any, ActivityWorkflow()),
+            )
+        ]
+        activities = [event for event in events if event.type == EventType.ACTIVITY_SNAPSHOT]
+        assert len(activities) == 4
+        assert activities[0].message_id == activities[1].message_id
+        assert activities[2].message_id == activities[3].message_id
+        assert activities[0].message_id != activities[2].message_id
+        assert [event.content["executor_id"] for event in activities] == [
+            "researcher",
+            "researcher",
+            "writer",
+            "writer",
+        ]
+        activities_by_run.append(activities)
+
+    assert {event.message_id for event in activities_by_run[0]}.isdisjoint(
+        event.message_id for event in activities_by_run[1]
+    )
+
+
 async def test_workflow_run_executor_invoked_drains_text():
     """executor_invoked should drain any open text message."""
 
