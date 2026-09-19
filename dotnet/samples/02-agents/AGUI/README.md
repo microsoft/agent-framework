@@ -199,6 +199,63 @@ cd Step05_StateManagement/Client
 dotnet run
 ```
 
+## Displaying reasoning summaries
+
+`MapAGUIServer` forwards reasoning content returned by the agent; it does not
+enable reasoning on the model. Request a summary through `ChatOptions.Reasoning`
+when constructing the agent:
+
+```csharp
+using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
+
+// Use an IChatClient whose provider, API, and model support reasoning summaries.
+AIAgent agent = chatClient.AsAIAgent(new ChatClientAgentOptions
+{
+    Name = "AGUIAssistant",
+    ChatOptions = new ChatOptions
+    {
+        Instructions = "You are a helpful assistant.",
+        Reasoning = new ReasoningOptions
+        {
+            Effort = ReasoningEffort.Medium,
+            Output = ReasoningOutput.Summary,
+        },
+    },
+});
+
+app.MapAGUIServer("/", agent);
+```
+
+For a `HarnessAgent`, set the same `Reasoning` options on
+`HarnessAgentOptions.ChatOptions` before calling `AsHarnessAgent`, then expose
+that agent with `MapAGUIServer`. Preserve the other chat options, including tools,
+when adding this configuration. `Effort` controls the requested reasoning effort;
+`Output` requests the summary. Setting effort alone does not request visible text.
+
+The Step01 server uses Chat Completions. Adding these options does not switch it
+to the Responses API or make an unsupported deployment support summaries. For a
+Responses-based connection, see the [Harness research sample](../Harness/Harness_Step01_Research/Program.cs),
+which creates an `IChatClient` with `GetResponsesClient().AsIChatClient(deploymentName)`.
+Use a model and API that support the requested effort and summary output. An
+unsupported `reasoning_effort` error originates in that provider configuration,
+before AG-UI can stream any reasoning.
+
+To locate missing reasoning output:
+
+1. Inspect the agent's `RunStreamingAsync` updates for nonempty
+   `TextReasoningContent`. A reasoning token count alone does not mean the provider
+   returned a displayable summary; summaries are provider-dependent.
+2. Inspect the endpoint's raw SSE response for `REASONING_MESSAGE_CONTENT` events
+   and their `delta` text. The AG-UI adapter maps reasoning content separately from
+   ordinary assistant text.
+3. If those events are present, check that the frontend renders the
+   [AG-UI reasoning events](https://docs.ag-ui.com/concepts/reasoning).
+   A client that displays only `TextContent` will not display reasoning summaries.
+
+These events expose the summary supplied by the provider, not its private internal
+reasoning. They do not guarantee that every request produces a summary.
+
 ## How AG-UI Works
 
 ### Server-Side
