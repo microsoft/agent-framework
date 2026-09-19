@@ -77,6 +77,24 @@ def _contents_from_state(values: Any) -> list[Content]:
     return [_content_from_state(value) for value in state_items]
 
 
+def _structured_response_format(context: AgentContext) -> Any | None:
+    """Return the structured-output schema for this invocation, if any.
+
+    Run ``options`` take precedence over the agent's ``default_options``. The
+    streaming re-wrap in :meth:`ToolApprovalMiddleware._process_stream` must
+    forward this to ``AgentResponse.from_updates`` or ``response.value`` is
+    dropped even when the inner stream already parsed it.
+    """
+    if context.options is not None:
+        response_format = context.options.get("response_format")
+        if response_format is not None:
+            return response_format
+    default_options = getattr(context.agent, "default_options", None)
+    if isinstance(default_options, Mapping):
+        return default_options.get("response_format")
+    return None
+
+
 def _content_to_state(content: Content) -> dict[str, Any]:
     return content.to_dict()
 
@@ -442,6 +460,12 @@ class ToolApprovalMiddleware(AgentMiddleware):
         call_next: Callable[[], Awaitable[None]],
         state: ToolApprovalState,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+        # Last inner AgentResponse. Its already-parsed structured value is carried
+        # over by the outer finalizer so an auto-approved preamble that
+        # AgentResponse.from_updates coalesces into the JSON message cannot mask it.
+        holder: dict[str, AgentResponse | None] = {"final": None}
+        response_format = _structured_response_format(context)
+
         async def _stream() -> AsyncIterable[AgentResponseUpdate]:
             if context.session is None:
                 raise RuntimeError("ToolApprovalMiddleware requires an AgentSession.")
@@ -477,7 +501,7 @@ class ToolApprovalMiddleware(AgentMiddleware):
                     buffered_update = copy.copy(update)
                     buffered_update.contents = list(update.contents)
                     buffered_approval_updates.append(buffered_update)
-                await context.result.get_final_response()
+                holder["final"] = await context.result.get_final_response()
                 if not approval_requests:
                     return
 
@@ -509,7 +533,20 @@ class ToolApprovalMiddleware(AgentMiddleware):
                 context.messages = []
                 context.result = None
 
-        return ResponseStream(_stream(), finalizer=AgentResponse.from_updates)
+        def _finalize(updates: Sequence[AgentResponseUpdate]) -> AgentResponse:
+            # Build the response from the streamed updates so the middleware's
+            # approval / user-input handling is preserved, then carry over the
+            # structured value already parsed by the inner response. The coalesced
+            # update text can include preamble from auto-approved turns, which would
+            # otherwise mask the parsed value (#7418).
+            response = AgentResponse.from_updates(updates, output_format_type=response_format)
+            final = holder["final"]
+            if final is not None and final._value_parsed:  # pyright: ignore[reportPrivateUsage]
+                response._value = final._value  # pyright: ignore[reportPrivateUsage]
+                response._value_parsed = True  # pyright: ignore[reportPrivateUsage]
+            return response
+
+        return ResponseStream(_stream(), finalizer=_finalize)
 
     def _prepare_inbound_messages(
         self,
