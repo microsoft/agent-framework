@@ -1,0 +1,16 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"type": "process",
+			"command": "dotnet",
+			"group": "build",
+			"problemMatcher": [],
+			"label": "dotnet: build release solution filter",
+			"args": ["build", "agent-framework-release.slnf"],
+			"options": {
+				"cwd": "${workspaceFolder}/dotnet"
+			}
+		}
+	]
+}
