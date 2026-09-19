@@ -71,10 +71,10 @@ DEFAULT_FILE_ACCESS_INSTRUCTIONS = (
 _ENCODED_FILE_ACCESS_SESSION_PREFIX: Final[str] = "~access-"
 
 # Instruction suffix appended when session-scoped mode is enabled, so the model
-# does not assume files are shared with other sessions.
+# does not assume files are shared outside the resolved workspace.
 _SESSION_SCOPED_INSTRUCTIONS_SUFFIX = (
-    "\n- Your file workspace is isolated to the current session: files written "
-    "here are not visible to other sessions or agents."
+    "\n- Your file workspace is isolated to the current session or configured scope: files written "
+    "here are not visible outside that workspace."
 )
 
 # Maximum number of characters of context to include on either side of the first
@@ -1704,10 +1704,12 @@ class FileAccessProvider(ContextProvider):
 
     Unlike :class:`~agent_framework.MemoryContextProvider`, which provides
     session-scoped memory that may be isolated per session,
-    :class:`FileAccessProvider` operates on a shared, persistent store whose
-    contents are visible across sessions and agents. The store is passed in by
-    the caller and should already be scoped to the desired folder or storage
-    location.
+    :class:`FileAccessProvider` operates by default on a shared, persistent
+    store whose contents are visible across sessions and agents. Pass
+    ``session_scoped=True`` (with an optional explicit ``scope``) to confine
+    tool operations to a workspace derived from the session id or scope
+    instead. The store is passed in by the caller and should already be scoped
+    to the desired folder or storage location.
 
     By default all tools require approval: each is registered with
     ``approval_mode="always_require"`` so the host must approve every file
@@ -1817,8 +1819,10 @@ class FileAccessProvider(ContextProvider):
                 without host approval. Defaults to ``False`` (approval required).
             session_scoped: When ``True``, tool operations are confined to a
                 working folder derived from the active session id (or the
-                explicit ``scope``), so files are isolated per session.
-                Defaults to ``False``, preserving the shared-store semantics.
+                explicit ``scope``), so files are isolated to that workspace:
+                per session by default, or shared across sessions when an
+                explicit ``scope`` is set. Defaults to ``False``, preserving
+                the shared-store semantics.
             scope: The namespace that logically groups and isolates files
                 (for example, a user or tenant id). Only used when
                 ``session_scoped`` is ``True``; when ``None`` (the default),
