@@ -64,7 +64,7 @@ public class DecisionLoopEvaluatorTests
     {
         // Arrange
         var client = new FakeDecisionClient(1.0);
-        var evaluator = new DecisionLoopEvaluator(client, new() { CompletionQuestion = null! });
+        var evaluator = new DecisionLoopEvaluator(client, new() { CompletionQuestion = null });
 
         // Act
         await evaluator.EvaluateAsync(CreateContext());
@@ -604,7 +604,7 @@ public class DecisionLoopEvaluatorTests
     {
         // Arrange
         var logs = new CapturingLoggerFactory();
-        var exception = new DecisionClientException(DecisionFailureKind.RateLimited, "slow down");
+        var exception = new DecisionClientException(DecisionFailureKind.RateLimited, "slow down {\"echo\":\"SECRET-STATE\"}", statusCode: 429);
         var evaluator = new DecisionLoopEvaluator(Throwing(exception), new() { TransientFailureBehavior = DecisionLoopFailureBehavior.DeferToNextEvaluator }, logs);
 
         // Act
@@ -613,10 +613,13 @@ public class DecisionLoopEvaluatorTests
         // Assert
         (LogLevel level, string message, Exception? loggedException) entry = Assert.Single(logs.Entries);
         Assert.Equal(LogLevel.Warning, entry.level);
-        Assert.Same(exception, entry.loggedException);
+        Assert.Null(entry.loggedException);
+        Assert.Contains(nameof(DecisionClientException), entry.message);
         Assert.Contains("RateLimited", entry.message);
+        Assert.Contains("status 429", entry.message);
         Assert.Contains("transient: True", entry.message);
         Assert.Contains(nameof(DecisionLoopFailureBehavior.DeferToNextEvaluator), entry.message);
+        Assert.DoesNotContain("slow down", entry.message);
     }
 
     /// <summary>

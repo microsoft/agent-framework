@@ -2,7 +2,7 @@
 status: proposed
 contact: joslat
 date: 2026-09-20
-deciders: TBD
+deciders: westey-m, SergeyMenshykh, rogerbarreto
 consulted:
 informed:
 ---
@@ -11,9 +11,10 @@ informed:
 
 > **PR note:** This ADR ships in the same pull request as the initial .NET implementation: the experimental
 > `IDecisionClient` contract in `Microsoft.Agents.AI.Abstractions`, `DecisionLoopEvaluator` in `Microsoft.Agents.AI`,
-> the `Microsoft.Agents.AI.TypeSafe` provider package, their tests, and the `Harness_Step06_DecisionLoop` sample. Before requesting final review, replace `deciders: TBD` with
-> the GitHub IDs of the relevant EM/architect per `docs/decisions/README.md`. The repository's highest ADR number at
-> the time of writing is `0041`; renumber if another ADR lands first.
+> the `Microsoft.Agents.AI.TypeSafe` provider package, their tests, and the `Harness_Step06_DecisionLoop` sample. The
+> listed deciders are the .NET owners of the Harness/Loop code (proposed by the contributor; maintainers may adjust
+> per `docs/decisions/README.md`). The repository's highest ADR number at the time of writing is `0041`; renumber if
+> another ADR lands first.
 
 ## Context and Problem Statement
 
@@ -317,7 +318,7 @@ public sealed class DecisionLoopEvaluator : LoopEvaluator
 public sealed class DecisionLoopEvaluatorOptions
 {
     public double CompletionThreshold { get; set; } = 0.90;          // 0..1, validated at construction
-    public string CompletionQuestion { get; set; }                     // null -> default; blank -> ArgumentException
+    public string? CompletionQuestion { get; set; }                    // null -> default; blank -> ArgumentException
     public string? CompletedDescription { get; set; }                  // null -> omitted
     public string? IncompleteDescription { get; set; }
     public string? ContinueFeedbackMessage { get; set; }               // null/blank -> continue without feedback

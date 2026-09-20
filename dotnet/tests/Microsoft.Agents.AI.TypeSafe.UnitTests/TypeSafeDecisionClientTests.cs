@@ -127,6 +127,26 @@ public class TypeSafeDecisionClientTests
         Assert.Equal("jev-preview", body.RootElement.GetProperty("model").GetString());
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task GetResponseAsync_BlankModelOverride_ThrowsInvalidRequestWithoutSendingAsync(string modelId)
+    {
+        bool sent = false;
+        using var handler = new StubHandler((_, _) =>
+        {
+            sent = true;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(OkBody) });
+        });
+        using var http = new HttpClient(handler);
+        using var client = new TypeSafeDecisionClient("k", httpClient: http);
+
+        var ex = await Assert.ThrowsAsync<DecisionClientException>(() => client.GetResponseAsync(Request(), new DecisionOptions { ModelId = modelId }));
+
+        Assert.Equal(DecisionFailureKind.InvalidRequest, ex.Kind);
+        Assert.False(sent);
+    }
+
     [Fact]
     public async Task GetResponseAsync_ProviderError_ThrowsClassifiedAndRedactedAsync()
     {

@@ -133,6 +133,33 @@ public class TypeSafeProtocolTests
 
     #endregion
 
+    [Fact]
+    public void SerializeRequest_ChoicesMutatedAfterConstruction_ThrowsInvalidRequest()
+    {
+        var question = new ChoiceDecisionQuestion("c", "Which?", [new("a"), new("b")]);
+        question.Choices.Add(new DecisionChoice("a"));
+        var duplicate = Request(question);
+
+        var emptied = new ChoiceDecisionQuestion("c", "Which?", [new("a"), new("b")]);
+        emptied.Choices.Clear();
+        var empty = Request(emptied);
+
+        Assert.Equal(DecisionFailureKind.InvalidRequest, Assert.Throws<DecisionClientException>(() => TypeSafeProtocol.SerializeRequest(duplicate, "m")).Kind);
+        Assert.Equal(DecisionFailureKind.InvalidRequest, Assert.Throws<DecisionClientException>(() => TypeSafeProtocol.SerializeRequest(empty, "m")).Kind);
+    }
+
+    [Fact]
+    public void SerializeRequest_LevelsMutatedAfterConstruction_ThrowsInvalidRequest()
+    {
+        var question = new ScoreDecisionQuestion("s", "How much?", [new("lo"), new("hi")]);
+        question.Levels.Clear();
+        question.Levels.Add(new DecisionScoreLevel("only"));
+
+        var ex = Assert.Throws<DecisionClientException>(() => TypeSafeProtocol.SerializeRequest(Request(question), "m"));
+
+        Assert.Equal(DecisionFailureKind.InvalidRequest, ex.Kind);
+    }
+
     #region Response parsing
 
     private const string MixedResponse = """
@@ -238,6 +265,31 @@ public class TypeSafeProtocolTests
     }
 
     [Fact]
+    public void ParseResponse_ChoiceSelectingExtraReturnedOption_ThrowsInvalidResponse()
+    {
+        // The provider returns a probability for an option that was never asked and selects it.
+        const string body = """{ "model": "m", "answers": { "c": { "type": "choice", "choice": "nope", "probabilities": { "a": 0.3, "b": 0.3, "nope": 0.4 } } } }""";
+        var request = Request(new ChoiceDecisionQuestion("c", "?", [new("a"), new("b")]));
+
+        var ex = Assert.Throws<DecisionClientException>(() => TypeSafeProtocol.ParseResponse(body, request, "h"));
+
+        Assert.Contains("not one of the requested choices", ex.Message);
+    }
+
+    [Theory]
+    [InlineData(-0.1)]
+    [InlineData(1.5)]
+    public void ParseResponse_ScoreOutsideRequestedScale_ThrowsInvalidResponse(double score)
+    {
+        string body = $$"""{ "model": "m", "answers": { "s": { "type": "score", "score": {{score.ToString(System.Globalization.CultureInfo.InvariantCulture)}}, "probabilities": { "0": 0.5, "1": 0.5 }, "confidence": 0.5 } } }""";
+        var request = Request(new ScoreDecisionQuestion("s", "?", [new("lo"), new("hi")]));
+
+        var ex = Assert.Throws<DecisionClientException>(() => TypeSafeProtocol.ParseResponse(body, request, "h"));
+
+        Assert.Contains("outside the requested scale", ex.Message);
+    }
+
+    [Fact]
     public void ParseResponse_ChoiceMissingAProbability_ThrowsInvalidResponse()
     {
         const string body = """{ "model": "m", "answers": { "c": { "type": "choice", "choice": "a", "probabilities": { "a": 1.0 } } } }""";
@@ -257,6 +309,18 @@ public class TypeSafeProtocolTests
         var ex = Assert.Throws<DecisionClientException>(() => TypeSafeProtocol.ParseResponse(body, request, "h"));
 
         Assert.Contains("unknown level '5'", ex.Message);
+    }
+
+    #endregion
+
+    #region Answer construction invariants
+
+    [Fact]
+    public void ChoiceDecisionAnswer_InvalidDistributionAtConstruction_Throws()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => new ChoiceDecisionAnswer("a", new Dictionary<string, double> { ["a"] = 1.5 }));
+        Assert.Throws<ArgumentException>(() => new ChoiceDecisionAnswer("a", new Dictionary<string, double> { [" "] = 0.5 }));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new ScoreDecisionAnswer(0.5, new Dictionary<int, double> { [0] = double.NaN }));
     }
 
     #endregion

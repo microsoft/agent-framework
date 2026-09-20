@@ -46,6 +46,23 @@ public abstract class DecisionAnswer
     /// <summary>Validates that an optional confidence value, when present, is finite and within 0 to 1 inclusive.</summary>
     private protected static double? EnsureOptionalProbability(double? value, string paramName) =>
         value is null ? null : EnsureProbability(value.Value, paramName);
+
+    /// <summary>Validates every entry of a distribution supplied at construction: non-blank keys and unit probabilities.</summary>
+    private protected static IDictionary<TKey, double> EnsureDistribution<TKey>(IDictionary<TKey, double> probabilities, string paramName)
+    {
+        _ = Throw.IfNull(probabilities, paramName);
+        foreach (KeyValuePair<TKey, double> pair in probabilities)
+        {
+            if (pair.Key is null || (pair.Key is string key && string.IsNullOrWhiteSpace(key)))
+            {
+                throw new ArgumentException("Distribution keys must not be null or blank.", paramName);
+            }
+
+            _ = EnsureProbability(pair.Value, paramName);
+        }
+
+        return probabilities;
+    }
 }
 
 /// <summary>
@@ -91,7 +108,9 @@ public sealed class BinaryDecisionAnswer : DecisionAnswer
 /// <see cref="Probabilities"/> is the fundamental interoperable value: it contains an entry for every requested choice,
 /// each between 0 and 1, summing to approximately 1. <see cref="SelectedChoice"/> is one of the requested choices.
 /// <see cref="Confidence"/> is an optional provider-derived summary of the distribution and is not comparable across
-/// providers unless documented.
+/// providers unless documented. The distribution supplied at construction is validated (non-blank keys, values within
+/// 0 to 1); the collection itself stays mutable, matching the proposed <c>Microsoft.Extensions.AI</c> shape, so
+/// producers that mutate it afterwards own its invariants.
 /// </remarks>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class ChoiceDecisionAnswer : DecisionAnswer
@@ -107,7 +126,7 @@ public sealed class ChoiceDecisionAnswer : DecisionAnswer
     public ChoiceDecisionAnswer(string selectedChoice, IDictionary<string, double> probabilities)
     {
         this._selectedChoice = Throw.IfNullOrWhitespace(selectedChoice);
-        this.Probabilities = Throw.IfNull(probabilities);
+        this.Probabilities = EnsureDistribution(probabilities, nameof(probabilities));
     }
 
     /// <summary>Gets or sets the name of the selected choice.</summary>
@@ -140,7 +159,9 @@ public sealed class ChoiceDecisionAnswer : DecisionAnswer
 /// each between 0 and 1, summing to approximately 1, and the portable meaning of <see cref="Score"/> is
 /// <c>Σ(levelIndex × P(levelIndex))</c>, so <c>0 &lt;= Score &lt;= N - 1</c>. A provider adapter may compute
 /// <see cref="Score"/> from the distribution when the provider does not return it. Two answers with the same score can
-/// carry very different distributions, which is why the distribution is the portable value.
+/// carry very different distributions, which is why the distribution is the portable value. The distribution supplied
+/// at construction is validated (values within 0 to 1); the collection itself stays mutable, matching the proposed
+/// <c>Microsoft.Extensions.AI</c> shape, so producers that mutate it afterwards own its invariants.
 /// </remarks>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class ScoreDecisionAnswer : DecisionAnswer
@@ -162,7 +183,7 @@ public sealed class ScoreDecisionAnswer : DecisionAnswer
     public ScoreDecisionAnswer(double score, IDictionary<int, double> probabilities)
     {
         this.Score = score;
-        this.Probabilities = Throw.IfNull(probabilities);
+        this.Probabilities = EnsureDistribution(probabilities, nameof(probabilities));
     }
 
     /// <summary>Gets or sets the probability-weighted position on the scale.</summary>

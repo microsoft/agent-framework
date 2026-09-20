@@ -104,6 +104,11 @@ public sealed class TypeSafeDecisionClient : IDecisionClient
         _ = Throw.IfNull(request);
 
         string modelId = options?.ModelId ?? this._modelId;
+        if (string.IsNullOrWhiteSpace(modelId))
+        {
+            throw new DecisionClientException(DecisionFailureKind.InvalidRequest, "The model identifier override must not be empty.");
+        }
+
         string json = TypeSafeProtocol.SerializeRequest(request, modelId);
 
         using var message = new HttpRequestMessage(HttpMethod.Post, this._endpoint)

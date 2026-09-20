@@ -27,7 +27,7 @@ Microsoft.Agents.AI.AgentModeProviderOptions.DisableModeSetTool.set -> void
 [MAAI001]Microsoft.Agents.AI.DecisionLoopEvaluatorOptions
 [MAAI001]Microsoft.Agents.AI.DecisionLoopEvaluatorOptions.CompletedDescription.get -> string?
 [MAAI001]Microsoft.Agents.AI.DecisionLoopEvaluatorOptions.CompletedDescription.set -> void
-[MAAI001]Microsoft.Agents.AI.DecisionLoopEvaluatorOptions.CompletionQuestion.get -> string!
+[MAAI001]Microsoft.Agents.AI.DecisionLoopEvaluatorOptions.CompletionQuestion.get -> string?
 [MAAI001]Microsoft.Agents.AI.DecisionLoopEvaluatorOptions.CompletionQuestion.set -> void
 [MAAI001]Microsoft.Agents.AI.DecisionLoopEvaluatorOptions.CompletionThreshold.get -> double
 [MAAI001]Microsoft.Agents.AI.DecisionLoopEvaluatorOptions.CompletionThreshold.set -> void

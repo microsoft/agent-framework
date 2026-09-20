@@ -32,7 +32,7 @@ public sealed class DecisionLoopEvaluatorOptions
     /// Phrase it so that a high probability means the loop should stop. A <see langword="null"/> value falls back to the
     /// default; an empty or whitespace value is rejected by the evaluator constructor.
     /// </remarks>
-    public string CompletionQuestion { get; set; } = DecisionLoopEvaluator.DefaultCompletionQuestion;
+    public string? CompletionQuestion { get; set; } = DecisionLoopEvaluator.DefaultCompletionQuestion;
 
     /// <summary>
     /// Gets or sets an optional description of what a "yes" (completed) answer means, sent to the decision client as

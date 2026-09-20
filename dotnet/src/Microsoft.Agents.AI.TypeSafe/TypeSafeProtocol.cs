@@ -119,6 +119,7 @@ internal static class TypeSafeProtocol
                 break;
 
             case ChoiceDecisionQuestion choice:
+                ValidateChoices(choice);
                 if (choice.Choices.Count > MaxChoices)
                 {
                     throw new DecisionClientException(DecisionFailureKind.InvalidRequest, $"A System One choice question accepts at most {MaxChoices} choices; question '{choice.Id}' has {choice.Choices.Count}.");
@@ -137,6 +138,7 @@ internal static class TypeSafeProtocol
                 break;
 
             case ScoreDecisionQuestion score:
+                ValidateLevels(score);
                 if (score.Levels.Count > MaxScoreLevels)
                 {
                     throw new DecisionClientException(DecisionFailureKind.InvalidRequest, $"A System One score question accepts at most {MaxScoreLevels} levels; question '{score.Id}' has {score.Levels.Count}.");
@@ -159,6 +161,46 @@ internal static class TypeSafeProtocol
         }
 
         writer.WriteEndObject();
+    }
+
+    /// <summary>Re-checks a choice question's invariants at call time, since its collection is mutable after construction.</summary>
+    private static void ValidateChoices(ChoiceDecisionQuestion question)
+    {
+        if (question.Choices.Count < 2)
+        {
+            throw new DecisionClientException(DecisionFailureKind.InvalidRequest, $"Choice question '{question.Id}' needs at least two choices.");
+        }
+
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        foreach (DecisionChoice option in question.Choices)
+        {
+            if (option is null || string.IsNullOrWhiteSpace(option.Name))
+            {
+                throw new DecisionClientException(DecisionFailureKind.InvalidRequest, $"Choice question '{question.Id}' contains a null or unnamed choice.");
+            }
+
+            if (!names.Add(option.Name))
+            {
+                throw new DecisionClientException(DecisionFailureKind.InvalidRequest, $"Choice question '{question.Id}' lists choice '{option.Name}' more than once.");
+            }
+        }
+    }
+
+    /// <summary>Re-checks a score question's invariants at call time, since its collection is mutable after construction.</summary>
+    private static void ValidateLevels(ScoreDecisionQuestion question)
+    {
+        if (question.Levels.Count < 2)
+        {
+            throw new DecisionClientException(DecisionFailureKind.InvalidRequest, $"Score question '{question.Id}' needs at least two levels.");
+        }
+
+        foreach (DecisionScoreLevel level in question.Levels)
+        {
+            if (level is null || string.IsNullOrWhiteSpace(level.Description))
+            {
+                throw new DecisionClientException(DecisionFailureKind.InvalidRequest, $"Score question '{question.Id}' contains a null or undescribed level.");
+            }
+        }
     }
 
     internal static DecisionClientException ClassifyFailure(int statusCode, string body, string host)
@@ -292,7 +334,17 @@ internal static class TypeSafeProtocol
                         }
                     }
 
-                    if (!probabilities.ContainsKey(selected))
+                    bool selectedIsRequested = false;
+                    foreach (DecisionChoice option in choiceQuestion.Choices)
+                    {
+                        if (string.Equals(option.Name, selected, StringComparison.Ordinal))
+                        {
+                            selectedIsRequested = true;
+                            break;
+                        }
+                    }
+
+                    if (!selectedIsRequested)
                     {
                         throw Invalid($"{host}: answer '{question.Id}' selected '{selected}', which is not one of the requested choices.");
                     }
@@ -326,7 +378,13 @@ internal static class TypeSafeProtocol
                         }
                     }
 
-                    var answer = new ScoreDecisionAnswer(ReadDouble(element, "score", question.Id, host), probabilities)
+                    double score = ReadDouble(element, "score", question.Id, host);
+                    if (double.IsNaN(score) || score < 0 || score > scoreQuestion.Levels.Count - 1)
+                    {
+                        throw Invalid($"{host}: answer '{question.Id}' has score {score}, outside the requested scale 0..{scoreQuestion.Levels.Count - 1}.");
+                    }
+
+                    var answer = new ScoreDecisionAnswer(score, probabilities)
                     {
                         Confidence = ReadOptionalDouble(element, "confidence", question.Id, host),
                         RawRepresentation = element.Clone(),

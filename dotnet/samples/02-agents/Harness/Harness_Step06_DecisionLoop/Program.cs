@@ -31,10 +31,12 @@ using OpenAI;
 
 // Primary agent + generative judge: OpenAI, or any OpenAI-compatible chat-completions endpoint (for example Bitdeer
 // with zai-org/GLM-5.3-Flash) when OPENAI_COMPATIBLE_ENDPOINT is set.
-var chatApiKey = Environment.GetEnvironmentVariable("OPENAI_COMPATIBLE_API_KEY")
-    ?? Environment.GetEnvironmentVariable("OPENAI_API_KEY")
-    ?? throw new InvalidOperationException("Set OPENAI_API_KEY, or OPENAI_COMPATIBLE_API_KEY together with OPENAI_COMPATIBLE_ENDPOINT.");
+// The key is tied to the endpoint: a compatible endpoint uses only OPENAI_COMPATIBLE_API_KEY, and OpenAI uses only
+// OPENAI_API_KEY, so a credential for one service is never sent to the other.
 var chatEndpoint = Environment.GetEnvironmentVariable("OPENAI_COMPATIBLE_ENDPOINT");
+var chatApiKey = chatEndpoint is null
+    ? Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? throw new InvalidOperationException("OPENAI_API_KEY is not set (or set OPENAI_COMPATIBLE_ENDPOINT and OPENAI_COMPATIBLE_API_KEY).")
+    : Environment.GetEnvironmentVariable("OPENAI_COMPATIBLE_API_KEY") ?? throw new InvalidOperationException("OPENAI_COMPATIBLE_ENDPOINT is set but OPENAI_COMPATIBLE_API_KEY is not.");
 var chatModel = Environment.GetEnvironmentVariable("OPENAI_COMPATIBLE_MODEL")
     ?? Environment.GetEnvironmentVariable("OPENAI_CHAT_MODEL_NAME")
     ?? "gpt-5.4-mini";

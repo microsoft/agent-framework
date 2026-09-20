@@ -59,8 +59,9 @@ namespace Microsoft.Agents.AI;
 /// </para>
 /// <para>
 /// When a logger factory is supplied, the evaluator logs one line per evaluation (iteration, model-reported probability,
-/// threshold, and outcome) at debug level, and a warning when a failure policy other than throwing is applied. It never
-/// logs the projected state.
+/// threshold, and outcome) at debug level, and a warning when a failure policy other than throwing is applied. The
+/// warning carries only the exception type, failure kind, status code, and transience, never the exception message or
+/// the projected state.
 /// </para>
 /// <para>
 /// <strong>Security considerations:</strong> Using this evaluator is an explicit opt-in. The decision client is an
@@ -218,11 +219,14 @@ public sealed class DecisionLoopEvaluator : LoopEvaluator
     {
         if (this._logger.IsEnabled(LogLevel.Warning))
         {
+            // Only classification fields are logged. The exception object is deliberately not attached: a provider
+            // error body excerpted into its message could echo request data, and this evaluator never logs the state.
             this._logger.LogWarning(
-                exception,
-                "DecisionLoopEvaluator iteration {Iteration}: the decision client failed ({FailureKind}, transient: {IsTransient}); applying {FailureBehavior}.",
+                "DecisionLoopEvaluator iteration {Iteration}: the decision client failed ({ExceptionType}, kind {FailureKind}, status {StatusCode}, transient: {IsTransient}); applying {FailureBehavior}.",
                 iteration,
-                exception is DecisionClientException dce ? dce.Kind.ToString() : exception.GetType().Name,
+                exception.GetType().Name,
+                exception is DecisionClientException dce ? dce.Kind.ToString() : "n/a",
+                exception is DecisionClientException { StatusCode: { } status } ? status.ToString(System.Globalization.CultureInfo.InvariantCulture) : "n/a",
                 exception is DecisionClientException { IsTransient: true },
                 behavior);
         }
