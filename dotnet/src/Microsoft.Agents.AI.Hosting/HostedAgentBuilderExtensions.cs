@@ -20,6 +20,10 @@ public static class HostedAgentBuilderExtensions
     /// <param name="builder">The hosted agent builder.</param>
     /// <returns>The same <see cref="IHostedAgentBuilder"/> instance so that additional calls can be chained.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="builder"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException">
+    /// Thrown when <paramref name="builder"/>'s <see cref="IHostedAgentBuilder.ServiceCollection"/> or
+    /// <see cref="IHostedAgentBuilder.Name"/> is <see langword="null"/>.
+    /// </exception>
     /// <exception cref="InvalidOperationException">
     /// Thrown when an earlier <see cref="AsDefault"/> call has already marked an agent as the default, including an
     /// earlier call on this same builder. Also thrown when the service collection contains no keyed
@@ -77,9 +81,8 @@ public static class HostedAgentBuilderExtensions
     /// </remarks>
     public static IHostedAgentBuilder AsDefault(this IHostedAgentBuilder builder)
     {
-        Throw.IfNull(builder);
-
-        var services = builder.ServiceCollection;
+        var services = Throw.IfNullOrMemberNull(builder, builder?.ServiceCollection);
+        _ = Throw.IfMemberNull(builder, builder.Name);
 
         ServiceDescriptor? lastKeyedAgentDescriptor = null;
         foreach (var descriptor in services)

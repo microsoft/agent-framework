@@ -399,6 +399,36 @@ public sealed class HostedAgentBuilderAsDefaultExtensionsTests
     }
 
     /// <summary>
+    /// Verifies that AsDefault throws <see cref="ArgumentException"/>, not <see cref="NullReferenceException"/>, when a
+    /// third-party <see cref="IHostedAgentBuilder"/> implementation returns a null <see cref="IHostedAgentBuilder.ServiceCollection"/>.
+    /// </summary>
+    [Fact]
+    public void AsDefault_NullServiceCollection_ThrowsArgumentException()
+    {
+        // Arrange
+        var builder = new NullMemberAgentBuilder(name: "billing", nullServiceCollection: true);
+
+        // Act & Assert
+        Assert.Throws<ArgumentException>(() => builder.AsDefault());
+    }
+
+    /// <summary>
+    /// Verifies that AsDefault throws <see cref="ArgumentException"/>, not the "no keyed registration"
+    /// <see cref="InvalidOperationException"/>, when a third-party <see cref="IHostedAgentBuilder"/> implementation
+    /// returns a null <see cref="IHostedAgentBuilder.Name"/>, and that the failing call adds no descriptor.
+    /// </summary>
+    [Fact]
+    public void AsDefault_NullName_ThrowsArgumentException()
+    {
+        // Arrange
+        var builder = new NullMemberAgentBuilder(name: null, nullServiceCollection: false);
+
+        // Act & Assert
+        Assert.Throws<ArgumentException>(() => builder.AsDefault());
+        Assert.Empty(builder.ServiceCollection);
+    }
+
+    /// <summary>
     /// Verifies that AsDefault throws when the last-registered keyed <see cref="AIAgent"/> registration for the
     /// builder's name is shorter-lived than the builder, and that the failing call adds no descriptor.
     /// </summary>
@@ -497,5 +527,25 @@ public sealed class HostedAgentBuilderAsDefaultExtensionsTests
         public IServiceCollection ServiceCollection { get; } = new ServiceCollection();
 
         public ServiceLifetime Lifetime { get; } = lifetime;
+    }
+
+    /// <summary>
+    /// A hand-rolled <see cref="IHostedAgentBuilder"/> standing in for a third-party implementation that violates the
+    /// interface's non-nullable contract by returning a null <see cref="Name"/> or <see cref="ServiceCollection"/>.
+    /// </summary>
+    private sealed class NullMemberAgentBuilder : IHostedAgentBuilder
+    {
+        public NullMemberAgentBuilder(string? name, bool nullServiceCollection)
+        {
+            // null! simulates a third-party implementation that ignores the interface's non-nullable annotation.
+            this.Name = name!;
+            this.ServiceCollection = nullServiceCollection ? null! : new ServiceCollection();
+        }
+
+        public string Name { get; }
+
+        public IServiceCollection ServiceCollection { get; }
+
+        public ServiceLifetime Lifetime => ServiceLifetime.Singleton;
     }
 }
