@@ -1502,8 +1502,9 @@ class TestAgentSessionPersistence:
         assert stored is not None
         assert stored.state["started"] is True
 
-    async def test_cancellation_signal_stops_streaming_and_completes(self) -> None:
-        """Steering/explicit-cancel: the loop must break promptly, and the response still completes."""
+    async def test_cancellation_signal_stops_streaming_without_completing(self) -> None:
+        """Steering/explicit-cancel: the loop must break promptly, and the handler must not emit a
+        ``response.completed`` terminal for a run it didn't finish (regression for #8564)."""
         store = SessionStore()
         agent = _make_agent(
             stream_updates=[
@@ -1536,7 +1537,8 @@ class TestAgentSessionPersistence:
 
         types = [event.get("type") for event in events if isinstance(event, Mapping)]
         assert types.count("response.output_text.delta") == 1
-        assert types[-1] == "response.completed"
+        assert "response.completed" not in types
+        assert types[-1] == "response.output_text.delta"
 
         stored = await store.get("response-1")
         assert stored is not None
@@ -1586,9 +1588,7 @@ class TestAgentSessionPersistence:
             # call instead of only being observed after it (eventually) produced an update.
             events = await asyncio.wait_for(_drain(), timeout=1.0)
 
-        types = [event.get("type") for event in events if isinstance(event, Mapping)]
-        assert "response.output_text.delta" not in types
-        assert types[-1] == "response.completed"
+        assert events == []
         assert cleanup_called.is_set()
 
     async def test_consumer_failure_cancels_agent_stream_driver_task(self) -> None:
@@ -5885,8 +5885,9 @@ class TestWorkflowAgentHosting:
         text_done = [e for e in events if e["event"] == "response.output_text.done"]
         assert any(e["data"]["text"] == "hello stream" for e in text_done)
 
-    async def test_cancellation_signal_stops_main_loop_and_completes(self) -> None:
-        """Explicit-cancel: the workflow's main loop must break promptly and still complete."""
+    async def test_cancellation_signal_stops_main_loop_without_completing(self) -> None:
+        """Explicit-cancel: the workflow's main loop must break promptly, and the handler must not
+        emit a ``response.completed`` terminal for a run it didn't finish (regression for #8564)."""
         workflow_agent, inner = _build_multi_update_workflow_agent(["one", "two", "three"])
         server = _make_server(workflow_agent)
         request = CreateResponse(model="m", input="hi", stream=True)
@@ -5912,7 +5913,8 @@ class TestWorkflowAgentHosting:
 
         types = [event.get("type") for event in events if isinstance(event, Mapping)]
         assert types.count("response.output_text.delta") == 1
-        assert types[-1] == "response.completed"
+        assert "response.completed" not in types
+        assert types[-1] == "response.output_text.delta"
         assert inner.run_count == 1
 
     async def test_cancellation_signal_preempts_stuck_workflow_call(self) -> None:
@@ -5940,8 +5942,13 @@ class TestWorkflowAgentHosting:
                 cancellation_signal.set()  # Fires while the inner agent is stuck awaiting `gate`.
 
                 async def _drain() -> list[Any]:
-                    first = await pending
-                    return [first, *[event async for event in handler]]
+                    events: list[Any] = []
+                    try:
+                        events.append(await pending)
+                    except StopAsyncIteration:
+                        return events
+                    events.extend([event async for event in handler])
+                    return events
 
                 # Bounded well below `gate` never being set: proves cancellation preempted the stuck
                 # call instead of only being observed after it (eventually) produced an update.
@@ -5950,7 +5957,7 @@ class TestWorkflowAgentHosting:
 
         types = [event.get("type") for event in events if isinstance(event, Mapping)]
         assert "response.output_text.delta" not in types
-        assert types[-1] == "response.completed"
+        assert "response.completed" not in types
         assert inner.run_count == 1
 
     async def test_shutdown_signal_preempts_stuck_workflow_call(self, tmp_path: Path) -> None:
@@ -6020,7 +6027,8 @@ class TestWorkflowAgentHosting:
 
         types = [event.get("type") for event in events if isinstance(event, Mapping)]
         assert "response.output_text.delta" not in types
-        assert types[-1] == "response.completed"
+        assert "response.completed" not in types
+        assert types[-1] == "response.in_progress"
         # At most the restore-only replay call happened; the new-turn call (which would deliver
         # "hi again") must never fire.
         assert inner.run_count <= run_count_after_first_turn + 1

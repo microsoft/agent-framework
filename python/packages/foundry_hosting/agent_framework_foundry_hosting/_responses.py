@@ -794,6 +794,15 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 await inner.aclose()
                 raise
 
+            if cancellation_signal.is_set():
+                # A cancelled run drains the inner generator without raising (both
+                # ``_handle_inner_workflow`` and ``_handle_inner_agent`` stop their
+                # ``_SignalledIterator`` loop and return normally once the signal fires).
+                # Emit nothing here so a caller cannot mistake this for a normal
+                # completion; the host server's cancel-aware layer synthesizes the
+                # cancelled terminal when the handler returns without one.
+                return
+
             for event in tracker.close():
                 yield event
 
