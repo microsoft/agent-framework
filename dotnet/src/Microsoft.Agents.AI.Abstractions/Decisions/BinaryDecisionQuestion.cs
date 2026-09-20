@@ -30,17 +30,3 @@ public sealed class BinaryDecisionQuestion : DecisionQuestion
     /// <summary>Gets or sets optional descriptions of what a true and a false answer mean.</summary>
     public BinaryDecisionCriteria? Criteria { get; set; }
 }
-
-/// <summary>
-/// Describes what a true and a false answer to a <see cref="BinaryDecisionQuestion"/> mean, to sharpen the semantic
-/// boundary between them.
-/// </summary>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-public sealed class BinaryDecisionCriteria
-{
-    /// <summary>Gets or sets a description of what a true answer means.</summary>
-    public string? TrueDescription { get; set; }
-
-    /// <summary>Gets or sets a description of what a false answer means.</summary>
-    public string? FalseDescription { get; set; }
-}
