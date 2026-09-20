@@ -24,7 +24,10 @@ public static class HostedAgentBuilderExtensions
     /// Thrown when an earlier <see cref="AsDefault"/> call has already marked an agent as the default, including an
     /// earlier call on this same builder. Also thrown when the service collection contains no keyed
     /// <see cref="AIAgent"/> registration whose service key is <see cref="IHostedAgentBuilder.Name"/>, because the
-    /// registration added here forwards to that keyed one. No descriptor is added when the exception is thrown.
+    /// registration added here forwards to that keyed one. Also thrown when the last such keyed registration present
+    /// when this method is called has a shorter <see cref="ServiceLifetime"/> than <see cref="IHostedAgentBuilder.Lifetime"/>,
+    /// because the registration added here would then capture a shorter-lived keyed agent. No descriptor is added when
+    /// the exception is thrown.
     /// </exception>
     /// <remarks>
     /// <para>
@@ -32,11 +35,14 @@ public static class HostedAgentBuilderExtensions
     /// and its overloads register the agent as a keyed service whose service key is the agent name. This method adds one
     /// additional, non-keyed <see cref="AIAgent"/> registration that forwards to the keyed one, using the agent's
     /// <see cref="IHostedAgentBuilder.Lifetime"/> and never invoking the agent factory independently, so a singleton agent
-    /// resolves to the same instance both ways. The keyed registration is unaffected.
+    /// resolves to the same instance both ways. The keyed registration is unaffected. When several keyed registrations
+    /// share the agent name, the container resolves the last one, so that is the one whose lifetime is compared with
+    /// <see cref="IHostedAgentBuilder.Lifetime"/>.
     /// </para>
     /// <para>
-    /// Only registrations present when this method is called are checked, and only a second <see cref="AsDefault"/>
-    /// call throws, on this builder or on any other. A non-keyed <see cref="AIAgent"/> registered earlier by other
+    /// Only registrations present when this method is called are checked, and among non-keyed registrations only a
+    /// second <see cref="AsDefault"/> call throws, on this builder or on any other. A non-keyed
+    /// <see cref="AIAgent"/> registered earlier by other
     /// means is superseded by the registration added here under the usual last-registration-wins rule, and one
     /// registered afterwards supersedes this one. A TryAdd-style registration added afterwards (for example
     /// <c>AddFoundryResponses(services, agent)</c> from Microsoft.Agents.AI.Foundry.Hosting) is ignored, as is its
@@ -75,16 +81,18 @@ public static class HostedAgentBuilderExtensions
 
         var services = builder.ServiceCollection;
 
-        var hasKeyedAgentRegistration = false;
+        ServiceDescriptor? lastKeyedAgentDescriptor = null;
         foreach (var descriptor in services)
         {
             // ServiceDescriptor.ImplementationFactory and ImplementationInstance throw on keyed descriptors, so the
             // keyed check has to come first.
             if (descriptor.IsKeyedService)
             {
-                if (!hasKeyedAgentRegistration && descriptor.ServiceType == typeof(AIAgent) && Equals(descriptor.ServiceKey, builder.Name))
+                if (descriptor.ServiceType == typeof(AIAgent) && Equals(descriptor.ServiceKey, builder.Name))
                 {
-                    hasKeyedAgentRegistration = true;
+                    // Keep the LAST match: Microsoft.Extensions.DependencyInjection resolves the last-registered keyed
+                    // descriptor for a given service type and key, so that is the one this default forwards to.
+                    lastKeyedAgentDescriptor = descriptor;
                 }
 
                 continue;
@@ -101,13 +109,22 @@ public static class HostedAgentBuilderExtensions
             }
         }
 
-        if (!hasKeyedAgentRegistration)
+        if (lastKeyedAgentDescriptor is null)
         {
             // The forwarding registration below would otherwise fail only at resolution time, and where DevUI's
             // KeyedService.AnyKey agent factory is registered the two factories would call each other instead.
             throw new InvalidOperationException(
                 $"No keyed {nameof(AIAgent)} registration exists for agent '{builder.Name}'; " +
                 $"call {nameof(AsDefault)}() on the builder returned by AddAIAgent or AddAsAIAgent.");
+        }
+
+        // ServiceLifetime enum: Singleton=0, Scoped=1, Transient=2. A higher value means a shorter lifetime.
+        if (lastKeyedAgentDescriptor.Lifetime > builder.Lifetime)
+        {
+            throw new InvalidOperationException(
+                $"The keyed {nameof(AIAgent)} registration for agent '{builder.Name}' has lifetime '{lastKeyedAgentDescriptor.Lifetime}', " +
+                $"which is shorter than the default registration's lifetime '{builder.Lifetime}'. " +
+                "The default registration would capture the shorter-lived keyed agent, causing a captive dependency.");
         }
 
         // Forwarding to the keyed registration keeps a single instance per lifetime scope and ensures the agent factory is

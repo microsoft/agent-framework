@@ -398,6 +398,87 @@ public sealed class HostedAgentBuilderAsDefaultExtensionsTests
         Assert.Empty(builder.ServiceCollection);
     }
 
+    /// <summary>
+    /// Verifies that AsDefault throws when the last-registered keyed <see cref="AIAgent"/> registration for the
+    /// builder's name is shorter-lived than the builder, and that the failing call adds no descriptor.
+    /// </summary>
+    [Fact]
+    public void AsDefault_LastKeyedRegistrationShorterLivedThanBuilder_ThrowsInvalidOperationException()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        var first = services.AddAIAgent("billing", (sp, key) => new TestEchoAgent(name: key), ServiceLifetime.Singleton);
+        services.AddAIAgent("billing", (sp, key) => new TestEchoAgent(name: key), ServiceLifetime.Scoped);
+        var countBeforeAsDefault = services.Count;
+
+        // Act
+        var exception = Assert.Throws<InvalidOperationException>(() => first.AsDefault());
+
+        // Assert
+        Assert.Contains("'billing'", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("Scoped", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("Singleton", exception.Message, StringComparison.Ordinal);
+        Assert.Equal(countBeforeAsDefault, services.Count);
+    }
+
+    /// <summary>
+    /// Verifies that AsDefault scans for the LAST keyed <see cref="AIAgent"/> registration under the builder's name,
+    /// which is the one DI actually resolves, and does not throw when that one is at least as long-lived as the builder
+    /// even though an earlier, shorter-lived keyed registration under the same name exists.
+    /// </summary>
+    [Fact]
+    public void AsDefault_LastKeyedRegistrationAtLeastAsLongLivedAsBuilder_DoesNotThrow()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        services.AddAIAgent("billing", (sp, key) => new TestEchoAgent(name: key), ServiceLifetime.Scoped);
+        var second = services.AddAIAgent("billing", (sp, key) => new TestEchoAgent(name: key), ServiceLifetime.Singleton);
+
+        // Act
+        second.AsDefault();
+
+        // Assert
+        _ = Assert.Single(services, d => d.ServiceType == typeof(AIAgent) && !d.IsKeyedService);
+    }
+
+    /// <summary>
+    /// Verifies that AsDefault throws exactly when the keyed registration's lifetime is shorter than the builder's,
+    /// for every (keyed lifetime, builder lifetime) pair, matching the captive-dependency rule used for tools.
+    /// </summary>
+    [Theory]
+    [InlineData(ServiceLifetime.Singleton, ServiceLifetime.Singleton, false)]
+    [InlineData(ServiceLifetime.Singleton, ServiceLifetime.Scoped, false)]
+    [InlineData(ServiceLifetime.Singleton, ServiceLifetime.Transient, false)]
+    [InlineData(ServiceLifetime.Scoped, ServiceLifetime.Singleton, true)]
+    [InlineData(ServiceLifetime.Scoped, ServiceLifetime.Scoped, false)]
+    [InlineData(ServiceLifetime.Scoped, ServiceLifetime.Transient, false)]
+    [InlineData(ServiceLifetime.Transient, ServiceLifetime.Singleton, true)]
+    [InlineData(ServiceLifetime.Transient, ServiceLifetime.Scoped, true)]
+    [InlineData(ServiceLifetime.Transient, ServiceLifetime.Transient, false)]
+    public void AsDefault_KeyedAndBuilderLifetimeCombinations_ThrowsOnlyWhenKeyedIsShorterLived(
+        ServiceLifetime keyedLifetime, ServiceLifetime builderLifetime, bool expectThrow)
+    {
+        // Arrange
+        var builder = new StandaloneAgentBuilder("billing", builderLifetime);
+        builder.ServiceCollection.Add(new ServiceDescriptor(
+            typeof(AIAgent), "billing", (sp, key) => new TestEchoAgent(name: key as string), keyedLifetime));
+
+        // Act & Assert
+        if (expectThrow)
+        {
+            var exception = Assert.Throws<InvalidOperationException>(() => builder.AsDefault());
+            Assert.Contains("'billing'", exception.Message, StringComparison.Ordinal);
+            Assert.Contains(keyedLifetime.ToString(), exception.Message, StringComparison.Ordinal);
+            Assert.Contains(builderLifetime.ToString(), exception.Message, StringComparison.Ordinal);
+            Assert.DoesNotContain(builder.ServiceCollection, d => d.ServiceType == typeof(AIAgent) && !d.IsKeyedService);
+        }
+        else
+        {
+            builder.AsDefault();
+            _ = Assert.Single(builder.ServiceCollection, d => d.ServiceType == typeof(AIAgent) && !d.IsKeyedService);
+        }
+    }
+
     private static IList<AITool> ResolveToolsFromDefaultAgent(IServiceProvider serviceProvider)
     {
         var agent = serviceProvider.GetRequiredService<AIAgent>() as ChatClientAgent;
@@ -409,12 +490,12 @@ public sealed class HostedAgentBuilderAsDefaultExtensionsTests
     /// A hand-rolled <see cref="IHostedAgentBuilder"/> over an empty service collection: the only way to reach
     /// <c>AsDefault()</c> without the keyed registration that <c>AddAIAgent</c> adds.
     /// </summary>
-    private sealed class StandaloneAgentBuilder(string name) : IHostedAgentBuilder
+    private sealed class StandaloneAgentBuilder(string name, ServiceLifetime lifetime = ServiceLifetime.Singleton) : IHostedAgentBuilder
     {
         public string Name { get; } = name;
 
         public IServiceCollection ServiceCollection { get; } = new ServiceCollection();
 
-        public ServiceLifetime Lifetime => ServiceLifetime.Singleton;
+        public ServiceLifetime Lifetime { get; } = lifetime;
     }
 }
