@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>$(TargetFrameworksCore)</TargetFrameworks>
+    <NoWarn>$(NoWarn);MAAI001</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Microsoft.Agents.AI.TypeSafe\Microsoft.Agents.AI.TypeSafe.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\FeatureUsageAssert.cs" Link="FeatureUsageAssert.cs" />
+    <ProjectReference Include="..\..\src\Microsoft.Agents.AI.Abstractions\Microsoft.Agents.AI.Abstractions.csproj" />
+    <Using Include="Microsoft.Agents.AI.Testing" />
+  </ItemGroup>
+
+</Project>
