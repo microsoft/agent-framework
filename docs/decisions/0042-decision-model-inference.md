@@ -171,8 +171,11 @@ DecisionClientExtensions                 GetResponseAsync<TState>(state, JsonTyp
 Two additions go beyond the proposal and are candidates to contribute upstream: `DecisionClientException` with a
 `DecisionFailureKind` (`Authentication`, `InvalidRequest`, `RateLimited`, `Overloaded`, `ProviderUnavailable`,
 `InvalidResponse`, `Unknown`) and `IsTransient`, so callers can distinguish a retryable condition from a permanent
-one; and range validation on the answer types, so an out-of-range probability cannot exist as an object. Both were
-adopted from AgentEval's `AgentEval.Decisions` contract (ADR-033 there), which is kept isomorphic to this one.
+one; and construction-time validation on the answer types (a `TrueProbability`, `Confidence`, or distribution value
+supplied at construction or through a setter must be finite and within 0..1). The `Probabilities` collections stay
+mutable to match the proposed MEAI shape, so a producer that mutates them afterwards owns their invariants. Both
+additions were adopted from AgentEval's `AgentEval.Decisions` contract (ADR-033 there), which is kept isomorphic to
+this one.
 
 Provider limits (for example Jev's 255 choices or 10 levels) are not part of the contract; providers enforce them.
 
@@ -447,7 +450,7 @@ verification.
 The implementation is compliant with this ADR when:
 
 1. The decision contract in `Microsoft.Agents.AI.Abstractions` mirrors `dotnet/extensions#7764` name for name, is
-   `[Experimental]`, and adds only the exception model and range validation. ✔
+   `[Experimental]`, and adds only the exception model and construction-time validation of answer values. ✔
 2. MAF Core and Abstractions have no dependency on Jev or TypeSafe; the transport is in `Microsoft.Agents.AI.TypeSafe`. ✔
 3. `DecisionLoopEvaluator` is a `LoopEvaluator`. ✔
 4. `AIJudgeLoopEvaluator` behavior is unchanged. ✔ (existing tests pass)
