@@ -2,19 +2,16 @@
 
 using System.Collections.Generic;
 using System.ComponentModel;
-using System.Linq;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Hyperlight.Internal;
 using Microsoft.Extensions.AI;
-using Moq;
 
 namespace Microsoft.Agents.AI.Hyperlight.UnitTests;
 
 public sealed class InstructionBuilderTests
 {
-    private static readonly AIAgent s_mockAgent = new Mock<AIAgent>().Object;
-
     [Fact]
     public void BuildContextInstructions_HiddenTools_MentionsCallTool()
     {
@@ -77,11 +74,9 @@ public sealed class InstructionBuilderTests
     }
 
     [Fact]
-    public async Task BuildExecuteCodeDescription_WithParameterizedTools_IncludesHostToolJsonSchemaAsync()
+    public void BuildExecuteCodeDescription_WithToolParameters_IncludesParameterMetadata()
     {
-        // Arrange — zero-parameter tools already have coverage above; this locks the
-        // host-tool JsonSchema gap tracked by microsoft/agent-framework#8446.
-        // Stick to reflection-friendly primitives so AOT/source-gen test hosts can build the schema.
+        // Arrange
         static string Lookup(
             [Description("Search text")] string query,
             [Description("Maximum results")] int limit = 10) => $"{query}:{limit}";
@@ -98,44 +93,62 @@ public sealed class InstructionBuilderTests
             allowedDomains: [],
             hasHostInputDirectory: false);
 
-        // Assert — model-facing description must carry the host tool parameter schema.
+        // Assert
         Assert.Contains("lookup", text);
-        Assert.Contains("Look up an item.", text);
-        Assert.Contains("Parameters (JSON Schema)", text);
-        Assert.Contains(tool.JsonSchema.GetRawText(), text);
         Assert.Contains("query", text);
         Assert.Contains("Search text", text);
-        Assert.Contains("limit", text);
         Assert.Contains("Maximum results", text);
 
-        // Host schemas are documentation only; they must not replace execute_code's code-only input.
-        using var executeCode = new HyperlightExecuteCodeFunction(new HyperlightCodeActProviderOptions
-        {
-            Tools = [tool],
-        });
-        Assert.Contains("\"code\"", executeCode.JsonSchema.GetRawText());
-        Assert.DoesNotContain("\"query\"", executeCode.JsonSchema.GetRawText());
-        Assert.DoesNotContain("\"limit\"", executeCode.JsonSchema.GetRawText());
-
-        using var provider = new HyperlightCodeActProvider(new HyperlightCodeActProviderOptions
-        {
-            Tools = [tool],
-        });
-        var context = await provider.InvokingAsync(
-            new AIContextProvider.InvokingContext(s_mockAgent, session: null, new AIContext()));
-        var providerFn = Assert.IsAssignableFrom<AIFunction>(context!.Tools!.First());
-        Assert.Contains("\"code\"", providerFn.JsonSchema.GetRawText());
-        Assert.DoesNotContain("\"query\"", providerFn.JsonSchema.GetRawText());
-        Assert.DoesNotContain("\"limit\"", providerFn.JsonSchema.GetRawText());
+        // Requiredness and defaults separate the two parameters.
+        Assert.Contains("\"required\":[\"query\"]", text);
+        Assert.Contains("\"default\":10", text);
     }
 
-    [Theory]
-    [InlineData("true")]
-    [InlineData("false")]
-    public void BuildExecuteCodeDescription_WithBooleanJsonSchema_IncludesBooleanRoot(string schemaJson)
+    [Fact]
+    public void BuildExecuteCodeDescription_WithZeroParameterTool_ReportsNoParameters()
     {
-        // Arrange — boolean JSON Schema roots are valid and must surface to the model.
-        var tool = new BooleanSchemaTool("gate", "Always-on gate.", schemaJson);
+        // Arrange
+        var tool = AIFunctionFactory.Create(() => "ok", name: "ping", description: "Pings.");
+
+        // Act
+        var text = InstructionBuilder.BuildExecuteCodeDescription(
+            tools: [tool],
+            fileMounts: [],
+            allowedDomains: [],
+            hasHostInputDirectory: false);
+
+        // Assert
+        Assert.Contains("Parameters: none.", text);
+        Assert.DoesNotContain("Parameters (JSON Schema)", text);
+        Assert.DoesNotContain("\"properties\":{}", text);
+    }
+
+    [Fact]
+    public void BuildExecuteCodeDescription_WithUnconstrainedSchema_OmitsParameterBlock()
+    {
+        // Arrange
+        var tool = new StubTool("legacy_tool", "A tool that does not describe its input.");
+
+        // Act
+        var text = InstructionBuilder.BuildExecuteCodeDescription(
+            tools: [tool],
+            fileMounts: [],
+            allowedDomains: [],
+            hasHostInputDirectory: false);
+
+        // Assert
+        Assert.Contains("legacy_tool", text);
+        Assert.DoesNotContain("Parameters", text);
+        Assert.DoesNotContain("{}", text);
+    }
+
+    [Fact]
+    public void BuildExecuteCodeDescription_WithBooleanSchemaRoot_OmitsParameterBlock()
+    {
+        // Arrange — `true` is a valid JSON Schema root, and carries exactly as much
+        // parameter information as `{}`: none.
+        using var document = JsonDocument.Parse("true");
+        var tool = new StubTool("gate", "Always-on gate.", document.RootElement);
 
         // Act
         var text = InstructionBuilder.BuildExecuteCodeDescription(
@@ -146,8 +159,7 @@ public sealed class InstructionBuilderTests
 
         // Assert
         Assert.Contains("gate", text);
-        Assert.Contains("Parameters (JSON Schema)", text);
-        Assert.Contains(schemaJson, text);
+        Assert.DoesNotContain("Parameters", text);
     }
 
     [Fact]
@@ -187,26 +199,26 @@ public sealed class InstructionBuilderTests
         Assert.Contains("POST", text);
     }
 
-    private sealed class BooleanSchemaTool : AIFunction
+    /// <summary>An <see cref="AIFunction"/> with a caller-supplied schema, or none at all.</summary>
+    private sealed class StubTool : AIFunction
     {
-        private readonly JsonDocument _schemaDocument;
+        private readonly JsonElement? _schema;
 
-        public BooleanSchemaTool(string name, string description, string schemaJson)
+        public StubTool(string name, string description, JsonElement? schema = null)
         {
             this.Name = name;
             this.Description = description;
-            this._schemaDocument = JsonDocument.Parse(schemaJson);
+            this._schema = schema;
         }
 
         public override string Name { get; }
 
         public override string Description { get; }
 
-        public override JsonElement JsonSchema => this._schemaDocument.RootElement;
+        public override JsonElement JsonSchema => this._schema ?? base.JsonSchema;
 
         protected override ValueTask<object?> InvokeCoreAsync(
             AIFunctionArguments arguments,
-            System.Threading.CancellationToken cancellationToken) =>
-            new((object?)null);
+            CancellationToken cancellationToken) => new((object?)null);
     }
 }
