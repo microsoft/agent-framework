@@ -79,6 +79,53 @@ public class FoundryToolboxBearerTokenHandlerTests
         Assert.False(request.Headers.Contains("x-agent-foundry-call-id"));
     }
 
+
+    [Fact]
+    public async Task SendAsync_ReplacesExistingCallIdWithCurrentHostedContextAsync()
+    {
+        var (handler, _) = CreateHandlerPair();
+        using var invoker = new HttpMessageInvoker(handler);
+        HostedCallContext.CallId = "call-current-user";
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, "https://example.com/api");
+            request.Headers.TryAddWithoutValidation("x-agent-foundry-call-id", "call-stale-user");
+
+            using var response = await invoker.SendAsync(request, CancellationToken.None);
+
+            Assert.True(request.Headers.TryGetValues("x-agent-foundry-call-id", out var values));
+            Assert.Equal(["call-current-user"], values);
+        }
+        finally
+        {
+            HostedCallContext.CallId = null;
+        }
+    }
+
+    [Fact]
+    public async Task SendAsync_ReplacesExistingUserIdWithCurrentHostedContextAsync()
+    {
+        var (handler, _) = CreateHandlerPair();
+        using var invoker = new HttpMessageInvoker(handler);
+        HostedCallContext.UserId = "user-current";
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, "https://example.com/api");
+            request.Headers.TryAddWithoutValidation("x-agent-user-id", "user-stale");
+
+            using var response = await invoker.SendAsync(request, CancellationToken.None);
+
+            Assert.True(request.Headers.TryGetValues("x-agent-user-id", out var values));
+            Assert.Equal(["user-current"], values);
+        }
+        finally
+        {
+            HostedCallContext.UserId = null;
+        }
+    }
+
     [Fact]
     public async Task SendAsync_InjectsBearerTokenAsync()
     {
