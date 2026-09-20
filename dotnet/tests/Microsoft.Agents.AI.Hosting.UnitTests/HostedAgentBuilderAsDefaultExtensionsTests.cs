@@ -486,7 +486,8 @@ public sealed class HostedAgentBuilderAsDefaultExtensionsTests
 
         // Assert
         Assert.Equal("builder", exception.ParamName);
-        Assert.Contains("ServiceCollection", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("builder.ServiceCollection", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("?.", exception.Message, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -505,7 +506,7 @@ public sealed class HostedAgentBuilderAsDefaultExtensionsTests
 
         // Assert
         Assert.Equal("builder", exception.ParamName);
-        Assert.Contains("Name", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("builder.Name", exception.Message, StringComparison.Ordinal);
         Assert.Empty(builder.ServiceCollection);
     }
 
@@ -529,6 +530,7 @@ public sealed class HostedAgentBuilderAsDefaultExtensionsTests
         Assert.Contains("'billing'", exception.Message, StringComparison.Ordinal);
         Assert.Contains("Scoped", exception.Message, StringComparison.Ordinal);
         Assert.Contains("Singleton", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("the last one", exception.Message, StringComparison.Ordinal);
         Assert.Equal(countBeforeAsDefault, services.Count);
     }
 

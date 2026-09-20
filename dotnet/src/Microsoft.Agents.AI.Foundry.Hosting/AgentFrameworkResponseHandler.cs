@@ -52,8 +52,8 @@ public class AgentFrameworkResponseHandler : ResponseHandler
     /// <summary>
     /// The default agent name proven not to alias the keyed registration under that name, remembered so later
     /// requests do not resolve the keyed candidate again. The result cannot change once the provider is built: this
-    /// handler resolves both the default agent and the keyed candidate from its one root
-    /// <see cref="_serviceProvider"/>, where a singleton or scoped registration yields one instance for the
+    /// handler resolves both the default agent and the keyed candidate from the same <see cref="_serviceProvider"/>,
+    /// where a singleton or scoped registration, on either side of the comparison, yields one instance for the
     /// provider's lifetime and a registration that creates an instance per resolution never compares equal at all.
     /// Single slot because a host has one default agent name. A probe that fails is remembered by neither this field
     /// nor <see cref="_knownAliasAgentName"/>.

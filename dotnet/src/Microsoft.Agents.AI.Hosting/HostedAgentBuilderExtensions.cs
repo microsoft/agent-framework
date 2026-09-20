@@ -45,17 +45,17 @@ public static class HostedAgentBuilderExtensions
     /// </para>
     /// <para>
     /// Only registrations present when this method is called are checked, and among non-keyed registrations only a
-    /// second <see cref="AsDefault"/> call throws, on this builder or on any other. A non-keyed
-    /// <see cref="AIAgent"/> registered earlier by other
-    /// means is superseded by the registration added here under the usual last-registration-wins rule, and one
-    /// registered afterwards supersedes this one. A TryAdd-style registration added afterwards (for example
-    /// <c>AddFoundryResponses(services, agent)</c> from Microsoft.Agents.AI.Foundry.Hosting) is ignored, as is its
-    /// keyed <see cref="AIAgent"/> registration under the same agent name, so <c>AsDefault()</c> wins over that call
-    /// in either order. A keyed <see cref="AgentSessionStore"/> that such a call registers under the same agent name
-    /// is not ignored: call <see cref="WithSessionStore(IHostedAgentBuilder, AgentSessionStore, bool)"/> if the
-    /// default agent must not share it. Registering another keyed <see cref="AIAgent"/> under the same name after this
-    /// call is not supported: the registration added here would forward to the replacement and, with a singleton
-    /// lifetime, hold the first instance it resolves regardless of the replacement's lifetime.
+    /// second <see cref="AsDefault"/> call throws, on this builder or on any other. A non-keyed <see cref="AIAgent"/>
+    /// registered earlier by other means is superseded by the registration added here under the usual
+    /// last-registration-wins rule, and one registered afterwards supersedes this one.
+    /// A TryAdd-style registration added afterwards (for example <c>AddFoundryResponses(services, agent)</c> from
+    /// Microsoft.Agents.AI.Foundry.Hosting) is ignored, as is its keyed <see cref="AIAgent"/> registration under the
+    /// same agent name, so <c>AsDefault()</c> wins over that call in either order. A keyed
+    /// <see cref="AgentSessionStore"/> that such a call registers under the same agent name is not ignored: call
+    /// <see cref="WithSessionStore(IHostedAgentBuilder, AgentSessionStore, bool)"/> if the default agent must not share
+    /// it. Registering another keyed <see cref="AIAgent"/> under the same name after this call is not supported: the
+    /// registration added here would forward to the replacement and, with a singleton lifetime, hold the first instance
+    /// it resolves regardless of the replacement's lifetime.
     /// </para>
     /// <para>
     /// Use <see cref="ServiceLifetime.Singleton"/> for a default agent. Hosting integrations resolve it from the root
@@ -81,7 +81,8 @@ public static class HostedAgentBuilderExtensions
     /// </remarks>
     public static IHostedAgentBuilder AsDefault(this IHostedAgentBuilder builder)
     {
-        var services = Throw.IfNullOrMemberNull(builder, builder?.ServiceCollection);
+        Throw.IfNull(builder);
+        var services = Throw.IfMemberNull(builder, builder.ServiceCollection);
         _ = Throw.IfMemberNull(builder, builder.Name);
 
         ServiceDescriptor? lastKeyedAgentDescriptor = null;
@@ -126,7 +127,8 @@ public static class HostedAgentBuilderExtensions
             throw new InvalidOperationException(
                 $"The keyed {nameof(AIAgent)} registration for agent '{builder.Name}' has lifetime '{lastKeyedAgentDescriptor.Lifetime}', " +
                 $"which is shorter than the default registration's lifetime '{builder.Lifetime}'. " +
-                "The default registration would capture the shorter-lived keyed agent, causing a captive dependency.");
+                "The default registration would capture the shorter-lived keyed agent, causing a captive dependency. " +
+                "When several keyed registrations share the name, the last one is the one the container resolves.");
         }
 
         // Forwarding to the keyed registration keeps a single instance per lifetime scope and ensures the agent factory is
