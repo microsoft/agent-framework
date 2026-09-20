@@ -121,8 +121,7 @@ public static class HostedAgentBuilderExtensions
                 $"call {nameof(AsDefault)}() on the builder returned by AddAIAgent or AddAsAIAgent.");
         }
 
-        // ServiceLifetime enum: Singleton=0, Scoped=1, Transient=2. A higher value means a shorter lifetime.
-        if (lastKeyedAgentDescriptor.Lifetime > builder.Lifetime)
+        if (IsShorterLivedThan(lastKeyedAgentDescriptor.Lifetime, builder.Lifetime))
         {
             throw new InvalidOperationException(
                 $"The keyed {nameof(AIAgent)} registration for agent '{builder.Name}' has lifetime '{lastKeyedAgentDescriptor.Lifetime}', " +
@@ -266,14 +265,21 @@ public static class HostedAgentBuilderExtensions
     }
 
     /// <summary>
+    /// Determines whether <paramref name="lifetime"/> is shorter-lived than <paramref name="other"/>.
+    /// </summary>
+    private static bool IsShorterLivedThan(ServiceLifetime lifetime, ServiceLifetime other)
+    {
+        // ServiceLifetime enum: Singleton=0, Scoped=1, Transient=2. A higher value means a shorter lifetime.
+        return lifetime > other;
+    }
+
+    /// <summary>
     /// Validates that the tool lifetime is compatible with the agent lifetime.
     /// A tool's lifetime must be at least as long as the agent's lifetime to prevent captive dependency issues.
     /// </summary>
     internal static void ValidateToolLifetime(ServiceLifetime agentLifetime, ServiceLifetime toolLifetime)
     {
-        // ServiceLifetime enum: Singleton=0, Scoped=1, Transient=2
-        // A higher value means a shorter lifetime.
-        if (toolLifetime > agentLifetime)
+        if (IsShorterLivedThan(toolLifetime, agentLifetime))
         {
             throw new InvalidOperationException(
                 $"A tool with lifetime '{toolLifetime}' cannot be registered for an agent with lifetime '{agentLifetime}'. " +

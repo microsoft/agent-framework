@@ -481,8 +481,12 @@ public sealed class HostedAgentBuilderAsDefaultExtensionsTests
         // Arrange
         var builder = new NullMemberAgentBuilder(name: "billing", nullServiceCollection: true);
 
-        // Act & Assert
-        Assert.Throws<ArgumentException>(() => builder.AsDefault());
+        // Act
+        var exception = Assert.Throws<ArgumentException>(() => builder.AsDefault());
+
+        // Assert
+        Assert.Equal("builder", exception.ParamName);
+        Assert.Contains("ServiceCollection", exception.Message, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -496,8 +500,12 @@ public sealed class HostedAgentBuilderAsDefaultExtensionsTests
         // Arrange
         var builder = new NullMemberAgentBuilder(name: null, nullServiceCollection: false);
 
-        // Act & Assert
-        Assert.Throws<ArgumentException>(() => builder.AsDefault());
+        // Act
+        var exception = Assert.Throws<ArgumentException>(() => builder.AsDefault());
+
+        // Assert
+        Assert.Equal("builder", exception.ParamName);
+        Assert.Contains("Name", exception.Message, StringComparison.Ordinal);
         Assert.Empty(builder.ServiceCollection);
     }
 
