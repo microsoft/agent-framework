@@ -1100,7 +1100,7 @@ def _current_run_identity() -> object | None:  # pyright: ignore[reportUnusedFun
 
 
 @contextlib.contextmanager
-def _run_identity_scope(identity: object) -> Generator[None]:  # pyright: ignore[reportUnusedFunction]
+def _run_identity_scope(identity: object) -> Generator[None]:
     """Stamp ``identity`` as the current run identity for the enclosed extent."""
     token = _CURRENT_RUN_IDENTITY.set(identity)
     try:

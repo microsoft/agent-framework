@@ -26,12 +26,13 @@ import errno
 import fnmatch
 import logging
 import os
-import re
+import time
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Mapping, MutableMapping
 from pathlib import Path
-from typing import Annotated, Any, ClassVar, cast
+from typing import Annotated, Any, ClassVar, Protocol, cast
 
+import regex
 from pydantic import BaseModel, Field
 
 from .._feature_stage import ExperimentalFeature, experimental
@@ -68,15 +69,15 @@ DEFAULT_FILE_ACCESS_INSTRUCTIONS = (
 # regex match when building a result snippet.
 _SEARCH_SNIPPET_RADIUS = 50
 
-# Hard cap on the length of a user-supplied search regex. Python's ``re`` module
-# has no built-in timeout, so a catastrophic-backtracking pattern (such as
-# ``(a+)+$``) submitted by the model could spin the CPU indefinitely. The cap
-# alone does not stop short pathological patterns, so :meth:`search`
-# additionally executes the regex scan in a worker thread and bounds the wall
-# clock with :data:`_SEARCH_TIMEOUT_SECONDS`. The thread itself cannot be
-# safely interrupted from Python, so a runaway scan continues until the
-# regex engine returns, but the caller and event loop stay responsive.
+# Hard cap on the length of a user-supplied search regex. The cap is a coarse bound on
+# how much work a single pattern can describe; it does not stop a short pathological
+# pattern, which is what :class:`_BoundedSearchPattern` is for.
 _MAX_SEARCH_PATTERN_LENGTH = 256
+
+# Wall-clock budget for one search, covering the whole call: every file read and every
+# line matched. Enforced twice over, by :class:`_BoundedSearchPattern` inside the match
+# and by :func:`_run_search_with_timeout` around the call. See
+# :func:`_compile_search_regex` for why the inner bound is the one that matters.
 _SEARCH_TIMEOUT_SECONDS = 10.0
 
 # How much file content :meth:`AgentFileStore.search` accumulates before handing a batch
@@ -97,24 +98,120 @@ _SCAN_BATCH_FILES = 10_000
 _ELOOP = errno.ELOOP
 
 
-def _compile_search_regex(pattern: str) -> re.Pattern[str]:
-    """Compile a case-insensitive search regex, enforcing the length cap.
+class _SearchMatch(Protocol):
+    """The part of a match object :func:`_search_file_content` uses."""
 
-    An invalid ``pattern`` raises :class:`re.error` unchanged so the search
-    tools surface it to the calling model, which can correct the pattern and
-    retry.
+    def start(self) -> int: ...
+
+    def end(self) -> int: ...
+
+
+class _SearchPattern(Protocol):
+    """The part of a compiled pattern the scan pipeline uses.
+
+    Both :class:`re.Pattern` and :class:`_BoundedSearchPattern` satisfy this, which is
+    what lets :meth:`AgentFileStore.scan_content` keep accepting a plain ``re.Pattern``
+    from a third-party store while the built-in stores pass a deadline-bounded one.
+    """
+
+    @property
+    def pattern(self) -> str: ...
+
+    def search(self, string: str) -> _SearchMatch | None: ...
+
+
+class _SearchTimeout(Exception):
+    """Raised when a scan exhausts its deadline.
+
+    Deliberately not an :class:`OSError` subclass. ``regex`` signals its own timeout with
+    the builtin :class:`TimeoutError`, which *is* an ``OSError``, and the grep tools catch
+    ``OSError`` around the search to report unreadable files -- so letting that escape as-is
+    would have the timeout silently reported as a file error. This is converted to the
+    documented :class:`ValueError` at the boundary by :func:`_run_search_with_timeout`.
+    """
+
+
+class _BoundedSearchPattern:
+    """A compiled pattern that enforces one deadline across every match it performs.
+
+    The deadline is shared rather than per-call: a pattern is matched once per line of
+    every searched file, so a per-match timeout would reset thousands of times over and
+    bound nothing in aggregate.
+    """
+
+    def __init__(self, compiled: Any, pattern: str, deadline: float) -> None:
+        self._compiled = compiled
+        self._pattern = pattern
+        self._deadline = deadline
+
+    @property
+    def pattern(self) -> str:
+        """The pattern string this was compiled from."""
+        return self._pattern
+
+    def search(self, string: str) -> Any:
+        """Search ``string``, charging the elapsed time against the shared deadline.
+
+        Raises:
+            _SearchTimeout: When the deadline has passed, or passes mid-match.
+        """
+        remaining = self._deadline - time.monotonic()
+        if remaining <= 0.0:
+            raise _SearchTimeout
+        try:
+            return self._compiled.search(string, timeout=remaining)
+        except TimeoutError as exc:
+            raise _SearchTimeout from exc
+
+
+def _compile_search_regex(pattern: str) -> _BoundedSearchPattern:
+    """Compile a case-insensitive search regex, enforcing the length cap and a deadline.
+
+    Compiled with ``regex`` rather than the standard library's ``re``. A search pattern
+    comes from the model, so it is attacker-influenced: a request can carry an indirect
+    prompt injection that asks for a catastrophically backtracking pattern such as
+    ``(a|a)*$``. ``re`` offers no way to bound a match -- it holds the GIL for the whole
+    operation and has no interruption point -- so wrapping the scan in a worker thread and
+    an ``asyncio`` timeout bounds nothing: the timer cannot be scheduled, the thread cannot
+    be cancelled, and the host process stops servicing unrelated work until the match
+    finally returns. ``regex`` checks a deadline mid-match and releases the GIL while
+    matching, which is what makes the bound real and keeps the event loop responsive.
+
+    An invalid ``pattern`` raises :class:`regex.error` unchanged so the search tools surface
+    it to the calling model, which can correct the pattern and retry. Note that
+    ``regex.error`` is *not* a subclass of the standard library's ``re.error``.
 
     Raises:
         ValueError: When ``pattern`` exceeds ``_MAX_SEARCH_PATTERN_LENGTH``
             characters.
-        re.error: When ``pattern`` is not a valid regular expression.
+        regex.error: When ``pattern`` is not a valid regular expression.
     """
     if len(pattern) > _MAX_SEARCH_PATTERN_LENGTH:
         raise ValueError(
             f"Regex pattern is too long ({len(pattern)} characters). "
             f"Maximum supported length is {_MAX_SEARCH_PATTERN_LENGTH} characters."
         )
-    return re.compile(pattern, flags=re.IGNORECASE)
+    # VERSION1 is selected explicitly rather than left to ``regex.DEFAULT_VERSION``, which is
+    # a mutable process global: any library in the process can flip it and silently change how
+    # these patterns parse.
+    compiled = regex.compile(pattern, flags=regex.IGNORECASE | regex.VERSION1)
+    # The deadline starts here, not at first match: the budget covers the whole search,
+    # including the file reads the scan is interleaved with.
+    return _BoundedSearchPattern(compiled, pattern, time.monotonic() + _SEARCH_TIMEOUT_SECONDS)
+
+
+def _search_timeout_message() -> str:
+    """Build the message for a search that ran out of budget.
+
+    Built on demand rather than stored as a constant so it reflects the current value of
+    :data:`_SEARCH_TIMEOUT_SECONDS`, which tests patch.
+    """
+    return (
+        f"Search did not complete within {_SEARCH_TIMEOUT_SECONDS:g} seconds. The bound covers "
+        "the whole search, so this is either a pathological pattern (avoid nested quantifiers "
+        "such as '(a+)+') or a store too slow to read this many files in time. Narrow the "
+        "pattern, or search a smaller directory."
+    )
 
 
 async def _run_search_with_timeout(
@@ -122,11 +219,9 @@ async def _run_search_with_timeout(
 ) -> list[FileSearchResult]:
     """Await ``work`` under a bounded wall-clock timeout.
 
-    The one bound covers both shapes of search: a whole scan offloaded with
-    :func:`asyncio.to_thread` (what the stores in this package do) and the base
-    :meth:`AgentFileStore.search` pipeline, which keeps store I/O on the event
-    loop and offloads only the per-file regex work. In both cases the
-    model-supplied pattern executes in a worker thread, never on the loop.
+    A backstop around the deadline :func:`_compile_search_regex` binds into the pattern
+    itself. The inner bound covers time spent matching; this one also covers a store too
+    slow to read its files, which no regex deadline would catch.
 
     Raises:
         ValueError: When the search does not complete within
@@ -134,17 +229,8 @@ async def _run_search_with_timeout(
     """
     try:
         return await asyncio.wait_for(work, timeout=_SEARCH_TIMEOUT_SECONDS)
-    except asyncio.TimeoutError as exc:
-        # On Python 3.10 ``asyncio.wait_for`` raises ``asyncio.TimeoutError``
-        # which is distinct from the builtin ``TimeoutError`` (the two were
-        # unified in 3.11). Catching the asyncio alias works on every
-        # supported version.
-        raise ValueError(
-            f"Search did not complete within {_SEARCH_TIMEOUT_SECONDS:g} seconds. The bound covers "
-            "the whole search, so this is either a pathological pattern (avoid nested quantifiers "
-            "such as '(a+)+') or a store too slow to read this many files in time. Narrow the "
-            "pattern, or search a smaller directory."
-        ) from exc
+    except (_SearchTimeout, asyncio.TimeoutError) as exc:
+        raise ValueError(_search_timeout_message()) from exc
 
 
 def _normalize_relative_path(path: str, *, is_directory: bool = False) -> str:
@@ -595,7 +681,7 @@ class FileStoreEntry(SerializationMixin):
         return f"FileStoreEntry(name={self.name!r}, type={self.type!r})"
 
 
-def _search_file_content(file_name: str, content: str, regex: re.Pattern[str]) -> FileSearchResult | None:
+def _search_file_content(file_name: str, content: str, search_pattern: _SearchPattern) -> FileSearchResult | None:
     r"""Search one file's content and return a :class:`FileSearchResult` if any lines match.
 
     Lines are split by :func:`_split_lines_keepends` and reported verbatim, terminator
@@ -617,7 +703,7 @@ def _search_file_content(file_name: str, content: str, regex: re.Pattern[str]) -
         # Same rule as _strip_line_terminator: a lone \r is content, so only a whole
         # \r\n comes off.
         scanned = line[:-2] if line.endswith("\r\n") else line.removesuffix("\n")
-        match = regex.search(scanned)
+        match = search_pattern.search(scanned)
         if match is not None:
             matching_lines.append(FileSearchMatch(line_number=line_number, line=line))
             if first_snippet is None:
@@ -729,7 +815,7 @@ class AgentFileStore(ABC):
         return _split_lines_keepends(content)
 
     @staticmethod
-    def scan_content(file_name: str, content: str, regex: re.Pattern[str]) -> FileSearchResult | None:
+    def scan_content(file_name: str, content: str, regex: _SearchPattern) -> FileSearchResult | None:
         """Find every line of ``content`` matching ``regex``, numbered by :meth:`split_lines`.
 
         This is the numbering primitive the base :meth:`search` uses, published so a
@@ -741,7 +827,11 @@ class AgentFileStore(ABC):
             file_name: The name recorded on the result, relative to the searched directory.
             content: The file's full text.
             regex: A compiled pattern, normally from the same source string passed
-                to :meth:`search`.
+                to :meth:`search`. Anything exposing ``pattern`` and ``search`` works,
+                including a plain :class:`re.Pattern`. Note that a store passing its own
+                ``re.Pattern`` here opts out of the deadline the built-in stores apply,
+                and so must bound a model-supplied pattern by other means -- see
+                :func:`_compile_search_regex` for why ``re`` cannot be interrupted.
 
         Returns:
             The match metadata, or ``None`` when no line matches.
@@ -860,13 +950,15 @@ class AgentFileStore(ABC):
             ValueError: When the search does not complete within
                 :data:`_SEARCH_TIMEOUT_SECONDS` seconds.
         """
-        regex = _compile_search_regex(regex_pattern)
-        return await _run_search_with_timeout(self._scan_candidate_files(directory, regex, glob_pattern, recursive))
+        search_pattern = _compile_search_regex(regex_pattern)
+        return await _run_search_with_timeout(
+            self._scan_candidate_files(directory, search_pattern, glob_pattern, recursive)
+        )
 
     async def _scan_candidate_files(
         self,
         directory: str,
-        regex: re.Pattern[str],
+        search_pattern: _SearchPattern,
         glob_pattern: str | None,
         recursive: bool,
     ) -> list[FileSearchResult]:
@@ -876,7 +968,7 @@ class AgentFileStore(ABC):
         over-returns (which :meth:`find_matching_files` explicitly permits)
         cannot widen the caller's scope.
         """
-        names = await self.find_matching_files(directory, regex.pattern, glob_pattern, recursive=recursive)
+        names = await self.find_matching_files(directory, search_pattern.pattern, glob_pattern, recursive=recursive)
         results: list[FileSearchResult] = []
         batch: list[tuple[str, str]] = []
         batch_chars = 0
@@ -887,7 +979,7 @@ class AgentFileStore(ABC):
                 # Called on the class, not the instance: a store that overrides the public
                 # scan_content must not be able to skew the numbers while still counting as
                 # aligned by construction.
-                result = AgentFileStore.scan_content(candidate_name, candidate_content, regex)
+                result = AgentFileStore.scan_content(candidate_name, candidate_content, search_pattern)
                 if result is not None:
                     found.append(result)
             return found
@@ -1046,7 +1138,7 @@ class InMemoryAgentFileStore(AgentFileStore):
         prefix = _normalize_relative_path(directory, is_directory=True).lower()
         if prefix and not prefix.endswith("/"):
             prefix += "/"
-        regex = _compile_search_regex(regex_pattern)
+        search_pattern = _compile_search_regex(regex_pattern)
 
         async with self._lock:
             entries = [(key, display, content) for key, (display, content) in self._files.items()]
@@ -1062,7 +1154,7 @@ class InMemoryAgentFileStore(AgentFileStore):
                 relative_display = display[len(prefix) :]
                 if not _matches_glob(relative_display, glob_pattern):
                     continue
-                result = AgentFileStore.scan_content(relative_display, file_content, regex)
+                result = AgentFileStore.scan_content(relative_display, file_content, search_pattern)
                 if result is not None:
                     results.append(result)
             return results
@@ -1350,9 +1442,9 @@ class FileSystemAgentFileStore(AgentFileStore):
         children.
         """
         full_dir = self._resolve_safe_directory_path(directory)
-        regex = _compile_search_regex(regex_pattern)
+        search_pattern = _compile_search_regex(regex_pattern)
         return await _run_search_with_timeout(
-            asyncio.to_thread(self._search_files_sync, full_dir, regex, glob_pattern, recursive)
+            asyncio.to_thread(self._search_files_sync, full_dir, search_pattern, glob_pattern, recursive)
         )
 
     @staticmethod
@@ -1387,7 +1479,7 @@ class FileSystemAgentFileStore(AgentFileStore):
 
     @staticmethod
     def _search_files_sync(
-        full_dir: Path, regex: re.Pattern[str], glob_pattern: str | None, recursive: bool
+        full_dir: Path, search_pattern: _SearchPattern, glob_pattern: str | None, recursive: bool
     ) -> list[FileSearchResult]:
         if not full_dir.is_dir():
             return []
@@ -1418,7 +1510,7 @@ class FileSystemAgentFileStore(AgentFileStore):
                 logger.warning("Skipping unreadable file during search: %s", entry)
                 skipped.append(relative_name)
                 continue
-            result = AgentFileStore.scan_content(relative_name, file_content, regex)
+            result = AgentFileStore.scan_content(relative_name, file_content, search_pattern)
             if result is not None:
                 results.append(result)
         if skipped:

@@ -1,7 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 import asyncio
+import copy
 import logging
 import threading
+from contextvars import ContextVar
 from typing import Annotated, Any, Literal, get_args, get_origin
 from unittest.mock import Mock
 
@@ -10,6 +12,7 @@ from opentelemetry import trace
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic import BaseModel
 
+import agent_framework._tools as tools_module
 from agent_framework import (
     SKIP_PARSING,
     Content,
@@ -19,13 +22,286 @@ from agent_framework import (
 from agent_framework._middleware import FunctionInvocationContext
 from agent_framework._tools import (
     _auto_invoke_function,
+    _format_tool_parameters,
+    _normalize_tool_description_format,
     _parse_annotation,
     _parse_inputs,
+    _try_execute_function_call_groups,
     normalize_function_invocation_configuration,
 )
 from agent_framework.observability import OtelAttr
 
 # region FunctionTool and tool decorator tests
+
+
+def test_normalize_tool_description_format_returns_detached_mapping():
+    formats = {"lookup": "json"}
+
+    normalized = _normalize_tool_description_format(formats)
+    formats.clear()
+
+    assert normalized == {"lookup": "json"}
+
+
+@pytest.mark.parametrize(
+    ("value", "error_type"),
+    [
+        ("yaml", ValueError),
+        (None, TypeError),
+        ({1: "json"}, TypeError),
+        ({"lookup": 1}, TypeError),
+        ({"lookup": "yaml"}, ValueError),
+    ],
+)
+def test_normalize_tool_description_format_rejects_invalid_values(value, error_type):
+    with pytest.raises(error_type, match="tool_description_format"):
+        _normalize_tool_description_format(value)
+
+
+def test_format_tool_parameters_compact_preserves_scalar_metadata():
+    schema = {
+        "type": "object",
+        "title": "InventoryInput",
+        "properties": {
+            "partNumber": {"type": "string", "description": "Part identifier", "title": "Part Number"},
+            "units": {"type": "integer", "default": 1},
+            "currency": {"type": "string", "enum": ["EUR", "USD"], "default": "EUR"},
+            "price": {"type": "number"},
+            "available": {"type": "boolean", "default": False},
+            "empty": {"type": "null", "default": None},
+        },
+        "required": ["partNumber", "empty"],
+    }
+    original = copy.deepcopy(schema)
+
+    effective_format, parameters = _format_tool_parameters(schema, parameter_format="compact")
+
+    assert effective_format == "compact"
+    assert parameters == {
+        "partNumber": {"type": "string", "required": True, "description": "Part identifier"},
+        "units": {"type": "integer", "required": False, "default": 1},
+        "currency": {"type": "string", "required": False, "enum": ["EUR", "USD"], "default": "EUR"},
+        "price": {"type": "number", "required": False},
+        "available": {"type": "boolean", "required": False, "default": False},
+        "empty": {"type": "null", "required": True, "default": None},
+    }
+    parameters["currency"]["enum"].append("GBP")
+    assert schema == original
+
+
+@pytest.mark.parametrize("required", [[], ["value"]])
+def test_format_tool_parameters_does_not_infer_requiredness_from_defaults(required):
+    schema = {
+        "type": "object",
+        "properties": {"value": {"type": "string", "default": "default"}},
+        "required": required,
+    }
+
+    effective_format, parameters = _format_tool_parameters(schema, parameter_format="compact")
+
+    assert effective_format == "compact"
+    assert parameters["value"]["required"] == ("value" in required)
+    assert parameters["value"]["default"] == "default"
+
+
+@pytest.mark.parametrize(
+    "schema",
+    [
+        {"type": "object", "properties": {}},
+        {"type": "object", "properties": {}, "required": [], "title": "EmptyInput"},
+    ],
+)
+def test_format_tool_parameters_empty_object(schema):
+    assert _format_tool_parameters(schema, parameter_format="compact") == ("compact", {})
+
+
+@pytest.mark.parametrize(
+    "property_schema",
+    [
+        {"type": "object", "properties": {"nested": {"type": "string"}}, "required": ["nested"]},
+        {"type": "array", "items": {"type": "integer"}},
+        {"$ref": "#/$defs/Address"},
+        {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        {"type": ["string", "null"]},
+        {"type": "string", "minLength": 1},
+        {"type": "number", "minimum": 0},
+        {"type": "integer", "exclusiveMaximum": 10},
+        {"type": "string", "pattern": "^[A-Z]+$"},
+        {"type": "string", "format": "date-time"},
+        {"type": "string", "const": "fixed"},
+        {"type": "string", "x-custom-keyword": {"constraint": "custom"}},
+        {"type": "string", "allOf": [{"maxLength": 10}]},
+        {"description": "An unconstrained parameter"},
+        True,
+        False,
+    ],
+)
+def test_format_tool_parameters_compact_falls_back_for_rich_properties(property_schema):
+    schema = {"type": "object", "properties": {"value": property_schema}, "required": ["value"]}
+
+    effective_format, parameters = _format_tool_parameters(schema, parameter_format="compact")
+
+    assert effective_format == "json"
+    assert parameters == schema
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"additionalProperties": False},
+        {"additionalProperties": {"type": "string"}},
+        {"$defs": {"Address": {"type": "string"}}},
+        {"oneOf": [{"required": ["value"]}, {"required": ["other"]}]},
+        {"dependentRequired": {"value": ["other"]}},
+        {"patternProperties": {"^x-": {"type": "integer"}}},
+        {"minProperties": 1},
+        {"x-custom-keyword": "preserve"},
+        {"required": ["unlisted"]},
+        {"required": "value"},
+        {"required": [1]},
+        {"properties": []},
+        {"properties": {1: {"type": "string"}}},
+        {"properties": {"value": {"type": "string", "required": True}}},
+        {"type": "array"},
+    ],
+)
+def test_format_tool_parameters_compact_falls_back_for_root_constraints(extra):
+    schema = {"type": "object", "properties": {"value": {"type": "string"}}, **extra}
+
+    effective_format, parameters = _format_tool_parameters(schema, parameter_format="compact")
+
+    assert effective_format == "json"
+    assert parameters == schema
+
+
+@pytest.mark.parametrize("parameter_format", ["compact", "json"])
+def test_format_tool_parameters_full_schema_result_is_detached(parameter_format):
+    schema = {
+        "type": "object",
+        "properties": {"value": {"$ref": "#/$defs/Value"}},
+        "$defs": {"Value": {"type": "string", "enum": ["one", "two"]}},
+        "required": ["value"],
+        "additionalProperties": False,
+    }
+    original = copy.deepcopy(schema)
+
+    effective_format, parameters = _format_tool_parameters(schema, parameter_format=parameter_format)
+
+    assert effective_format == "json"
+    assert parameters == original
+    parameters["$defs"]["Value"]["enum"].append("three")
+    assert schema == original
+
+
+def test_format_tool_parameters_json_preserves_simple_schema():
+    schema = {"type": "object", "properties": {"value": {"type": "string", "title": "Value"}}}
+
+    assert _format_tool_parameters(schema, parameter_format="json") == ("json", schema)
+
+
+@pytest.mark.parametrize("schema", [{}, {"properties": {"value": {"type": "string"}}}])
+def test_format_tool_parameters_does_not_treat_unconstrained_schema_as_empty(schema):
+    assert _format_tool_parameters(schema, parameter_format="compact") == ("json", schema)
+
+
+@pytest.mark.parametrize("parameter_format", ["other", "", None])
+def test_format_tool_parameters_rejects_unknown_format(parameter_format):
+    with pytest.raises(ValueError, match="parameter_format"):
+        _format_tool_parameters({"type": "object", "properties": {}}, parameter_format=parameter_format)
+
+
+async def test_sequential_function_invocation_runs_calls_in_model_order() -> None:
+    execution_order: list[str] = []
+
+    @tool
+    async def first() -> str:
+        execution_order.append("first_start")
+        await asyncio.sleep(0)
+        execution_order.append("first_end")
+        return "first"
+
+    @tool
+    async def second() -> str:
+        execution_order.append("second_start")
+        await asyncio.sleep(0)
+        execution_order.append("second_end")
+        return "second"
+
+    result_groups, should_terminate = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=[
+            Content.from_function_call(call_id="first", name="first", arguments={}),
+            Content.from_function_call(call_id="second", name="second", arguments={}),
+        ],
+        tools=[first, second],
+        config={"allow_concurrent_invocation": False},
+    )
+
+    assert not should_terminate
+    assert execution_order == ["first_start", "first_end", "second_start", "second_end"]
+    assert [group[0].result for group in result_groups] == ["first", "second"]
+
+
+async def test_sequential_function_invocation_isolates_context() -> None:
+    current_tool = ContextVar[str | None]("current_tool", default=None)
+
+    @tool
+    async def first() -> str:
+        current_tool.set("first")
+        return "first"
+
+    @tool
+    async def second() -> str:
+        return str(current_tool.get())
+
+    result_groups, _ = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=[
+            Content.from_function_call(call_id="first", name="first", arguments={}),
+            Content.from_function_call(call_id="second", name="second", arguments={}),
+        ],
+        tools=[first, second],
+        config={"allow_concurrent_invocation": False},
+    )
+
+    assert result_groups[1][0].result == "None"
+
+
+def test_function_invocation_configuration_allows_concurrency_by_default() -> None:
+    config = normalize_function_invocation_configuration(None)
+
+    assert config["allow_concurrent_invocation"] is True
+
+
+async def test_sequential_function_invocation_finishes_batch_after_termination(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executed_calls: list[str] = []
+
+    async def execute(function_call: Content, **_: Any) -> tuple[list[Content], bool]:
+        call_id = function_call.call_id
+        assert call_id is not None
+        executed_calls.append(call_id)
+        return [Content.from_function_result(call_id=call_id, result="done")], call_id == "first"
+
+    monkeypatch.setattr(tools_module, "_execute_single_function_call", execute)
+
+    result_groups, should_terminate = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=[
+            Content.from_function_call(call_id="first", name="first", arguments={}),
+            Content.from_function_call(call_id="second", name="second", arguments={}),
+        ],
+        tools=[
+            FunctionTool(name="first", func=lambda: "first"),
+            FunctionTool(name="second", func=lambda: "second"),
+        ],
+        config={"allow_concurrent_invocation": False},
+    )
+
+    assert should_terminate
+    assert executed_calls == ["first", "second"]
+    assert [group[0].result for group in result_groups] == ["done", "done"]
 
 
 def test_tool_decorator():

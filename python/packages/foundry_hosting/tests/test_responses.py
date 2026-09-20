@@ -16,6 +16,7 @@ import logging
 import os
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Mapping, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
@@ -37,6 +38,7 @@ from agent_framework import (
     Content,
     FunctionInvocationLayer,
     HistoryProvider,
+    InMemoryCheckpointStorage,
     InMemoryHistoryProvider,
     Message,
     RawAgent,
@@ -140,6 +142,42 @@ async def _raising_updates(
     raise RuntimeError(message)
 
 
+class _AgentProtocolMock(MagicMock):
+    id = "test-agent"
+    name: str | None = "Test Agent"
+    description: str | None = "A mock agent for testing"
+    run: Any = None
+    create_session: Any = None
+    get_session: Any = None
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.run = MagicMock()
+        self.create_session = MagicMock(side_effect=lambda *, session_id=None: AgentSession(session_id=session_id))
+        self.get_session = MagicMock(
+            side_effect=lambda service_session_id, *, session_id=None: AgentSession(
+                service_session_id=service_session_id,
+                session_id=session_id,
+            )
+        )
+
+
+class _RawAgentMock(_AgentProtocolMock, RawAgent):
+    pass
+
+
+class _WorkflowAgentMock(_AgentProtocolMock, WorkflowAgent):
+    _workflow_value: Any = None
+
+    @property
+    def workflow(self) -> Any:
+        return self._workflow_value
+
+    @workflow.setter
+    def workflow(self, value: Any) -> None:
+        self._workflow_value = value
+
+
 def _make_agent(
     *,
     response: AgentResponse | None = None,
@@ -152,7 +190,7 @@ def _make_agent(
     tests that only care about complete output messages: the helper converts those messages into streamed updates.
     ``stream_updates`` is for tests that need explicit chunk boundaries to verify streaming event behavior.
     """
-    agent = MagicMock(spec=RawAgent) if raw_agent else MagicMock()
+    agent = _RawAgentMock() if raw_agent else _AgentProtocolMock()
     agent.id = "test-agent"
     agent.name = "Test Agent"
     agent.description = "A mock agent for testing"
@@ -164,7 +202,8 @@ def _make_agent(
     def create_session(*, session_id: str | None = None) -> AgentSession:
         return AgentSession(session_id=session_id)
 
-    agent.create_session.side_effect = create_session
+    agent.create_session = MagicMock(side_effect=create_session)
+    agent.run = MagicMock()
 
     if response is not None:
 
@@ -207,6 +246,14 @@ class _StrictCustomAgent:
 
     def create_session(self, *, session_id: str | None = None) -> AgentSession:
         return AgentSession(session_id=session_id)
+
+    def get_session(
+        self,
+        service_session_id: str | ServiceSessionId,
+        *,
+        session_id: str | None = None,
+    ) -> AgentSession:
+        return AgentSession(service_session_id=service_session_id, session_id=session_id)
 
     def run(
         self,
@@ -852,6 +899,18 @@ class TestSerializationHelpers:
 
 
 class TestResponsesHostServerInit:
+    @pytest.mark.parametrize("agent", [None, 42])
+    def test_init_rejects_invalid_agent_source(self, agent: Any) -> None:
+        with pytest.raises(TypeError, match="agent must be an agent instance or a zero-argument callable"):
+            ResponsesHostServer(agent)
+
+    async def test_zero_argument_agent_class_is_resolved_as_factory(self) -> None:
+        server = _make_server(cast(Any, _StrictCustomAgent), history_source="agent")
+
+        response = await _post(server)
+
+        assert response.json()["status"] == "completed"
+
     def test_init_basic(self) -> None:
         agent = _make_agent(
             response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
@@ -1487,6 +1546,7 @@ class TestAgentSessionPersistence:
         response, not merely be checked between already-produced updates."""
         store = SessionStore()
         gate = asyncio.Event()  # Never set: simulates a model/tool call that never returns.
+        cleanup_called = asyncio.Event()
         agent = _make_agent()
 
         async def _stream_gen() -> AsyncIterator[AgentResponseUpdate]:
@@ -1495,7 +1555,11 @@ class TestAgentSessionPersistence:
 
         def run_streaming(*_args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
             del _args, kwargs
-            return ResponseStream(_stream_gen(), finalizer=AgentResponse.from_updates)
+            return ResponseStream(
+                _stream_gen(),
+                finalizer=AgentResponse.from_updates,
+                cleanup_hooks=[cleanup_called.set],
+            )
 
         agent.run = MagicMock(side_effect=run_streaming)
         server = _make_server(agent, session_store=store)
@@ -1525,6 +1589,7 @@ class TestAgentSessionPersistence:
         types = [event.get("type") for event in events if isinstance(event, Mapping)]
         assert "response.output_text.delta" not in types
         assert types[-1] == "response.completed"
+        assert cleanup_called.is_set()
 
     async def test_consumer_failure_cancels_agent_stream_driver_task(self) -> None:
         """A crash in the consumer (`_OutputItemTracker.handle`) must not leave the background
@@ -2691,20 +2756,19 @@ class TestOutputItemToMessage:
             OutputItemFunctionShellCallOutput,
         )
 
-        item = OutputItemFunctionShellCallOutput({
+        output: FunctionShellCallOutputContent = {
+            "stdout": "file.txt",
+            "stderr": "",
+            "outcome": cast(FunctionShellCallOutputExitOutcome, {"exit_code": 0}),
+        }
+        item: OutputItemFunctionShellCallOutput = {
             "type": "shell_call_output",
             "id": "sco-1",
             "call_id": "call_sc",
             "status": "completed",
-            "output": [
-                FunctionShellCallOutputContent({
-                    "stdout": "file.txt",
-                    "stderr": "",
-                    "outcome": cast(FunctionShellCallOutputExitOutcome, {"exit_code": 0}),
-                })
-            ],
+            "output": [output],
             "max_output_length": 1024,
-        })
+        }
         msg = await _output_item_to_message(item)
         assert msg.role == "tool"
         assert msg.contents[0].type == "shell_tool_result"
@@ -3232,23 +3296,22 @@ class TestItemToMessage:
 
     async def test_shell_call_output(self) -> None:
         from azure.ai.agentserver.responses.models import (
-            FunctionShellCallOutputContent,
-            FunctionShellCallOutputExitOutcome,
+            FunctionShellCallOutputContentParam,
+            FunctionShellCallOutputExitOutcomeParam,
             FunctionShellCallOutputItemParam,
         )
 
-        item = FunctionShellCallOutputItemParam({
+        output: FunctionShellCallOutputContentParam = {
+            "stdout": "file.txt",
+            "stderr": "",
+            "outcome": cast(FunctionShellCallOutputExitOutcomeParam, {"exit_code": 0}),
+        }
+        item: FunctionShellCallOutputItemParam = {
             "type": "shell_call_output",
             "call_id": "call_sc",
-            "output": [
-                FunctionShellCallOutputContent({
-                    "stdout": "file.txt",
-                    "stderr": "",
-                    "outcome": cast(FunctionShellCallOutputExitOutcome, {"exit_code": 0}),
-                })
-            ],
+            "output": [output],
             "max_output_length": 1024,
-        })
+        }
         msg = await _item_to_message(item)
         assert msg is not None
         assert msg.role == "tool"
@@ -3516,7 +3579,7 @@ def _make_multi_response_agent(
     stream_updates_list: list[list[AgentResponseUpdate]] | None = None,
 ) -> MagicMock:
     """Create a mock agent that returns different responses on successive calls."""
-    agent = MagicMock(spec=RawAgent)
+    agent = _RawAgentMock()
     agent.id = "test-agent"
     agent.name = "Test Agent"
     agent.description = "A mock agent for testing"
@@ -3528,7 +3591,7 @@ def _make_multi_response_agent(
     def create_session(*, session_id: str | None = None) -> AgentSession:
         return AgentSession(session_id=session_id)
 
-    agent.create_session.side_effect = create_session
+    agent.create_session = MagicMock(side_effect=create_session)
 
     call_index = [0]
 
@@ -4732,7 +4795,8 @@ class TestCheckpointContextValidation:
         context_field: str,
         bad_id: str,
     ) -> None:
-        agent = MagicMock(spec=WorkflowAgent)
+        agent = _WorkflowAgentMock()
+        agent.run = MagicMock()
         agent.context_providers = []
         agent.workflow = MagicMock()
         agent.workflow.name = "workflow"
@@ -4848,6 +4912,25 @@ class TestConsentUrlFromError:
 
 
 class TestAgentLifecycle:
+    async def test_factory_agent_is_entered_and_exited_for_each_request(self) -> None:
+        agents: list[MagicMock] = []
+
+        def create_agent() -> MagicMock:
+            agent = _make_agent(
+                response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
+            )
+            agents.append(agent)
+            return agent
+
+        server = _make_server(create_agent)
+
+        await _post(server, input_text="first", stream=False)
+        await _post(server, input_text="second", stream=False)
+
+        assert len(agents) == 2
+        assert [agent.__aenter__.await_count for agent in agents] == [1, 1]
+        assert [agent.__aexit__.await_count for agent in agents] == [1, 1]
+
     async def test_agent_entered_lazily_on_first_request(self) -> None:
         agent = _make_agent(
             response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
@@ -5215,7 +5298,7 @@ class TestResponseFailedSurfacing:
             yield AgentResponseUpdate(contents=[Content.from_text("partial ")], role="assistant")
             raise RuntimeError("stream kaboom")
 
-        agent = MagicMock(spec=RawAgent)
+        agent = _RawAgentMock()
         agent.id = "test-agent"
         agent.name = "Test Agent"
         agent.description = "A mock agent for testing"
@@ -5227,7 +5310,7 @@ class TestResponseFailedSurfacing:
         def create_session(*, session_id: str | None = None) -> AgentSession:
             return AgentSession(session_id=session_id)
 
-        agent.create_session.side_effect = create_session
+        agent.create_session = MagicMock(side_effect=create_session)
 
         def run_streaming(*args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
             del args
@@ -5266,7 +5349,7 @@ class TestResponseFailedSurfacing:
             yield AgentResponseUpdate(contents=[Content.from_text("hello ")], role="assistant")
             raise RuntimeError("mid-item kaboom")
 
-        agent = MagicMock(spec=RawAgent)
+        agent = _RawAgentMock()
         agent.id = "test-agent"
         agent.name = "Test Agent"
         agent.description = "A mock agent for testing"
@@ -5278,7 +5361,7 @@ class TestResponseFailedSurfacing:
         def create_session(*, session_id: str | None = None) -> AgentSession:
             return AgentSession(session_id=session_id)
 
-        agent.create_session.side_effect = create_session
+        agent.create_session = MagicMock(side_effect=create_session)
 
         def run_streaming(*args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
             del args, kwargs
@@ -5599,7 +5682,8 @@ class _MultiUpdateWorkflowAgentMock(SupportsAgentRun):
         self._texts = list(texts)
         self._gate = gate
         self.run_count = 0
-        self.started = asyncio.Event()  # Set at the top of run(), before any gate wait.
+        self.started = asyncio.Event()
+        self.cancelled = asyncio.Event()
 
     def create_session(self, **kwargs: Any) -> AgentSession:
         del kwargs
@@ -5640,14 +5724,18 @@ class _MultiUpdateWorkflowAgentMock(SupportsAgentRun):
         del messages, session, kwargs
         assert stream is True, "The inner agent only runs in stream mode in Foundry Hosted Agents."
         self.run_count += 1
-        self.started.set()
         texts = self._texts
         name = self.name
         gate = self._gate
 
         async def _aiter() -> AsyncIterator[AgentResponseUpdate]:
+            self.started.set()
             if gate is not None:
-                await gate.wait()  # Simulates a stuck model/tool call for preemption tests.
+                try:
+                    await gate.wait()  # Simulates a stuck model/tool call for preemption tests.
+                except asyncio.CancelledError:
+                    self.cancelled.set()
+                    raise
             for text in texts:
                 yield AgentResponseUpdate(
                     contents=[Content.from_text(text=text)],
@@ -5668,8 +5756,27 @@ def _build_multi_update_workflow_agent(
     async def start(messages: list[Message], ctx: WorkflowContext[AgentExecutorRequest]) -> None:
         await ctx.send_message(AgentExecutorRequest(messages=messages, should_respond=True))
 
-    workflow = WorkflowBuilder(start_executor=start).add_edge(start, inner).build()
+    workflow = WorkflowBuilder(name="multi-update-workflow", start_executor=start).add_edge(start, inner).build()
     return WorkflowAgent(workflow=workflow, name="Multi Update Workflow Agent"), inner
+
+
+@asynccontextmanager
+async def _pending_workflow_event(
+    handler: AsyncGenerator[Any], started: asyncio.Event
+) -> AsyncIterator[asyncio.Future[Any]]:
+    pending = asyncio.ensure_future(anext(handler))
+    started_wait = asyncio.ensure_future(started.wait())
+    try:
+        # Startup uses pytest's test timeout; only preemption has a short deadline.
+        await asyncio.wait([pending, started_wait], return_when=asyncio.FIRST_COMPLETED)
+        if pending.done():
+            pytest.fail(f"Workflow returned before reaching the blocked call: {pending.result()!r}")
+        yield pending
+    finally:
+        started_wait.cancel()
+        pending.cancel()
+        await asyncio.gather(started_wait, pending, return_exceptions=True)
+        await handler.aclose()
 
 
 def _build_approval_workflow_agent(
@@ -5705,6 +5812,47 @@ class TestWorkflowAgentHosting:
     tool-approval round-trip path, which is the primary differentiator
     relative to the regular agent path.
     """
+
+    async def test_async_factory_creates_workflow_agent_for_each_request(self) -> None:
+        created: list[tuple[WorkflowAgent, _MultiUpdateWorkflowAgentMock]] = []
+
+        async def create_agent() -> WorkflowAgent:
+            agent, inner = _build_multi_update_workflow_agent(["hello"])
+            created.append((agent, inner))
+            return agent
+
+        server = _make_server(create_agent)
+
+        first = await _post(server, input_text="one")
+        second = await _post(server, input_text="two")
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert len(created) == 2
+        assert created[0][0].workflow is not created[1][0].workflow
+        assert [inner.run_count for _, inner in created] == [1, 1]
+
+    async def test_factory_workflow_restores_checkpoint_for_same_conversation(self) -> None:
+        runs: list[MagicMock] = []
+
+        def create_agent() -> WorkflowAgent:
+            agent, _ = _build_multi_update_workflow_agent(["hello"])
+            run = MagicMock(wraps=agent.run)
+            cast(Any, agent).run = run
+            runs.append(run)
+            return agent
+
+        checkpoint_storage = InMemoryCheckpointStorage()
+        checkpoint_provider = MagicMock(spec=CheckpointStoreProvider)
+        checkpoint_provider.get_store.return_value = checkpoint_storage
+        server = _make_server(create_agent, checkpoint_store_provider=checkpoint_provider)
+
+        first = await _post(server, input_text="one", conversation_id="conversation-1")
+        second = await _post(server, input_text="two", conversation_id="conversation-1")
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert [run.call_count for run in runs] == [1, 2]
 
     async def test_basic_text_response(self) -> None:
         workflow_agent = _build_text_workflow_agent("hello from workflow")
@@ -5788,20 +5936,17 @@ class TestWorkflowAgentHosting:
             await anext(handler)  # response.created
             await anext(handler)  # response.in_progress
 
-            # Pull the first workflow event in the background so we can wait for the inner agent's
-            # run() to actually start (proving it's genuinely stuck on `gate`) before signalling --
-            # otherwise cancellation could preempt the pull before the workflow even reaches it.
-            pending = asyncio.ensure_future(anext(handler))
-            await asyncio.wait_for(inner.started.wait(), timeout=1.0)
-            cancellation_signal.set()  # Fires while the inner agent is stuck awaiting `gate`.
+            async with _pending_workflow_event(handler, inner.started) as pending:
+                cancellation_signal.set()  # Fires while the inner agent is stuck awaiting `gate`.
 
-            async def _drain() -> list[Any]:
-                first = await pending
-                return [first, *[event async for event in handler]]
+                async def _drain() -> list[Any]:
+                    first = await pending
+                    return [first, *[event async for event in handler]]
 
-            # Bounded well below `gate` never being set: proves cancellation preempted the stuck
-            # call instead of only being observed after it (eventually) produced an update.
-            events = await asyncio.wait_for(_drain(), timeout=1.0)
+                # Bounded well below `gate` never being set: proves cancellation preempted the stuck
+                # call instead of only being observed after it (eventually) produced an update.
+                events = await asyncio.wait_for(_drain(), timeout=1.0)
+                assert inner.cancelled.is_set()
 
         types = [event.get("type") for event in events if isinstance(event, Mapping)]
         assert "response.output_text.delta" not in types
@@ -5835,16 +5980,14 @@ class TestWorkflowAgentHosting:
             await anext(handler)  # response.created
             await anext(handler)  # response.in_progress
 
-            # Pull the first workflow event in the background so we can wait for the inner agent's
-            # run() to actually start (proving it's genuinely stuck on `gate`) before signalling.
-            pending = asyncio.ensure_future(anext(handler))
-            await asyncio.wait_for(inner.started.wait(), timeout=1.0)
-            context.shutdown.set()  # Fires while the inner agent is stuck awaiting `gate`.
+            async with _pending_workflow_event(handler, inner.started) as pending:
+                context.shutdown.set()  # Fires while the inner agent is stuck awaiting `gate`.
 
-            # Bounded well below `gate` never being set: proves shutdown preempted the stuck call
-            # instead of only being observed after it (eventually) produced an update.
-            with pytest.raises(ResponseExitForRecovery):
-                await asyncio.wait_for(pending, timeout=1.0)
+                # Bounded well below `gate` never being set: proves shutdown preempted the stuck call
+                # instead of only being observed after it (eventually) produced an update.
+                with pytest.raises(ResponseExitForRecovery):
+                    await asyncio.wait_for(pending, timeout=1.0)
+                assert inner.cancelled.is_set()
 
         assert inner.run_count == 1
 
