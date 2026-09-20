@@ -3,6 +3,9 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -363,6 +366,76 @@ public sealed class HostedAgentBuilderAsDefaultExtensionsTests
         Assert.Single(distinctAgents);
     }
 
+    // These three tests pin how Microsoft.Extensions.DependencyInjection disposes an agent that a keyed and a
+    // non-keyed registration both resolve to: the container captures a disposable once per registration that
+    // produced it and does not de-duplicate captures across registrations that resolve to the same instance. That
+    // capture-per-registration behavior is what the idempotency requirement in the AsDefault remarks rests on, so a
+    // future DI version that starts de-duplicating disposal fails the counts asserted here first, and the remarks
+    // need updating alongside it.
+    /// <summary>
+    /// Verifies that a singleton default implementing <see cref="IDisposable"/> is disposed twice, once through each
+    /// registration, when the provider is disposed.
+    /// </summary>
+    [Fact]
+    public void AsDefault_SingletonImplementsIDisposable_DisposesTwice()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        services.AddAIAgent("billing", (sp, key) => new DisposableTestAgent(key), ServiceLifetime.Singleton).AsDefault();
+        var provider = services.BuildServiceProvider();
+        var fromKey = provider.GetRequiredKeyedService<AIAgent>("billing");
+        var fromDefault = (DisposableTestAgent)provider.GetRequiredService<AIAgent>();
+
+        // Act
+        provider.Dispose();
+
+        // Assert
+        Assert.Same(fromKey, fromDefault);
+        Assert.Equal(2, fromDefault.DisposeCount);
+    }
+
+    /// <summary>
+    /// Verifies that a singleton default implementing only <see cref="IAsyncDisposable"/> has its <c>DisposeAsync</c>
+    /// invoked twice when the provider is disposed asynchronously, mirroring the synchronous case.
+    /// </summary>
+    [Fact]
+    public async Task AsDefault_SingletonImplementsIAsyncDisposable_DisposesAsyncTwiceAsync()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        services.AddAIAgent("billing", (sp, key) => new AsyncDisposableTestAgent(key), ServiceLifetime.Singleton).AsDefault();
+        var provider = services.BuildServiceProvider();
+        var fromKey = provider.GetRequiredKeyedService<AIAgent>("billing");
+        var fromDefault = (AsyncDisposableTestAgent)provider.GetRequiredService<AIAgent>();
+
+        // Act
+        await provider.DisposeAsync();
+
+        // Assert
+        Assert.Same(fromKey, fromDefault);
+        Assert.Equal(2, fromDefault.DisposeAsyncCount);
+    }
+
+    /// <summary>
+    /// Verifies that, without AsDefault, a singleton agent resolved only through the keyed registration is disposed
+    /// exactly once, showing that the second disposal in the AsDefault case comes from the forwarding registration.
+    /// </summary>
+    [Fact]
+    public void AddAIAgent_WithoutAsDefault_DisposesSingletonOnce()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        services.AddAIAgent("billing", (sp, key) => new DisposableTestAgent(key), ServiceLifetime.Singleton);
+        var provider = services.BuildServiceProvider();
+        var agent = (DisposableTestAgent)provider.GetRequiredKeyedService<AIAgent>("billing");
+
+        // Act
+        provider.Dispose();
+
+        // Assert
+        Assert.Equal(1, agent.DisposeCount);
+    }
+
     /// <summary>
     /// Verifies that a scoped default resolved from the root of a scope-validating provider throws, as keyed resolution does.
     /// </summary>
@@ -547,5 +620,58 @@ public sealed class HostedAgentBuilderAsDefaultExtensionsTests
         public IServiceCollection ServiceCollection { get; }
 
         public ServiceLifetime Lifetime => ServiceLifetime.Singleton;
+    }
+
+    /// <summary>
+    /// Wraps a <see cref="TestEchoAgent"/> to supply the abstract <see cref="AIAgent"/> members, so disposal fakes only
+    /// need to add the disposal interface and its counter.
+    /// </summary>
+    private abstract class WrappingTestAgent(string name) : AIAgent
+    {
+        private readonly TestEchoAgent _inner = new(name: name);
+
+        public override string? Name => this._inner.Name;
+
+        protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default)
+            => this._inner.CreateSessionAsync(cancellationToken);
+
+        protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+            => this._inner.SerializeSessionAsync(session, jsonSerializerOptions, cancellationToken);
+
+        protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+            => this._inner.DeserializeSessionAsync(serializedState, jsonSerializerOptions, cancellationToken);
+
+        protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+            => this._inner.RunAsync(messages, session, options, cancellationToken);
+
+        protected override IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+            => this._inner.RunStreamingAsync(messages, session, options, cancellationToken);
+    }
+
+    /// <summary>
+    /// A <see cref="WrappingTestAgent"/> that counts synchronous <see cref="Dispose"/> calls, used to pin how many
+    /// times the container disposes a default agent's instance.
+    /// </summary>
+    private sealed class DisposableTestAgent(string name) : WrappingTestAgent(name), IDisposable
+    {
+        public int DisposeCount { get; private set; }
+
+        public void Dispose() => this.DisposeCount++;
+    }
+
+    /// <summary>
+    /// A <see cref="WrappingTestAgent"/> that implements only <see cref="IAsyncDisposable"/> and counts
+    /// <see cref="DisposeAsync"/> calls, used to pin how many times the container disposes a default agent's instance
+    /// asynchronously.
+    /// </summary>
+    private sealed class AsyncDisposableTestAgent(string name) : WrappingTestAgent(name), IAsyncDisposable
+    {
+        public int DisposeAsyncCount { get; private set; }
+
+        public ValueTask DisposeAsync()
+        {
+            this.DisposeAsyncCount++;
+            return default;
+        }
     }
 }
