@@ -50,11 +50,21 @@ public class AgentFrameworkResponseHandler : ResponseHandler
     private readonly bool _resilientBackground;
 
     /// <summary>
-    /// A name proven not to alias the default agent can never start aliasing it: registrations are fixed once the
-    /// provider is built. Remembered so later requests do not resolve the keyed candidate again. Single slot because
-    /// a host has one default agent name.
+    /// The default agent name proven not to alias the keyed registration under that name, remembered so later
+    /// requests do not resolve the keyed candidate again. The result cannot change once the provider is built: this
+    /// handler resolves both the default agent and the keyed candidate from its one root
+    /// <see cref="_serviceProvider"/>, where a singleton or scoped registration yields one instance for the
+    /// provider's lifetime and a registration that creates an instance per resolution never compares equal at all.
+    /// Single slot because a host has one default agent name. A probe that fails is remembered by neither this field
+    /// nor <see cref="_knownAliasAgentName"/>.
     /// </summary>
     private volatile string? _knownNonAliasAgentName;
+
+    /// <summary>
+    /// The default agent name proven to alias the keyed registration under that name. The counterpart of
+    /// <see cref="_knownNonAliasAgentName"/>, and safe to remember for the same reason.
+    /// </summary>
+    private volatile string? _knownAliasAgentName;
 
     /// <summary>
     /// Cached fallback used when no <see cref="HostedSessionIsolationKeyProvider"/> is registered in DI.
@@ -893,7 +903,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
     /// as the session store key. The keyed candidate is resolved only to compare identity; a registration that cannot
     /// be resolved from this handler's root provider (a scoped registration under scope validation, or a faulting
     /// factory) is treated as not an alias, so the probe fails the request only when the keyed factory observes
-    /// cancellation; a name proven not to alias is remembered so later requests skip the probe.
+    /// cancellation; a name proven either to alias or not to alias is remembered so later requests skip the probe.
     /// </summary>
     /// <param name="defaultAgent">The default agent the request resolved to.</param>
     /// <param name="name">The default agent's <see cref="AIAgent.Name"/>.</param>
@@ -908,10 +918,16 @@ public class AgentFrameworkResponseHandler : ResponseHandler
             return false;
         }
 
+        if (string.Equals(this._knownAliasAgentName, name, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
         try
         {
             if (ReferenceEquals(this._serviceProvider.GetKeyedService<AIAgent>(name), defaultAgent))
             {
+                this._knownAliasAgentName = name;
                 return true;
             }
 

@@ -245,6 +245,44 @@ public class AgentFrameworkResponseHandlerDefaultAgentStoreTests
     }
 
     [Fact]
+    public async Task CreateAsync_NamelessRequestsWhenDefaultIsAlias_ResolvesKeyedCandidateOnceAsync()
+    {
+        // Arrange
+        var keyedStore = new RecordingSessionStore();
+        var nonKeyedStore = new RecordingSessionStore();
+
+        var services = CreateServices();
+
+        // The alias shape AddAIAgent(name, ...).AsDefault() produces: a keyed singleton and a non-keyed singleton
+        // forwarding to it. A keyed singleton factory only ever runs once no matter how often it is resolved, so
+        // the counting provider below counts lookup call-sites instead: once the probe has proven the alias, the
+        // handler must remember it rather than repeat the keyed lookup on every later request.
+        AddAliasedDefaultAgent(services, new NamedTestAgent(DefaultAgentName), DefaultAgentName);
+        services.AddKeyedSingleton<AgentSessionStore>(DefaultAgentName, keyedStore);
+        services.AddSingleton<AgentSessionStore>(nonKeyedStore);
+
+        var provider = services.BuildServiceProvider();
+        var countingProvider = new KeyedAgentLookupCountingServiceProvider(provider, DefaultAgentName);
+        var handler = CreateHandler(countingProvider);
+
+        // Act
+        // The intermediate count is captured here, between the two requests, rather than in Assert: it is what the
+        // second request's growth is measured against.
+        await RunRequestAsync(handler, requestedAgentName: null);
+        var usesAfterFirstRequest = keyedStore.UseCount;
+        await RunRequestAsync(handler, requestedAgentName: null);
+
+        // Assert
+        Assert.Equal(1, countingProvider.KeyedAgentLookupCount);
+
+        // Assert both requests reached the keyed store (not just the first, before the alias was cached), without
+        // coupling the test to how many store calls one request makes internally.
+        Assert.True(usesAfterFirstRequest > 0);
+        Assert.True(keyedStore.UseCount > usesAfterFirstRequest);
+        Assert.Equal(0, nonKeyedStore.UseCount);
+    }
+
+    [Fact]
     public async Task CreateAsync_NamedRequestWhenDefaultAgentIsScoped_UsesKeyedAgentAndStoreAsync()
     {
         // Arrange
@@ -402,6 +440,41 @@ public class AgentFrameworkResponseHandlerDefaultAgentStoreTests
     private static AgentFrameworkResponseHandler CreateHandler(IServiceProvider provider)
         => new(provider, NullLogger<AgentFrameworkResponseHandler>.Instance);
 
+    /// <summary>
+    /// Wraps a built <see cref="IServiceProvider"/> and counts calls that resolve a keyed <see cref="AIAgent"/> under
+    /// the constructor's <c>countedKey</c>. A keyed singleton factory runs exactly once no matter how many times it
+    /// is resolved, so counting factory invocations cannot observe the positive alias cache; this decorator counts
+    /// the lookup call-sites instead. Everything else is delegated unchanged to the inner provider.
+    /// </summary>
+    private sealed class KeyedAgentLookupCountingServiceProvider(IServiceProvider inner, string countedKey) : IServiceProvider, IKeyedServiceProvider
+    {
+        private int _keyedAgentLookupCount;
+
+        public int KeyedAgentLookupCount => this._keyedAgentLookupCount;
+
+        public object? GetService(Type serviceType) => inner.GetService(serviceType);
+
+        public object? GetKeyedService(Type serviceType, object? serviceKey)
+        {
+            this.CountIfAgentLookup(serviceType, serviceKey);
+            return ((IKeyedServiceProvider)inner).GetKeyedService(serviceType, serviceKey);
+        }
+
+        public object GetRequiredKeyedService(Type serviceType, object? serviceKey)
+        {
+            this.CountIfAgentLookup(serviceType, serviceKey);
+            return ((IKeyedServiceProvider)inner).GetRequiredKeyedService(serviceType, serviceKey);
+        }
+
+        private void CountIfAgentLookup(Type serviceType, object? serviceKey)
+        {
+            if (serviceType == typeof(AIAgent) && serviceKey is string key && string.Equals(key, countedKey, StringComparison.Ordinal))
+            {
+                Interlocked.Increment(ref this._keyedAgentLookupCount);
+            }
+        }
+    }
+
     private static async Task RunRequestAsync(AgentFrameworkResponseHandler handler, string? requestedAgentName)
     {
         // An empty Model keeps the request genuinely nameless: GetAgentName falls back to Model when no
@@ -436,12 +509,16 @@ public class AgentFrameworkResponseHandlerDefaultAgentStoreTests
     {
         public bool WasUsed { get; private set; }
 
+        /// <summary>Number of times this store was asked to load or save a session.</summary>
+        public int UseCount { get; private set; }
+
         public override ValueTask<AgentSession?> GetSessionAsync(
             AIAgent agent,
             AgentSessionStoreKey key,
             CancellationToken cancellationToken = default)
         {
             this.WasUsed = true;
+            this.UseCount++;
             return new((AgentSession?)null);
         }
 
@@ -452,6 +529,7 @@ public class AgentFrameworkResponseHandlerDefaultAgentStoreTests
             CancellationToken cancellationToken = default)
         {
             this.WasUsed = true;
+            this.UseCount++;
             return default;
         }
     }
