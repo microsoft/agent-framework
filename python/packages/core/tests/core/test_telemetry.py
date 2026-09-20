@@ -315,6 +315,17 @@ def test_prepend_to_existing_user_agent():
     assert "existing-agent/1.0" in result["User-Agent"]
 
 
+def test_prepend_to_existing_lowercase_user_agent():
+    """Test prepending to a case-insensitive User-Agent header."""
+    headers = {"user-agent": "existing-agent/1.0"}
+    result = prepend_agent_framework_to_user_agent(headers)
+
+    assert result is headers
+    assert [key for key in result if key.lower() == USER_AGENT_KEY.lower()] == ["user-agent"]
+    assert result["user-agent"].startswith("agent-framework-python/")
+    assert "existing-agent/1.0" in result["user-agent"]
+
+
 def test_prepend_to_empty_headers():
     """Test prepending to headers without User-Agent."""
     headers = {"Content-Type": "application/json"}

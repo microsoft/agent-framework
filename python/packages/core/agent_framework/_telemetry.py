@@ -212,6 +212,13 @@ def prepend_agent_framework_to_user_agent(headers: dict[str, Any] | None = None)
     user_agent = get_user_agent()
     if not headers:
         return {USER_AGENT_KEY: user_agent}
-    headers[USER_AGENT_KEY] = f"{user_agent} {headers[USER_AGENT_KEY]}" if USER_AGENT_KEY in headers else user_agent
+    existing_user_agent_key = next(
+        (header_name for header_name in headers if header_name.lower() == USER_AGENT_KEY.lower()),
+        None,
+    )
+    if existing_user_agent_key is None:
+        headers[USER_AGENT_KEY] = user_agent
+    else:
+        headers[existing_user_agent_key] = f"{user_agent} {headers[existing_user_agent_key]}"
 
     return headers
