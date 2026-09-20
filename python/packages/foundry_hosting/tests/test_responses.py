@@ -1543,6 +1543,42 @@ class TestAgentSessionPersistence:
         stored = await store.get("response-1")
         assert stored is not None
 
+    async def test_cancellation_signal_during_close_drain_stops_completion(self) -> None:
+        """Regression for #8564 (Copilot follow-up): the cancellation recheck must happen *after*
+        draining ``tracker.close()``, not only before it. Each event that loop yields suspends the
+        handler, so a cancellation arriving mid-drain must still suppress ``response.completed``."""
+        store = SessionStore()
+        agent = _make_agent(
+            stream_updates=[AgentResponseUpdate(contents=[Content.from_text("done")], role="assistant")]
+        )
+        server = _make_server(agent, session_store=store)
+        request = CreateResponse(model="m", input="hi", stream=True)
+        context = ResponseContext(response_id="response-1", mode_flags=MagicMock())
+        cancellation_signal = asyncio.Event()
+
+        with (
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
+            patch.object(ResponseContext, "get_history", new=AsyncMock(return_value=[])),
+        ):
+            handler = cast(
+                AsyncGenerator[Any, None],
+                server._handle_response(request, context, cancellation_signal),  # pyright: ignore[reportPrivateUsage]
+            )
+            events: list[Any] = []
+            async for event in handler:
+                events.append(event)
+                # The inner agent stream has already finished draining (so the earlier check
+                # passed) by the time `tracker.close()` emits its first closing event; fire the
+                # cancellation exactly then, mid-drain, instead of before the drain starts.
+                if isinstance(event, Mapping) and event.get("type") == "response.output_text.done":
+                    cancellation_signal.set()
+                    break
+            events.extend([event async for event in handler])
+
+        types = [event.get("type") for event in events if isinstance(event, Mapping)]
+        assert "response.output_text.done" in types
+        assert "response.completed" not in types
+
     async def test_cancellation_signal_preempts_stuck_agent_call(self) -> None:
         """Steering/explicit-cancel must interrupt an agent call stuck awaiting a slow model/tool
         response, not merely be checked between already-produced updates."""

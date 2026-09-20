@@ -806,6 +806,14 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             for event in tracker.close():
                 yield event
 
+            if cancellation_signal.is_set():
+                # Draining ``tracker.close()`` yields events one at a time, and each
+                # ``yield`` above suspends this handler until the caller resumes it.
+                # A cancellation can arrive during that window, after the earlier check
+                # already passed, so it must be rechecked here, immediately before
+                # selecting the terminal event.
+                return
+
             if tracker.oauth_consent_requested:
                 yield response_event_stream.emit_incomplete(usage=tracker.usage)
             else:
