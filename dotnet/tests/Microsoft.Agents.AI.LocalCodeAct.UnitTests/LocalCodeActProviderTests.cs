@@ -37,6 +37,36 @@ public sealed class LocalCodeActProviderTests
     }
 
     [Fact]
+    public async Task ProvideAIContextAsync_WithParameterizedTool_CarriesHostToolSchemaAsync()
+    {
+        var tool = AIFunctionFactory.Create((string query) => "ok", name: "lookup");
+        var options = Options();
+        options.Tools = [tool];
+        using var provider = new LocalCodeActProvider("/usr/bin/python3", options);
+
+        var context = await provider.InvokingAsync(NewInvokingContext());
+        var function = Assert.IsAssignableFrom<AIFunction>(context!.Tools!.First());
+
+        Assert.Contains("query", function.Description);
+    }
+
+    [Fact]
+    public async Task ProvideAIContextAsync_WithParameterizedTool_KeepsCodeOnlyInputSchemaAsync()
+    {
+        var tool = AIFunctionFactory.Create((string query) => "ok", name: "lookup");
+        var options = Options();
+        options.Tools = [tool];
+        using var provider = new LocalCodeActProvider("/usr/bin/python3", options);
+
+        var context = await provider.InvokingAsync(NewInvokingContext());
+        var function = Assert.IsAssignableFrom<AIFunction>(context!.Tools!.First());
+        var inputSchema = function.JsonSchema.GetRawText();
+
+        Assert.Contains("\"code\"", inputSchema);
+        Assert.DoesNotContain("query", inputSchema);
+    }
+
+    [Fact]
     public void AddAndRemoveTools_RoundTrips()
     {
         using var provider = new LocalCodeActProvider("/usr/bin/python3", Options());
