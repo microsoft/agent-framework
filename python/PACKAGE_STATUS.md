@@ -54,6 +54,7 @@ Status is grouped into these buckets:
 | `agent-framework-qdrant` | `python/packages/qdrant` | `alpha` |
 | `agent-framework-redis` | `python/packages/redis` | `beta` |
 | `agent-framework-tools` | `python/packages/tools` | `beta` |
+| `agent-framework-typesafe` | `python/packages/typesafe` | `alpha` |
 
 ## Deprecated / removed packages
 

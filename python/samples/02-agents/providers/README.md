@@ -15,6 +15,5 @@ This directory groups provider-specific samples for Agent Framework.
 | [`mistral/`](mistral/) | Mistral AI embedding generation with configurable models and output dimensions. |
 | [`ollama/`](ollama/) | Local Ollama samples using `OllamaChatClient` (recommended) plus OpenAI-compatible Ollama setup, including reasoning and multimodal examples. |
 | [`openai/`](openai/) | OpenAI provider samples for Chat and Chat Completion clients, including tools, structured output, sessions, MCP, web search, and multimodal tasks. |
-| [`typesafe/`](typesafe/) | TypeSafe AI Jev structured decision model integration using a custom `BaseChatClient`. |
 
 Each folder has its own README with setup requirements and file-by-file details.
