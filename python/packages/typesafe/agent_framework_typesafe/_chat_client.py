@@ -20,13 +20,13 @@ from agent_framework import (
     UsageDetails,
     validate_tool_mode,
 )
+from agent_framework._settings import SecretString, load_settings
 from agent_framework._telemetry import get_user_agent
 from agent_framework.exceptions import (
     ChatClientException,
     ChatClientInvalidAuthException,
     ChatClientInvalidRequestException,
     ChatClientInvalidResponseException,
-    SettingNotFoundError,
 )
 from agent_framework.observability import ChatTelemetryLayer
 from typesafe_sdk import (
@@ -43,9 +43,16 @@ from typesafe_sdk import (
     TypeSafePermissionDeniedError,
     TypeSafeUnprocessableEntityError,
 )
-from typing_extensions import Self, override
+from typing_extensions import Self, TypedDict, override
 
 _TYPESAFE_SERVICE_URL = "https://api.typesafe.ai/v1/systemone"
+
+
+class TypeSafeSettings(TypedDict, total=False):
+    """TypeSafe settings resolved from explicit values, .env files, or the environment."""
+
+    api_key: SecretString | None
+    default_model: str | None
 
 
 class TypeSafeChatOptions(ChatOptions[SystemOneResponse], total=False):
@@ -86,13 +93,15 @@ class TypeSafeChatClient(
     def __init__(
         self,
         *,
-        api_key: str | None = None,
+        api_key: str | SecretString | None = None,
         model: str | None = None,
         async_client: AsyncTypeSafeClient | None = None,
         middleware: Sequence[ChatMiddlewareTypes] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         additional_properties: dict[str, Any] | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
     ) -> None:
         """Create a TypeSafe AI chat client.
 
@@ -104,30 +113,31 @@ class TypeSafeChatClient(
             compaction_strategy: Optional compaction strategy applied before requests.
             tokenizer: Optional tokenizer used by token-aware compaction strategies.
             additional_properties: Additional properties stored on the client.
-
-        Raises:
-            ValueError: If api_key and async_client are both supplied.
-            SettingNotFoundError: If an internally created client cannot resolve an API key.
+            env_file_path: Path to a .env file used for settings resolution.
+            env_file_encoding: Encoding used to read the .env file.
         """
-        if api_key is not None and async_client is not None:
-            raise ValueError("Provide either 'api_key' or 'async_client', not both.")
+        settings = load_settings(
+            TypeSafeSettings,
+            env_prefix="TYPESAFE_",
+            required_fields=[] if async_client is not None else ["api_key"],
+            api_key=api_key,
+            default_model=model,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+        )
 
-        self.model = model
+        self.model = settings.get("default_model")
         self._owns_client = async_client is None
 
         if async_client is not None:
             self.client = async_client
         else:
-            try:
-                self.client = AsyncTypeSafeClient(
-                    api_key=api_key,
-                    model=model,
-                    headers={"User-Agent": get_user_agent()},
-                )
-            except TypeSafeError as exc:
-                raise SettingNotFoundError(
-                    "TypeSafe API key is required. Pass api_key or set TYPESAFE_API_KEY."
-                ) from exc
+            api_key_secret = cast(SecretString, settings.get("api_key"))
+            self.client = AsyncTypeSafeClient(
+                api_key=api_key_secret.get_secret_value(),
+                model=self.model,
+                headers={"User-Agent": get_user_agent()},
+            )
 
         super().__init__(
             middleware=middleware,

@@ -103,16 +103,42 @@ def questions() -> Questions:
 def test_construction_requires_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
 
-    with pytest.raises(SettingNotFoundError, match="TypeSafe API key is required"):
+    with pytest.raises(SettingNotFoundError, match="TYPESAFE_API_KEY"):
         TypeSafeChatClient()
 
 
-def test_construction_rejects_api_key_with_injected_client() -> None:
-    with pytest.raises(ValueError, match="either 'api_key' or 'async_client'"):
-        TypeSafeChatClient(
-            api_key="test-key",
-            async_client=cast(AsyncTypeSafeClient, StubTypeSafeClient()),
-        )
+def test_injected_client_takes_precedence_over_api_key() -> None:
+    stub = StubTypeSafeClient()
+
+    client = TypeSafeChatClient(
+        api_key="test-key",
+        async_client=cast(AsyncTypeSafeClient, stub),
+    )
+
+    assert client.client is stub
+
+
+def test_construction_resolves_environment_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    stub = StubTypeSafeClient()
+    captured: dict[str, Any] = {}
+    monkeypatch.setenv("TYPESAFE_API_KEY", "environment-key")
+    monkeypatch.setenv("TYPESAFE_DEFAULT_MODEL", "jev-preview")
+
+    def create_client(**kwargs: Any) -> StubTypeSafeClient:
+        captured.update(kwargs)
+        return stub
+
+    monkeypatch.setattr(
+        "agent_framework_typesafe._chat_client.AsyncTypeSafeClient",
+        create_client,
+    )
+
+    client = TypeSafeChatClient()
+
+    assert client.client is stub
+    assert client.model == "jev-preview"
+    assert captured["api_key"] == "environment-key"
+    assert captured["model"] == "jev-preview"
 
 
 async def test_close_leaves_injected_client_open() -> None:

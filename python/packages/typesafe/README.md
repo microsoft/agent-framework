@@ -73,6 +73,11 @@ The internally created TypeSafe SDK client reads:
 - `TYPESAFE_DEFAULT_MODEL` - optional default model; the SDK defaults to `jev-latest`.
 - `TYPESAFE_BASE_URL` - optional API root override.
 
+Constructor values take precedence over an explicitly selected `.env` file and
+process environment variables. Credential requirements are evaluated only after
+those sources are resolved. When `async_client` is supplied, the injected client
+is authoritative and no API key is required by the connector.
+
 For advanced SDK configuration, inject a configured `AsyncTypeSafeClient`:
 
 ```python
