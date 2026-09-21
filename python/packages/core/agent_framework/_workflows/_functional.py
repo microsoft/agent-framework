@@ -1182,9 +1182,12 @@ class FunctionalWorkflow:
             # ResponseStream cleanup_hooks do not run when the generator is
             # closed by GC. Release the run lock here so a follow-up run
             # after an abandoned stream is not rejected as concurrent.
-            # Also retire the per-step callback: any step still running from
-            # this run must not checkpoint once the run is over.
-            run_closed = True
+            # Retire the per-step callback under the lineage lock first: a save that
+            # already passed the run_closed check may still be inside storage.save(),
+            # and releasing the guard would let a restored run chain new checkpoints
+            # onto the same parent before that save lands, forking the lineage.
+            async with ckpt_chain_lock:
+                run_closed = True
             self._release_run_guard()
             span.end()
 
