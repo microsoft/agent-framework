@@ -238,6 +238,29 @@ public sealed class InvokeAzureAgentExecutorTest(ITestOutputHelper output) : Wor
     }
 
     [Fact]
+    public async Task InvalidResponseObjectOutputPreservesPreviousTypeForExternalLoopAsync()
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        this.State.Set(
+            "Result",
+            FormulaValue.NewRecordFromFields(new NamedValue("IsResolved", FormulaValue.New(false))));
+        CapturingAgentProvider provider = new("not json");
+        InvokeAzureAgent model =
+            this.CreateModel(
+                displayName: nameof(InvalidResponseObjectOutputPreservesPreviousTypeForExternalLoopAsync),
+                agentName: "BrainInvalidResponseWithLoop",
+                responseObjectVariable: "Result",
+                externalLoopWhen: "IsBlank(Local.Result.IsResolved)");
+
+        // Act
+        await this.ExecuteAsync(new InvokeAzureAgentExecutor(model, provider, this.State), isDiscrete: false);
+
+        // Assert
+        this.VerifyUndefined("Result");
+    }
+
+    [Fact]
     public async Task MixedJsonArrayOutputSkipsAssignmentAsync()
     {
         // Arrange
@@ -317,7 +340,8 @@ public sealed class InvokeAzureAgentExecutorTest(ITestOutputHelper output) : Wor
         string displayName,
         string agentName,
         IReadOnlyList<(string Key, ValueExpression Value)>? arguments = null,
-        string? responseObjectVariable = null)
+        string? responseObjectVariable = null,
+        string? externalLoopWhen = null)
     {
         InvokeAzureAgent.Builder builder =
             new()
@@ -331,13 +355,28 @@ public sealed class InvokeAzureAgentExecutorTest(ITestOutputHelper output) : Wor
                     },
             };
 
+        AzureAgentInput.Builder? inputBuilder = null;
         if (arguments is not null)
         {
-            AzureAgentInput.Builder inputBuilder = new();
+            inputBuilder = new();
             foreach ((string key, ValueExpression value) in arguments)
             {
                 inputBuilder.Arguments.Add(key, value);
             }
+        }
+
+        if (externalLoopWhen is not null)
+        {
+            inputBuilder ??= new();
+            inputBuilder.ExternalLoop =
+                new AzureAgentExternal.Builder
+                {
+                    When = new BoolExpression.Builder(BoolExpression.Expression(externalLoopWhen)),
+                };
+        }
+
+        if (inputBuilder is not null)
+        {
             builder.Input = inputBuilder;
         }
 

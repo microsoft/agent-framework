@@ -92,6 +92,7 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, ResponseA
         // Attempt to parse the last message as JSON and assign to the response object variable.
         PropertyPath? responseObjectPath = this.AgentOutput?.ResponseObject?.Path;
         string? lastMessageText = agentResponse.Messages.LastOrDefault()?.Text;
+        bool responseObjectHasValue = responseObjectPath is null;
         if (responseObjectPath is not null)
         {
             FormulaValue responseObjectValue = FormulaValue.NewBlank();
@@ -101,6 +102,7 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, ResponseA
                 {
                     using JsonDocument jsonDocument = JsonDocument.Parse(lastMessageText);
                     responseObjectValue = jsonDocument.ParseJsonValue(lastMessageText).ToFormula();
+                    responseObjectHasValue = true;
                 }
                 catch (JsonException)
                 {
@@ -116,7 +118,7 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, ResponseA
             await this.AssignAsync(responseObjectPath, responseObjectValue, context).ConfigureAwait(false);
         }
 
-        if (this.Model.Input?.ExternalLoop?.When is not null)
+        if (responseObjectHasValue && this.Model.Input?.ExternalLoop?.When is not null)
         {
             bool requestInput = this.Evaluator.GetValue(this.Model.Input.ExternalLoop.When).Value;
             if (requestInput)
