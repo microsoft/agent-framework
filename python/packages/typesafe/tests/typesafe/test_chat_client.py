@@ -269,6 +269,24 @@ async def test_invalid_common_option_types_are_rejected(options: dict[str, Any],
         )
 
 
+async def test_invalid_model_is_rejected_before_tool_compilation(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = make_client()
+
+    def fail_if_called(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("tool compilation should not run")
+
+    monkeypatch.setattr(
+        "agent_framework_typesafe._chat_client.compile_tool_call_plan",
+        fail_if_called,
+    )
+
+    with pytest.raises(ChatClientInvalidRequestException, match="model must be a string"):
+        await client.get_response(
+            [Message("user", ["hello"])],
+            options=cast(TypeSafeChatOptions, {"response_format": questions(), "model": 123}),
+        )
+
+
 async def test_request_and_response_mapping() -> None:
     stub = StubTypeSafeClient()
     client = make_client(stub, model="jev-latest")

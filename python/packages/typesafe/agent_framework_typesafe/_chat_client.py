@@ -192,6 +192,10 @@ class RawTypeSafeChatClient(BaseChatClient[TypeSafeChatOptions]):
             normalized_options = await self._validate_options(options)
             self._validate_supported_options(normalized_options)
 
+            model = normalized_options.get("model", self.model)
+            if model is not None and not isinstance(model, str):
+                raise ChatClientInvalidRequestException("TypeSafe model must be a string.")
+
             user_questions = self._get_questions(normalized_options)
             tools = self._get_function_tools(normalized_options)
             tool_mode = validate_tool_mode(normalized_options.get("tool_choice"))
@@ -203,9 +207,6 @@ class RawTypeSafeChatClient(BaseChatClient[TypeSafeChatOptions]):
             questions = dict(user_questions)
             if tool_plan is not None:
                 questions.update(tool_plan.questions)
-            model = normalized_options.get("model", self.model)
-            if model is not None and not isinstance(model, str):
-                raise ChatClientInvalidRequestException("TypeSafe model must be a string.")
 
             state = self._build_state(
                 messages,
