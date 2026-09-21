@@ -46,7 +46,6 @@ async def main() -> None:
     if not isinstance(response.value, SystemOneResponse):
         raise RuntimeError("TypeSafe did not return the terminal structured response.")
     print(response.text)
-    print(f"Success probability: {response.value.nouls['succeeded'].noul:.3f}")
 
 
 if __name__ == "__main__":

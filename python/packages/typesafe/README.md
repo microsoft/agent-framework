@@ -74,7 +74,8 @@ TypeSafe converts tool selection and supported arguments into internal `Choice`
 and `Noul` questions, emits an Agent Framework function call, and lets the standard
 function-invocation loop execute it. After one tool call, tools are disabled and
 the connector makes the terminal TypeSafe request using only the caller's
-`response_format` questions.
+`response_format` questions. The final response text is the executed tool result;
+the terminal `SystemOneResponse` remains available through `response.value`.
 
 Supported input-schema shapes:
 

@@ -241,6 +241,19 @@ async def test_empty_text_messages_are_rejected() -> None:
         await client.get_response([Message("user", [""])], options={"response_format": questions()})
 
 
+def test_simple_mcp_result_wrapper_is_unwrapped() -> None:
+    result = RawTypeSafeChatClient._get_latest_function_result_text(  # pyright: ignore[reportPrivateUsage]
+        [
+            Message(
+                "tool",
+                [Content.from_function_result(call_id="call-1", result='{"result": "Paris is sunny."}')],
+            )
+        ]
+    )
+
+    assert result == "Paris is sunny."
+
+
 async def test_client_kwargs_are_rejected() -> None:
     client = make_client()
 
@@ -510,6 +523,7 @@ async def test_local_tool_executes_once_then_returns_structured_response() -> No
     assert calls == [("Seattle", True)]
     assert isinstance(response.value, SystemOneResponse)
     assert set(response.value.answers) == {"urgent"}
+    assert response.text == "Weather for Seattle; detailed=True"
     assert len(stub.calls) == 2
     assert "__af_tool__.route" in stub.calls[0]["questions"]
     assert set(stub.calls[1]["questions"]) == {"urgent"}
@@ -562,6 +576,7 @@ async def test_agent_expands_and_executes_compatible_mcp_tool() -> None:
 
     assert executions == [True]
     assert isinstance(response.value, SystemOneResponse)
+    assert response.text == "refreshed"
     assert stub.calls[0]["questions"]["__af_tool__.route"]
 
 

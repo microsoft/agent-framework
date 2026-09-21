@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Awaitable, Mapping, Sequence
 from types import TracebackType
 from typing import Any, ClassVar, NoReturn, cast
@@ -259,8 +260,9 @@ class RawTypeSafeChatClient(BaseChatClient[TypeSafeChatOptions]):
                 )
 
             response = self._filter_internal_answers(response, set(user_questions))
+            tool_result_text = self._get_latest_function_result_text(messages)
             return ChatResponse(
-                messages=[Message(role="assistant", contents=[response.model_dump_json()])],
+                messages=[Message(role="assistant", contents=[tool_result_text or response.model_dump_json()])],
                 response_id=response.request_id,
                 model=response.model,
                 finish_reason="stop",
@@ -384,6 +386,22 @@ class RawTypeSafeChatClient(BaseChatClient[TypeSafeChatOptions]):
                 else {}
             ),
         )
+
+    @staticmethod
+    def _get_latest_function_result_text(messages: Sequence[Message]) -> str | None:
+        for message in reversed(messages):
+            for content in reversed(message.contents):
+                if content.type == "function_result" and isinstance(content.result, str):
+                    try:
+                        decoded: Any = json.loads(content.result)
+                    except json.JSONDecodeError:
+                        return content.result
+                    if isinstance(decoded, dict):
+                        decoded_result = cast(dict[str, Any], decoded)
+                        if set(decoded_result) == {"result"} and isinstance(decoded_result["result"], str):
+                            return decoded_result["result"]
+                    return content.result
+        return None
 
     @staticmethod
     def _filter_internal_answers(response: SystemOneResponse, question_ids: set[str]) -> SystemOneResponse:
