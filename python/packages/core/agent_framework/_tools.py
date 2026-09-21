@@ -2956,12 +2956,16 @@ def _bind_approval_response_to_pending_request(
 def _bind_approval_responses_to_pending_requests(
     messages: list[Message],
     invocation_session: AgentSession | None,
-) -> None:
+    *,
+    consume: bool = True,
+) -> set[int]:
     """Rebind approval responses and remove unissued or duplicate responses."""
     if invocation_session is None:
-        return
+        return set()
 
     filtered_messages: list[Message] = []
+    bound_response_ids: set[int] = set()
+    claimed_request_ids: set[str] = set()
     for message in messages:
         filtered_contents: list[Content] = []
         for content in message.contents:
@@ -2971,7 +2975,7 @@ def _bind_approval_responses_to_pending_requests(
             rebound = _bind_approval_response_to_pending_request(
                 content,
                 invocation_session,
-                consume=True,
+                consume=consume,
             )
             if rebound is None:
                 logger.warning(
@@ -2980,11 +2984,18 @@ def _bind_approval_responses_to_pending_requests(
                     content.id,
                 )
                 continue
+            request_id = rebound.additional_properties.get(_APPROVAL_REQUEST_ID_KEY)
+            if isinstance(request_id, str) and request_id in claimed_request_ids:
+                continue
+            if isinstance(request_id, str):
+                claimed_request_ids.add(request_id)
+            bound_response_ids.add(id(rebound))
             filtered_contents.append(rebound)
         if filtered_contents:
             message.contents = filtered_contents
             filtered_messages.append(message)
     messages[:] = filtered_messages
+    return bound_response_ids
 
 
 def _store_already_approved_approval_requests(
@@ -3559,6 +3570,7 @@ def _collect_approval_responses(
     messages: list[Message],
     *,
     non_approval_result_ids: set[int] | None = None,
+    protected_response_ids: set[int] | None = None,
 ) -> dict[str, Content]:
     """Collect approval responses (both approved and rejected) from messages.
 
@@ -3599,12 +3611,13 @@ def _collect_approval_responses(
                     continue
                 request_id = request_ids_by_occurrence.get(content.id, content.id) if content.id is not None else None
                 request = latest_requests_by_id.get(request_id) if request_id is not None else None
-                if request is not None and id(request) in closed_request_occurrences:
+                is_protected = protected_response_ids is not None and id(content) in protected_response_ids
+                if not is_protected and request is not None and id(request) in closed_request_occurrences:
                     continue
                 approval_responses.append(content)
                 if content.id is not None:
                     pending_by_approval_id[content.id] = content
-                if request is not None:
+                if not is_protected and request is not None:
                     response_requests[id(content)] = request
                     if request.id is not None and pending_requests_by_id.get(request.id) is request:
                         pending_requests_by_id.pop(request.id, None)
@@ -3624,7 +3637,9 @@ def _collect_approval_responses(
             pending_responses = pending_by_call_id.get(content.call_id)
             while pending_responses and id(pending_responses[0]) in resolved_response_ids:
                 pending_responses.popleft()
-            if pending_responses:
+            if pending_responses and (
+                protected_response_ids is None or id(pending_responses[0]) not in protected_response_ids
+            ):
                 resolved = pending_responses.popleft()
                 resolved_response_ids.add(id(resolved))
                 if request := response_requests.get(id(resolved)):
@@ -4469,7 +4484,11 @@ async def _resolve_approval_responses(
             streaming_updates=streaming_updates,
         )
 
-    _bind_approval_responses_to_pending_requests(prepared_messages, approval_session)
+    bound_response_ids = _bind_approval_responses_to_pending_requests(
+        prepared_messages,
+        approval_session,
+        consume=False,
+    )
     active_pending_ids = (
         set(_load_pending_approval_requests(approval_session))
         if _has_authoritative_approval_session(approval_session)
@@ -4544,10 +4563,16 @@ async def _resolve_approval_responses(
         pending_approval_responses := _collect_approval_responses(
             prepared_messages,
             non_approval_result_ids=host_result_ids,
+            protected_response_ids=bound_response_ids,
         )
     ):
         _remove_unanswered_approval_batches_from_model_input(prepared_messages)
         return _FunctionProcessingResult(errors_in_a_row=errors_in_a_row)
+
+    if bound_response_ids:
+        for response in pending_approval_responses.values():
+            if id(response) in bound_response_ids:
+                _bind_approval_response_to_pending_request(response, approval_session, consume=True)
 
     # 3. Execute approved decisions once. Rejected decisions are converted to results during normalization below.
     responses_to_execute = [

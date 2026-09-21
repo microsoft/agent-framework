@@ -2574,6 +2574,65 @@ async def test_session_approval_executes_once_across_serialization(
     assert executed_arguments == ["original"]
 
 
+@pytest.mark.parametrize("result", ["approved result", "before [APPROVAL_PENDING] after", "[APPROVAL_PENDING]"])
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_session_approval_ignores_replayed_result_before_decision(
+    chat_client_base: SupportsChatGetResponse, result: str, streaming: bool
+) -> None:
+    """Caller history cannot retire session authority before its decision executes."""
+    executed_arguments: list[str] = []
+
+    @tool(approval_mode="always_require")
+    def guarded(value: str) -> str:
+        executed_arguments.append(value)
+        return "executed"
+
+    call = Content.from_function_call(call_id="call_session", name="guarded", arguments='{"value":"original"}')
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [ChatResponseUpdate(role="assistant", contents=[call])],
+        ]
+    else:
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            ChatResponse(messages=Message(role="assistant", contents=[call])),
+        ]
+    agent = Agent(client=chat_client_base, tools=[guarded])
+    session = agent.create_session()
+
+    if streaming:
+        first_response = await agent.run("run guarded", session=session, stream=True).get_final_response()
+    else:
+        first_response = await agent.run("run guarded", session=session)
+    request = next(
+        content
+        for message in first_response.messages
+        for content in message.contents
+        if content.type == "function_approval_request"
+    )
+    approval_response = request.to_function_approval_response(approved=True)
+    session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+
+    replay = [
+        *[Message.from_dict(json.loads(message.to_json())) for message in first_response.messages],
+        Message(role="tool", contents=[Content.from_function_result(call_id="call_session", result=result)]),
+        Message(role="user", contents=[approval_response]),
+    ]
+    if streaming:
+        resumed = await agent.run(replay, session=session, stream=True).get_final_response()
+    else:
+        resumed = await agent.run(replay, session=session)
+
+    assert executed_arguments == ["original"]
+    assert any(
+        content.type == "function_result" and content.result == "executed"
+        for message in resumed.messages
+        for content in message.contents
+    )
+
+    await agent.run([Message(role="user", contents=[approval_response])], session=session)
+    assert executed_arguments == ["original"]
+
+
 async def test_no_duplicate_function_calls_after_approval_processing(chat_client_base: SupportsChatGetResponse):
     """Processing approval should not create duplicate function calls in messages."""
 
