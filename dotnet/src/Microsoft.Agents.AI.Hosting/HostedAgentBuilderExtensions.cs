@@ -21,7 +21,7 @@ public static class HostedAgentBuilderExtensions
     /// that adds a partition from <see cref="AgentIsolationKeyProvider"/>. Defaults to <see langword="true"/>.</param>
     /// <returns>The same <paramref name="builder"/> instance, configured to use an in-memory session store.</returns>
     public static IHostedAgentBuilder WithInMemorySessionStore(this IHostedAgentBuilder builder, bool withIsolation = true)
-        => builder.WithSessionStore(new InMemoryAgentSessionStore(), withIsolation);
+        => builder.WithSessionStore(new AI.InMemoryAgentSessionStore(), withIsolation);
 
     /// <summary>
     /// Registers the specified agent session store with the host agent builder, enabling session-specific storage for

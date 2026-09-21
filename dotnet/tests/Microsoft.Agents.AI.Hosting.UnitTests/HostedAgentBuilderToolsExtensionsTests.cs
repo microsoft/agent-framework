@@ -16,6 +16,25 @@ namespace Microsoft.Agents.AI.Hosting.UnitTests;
 /// </summary>
 public sealed class HostedAgentBuilderToolsExtensionsTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void WithInMemorySessionStore_RegistersCoreStoreWithRequestedIsolation(bool withIsolation)
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        var builder = services.AddAIAgent("test-agent", (sp, key) => new Mock<AIAgent>().Object);
+
+        // Act
+        builder.WithInMemorySessionStore(withIsolation);
+        using var provider = services.BuildServiceProvider();
+        AgentSessionStore store = provider.GetRequiredKeyedService<AgentSessionStore>("test-agent");
+
+        // Assert
+        Assert.IsType<AI.InMemoryAgentSessionStore>(store.GetService<AI.InMemoryAgentSessionStore>());
+        Assert.Equal(withIsolation, store is IsolationKeyScopedAgentSessionStore);
+    }
+
     [Fact]
     public void WithAITool_ThrowsWhenBuilderIsNull()
     {
