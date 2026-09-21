@@ -1753,6 +1753,16 @@ def test_agent_run_response_from_updates(agent_response_update: AgentResponseUpd
     assert response.text == "Test contentTest content"
 
 
+def test_agent_run_response_from_updates_uses_last_non_none_agent_id() -> None:
+    response = AgentResponse.from_updates([
+        AgentResponseUpdate(agent_id="first-agent"),
+        AgentResponseUpdate(agent_id="source-agent"),
+        AgentResponseUpdate(agent_id=None),
+    ])
+
+    assert response.agent_id == "source-agent"
+
+
 def test_agent_run_response_str_method(chat_message: Message) -> None:
     response = AgentResponse(messages=chat_message)
     assert str(response) == "Hello"
