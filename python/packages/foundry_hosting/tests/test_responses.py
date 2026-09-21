@@ -11,12 +11,13 @@ the registered _handle_create handler.
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import logging
 import os
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Mapping, Sequence
-from contextlib import asynccontextmanager
+from contextlib import aclosing, asynccontextmanager
 from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
@@ -36,6 +37,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    FinishReasonLiteral,
     FunctionInvocationLayer,
     HistoryProvider,
     InMemoryCheckpointStorage,
@@ -63,7 +65,7 @@ from azure.ai.agentserver.responses import (
     ResponsesServerOptions,
 )
 from azure.ai.agentserver.responses.aio import ResponseEventStream
-from azure.ai.agentserver.responses.models import CreateResponse, Item, OutputItem
+from azure.ai.agentserver.responses.models import CreateResponse, Item, OutputItem, ResponseIncompleteReason
 from azure.ai.agentserver.responses.streaming._checkpoint import ResponseCheckpointEvent
 from mcp import McpError
 from mcp.types import ErrorData
@@ -72,12 +74,15 @@ from typing_extensions import Any
 
 from agent_framework_foundry_hosting import ResponsesHostServer
 from agent_framework_foundry_hosting._responses import (
+    _INCOMPLETE_REASON_KEY,  # pyright: ignore[reportPrivateUsage]
+    _LATEST_CHECKPOINT_ID_KEY,  # pyright: ignore[reportPrivateUsage]
     CONSENT_ERROR_CODE,
     ConsentError,
     _item_to_message,  # pyright: ignore[reportPrivateUsage]
     _json_safe_to_str,  # pyright: ignore[reportPrivateUsage]
     _output_item_to_message,  # pyright: ignore[reportPrivateUsage]
     _OutputItemTracker,  # pyright: ignore[reportPrivateUsage]
+    _SignalledIterator,  # pyright: ignore[reportPrivateUsage]
     _stringify_mcp_output,  # pyright: ignore[reportPrivateUsage]
     consent_url_from_error,
 )
@@ -5262,6 +5267,143 @@ class TestOAuthConsentSurfacing:
 # region Error handling (response.failed surfacing)
 
 
+class TestIncompleteFinishReasonSurfacing:
+    """A turn the model stopped early must end as ``incomplete`` with the reason, not ``completed``.
+
+    Regression coverage for https://github.com/microsoft/agent-framework/issues/8475: the
+    underlying chat completion reported ``finish_reason="content_filter"`` but the hosted
+    ``/responses`` payload said ``status="completed"`` with no trace of the filter.
+    """
+
+    @staticmethod
+    def _filtered_agent(*, finish_reason: FinishReasonLiteral) -> MagicMock:
+        return _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[Content.from_text("I'm sorry, but I cannot assist with that request.")],
+                    role="assistant",
+                    finish_reason=finish_reason,
+                )
+            ]
+        )
+
+    async def test_non_streaming_content_filter_marks_response_incomplete(self) -> None:
+        server = _make_server(self._filtered_agent(finish_reason="content_filter"))
+
+        resp = await _post(server, input_text="hello", stream=False)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "incomplete"
+        assert body["incomplete_details"] == {"reason": "content_filter"}
+        assert body.get("error") is None
+
+        # The refusal text is still delivered so the caller can show it if it chooses to.
+        messages = [it for it in body["output"] if it["type"] == "message"]
+        assert len(messages) == 1
+        assert messages[0]["content"][0]["text"] == "I'm sorry, but I cannot assist with that request."
+
+    async def test_streaming_content_filter_emits_response_incomplete(self) -> None:
+        server = _make_server(self._filtered_agent(finish_reason="content_filter"))
+
+        resp = await _post(server, input_text="hello", stream=True)
+        assert resp.status_code == 200
+        events = _parse_sse_events(resp.text)
+        types = _sse_event_types(events)
+
+        assert types[-1] == "response.incomplete"
+        assert "response.completed" not in types
+        incomplete = events[-1]["data"]["response"]
+        assert incomplete["status"] == "incomplete"
+        assert incomplete["incomplete_details"] == {"reason": "content_filter"}
+        # The text item itself still closes normally before the terminal event.
+        assert "response.output_text.done" in types
+
+    async def test_length_finish_reason_maps_to_max_output_tokens(self) -> None:
+        server = _make_server(self._filtered_agent(finish_reason="length"))
+
+        resp = await _post(server, input_text="hello", stream=False)
+        body = resp.json()
+        assert body["status"] == "incomplete"
+        assert body["incomplete_details"] == {"reason": "max_output_tokens"}
+
+    async def test_normal_finish_reasons_still_complete(self) -> None:
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(contents=[Content.from_text("part one")], role="assistant"),
+                AgentResponseUpdate(contents=[Content.from_text(" part two")], role="assistant", finish_reason="stop"),
+            ]
+        )
+        server = _make_server(agent)
+
+        resp = await _post(server, input_text="hello", stream=False)
+        body = resp.json()
+        assert body["status"] == "completed"
+        assert body.get("incomplete_details") is None
+
+    async def test_content_filter_persists_across_later_updates_in_the_turn(self) -> None:
+        """A filter mid-turn is not erased by a later update that finishes normally."""
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[Content.from_text("filtered")], role="assistant", finish_reason="content_filter"
+                ),
+                AgentResponseUpdate(contents=[Content.from_text("trailing")], role="assistant", finish_reason="stop"),
+            ]
+        )
+        server = _make_server(agent)
+
+        resp = await _post(server, input_text="hello", stream=False)
+        body = resp.json()
+        assert body["status"] == "incomplete"
+        assert body["incomplete_details"] == {"reason": "content_filter"}
+
+    async def test_content_filter_takes_precedence_over_length(self) -> None:
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(contents=[Content.from_text("cut")], role="assistant", finish_reason="length"),
+                AgentResponseUpdate(
+                    contents=[Content.from_text("filtered")], role="assistant", finish_reason="content_filter"
+                ),
+            ]
+        )
+        server = _make_server(agent)
+
+        resp = await _post(server, input_text="hello", stream=False)
+        body = resp.json()
+        assert body["incomplete_details"] == {"reason": "content_filter"}
+
+    async def test_incomplete_reason_survives_checkpoint_recovery(self) -> None:
+        """Resilient recovery rebuilds the tracker from the persisted response; the marker must ride along.
+
+        A filtered update followed by a crash and a later ``stop`` update must still end ``incomplete``.
+        """
+        stream = ResponseEventStream(response_id="resp_filtered")
+        stream.emit_created()
+        stream.emit_in_progress()
+        tracker = _OutputItemTracker(stream)
+        tracker.record_finish_reason("content_filter")
+        assert stream.internal_metadata[_INCOMPLETE_REASON_KEY] == "content_filter"
+
+        # Simulate recovery: a fresh tracker over the checkpointed response snapshot.
+        recovered = _OutputItemTracker(stream)
+        assert recovered.incomplete_reason == ResponseIncompleteReason.CONTENT_FILTER
+        recovered.record_finish_reason("stop")
+        assert recovered.incomplete_reason == ResponseIncompleteReason.CONTENT_FILTER
+
+        # A stream that was never marked restores nothing.
+        assert _OutputItemTracker(ResponseEventStream(response_id="resp_clean")).incomplete_reason is None
+
+    async def test_workflow_agent_content_filter_marks_response_incomplete(self) -> None:
+        workflow_agent = _build_text_workflow_agent("filtered by workflow", finish_reason="content_filter")
+        server = _make_server(workflow_agent)
+
+        resp = await _post(server, input_text="hi", stream=False)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "incomplete"
+        assert body["incomplete_details"] == {"reason": "content_filter"}
+
+
 class TestResponseFailedSurfacing:
     """Tests that exceptions raised by the hosted agent are converted into
     terminal ``response.failed`` events carrying the exception message,
@@ -5600,15 +5742,16 @@ class _ToolApprovalWorkflowAgentMock(SupportsAgentRun):
         return ResponseStream(_iter(), finalizer=AgentResponse.from_updates)
 
 
-def _build_text_workflow_agent(text: str) -> WorkflowAgent:
+def _build_text_workflow_agent(text: str, *, finish_reason: FinishReasonLiteral | None = None) -> WorkflowAgent:
     """Build a minimal ``WorkflowAgent`` whose inner agent emits a fixed text."""
 
     class _TextAgent(SupportsAgentRun):
-        def __init__(self, name: str, text: str) -> None:
+        def __init__(self, name: str, text: str, finish_reason: FinishReasonLiteral | None) -> None:
             self.id = str(uuid.uuid4())
             self.name = name
             self.description: str | None = None
             self._text = text
+            self._finish_reason: FinishReasonLiteral | None = finish_reason
 
         def create_session(self, **kwargs: Any) -> AgentSession:
             del kwargs
@@ -5652,17 +5795,19 @@ def _build_text_workflow_agent(text: str) -> WorkflowAgent:
             assert stream is True, "The inner agent only runs in stream mode in Foundry Hosted Agents."
             text = self._text
             name = self.name
+            finish_reason = self._finish_reason
 
             async def _aiter() -> AsyncIterator[AgentResponseUpdate]:
                 yield AgentResponseUpdate(
                     contents=[Content.from_text(text=text)],
                     role="assistant",
                     author_name=name,
+                    finish_reason=finish_reason,
                 )
 
             return ResponseStream(_aiter(), finalizer=AgentResponse.from_updates)
 
-    inner = _TextAgent("text-agent", text)
+    inner = _TextAgent("text-agent", text, finish_reason)
 
     @executor
     async def start(messages: list[Message], ctx: WorkflowContext[AgentExecutorRequest]) -> None:
@@ -6326,6 +6471,84 @@ class TestResilientBackgroundCheckpointing:
 
         checkpoint_events = [e for e in events if isinstance(e, ResponseCheckpointEvent)]
         assert checkpoint_events, "expected at least one checkpoint event yielded for a resilient background run"
+
+    async def test_signalled_iterator_stamps_items_when_produced(self) -> None:
+        """The stamp reflects state as of production, not consumption.
+
+        The driver runs one item ahead: once the consumer holds item k, the wrapped iterator may
+        already have resumed and created a checkpoint after it. The stamp taken right after item k
+        was produced must not see that later checkpoint.
+        """
+        checkpoints: list[int] = []
+
+        async def produce() -> AsyncIterator[int]:
+            for k in range(1, 4):
+                yield k
+                # Runs when the iterator is resumed to produce the next item, i.e. after item k
+                # was handed over, mirroring the runner checkpointing at the end of a superstep.
+                checkpoints.append(k)
+
+        async def stamp() -> int:
+            return len(checkpoints)
+
+        seen: list[tuple[int, int, int]] = []
+        it = _SignalledIterator(produce(), asyncio.Event(), stamp=stamp)
+        async with aclosing(it):
+            async for item in it:
+                # Give the driver every chance to run ahead before we look at the stamp.
+                for _ in range(5):
+                    await asyncio.sleep(0)
+                seen.append((item, it.stamp, len(checkpoints)))
+
+        assert [(item, stamped) for item, stamped, _ in seen] == [(1, 0), (2, 1), (3, 2)]
+        # Consumption-time state had already moved past the stamped one for every item.
+        assert all(consumed > stamped for _, stamped, consumed in seen)
+
+    async def test_snapshots_pair_output_with_the_checkpoint_it_follows(self, tmp_path: Path) -> None:
+        """Every persisted snapshot must contain exactly the output emitted before it, and the final
+        snapshot must carry the full output and the incomplete reason.
+        """
+        workflow_agent = _build_text_workflow_agent("filtered by workflow", finish_reason="content_filter")
+        server = _make_server(
+            workflow_agent,
+            response_store=FileResponseStore(storage_dir=tmp_path),
+            options=ResponsesServerOptions(resilient_background=True),
+        )
+        request = CreateResponse(model="m", input="hi", background=True, stream=True, store=True)
+        context = ResponseContext(response_id="response-current", mode_flags=MagicMock())
+
+        emitted_text = ""
+        snapshots: list[tuple[str, dict[str, Any]]] = []
+        async for event in server._handle_response(  # pyright: ignore[reportPrivateUsage]
+            request, context, asyncio.Event()
+        ):
+            if isinstance(event, ResponseCheckpointEvent):
+                # The event references the live response; copy it as it is at persistence time.
+                snapshots.append((emitted_text, copy.deepcopy(dict(event.response))))
+            elif isinstance(event, Mapping) and event.get("type") == "response.output_text.delta":
+                emitted_text += str(event.get("delta", ""))
+
+        assert emitted_text == "filtered by workflow"
+        assert snapshots, "expected the completed workflow to be snapshotted"
+        checkpoint_ids: list[str] = []
+        for text_before, response in snapshots:
+            internal = json.loads(response["metadata"]["_internal_metadata"])
+            checkpoint_ids.append(internal[_LATEST_CHECKPOINT_ID_KEY])
+            snapshot_text = "".join(
+                part["text"]
+                for item in response["output"]
+                if item["type"] == "message"
+                for part in item["content"]
+                if part["type"] == "output_text"
+            )
+            assert snapshot_text == text_before
+        assert len(set(checkpoint_ids)) == len(checkpoint_ids), "each checkpoint is snapshotted once"
+
+        # The last snapshot is paired with the workflow's final checkpoint and carries everything.
+        final_text, final_response = snapshots[-1]
+        assert final_text == "filtered by workflow"
+        assert json.loads(final_response["metadata"]["_internal_metadata"])[_INCOMPLETE_REASON_KEY] == "content_filter"
+        assert final_response["status"] == "in_progress"
 
 
 # endregion
