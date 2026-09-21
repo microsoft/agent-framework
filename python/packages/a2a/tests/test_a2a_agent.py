@@ -754,6 +754,36 @@ def test_create_timeout_config_httpx_timeout() -> None:
     assert timeout_config.pool == 8.0
 
 
+def test_create_timeout_config_integer_timeout() -> None:
+    """Test _create_timeout_config accepts an int timeout (PEP 484 numeric tower)."""
+    agent = A2AAgent(name="Test Agent", client=cast(Any, MockA2AClient()), http_client=None)
+
+    timeout_config = agent._create_timeout_config(30)
+
+    assert isinstance(timeout_config, httpx.Timeout)
+    assert timeout_config.connect == 30.0
+    assert timeout_config.read == 30.0
+    assert timeout_config.write == 30.0
+    assert timeout_config.pool == 30.0
+
+
+def test_a2a_agent_initialization_with_integer_timeout_parameter() -> None:
+    """Test A2AAgent initialization accepts an int timeout without raising TypeError."""
+    with (
+        patch("agent_framework_a2a._agent.httpx.AsyncClient") as mock_async_client,
+        patch("agent_framework_a2a._agent.ClientFactory") as mock_factory,
+    ):
+        mock_client_instance = MagicMock()
+        mock_factory.return_value.create.return_value = mock_client_instance
+
+        A2AAgent(name="Test Agent", url="https://test-agent.example.com", timeout=120)
+
+        mock_async_client.assert_called_once()
+        timeout_arg = mock_async_client.call_args.kwargs["timeout"]
+        assert isinstance(timeout_arg, httpx.Timeout)
+        assert timeout_arg.read == 120.0
+
+
 def test_create_timeout_config_invalid_type() -> None:
     """Test _create_timeout_config with invalid type raises TypeError."""
     agent = A2AAgent(name="Test Agent", client=cast(Any, MockA2AClient()), http_client=None)
