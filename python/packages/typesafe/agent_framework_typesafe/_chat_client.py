@@ -68,17 +68,15 @@ class TypeSafeChatOptions(ChatOptions[SystemOneResponse], total=False):
     pass
 
 
-class TypeSafeChatClient(
-    ChatMiddlewareLayer[TypeSafeChatOptions],
-    ChatTelemetryLayer[TypeSafeChatOptions],
-    BaseChatClient[TypeSafeChatOptions],
-):
-    """Agent Framework chat client for TypeSafe AI System One models.
+class RawTypeSafeChatClient(BaseChatClient[TypeSafeChatOptions]):
+    """Raw Agent Framework chat client for TypeSafe AI System One models.
 
     The client maps text messages and Agent instructions to TypeSafe structured
     state. The response_format option supplies the TypeSafe Questions mapping,
     while every response is returned as SystemOneResponse. Free-form generation,
     streaming, tools, and non-text message content are not supported.
+
+    Use TypeSafeChatClient for the standard middleware and telemetry layers.
     """
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "typesafe.ai"
@@ -96,20 +94,18 @@ class TypeSafeChatClient(
         api_key: str | SecretString | None = None,
         model: str | None = None,
         async_client: AsyncTypeSafeClient | None = None,
-        middleware: Sequence[ChatMiddlewareTypes] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
-        """Create a TypeSafe AI chat client.
+        """Create a raw TypeSafe AI chat client.
 
         Keyword Args:
             api_key: TypeSafe API key. Defaults to the TYPESAFE_API_KEY environment variable.
             model: Default TypeSafe model. The SDK defaults to jev-latest.
             async_client: Optional preconfigured TypeSafe SDK client. It remains caller-owned.
-            middleware: Chat middleware to apply around TypeSafe requests.
             compaction_strategy: Optional compaction strategy applied before requests.
             tokenizer: Optional tokenizer used by token-aware compaction strategies.
             additional_properties: Additional properties stored on the client.
@@ -138,9 +134,7 @@ class TypeSafeChatClient(
                 model=self.model,
                 headers={"User-Agent": get_user_agent()},
             )
-
         super().__init__(
-            middleware=middleware,
             compaction_strategy=compaction_strategy,
             tokenizer=tokenizer,
             additional_properties=additional_properties,
@@ -326,3 +320,53 @@ class TypeSafeChatClient(
             f"Invalid TypeSafe request: {exc}",
             inner_exception=exc,
         ) from exc
+
+
+class TypeSafeChatClient(
+    ChatMiddlewareLayer[TypeSafeChatOptions],
+    ChatTelemetryLayer[TypeSafeChatOptions],
+    RawTypeSafeChatClient,
+):
+    """TypeSafe AI chat client with middleware and telemetry support.
+
+    This is the recommended client for most uses. Use RawTypeSafeChatClient
+    when composing a custom layer stack or opting out of telemetry.
+    """
+
+    def __init__(
+        self,
+        *,
+        api_key: str | SecretString | None = None,
+        model: str | None = None,
+        async_client: AsyncTypeSafeClient | None = None,
+        middleware: Sequence[ChatMiddlewareTypes] | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+    ) -> None:
+        """Create a layered TypeSafe AI chat client.
+
+        Keyword Args:
+            api_key: TypeSafe API key. Defaults to the TYPESAFE_API_KEY environment variable.
+            model: Default TypeSafe model. The SDK defaults to jev-latest.
+            async_client: Optional preconfigured TypeSafe SDK client. It remains caller-owned.
+            middleware: Chat middleware to apply around TypeSafe requests.
+            compaction_strategy: Optional compaction strategy applied before requests.
+            tokenizer: Optional tokenizer used by token-aware compaction strategies.
+            additional_properties: Additional properties stored on the client.
+            env_file_path: Path to a .env file used for settings resolution.
+            env_file_encoding: Encoding used to read the .env file.
+        """
+        super().__init__(
+            api_key=api_key,
+            model=model,
+            async_client=async_client,
+            middleware=middleware,
+            compaction_strategy=compaction_strategy,
+            tokenizer=tokenizer,
+            additional_properties=additional_properties,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+        )

@@ -65,6 +65,10 @@ Streaming, tools, non-text message content, and generative settings such as
 not support function invocation; that is expected because TypeSafe System One
 models do not expose tool calling.
 
+`TypeSafeChatClient` is the recommended client and layers middleware and telemetry
+over `RawTypeSafeChatClient`. Use the raw client only when composing a custom layer
+stack or intentionally opting out of those framework layers.
+
 ## Configuration and lifecycle
 
 The internally created TypeSafe SDK client reads:

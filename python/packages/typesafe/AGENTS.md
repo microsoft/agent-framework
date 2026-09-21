@@ -5,6 +5,7 @@ Integration with TypeSafe AI System One models, including Jev.
 ## Public API
 
 - **`TypeSafeChatClient`** - Adapts TypeSafe's structured decision API to the Agent Framework chat client contract.
+- **`RawTypeSafeChatClient`** - Provider transport without middleware or telemetry layers.
 - **`TypeSafeChatOptions`** - Uses `response_format` for the required TypeSafe `Questions` mapping.
 
 ## Behavioral Contract
@@ -23,5 +24,5 @@ Integration with TypeSafe AI System One models, including Jev.
 This package is alpha and is not included in `agent-framework-core[all]`.
 
 ```python
-from agent_framework_typesafe import TypeSafeChatClient, TypeSafeChatOptions
+from agent_framework_typesafe import RawTypeSafeChatClient, TypeSafeChatClient, TypeSafeChatOptions
 ```

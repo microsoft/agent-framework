@@ -29,7 +29,7 @@ from typesafe_sdk import (
     TypeSafeUnprocessableEntityError,
 )
 
-from agent_framework_typesafe import TypeSafeChatClient, TypeSafeChatOptions
+from agent_framework_typesafe import RawTypeSafeChatClient, TypeSafeChatClient, TypeSafeChatOptions
 
 
 class StubSystemOneResponse(SystemOneResponse):
@@ -98,6 +98,10 @@ def make_client(stub: StubTypeSafeClient | None = None, *, model: str | None = N
 def questions() -> Questions:
     """Create a valid question mapping."""
     return {"urgent": Noul(instructions="Is this urgent?")}
+
+
+def test_public_client_layers_raw_client() -> None:
+    assert issubclass(TypeSafeChatClient, RawTypeSafeChatClient)
 
 
 def test_construction_requires_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
