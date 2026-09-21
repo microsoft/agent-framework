@@ -39,6 +39,38 @@ public static class WorkflowHostingExtensions
     }
 
     /// <summary>
+    /// Convert a workflow with the appropriate primary input type to an <see cref="AIAgent"/>.
+    /// </summary>
+    /// <param name="workflow">The workflow to be hosted by the resulting <see cref="AIAgent"/></param>
+    /// <param name="filterToolCallMessages">If <see langword="true"/>, will remove <see cref="FunctionCallContent"/> and
+    /// <see cref="FunctionResultContent"/> from messages surfaced by the hosted workflow agent.</param>
+    /// <param name="id">A unique id for the hosting <see cref="AIAgent"/>.</param>
+    /// <param name="name">A name for the hosting <see cref="AIAgent"/>.</param>
+    /// <param name="description">A description for the hosting <see cref="AIAgent"/>.</param>
+    /// <param name="executionEnvironment">Specify the execution environment to use when running the workflows. See
+    /// <see cref="InProcessExecution.OffThread"/>, <see cref="InProcessExecution.Concurrent"/> and
+    /// <see cref="InProcessExecution.Lockstep"/> for the in-process environments.</param>
+    /// <param name="includeExceptionDetails">If <see langword="true"/>, will include <see cref="System.Exception.Message"/>
+    /// in the <see cref="ErrorContent"/> representing the workflow error.</param>
+    /// <param name="includeWorkflowOutputsInResponse">If <see langword="true"/>, will transform outgoing workflow outputs
+    /// into content in <see cref="AgentResponseUpdate"/>s or the <see cref="AgentResponse"/> as appropriate.</param>
+    /// <returns></returns>
+#pragma warning disable RS0026 // The required Boolean parameter distinguishes this overload from the existing optional-id overload.
+    public static AIAgent AsAIAgent(
+        this Workflow workflow,
+        bool filterToolCallMessages,
+        string? id = null,
+        string? name = null,
+        string? description = null,
+        IWorkflowExecutionEnvironment? executionEnvironment = null,
+        bool includeExceptionDetails = false,
+        bool includeWorkflowOutputsInResponse = false)
+    {
+        return new WorkflowHostAgent(workflow, id, name, description, executionEnvironment, includeExceptionDetails, includeWorkflowOutputsInResponse, filterToolCallMessages);
+    }
+#pragma warning restore RS0026
+
+    /// <summary>
     /// Returns a copy of a workflow-hosting agent that writes its checkpoints to the supplied
     /// <see cref="CheckpointManager"/>, so a host can redirect checkpoint storage on an agent that
     /// has already been built.
