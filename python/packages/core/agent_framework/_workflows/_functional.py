@@ -39,6 +39,7 @@ from __future__ import annotations
 # pyright: reportPrivateUsage=false
 # Classes in this module (RunContext, StepWrapper, FunctionalWorkflow) form a
 # cohesive unit and intentionally access each other's underscore-prefixed members.
+import asyncio
 import functools
 import hashlib
 import inspect
@@ -1052,15 +1053,24 @@ class FunctionalWorkflow:
         if responses:
             ctx._set_responses(responses)
 
-        # Wire up per-step checkpointing
-        # Use a mutable list so the closure can update prev_checkpoint_id
+        # Checkpoint lineage is a single chain: every save reads the current head, persists
+        # it, and advances the head.  Use a mutable list so the closure can update the head.
         ckpt_chain: list[str | None] = [prev_checkpoint_id]
-        if storage is not None:
+        # Concurrent @step completions (for example through ``asyncio.gather``) can read the
+        # same head before either writes the updated value back, which creates sibling root
+        # checkpoints and leaves part of the history unreachable from the latest checkpoint.
+        # Per-step, final, and HITL saves all go through this locked helper so the
+        # read/save/update of the chain head is atomic on every path.
+        ckpt_chain_lock = asyncio.Lock()
 
-            async def _on_step_completed() -> None:
+        async def _save_checkpoint_linked() -> None:
+            if storage is None:
+                return
+            async with ckpt_chain_lock:
                 ckpt_chain[0] = await self._save_checkpoint(ctx, storage, ckpt_chain[0])
 
-            ctx._on_step_completed = _on_step_completed
+        if storage is not None:
+            ctx._on_step_completed = _save_checkpoint_linked
 
         # Tracing: start the run span without attaching it. Attaching with
         # create_workflow_span() across a yield leaves OpenTelemetry's context
@@ -1107,7 +1117,7 @@ class FunctionalWorkflow:
 
             # Save final checkpoint if storage is available
             if storage is not None:
-                await self._save_checkpoint(ctx, storage, ckpt_chain[0])
+                await _save_checkpoint_linked()
 
             # Final status
             if saw_request:
@@ -1133,7 +1143,7 @@ class FunctionalWorkflow:
 
             # Save checkpoint
             if storage is not None:
-                await self._save_checkpoint(ctx, storage, ckpt_chain[0])
+                await _save_checkpoint_linked()
 
             yield _framework_event(WorkflowEvent.status, WorkflowRunState.IDLE_WITH_PENDING_REQUESTS)
 

@@ -27,6 +27,7 @@ from agent_framework import (
     RunContext,
     StepWrapper,
     SupportsAgentRun,
+    WorkflowCheckpoint,
     WorkflowEvent,
     WorkflowEventSource,
     WorkflowRunResult,
@@ -70,6 +71,20 @@ def built_workflow(
         return workflow(name=name, description=description)(fn).build(checkpoint_storage=checkpoint_storage)
 
     return decorate(func) if func is not None else decorate
+
+
+class _YieldingCheckpointStorage(InMemoryCheckpointStorage):
+    """Checkpoint storage whose ``save()`` yields to the event loop.
+
+    Real backends (files, databases) suspend while persisting, which lets two concurrent
+    checkpoint saves interleave.  The plain in-memory implementation never suspends, so it
+    cannot exercise the race the parallel-checkpoint lineage tests guard against.  Yielding
+    here reproduces that interleaving deterministically.
+    """
+
+    async def save(self, checkpoint: WorkflowCheckpoint) -> str:
+        await asyncio.sleep(0)
+        return await super().save(checkpoint)
 
 
 @step
@@ -903,6 +918,95 @@ class TestCheckpointing:
         # 3 per-step checkpoints + 1 final = 4
         checkpoints = await storage.list_checkpoints(workflow_name="multi_step_wf")
         assert len(checkpoints) == 4
+
+    async def test_parallel_steps_keep_single_checkpoint_lineage(self):
+        """Concurrent step completions must not fork the checkpoint chain.
+
+        ``asyncio.gather`` lets two steps complete around the same time.  Each completion
+        saves a checkpoint, so both can read the same ``previous_checkpoint_id`` before
+        either writes the updated chain head back.  That creates sibling root checkpoints
+        and leaves part of the history unreachable from the latest checkpoint.
+        """
+        storage = _YieldingCheckpointStorage()
+
+        @step
+        async def left(value: int) -> int:
+            return value + 1
+
+        @step
+        async def right(value: int) -> int:
+            return value + 2
+
+        @built_workflow(checkpoint_storage=storage)
+        async def parallel(value: int) -> list[int]:
+            left_result, right_result = await asyncio.gather(left(value), right(value))
+            return [left_result, right_result]
+
+        result = await parallel.run(1)
+        assert result.get_outputs() == [[2, 3]]
+
+        checkpoints = await storage.list_checkpoints(workflow_name="parallel")
+        # Two per-step saves plus the final save.
+        assert len(checkpoints) == 3
+
+        # Exactly one root: the chain head is read and updated under the lineage lock.
+        roots = [checkpoint for checkpoint in checkpoints if checkpoint.previous_checkpoint_id is None]
+        assert len(roots) == 1
+
+        # Every checkpoint is reachable from the latest one - no forked lineage.
+        by_id = {checkpoint.checkpoint_id: checkpoint for checkpoint in checkpoints}
+        latest = await storage.get_latest(workflow_name="parallel")
+        reachable: set[str] = set()
+        cursor = latest
+        while cursor is not None:
+            reachable.add(cursor.checkpoint_id)
+            cursor = by_id.get(cursor.previous_checkpoint_id) if cursor.previous_checkpoint_id else None
+        assert reachable == set(by_id)
+
+    async def test_request_info_checkpoint_keeps_single_lineage(self):
+        """A HITL checkpoint must not be forked by a still-running sibling step.
+
+        ``asyncio.gather`` does not cancel its remaining awaitables when one of them raises,
+        so a sibling step keeps running after ``request_info()`` interrupts the run.  If the
+        HITL save neither shares the lineage lock nor advances the chain head, that later
+        completion links to the pre-interruption head and forks the chain.
+        """
+        storage = _YieldingCheckpointStorage()
+        gate = asyncio.Event()
+
+        @step
+        async def ask_human(doc: str, ctx: RunContext) -> str:
+            return await ctx.request_info({"draft": doc}, response_type=str, request_id="req1")
+
+        @step
+        async def slow_peer(doc: str) -> str:
+            await gate.wait()
+            return doc.upper()
+
+        @built_workflow(checkpoint_storage=storage)
+        async def hitl_parallel(doc: str) -> list[str]:
+            answer, peer = await asyncio.gather(ask_human(doc), slow_peer(doc))
+            return [answer, peer]
+
+        result = await hitl_parallel.run("hello")
+        assert result.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
+        # Only the HITL checkpoint exists while the sibling step is still gated.
+        assert len(await storage.list_checkpoints(workflow_name="hitl_parallel")) == 1
+
+        # Release the sibling step, then let the event loop drain its completion path.
+        gate.set()
+        for _ in range(100):
+            if len(await storage.list_checkpoints(workflow_name="hitl_parallel")) > 1:
+                break
+            await asyncio.sleep(0)
+
+        checkpoints = await storage.list_checkpoints(workflow_name="hitl_parallel")
+        # The HITL checkpoint plus the late sibling step save.
+        assert len(checkpoints) == 2
+
+        # The late save links to the HITL checkpoint instead of forking off the old head.
+        roots = [checkpoint for checkpoint in checkpoints if checkpoint.previous_checkpoint_id is None]
+        assert len(roots) == 1
 
     async def test_no_checkpoint_on_cache_hit(self):
         """During replay, cached steps should NOT create additional checkpoints."""
