@@ -95,13 +95,41 @@ _ENCODED_SCOPE_PREFIX = "~scope-"
 def _description_file_name(file_name: str) -> str:
     """Return the companion description file name for ``file_name``.
 
-    The suffix replaces the original extension when present (so ``notes.md``
-    becomes ``notes_description.md``); otherwise it is appended.
+    The suffix is appended to the full file name, extension included, so
+    ``notes.md`` becomes ``notes.md_description.md``. Keeping the extension
+    gives every memory file its own sidecar: ``notes.md`` and ``notes.json``
+    must not share one, or writing or deleting either would clobber the
+    other's description.
+    """
+    return f"{file_name}{_DESCRIPTION_SUFFIX}"
+
+
+def _legacy_description_file_name(file_name: str) -> str:
+    """Return the sidecar name used before the extension was kept.
+
+    Earlier versions replaced the extension (``notes.md`` ->
+    ``notes_description.md``). Sidecars written under that scheme are still
+    read so existing memories keep their descriptions; new sidecars always use
+    :func:`_description_file_name`.
     """
     dot_index = file_name.rfind(".")
     if dot_index > 0:
         return f"{file_name[:dot_index]}{_DESCRIPTION_SUFFIX}"
     return f"{file_name}{_DESCRIPTION_SUFFIX}"
+
+
+def _legacy_sidecar_is_shared(file_name: str, file_names: list[str]) -> bool:
+    """Return whether another memory file maps to the same legacy sidecar as ``file_name``.
+
+    Under the legacy scheme ``notes.md`` and ``notes.json`` both map to
+    ``notes_description.md``, so that sidecar may only be removed on behalf of
+    ``file_name`` when no other file still claims it.
+    """
+    legacy_name = _legacy_description_file_name(file_name)
+    return any(
+        other != file_name and not _is_internal_file(other) and _legacy_description_file_name(other) == legacy_name
+        for other in file_names
+    )
 
 
 def _is_internal_file(file_name: str) -> bool:
@@ -338,8 +366,9 @@ class FileMemoryProvider(ContextProvider):
         sorted_files = sorted((name for name in file_names if not _is_internal_file(name)), key=str.lower)
 
         lines = ["# Memory Index", ""]
+        available = set(file_names)
         for file_name in sorted_files[:_MAX_INDEX_ENTRIES]:
-            description = await self.store.read(_combine_paths(working_folder, _description_file_name(file_name)))
+            description = await self._read_description(working_folder, file_name, available)
             if description and description.strip():
                 lines.append(f"- **{file_name}**: {description.strip()}")
             else:
@@ -347,6 +376,30 @@ class FileMemoryProvider(ContextProvider):
 
         index_path = _combine_paths(working_folder, _MEMORY_INDEX_FILE_NAME)
         await self.store.write(index_path, "\n".join(lines) + "\n")
+
+    async def _read_description(self, working_folder: str, file_name: str, available: set[str]) -> str | None:
+        """Return the description stored for ``file_name``, or ``None`` when it has none.
+
+        The current sidecar name is preferred; a sidecar written under the
+        legacy extension-replacing scheme is used when no current one exists.
+        """
+        for sidecar in (_description_file_name(file_name), _legacy_description_file_name(file_name)):
+            if sidecar in available:
+                return await self.store.read(_combine_paths(working_folder, sidecar))
+        return None
+
+    async def _delete_description(self, working_folder: str, file_name: str) -> None:
+        """Remove the description sidecar(s) of ``file_name``.
+
+        The legacy sidecar is only removed when no other memory file still maps
+        to it, since the legacy naming is shared between files that differ only
+        by extension.
+        """
+        await self.store.delete(_combine_paths(working_folder, _description_file_name(file_name)))
+        entries = await self.store.list_children(working_folder)
+        file_names = [entry.name for entry in entries if entry.type == FileStoreEntry.FILE]
+        if not _legacy_sidecar_is_shared(file_name, file_names):
+            await self.store.delete(_combine_paths(working_folder, _legacy_description_file_name(file_name)))
 
     async def before_run(
         self,
@@ -388,7 +441,7 @@ class FileMemoryProvider(ContextProvider):
                     if description and description.strip():
                         await self.store.write(desc_path, description)
                     else:
-                        await self.store.delete(desc_path)
+                        await self._delete_description(working_folder, normalized)
                     await self._rebuild_index(working_folder)
                 except ValueError as exc:
                     return f"Could not write file '{file_name}': {exc}"
@@ -426,12 +479,12 @@ class FileMemoryProvider(ContextProvider):
                 return f"File '{file_name}' not found."
 
             path = _combine_paths(working_folder, normalized)
-            desc_path = _combine_paths(working_folder, _description_file_name(normalized))
             async with self._write_lock:
                 try:
                     deleted = await self.store.delete(path)
-                    await self.store.delete(desc_path)
-                    await self._rebuild_index(working_folder)
+                    if deleted:
+                        await self._delete_description(working_folder, normalized)
+                        await self._rebuild_index(working_folder)
                 except ValueError as exc:
                     return f"Could not delete file '{file_name}': {exc}"
                 except OSError as exc:
@@ -454,10 +507,7 @@ class FileMemoryProvider(ContextProvider):
                     continue
                 if not _matches_glob(file_name, glob_pattern):
                     continue
-                description: str | None = None
-                desc_file_name = _description_file_name(file_name)
-                if desc_file_name in available:
-                    description = await self.store.read(_combine_paths(working_folder, desc_file_name))
+                description = await self._read_description(working_folder, file_name, available)
                 results.append({"name": file_name, "type": "file", "description": description})
             return results
 

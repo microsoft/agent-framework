@@ -23,6 +23,8 @@ from agent_framework._harness._file_memory import (
     _combine_paths,
     _description_file_name,
     _is_internal_file,
+    _legacy_description_file_name,
+    _legacy_sidecar_is_shared,
 )
 from agent_framework._sessions import SessionContext
 
@@ -53,13 +55,31 @@ async def _prepare(
     return context, tools
 
 
-def test_description_file_name_replaces_extension() -> None:
-    """The description sidecar replaces a known extension and appends otherwise."""
-    assert _description_file_name("notes.md") == "notes_description.md"
-    assert _description_file_name("data.json") == "data_description.md"
+def test_description_file_name_keeps_extension() -> None:
+    """The description sidecar appends the suffix to the whole name, extension included."""
+    assert _description_file_name("notes.md") == "notes.md_description.md"
+    assert _description_file_name("data.json") == "data.json_description.md"
     assert _description_file_name("noext") == "noext_description.md"
-    # Leading-dot files have no stem, so the suffix is appended.
     assert _description_file_name(".hidden") == ".hidden_description.md"
+    # Files that differ only by extension must not share a sidecar.
+    assert _description_file_name("notes.md") != _description_file_name("notes.json")
+
+
+def test_legacy_description_file_name_replaces_extension() -> None:
+    """The legacy scheme replaced a known extension and appended otherwise."""
+    assert _legacy_description_file_name("notes.md") == "notes_description.md"
+    assert _legacy_description_file_name("data.json") == "data_description.md"
+    assert _legacy_description_file_name("noext") == "noext_description.md"
+    assert _legacy_description_file_name(".hidden") == ".hidden_description.md"
+
+
+def test_legacy_sidecar_is_shared_only_with_other_visible_files() -> None:
+    """A legacy sidecar is shared when another non-internal file maps to it."""
+    assert _legacy_sidecar_is_shared("notes.md", ["notes.md", "notes.json"])
+    assert not _legacy_sidecar_is_shared("notes.md", ["notes.md", "plan.md"])
+    assert not _legacy_sidecar_is_shared("notes.md", ["notes.md"])
+    # The sidecar itself and the index are internal and never count as owners.
+    assert not _legacy_sidecar_is_shared("notes.md", ["notes.md", "notes_description.md", "memories.md"])
 
 
 def test_is_internal_file_detects_sidecars_and_index() -> None:
@@ -150,7 +170,7 @@ async def test_description_sidecar_is_written_and_listed() -> None:
     )
     assert "with description" in _text(result)
 
-    sidecar = await store.read(_combine_paths("user-1", "arch_description.md"))
+    sidecar = await store.read(_combine_paths("user-1", "arch.md_description.md"))
     assert sidecar == "system architecture"
 
     listed = json.loads(_text(await list_files.invoke()))
@@ -158,7 +178,7 @@ async def test_description_sidecar_is_written_and_listed() -> None:
 
     # Re-saving without a description removes the sidecar.
     await save.invoke(arguments={"file_name": "arch.md", "content": "big content"})
-    assert await store.read(_combine_paths("user-1", "arch_description.md")) is None
+    assert await store.read(_combine_paths("user-1", "arch.md_description.md")) is None
     listed_again = json.loads(_text(await list_files.invoke()))
     assert listed_again == [{"name": "arch.md", "type": "file", "description": None}]
 
@@ -170,10 +190,75 @@ async def test_delete_removes_sidecar() -> None:
     _, tools = await _prepare(provider)
 
     await tools["file_memory_write"].invoke(arguments={"file_name": "arch.md", "content": "x", "description": "desc"})
-    assert await store.read(_combine_paths("user-1", "arch_description.md")) == "desc"
+    assert await store.read(_combine_paths("user-1", "arch.md_description.md")) == "desc"
 
     await tools["file_memory_delete"].invoke(arguments={"file_name": "arch.md"})
-    assert await store.read(_combine_paths("user-1", "arch_description.md")) is None
+    assert await store.read(_combine_paths("user-1", "arch.md_description.md")) is None
+
+
+async def test_files_differing_only_by_extension_keep_separate_descriptions() -> None:
+    """``notes.md`` and ``notes.json`` each own their description; neither write nor delete crosses over."""
+    store = InMemoryAgentFileStore()
+    provider = FileMemoryProvider(store=store, scope="user-1")
+    _, tools = await _prepare(provider)
+    save = tools["file_memory_write"]
+    delete = tools["file_memory_delete"]
+    list_files = tools["file_memory_ls"]
+
+    await save.invoke(arguments={"file_name": "notes.md", "content": "md", "description": "markdown notes"})
+
+    # Writing a sibling without a description must not drop the markdown file's description ...
+    await save.invoke(arguments={"file_name": "notes.json", "content": "{}"})
+    listed = {entry["name"]: entry["description"] for entry in json.loads(_text(await list_files.invoke()))}
+    assert listed == {"notes.md": "markdown notes", "notes.json": None}
+
+    # ... nor may the sibling's own description leak onto the markdown file.
+    await save.invoke(arguments={"file_name": "notes.json", "content": "{}", "description": "json notes"})
+    listed = {entry["name"]: entry["description"] for entry in json.loads(_text(await list_files.invoke()))}
+    assert listed == {"notes.md": "markdown notes", "notes.json": "json notes"}
+    index = await store.read(_combine_paths("user-1", _MEMORY_INDEX_FILE_NAME))
+    assert index is not None
+    assert "- **notes.json**: json notes" in index
+    assert "- **notes.md**: markdown notes" in index
+
+    # Deleting one sibling (or a missing one) leaves the other's description alone.
+    assert "not found" in _text(await delete.invoke(arguments={"file_name": "notes.txt"}))
+    assert "deleted" in _text(await delete.invoke(arguments={"file_name": "notes.json"}))
+    listed = json.loads(_text(await list_files.invoke()))
+    assert listed == [{"name": "notes.md", "type": "file", "description": "markdown notes"}]
+    assert await store.read(_combine_paths("user-1", "notes.json_description.md")) is None
+
+
+async def test_legacy_description_sidecar_is_still_read_and_cleaned_up() -> None:
+    """Sidecars written under the old extension-replacing name keep working."""
+    store = InMemoryAgentFileStore()
+    await store.write("user-1/notes.md", "md")
+    await store.write("user-1/notes_description.md", "legacy description")
+    provider = FileMemoryProvider(store=store, scope="user-1")
+    _, tools = await _prepare(provider)
+    save = tools["file_memory_write"]
+    delete = tools["file_memory_delete"]
+    list_files = tools["file_memory_ls"]
+
+    listed = json.loads(_text(await list_files.invoke()))
+    assert listed == [{"name": "notes.md", "type": "file", "description": "legacy description"}]
+
+    # A new description supersedes the legacy sidecar without touching it.
+    await save.invoke(arguments={"file_name": "notes.md", "content": "md", "description": "new description"})
+    listed = json.loads(_text(await list_files.invoke()))
+    assert listed == [{"name": "notes.md", "type": "file", "description": "new description"}]
+    assert await store.read("user-1/notes_description.md") == "legacy description"
+
+    # While a sibling still maps to the legacy sidecar, deleting one file keeps it for the other.
+    await save.invoke(arguments={"file_name": "notes.json", "content": "{}"})
+    await delete.invoke(arguments={"file_name": "notes.md"})
+    assert await store.read("user-1/notes_description.md") == "legacy description"
+    listed = json.loads(_text(await list_files.invoke()))
+    assert listed == [{"name": "notes.json", "type": "file", "description": "legacy description"}]
+
+    # Once the last owner is deleted, the legacy sidecar goes with it.
+    await delete.invoke(arguments={"file_name": "notes.json"})
+    assert await store.read("user-1/notes_description.md") is None
 
 
 async def test_index_is_rebuilt_and_injected_on_next_run() -> None:
