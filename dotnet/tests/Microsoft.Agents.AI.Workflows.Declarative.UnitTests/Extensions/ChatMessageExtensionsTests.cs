@@ -101,6 +101,7 @@ public sealed class ChatMessageExtensionsTests
         // Assert
         Assert.NotNull(result);
         Assert.Empty(result.Rows);
+        Assert.Equal(TypeSchema.Message.RecordType.ToTable(), result.Type);
     }
 
     [Fact]
@@ -834,7 +835,7 @@ public sealed class ChatMessageExtensionsTests
     }
 
     [Fact]
-    public void MergeForLastMessageAppendsOriginalTextWhenRoundTripHasNoTextSlot()
+    public void MergeForLastMessagePreservesOriginalOrderWhenRoundTripHasNoTextSlot()
     {
         // Arrange: round-tripped message has only media (no text slot to replace).
         HostedFileContent serverRef = new("file-1");
@@ -844,10 +845,10 @@ public sealed class ChatMessageExtensionsTests
         // Act
         ChatMessage result = input.MergeForLastMessage(roundTripped);
 
-        // Assert: media kept; original text appended at end.
+        // Assert: original order is kept while media is replaced by the server reference.
         Assert.Collection(result.Contents,
-            c => Assert.Same(serverRef, c),
-            c => Assert.Equal("middle", Assert.IsType<TextContent>(c).Text));
+            c => Assert.Equal("middle", Assert.IsType<TextContent>(c).Text),
+            c => Assert.Same(serverRef, c));
     }
 
     [Fact]
@@ -864,10 +865,10 @@ public sealed class ChatMessageExtensionsTests
 
         // Assert
         Assert.Collection(result.Contents,
-            c => Assert.Same(firstRef, c),
             c => Assert.Equal("first", Assert.IsType<TextContent>(c).Text),
-            c => Assert.Same(secondRef, c),
-            c => Assert.Equal("second", Assert.IsType<TextContent>(c).Text));
+            c => Assert.Equal("second", Assert.IsType<TextContent>(c).Text),
+            c => Assert.Same(firstRef, c),
+            c => Assert.Same(secondRef, c));
     }
 
     [Fact]

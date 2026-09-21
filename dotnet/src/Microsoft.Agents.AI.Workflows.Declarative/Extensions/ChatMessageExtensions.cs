@@ -31,10 +31,8 @@ internal static class ChatMessageExtensions
     /// Strategy: keep <paramref name="inputMessage"/> as the base — it has the server-generated
     /// <see cref="ChatMessage.MessageId"/> and any provider-augmented metadata, and is forward-
     /// compatible with new properties added on <see cref="ChatMessage"/> in the abstractions
-    /// layer. Only the <see cref="ChatMessage.Contents"/> list is mutated to substitute
-    /// original <see cref="TextContent"/> items in place (and append any extras the round-trip
-    /// dropped). Non-text content items returned by the service are left untouched so
-    /// server-side references survive.
+    /// layer. Only the <see cref="ChatMessage.Contents"/> list is mutated to preserve the
+    /// caller's ordering while substituting server-side references for original non-text content.
     /// </para>
     /// </remarks>
     public static ChatMessage MergeForLastMessage(this ChatMessage input, ChatMessage? inputMessage)
@@ -44,27 +42,32 @@ internal static class ChatMessageExtensions
             return input;
         }
 
-        // Build a queue of the original text items, in order. Fall back to ChatMessage.Text
-        // if the input has no explicit TextContent entries.
-        Queue<TextContent> originalTexts = new(input.Contents.OfType<TextContent>());
-        if (originalTexts.Count == 0 && !string.IsNullOrEmpty(input.Text))
+        Queue<AIContent> canonicalNonTextContents = new(inputMessage.Contents.Where(content => content is not TextContent));
+        List<AIContent> mergedContents = [];
+
+        foreach (AIContent content in input.Contents)
         {
-            originalTexts.Enqueue(new TextContent(input.Text));
+            mergedContents.Add(
+                content is TextContent
+                    ? content
+                    : canonicalNonTextContents.Count > 0 ? canonicalNonTextContents.Dequeue() : content);
         }
 
-        // Replace TextContent items in inputMessage.Contents with the originals, in order.
-        for (int i = 0; i < inputMessage.Contents.Count && originalTexts.Count > 0; i++)
+        if (mergedContents.Count == 0 && !string.IsNullOrEmpty(input.Text))
         {
-            if (inputMessage.Contents[i] is TextContent)
-            {
-                inputMessage.Contents[i] = originalTexts.Dequeue();
-            }
+            mergedContents.Add(new TextContent(input.Text));
         }
 
-        // Append any remaining original text items that the round-trip dropped entirely.
-        while (originalTexts.Count > 0)
+        if (mergedContents.Count == 0)
         {
-            inputMessage.Contents.Add(originalTexts.Dequeue());
+            return inputMessage;
+        }
+
+        mergedContents.AddRange(canonicalNonTextContents);
+        inputMessage.Contents.Clear();
+        foreach (AIContent content in mergedContents)
+        {
+            inputMessage.Contents.Add(content);
         }
 
         return inputMessage;

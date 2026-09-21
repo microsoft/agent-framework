@@ -174,6 +174,29 @@ public sealed class RequestExternalInputExecutorTest(ITestOutputHelper output) :
     }
 
     [Fact]
+    public async Task CaptureResponseWithEmptyMessagesPreservesMessageTableTypeAsync()
+    {
+        // Arrange
+        const string VariableName = "TestVariable";
+        RequestExternalInput model = this.CreateModel(nameof(CaptureResponseWithEmptyMessagesPreservesMessageTableTypeAsync), VariableName);
+        MockAgentProvider mockAgentProvider = new();
+        RequestExternalInputExecutor action = new(model, mockAgentProvider.Object, this.State);
+        ExternalInputResponse response = new([]);
+
+        // Act
+        WorkflowEvent[] events =
+            await this.ExecuteAsync(
+                RequestExternalInputExecutor.Steps.Capture(action.Id),
+                (context, message, cancellationToken) => action.CaptureResponseAsync(context, response, cancellationToken));
+
+        // Assert
+        VerifyCompletionEvent(events);
+        TableValue table = Assert.IsAssignableFrom<TableValue>(this.State.Get(VariableName));
+        Assert.Empty(table.Rows);
+        Assert.Equal(TypeSchema.Message.RecordType.ToTable(), table.Type);
+    }
+
+    [Fact]
     public async Task CaptureResponseWithEmptyMessagesAndWorkflowConversationAsync()
     {
         // Arrange

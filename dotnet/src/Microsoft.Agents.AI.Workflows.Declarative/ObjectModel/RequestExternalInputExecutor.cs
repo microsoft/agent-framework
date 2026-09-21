@@ -55,7 +55,7 @@ internal sealed class RequestExternalInputExecutor(RequestExternalInput model, R
         {
             await context.SetLastMessageAsync(lastMessage).ConfigureAwait(false);
         }
-        await this.AssignAsync(this.Model.Variable?.Path, capturedMessages.ToFormula(), context).ConfigureAwait(false);
+        await this.AssignAsync(this.Model.Variable?.Path, capturedMessages.ToTable(), context).ConfigureAwait(false);
 
         await context.RaiseCompletionEventAsync(this.Model, cancellationToken).ConfigureAwait(false);
     }
