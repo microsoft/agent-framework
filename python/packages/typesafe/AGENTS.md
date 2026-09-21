@@ -13,8 +13,10 @@ Integration with TypeSafe AI System One models, including Jev.
 - Calls always return structured `SystemOneResponse` data. This provider does not generate free-form chat text.
 - Every call requires `response_format` to contain at least one TypeSafe `Noul`, `Choice`, or `Score` question.
 - Streaming and non-text message content are not supported.
-- Tool calling supports one call per run and closed-set schemas: constants, enums/Literals, booleans, and arrays of
-  enums/Literals. Optional supported arguments use a presence question so omitted values preserve tool defaults.
+- Tool calling defaults to one call per run; callers can opt into sequential round trips with
+  `FunctionInvocationConfiguration.max_function_calls`. Closed-set schemas support constants, enums/Literals,
+  booleans, and arrays of enums/Literals. Optional supported arguments use a presence question so omitted values
+  preserve tool defaults.
 - Agent-provided MCP tools work when their discovered function schemas fit the supported subset. Direct raw/client
   calls must receive expanded `FunctionTool` instances.
 - The connector forwards `response_format` as the TypeSafe SDK `questions` argument and internally uses

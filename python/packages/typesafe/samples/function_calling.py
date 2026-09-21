@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Literal, cast
+from random import randint
+from typing import Annotated, Literal
 
-from agent_framework import Agent, FunctionTool
-from pydantic import BaseModel
-from typesafe_sdk import Noul, SystemOneResponse
+from agent_framework import Agent, tool
+from typesafe_sdk import Choice, SystemOneResponse
 
 from agent_framework_typesafe import TypeSafeChatClient
 
@@ -19,40 +19,33 @@ Environment variables:
 """
 
 
-class WeatherArguments(BaseModel):
-    """Arguments TypeSafe can fill using Choice and Noul questions."""
-
-    city: Literal["Seattle", "Paris"]
-    detailed: bool
-
-
-def get_weather(city: str, detailed: bool) -> str:
-    """Return deterministic sample weather."""
+@tool
+def get_weather(
+    city: Annotated[Literal["Seattle", "Paris", "Amsterdam"], "City to get the weather for"], detailed: bool
+) -> str:
+    """Get the weather forecast."""
     suffix = " with a detailed hourly forecast" if detailed else ""
-    return f"{city} is sunny and 22 C{suffix}."
+    return f"{city} is sunny and {randint(15, 30)} C{suffix}."
 
 
 async def main() -> None:
     """Run one TypeSafe-selected function call and print the terminal structured response."""
-    weather = FunctionTool(
-        name="get_weather",
-        description="Get weather for Seattle or Paris.",
-        func=get_weather,
-        input_model=WeatherArguments,
-    )
 
-    async with TypeSafeChatClient() as client:
-        agent = Agent(client=client, name="WeatherEvaluator", tools=[weather])
+    async with TypeSafeChatClient(function_invocation_configuration={"max_function_calls": 2}) as client:
+        agent = Agent(client=client, name="WeatherEvaluator", tools=[get_weather])
         response = await agent.run(
-            "Give me a detailed weather report for Seattle.",
-            options=cast(
-                Any,
-                {
-                    "response_format": {
-                        "succeeded": Noul(instructions="Did the tool result contain a successful weather report?")
-                    }
-                },
-            ),
+            "Give me a detailed weather report for Seattle and Amsterdam and tell me where the weather is better.",
+            options={
+                "response_format": {
+                    "better_city": Choice(
+                        instructions="Which city has better weather based on the tool results?",
+                        criteria={
+                            "Seattle": "Seattle has the better weather.",
+                            "Amsterdam": "Amsterdam has the better weather.",
+                        },
+                    )
+                }
+            },
         )
 
     if not isinstance(response.value, SystemOneResponse):

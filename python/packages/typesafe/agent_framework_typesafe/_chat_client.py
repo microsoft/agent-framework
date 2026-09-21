@@ -37,7 +37,9 @@ from agent_framework.exceptions import (
 from agent_framework.observability import ChatTelemetryLayer
 from typesafe_sdk import (
     AsyncTypeSafeClient,
+    ChoiceAnswer,
     Questions,
+    ScoreAnswer,
     SystemOneResponse,
     TypeSafeAPIConnectionError,
     TypeSafeAPIError,
@@ -204,6 +206,7 @@ class RawTypeSafeChatClient(BaseChatClient[TypeSafeChatOptions]):
                 tools,
                 tool_mode=tool_mode,
                 user_question_ids=set(user_questions),
+                previous_calls=self._get_current_turn_function_calls(messages),
             )
             questions = dict(user_questions)
             if tool_plan is not None:
@@ -260,9 +263,9 @@ class RawTypeSafeChatClient(BaseChatClient[TypeSafeChatOptions]):
                 )
 
             response = self._filter_internal_answers(response, set(user_questions))
-            tool_result_text = self._get_latest_function_result_text(messages)
+            terminal_text = self._build_terminal_text(messages, response)
             return ChatResponse(
-                messages=[Message(role="assistant", contents=[tool_result_text or response.model_dump_json()])],
+                messages=[Message(role="assistant", contents=[terminal_text])],
                 response_id=response.request_id,
                 model=response.model,
                 finish_reason="stop",
@@ -327,6 +330,19 @@ class RawTypeSafeChatClient(BaseChatClient[TypeSafeChatOptions]):
         return [cast(FunctionTool, tools)]
 
     @staticmethod
+    def _get_current_turn_function_calls(messages: Sequence[Message]) -> dict[str, list[dict[str, Any]]]:
+        calls: dict[str, list[dict[str, Any]]] = {}
+        for message in reversed(messages):
+            if message.role == "user":
+                break
+            for content in reversed(message.contents):
+                if content.type == "function_call" and content.name:
+                    calls.setdefault(content.name, []).append(content.parse_arguments() or {})
+        for function_calls in calls.values():
+            function_calls.reverse()
+        return calls
+
+    @staticmethod
     def _build_state(messages: Sequence[Message], *, instructions: Any) -> dict[str, Any]:
         if instructions is not None and not isinstance(instructions, str):
             raise ChatClientInvalidRequestException("TypeSafe instructions must be a string.")
@@ -388,20 +404,43 @@ class RawTypeSafeChatClient(BaseChatClient[TypeSafeChatOptions]):
         )
 
     @staticmethod
-    def _get_latest_function_result_text(messages: Sequence[Message]) -> str | None:
+    def _build_terminal_text(messages: Sequence[Message], response: SystemOneResponse) -> str:
+        tool_results = RawTypeSafeChatClient._get_current_turn_function_result_texts(messages)
+        if not tool_results:
+            return response.model_dump_json()
+
+        decision_lines = [
+            f"{question_id}: {answer.choice}"
+            if isinstance(answer, ChoiceAnswer)
+            else f"{question_id}: {answer.score:g}"
+            for question_id, answer in response.answers.items()
+            if isinstance(answer, (ChoiceAnswer, ScoreAnswer))
+        ]
+        return "\n".join([*tool_results, *decision_lines])
+
+    @staticmethod
+    def _get_current_turn_function_result_texts(messages: Sequence[Message]) -> list[str]:
+        results: list[str] = []
         for message in reversed(messages):
+            if message.role == "user":
+                break
             for content in reversed(message.contents):
                 if content.type == "function_result" and isinstance(content.result, str):
-                    try:
-                        decoded: Any = json.loads(content.result)
-                    except json.JSONDecodeError:
-                        return content.result
-                    if isinstance(decoded, dict):
-                        decoded_result = cast(dict[str, Any], decoded)
-                        if set(decoded_result) == {"result"} and isinstance(decoded_result["result"], str):
-                            return decoded_result["result"]
-                    return content.result
-        return None
+                    results.append(RawTypeSafeChatClient._unwrap_function_result_text(content.result))
+        results.reverse()
+        return results
+
+    @staticmethod
+    def _unwrap_function_result_text(result: str) -> str:
+        try:
+            decoded: Any = json.loads(result)
+        except json.JSONDecodeError:
+            return result
+        if isinstance(decoded, dict):
+            decoded_result = cast(dict[str, Any], decoded)
+            if set(decoded_result) == {"result"} and isinstance(decoded_result["result"], str):
+                return decoded_result["result"]
+        return result
 
     @staticmethod
     def _filter_internal_answers(response: SystemOneResponse, question_ids: set[str]) -> SystemOneResponse:
@@ -488,7 +527,7 @@ class TypeSafeChatClient(
             env_file_encoding: Encoding used to read the .env file.
         """
         invocation_configuration = dict(function_invocation_configuration or {})
-        invocation_configuration["max_function_calls"] = 1
+        invocation_configuration.setdefault("max_function_calls", 1)
         super().__init__(
             api_key=api_key,
             model=model,

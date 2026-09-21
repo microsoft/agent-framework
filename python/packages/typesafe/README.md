@@ -71,11 +71,16 @@ layers.
 ## Function calling
 
 TypeSafe converts tool selection and supported arguments into internal `Choice`
-and `Noul` questions, emits an Agent Framework function call, and lets the standard
-function-invocation loop execute it. After one tool call, tools are disabled and
-the connector makes the terminal TypeSafe request using only the caller's
-`response_format` questions. The final response text is the executed tool result;
-the terminal `SystemOneResponse` remains available through `response.value`.
+and `Noul` questions, emits Agent Framework function calls, and lets the standard
+function-invocation loop execute them. The client defaults to one tool call per
+run; opt into sequential round trips with
+`function_invocation_configuration={"max_function_calls": N}`. Jev can select
+another tool call after seeing each result, or select no tool to finish.
+
+The terminal response text consolidates the current turn's tool results and any
+final TypeSafe `Choice` or `Score` decisions. The full terminal
+`SystemOneResponse`, including `Noul` answers, remains available through
+`response.value`.
 
 Supported input-schema shapes:
 

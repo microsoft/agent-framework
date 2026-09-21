@@ -51,6 +51,31 @@ def test_tool_choice_none_skips_compilation() -> None:
     )
 
 
+def test_previous_calls_are_included_in_routing_and_argument_questions() -> None:
+    tool = function(
+        "weather",
+        {
+            "type": "object",
+            "properties": {"city": {"enum": ["Seattle", "Amsterdam"], "type": "string"}},
+            "required": ["city"],
+        },
+    )
+
+    plan = compile_tool_call_plan(
+        [tool],
+        tool_mode=None,
+        user_question_ids=set(),
+        previous_calls={"weather": [{"city": "Seattle"}]},
+    )
+
+    assert plan is not None
+    route = plan.questions["__af_tool__.route"]
+    argument = plan.questions["__af_tool__.t0.a0.value"]
+    assert "Seattle" in str(route)
+    assert "Seattle" in str(argument)
+    assert "different value" in str(argument)
+
+
 def test_required_tool_modes_validate_availability() -> None:
     with pytest.raises(ChatClientInvalidRequestException, match="no tools"):
         compile_tool_call_plan([], tool_mode={"mode": "required"}, user_question_ids=set())

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 
@@ -110,6 +111,7 @@ def compile_tool_call_plan(
     *,
     tool_mode: ToolMode | None,
     user_question_ids: set[str],
+    previous_calls: Mapping[str, Sequence[Mapping[str, Any]]] | None = None,
 ) -> ToolCallPlan | None:
     """Compile supported FunctionTool schemas into TypeSafe routing questions."""
     collisions = sorted(
@@ -145,7 +147,7 @@ def compile_tool_call_plan(
     unsupported: dict[str, str] = {}
     for index, tool in enumerate(selected_tools):
         try:
-            compiled.append(_compile_tool(tool, index))
+            compiled.append(_compile_tool(tool, index, list((previous_calls or {}).get(tool.name, ()))))
         except _UnsupportedToolSchema as exc:
             unsupported[tool.name] = str(exc)
 
@@ -172,11 +174,21 @@ def compile_tool_call_plan(
     questions: dict[str, Any] = {}
     if required_tool is None:
         route_question_id = TOOL_ROUTE_QUESTION_ID
-        criteria = {
-            tool.route_label: tool.function.description or f"Call the {tool.function.name} tool." for tool in compiled
-        }
+        criteria: dict[str, str] = {}
+        for tool in compiled:
+            description = tool.function.description or f"Call the {tool.function.name} tool."
+            prior = list((previous_calls or {}).get(tool.function.name, ()))
+            if prior:
+                description += (
+                    " Call this tool again only if the latest user request still needs a distinct execution. "
+                    f"Do not repeat argument sets already called this turn: {_describe_value(prior)}."
+                )
+            criteria[tool.route_label] = description
         if mode != "required":
-            criteria[TOOL_ROUTE_NONE] = "Do not call a tool; answer the configured TypeSafe questions directly."
+            criteria[TOOL_ROUTE_NONE] = (
+                "Do not call a tool because all requested tool actions are already satisfied, "
+                "or because no tool is needed."
+            )
         questions[route_question_id] = Choice(
             instructions="Which available tool, if any, should handle the latest user request?",
             criteria=criteria,
@@ -198,7 +210,11 @@ def compile_tool_call_plan(
     )
 
 
-def _compile_tool(tool: FunctionTool, tool_index: int) -> _CompiledTool:
+def _compile_tool(
+    tool: FunctionTool,
+    tool_index: int,
+    previous_calls: list[Mapping[str, Any]],
+) -> _CompiledTool:
     schema: dict[str, Any] = tool.parameters()
     if not schema:
         schema = cast(dict[str, Any], {"type": "object", "properties": {}})
@@ -235,6 +251,7 @@ def _compile_tool(tool: FunctionTool, tool_index: int) -> _CompiledTool:
                 required=name in required,
                 tool_index=tool_index,
                 argument_index=argument_index,
+                previous_values=[call[name] for call in previous_calls if name in call],
             )
         except _UnsupportedToolSchema as exc:
             if name in required:
@@ -261,6 +278,7 @@ def _compile_argument(
     required: bool,
     tool_index: int,
     argument_index: int,
+    previous_values: list[Any],
 ) -> tuple[_ArgumentPlan, Questions]:
     schema, nullable = _resolve_schema(raw_schema, root_schema)
     if nullable and required:
@@ -268,13 +286,19 @@ def _compile_argument(
 
     prefix = f"{TOOL_QUESTION_PREFIX}.t{tool_index}.a{argument_index}"
     description = schema.get("description") or raw_schema.get("description") or schema.get("title") or name
+    previous_instruction = (
+        f" Values already used for this argument in earlier calls this turn: {_describe_value(previous_values)}. "
+        "Choose a different value when the user requested another distinct call."
+        if previous_values
+        else ""
+    )
     presence_question_id = None if required else f"{prefix}.present"
     questions: dict[str, Any] = {}
     if presence_question_id is not None:
         questions[presence_question_id] = Noul(
             instructions=(
                 f"For the {tool.name} tool, did the user explicitly specify the {name} argument? "
-                f"Argument meaning: {description}"
+                f"Argument meaning: {description}.{previous_instruction}"
             )
         )
 
@@ -305,7 +329,10 @@ def _compile_argument(
         values = tuple((f"v{index}", value) for index, value in enumerate(enum_values))
         question_id = f"{prefix}.value"
         questions[question_id] = Choice(
-            instructions=f"For the {tool.name} tool, choose the {name} argument. Argument meaning: {description}",
+            instructions=(
+                f"For the {tool.name} tool, choose the {name} argument. "
+                f"Argument meaning: {description}.{previous_instruction}"
+            ),
             criteria={label: _describe_value(value) for label, value in values},
         )
         return (
@@ -324,7 +351,8 @@ def _compile_argument(
         question_id = f"{prefix}.value"
         questions[question_id] = Noul(
             instructions=(
-                f"For the {tool.name} tool, should the {name} argument be true? Argument meaning: {description}"
+                f"For the {tool.name} tool, should the {name} argument be true? "
+                f"Argument meaning: {description}.{previous_instruction}"
             )
         )
         return (
@@ -354,7 +382,7 @@ def _compile_argument(
             questions[question_id] = Noul(
                 instructions=(
                     f"For the {tool.name} tool, should the {name} argument include {_describe_value(member)}? "
-                    f"Argument meaning: {description}"
+                    f"Argument meaning: {description}.{previous_instruction}"
                 )
             )
             member_questions.append((question_id, member))

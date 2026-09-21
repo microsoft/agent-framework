@@ -27,5 +27,6 @@ uv run --env-file .env --package agent-framework-typesafe \
 The exact probabilities and scores vary. Both examples print a department
 choice, confidence, frustration score, and urgency probability.
 
-Function calling supports one call per run and the closed-set schema subset
-documented in the package README.
+Function calling defaults to one call per run. The local sample opts into
+multiple sequential calls and prints the consolidated tool results plus the
+final TypeSafe comparison decision.

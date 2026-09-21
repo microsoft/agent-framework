@@ -20,6 +20,7 @@ from agent_framework.exceptions import (
 from pydantic import BaseModel
 from typesafe_sdk import (
     AsyncTypeSafeClient,
+    Choice,
     Noul,
     Questions,
     SystemOneResponse,
@@ -242,7 +243,7 @@ async def test_empty_text_messages_are_rejected() -> None:
 
 
 def test_simple_mcp_result_wrapper_is_unwrapped() -> None:
-    result = RawTypeSafeChatClient._get_latest_function_result_text(  # pyright: ignore[reportPrivateUsage]
+    result = RawTypeSafeChatClient._get_current_turn_function_result_texts(  # pyright: ignore[reportPrivateUsage]
         [
             Message(
                 "tool",
@@ -251,7 +252,7 @@ def test_simple_mcp_result_wrapper_is_unwrapped() -> None:
         ]
     )
 
-    assert result == "Paris is sunny."
+    assert result == ["Paris is sunny."]
 
 
 async def test_client_kwargs_are_rejected() -> None:
@@ -685,6 +686,109 @@ async def test_session_can_route_a_tool_on_later_independent_runs() -> None:
     assert isinstance(first.value, SystemOneResponse)
     assert isinstance(second.value, SystemOneResponse)
     assert len(stub.calls) == 4
+
+
+async def test_multiple_tool_roundtrips_return_consolidated_results() -> None:
+    forecasts = {
+        "Seattle": "Seattle is rainy and 18 C.",
+        "Amsterdam": "Amsterdam is sunny and 24 C.",
+    }
+    executions: list[str] = []
+
+    class WeatherArguments(BaseModel):
+        city: Literal["Seattle", "Amsterdam"]
+
+    def weather(city: str) -> str:
+        executions.append(city)
+        return forecasts[city]
+
+    function = FunctionTool(
+        name="weather",
+        description="Get weather for Seattle or Amsterdam.",
+        func=weather,
+        input_model=WeatherArguments,
+    )
+    stub = StubTypeSafeClient(
+        responses=[
+            make_response({
+                "better_city": {
+                    "type": "choice",
+                    "choice": "Seattle",
+                    "confidence": 0.5,
+                    "probabilities": {"Seattle": 0.5, "Amsterdam": 0.5},
+                },
+                "__af_tool__.route": {
+                    "type": "choice",
+                    "choice": "t0",
+                    "confidence": 1.0,
+                    "probabilities": {"t0": 1.0, "none": 0.0},
+                },
+                "__af_tool__.t0.a0.value": {
+                    "type": "choice",
+                    "choice": "v0",
+                    "confidence": 1.0,
+                    "probabilities": {"v0": 1.0, "v1": 0.0},
+                },
+            }),
+            make_response({
+                "better_city": {
+                    "type": "choice",
+                    "choice": "Amsterdam",
+                    "confidence": 0.6,
+                    "probabilities": {"Seattle": 0.4, "Amsterdam": 0.6},
+                },
+                "__af_tool__.route": {
+                    "type": "choice",
+                    "choice": "t0",
+                    "confidence": 1.0,
+                    "probabilities": {"t0": 1.0, "none": 0.0},
+                },
+                "__af_tool__.t0.a0.value": {
+                    "type": "choice",
+                    "choice": "v1",
+                    "confidence": 1.0,
+                    "probabilities": {"v0": 0.0, "v1": 1.0},
+                },
+            }),
+            make_response({
+                "better_city": {
+                    "type": "choice",
+                    "choice": "Amsterdam",
+                    "confidence": 1.0,
+                    "probabilities": {"Seattle": 0.0, "Amsterdam": 1.0},
+                },
+                "__af_tool__.route": {
+                    "type": "choice",
+                    "choice": "none",
+                    "confidence": 1.0,
+                    "probabilities": {"t0": 0.0, "none": 1.0},
+                },
+            }),
+        ]
+    )
+    client = TypeSafeChatClient(
+        async_client=cast(AsyncTypeSafeClient, stub),
+        function_invocation_configuration={"max_function_calls": 4},
+    )
+    agent = Agent(client=client, tools=[function])
+
+    response = await agent.run(
+        "Compare Seattle and Amsterdam weather.",
+        options=cast(
+            Any,
+            {
+                "response_format": {
+                    "better_city": Choice(
+                        instructions="Which city has better weather based on the tool results?",
+                        criteria={"Seattle": None, "Amsterdam": None},
+                    )
+                }
+            },
+        ),
+    )
+
+    assert executions == ["Seattle", "Amsterdam"]
+    assert response.text == ("Seattle is rainy and 18 C.\nAmsterdam is sunny and 24 C.\nbetter_city: Amsterdam")
 
 
 @pytest.mark.parametrize(
