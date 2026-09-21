@@ -21,6 +21,7 @@ from agent_framework import (
     Content,
     ExperimentalFeature,
     FileAccessProvider,
+    FileMemoryProvider,
     FileSearchMatch,
     FileSearchResult,
     FileStoreEntry,
@@ -2025,8 +2026,10 @@ async def test_session_scoped_provider_isolates_sessions(chat_client_base: Suppo
     await _tool_by_name(tools_b, "file_access_write").invoke(arguments={"file_name": "notes.txt", "content": "BBB"})
 
     dirs = await _list_dirs(store)
-    assert len(dirs) == 2
-    assert dirs[0] != dirs[1]
+    assert dirs == ["~access-"]
+    session_dirs = await _list_dirs(store, "~access-")
+    assert len(session_dirs) == 2
+    assert session_dirs[0] != session_dirs[1]
     assert await _list_files(store) == []
 
     read_a = await _tool_by_name(tools_a, "file_access_read").invoke(arguments={"file_name": "notes.txt"})
@@ -2049,7 +2052,8 @@ async def test_session_scoped_provider_isolates_colliding_session_ids(
     await _tool_by_name(tools_base, "file_access_write").invoke(arguments={"file_name": "f.txt", "content": "BASE"})
     await _tool_by_name(tools_other, "file_access_write").invoke(arguments={"file_name": "f.txt", "content": "OTHER"})
 
-    assert len(await _list_dirs(store)) == 2
+    assert await _list_dirs(store) == ["~access-"]
+    assert len(await _list_dirs(store, "~access-")) == 2
     read_base = await _tool_by_name(tools_base, "file_access_read").invoke(arguments={"file_name": "f.txt"})
     read_other = await _tool_by_name(tools_other, "file_access_read").invoke(arguments={"file_name": "f.txt"})
     assert _text(read_base[0]) == "BASE"
@@ -2080,7 +2084,8 @@ async def test_session_scoped_provider_scope_overrides_session(chat_client_base:
     read_b = await _tool_by_name(tools_b, "file_access_read").invoke(arguments={"file_name": "shared.md"})
 
     assert _text(read_b[0]) == "SHARED"
-    assert len(await _list_dirs(store)) == 1
+    assert await _list_dirs(store) == ["~access-"]
+    assert len(await _list_dirs(store, "~access-")) == 1
 
 
 async def test_session_scoped_provider_grep_returns_session_relative_names(
@@ -2124,3 +2129,75 @@ def test_session_scoped_provider_uses_file_access_namespace_prefix() -> None:
     assert _storage_key_segment("Session-a", encoded_prefix="~access-") != _storage_key_segment(
         "Session-a", encoded_prefix="~scope-"
     )
+
+
+async def test_session_scoped_ls_rejects_parent_traversal(chat_client_base: SupportsChatGetResponse) -> None:
+    """A '..' directory must not escape the session workspace, even against a permissive store."""
+    store = InMemoryAgentFileStore()
+    tools = await _prepare_access_tools(chat_client_base, store=store, session_id="session-a", session_scoped=True)
+    await _tool_by_name(tools, "file_access_write").invoke(arguments={"file_name": "notes.txt", "content": "AAA"})
+
+    result = await _tool_by_name(tools, "file_access_ls").invoke(arguments={"directory": ".."})
+
+    assert "Could not list directory" in _text(result[0])
+    assert await _list_dirs(store) == ["~access-"]
+    assert await _list_dirs(store, "~access-") == ["session-a"]
+
+
+async def test_session_scoped_grep_rejects_parent_traversal(chat_client_base: SupportsChatGetResponse) -> None:
+    """A '..' search directory must not reach sibling sessions' files."""
+    store = InMemoryAgentFileStore()
+    tools = await _prepare_access_tools(chat_client_base, store=store, session_id="session-a", session_scoped=True)
+    await _tool_by_name(tools, "file_access_write").invoke(
+        arguments={"file_name": "notes.txt", "content": "hello world"}
+    )
+
+    result = await _tool_by_name(tools, "file_access_grep").invoke(
+        arguments={"regex_pattern": "hello", "directory": ".."}
+    )
+
+    assert "Could not search files" in _text(result[0])
+
+
+async def test_session_scoped_namespace_does_not_collide_with_file_memory(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """File access and file memory working folders must stay distinct on a shared store root."""
+    store = InMemoryAgentFileStore()
+    access_tools = await _prepare_access_tools(
+        chat_client_base, store=store, session_id="session-a", session_scoped=True
+    )
+    memory_provider = FileMemoryProvider(store=store)
+    memory_session = AgentSession(session_id="session-a")
+    memory_context = SessionContext(session_id="session-a", input_messages=[])
+    await memory_provider.before_run(agent=None, session=memory_session, context=memory_context, state={})
+    memory_tools = {tool.name: tool for tool in memory_context.tools}
+
+    await _tool_by_name(access_tools, "file_access_write").invoke(
+        arguments={"file_name": "notes.txt", "content": "ACCESS"}
+    )
+    await memory_tools["file_memory_write"].invoke(arguments={"file_name": "notes.txt", "content": "MEMORY"})
+
+    assert sorted(await _list_dirs(store)) == ["session-a", "~access-"]
+    read_access = await _tool_by_name(access_tools, "file_access_read").invoke(arguments={"file_name": "notes.txt"})
+    read_memory = await memory_tools["file_memory_read"].invoke(arguments={"file_name": "notes.txt"})
+    assert _text(read_access[0]) == "ACCESS"
+    assert _text(read_memory[0]) == "MEMORY"
+
+
+async def test_scope_alone_enables_scoped_mode(chat_client_base: SupportsChatGetResponse) -> None:
+    """A non-empty scope enables scoped mode without the session_scoped flag."""
+    store = InMemoryAgentFileStore()
+    tools = await _prepare_access_tools(chat_client_base, store=store, session_id="session-a", scope="tenant-1")
+
+    await _tool_by_name(tools, "file_access_write").invoke(arguments={"file_name": "f.txt", "content": "SCOPED"})
+
+    assert await _list_dirs(store) == ["~access-"]
+    inner_dirs = await _list_dirs(store, "~access-")
+    assert len(inner_dirs) == 1
+    assert await _list_files(store, f"~access-/{inner_dirs[0]}") == ["f.txt"]
+
+    # A scope alone must also satisfy before_run when no session id is available.
+    provider = FileAccessProvider(store=store, scope="tenant-1")
+    context = SessionContext(session_id=None, input_messages=[])
+    await provider.before_run(agent=None, session=AgentSession(), context=context, state={})

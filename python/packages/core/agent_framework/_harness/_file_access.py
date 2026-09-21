@@ -69,6 +69,12 @@ DEFAULT_FILE_ACCESS_INSTRUCTIONS = (
 # distinct from the other component prefixes so the same identifier under a
 # different component never shares a storage location.
 _ENCODED_FILE_ACCESS_SESSION_PREFIX: Final[str] = "~access-"
+# Fixed namespace directory that wraps every session-scoped working folder.
+# _storage_key_segment returns literal-safe identifiers (such as "session-1")
+# unchanged, so without this outer segment a FileMemoryProvider and a
+# session-scoped FileAccessProvider sharing one store root would derive the
+# same working folder and could overwrite each other's files.
+_FILE_ACCESS_WORKSPACE_NAMESPACE: Final[str] = "~access-"
 
 # Instruction suffix appended when session-scoped mode is enabled, so the model
 # does not assume files are shared outside the resolved workspace.
@@ -1822,14 +1828,15 @@ class FileAccessProvider(ContextProvider):
                 explicit ``scope``), so files are isolated to that workspace:
                 per session by default, or shared across sessions when an
                 explicit ``scope`` is set. Defaults to ``False``, preserving
-                the shared-store semantics.
+                the shared-store semantics. Passing a non-empty ``scope``
+                also enables scoped mode.
             scope: The namespace that logically groups and isolates files
-                (for example, a user or tenant id). Only used when
-                ``session_scoped`` is ``True``; when ``None`` (the default),
-                the active session's ``session_id`` is used. The value is
-                treated as an opaque key rather than a path: it is mapped
-                onto exactly one folder by
-                :func:`~agent_framework._filesystem._storage_key_segment`.
+                (for example, a user or tenant id). A non-empty ``scope``
+                enables scoped mode by itself; when ``None`` (the default)
+                and ``session_scoped`` is ``True``, the active session's
+                ``session_id`` is used. The value is treated as an opaque
+                key rather than a path: it is mapped onto exactly one folder
+                by :func:`~agent_framework._filesystem._storage_key_segment`.
         """
         super().__init__(source_id)
         self.store = store
@@ -1856,7 +1863,10 @@ class FileAccessProvider(ContextProvider):
         which fall back to a collision-resistant digest. Two byte-distinct
         scopes or session ids therefore do not resolve to the same working
         folder, so a caller authorized for one of them cannot reach another's
-        files.
+        files. The derived segment is placed inside a fixed ``~access-``
+        namespace directory, so a session-scoped file-access working folder
+        can never collide with a file-memory working folder even when both
+        providers share one store root and a literal-safe identifier.
 
         Raises:
             ValueError: When neither ``scope`` nor the session id yields a
@@ -1870,7 +1880,8 @@ class FileAccessProvider(ContextProvider):
                 "FileAccessProvider session-scoped mode requires a scope: pass an explicit 'scope' or run with a "
                 "session that has a 'session_id'. Without one, files cannot be isolated from other sessions."
             )
-        return _storage_key_segment(raw_scope, encoded_prefix=_ENCODED_FILE_ACCESS_SESSION_PREFIX)
+        segment = _storage_key_segment(raw_scope, encoded_prefix=_ENCODED_FILE_ACCESS_SESSION_PREFIX)
+        return _combine_paths(_FILE_ACCESS_WORKSPACE_NAMESPACE, segment)
 
     @staticmethod
     def _is_local_tool_call(function_call: Content) -> bool:
@@ -1975,7 +1986,7 @@ class FileAccessProvider(ContextProvider):
         readonly_approval: ApprovalMode = "never_require" if self.disable_readonly_tool_approval else "always_require"
         write_approval: ApprovalMode = "never_require" if self.disable_write_tool_approval else "always_require"
 
-        session_key = self._resolve_session_key(context) if self.session_scoped else ""
+        session_key = self._resolve_session_key(context) if (self.session_scoped or bool(self.scope)) else ""
         if session_key:
             logger.debug("Session-scoped file access using working folder %r.", session_key)
             await self.store.create_directory(session_key)
@@ -1984,7 +1995,7 @@ class FileAccessProvider(ContextProvider):
             return _combine_paths(session_key, relative_path)
 
         instructions = self.instructions
-        if self.session_scoped:
+        if session_key:
             instructions += _SESSION_SCOPED_INSTRUCTIONS_SUFFIX
 
         @tool(name=FileAccessProvider.WRITE_TOOL_NAME, schema=_WriteFileInput, approval_mode=write_approval)
@@ -2056,8 +2067,12 @@ class FileAccessProvider(ContextProvider):
         ) -> list[dict[str, str]] | str:
             """List the direct child files and subdirectories of a directory. Omit ``directory`` (or pass an empty string) to list the root. To enumerate a subdirectory, pass its relative path, for example ``"reports"`` or ``"reports/2024"``. Optionally filter entries with a ``glob_pattern`` (e.g. ``"*.md"``). Subdirectories are listed before files, and each entry is ``{"name": <name>, "type": "file"|"directory"}``."""  # ruff:ignore[line-too-long]
             target = directory if directory and directory.strip() else ""
-            store_target = _session_path(target) if target else session_key
             try:
+                if session_key:
+                    normalized_target = _normalize_relative_path(target, is_directory=True) if target else ""
+                    store_target = _session_path(normalized_target) if normalized_target else session_key
+                else:
+                    store_target = target
                 listed = await self.store.list_children(store_target)
             except ValueError as exc:
                 return f"Could not list directory '{directory or ''}': {exc}"
@@ -2138,8 +2153,13 @@ class FileAccessProvider(ContextProvider):
             """
             glob_filter = glob_pattern if glob_pattern and glob_pattern.strip() else None
             target = directory if directory and directory.strip() else ""
-            store_target = _session_path(target) if target else session_key
             try:
+                if session_key:
+                    normalized_target = _normalize_relative_path(target, is_directory=True) if target else ""
+                    store_target = _session_path(normalized_target) if normalized_target else session_key
+                else:
+                    normalized_target = target
+                    store_target = target
                 results = await self.store.search(store_target, regex_pattern, glob_filter, recursive=True)
             except ValueError as exc:
                 return f"Could not search files: {exc}"
@@ -2147,7 +2167,7 @@ class FileAccessProvider(ContextProvider):
                 return f"Could not search files: {exc.strerror or exc}"
             # ``store.search`` returns ``file_name`` relative to ``target``; re-root it to the store
             # root so the names compose directly with file_access_read/replace/delete.
-            prefix = target.strip("/")
+            prefix = normalized_target.strip("/")
             output: list[dict[str, Any]] = []
             for result in results:
                 entry = result.to_dict()
