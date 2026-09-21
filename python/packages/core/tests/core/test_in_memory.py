@@ -167,6 +167,30 @@ async def test_in_memory_get_filters_before_ordering_and_paging() -> None:
     assert results == [Document("one", "Luxury hotel", "travel", 5, ["wifi", "pool"], "featured")]
 
 
+@pytest.mark.parametrize("include_vectors", [False, True])
+async def test_in_memory_search_page_is_detached_from_stored_records(include_vectors: bool) -> None:
+    collection = await _create_collection()
+    results = await collection.search(vector=[1.0, 0.0], skip=1, top=1, include_vectors=include_vectors)
+
+    assert results.metadata == {"in_memory_total_count": 2}
+    rows = [result async for result in results]
+    assert len(rows) == 1
+    record = rows[0]["record"]
+    assert record.id == "two"
+    assert rows[0]["score"] == 0.0
+    record.tags.append("changed")
+    if include_vectors:
+        assert record.vector is not None
+        assert record.vector == [0.0, 1.0]
+        record.vector[0] = 99.0
+    else:
+        assert record.vector is None
+
+    assert await collection.get(["two"], include_vectors=True) == [DOCUMENTS[1]]
+    next_results = await collection.search(vector=[1.0, 0.0], skip=1, top=1, include_vectors=True)
+    assert [result["record"] async for result in next_results] == [DOCUMENTS[1]]
+
+
 async def test_in_memory_generates_missing_string_keys() -> None:
     definition = VectorStoreCollectionDefinition(
         [
