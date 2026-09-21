@@ -4,9 +4,10 @@ import asyncio
 import base64
 import json
 import warnings
-from collections.abc import AsyncIterable, Awaitable, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from functools import partial
 from typing import Any, Literal, cast
 
 import pytest
@@ -286,16 +287,36 @@ def test_data_content_detect_image_format_from_base64():
     # Test error handling
     with pytest.raises(ValueError, match="Invalid base64 data provided."):
         detect_media_type_from_base64(data_str="invalid_base64!")
-        detect_media_type_from_base64(data_str="")
 
-    with pytest.raises(ValueError, match="Provide exactly one of data_bytes, data_str, or data_uri."):
-        detect_media_type_from_base64()
-        detect_media_type_from_base64(
-            data_bytes=b"data", data_str="data", data_uri="data:application/octet-stream;base64,AAA"
-        )
-        detect_media_type_from_base64(data_bytes=b"data", data_str="data")
-        detect_media_type_from_base64(data_bytes=b"data", data_uri="data:application/octet-stream;base64,AAA")
-        detect_media_type_from_base64(data_str="data", data_uri="data:application/octet-stream;base64,AAA")
+
+@mark.parametrize(
+    "call",
+    [
+        partial(detect_media_type_from_base64),
+        partial(detect_media_type_from_base64, data_bytes=b"data", data_str="data"),
+        partial(detect_media_type_from_base64, data_bytes=b"data", data_uri="data:application/octet-stream;base64,AAA"),
+        partial(detect_media_type_from_base64, data_str="data", data_uri="data:application/octet-stream;base64,AAA"),
+        partial(
+            detect_media_type_from_base64,
+            data_bytes=b"data",
+            data_str="data",
+            data_uri="data:application/octet-stream;base64,AAA",
+        ),
+    ],
+)
+def test_detect_media_type_from_base64_requires_exactly_one_source(call: Callable[[], Any]):
+    """Every combination other than a single source must be rejected, never silently resolved."""
+    with raises(ValueError, match="Provide exactly one of data_bytes, data_str, or data_uri."):
+        call()
+
+
+def test_detect_media_type_from_base64_rejects_data_str_alongside_data_uri():
+    """A data URI must not overwrite a caller-supplied base64 string and hide its error."""
+    png_data = b"\x89PNG\r\n\x1a\n" + b"fake_data"
+    data_uri = f"data:application/octet-stream;base64,{base64.b64encode(png_data).decode()}"
+
+    with raises(ValueError, match="Provide exactly one of data_bytes, data_str, or data_uri."):
+        detect_media_type_from_base64(data_str="invalid_base64!", data_uri=data_uri)
 
 
 @mark.parametrize(
