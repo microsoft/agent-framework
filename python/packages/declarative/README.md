@@ -61,11 +61,3 @@ This intentionally incurs connection and initialization overhead and does not
 retain server session state between provider-backed invocations. Applications
 that require shared session ownership must implement an explicitly scoped
 custom `MCPToolHandler`; there is no provider-backed session-cache opt-in.
-
-## MCP approval compatibility
-
-`InvokeMcpTool` requires fresh approval when evaluated headers change
-(including credential rotation), or when an approval with headers lacks
-verification state. Unchanged approvals survive checkpoint restoration.
-Keep checkpoints protected as trusted authorization state; raw header values
-are not added to approvals or checkpoints.
