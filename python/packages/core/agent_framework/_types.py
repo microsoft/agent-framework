@@ -2103,6 +2103,8 @@ def _process_update(response: ChatResponse | AgentResponse, update: ChatResponse
             response.finish_reason = update.finish_reason
         if update.model is not None:
             response.model = update.model
+    if isinstance(response, AgentResponse) and isinstance(update, AgentResponseUpdate) and update.agent_id is not None:
+        response.agent_id = update.agent_id
     if (
         isinstance(response, AgentResponse)
         and isinstance(update, AgentResponseUpdate)
@@ -3519,6 +3521,24 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
                 if isawaitable(update):
                     update = await update
             return await self._record_update(update)
+
+    async def close(self) -> None:
+        """Close the active iterator and run cleanup hooks.
+
+        This method is idempotent and also closes nested ``ResponseStream`` wrappers.
+        """
+        try:
+            iterator: AsyncIterator[UpdateT] | None = self._iterator
+            if iterator is not None:
+                if isinstance(iterator, ResponseStream):
+                    await cast(ResponseStream[UpdateT, Any], iterator).close()
+                else:
+                    close = getattr(iterator, "aclose", None)
+                    if close is not None:
+                        await close()
+        finally:
+            self._consumed = True
+            await self._run_cleanup_hooks()
 
     async def _resolve_stream_with_pull_contexts(self) -> AsyncIterable[UpdateT]:
         """Resolve the underlying stream while activating any registered pull context managers.

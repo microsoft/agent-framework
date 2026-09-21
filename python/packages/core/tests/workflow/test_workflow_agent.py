@@ -14,6 +14,7 @@ from agent_framework import (
     AgentResponseUpdate,
     AgentSession,
     Content,
+    ContextProvider,
     Executor,
     FinishReason,
     HistoryProvider,
@@ -21,6 +22,7 @@ from agent_framework import (
     Message,
     ResponseStream,
     ServiceSessionId,
+    SessionContext,
     SupportsAgentRun,
     UsageDetails,
     WorkflowAgent,
@@ -898,6 +900,46 @@ class TestWorkflowAgent:
         assert update.continuation_token == {"token": "resume-token"}
         assert update.additional_properties == {"provider_marker": "preserve-me"}
 
+    async def test_workflow_as_agent_stream_preserves_response_metadata(self) -> None:
+        """Test that streaming preserves metadata from an AgentResponse output."""
+
+        @executor
+        async def metadata_executor(messages: list[Message], ctx: WorkflowContext[Never, AgentResponse]) -> None:  # type: ignore[valid-type]
+            await ctx.yield_output(
+                AgentResponse(
+                    messages=[
+                        Message(role="assistant", contents=["first"]),
+                        Message(role="assistant", contents=["second"]),
+                    ],
+                    agent_id="source-agent",
+                    response_id="source-response",
+                    finish_reason="length",
+                    continuation_token=cast(Any, {"token": "response-resume-token"}),
+                    additional_properties={"provider_marker": "preserve-response"},
+                )
+            )
+
+        workflow = WorkflowBuilder(start_executor=metadata_executor).build()
+        agent = workflow.as_agent("response-metadata-test-agent")
+
+        stream = agent.run("hello", stream=True)
+        updates = [update async for update in stream]
+        final_response = await stream.get_final_response()
+
+        assert [update.text for update in updates] == ["first", "second"]
+        assert updates[0].agent_id is None
+        assert updates[0].finish_reason is None
+        assert updates[0].continuation_token is None
+        assert updates[0].additional_properties is None
+        assert updates[-1].agent_id == "source-agent"
+        assert updates[-1].finish_reason == "length"
+        assert updates[-1].continuation_token == {"token": "response-resume-token"}
+        assert updates[-1].additional_properties == {"provider_marker": "preserve-response"}
+        assert final_response.agent_id == "source-agent"
+        assert final_response.finish_reason == "length"
+        assert final_response.continuation_token == {"token": "response-resume-token"}
+        assert final_response.additional_properties == {"provider_marker": "preserve-response"}
+
     async def test_workflow_as_agent_stream_preserves_custom_finish_reason(self) -> None:
         """Test that a non-literal finish_reason is forwarded unchanged.
 
@@ -1219,6 +1261,44 @@ class TestWorkflowAgent:
         assert roles[0] == "user"
         assert roles[1] == "assistant"
         assert roles[2] == "user"
+
+    async def test_zero_output_stream_populates_response_before_after_run(self) -> None:
+        """After-run providers receive a response even when a workflow emits no output."""
+
+        @executor
+        async def silent(messages: list[Message], ctx: WorkflowContext[Any, str]) -> None:
+            assert messages[0].text == "hello"
+            del ctx
+
+        captured: list[AgentResponse | None] = []
+
+        class CapturingProvider(ContextProvider):
+            async def after_run(
+                self,
+                *,
+                agent: SupportsAgentRun,
+                session: AgentSession,
+                context: SessionContext,
+                state: dict[str, Any],
+            ) -> None:
+                captured.append(context.response)
+
+        workflow = WorkflowBuilder(start_executor=silent, output_from=[silent]).build()
+        agent = workflow.as_agent(context_providers=[CapturingProvider("capture")])
+
+        non_stream_response = await agent.run("hello")
+        stream = agent.run("hello", stream=True)
+        updates = [update async for update in stream]
+        stream_response = await stream.get_final_response()
+
+        assert updates == []
+        assert non_stream_response.messages == []
+        assert stream_response.messages == []
+        assert len(captured) == 2
+        assert isinstance(captured[0], AgentResponse)
+        assert captured[0].messages == []
+        assert isinstance(captured[1], AgentResponse)
+        assert captured[1].messages == []
 
     async def test_multi_turn_session_roundtrip_serialization(self) -> None:
         """Test that session can be serialized/deserialized and multi-turn still works."""

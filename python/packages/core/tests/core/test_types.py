@@ -1753,6 +1753,16 @@ def test_agent_run_response_from_updates(agent_response_update: AgentResponseUpd
     assert response.text == "Test contentTest content"
 
 
+def test_agent_run_response_from_updates_uses_last_non_none_agent_id() -> None:
+    response = AgentResponse.from_updates([
+        AgentResponseUpdate(agent_id="first-agent"),
+        AgentResponseUpdate(agent_id="source-agent"),
+        AgentResponseUpdate(agent_id=None),
+    ])
+
+    assert response.agent_id == "source-agent"
+
+
 def test_agent_run_response_str_method(chat_message: Message) -> None:
     response = AgentResponse(messages=chat_message)
     assert str(response) == "Hello"
@@ -4191,6 +4201,48 @@ class TestResponseStreamTransformHooks:
 
 class TestResponseStreamCleanupHooks:
     """Tests for cleanup hooks (after stream consumption, before finalizer)."""
+
+    async def test_close_closes_iterator_and_runs_cleanup_once(self) -> None:
+        """Closing a partially consumed stream releases its iterator and cleanup hooks."""
+        events: list[str] = []
+
+        async def updates() -> AsyncIterable[ChatResponseUpdate]:
+            try:
+                yield ChatResponseUpdate(contents=[Content.from_text("first")], role="assistant")
+                yield ChatResponseUpdate(contents=[Content.from_text("second")], role="assistant")
+            finally:
+                events.append("iterator")
+
+        stream: ResponseStream[ChatResponseUpdate, Sequence[ChatResponseUpdate]] = ResponseStream(
+            updates(), cleanup_hooks=[lambda: events.append("cleanup")]
+        )
+        await anext(stream)
+
+        await stream.close()
+        await stream.close()
+
+        assert events == ["iterator", "cleanup"]
+
+    async def test_close_closes_wrapped_stream(self) -> None:
+        """Closing a wrapper releases the concrete inner stream."""
+        events: list[str] = []
+
+        async def updates() -> AsyncIterable[ChatResponseUpdate]:
+            try:
+                yield ChatResponseUpdate(contents=[Content.from_text("first")], role="assistant")
+                yield ChatResponseUpdate(contents=[Content.from_text("second")], role="assistant")
+            finally:
+                events.append("iterator")
+
+        inner: ResponseStream[ChatResponseUpdate, Sequence[ChatResponseUpdate]] = ResponseStream(
+            updates(), cleanup_hooks=[lambda: events.append("inner")]
+        )
+        outer = inner.map(lambda update: update, _combine_updates).with_cleanup_hook(lambda: events.append("outer"))
+        await anext(outer)
+
+        await outer.close()
+
+        assert events == ["iterator", "inner", "outer"]
 
     async def test_cleanup_hook_called_after_iteration(self) -> None:
         """Cleanup hook is called after iteration completes."""

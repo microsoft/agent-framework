@@ -73,6 +73,10 @@ agent_framework/
 - **`FunctionTool`** - Wraps Python functions as tools with JSON schema generation
 - **`@tool`** decorator - Converts functions to tools
 - **`use_function_invocation()`** - Decorator to add automatic function calling to chat clients
+- **`_normalize_tool_description_format` / `_format_tool_parameters`** - Private configuration normalizer and
+  structured parameter formatter shared by Hyperlight and Monty descriptions. They validate and detach compact/JSON
+  settings, return detached parameter data, and fall back to full JSON Schema when compact data cannot preserve
+  constraints. They do not change `FunctionTool.parameters()` or render runtime-specific text.
 
 ### Vector stores
 
@@ -94,7 +98,8 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
     recursively; removing the whole tree means no filter. Paging parameters do not support null omission.
 - **`BaseVectorCollection`** - Base class for collection lifecycle and msgspec-backed record CRUD operations;
   upserts generate embeddings by default, retrieval excludes vectors by default, and filtered retrieval is an
-  alternate mode to key lookup
+  alternate mode to key lookup. Agent-facing CRUD tools use its `key_json_schema`, `key_from_json`, and
+  `key_to_json` hooks so connectors can preserve native key identity at JSON boundaries.
 - **Embedding generation selection** - `generate_vectors=True` regenerates every vector field, `False` preserves all
   values, and a list or tuple of logical vector field names generates only those fields so connectors can combine
   local, precomputed, and provider-side vectorization
@@ -112,6 +117,17 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
   filter execution, score thresholds (including provider-defined/default metrics), and paging. Use native backend
   execution where available, otherwise an explicit connector-local fallback or reject unsupported options
 - **`create_vector_search_tool`** - Creates an agent tool from any `SupportsVectorSearch` implementation
+- **`create_upsert_tool` / `create_get_tool` / `create_delete_tool`** - Create agent tools for collection CRUD;
+  upsert and delete require approval by default, while get does not. Auto-generated keys are omitted from upsert
+  input only when the record is a dictionary or the typed model declares a key default. Connector partial-write
+  errors propagate because the collection contract cannot report unknown committed subsets.
+- **`VectorStoreHistoryProvider`** - Stores full scoped conversation history in a provider-owned collection;
+  optional embeddings enable session-scoped history search and optional compaction affects only loaded context.
+  Embedding-enabled history requires an explicit collection name; physical retention, large-history paging, and
+  concurrent clear semantics remain backing-store guarantees.
+- **`VectorCollectionContextProvider`** - Adds instructions and configurable CRUD/search tools for a caller-owned
+  collection. Callers explicitly provide a best-effort logical scope filter (or `None`); it is not a security
+  boundary. Independently configured additional search tools retain their own filters.
 - **`InMemoryCollection` / `InMemoryStore`** - Dependency-free, process-local development and test implementation;
   cosine scoring scales finite inputs, all metrics reject non-finite scores, and unsupported distance functions
   fail before record scanning. Hamming scores/thresholds use the fraction of unequal dimensions, not a count.
@@ -145,6 +161,7 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
 
 ### Skills (`_skills.py`)
 
+- **Skill frontmatter parsing** - Local and MCP archive skill loaders use PyYAML's `SafeLoader` node composition, not dictionary construction, so duplicate mapping entries remain available for validation and no YAML object constructors run. Recognized root names must be lowercase and unique after YAML decoding. Scalar fields remain text (including numeric/boolean scalar spellings); null root values remain unset. Decoded keys and retained scalar values cannot contain Unicode surrogate code points, which cannot be encoded as UTF-8. Invalid optional metadata mappings or entries warn and are skipped; case-sensitive duplicate metadata keys keep the first valid value. Invalid YAML syntax or invalid recognized root fields reject the skill. Quoting, escapes, multiline folding/chomping, and line-ending normalization follow PyYAML. YAML merge keys (`<<`) are not expanded: they are invalid at the root and skipped with warnings in metadata.
 - **`Skill`** - Abstract base for a skill definition bundling instructions (`content`) with frontmatter metadata, resources, and scripts. Concrete subclasses (`InlineSkill`, `FileSkill`, `ClassSkill`) accept a `frontmatter=SkillFrontmatter(...)` argument carrying the spec fields. Adding new spec fields is done in one place — on `SkillFrontmatter` — keeping the subclass constructors stable.
 - **`SkillFrontmatter`** - L1 discovery metadata for a skill (`name`, `description`, `license`, `compatibility`, `allowed_tools`, `metadata`). All fields are mutable plain attributes; the constructor validates `name`, `description`, and `compatibility` against the spec but post-construction assignments are not re-validated. Spec fields are reachable on every skill via `skill.frontmatter`.
 - **`SkillResource`** - Named supplementary content attached to a skill; holds either static `content` or a dynamic `function` (sync or async). Exactly one must be provided.
@@ -183,7 +200,7 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
 
 ### File Access Harness (`_harness/_file_access.py`)
 
-- **`AgentFileStore`** - Abstract async store backing the file-access harness. Implementations expose `write`, `read`, `delete`, `list_children`, `file_exists`, `search`, and `create_directory` over forward-slash relative paths. `list_children` returns the direct children (files and subdirectories, subdirectories first) as `FileStoreEntry` instances; `search` accepts a keyword-only `recursive` flag (default `False`) and, when `recursive=True`, walks all descendants and returns `file_name` values relative to the search directory. The line-numbering contract lives on the base class: `split_lines` publishes the `\n`-only keepends split that every `line_number` addresses, `scan_content` is the numbering primitive both shipped stores report through, and `search` is now **concrete** — it asks the overridable `find_matching_files` hook which files to consider (superset semantics; a backend with a native index overrides it and prunes server-side) and then reads and numbers them itself. A store may still override `search` outright, but then it owns numbering: it must report `line_number` as a 1-based coordinate into `split_lines` of the content `read` returns. Nothing checks that at run time, so a store that numbers differently makes a later edit land on the wrong line silently.
+- **`AgentFileStore`** - Abstract async store backing the file-access harness. Implementations expose `write`, `read`, `delete`, `list_children`, `file_exists`, `search`, and `create_directory` over forward-slash relative paths. `list_children` returns the direct children (files and subdirectories, subdirectories first) as `FileStoreEntry` instances; `search` accepts a keyword-only `recursive` flag (default `False`) and, when `recursive=True`, walks all descendants and returns `file_name` values relative to the search directory. The line-numbering contract lives on the base class: `split_lines` publishes the `\n`-only keepends split that every `line_number` addresses, `scan_content` is the numbering primitive both shipped stores report through, and `search` is now **concrete** — it asks the overridable `find_matching_files` hook which files to consider (superset semantics; a backend with a native index overrides it and prunes server-side) and then reads and numbers them itself. A store may still override `search` outright, but then it owns numbering: it must report `line_number` as a 1-based coordinate into `split_lines` of the content `read` returns. Nothing checks that at run time, so a store that numbers differently makes a later edit land on the wrong line silently. The same applies to ReDoS: the grep pattern is model-supplied, so `search` compiles it through the `regex` module against a single monotonic deadline that bounds the whole scan (CPython's `re` holds the GIL for an entire match, so `asyncio.wait_for` around it bounds nothing). A store overriding `search` with bare `re` silently opts itself back out of that guarantee.
 - **`InMemoryAgentFileStore`** - Dict-backed store suitable for tests and lightweight scenarios.
 - **`FileSystemAgentFileStore`** - Disk-backed store rooted under a configurable directory. Enforces relative-path normalization, root containment, and rejects symlink/reparse-point segments to prevent escape.
 - **`FileSearchResult`** / **`FileSearchMatch`** - `SerializationMixin` DTOs returned by `search`, carrying the matching file name, a context snippet, and the matching lines with 1-based line numbers. Implementers should report each matching line verbatim, including its own terminator, so it can be reused as a `file_access_replace_lines` `new_line`; the pattern itself is matched against the line with its whole terminator removed, so `^`/`$` anchor to the line's text on a CRLF file as they already did on an LF one. A custom store populates these DTOs from its own `search`; the verbatim text is a recommendation, but the line number is not — it must address `split_lines`.

@@ -1,7 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import ast
+import inspect
 import os
 import re
+import textwrap
 from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
 from typing import Annotated, Any, cast
 from unittest.mock import AsyncMock, MagicMock
@@ -12,6 +15,7 @@ from agent_framework import (
     AgentContext,
     AgentResponse,
     AgentResponseUpdate,
+    CharacterEstimatorTokenizer,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
@@ -20,6 +24,7 @@ from agent_framework import (
     InMemoryHistoryProvider,
     Message,
     ResponseStream,
+    ToolResultCompactionStrategy,
     WorkflowEvent,
     WorkflowRunState,
     agent_middleware,
@@ -1007,6 +1012,98 @@ async def test_handoff_clone_preserves_additional_properties() -> None:
     assert cloned_additional_properties is not coordinator.additional_properties
 
 
+async def test_handoff_clone_preserves_compaction_strategy_and_tokenizer() -> None:
+    """Handoff clones must keep agent-level compaction configuration (#8320).
+
+    Both live outside ``default_options``, so rebuilding the agent through its constructor
+    drops them unless they are forwarded explicitly. The clone then silently falls back to
+    no compaction, and a long handoff conversation grows unbounded until it trips the
+    model's context limit -- a failure that shows up as cost and latency long before it
+    shows up as an error.
+    """
+    strategy = ToolResultCompactionStrategy()
+    tokenizer = CharacterEstimatorTokenizer()
+
+    coordinator = Agent(
+        id="coordinator",
+        name="coordinator",
+        client=MockChatClient(name="coordinator"),
+        compaction_strategy=strategy,
+        tokenizer=tokenizer,
+        require_per_service_call_history_persistence=True,
+    )
+    specialist = Agent(
+        id="specialist",
+        name="specialist",
+        client=MockChatClient(name="specialist"),
+        require_per_service_call_history_persistence=True,
+    )
+
+    workflow = (
+        HandoffBuilder(
+            participants=_as_handoff_agents(coordinator, specialist),
+            termination_condition=lambda conversation: any(msg.role == "assistant" for msg in conversation),
+        )
+        .with_start_agent(_as_handoff_agent(coordinator))
+        .build()
+    )
+
+    await _drain(workflow.run("hello", stream=True))
+
+    executor = workflow.executors[resolve_agent_id(coordinator)]
+    assert isinstance(executor, HandoffAgentExecutor)
+    cloned = cast(Agent, executor.agent)
+
+    # Shared by reference, like context_providers and middleware: these hold immutable
+    # configuration, and a tokenizer may carry a vocabulary that is costly to copy.
+    assert cloned.compaction_strategy is strategy
+    assert cloned.tokenizer is tokenizer
+
+
+def test_handoff_clone_forwards_every_agent_constructor_field() -> None:
+    """Guard against the next field being dropped the way #8320 dropped two.
+
+    ``_clone_chat_agent`` rebuilds the agent by listing constructor arguments by hand, so
+    every parameter added to ``Agent.__init__`` has to be added here too or it is silently
+    lost. That has already happened repeatedly -- the ``test_handoff_clone_preserves_*``
+    tests above were each written after a field went missing. This asserts the inverse:
+    every constructor parameter is either forwarded or named below as deliberately handled
+    another way, so a new parameter fails here instead of in a user's workflow.
+    """
+    handled_elsewhere = {
+        # Recombined with `agent.mcp_tools` and passed through `default_options["tools"]`,
+        # because the constructor re-separates MCP tools from regular ones.
+        "tools",
+        # Carried inside `default_options` rather than as its own argument.
+        "instructions",
+    }
+
+    parameters = {
+        name
+        for name, param in inspect.signature(Agent.__init__).parameters.items()
+        if name != "self" and param.kind not in (param.VAR_POSITIONAL, param.VAR_KEYWORD)
+    }
+
+    # Read the keyword names off the `Agent(...)` call itself rather than substring-matching
+    # the source: a commented-out argument would satisfy a substring check, and renaming the
+    # local would break every match at once.
+    tree = ast.parse(textwrap.dedent(inspect.getsource(HandoffAgentExecutor._clone_chat_agent)))
+    forwarded = {
+        keyword.arg
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "Agent"
+        for keyword in node.keywords
+        if keyword.arg is not None
+    }
+    assert forwarded, "could not find the Agent(...) call in _clone_chat_agent; this guard needs updating"
+
+    missing = parameters - forwarded - handled_elsewhere
+    assert not missing, (
+        f"_clone_chat_agent does not forward {sorted(missing)}; add them to the Agent(...) "
+        f"call, or to `handled_elsewhere` with a comment saying why."
+    )
+
+
 def test_clean_conversation_for_handoff_keeps_text_only_history() -> None:
     """Tool-control messages must be excluded from persisted handoff history."""
     function_call = Content.from_function_call(
@@ -1043,6 +1140,63 @@ def test_clean_conversation_for_handoff_keeps_text_only_history() -> None:
         "My order arrived damaged.",
         "Triage Agent: Routing you to Refund.",
     ]
+
+
+def test_clean_conversation_for_handoff_preserves_user_multimodal_content() -> None:
+    """Semantic multimodal content on user messages must survive handoff routing (#7822).
+
+    Tool-control payloads are runtime-only and must still be dropped, and assistant
+    messages must stay text-only because providers treat multimodal items as
+    input-only and reject them when replayed on assistant turns.
+    """
+    user_image = Content.from_uri(uri="https://example.com/damage.png", media_type="image/png")
+    user_inline_data = Content.from_data(data=b"\x89PNG-fake", media_type="image/png")
+    user_upload = Content.from_hosted_file(file_id="file-abc123")
+    user_store = Content.from_hosted_vector_store(vector_store_id="vs-xyz789")
+
+    conversation = [
+        Message(
+            role="user",
+            contents=[
+                "My order arrived damaged, see the attached photos.",
+                user_image,
+                user_inline_data,
+                user_upload,
+                user_store,
+            ],
+        ),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_text(text="Triage Agent: Routing you to Refund."),
+                # Providers reject input-only multimodal parts replayed on assistant turns.
+                Content.from_uri(uri="https://example.com/generated.png", media_type="image/png"),
+                Content.from_function_call(call_id="handoff-call-1", name="handoff_to_refund_agent"),
+            ],
+        ),
+        Message(role="tool", contents=[Content.from_function_result(call_id="handoff-call-1", result="ok")]),
+    ]
+
+    cleaned = clean_conversation_for_handoff(conversation)
+    assert [message.role for message in cleaned] == ["user", "assistant"]
+
+    cleaned_user = cleaned[0]
+    assert [content.type for content in cleaned_user.contents] == [
+        "text",
+        "uri",
+        "data",
+        "hosted_file",
+        "hosted_vector_store",
+    ]
+    assert cleaned_user.contents[1].uri == "https://example.com/damage.png"
+    assert cleaned_user.contents[2].uri is not None
+    assert cleaned_user.contents[2].uri.startswith("data:image/png;base64,")
+    assert cleaned_user.contents[3].file_id == "file-abc123"
+    assert cleaned_user.contents[4].vector_store_id == "vs-xyz789"
+
+    cleaned_assistant = cleaned[1]
+    assert [content.type for content in cleaned_assistant.contents] == ["text"]
+    assert cleaned_assistant.text == "Triage Agent: Routing you to Refund."
 
 
 async def test_autonomous_mode_yields_output_without_user_request():

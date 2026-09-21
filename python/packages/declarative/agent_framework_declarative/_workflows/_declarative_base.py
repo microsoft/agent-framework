@@ -45,6 +45,8 @@ from agent_framework import (
 )
 from agent_framework._workflows._state import State
 
+from ._errors import DeclarativeWorkflowError
+
 try:
     from powerfx import Engine
 except (ImportError, RuntimeError):
@@ -197,6 +199,10 @@ def discover_env_references(node: Any) -> set[str]:
     happen to mention ``Env.SOMETHING`` as plain text, the scan only inspects
     strings that begin with ``=`` (PowerFx expression marker, matching the
     convention enforced by :meth:`DeclarativeWorkflowState.eval`).
+    Shared containers are scanned once by identity without Python recursion.
+    Cyclic mappings and lists are rejected rather than silently skipped.
+    This avoids repeated container traversal, but does not impose a definition-size,
+    depth, parsing-time, or execution budget.
 
     Args:
         node: A parsed workflow definition (typically the dict produced by
@@ -205,23 +211,43 @@ def discover_env_references(node: Any) -> set[str]:
     Returns:
         The set of ``Env`` identifier names referenced in PowerFx
         expressions inside ``node``.
+
+    Raises:
+        DeclarativeWorkflowError: If the definition contains a mapping/list cycle.
     """
     names: set[str] = set()
+    active: set[int] = set()
+    # Retain containers so their identities cannot be reused during the walk.
+    visited: dict[int, Mapping[Any, Any] | list[Any]] = {}
+    stack: list[tuple[int | None, Iterator[Any]]] = [(None, iter((node,)))]
 
-    def visit(value: Any) -> None:
+    while stack:
+        parent_id, children = stack[-1]
+        try:
+            value = next(children)
+        except StopIteration:
+            stack.pop()
+            if parent_id is not None:
+                active.remove(parent_id)
+            continue
         if isinstance(value, str):
             if value.startswith("="):
                 names.update(_ENV_REFERENCE_RE.findall(value))
-            return
-        if isinstance(value, Mapping):
-            for inner in cast(Mapping[Any, Any], value).values():
-                visit(inner)
-            return
-        if isinstance(value, list):
-            for item in cast(list[Any], value):
-                visit(item)
+            continue
+        if not isinstance(value, (Mapping, list)):
+            continue
 
-    visit(node)
+        container = cast(Mapping[Any, Any] | list[Any], value)
+        container_id = id(container)
+        if container_id in active:
+            raise DeclarativeWorkflowError("Cyclic mappings or lists are not supported in workflow definitions.")
+        if container_id in visited:
+            continue
+        visited[container_id] = container
+        active.add(container_id)
+        children = iter(container.values()) if isinstance(container, Mapping) else iter(container)
+        stack.append((container_id, children))
+
     return names
 
 

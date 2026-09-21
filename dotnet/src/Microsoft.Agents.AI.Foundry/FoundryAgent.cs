@@ -164,7 +164,7 @@ public sealed class FoundryAgent : DelegatingAIAgent
 
     /// <summary>
     /// Creates a local <see cref="ChatClientAgentSession"/> optionally pinned to a Foundry hosted-agent
-    /// session id (sandbox) and/or a server conversation id.
+    /// session id (sandbox), a server conversation id, and a delegated application user identity.
     /// </summary>
     /// <param name="hostedSessionId">
     /// Optional existing hosted-agent session id to pin on the session. The id identifies a Foundry
@@ -181,8 +181,14 @@ public sealed class FoundryAgent : DelegatingAIAgent
     /// history and hosted-agent session (sandbox) are separate Foundry concepts; see
     /// <see href="https://learn.microsoft.com/en-us/azure/foundry/agents/concepts/hosted-agents#sessions-and-conversations">Sessions and conversations</see>.
     /// </param>
+    /// <param name="userIdentity">
+    /// Optional opaque application user identifier to associate with the session. When set, it is
+    /// stored in <see cref="AgentSession.StateBag"/> and sent as <c>x-ms-user-identity</c> on every
+    /// run that reuses this session. Create a separate <see cref="AgentSession"/> for each user;
+    /// separate sessions may share the same <paramref name="hostedSessionId"/>.
+    /// </param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
-    /// <returns>A <see cref="ChatClientAgentSession"/> with the optional pins applied.</returns>
+    /// <returns>A <see cref="ChatClientAgentSession"/> with the optional bindings applied.</returns>
     /// <remarks>
     /// <para>
     /// The hosted-agent session itself is owned and lifecycle managed by Foundry Agent Service
@@ -199,6 +205,7 @@ public sealed class FoundryAgent : DelegatingAIAgent
     public async Task<ChatClientAgentSession> CreateFoundryHostedAgentSessionAsync(
         string? hostedSessionId = null,
         string? conversationId = null,
+        string? userIdentity = null,
         CancellationToken cancellationToken = default)
     {
         AgentSession session = conversationId is null
@@ -210,6 +217,12 @@ public sealed class FoundryAgent : DelegatingAIAgent
         {
             // Non-null values are treated as an explicit pin attempt; whitespace is rejected by Set.
             typed.FoundryHostedAgentSessionId = hostedSessionId;
+        }
+
+        if (userIdentity is not null)
+        {
+            // Non-null values are treated as an explicit identity binding; whitespace is rejected by Set.
+            typed.FoundryHostedAgentUserIdentity = userIdentity;
         }
 
         return typed;
@@ -297,11 +310,11 @@ public sealed class FoundryAgent : DelegatingAIAgent
     }
 
     /// <summary>
-    /// Registers Foundry per-call pipeline policies and wraps the agent so request-scoped
+    /// Registers Foundry pipeline policies and wraps the agent so request context
     /// headers/body fields reach the wire:
     /// <list type="bullet">
     /// <item><description><c>x-client-*</c> via <see cref="ClientHeadersAgent"/> / <see cref="ClientHeadersPolicy"/></description></item>
-    /// <item><description><c>x-ms-user-identity</c> and sticky <c>agent_session_id</c> via <see cref="FoundryHostedRequestAgent"/></description></item>
+    /// <item><description>sticky <c>x-ms-user-identity</c> and <c>agent_session_id</c> via <see cref="FoundryHostedRequestAgent"/></description></item>
     /// </list>
     /// Idempotent per decorator type.
     /// </summary>

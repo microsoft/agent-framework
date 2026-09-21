@@ -21,16 +21,17 @@ jobs:
     name: Public API Compatibility
     runs-on: ubuntu-latest
     continue-on-error: true
+    timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: refs/pull/${{ github.event.pull_request.number }}/merge
-          fetch-depth: 0
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 1
           persist-credentials: false
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
           enable-cache: false
           version: "0.12.9"
@@ -39,10 +40,61 @@ jobs:
         working-directory: ${{ runner.temp }}
         env:
           BREAKING_CHANGE_ACKNOWLEDGED: ${{ contains(github.event.pull_request.labels.*.name, 'breaking change') }}
+          EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           UV_NO_CONFIG: "1"
         shell: bash
         run: |
-          BASE_SHA="$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD^1)"
+          skip_comparison() {
+            local reason="$1"
+            echo "::notice title=Python public API compatibility::$reason"
+            {
+              echo "## Python public API compatibility"
+              echo
+              echo "Comparison skipped: $reason"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          }
+
+          set +e
+          git ls-remote \
+            --exit-code \
+            --refs \
+            "https://github.com/$GITHUB_REPOSITORY.git" \
+            "refs/pull/$PR_NUMBER/merge" > /dev/null
+          ref_status=$?
+          set -e
+          if (( ref_status == 2 )); then
+            skip_comparison "GitHub has not produced a synthetic merge ref for the current pull request head."
+          fi
+          if (( ref_status != 0 )); then
+            echo "Failed to query the pull request merge ref (exit $ref_status)." >&2
+            exit "$ref_status"
+          fi
+
+          git -C "$GITHUB_WORKSPACE" fetch \
+            --no-tags \
+            --no-recurse-submodules \
+            --depth=2 \
+            "https://github.com/$GITHUB_REPOSITORY.git" \
+            "refs/pull/$PR_NUMBER/merge"
+
+          MERGE_SHA="$(git -C "$GITHUB_WORKSPACE" rev-parse --verify 'FETCH_HEAD^{commit}')"
+          BASE_SHA="$(git -C "$GITHUB_WORKSPACE" rev-parse "$MERGE_SHA^1")"
+          HEAD_SHA="$(git -C "$GITHUB_WORKSPACE" rev-parse "$MERGE_SHA^2")"
+          if [[ "$HEAD_SHA" != "$EXPECTED_HEAD_SHA" ]]; then
+            skip_comparison "GitHub's synthetic merge ref is not current for pull request head $EXPECTED_HEAD_SHA."
+          fi
+
+          PR_SOURCE="$RUNNER_TEMP/pr-source"
+          mkdir "$PR_SOURCE"
+          git -C "$GITHUB_WORKSPACE" archive "$MERGE_SHA" python |
+            tar -x -C "$PR_SOURCE"
+          if [[ -n "$(find "$PR_SOURCE/python" -type l -print -quit)" ]]; then
+            echo "Refusing to analyze pull request source containing symbolic links." >&2
+            exit 1
+          fi
+
           git -C "$GITHUB_WORKSPACE" show "$BASE_SHA:.github/scripts/check_python_api_compatibility.py" \
             > "$RUNNER_TEMP/check_python_api_compatibility.py"
           git -C "$GITHUB_WORKSPACE" show "$BASE_SHA:python/pyproject.toml" \
@@ -66,6 +118,7 @@ jobs:
 
           args=(
             --base-sha "$BASE_SHA"
+            --current-source "$PR_SOURCE"
             --repo "$GITHUB_WORKSPACE"
           )
           if [[ "$BREAKING_CHANGE_ACKNOWLEDGED" == "true" ]]; then

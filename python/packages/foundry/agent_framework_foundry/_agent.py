@@ -856,6 +856,8 @@ class RawFoundryAgent(
 
         This method configures Azure Monitor for telemetry collection using the
         connection string from the Foundry project client (accessed via the internal client).
+        Use azure-monitor-opentelemetry>=1.8.10,<2 for HTTPX/HTTPX2
+        auto-instrumentation that connects client and service traces.
 
         Args:
             enable_sensitive_data: Enable sensitive data logging (prompts, responses).
@@ -863,7 +865,7 @@ class RawFoundryAgent(
             **kwargs: Additional arguments passed to configure_azure_monitor().
 
         Raises:
-            ImportError: If azure-monitor-opentelemetry-exporter is not installed.
+            ImportError: If azure-monitor-opentelemetry is not installed.
         """
         from agent_framework.observability import (
             OBSERVABILITY_SETTINGS,
@@ -900,7 +902,7 @@ class RawFoundryAgent(
         except ImportError as exc:
             raise ImportError(
                 "azure-monitor-opentelemetry is required for Azure Monitor integration. "
-                "Install it with: pip install azure-monitor-opentelemetry"
+                'Install it with: pip install "azure-monitor-opentelemetry>=1.8.10,<2"'
             ) from exc
 
         if "resource" not in kwargs:
