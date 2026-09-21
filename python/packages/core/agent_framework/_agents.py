@@ -63,7 +63,12 @@ from ._types import (
     map_chat_to_agent_update,
     normalize_messages,
 )
-from .exceptions import AgentInvalidRequestException, AgentInvalidResponseException, UserInputRequiredException
+from .exceptions import (
+    AgentInvalidRequestException,
+    AgentInvalidResponseException,
+    ToolExecutionException,
+    UserInputRequiredException,
+)
 from .observability import AgentTelemetryLayer
 
 if sys.version_info >= (3, 13):
@@ -95,6 +100,37 @@ logger = logging.getLogger("agent_framework")
 # nested ``agent.run()`` (fresh options, its own session) keeps its own turn,
 # and nothing leaks into the caller's context while a stream is paused.
 _LOOP_ITERATION_TOKEN_KEY = "_agent_loop_iteration"  # nosec B105 - a context-options key, not a credential  # ruff: ignore[hardcoded-password-string]
+_DELEGATED_STATE_MISSING = object()
+
+
+def _tool_approval_source_ids(middleware: Sequence[MiddlewareTypes] | None) -> frozenset[str]:
+    """Return session-state keys owned by ToolApprovalMiddleware instances."""
+    from ._harness._tool_approval import ToolApprovalMiddleware
+
+    return frozenset(item.source_id for item in middleware or () if isinstance(item, ToolApprovalMiddleware))
+
+
+def _merge_delegated_session_state(
+    parent_state: MutableMapping[str, Any],
+    initial_child_state: Mapping[str, Any],
+    final_child_state: Mapping[str, Any],
+    *,
+    excluded_keys: frozenset[str],
+) -> None:
+    """Merge child application-state changes without copying framework continuation state."""
+    for key, initial_value in initial_child_state.items():
+        if key in excluded_keys or key in final_child_state:
+            continue
+        if parent_state.get(key, _DELEGATED_STATE_MISSING) is initial_value:
+            parent_state.pop(key, None)
+
+    for key, final_value in final_child_state.items():
+        if key in excluded_keys:
+            continue
+        initial_value = initial_child_state.get(key, _DELEGATED_STATE_MISSING)
+        if initial_value is _DELEGATED_STATE_MISSING or final_value is not initial_value:
+            parent_state[key] = final_value
+
 
 if TYPE_CHECKING:
     ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
@@ -624,11 +660,25 @@ class BaseAgent(SerializationMixin):
             approval_mode: Whether this delegated tool requires approval before execution.
             stream_callback: Optional callback for streaming responses. If provided, uses run(..., stream=True).
             propagate_session: If True, the parent agent's session is forwarded
-                to this sub-agent's ``run()`` call so both agents share the
-                same session. Defaults to False.
+                to this sub-agent's ``run()`` call. Application-state changes
+                propagate back to the parent, while framework approval continuation
+                state remains isolated. Defaults to False. The sub-agent always
+                receives an AgentSession so session-backed middleware can run.
+                When False, that session is private to this invocation.
 
         Returns:
             A FunctionTool that can be used as a tool by other agents.
+
+        Note:
+            Child function approvals are not propagated into the calling agent.
+            Configure ToolApprovalMiddleware with runtime auto-approval rules on
+            the child for immediate policy decisions. Use a workflow when approval
+            is interactive, delayed, or durable.
+
+            When parent and child both use ToolApprovalMiddleware with
+            ``propagate_session=True``, configure distinct middleware ``source_id``
+            values. The delegated call raises ToolExecutionException before running
+            the child when their shared session-state keys overlap.
 
         Examples:
             .. code-block:: python
@@ -676,39 +726,114 @@ class BaseAgent(SerializationMixin):
                 ctx: the function invocation context used
                 **kwargs: only used to dynamically load the argument that is defined for this tool.
             """
-            session = ctx.session if propagate_session else None
+            parent_session = ctx.session
+            session = AgentSession()
+            child_approval_source_ids = _tool_approval_source_ids(self.middleware)
+            parent_approval_source_ids: frozenset[str] = frozenset()
 
-            # Create a child session that shares the parent's state dict but has
-            # an isolated service_session_id. This avoids mutating the parent
-            # session in-place, which would race under concurrent asyncio.gather
-            # tool invocations sharing the same session.
-            if session is not None:
-                child_session = AgentSession(session_id=session.session_id)
-                child_session.state = session.state  # shared by reference
-                child_session.service_session_id = None
-                session = child_session
+            if propagate_session and parent_session is not None:
+                from ._tools import _PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY  # pyright: ignore[reportPrivateUsage]
 
-            stream = self.run(
-                str(kwargs.get(arg_name, "")),
-                stream=True,
-                session=session,
-                function_invocation_kwargs=dict(ctx.kwargs),
-            )
-            if stream_callback is not None:
-                # The callback is a host-facing observer: feed it the *released*
-                # updates by consuming the stream, never by registering a transform
-                # hook on it. Hooks can end up applied to buffered content ahead of an
-                # egress gate's verdict (see ResponseStream.buffered_and_gated), so a
-                # hook-registered observer could see denied or unredacted content.
-                async for update in stream:
-                    callback_result = stream_callback(update)
-                    if isawaitable(callback_result):
-                        await callback_result
-            final_response = await stream.get_final_response()
-            if final_response.user_input_requests:
-                raise UserInputRequiredException(contents=final_response.user_input_requests)
-            # TODO(Copilot): update once #4331 merges
-            return final_response.text
+                raw_parent_approval_source_ids = ctx.metadata.get(_PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY)
+                parent_approval_source_ids = (
+                    cast("frozenset[str]", raw_parent_approval_source_ids)
+                    if isinstance(raw_parent_approval_source_ids, frozenset)
+                    else frozenset()
+                )
+                overlapping_source_ids = child_approval_source_ids.intersection(parent_approval_source_ids)
+                if overlapping_source_ids:
+                    formatted_source_ids = ", ".join(repr(source_id) for source_id in sorted(overlapping_source_ids))
+                    raise ToolExecutionException(
+                        f"Agent tool {tool_name!r} cannot share its parent session because parent and child "
+                        f"ToolApprovalMiddleware instances use the same source_id: {formatted_source_ids}. "
+                        "Configure distinct source_id values or set propagate_session=False."
+                    )
+
+            parent_state: MutableMapping[str, Any] | None = None
+            initial_child_state: dict[str, Any] | None = None
+            excluded_state_keys: frozenset[str] = frozenset()
+
+            # Propagate application state through a child-owned copy. Framework
+            # approval continuation state stays isolated so an unresolved child
+            # request can never become pending authority in the parent session.
+            if propagate_session and parent_session is not None:
+                from ._tools import (
+                    _FUNCTION_INVOCATION_BUDGET_STATE_KEY,  # pyright: ignore[reportPrivateUsage]
+                    _FUNCTION_RESULT_PAYLOAD_BUDGET_STATE_KEY,  # pyright: ignore[reportPrivateUsage]
+                    _TOOL_APPROVAL_STATE_KEY,  # pyright: ignore[reportPrivateUsage]
+                )
+
+                excluded_state_keys = frozenset({
+                    _TOOL_APPROVAL_STATE_KEY,
+                    _FUNCTION_INVOCATION_BUDGET_STATE_KEY,
+                    _FUNCTION_RESULT_PAYLOAD_BUDGET_STATE_KEY,
+                    *child_approval_source_ids,
+                    *parent_approval_source_ids,
+                })
+                parent_state = parent_session.state
+                child_state = {key: value for key, value in parent_state.items() if key not in excluded_state_keys}
+                initial_child_state = dict(child_state)
+                session = AgentSession(session_id=parent_session.session_id)
+                session.state = child_state
+
+            try:
+                stream = self.run(
+                    str(kwargs.get(arg_name, "")),
+                    stream=True,
+                    session=session,
+                    function_invocation_kwargs=dict(ctx.kwargs),
+                )
+                if stream_callback is not None:
+                    # The callback is a host-facing observer: feed it the *released*
+                    # updates by consuming the stream, never by registering a transform
+                    # hook on it. Hooks can end up applied to buffered content ahead of an
+                    # egress gate's verdict (see ResponseStream.buffered_and_gated), so a
+                    # hook-registered observer could see denied or unredacted content.
+                    async for update in stream:
+                        callback_result = stream_callback(update)
+                        if isawaitable(callback_result):
+                            await callback_result
+                final_response = await stream.get_final_response()
+                approval_requests = [
+                    request
+                    for request in final_response.user_input_requests
+                    if request.type == "function_approval_request"
+                ]
+                other_input_requests = [
+                    request
+                    for request in final_response.user_input_requests
+                    if request.type != "function_approval_request"
+                ]
+                if approval_requests:
+                    requested_tools = sorted(
+                        {
+                            request.function_call.name or "<unknown>"
+                            for request in approval_requests
+                            if request.function_call is not None
+                        }
+                        or {"<unknown>"}
+                    )
+                    approval_error = (
+                        f"Agent tool {tool_name!r} cannot continue because its sub-agent requested approval for "
+                        f"{', '.join(requested_tools)}. Configure ToolApprovalMiddleware with auto_approval_rules on "
+                        "the sub-agent for immediate policy decisions. Use a workflow for interactive, delayed, or "
+                        "durable approval."
+                    )
+                    if other_input_requests:
+                        raise UserInputRequiredException(contents=other_input_requests, message=approval_error)
+                    raise ToolExecutionException(approval_error)
+                if other_input_requests:
+                    raise UserInputRequiredException(contents=other_input_requests)
+                # TODO(Copilot): update once #4331 merges
+                return final_response.text
+            finally:
+                if parent_state is not None and initial_child_state is not None:
+                    _merge_delegated_session_state(
+                        parent_state,
+                        initial_child_state,
+                        session.state,
+                        excluded_keys=excluded_state_keys,
+                    )
 
         from ._tools import FunctionTool
 
@@ -1450,6 +1575,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
 
         agent_name = self._get_agent_name()
         from ._mcp import MCPTool
+        from ._tools import _PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY  # pyright: ignore[reportPrivateUsage]
 
         base_tools = _normalize_tools(chat_options.pop("tools", None))
         mcp_duplicate_message = "Tool names must be unique. Consider setting `tool_name_prefix` on the MCPTool."
@@ -1493,6 +1619,10 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 mcp_server.functions,
                 duplicate_error_message=mcp_duplicate_message,
             )
+
+        additional_function_arguments[_PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY] = _tool_approval_source_ids(
+            self.middleware
+        )
 
         model = opts.pop("model", None)
 
