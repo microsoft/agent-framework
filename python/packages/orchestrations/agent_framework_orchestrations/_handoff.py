@@ -38,7 +38,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 
-from agent_framework import Agent, AgentResponse, Message, SupportsAgentRun
+from agent_framework import Agent, AgentResponse, ContextProvider, Message, SessionContext, SupportsAgentRun
 from agent_framework._middleware import FunctionInvocationContext, FunctionMiddleware, MiddlewareTermination
 from agent_framework._sessions import AgentSession
 from agent_framework._telemetry import mark_feature_used
@@ -155,6 +155,26 @@ class _AutoHandoffMiddleware(FunctionMiddleware):
         raise MiddlewareTermination(result=context.result)
 
 
+class _AutoHandoffContextProvider(ContextProvider):
+    """Add auto-handoff middleware after application context providers."""
+
+    def __init__(self, handoffs: Sequence[HandoffConfiguration]) -> None:
+        """Initialize the provider with the generated handoff middleware."""
+        super().__init__("agent_framework.handoff")
+        self._middleware = _AutoHandoffMiddleware(handoffs)
+
+    async def before_run(
+        self,
+        *,
+        agent: SupportsAgentRun,
+        session: AgentSession,
+        context: SessionContext,
+        state: dict[str, Any],
+    ) -> None:
+        """Add handoff interception after previously configured provider middleware."""
+        context.extend_middleware(self.source_id, self._middleware)
+
+
 @dataclass
 class HandoffAgentUserRequest:
     """Request issued to the user after an agent run in a handoff workflow.
@@ -237,6 +257,7 @@ class HandoffAgentExecutor(AgentExecutor):
         super().__init__(cloned_agent, session=agent_session)
 
         self._handoff_targets = {handoff.target_id for handoff in handoffs}
+        self._handoff_functions = {get_handoff_tool_name(handoff.target_id): handoff.target_id for handoff in handoffs}
         self._termination_condition = termination_condition
         self._is_start_agent = is_start_agent
 
@@ -264,11 +285,14 @@ class HandoffAgentExecutor(AgentExecutor):
         cloned_agent = self._clone_chat_agent(agent)
         # Add handoff tools to the cloned agent
         self._apply_auto_tools(cloned_agent, handoffs)
-        # Add middleware to handle handoff tool invocations
-        middleware = _AutoHandoffMiddleware(handoffs)
-        existing_middleware = list(cloned_agent.middleware or [])
-        existing_middleware.append(middleware)
-        cloned_agent.middleware = existing_middleware
+        if cloned_agent.context_providers:
+            # Provider middleware is added after agent middleware. Contribute the interceptor
+            # last so existing provider policies can inspect or block generated handoff calls.
+            cloned_agent.context_providers.append(_AutoHandoffContextProvider(handoffs))
+        else:
+            existing_middleware = list(cloned_agent.middleware or [])
+            existing_middleware.append(_AutoHandoffMiddleware(handoffs))
+            cloned_agent.middleware = existing_middleware
 
         return cloned_agent
 
@@ -493,9 +517,10 @@ class HandoffAgentExecutor(AgentExecutor):
     def _is_handoff_requested(self, response: AgentResponse) -> tuple[str, Message] | None:
         """Determine if the agent response includes a handoff request.
 
-        If a handoff tool is invoked, the middleware will short-circuit execution
-        and provide a synthetic result that includes the target agent ID. The message
-        that contains the function result will be the last message in the response.
+        If a generated handoff tool is invoked, the middleware will short-circuit execution
+        and provide a synthetic result that includes the target agent ID. The matching
+        function call must occur in the same response, and the message containing its
+        function result must be the last message in the response.
 
         Args:
             response: The AgentResponse to inspect for handoff requests
@@ -513,9 +538,22 @@ class HandoffAgentExecutor(AgentExecutor):
         if not response.messages:
             return None
 
+        function_calls_by_id: dict[str, list[str]] = {}
+        for message in response.messages:
+            for content in message.contents:
+                if content.type == "function_call" and content.call_id and content.name:
+                    function_calls_by_id.setdefault(content.call_id, []).append(content.name)
+
         last_message = response.messages[-1]
         for content in last_message.contents:
-            if content.type == "function_result":
+            if content.type == "function_result" and content.call_id:
+                function_names = function_calls_by_id.get(content.call_id, [])
+                if len(function_names) != 1:
+                    continue
+                handoff_target = self._handoff_functions.get(function_names[0])
+                if handoff_target is None:
+                    continue
+
                 payload = content.result
                 parsed_payload: dict[str, Any] | None = None
                 if isinstance(payload, Mapping):
@@ -529,11 +567,9 @@ class HandoffAgentExecutor(AgentExecutor):
                         parsed_payload = {key: value for key, value in maybe_payload.items() if isinstance(key, str)}  # pyright: ignore[reportUnknownVariableType]
 
                 if parsed_payload:
-                    handoff_target = parsed_payload.get(HANDOFF_FUNCTION_RESULT_KEY)
-                    if isinstance(handoff_target, str):
+                    payload_target = parsed_payload.get(HANDOFF_FUNCTION_RESULT_KEY)
+                    if payload_target == handoff_target:
                         return handoff_target, last_message
-            else:
-                continue
 
         return None
 
