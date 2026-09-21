@@ -757,6 +757,161 @@ def _archive_client(index_json: str, archive_url: str, archive_bytes: bytes, mim
 class TestMCPSkillsSourceArchive:
     """Tests for archive-type skill discovery via MCPSkillsSource (in-memory)."""
 
+    @pytest.mark.parametrize("newline", ("\n", "\r\n"))
+    @pytest.mark.parametrize(
+        "fields",
+        (
+            "description: First\ndescription: >-\n  Second",
+            "description: |-\n  First\nDescription: Second",
+            "description: Valid\nmetadata:\n  author: First\nmetadata:\n  author: Second",
+            "description: Valid\nAllowed-Tools: read",
+            'description: Valid\nallowed-tools: read\n"allowed-tools": other',
+            "description: Valid\n'allowed-tools': other\nallowed-tools: read",
+            'description: Valid\n"description": Other text',
+            "'description': Other text\ndescription: Valid",
+            'description: Valid\n"Allowed-Tools": other',
+            'description: Valid\nmetadata:\n  author: First\n"metadata":\n  author: Second',
+            "description: Valid\nlicense: MIT\n'license':",
+            'description: Valid\ncompatibility: Any runtime\n"compatibility": Other runtime',
+            'description: Valid\n"name": packaged-skill',
+            'description: First\n"descrip\\u0074ion": Second',
+            'description: First\n"\\x44escription": Second',
+            "description: Valid\nmetadata: [unterminated",
+            'description: "\\U00110000"',
+            'description: "\\UFFFFFFFF"',
+            'description: "\\uD800"',
+            'description: "\\uDFFF"',
+        ),
+    )
+    async def test_ambiguous_archive_frontmatter_is_skipped(self, fields: str, newline: str) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        index = _make_archive_index("packaged-skill", url)
+        content = f"---\nname: packaged-skill\n{fields}\n---\nBody."
+        archive = _make_zip({"SKILL.md": content.replace("\n", newline).encode()})
+        client = _archive_client(index, url, archive, "application/zip")
+
+        skills = await MCPSkillsSource(client=client).get_skills(_SOURCE_CTX)
+
+        assert skills == []
+
+    @pytest.mark.parametrize("newline", ("\n", "\r\n"))
+    async def test_archive_yaml_escapes_and_invalid_metadata(
+        self, newline: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        index = _make_archive_index("packaged-skill", url)
+        content = (
+            '---\nname: packaged-skill\n"\\x64escription": "Read\\nfiles"\n'
+            '"\\u006detadata": {author: First, "\\u0061uthor": Second, invalid: [value]}\n---\nBody.'
+        )
+        archive = _make_zip({"SKILL.md": content.replace("\n", newline).encode()})
+        client = _archive_client(index, url, archive, "application/zip")
+
+        skills = await MCPSkillsSource(client=client).get_skills(_SOURCE_CTX)
+
+        assert len(skills) == 1
+        assert skills[0].frontmatter.description == "Read\nfiles"
+        assert skills[0].frontmatter.metadata == {"author": "First"}
+        assert len(caplog.records) == 2
+        assert all(record.levelname == "WARNING" for record in caplog.records)
+
+    @pytest.mark.parametrize("newline", ("\n", "\r\n"))
+    async def test_archive_value_on_indented_next_line_is_preserved(self, newline: str) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        index = _make_archive_index("packaged-skill", url)
+        content = "---\nname: packaged-skill\ndescription:\n  'Read files'\nlicense: MIT\n---\nBody."
+        archive = _make_zip({"SKILL.md": content.replace("\n", newline).encode()})
+        client = _archive_client(index, url, archive, "application/zip")
+
+        skills = await MCPSkillsSource(client=client).get_skills(_SOURCE_CTX)
+
+        assert len(skills) == 1
+        assert skills[0].frontmatter.description == "Read files"
+        assert skills[0].frontmatter.license == "MIT"
+
+    @pytest.mark.parametrize("newline", ("\n", "\r\n"))
+    @pytest.mark.parametrize("field", ("license", "compatibility", "allowed-tools"))
+    async def test_archive_empty_optional_scalar_remains_none(self, field: str, newline: str) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        index = _make_archive_index("packaged-skill", url)
+        content = f"---\nname: packaged-skill\ndescription: Read files\n{field}:  \n---\nBody."
+        archive = _make_zip({"SKILL.md": content.replace("\n", newline).encode()})
+        client = _archive_client(index, url, archive, "application/zip")
+
+        skills = await MCPSkillsSource(client=client).get_skills(_SOURCE_CTX)
+
+        assert len(skills) == 1
+        assert skills[0].frontmatter.description == "Read files"
+        assert skills[0].frontmatter.license is None
+        assert skills[0].frontmatter.compatibility is None
+        assert skills[0].frontmatter.allowed_tools is None
+
+    @pytest.mark.parametrize("newline", ("\n", "\r\n"))
+    @pytest.mark.parametrize("second_key", ("author", "Author"))
+    @pytest.mark.parametrize("quote", ("", "'", '"'))
+    async def test_archive_duplicate_metadata_keeps_first_value_and_warns(
+        self, newline: str, second_key: str, quote: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        index = _make_archive_index("packaged-skill", url)
+        content = (
+            f"---\n{quote}name{quote}: packaged-skill\n{quote}description{quote}: >-\n  Read\n  files\n"
+            f"{quote}compatibility{quote}:\n  Any runtime\n{quote}allowed-tools{quote}: 'read'\n"
+            f"{quote}metadata{quote}:\n"
+            f"  author:\n    'First'\n  {second_key}: Second\n  author: Third\n  version: '1.0'\n"
+            f"{quote}license{quote}: |-\n  MIT\n  License\n---\nBody."
+        )
+        archive = _make_zip({"SKILL.md": content.replace("\n", newline).encode()})
+        client = _archive_client(index, url, archive, "application/zip")
+
+        skills = await MCPSkillsSource(client=client).get_skills(_SOURCE_CTX)
+
+        assert len(skills) == 1
+        expected = {"author": "First", "version": "1.0"}
+        if second_key == "Author":
+            expected["Author"] = "Second"
+        assert skills[0].frontmatter.metadata == expected
+        assert skills[0].frontmatter.description == "Read files"
+        assert skills[0].frontmatter.license == "MIT\nLicense"
+        assert skills[0].frontmatter.compatibility == "Any runtime"
+        assert skills[0].frontmatter.allowed_tools == "read"
+        assert "Body." in await skills[0].get_content()
+        assert len(caplog.records) == (2 if second_key == "author" else 1)
+        assert all(record.levelname == "WARNING" for record in caplog.records)
+        assert all(
+            "duplicate metadata key 'author'; keeping the first value" in record.getMessage()
+            for record in caplog.records
+        )
+
+    @pytest.mark.parametrize("newline", ("\n", "\r\n"))
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        (
+            ("First", "First"),
+            ("\n    'First'", "First"),
+            ("|-\n    First\n    Second", "First\nSecond"),
+            (">-\n    First\n    Second", "First Second"),
+        ),
+    )
+    async def test_archive_yaml_metadata_scalar_formats(
+        self, newline: str, value: str, expected: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        index = _make_archive_index("packaged-skill", url)
+        content = (
+            "---\nname: packaged-skill\ndescription: Read files\n"
+            f"metadata:\n  author: {value}\n  version: '1.0'\n---\nBody."
+        )
+        archive = _make_zip({"SKILL.md": content.replace("\n", newline).encode()})
+        client = _archive_client(index, url, archive, "application/zip")
+
+        skills = await MCPSkillsSource(client=client).get_skills(_SOURCE_CTX)
+
+        assert len(skills) == 1
+        assert skills[0].frontmatter.metadata == {"author": expected, "version": "1.0"}
+        assert "Body." in await skills[0].get_content()
+        assert not caplog.records
+
     async def test_zip_archive_discovered_as_file_skill(self) -> None:
         from agent_framework import FileSkill
 

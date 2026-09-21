@@ -112,6 +112,10 @@ public sealed class AgentSkillFrontmatter
     /// <summary>
     /// Gets or sets the arbitrary key-value metadata for this skill.
     /// </summary>
+    /// <remarks>
+    /// Keys are compared case-insensitively. When parsed from a SKILL.md file, duplicate
+    /// entries retain the first value and key spelling and produce warnings without rejecting the skill.
+    /// </remarks>
     public AdditionalPropertiesDictionary? Metadata { get; set; }
 
     /// <summary>

@@ -8,6 +8,12 @@ updates:
   # Maintain dependencies for nuget
   - package-ecosystem: "nuget"
     directory: "dotnet/"
+    # The samples tree contains most of the .NET package manifests and causes
+    # the NuGet updater to exceed Dependabot's fixed execution timeout. Keep the
+    # production source, tests, and central package versions in scope so updates
+    # can be opened again.
+    exclude-paths:
+      - "samples/**"
     schedule:
       interval: "cron"
       cronjob: "0 8 * * 4,0" # Every Thursday(4) and Sunday(0) at 8:00 UTC
@@ -55,7 +61,9 @@ updates:
   # TODO: Remove these Python Dependabot entries after we have confidence in the
   # Python dependency-maintenance workflow.
   - package-ecosystem: "pip"
-    directory: "python/"
+    directories:
+      - "python/"
+      - "python/packages/lab/"
     schedule:
       interval: "weekly"
       day: "thursday"

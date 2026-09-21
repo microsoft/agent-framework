@@ -1142,6 +1142,63 @@ def test_clean_conversation_for_handoff_keeps_text_only_history() -> None:
     ]
 
 
+def test_clean_conversation_for_handoff_preserves_user_multimodal_content() -> None:
+    """Semantic multimodal content on user messages must survive handoff routing (#7822).
+
+    Tool-control payloads are runtime-only and must still be dropped, and assistant
+    messages must stay text-only because providers treat multimodal items as
+    input-only and reject them when replayed on assistant turns.
+    """
+    user_image = Content.from_uri(uri="https://example.com/damage.png", media_type="image/png")
+    user_inline_data = Content.from_data(data=b"\x89PNG-fake", media_type="image/png")
+    user_upload = Content.from_hosted_file(file_id="file-abc123")
+    user_store = Content.from_hosted_vector_store(vector_store_id="vs-xyz789")
+
+    conversation = [
+        Message(
+            role="user",
+            contents=[
+                "My order arrived damaged, see the attached photos.",
+                user_image,
+                user_inline_data,
+                user_upload,
+                user_store,
+            ],
+        ),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_text(text="Triage Agent: Routing you to Refund."),
+                # Providers reject input-only multimodal parts replayed on assistant turns.
+                Content.from_uri(uri="https://example.com/generated.png", media_type="image/png"),
+                Content.from_function_call(call_id="handoff-call-1", name="handoff_to_refund_agent"),
+            ],
+        ),
+        Message(role="tool", contents=[Content.from_function_result(call_id="handoff-call-1", result="ok")]),
+    ]
+
+    cleaned = clean_conversation_for_handoff(conversation)
+    assert [message.role for message in cleaned] == ["user", "assistant"]
+
+    cleaned_user = cleaned[0]
+    assert [content.type for content in cleaned_user.contents] == [
+        "text",
+        "uri",
+        "data",
+        "hosted_file",
+        "hosted_vector_store",
+    ]
+    assert cleaned_user.contents[1].uri == "https://example.com/damage.png"
+    assert cleaned_user.contents[2].uri is not None
+    assert cleaned_user.contents[2].uri.startswith("data:image/png;base64,")
+    assert cleaned_user.contents[3].file_id == "file-abc123"
+    assert cleaned_user.contents[4].vector_store_id == "vs-xyz789"
+
+    cleaned_assistant = cleaned[1]
+    assert [content.type for content in cleaned_assistant.contents] == ["text"]
+    assert cleaned_assistant.text == "Triage Agent: Routing you to Refund."
+
+
 async def test_autonomous_mode_yields_output_without_user_request():
     """Ensure autonomous interaction mode yields output without requesting user input."""
     triage = MockHandoffAgent(name="triage", handoff_to="specialist")

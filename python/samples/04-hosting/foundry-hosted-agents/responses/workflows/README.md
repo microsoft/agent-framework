@@ -16,7 +16,9 @@ See [main.py](main.py) for the full implementation.
 
 ### Agent Hosting
 
-The workflow is exposed as a single agent via `.as_agent()` and hosted using the [Agent Framework](https://github.com/microsoft/agent-framework) with the `ResponsesHostServer`, which provisions a REST API endpoint compatible with the OpenAI Responses protocol.
+The workflow is exposed as an agent via `.as_agent()` and hosted using the
+[Agent Framework](https://github.com/microsoft/agent-framework) with `ResponsesHostServer`. The host receives a
+callable that builds a fresh `FoundryChatClient`, workflow, executors, and agents for each request.
 
 ## Running the Agent Host
 

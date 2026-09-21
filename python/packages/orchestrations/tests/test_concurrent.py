@@ -59,9 +59,7 @@ def test_concurrent_builder_uses_stable_default_and_custom_name() -> None:
     participants = [_FakeAgentExec("agentA", "A"), _FakeAgentExec("agentB", "B")]
 
     assert ConcurrentBuilder(participants=participants).build().name == "Concurrent"
-    assert (
-        ConcurrentBuilder(name="custom-concurrent", participants=participants).build().name == "custom-concurrent"
-    )
+    assert ConcurrentBuilder(name="custom-concurrent", participants=participants).build().name == "custom-concurrent"
 
 
 async def test_concurrent_default_aggregator_emits_assistants_only() -> None:

@@ -1405,8 +1405,10 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             self.context_providers.append(InMemoryHistoryProvider())
 
         active_session = session
+        framework_created_session = False
         if active_session is None and self.context_providers:
             active_session = AgentSession()
+            framework_created_session = True
 
         per_service_call_history_providers = self._resolve_per_service_call_history_providers(
             session=active_session,
@@ -1529,8 +1531,12 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         session_messages: list[Message] = session_context.get_messages(include_input=True)
 
         effective_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
+        from ._tools import _APPROVAL_SESSION_IS_AUTHORITATIVE_KEY  # pyright: ignore[reportPrivateUsage]
+
+        effective_client_kwargs.pop(_APPROVAL_SESSION_IS_AUTHORITATIVE_KEY, None)
         if active_session is not None:
             effective_client_kwargs["session"] = active_session
+            effective_client_kwargs[_APPROVAL_SESSION_IS_AUTHORITATIVE_KEY] = not framework_created_session
         per_service_call_history_middleware: PerServiceCallHistoryPersistingMiddleware | None = None
         if per_service_call_history_providers and active_session is not None:
             per_service_call_history_middleware = PerServiceCallHistoryPersistingMiddleware(
@@ -1721,7 +1727,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                     logger.error("Failed to send log message to server: %s", e)
 
         @server.list_tools()
-        async def _list_tools() -> list[types.Tool]:  # type: ignore
+        async def _list_tools() -> list[types.Tool]:
             """List all tools in the agent."""
             schema = agent_tool.parameters()
 
@@ -1735,7 +1741,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             return [tool]
 
         @server.call_tool()
-        async def _call_tool(  # type: ignore
+        async def _call_tool(
             name: str, arguments: dict[str, Any]
         ) -> Sequence[types.TextContent | types.ImageContent | types.AudioContent | types.EmbeddedResource]:
             """Call a tool in the agent."""
@@ -1778,7 +1784,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             return mcp_content or [types.TextContent(type="text", text="")]
 
         @server.set_logging_level()
-        async def _set_logging_level(level: types.LoggingLevel) -> None:  # type: ignore
+        async def _set_logging_level(level: types.LoggingLevel) -> None:
             """Set the logging level for the server."""
             logger.setLevel(LOG_LEVEL_MAPPING[level])
             # emit this log with the new minimum level

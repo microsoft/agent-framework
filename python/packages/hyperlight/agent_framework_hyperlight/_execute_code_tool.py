@@ -21,7 +21,13 @@ from typing import Any, Protocol, TypeGuard, TypeVar, cast
 from urllib.parse import urlparse
 
 from agent_framework import Content, FunctionTool
-from agent_framework._tools import ApprovalMode, normalize_tools
+from agent_framework._tools import (
+    ApprovalMode,
+    _normalize_tool_description_format,  # pyright: ignore[reportPrivateUsage]
+    _NormalizedToolDescriptionFormat,  # pyright: ignore[reportPrivateUsage]
+    _ToolDescriptionFormat,  # pyright: ignore[reportPrivateUsage]
+    normalize_tools,
+)
 
 from ._instructions import build_codeact_instructions, build_execute_code_description
 from ._types import AllowedDomain, AllowedDomainInput, FileMount, FileMountHostPath, FileMountInput
@@ -103,8 +109,6 @@ class _RunConfig:
         return self.workspace_root is not None or bool(self.file_mounts)
 
     def cache_key(self) -> tuple[Any, ...]:
-        # Output limits are invocation-scoped and do not change sandbox construction,
-        # so they intentionally do not participate in the shared runtime cache key.
         return (
             self.backend,
             self.module,
@@ -115,6 +119,9 @@ class _RunConfig:
             self.workspace_signature,
             tuple((mount.mount_path, str(mount.host_path), mount.path_signature) for mount in self.file_mounts),
             tuple((allowed_domain.target, allowed_domain.methods) for allowed_domain in self.allowed_domains),
+            self.max_output_files,
+            self.max_output_file_bytes,
+            self.max_output_total_bytes,
         )
 
 
@@ -1453,6 +1460,9 @@ class _SandboxRegistry(SandboxRuntime):
                     module_path=config.module_path,
                     input_dir=input_dir_handle.name if input_dir_handle is not None else None,
                     output_dir=output_dir_handle.name if output_dir_handle is not None else None,
+                    max_file_size=f"{config.max_output_file_bytes}B",
+                    max_total_size=f"{config.max_output_total_bytes}B",
+                    max_file_count=config.max_output_files,
                 )
             except ImportError as exc:
                 raise RuntimeError(
@@ -1506,12 +1516,20 @@ class _SandboxRegistry(SandboxRuntime):
 
 
 class HyperlightExecuteCodeTool(FunctionTool):
-    """Execute Python code inside a Hyperlight sandbox."""
+    """Execute Python code inside a Hyperlight sandbox.
+
+    Keyword Args:
+        tool_description_format: Parameter documentation in ``.description``: ``"compact"`` (default)
+            or ``"json"``, globally or mapped by exact, case-sensitive tool name. Missing names use
+            compact format. Schemas that cannot be represented faithfully in compact form use JSON Schema.
+            Mappings are copied, including entries for tools registered later.
+    """
 
     def __init__(
         self,
         *,
         tools: FunctionTool | Callable[..., Any] | Sequence[FunctionTool | Callable[..., Any]] | None = None,
+        tool_description_format: _ToolDescriptionFormat = "compact",
         approval_mode: ApprovalMode | None = None,
         workspace_root: str | Path | None = None,
         file_mounts: FileMountInput | Sequence[FileMountInput] | None = None,
@@ -1524,6 +1542,7 @@ class HyperlightExecuteCodeTool(FunctionTool):
         module_path: str | None = None,
         _registry: SandboxRuntime | None = None,
     ) -> None:
+        normalized_description_format = _normalize_tool_description_format(tool_description_format)
         max_output_files = _validate_positive_integer(name="max_output_files", value=max_output_files)
         max_output_file_bytes = _validate_positive_integer(name="max_output_file_bytes", value=max_output_file_bytes)
         max_output_total_bytes = _validate_positive_integer(name="max_output_total_bytes", value=max_output_total_bytes)
@@ -1535,6 +1554,7 @@ class HyperlightExecuteCodeTool(FunctionTool):
             input_model=EXECUTE_CODE_INPUT_SCHEMA,
         )
         self._state_lock = threading.RLock()
+        self._tool_description_format: _NormalizedToolDescriptionFormat = normalized_description_format
         self._registry = _registry or _SandboxRegistry()
         self._default_approval_mode: ApprovalMode = approval_mode or "never_require"
         self._workspace_root = _resolve_workspace_root(workspace_root)
@@ -1571,6 +1591,7 @@ class HyperlightExecuteCodeTool(FunctionTool):
                 workspace_enabled=self._workspace_root is not None,
                 mounted_paths=[_display_mount_path(mount.mount_path) for mount in self._file_mounts.values()],
                 allowed_domains=allowed_domains,
+                tool_description_format=self._tool_description_format,
             )
 
     @description.setter
@@ -1692,6 +1713,7 @@ class HyperlightExecuteCodeTool(FunctionTool):
 
         return HyperlightExecuteCodeTool(
             tools=self.get_tools(),
+            tool_description_format=self._tool_description_format,
             approval_mode=self._default_approval_mode,
             workspace_root=self._workspace_root,
             file_mounts=file_mounts or None,
@@ -1717,6 +1739,11 @@ class HyperlightExecuteCodeTool(FunctionTool):
             "max_output_file_bytes": config.max_output_file_bytes,
             "max_output_total_bytes": config.max_output_total_bytes,
             "tool_names": [tool_obj.name for tool_obj in config.tools],
+            "tool_description_format": (
+                dict(self._tool_description_format)
+                if isinstance(self._tool_description_format, dict)
+                else self._tool_description_format
+            ),
             "filesystem_enabled": config.filesystem_enabled,
             "workspace_root": str(config.workspace_root) if config.workspace_root is not None else None,
             "file_mounts": [
