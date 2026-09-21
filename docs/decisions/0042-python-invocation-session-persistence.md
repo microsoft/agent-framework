@@ -70,6 +70,14 @@ The coordination scope includes stream closure, factory-agent cleanup, and sessi
 The host attempts to save state on success, execution failure, and interruption, without
 retrying agent execution. Disconnect cleanup is shielded from the ASGI cancellation scope.
 Persistence errors are reported; there is no success-shaped in-memory fallback.
+After streaming headers have been sent, a persistence failure terminates the stream and is
+logged; already delivered text cannot be retracted.
+
+Starlette uses AnyIO cancellation scopes even when running on asyncio. `asyncio.shield()`
+protects the child operation but still allows the awaiting request to unwind on cancellation.
+Using `CancelScope(shield=True)` instead keeps cleanup awaited inside the request's ownership
+scope before releasing session coordination. This does not replace the asyncio event loop.
+AnyIO is already a transitive dependency and is declared directly because hosting imports it.
 
 This removes cumulative host retention of completed session objects. It does not bound
 individual session size, active request count, backend storage, or total process memory.
@@ -77,3 +85,20 @@ The SDK local backend reads its entire logical-store file per operation. The sto
 does not provide distributed transactions, so concurrent updates across hosts still
 require application-level coordination. Durable serialization also replaces Python
 object-identity reuse with restored state, and custom state needs registered codecs.
+
+### Migration and provider configuration
+
+Existing process-local invocation sessions are not migrated across deployment; the previous
+implementation also lost them on restart. Local sessions now survive host recreation and are
+written under `AGENTSERVER_STATE_ROOT` or the SDK's default state directory. Independent
+applications should use separate storage roots or providers.
+
+State must support `AgentSession.to_dict()` / `AgentSession.from_dict()`. Custom state types
+need registered codecs rather than arbitrary live Python objects. Restored sessions preserve
+state, not Python object identity.
+
+A custom provider's `get_store` receives host configuration and request platform context.
+The provider owns retention and deletion; an explicitly selected in-memory store remains
+volatile and does not gain automatic eviction. For new default stores, writes renew the
+30-day expiry window and reads do not. Missing, deleted, or expired state starts fresh on
+the next invocation, including when its caller reuses the same session ID.
