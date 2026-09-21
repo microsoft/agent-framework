@@ -5,6 +5,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.Declarative.Events;
+using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.ObjectModel;
@@ -252,12 +254,70 @@ public sealed class InvokeAzureAgentExecutorTest(ITestOutputHelper output) : Wor
                 agentName: "BrainInvalidResponseWithLoop",
                 responseObjectVariable: "Result",
                 externalLoopWhen: "IsBlank(Local.Result.IsResolved)");
+        InvokeAzureAgentExecutor action = new(model, provider, this.State);
+        ExternalInputRequest? capturedRequest = null;
 
         // Act
-        await this.ExecuteAsync(new InvokeAzureAgentExecutor(model, provider, this.State), isDiscrete: false);
+        await this.ExecuteAsync(
+            [
+                action,
+                new DelegateActionExecutor<ExternalInputRequest>(
+                    InvokeAzureAgentExecutor.Steps.ExternalInput(action.Id),
+                    this.State,
+                    CaptureExternalInputRequestAsync)
+            ],
+            isDiscrete: false);
 
         // Assert
         this.VerifyUndefined("Result");
+        Assert.Null(capturedRequest);
+
+        ValueTask CaptureExternalInputRequestAsync(IWorkflowContext context, ExternalInputRequest request, CancellationToken cancellationToken)
+        {
+            capturedRequest = request;
+            return default;
+        }
+    }
+
+    [Fact]
+    public async Task InvalidResponseObjectOutputStillEvaluatesIndependentExternalLoopAsync()
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        this.State.Set(
+            "Result",
+            FormulaValue.NewRecordFromFields(new NamedValue("IsResolved", FormulaValue.New(false))));
+        CapturingAgentProvider provider = new("not json");
+        InvokeAzureAgent model =
+            this.CreateModel(
+                displayName: nameof(InvalidResponseObjectOutputStillEvaluatesIndependentExternalLoopAsync),
+                agentName: "BrainInvalidResponseWithIndependentLoop",
+                responseObjectVariable: "Result",
+                externalLoopWhen: "Upper(\"continue\") <> \"EXIT\"");
+        InvokeAzureAgentExecutor action = new(model, provider, this.State);
+        ExternalInputRequest? capturedRequest = null;
+
+        // Act
+        await this.ExecuteAsync(
+            [
+                action,
+                new DelegateActionExecutor<ExternalInputRequest>(
+                    InvokeAzureAgentExecutor.Steps.ExternalInput(action.Id),
+                    this.State,
+                    CaptureExternalInputRequestAsync)
+            ],
+            isDiscrete: false);
+
+        // Assert
+        this.VerifyUndefined("Result");
+        ExternalInputRequest request = Assert.IsType<ExternalInputRequest>(capturedRequest);
+        Assert.Equal("not json", Assert.Single(request.AgentResponse.Messages).Text);
+
+        ValueTask CaptureExternalInputRequestAsync(IWorkflowContext context, ExternalInputRequest request, CancellationToken cancellationToken)
+        {
+            capturedRequest = request;
+            return default;
+        }
     }
 
     [Fact]

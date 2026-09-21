@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
@@ -92,17 +93,18 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, ResponseA
         // Attempt to parse the last message as JSON and assign to the response object variable.
         PropertyPath? responseObjectPath = this.AgentOutput?.ResponseObject?.Path;
         string? lastMessageText = agentResponse.Messages.LastOrDefault()?.Text;
-        bool responseObjectHasValue = responseObjectPath is null;
+        bool responseObjectWasBlanked = false;
         if (responseObjectPath is not null)
         {
             FormulaValue responseObjectValue = FormulaValue.NewBlank();
+            responseObjectWasBlanked = true;
             if (!string.IsNullOrEmpty(lastMessageText))
             {
                 try
                 {
                     using JsonDocument jsonDocument = JsonDocument.Parse(lastMessageText);
                     responseObjectValue = jsonDocument.ParseJsonValue(lastMessageText).ToFormula();
-                    responseObjectHasValue = true;
+                    responseObjectWasBlanked = false;
                 }
                 catch (JsonException)
                 {
@@ -118,9 +120,22 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, ResponseA
             await this.AssignAsync(responseObjectPath, responseObjectValue, context).ConfigureAwait(false);
         }
 
-        if (responseObjectHasValue && this.Model.Input?.ExternalLoop?.When is not null)
+        if (this.Model.Input?.ExternalLoop?.When is not null)
         {
-            bool requestInput = this.Evaluator.GetValue(this.Model.Input.ExternalLoop.When).Value;
+            bool requestInput;
+            try
+            {
+                requestInput = this.Evaluator.GetValue(this.Model.Input.ExternalLoop.When).Value;
+            }
+            catch (InvalidOperationException) when (responseObjectWasBlanked)
+            {
+                requestInput = false;
+            }
+            catch (AggregateException) when (responseObjectWasBlanked)
+            {
+                requestInput = false;
+            }
+
             if (requestInput)
             {
                 ExternalInputRequest inputRequest = new(agentResponse);
