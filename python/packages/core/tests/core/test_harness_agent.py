@@ -255,6 +255,28 @@ def test_create_harness_agent_file_access_approval_opt_outs() -> None:
     assert access_provider.disable_write_tool_approval is True
 
 
+def test_create_harness_agent_file_access_session_scoped_flag() -> None:
+    """The file_access_session_scoped flag should reach the FileAccessProvider."""
+    default_agent = create_harness_agent(
+        client=_FakeChatClient(),  # type: ignore[arg-type]
+        max_context_window_tokens=128_000,
+        max_output_tokens=16_384,
+        file_access_store=InMemoryAgentFileStore(),
+    )
+    default_provider = next(p for p in default_agent.context_providers if isinstance(p, FileAccessProvider))
+    assert default_provider.session_scoped is False
+
+    scoped_agent = create_harness_agent(
+        client=_FakeChatClient(),  # type: ignore[arg-type]
+        max_context_window_tokens=128_000,
+        max_output_tokens=16_384,
+        file_access_store=InMemoryAgentFileStore(),
+        file_access_session_scoped=True,
+    )
+    scoped_provider = next(p for p in scoped_agent.context_providers if isinstance(p, FileAccessProvider))
+    assert scoped_provider.session_scoped is True
+
+
 def test_create_harness_agent_default_file_stores_are_filesystem(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
