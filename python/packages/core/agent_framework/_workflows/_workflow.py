@@ -1484,8 +1484,14 @@ class Workflow(DictConvertible):
         Args:
             name: Optional name for the agent. Defaults to workflow name.
             description: Optional description of the agent. Defaults to workflow description.
-            context_providers: Optional sequence of context providers for the agent.
-            **kwargs: Additional keyword arguments passed to BaseAgent.
+            context_providers: Optional sequence of context providers. Provider lifecycle hooks
+                run, and provider-contributed messages are passed to the workflow. Provider-
+                contributed instructions, tools, and chat or function middleware are not
+                propagated to executors; configure them on the agents or clients within the
+                workflow instead.
+            **kwargs: Additional keyword arguments passed to BaseAgent. Middleware stored by
+                BaseAgent is not executed by WorkflowAgent; configure middleware on the agents
+                or clients within the workflow instead.
 
         Returns:
             A WorkflowAgent instance that wraps this workflow.
