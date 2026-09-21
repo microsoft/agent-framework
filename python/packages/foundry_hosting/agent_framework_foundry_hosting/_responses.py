@@ -566,6 +566,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                agent's strictly linear execution. It's also not currently practical to implement: a workflow
                instance cannot start a new run until its previous (steered-past) run has been garbage
                collected, and that isn't guaranteed to have happened in time.
+            6. Conversation branching (passing both `conversation` and `previous_response_id` on a request)
+               is supported for non-workflow agents: the session loads from the branch point response's own
+               snapshot and each new response keeps its own snapshot, so the conversation's mainline state
+               is never overwritten by a branch. Workflow agents do not support branching and still raise
+               `RuntimeError` when `previous_response_id` is combined with `conversation`.
 
         Raises:
             ValueError: If `history_source` is not supported.
@@ -753,16 +758,30 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         config=self.config, platform_context=request_context
                     )
                     previous_response_id = request.get("previous_response_id")
-                    session_load_id = context.conversation_id or previous_response_id
+                    # Conversation branching: `conversation` + `previous_response_id` together fork
+                    # the conversation at that response. State loads from the branch point's own
+                    # snapshot and is saved under this response's ID only, so the conversation's
+                    # mainline snapshot is never overwritten by a branch. See _handle_inner_agent.
+                    branching = previous_response_id is not None and context.conversation_id is not None
+                    session_load_id = (
+                        previous_response_id if previous_response_id is not None else context.conversation_id
+                    )
                     session = await session_storage.get(session_load_id) if session_load_id is not None else None
                     if session is None:
-                        if previous_response_id is not None and context.conversation_id is None:
+                        if previous_response_id is not None:
                             raise RuntimeError(
                                 "Cannot find an existing agent session for "
                                 f"previous_response_id={previous_response_id}."
                             )
                         session = agent.create_session()
-                    await session_storage.set(context.conversation_id or context.response_id, session)
+                    consent_save_id = (
+                        context.response_id if branching else context.conversation_id or context.response_id
+                    )
+                    await session_storage.set(consent_save_id, session)
+                    if consent_save_id != context.response_id:
+                        # Mainline conversation turns also snapshot under their response ID so the
+                        # response can later serve as a branch point for previous_response_id.
+                        await session_storage.set(context.response_id, session)
                 except Exception as save_error:
                     logger.error(
                         "Failed to persist the Agent Framework session for OAuth consent",
@@ -947,15 +966,22 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             )
 
             previous_response_id = request.get("previous_response_id")
-            session_load_id = context.conversation_id or previous_response_id
+            # Conversation branching: `conversation` + `previous_response_id` together fork the
+            # conversation at that response. State loads from the branch point's own snapshot and
+            # the new snapshot is saved under this response's ID only, so the conversation's
+            # mainline snapshot is never overwritten by a branch. Regular conversation turns also
+            # snapshot under their response ID (in the save path below) so any earlier response can
+            # serve as a branch point later.
+            branching = previous_response_id is not None and context.conversation_id is not None
+            session_load_id = previous_response_id if previous_response_id is not None else context.conversation_id
             session = await session_storage.get(session_load_id) if session_load_id is not None else None
             if session is None:
-                if previous_response_id is not None and context.conversation_id is None:
+                if previous_response_id is not None:
                     raise RuntimeError(
                         f"Cannot find an existing agent session for previous_response_id={previous_response_id}."
                     )
                 session = agent.create_session()
-            session_save_id = context.conversation_id or context.response_id
+            session_save_id = context.response_id if branching else context.conversation_id or context.response_id
         except BaseException as ex:
             # Session preparation failed (or the request was cancelled / the stream closed —
             # neither of which is an Exception). Cancel and drain the in-flight message-loading
@@ -1039,6 +1065,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             try:
                 if not stored_output_violation:
                     await session_storage.set(session_save_id, session)
+                    if session_save_id != context.response_id:
+                        # Mainline conversation turns also snapshot under their response ID so the
+                        # response can later serve as a branch point via previous_response_id without
+                        # falling back to the conversation's newer mainline state.
+                        await session_storage.set(context.response_id, session)
             except Exception as save_error:
                 save_failure = save_error
                 if request_interrupted:
