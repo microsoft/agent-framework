@@ -817,8 +817,29 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 await inner.aclose()
                 raise
 
+            if cancellation_signal.is_set() and context.client_cancelled:
+                # A cancelled run drains the inner generator without raising (both
+                # ``_handle_inner_workflow`` and ``_handle_inner_agent`` stop their
+                # ``_SignalledIterator`` loop and return normally once the signal fires).
+                # Emit nothing here so a caller cannot mistake this for a normal
+                # completion; the host server's cancel-aware layer synthesizes the
+                # cancelled terminal when the handler returns without one. Gated on
+                # ``client_cancelled`` (not just the signal) because steering pressure
+                # also sets ``cancellation_signal`` without that cause flag; a steered
+                # turn must still drain ``tracker.close()`` and emit its normal terminal
+                # below so its partial output is not misreported as a failure.
+                return
+
             for event in tracker.close():
                 yield event
+
+            if cancellation_signal.is_set() and context.client_cancelled:
+                # Draining ``tracker.close()`` yields events one at a time, and each
+                # ``yield`` above suspends this handler until the caller resumes it.
+                # A cancellation can arrive during that window, after the earlier check
+                # already passed, so it must be rechecked here, immediately before
+                # selecting the terminal event. Same ``client_cancelled`` gate as above.
+                return
 
             incomplete_reason = tracker.incomplete_reason
             if tracker.oauth_consent_requested or incomplete_reason is not None:

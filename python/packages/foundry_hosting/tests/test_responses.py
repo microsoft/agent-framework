@@ -1507,8 +1507,9 @@ class TestAgentSessionPersistence:
         assert stored is not None
         assert stored.state["started"] is True
 
-    async def test_cancellation_signal_stops_streaming_and_completes(self) -> None:
-        """Steering/explicit-cancel: the loop must break promptly, and the response still completes."""
+    async def test_cancellation_signal_stops_streaming_without_completing(self) -> None:
+        """Explicit cancel: the loop must break promptly, and the handler must not emit a
+        ``response.completed`` terminal for a run it didn't finish (regression for #8564)."""
         store = SessionStore()
         agent = _make_agent(
             stream_updates=[
@@ -1535,19 +1536,105 @@ class TestAgentSessionPersistence:
                 events.append(event)
                 if isinstance(event, Mapping) and event.get("type") == "response.output_text.delta":
                     break
-            # Cancellation arrives after the first delta; the loop must not process "two"/"three".
+            # Cancellation arrives after the first delta, via the explicit /cancel endpoint (both
+            # the signal and its cause flag fire together); the loop must not process "two"/"three".
+            context.client_cancelled = True
             cancellation_signal.set()
             events.extend([event async for event in handler])
 
         types = [event.get("type") for event in events if isinstance(event, Mapping)]
         assert types.count("response.output_text.delta") == 1
-        assert types[-1] == "response.completed"
+        assert "response.completed" not in types
+        assert types[-1] == "response.output_text.delta"
+
+        stored = await store.get("response-1")
+        assert stored is not None
+
+    async def test_cancellation_signal_during_close_drain_stops_completion(self) -> None:
+        """Regression for #8564 (Copilot follow-up): the cancellation recheck must happen *after*
+        draining ``tracker.close()``, not only before it. Each event that loop yields suspends the
+        handler, so an explicit cancel arriving mid-drain must still suppress ``response.completed``."""
+        store = SessionStore()
+        agent = _make_agent(
+            stream_updates=[AgentResponseUpdate(contents=[Content.from_text("done")], role="assistant")]
+        )
+        server = _make_server(agent, session_store=store)
+        request = CreateResponse(model="m", input="hi", stream=True)
+        context = ResponseContext(response_id="response-1", mode_flags=MagicMock())
+        cancellation_signal = asyncio.Event()
+
+        with (
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
+            patch.object(ResponseContext, "get_history", new=AsyncMock(return_value=[])),
+        ):
+            handler = cast(
+                AsyncGenerator[Any, None],
+                server._handle_response(request, context, cancellation_signal),  # pyright: ignore[reportPrivateUsage]
+            )
+            events: list[Any] = []
+            async for event in handler:
+                events.append(event)
+                # The inner agent stream has already finished draining (so the earlier check
+                # passed) by the time `tracker.close()` emits its first closing event; fire the
+                # explicit cancel exactly then, mid-drain, instead of before the drain starts.
+                if isinstance(event, Mapping) and event.get("type") == "response.output_text.done":
+                    context.client_cancelled = True
+                    cancellation_signal.set()
+                    break
+            events.extend([event async for event in handler])
+
+        types = [event.get("type") for event in events if isinstance(event, Mapping)]
+        assert "response.output_text.done" in types
+        assert "response.completed" not in types
+
+    async def test_steering_pressure_without_client_cancel_still_completes_normally(self) -> None:
+        """Steering: ``cancellation_signal`` also fires when a steerable conversation supersedes a
+        turn, but ``context.client_cancelled`` stays False for that cause (only the explicit
+        /cancel endpoint or a non-background disconnect sets it). A steered turn must still drain
+        ``tracker.close()`` and emit its normal terminal below so agentserver preserves the partial
+        output as ``response.completed`` instead of synthesizing ``response.failed`` for it."""
+        store = SessionStore()
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(contents=[Content.from_text("one")], role="assistant"),
+                AgentResponseUpdate(contents=[Content.from_text("two")], role="assistant"),
+            ]
+        )
+        server = _make_server(agent, session_store=store)
+        request = CreateResponse(model="m", input="hi", stream=True)
+        context = ResponseContext(response_id="response-1", mode_flags=MagicMock())
+        cancellation_signal = asyncio.Event()
+
+        with (
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
+            patch.object(ResponseContext, "get_history", new=AsyncMock(return_value=[])),
+        ):
+            handler = cast(
+                AsyncGenerator[Any, None],
+                server._handle_response(request, context, cancellation_signal),  # pyright: ignore[reportPrivateUsage]
+            )
+            events: list[Any] = []
+            async for event in handler:
+                events.append(event)
+                if isinstance(event, Mapping) and event.get("type") == "response.output_text.delta":
+                    break
+            # Steering pressure supersedes the turn: the signal fires with no cause flag
+            # (``client_cancelled`` stays False), unlike an explicit /cancel.
+            assert context.client_cancelled is False
+            cancellation_signal.set()
+            events.extend([event async for event in handler])
+
+        types = [event.get("type") for event in events if isinstance(event, Mapping)]
+        assert types.count("response.output_text.delta") == 1
+        assert "response.completed" in types
+        text_done = [e for e in events if isinstance(e, Mapping) and e.get("type") == "response.output_text.done"]
+        assert any(e.get("text") == "one" for e in text_done)
 
         stored = await store.get("response-1")
         assert stored is not None
 
     async def test_cancellation_signal_preempts_stuck_agent_call(self) -> None:
-        """Steering/explicit-cancel must interrupt an agent call stuck awaiting a slow model/tool
+        """Explicit cancel must interrupt an agent call stuck awaiting a slow model/tool
         response, not merely be checked between already-produced updates."""
         store = SessionStore()
         gate = asyncio.Event()  # Never set: simulates a model/tool call that never returns.
@@ -1582,6 +1669,7 @@ class TestAgentSessionPersistence:
             )
             await anext(handler)  # response.created
             await anext(handler)  # response.in_progress
+            context.client_cancelled = True
             cancellation_signal.set()  # Fires while the agent is stuck awaiting `gate`.
 
             async def _drain() -> list[Any]:
@@ -1591,9 +1679,7 @@ class TestAgentSessionPersistence:
             # call instead of only being observed after it (eventually) produced an update.
             events = await asyncio.wait_for(_drain(), timeout=1.0)
 
-        types = [event.get("type") for event in events if isinstance(event, Mapping)]
-        assert "response.output_text.delta" not in types
-        assert types[-1] == "response.completed"
+        assert events == []
         assert cleanup_called.is_set()
 
     async def test_consumer_failure_cancels_agent_stream_driver_task(self) -> None:
@@ -6030,8 +6116,9 @@ class TestWorkflowAgentHosting:
         text_done = [e for e in events if e["event"] == "response.output_text.done"]
         assert any(e["data"]["text"] == "hello stream" for e in text_done)
 
-    async def test_cancellation_signal_stops_main_loop_and_completes(self) -> None:
-        """Explicit-cancel: the workflow's main loop must break promptly and still complete."""
+    async def test_cancellation_signal_stops_main_loop_without_completing(self) -> None:
+        """Explicit-cancel: the workflow's main loop must break promptly, and the handler must not
+        emit a ``response.completed`` terminal for a run it didn't finish (regression for #8564)."""
         workflow_agent, inner = _build_multi_update_workflow_agent(["one", "two", "three"])
         server = _make_server(workflow_agent)
         request = CreateResponse(model="m", input="hi", stream=True)
@@ -6051,13 +6138,16 @@ class TestWorkflowAgentHosting:
                 events.append(event)
                 if isinstance(event, Mapping) and event.get("type") == "response.output_text.delta":
                     break
-            # Cancellation arrives after the first delta; the loop must not process "two"/"three".
+            # Cancellation arrives after the first delta, via the explicit /cancel endpoint (both
+            # the signal and its cause flag fire together); the loop must not process "two"/"three".
+            context.client_cancelled = True
             cancellation_signal.set()
             events.extend([event async for event in handler])
 
         types = [event.get("type") for event in events if isinstance(event, Mapping)]
         assert types.count("response.output_text.delta") == 1
-        assert types[-1] == "response.completed"
+        assert "response.completed" not in types
+        assert types[-1] == "response.output_text.delta"
         assert inner.run_count == 1
 
     async def test_cancellation_signal_preempts_stuck_workflow_call(self) -> None:
@@ -6082,11 +6172,17 @@ class TestWorkflowAgentHosting:
             await anext(handler)  # response.in_progress
 
             async with _pending_workflow_event(handler, inner.started) as pending:
+                context.client_cancelled = True
                 cancellation_signal.set()  # Fires while the inner agent is stuck awaiting `gate`.
 
                 async def _drain() -> list[Any]:
-                    first = await pending
-                    return [first, *[event async for event in handler]]
+                    events: list[Any] = []
+                    try:
+                        events.append(await pending)
+                    except StopAsyncIteration:
+                        return events
+                    events.extend([event async for event in handler])
+                    return events
 
                 # Bounded well below `gate` never being set: proves cancellation preempted the stuck
                 # call instead of only being observed after it (eventually) produced an update.
@@ -6095,7 +6191,7 @@ class TestWorkflowAgentHosting:
 
         types = [event.get("type") for event in events if isinstance(event, Mapping)]
         assert "response.output_text.delta" not in types
-        assert types[-1] == "response.completed"
+        assert "response.completed" not in types
         assert inner.run_count == 1
 
     async def test_shutdown_signal_preempts_stuck_workflow_call(self, tmp_path: Path) -> None:
@@ -6151,7 +6247,8 @@ class TestWorkflowAgentHosting:
         request = CreateResponse(model="m", input="hi again", stream=True)
         context = ResponseContext(response_id="response-2", mode_flags=MagicMock(), conversation_id="conv-1")
         cancellation_signal = asyncio.Event()
-        cancellation_signal.set()  # Steering pressure already present before the turn even starts.
+        context.client_cancelled = True  # Explicit cancel already present before the turn even starts.
+        cancellation_signal.set()
 
         with (
             patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
@@ -6165,7 +6262,8 @@ class TestWorkflowAgentHosting:
 
         types = [event.get("type") for event in events if isinstance(event, Mapping)]
         assert "response.output_text.delta" not in types
-        assert types[-1] == "response.completed"
+        assert "response.completed" not in types
+        assert types[-1] == "response.in_progress"
         # At most the restore-only replay call happened; the new-turn call (which would deliver
         # "hi again") must never fire.
         assert inner.run_count <= run_count_after_first_turn + 1
