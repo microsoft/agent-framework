@@ -5,15 +5,20 @@ from __future__ import annotations
 from collections.abc import Awaitable, Mapping, Sequence
 from types import TracebackType
 from typing import Any, ClassVar, NoReturn, cast
+from uuid import uuid4
 
 from agent_framework import (
     BaseChatClient,
+    ChatAndFunctionMiddlewareTypes,
     ChatMiddlewareLayer,
-    ChatMiddlewareTypes,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     CompactionStrategy,
+    Content,
+    FunctionInvocationConfiguration,
+    FunctionInvocationLayer,
+    FunctionTool,
     Message,
     ResponseStream,
     TokenizerProtocol,
@@ -44,6 +49,8 @@ from typesafe_sdk import (
     TypeSafeUnprocessableEntityError,
 )
 from typing_extensions import Self, TypedDict, override
+
+from ._tool_calls import compile_tool_call_plan
 
 _TYPESAFE_SERVICE_URL = "https://api.typesafe.ai/v1/systemone"
 
@@ -81,6 +88,7 @@ class RawTypeSafeChatClient(BaseChatClient[TypeSafeChatOptions]):
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "typesafe.ai"
     _SUPPORTED_OPTIONS: ClassVar[frozenset[str]] = frozenset({
+        "allow_multiple_tool_calls",
         "instructions",
         "model",
         "response_format",
@@ -184,7 +192,17 @@ class RawTypeSafeChatClient(BaseChatClient[TypeSafeChatOptions]):
             normalized_options = await self._validate_options(options)
             self._validate_supported_options(normalized_options)
 
-            questions = self._get_questions(normalized_options)
+            user_questions = self._get_questions(normalized_options)
+            tools = self._get_function_tools(normalized_options)
+            tool_mode = validate_tool_mode(normalized_options.get("tool_choice"))
+            tool_plan = compile_tool_call_plan(
+                tools,
+                tool_mode=tool_mode,
+                user_question_ids=set(user_questions),
+            )
+            questions = dict(user_questions)
+            if tool_plan is not None:
+                questions.update(tool_plan.questions)
             model = normalized_options.get("model", self.model)
             if model is not None and not isinstance(model, str):
                 raise ChatClientInvalidRequestException("TypeSafe model must be a string.")
@@ -216,16 +234,30 @@ class RawTypeSafeChatClient(BaseChatClient[TypeSafeChatOptions]):
 
             input_tokens = response.usage.input_tokens
             output_tokens = response.usage.output_tokens
-            usage_details = UsageDetails(
-                **({"input_token_count": input_tokens} if input_tokens is not None else {}),
-                **({"output_token_count": output_tokens} if output_tokens is not None else {}),
-                **(
-                    {"total_token_count": input_tokens + output_tokens}
-                    if input_tokens is not None and output_tokens is not None
-                    else {}
-                ),
-            )
+            usage_details = self._build_usage_details(input_tokens, output_tokens)
 
+            if tool_plan is not None and (tool_call := tool_plan.decode(response)) is not None:
+                function, arguments = tool_call
+                return ChatResponse(
+                    messages=[
+                        Message(
+                            role="assistant",
+                            contents=[
+                                Content.from_function_call(
+                                    call_id=f"typesafe-{uuid4().hex}",
+                                    name=function.name,
+                                    arguments=arguments,
+                                )
+                            ],
+                        )
+                    ],
+                    response_id=response.request_id,
+                    model=response.model,
+                    finish_reason="tool_calls",
+                    usage_details=usage_details or None,
+                )
+
+            response = self._filter_internal_answers(response, set(user_questions))
             return ChatResponse(
                 messages=[Message(role="assistant", contents=[response.model_dump_json()])],
                 response_id=response.request_id,
@@ -239,6 +271,26 @@ class RawTypeSafeChatClient(BaseChatClient[TypeSafeChatOptions]):
 
         return _get_response()
 
+    @override
+    async def _validate_options(self, options: Mapping[str, Any]) -> dict[str, Any]:
+        raw_options = dict(options)
+        raw_tools = raw_options.pop("tools", None)
+        validated = await super()._validate_options(raw_options)
+        if raw_tools is None:
+            return validated
+        tool_items: list[Any] = (
+            list(cast(Sequence[Any], raw_tools))
+            if isinstance(raw_tools, Sequence) and not isinstance(raw_tools, (str, bytes))
+            else [raw_tools]
+        )
+        if not all(isinstance(tool, FunctionTool) for tool in tool_items):
+            raise ChatClientInvalidRequestException(
+                "TypeSafe raw tool routing requires FunctionTool instances. "
+                "Pass MCPTool objects through Agent.run so Agent Framework can connect and expand them first."
+            )
+        validated["tools"] = list(tool_items)
+        return validated
+
     @classmethod
     def _validate_supported_options(cls, options: Mapping[str, Any]) -> None:
         unsupported = sorted(
@@ -250,12 +302,8 @@ class RawTypeSafeChatClient(BaseChatClient[TypeSafeChatOptions]):
                 f"{', '.join(unsupported)}. Use response_format to define structured judgments."
             )
 
-        if options.get("tools"):
-            raise ChatClientInvalidRequestException("TypeSafe System One does not support tools.")
-
-        tool_mode = validate_tool_mode(options.get("tool_choice"))
-        if tool_mode is not None and tool_mode.get("mode") not in ("auto", "none"):
-            raise ChatClientInvalidRequestException("TypeSafe System One does not support required tool choice.")
+        if options.get("allow_multiple_tool_calls"):
+            raise ChatClientInvalidRequestException("TypeSafe supports one tool call per agent run.")
 
     @staticmethod
     def _get_questions(options: Mapping[str, Any]) -> Questions:
@@ -267,23 +315,53 @@ class RawTypeSafeChatClient(BaseChatClient[TypeSafeChatOptions]):
         return cast(Questions, response_format)
 
     @staticmethod
+    def _get_function_tools(options: Mapping[str, Any]) -> list[FunctionTool]:
+        tools = options.get("tools")
+        if tools is None:
+            return []
+        if isinstance(tools, Sequence) and not isinstance(tools, (str, bytes)):
+            return [cast(FunctionTool, tool) for tool in cast(Sequence[Any], tools)]
+        return [cast(FunctionTool, tools)]
+
+    @staticmethod
     def _build_state(messages: Sequence[Message], *, instructions: Any) -> dict[str, Any]:
         if instructions is not None and not isinstance(instructions, str):
             raise ChatClientInvalidRequestException("TypeSafe instructions must be a string.")
 
-        state_messages: list[dict[str, str]] = []
+        state_messages: list[dict[str, Any]] = []
         for index, message in enumerate(messages):
-            unsupported_content_types = sorted({content.type for content in message.contents if content.type != "text"})
+            unsupported_content_types = sorted({
+                content.type
+                for content in message.contents
+                if content.type not in {"text", "function_call", "function_result"}
+            })
             if unsupported_content_types:
                 raise ChatClientInvalidRequestException(
-                    f"TypeSafe only supports text message content; message {index} contains: "
+                    f"TypeSafe only supports text and function call/result content; message {index} contains: "
                     f"{', '.join(unsupported_content_types)}."
                 )
 
-            if message.text:
+            contents: list[dict[str, Any]] = []
+            for content in message.contents:
+                if content.type == "text" and content.text:
+                    contents.append({"type": "text", "text": content.text})
+                elif content.type == "function_call":
+                    contents.append({
+                        "type": "function_call",
+                        "call_id": content.call_id,
+                        "name": content.name,
+                        "arguments": content.parse_arguments(),
+                    })
+                elif content.type == "function_result":
+                    contents.append({
+                        "type": "function_result",
+                        "call_id": content.call_id,
+                        "result": content.result,
+                    })
+            if contents:
                 state_messages.append({
                     "role": str(message.role),
-                    "content": message.text,
+                    "contents": contents,
                 })
 
         if not state_messages:
@@ -293,6 +371,33 @@ class RawTypeSafeChatClient(BaseChatClient[TypeSafeChatOptions]):
         if instructions:
             state["instructions"] = instructions
         return state
+
+    @staticmethod
+    def _build_usage_details(input_tokens: int | None, output_tokens: int | None) -> UsageDetails:
+        return UsageDetails(
+            **({"input_token_count": input_tokens} if input_tokens is not None else {}),
+            **({"output_token_count": output_tokens} if output_tokens is not None else {}),
+            **(
+                {"total_token_count": input_tokens + output_tokens}
+                if input_tokens is not None and output_tokens is not None
+                else {}
+            ),
+        )
+
+    @staticmethod
+    def _filter_internal_answers(response: SystemOneResponse, question_ids: set[str]) -> SystemOneResponse:
+        missing = sorted(question_id for question_id in question_ids if question_id not in response.answers)
+        if missing:
+            raise ChatClientInvalidResponseException(
+                f"TypeSafe response is missing configured answers: {', '.join(missing)}."
+            )
+        if set(response.answers) == question_ids:
+            return response
+        filtered = response.model_copy(
+            update={"answers": {question_id: response.answers[question_id] for question_id in question_ids}}
+        )
+        filtered.__dict__.pop("_raw", None)  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+        return filtered
 
     @staticmethod
     def _raise_sdk_error(exc: TypeSafeError) -> NoReturn:
@@ -323,11 +428,12 @@ class RawTypeSafeChatClient(BaseChatClient[TypeSafeChatOptions]):
 
 
 class TypeSafeChatClient(
+    FunctionInvocationLayer[TypeSafeChatOptions],
     ChatMiddlewareLayer[TypeSafeChatOptions],
     ChatTelemetryLayer[TypeSafeChatOptions],
     RawTypeSafeChatClient,
 ):
-    """TypeSafe AI chat client with middleware and telemetry support.
+    """TypeSafe AI chat client with function invocation, middleware, and telemetry support.
 
     This is the recommended client for most uses. Use RawTypeSafeChatClient
     when composing a custom layer stack or opting out of telemetry.
@@ -339,7 +445,8 @@ class TypeSafeChatClient(
         api_key: str | SecretString | None = None,
         model: str | None = None,
         async_client: AsyncTypeSafeClient | None = None,
-        middleware: Sequence[ChatMiddlewareTypes] | None = None,
+        middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         additional_properties: dict[str, Any] | None = None,
@@ -352,18 +459,23 @@ class TypeSafeChatClient(
             api_key: TypeSafe API key. Defaults to the TYPESAFE_API_KEY environment variable.
             model: Default TypeSafe model. The SDK defaults to jev-latest.
             async_client: Optional preconfigured TypeSafe SDK client. It remains caller-owned.
-            middleware: Chat middleware to apply around TypeSafe requests.
+            middleware: Chat and function middleware to apply around requests and tool calls.
+            function_invocation_configuration: Function invocation settings. TypeSafe limits
+                each run to one executed tool call.
             compaction_strategy: Optional compaction strategy applied before requests.
             tokenizer: Optional tokenizer used by token-aware compaction strategies.
             additional_properties: Additional properties stored on the client.
             env_file_path: Path to a .env file used for settings resolution.
             env_file_encoding: Encoding used to read the .env file.
         """
+        invocation_configuration = dict(function_invocation_configuration or {})
+        invocation_configuration["max_function_calls"] = 1
         super().__init__(
             api_key=api_key,
             model=model,
             async_client=async_client,
             middleware=middleware,
+            function_invocation_configuration=cast(FunctionInvocationConfiguration, invocation_configuration),
             compaction_strategy=compaction_strategy,
             tokenizer=tokenizer,
             additional_properties=additional_properties,

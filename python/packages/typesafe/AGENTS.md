@@ -4,7 +4,7 @@ Integration with TypeSafe AI System One models, including Jev.
 
 ## Public API
 
-- **`TypeSafeChatClient`** - Adapts TypeSafe's structured decision API to the Agent Framework chat client contract.
+- **`TypeSafeChatClient`** - Adds function invocation, middleware, and telemetry to the TypeSafe transport.
 - **`RawTypeSafeChatClient`** - Provider transport without middleware or telemetry layers.
 - **`TypeSafeChatOptions`** - Uses `response_format` for the required TypeSafe `Questions` mapping.
 
@@ -12,7 +12,11 @@ Integration with TypeSafe AI System One models, including Jev.
 
 - Calls always return structured `SystemOneResponse` data. This provider does not generate free-form chat text.
 - Every call requires `response_format` to contain at least one TypeSafe `Noul`, `Choice`, or `Score` question.
-- Streaming, tools, and non-text message content are not supported.
+- Streaming and non-text message content are not supported.
+- Tool calling supports one call per run and closed-set schemas: constants, enums/Literals, booleans, and arrays of
+  enums/Literals. Optional supported arguments use a presence question so omitted values preserve tool defaults.
+- Agent-provided MCP tools work when their discovered function schemas fit the supported subset. Direct raw/client
+  calls must receive expanded `FunctionTool` instances.
 - The connector forwards `response_format` as the TypeSafe SDK `questions` argument and internally uses
   `SystemOneResponse` as the response model.
 - An injected `AsyncTypeSafeClient` is caller-owned. A client created by `TypeSafeChatClient` is closed by

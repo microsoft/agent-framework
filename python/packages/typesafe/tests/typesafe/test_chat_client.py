@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
+import contextlib
+from collections.abc import Callable
+from typing import Any, Literal, cast
 
 import httpx2
 import pytest
-from agent_framework import Agent, Content, Message
+from agent_framework import Agent, Content, FunctionTool, Message
+from agent_framework._mcp import MCPTool
 from agent_framework.exceptions import (
     ChatClientException,
     ChatClientInvalidAuthException,
@@ -14,6 +17,7 @@ from agent_framework.exceptions import (
     ChatClientInvalidResponseException,
     SettingNotFoundError,
 )
+from pydantic import BaseModel
 from typesafe_sdk import (
     AsyncTypeSafeClient,
     Noul,
@@ -32,6 +36,18 @@ from typesafe_sdk import (
 from agent_framework_typesafe import RawTypeSafeChatClient, TypeSafeChatClient, TypeSafeChatOptions
 
 
+class _ConnectedMCPTool(MCPTool):
+    """Connected MCP stand-in exposing discovered FunctionTool objects."""
+
+    def __init__(self, function: FunctionTool) -> None:
+        super().__init__(name="test-mcp")
+        self.is_connected = True
+        self._functions = [function]
+
+    def get_mcp_client(self) -> contextlib.AbstractAsyncContextManager[Any]:  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
+        raise NotImplementedError
+
+
 class StubSystemOneResponse(SystemOneResponse):
     """SystemOneResponse with deterministic request metadata."""
 
@@ -47,9 +63,13 @@ class StubTypeSafeClient:
     def __init__(
         self,
         response: SystemOneResponse | None = None,
+        responses: list[SystemOneResponse] | None = None,
+        responder: Callable[[Questions], SystemOneResponse] | None = None,
         error: Exception | None = None,
     ) -> None:
         self.response = response or make_response()
+        self.responses = list(responses or [])
+        self.responder = responder
         self.error = error
         self.calls: list[dict[str, Any]] = []
         self.closed = False
@@ -72,18 +92,22 @@ class StubTypeSafeClient:
         })
         if self.error is not None:
             raise self.error
+        if self.responder is not None:
+            return self.responder(questions)
+        if self.responses:
+            return self.responses.pop(0)
         return self.response
 
     async def aclose(self) -> None:
         self.closed = True
 
 
-def make_response() -> StubSystemOneResponse:
+def make_response(answers: dict[str, dict[str, Any]] | None = None) -> StubSystemOneResponse:
     """Create a representative TypeSafe response."""
     return StubSystemOneResponse.model_validate({
         "model": "jev-latest",
         "usage": {"input_tokens": 12, "output_tokens": 4},
-        "answers": {"urgent": {"type": "noul", "noul": 0.9}},
+        "answers": answers or {"urgent": {"type": "noul", "noul": 0.9}},
     })
 
 
@@ -167,15 +191,16 @@ async def test_context_manager_closes_owned_client(monkeypatch: pytest.MonkeyPat
     assert stub.closed
 
 
-def test_streaming_is_rejected_immediately() -> None:
+async def test_streaming_is_rejected_on_consumption() -> None:
     client = make_client()
 
+    stream = client.get_response(
+        [Message("user", ["hello"])],
+        stream=True,
+        options={"response_format": questions()},
+    )
     with pytest.raises(ChatClientInvalidRequestException, match="streaming"):
-        client.get_response(
-            [Message("user", ["hello"])],
-            stream=True,
-            options={"response_format": questions()},
-        )
+        _ = [update async for update in stream]
 
 
 @pytest.mark.parametrize(
@@ -185,8 +210,9 @@ def test_streaming_is_rejected_immediately() -> None:
         ({"response_format": {}}, "non-empty typesafe_sdk.Questions"),
         ({"response_format": questions(), "questions": questions()}, "questions"),
         ({"response_format": questions(), "temperature": 0.2}, "temperature"),
-        ({"response_format": questions(), "tools": [object()]}, "does not support tools"),
-        ({"response_format": questions(), "tool_choice": "required"}, "required tool choice"),
+        ({"response_format": questions(), "tools": [object()]}, "FunctionTool"),
+        ({"response_format": questions(), "tool_choice": "required"}, "no tools"),
+        ({"response_format": questions(), "allow_multiple_tool_calls": True}, "one tool call"),
         ({"response_format": SystemOneResponse}, "non-empty typesafe_sdk.Questions"),
     ],
 )
@@ -204,7 +230,7 @@ async def test_non_text_content_is_rejected() -> None:
     client = make_client()
     message = Message("user", [Content.from_uri("https://example.com/image.png", media_type="image/png")])
 
-    with pytest.raises(ChatClientInvalidRequestException, match="only supports text"):
+    with pytest.raises(ChatClientInvalidRequestException, match="only supports text and function"):
         await client.get_response([message], options={"response_format": questions()})
 
 
@@ -263,8 +289,8 @@ async def test_request_and_response_mapping() -> None:
         {
             "state": {
                 "messages": [
-                    {"role": "user", "content": "first"},
-                    {"role": "assistant", "content": "second"},
+                    {"role": "user", "contents": [{"type": "text", "text": "first"}]},
+                    {"role": "assistant", "contents": [{"type": "text", "text": "second"}]},
                 ],
                 "instructions": "Evaluate the conversation.",
             },
@@ -337,6 +363,295 @@ async def test_agent_integration_preserves_structured_value() -> None:
     assert response.value is stub.response
     assert isinstance(response.value, SystemOneResponse)
     assert stub.calls[0]["state"]["instructions"] == "Evaluate the request."
+
+
+async def test_raw_client_decodes_closed_set_arguments_and_omits_optional_defaults() -> None:
+    class ToolArguments(BaseModel):
+        value: Literal[1, "1"]
+        unit: Literal["celsius", "fahrenheit"] = "celsius"
+        detailed: bool
+        tags: list[Literal["forecast", "alerts"]]
+
+    function = FunctionTool(
+        name="inspect",
+        description="Inspect a configured item.",
+        func=lambda **kwargs: kwargs,
+        input_model=ToolArguments,
+    )
+    response = make_response({
+        "urgent": {"type": "noul", "noul": 0.1},
+        "__af_tool__.t0.a0.value": {
+            "type": "choice",
+            "choice": "v1",
+            "confidence": 1.0,
+            "probabilities": {"v0": 0.0, "v1": 1.0},
+        },
+        "__af_tool__.t0.a1.present": {"type": "noul", "noul": 0.0},
+        "__af_tool__.t0.a1.value": {
+            "type": "choice",
+            "choice": "v0",
+            "confidence": 1.0,
+            "probabilities": {"v0": 1.0, "v1": 0.0},
+        },
+        "__af_tool__.t0.a2.value": {"type": "noul", "noul": 0.9},
+        "__af_tool__.t0.a3.m0": {"type": "noul", "noul": 0.2},
+        "__af_tool__.t0.a3.m1": {"type": "noul", "noul": 0.8},
+    })
+    client = RawTypeSafeChatClient(async_client=cast(AsyncTypeSafeClient, StubTypeSafeClient(response=response)))
+
+    result = await client.get_response(
+        [Message("user", ["inspect string one in detail with alerts"])],
+        options={
+            "response_format": questions(),
+            "tools": [function],
+            "tool_choice": {"mode": "required", "required_function_name": "inspect"},
+        },
+    )
+
+    assert result.text == ""
+    assert result.value is None
+    assert result.finish_reason == "tool_calls"
+    call = result.messages[0].contents[0]
+    assert call.type == "function_call"
+    assert call.name == "inspect"
+    assert call.parse_arguments() == {
+        "value": "1",
+        "detailed": True,
+        "tags": ["alerts"],
+    }
+
+
+async def test_no_tool_route_filters_internal_answers() -> None:
+    function = FunctionTool(name="list_symbols", description="List symbols", func=lambda: "symbols")
+    response = make_response({
+        "urgent": {"type": "noul", "noul": 0.9},
+        "__af_tool__.route": {
+            "type": "choice",
+            "choice": "none",
+            "confidence": 1.0,
+            "probabilities": {"t0": 0.0, "none": 1.0},
+        },
+    })
+    client = RawTypeSafeChatClient(async_client=cast(AsyncTypeSafeClient, StubTypeSafeClient(response=response)))
+
+    result = await client.get_response(
+        [Message("user", ["No tool needed"])],
+        options={"response_format": questions(), "tools": [function]},
+    )
+
+    assert isinstance(result.value, SystemOneResponse)
+    assert set(result.value.answers) == {"urgent"}
+    assert "__af_tool__" not in result.text
+
+
+async def test_local_tool_executes_once_then_returns_structured_response() -> None:
+    calls: list[tuple[str, bool]] = []
+
+    class WeatherArguments(BaseModel):
+        city: Literal["Seattle", "Paris"]
+        detailed: bool
+
+    def weather(city: str, detailed: bool) -> str:
+        calls.append((city, detailed))
+        return f"Weather for {city}; detailed={detailed}"
+
+    function = FunctionTool(
+        name="weather",
+        description="Get weather for a supported city.",
+        func=weather,
+        input_model=WeatherArguments,
+    )
+    stub = StubTypeSafeClient(
+        responses=[
+            make_response({
+                "urgent": {"type": "noul", "noul": 0.1},
+                "__af_tool__.route": {
+                    "type": "choice",
+                    "choice": "t0",
+                    "confidence": 1.0,
+                    "probabilities": {"t0": 1.0, "none": 0.0},
+                },
+                "__af_tool__.t0.a0.value": {
+                    "type": "choice",
+                    "choice": "v0",
+                    "confidence": 1.0,
+                    "probabilities": {"v0": 1.0, "v1": 0.0},
+                },
+                "__af_tool__.t0.a1.value": {"type": "noul", "noul": 0.9},
+            }),
+            make_response({"urgent": {"type": "noul", "noul": 0.8}}),
+        ]
+    )
+    agent = Agent(client=make_client(stub), tools=[function])
+
+    response = await agent.run(
+        "Give me detailed Seattle weather.",
+        options=cast(Any, {"response_format": questions()}),
+    )
+
+    assert calls == [("Seattle", True)]
+    assert isinstance(response.value, SystemOneResponse)
+    assert set(response.value.answers) == {"urgent"}
+    assert len(stub.calls) == 2
+    assert "__af_tool__.route" in stub.calls[0]["questions"]
+    assert set(stub.calls[1]["questions"]) == {"urgent"}
+    tool_results = [
+        content
+        for message in stub.calls[1]["state"]["messages"]
+        for content in message["contents"]
+        if content["type"] == "function_result"
+    ]
+    assert tool_results == [
+        {
+            "type": "function_result",
+            "call_id": cast(str, tool_results[0]["call_id"]),
+            "result": "Weather for Seattle; detailed=True",
+        }
+    ]
+
+
+async def test_agent_expands_and_executes_compatible_mcp_tool() -> None:
+    executions: list[bool] = []
+
+    def refresh_cache() -> str:
+        executions.append(True)
+        return "refreshed"
+
+    function = FunctionTool(
+        name="refresh_cache",
+        description="Refresh a cache.",
+        func=refresh_cache,
+        input_model={},
+    )
+    mcp_tool = _ConnectedMCPTool(function)
+    stub = StubTypeSafeClient(
+        responses=[
+            make_response({
+                "urgent": {"type": "noul", "noul": 0.1},
+                "__af_tool__.route": {
+                    "type": "choice",
+                    "choice": "t0",
+                    "confidence": 1.0,
+                    "probabilities": {"t0": 1.0, "none": 0.0},
+                },
+            }),
+            make_response({"urgent": {"type": "noul", "noul": 0.6}}),
+        ]
+    )
+    agent = Agent(client=make_client(stub), tools=[mcp_tool])
+
+    response = await agent.run("Refresh the cache.", options=cast(Any, {"response_format": questions()}))
+
+    assert executions == [True]
+    assert isinstance(response.value, SystemOneResponse)
+    assert stub.calls[0]["questions"]["__af_tool__.route"]
+
+
+async def test_direct_mcp_tool_requires_agent_expansion() -> None:
+    mcp_tool = _ConnectedMCPTool(FunctionTool(name="noop", func=lambda: "done", input_model={}))
+    client = make_client()
+
+    with pytest.raises(ChatClientInvalidRequestException, match="Pass MCPTool objects through Agent.run"):
+        await client.get_response(
+            [Message("user", ["run"])],
+            options=cast(Any, {"response_format": questions(), "tools": [mcp_tool]}),
+        )
+
+
+async def test_required_unsupported_tool_schema_is_rejected() -> None:
+    function = FunctionTool(
+        name="search",
+        description="Search arbitrary text.",
+        func=lambda query: query,
+        input_model={
+            "type": "object",
+            "properties": {"query": {"type": "string"}},
+            "required": ["query"],
+        },
+    )
+    client = RawTypeSafeChatClient(async_client=cast(AsyncTypeSafeClient, StubTypeSafeClient()))
+
+    with pytest.raises(ChatClientInvalidRequestException, match="no supported tools remain"):
+        await client.get_response(
+            [Message("user", ["search"])],
+            options={
+                "response_format": questions(),
+                "tools": [function],
+                "tool_choice": "required",
+            },
+        )
+
+
+async def test_tool_approval_pauses_before_execution() -> None:
+    executions: list[bool] = []
+
+    def guarded() -> str:
+        executions.append(True)
+        return "done"
+
+    function = FunctionTool(
+        name="guarded",
+        description="Run a guarded action.",
+        func=guarded,
+        input_model={},
+        approval_mode="always_require",
+    )
+    stub = StubTypeSafeClient(
+        response=make_response({
+            "urgent": {"type": "noul", "noul": 0.1},
+            "__af_tool__.route": {
+                "type": "choice",
+                "choice": "t0",
+                "confidence": 1.0,
+                "probabilities": {"t0": 1.0, "none": 0.0},
+            },
+        })
+    )
+    agent = Agent(client=make_client(stub), tools=[function])
+
+    response = await agent.run("Run the guarded action.", options=cast(Any, {"response_format": questions()}))
+
+    assert executions == []
+    assert any(
+        content.type == "function_approval_request" for message in response.messages for content in message.contents
+    )
+
+
+async def test_session_can_route_a_tool_on_later_independent_runs() -> None:
+    executions: list[int] = []
+
+    def increment() -> str:
+        executions.append(len(executions) + 1)
+        return str(executions[-1])
+
+    function = FunctionTool(name="increment", description="Increment a counter.", func=increment, input_model={})
+    route_response = {
+        "urgent": {"type": "noul", "noul": 0.1},
+        "__af_tool__.route": {
+            "type": "choice",
+            "choice": "t0",
+            "confidence": 1.0,
+            "probabilities": {"t0": 1.0, "none": 0.0},
+        },
+    }
+    stub = StubTypeSafeClient(
+        responses=[
+            make_response(route_response),
+            make_response({"urgent": {"type": "noul", "noul": 0.6}}),
+            make_response(route_response),
+            make_response({"urgent": {"type": "noul", "noul": 0.7}}),
+        ]
+    )
+    agent = Agent(client=make_client(stub), tools=[function])
+    session = agent.create_session()
+
+    first = await agent.run("Increment once.", session=session, options=cast(Any, {"response_format": questions()}))
+    second = await agent.run("Increment again.", session=session, options=cast(Any, {"response_format": questions()}))
+
+    assert executions == [1, 2]
+    assert isinstance(first.value, SystemOneResponse)
+    assert isinstance(second.value, SystemOneResponse)
+    assert len(stub.calls) == 4
 
 
 @pytest.mark.parametrize(

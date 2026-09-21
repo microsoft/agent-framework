@@ -60,14 +60,81 @@ and internally uses `SystemOneResponse` as the actual response model.
 | `model` | Optional per-call model override. |
 | `instructions` | Agent instructions included in the structured state sent to TypeSafe. |
 
-Streaming, tools, non-text message content, and generative settings such as
-`temperature` are rejected. Agent Framework may warn that this chat client does
-not support function invocation; that is expected because TypeSafe System One
-models do not expose tool calling.
+Streaming, non-text message content, and generative settings such as `temperature`
+are rejected.
 
-`TypeSafeChatClient` is the recommended client and layers middleware and telemetry
-over `RawTypeSafeChatClient`. Use the raw client only when composing a custom layer
-stack or intentionally opting out of those framework layers.
+`TypeSafeChatClient` is the recommended client and layers function invocation,
+middleware, and telemetry over `RawTypeSafeChatClient`. Use the raw client only
+when composing a custom layer stack or intentionally opting out of those framework
+layers.
+
+## Function calling
+
+TypeSafe converts tool selection and supported arguments into internal `Choice`
+and `Noul` questions, emits an Agent Framework function call, and lets the standard
+function-invocation loop execute it. After one tool call, tools are disabled and
+the connector makes the terminal TypeSafe request using only the caller's
+`response_format` questions.
+
+Supported input-schema shapes:
+
+- Empty/zero-argument object schemas.
+- Fixed `const` values.
+- `enum` or Python `Literal` arguments.
+- Boolean arguments.
+- Arrays whose items are `enum` or `Literal` values. These are treated as
+  set-like selections in schema order; duplicates and caller-defined ordering are
+  not supported.
+- Optional versions of those shapes. A separate TypeSafe question decides whether
+  to omit the argument so the function's default can apply.
+
+Required free-form strings, numbers, nested objects, general arrays, and required
+nullable arguments are not supported. In automatic tool mode, unsupported tools
+are excluded with a warning. Required unsupported tools fail the request.
+
+Local tools can use inferred schemas or Pydantic input models:
+
+```python
+from typing import Literal
+
+from agent_framework import Agent, FunctionTool
+from agent_framework_typesafe import TypeSafeChatClient
+from pydantic import BaseModel
+from typesafe_sdk import Noul
+
+
+class WeatherArguments(BaseModel):
+    city: Literal["Seattle", "Paris"]
+    detailed: bool
+
+
+weather = FunctionTool(
+    name="weather",
+    description="Get weather for a supported city.",
+    func=lambda city, detailed: f"Weather for {city}; detailed={detailed}",
+    input_model=WeatherArguments,
+)
+agent = Agent(client=TypeSafeChatClient(), tools=[weather])
+response = await agent.run(
+    "Give me detailed Seattle weather.",
+    options={"response_format": {"succeeded": Noul(instructions="Did the tool result indicate success?")}},
+)
+```
+
+MCP tools are supported through `Agent`, which connects to the server and expands
+discovered MCP functions into `FunctionTool` objects before TypeSafe routing:
+
+```python
+from agent_framework import Agent, MCPStdioTool
+from agent_framework_typesafe import TypeSafeChatClient
+
+mcp = MCPStdioTool(name="my-server", command="my-mcp-server")
+agent = Agent(client=TypeSafeChatClient(), tools=[mcp])
+```
+
+Only discovered MCP functions whose JSON schemas fit the supported subset are
+routable. Use `tool_choice.allowed_tools` to narrow large MCP servers; a request
+supports at most 32 routable tools and 128 generated internal questions.
 
 ## Configuration and lifecycle
 
