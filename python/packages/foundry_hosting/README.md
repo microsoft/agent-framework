@@ -124,10 +124,16 @@ Locally, the platform session ID is used unchanged.
 Both hosts accept `agent_session_store_provider` to select a `StoreProvider[SessionStore]`.
 For default Invocations storage, set `session_store_namespace` to a stable application-specific
 name unless `FOUNDRY_AGENT_ID` or `FOUNDRY_AGENT_NAME` is configured.
-Session state must support `AgentSession` serialization. New default stores expire saved
-sessions 30 days after their last write; an invocation after expiry starts a fresh session.
+Session state must support `AgentSession` serialization. Use `register_state_type()` codecs for
+custom types; unsupported live objects fail during persistence. Restored sessions preserve
+state, not Python object identity. New default stores expire saved sessions 30 days after
+their last write; an invocation after expiry starts a fresh session.
 Existing stores retain their creation-time settings, and custom providers own their retention
 policies.
+
+Same-session requests are coordinated only within one host instance. Multi-worker deployments
+must coordinate overlapping requests for the same session; cross-host transactions and
+exactly-once execution are not guaranteed.
 
 ### Workflow checkpoints
 
