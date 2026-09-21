@@ -3116,13 +3116,16 @@ async def test_streaming_tool_approval_preserves_structured_value(
     def echo(text: str) -> str:
         return text
 
-    default_options = {"response_format": Answer} if via == "default_options" else None
-    run_options = {"response_format": Answer} if via == "run_options" else None
+    # ``Any`` keeps the parametrized options out of ``Agent``'s generic client/options
+    # inference: the plain response-format dicts cannot be unified with the fixture's
+    # ``MockBaseChatClient[ChatOptions[None]]`` client type.
+    default_options: Any = {"response_format": Answer} if via == "default_options" else None
+    run_options: Any = {"response_format": Answer} if via == "run_options" else None
     agent = Agent(
         client=chat_client_base,
         tools=[echo],
         middleware=[ToolApprovalMiddleware()],
-        default_options=default_options,  # type: ignore[arg-type, typeddict-item]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        default_options=default_options,
     )
     session = AgentSession(session_id=f"structured-stream-{via}")
     chat_client_base.streaming_responses = [
@@ -3286,3 +3289,45 @@ async def test_non_streaming_tool_approval_preserves_structured_value(
 
     assert isinstance(response.value, Answer)
     assert response.value.answer == "42"
+
+
+async def test_streaming_tool_approval_defers_structured_parse_error_to_value_access(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    """A structured-output parse failure must surface on ``value`` access, not while streaming.
+
+    The outer finalizer resolves the terminal inner response's value eagerly so a coalesced
+    preamble cannot mask it (#7418). When that resolution fails, the value is left unset so
+    the outer response still parses lazily on ``value`` access — streaming iteration and
+    finalization succeed, matching the error timing of a middleware-free streaming run.
+    """
+    from pydantic import BaseModel
+
+    class Answer(BaseModel):
+        answer: str
+
+    bad_text = "not json"
+
+    agent = Agent(
+        client=chat_client_base,
+        middleware=[ToolApprovalMiddleware()],
+    )
+    session = AgentSession(session_id="structured-stream-parse-error")
+    chat_client_base.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                role="assistant",
+                contents=[Content.from_text(bad_text)],
+                finish_reason="stop",
+            )
+        ]
+    ]
+
+    stream = agent.run("return an Answer", stream=True, session=session, options={"response_format": Answer})
+    async for _ in stream:
+        pass  # must not raise
+    response = await stream.get_final_response()
+
+    assert response.text == bad_text
+    with pytest.raises(ValueError):
+        _ = response.value

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import inspect
 import json
@@ -91,7 +92,8 @@ def _structured_response_format(context: AgentContext) -> Any | None:
             return response_format
     default_options = getattr(context.agent, "default_options", None)
     if isinstance(default_options, Mapping):
-        return default_options.get("response_format")
+        typed_default_options = cast("Mapping[str, Any]", default_options)
+        return typed_default_options.get("response_format")
     return None
 
 
@@ -460,9 +462,11 @@ class ToolApprovalMiddleware(AgentMiddleware):
         call_next: Callable[[], Awaitable[None]],
         state: ToolApprovalState,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
-        # Last inner AgentResponse. Its already-parsed structured value is carried
-        # over by the outer finalizer so an auto-approved preamble that
-        # AgentResponse.from_updates coalesces into the JSON message cannot mask it.
+        # Last inner AgentResponse. The outer finalizer resolves its structured
+        # value (completing its lazy parse) and forwards it through the public
+        # ``from_updates(value=...)`` contract, so an auto-approved preamble that
+        # the outer aggregation coalesces into the JSON message cannot mask it
+        # (#7418).
         holder: dict[str, AgentResponse | None] = {"final": None}
         response_format = _structured_response_format(context)
 
@@ -535,18 +539,22 @@ class ToolApprovalMiddleware(AgentMiddleware):
 
         def _finalize(updates: Sequence[AgentResponseUpdate]) -> AgentResponse:
             # Build the response from the streamed updates so the middleware's
-            # approval / user-input handling is preserved, then carry over the
-            # structured value already parsed by the inner response. The coalesced
-            # update text can include preamble from auto-approved turns, which would
-            # otherwise mask the parsed value (#7418).
-            response = AgentResponse.from_updates(updates, output_format_type=response_format)
+            # approval / user-input handling is preserved. The coalesced update text
+            # can include preamble from auto-approved turns, which would otherwise be
+            # parsed as one invalid string, so resolve the terminal inner response's
+            # structured value — reading ``value`` also completes its lazy parse — and
+            # forward it via ``from_updates``' public ``value`` argument (#7418). A
+            # parse failure is left unset so the outer response still surfaces the
+            # error lazily on ``value`` access, matching the error timing of a
+            # middleware-free streaming run.
             final = holder["final"]
+            value: Any = None
             if final is not None:
-                value = final.value
-                if final._value_parsed:  # pyright: ignore[reportPrivateUsage]
-                    response._value = value  # pyright: ignore[reportPrivateUsage]
-                    response._value_parsed = True  # pyright: ignore[reportPrivateUsage]
-            return response
+                # ``ValidationError`` subclasses ``ValueError``; ``TypeError`` covers a
+                # malformed ``response_format`` in the terminal inner response.
+                with contextlib.suppress(ValueError, TypeError):
+                    value = final.value
+            return AgentResponse.from_updates(updates, output_format_type=response_format, value=value)
 
         return ResponseStream(_stream(), finalizer=_finalize)
 
