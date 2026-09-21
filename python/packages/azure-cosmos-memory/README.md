@@ -311,7 +311,7 @@ memory_provider = CosmosMemoryContextProvider(
     credential=DefaultAzureCredential(),          # Azure credential
 
     # Memory retrieval options
-    top_k=5,                                      # Number of memories to retrieve
+    top_k=5,                                      # Shared fact/episode result limit
     min_confidence=0.7,                           # Minimum confidence score (0.0-1.0)
     memory_types=["fact", "procedural"],          # Types to retrieve
 
@@ -326,16 +326,19 @@ memory_provider = CosmosMemoryContextProvider(
 
 ### Memory Types
 
-The provider retrieves four types of memories:
+The provider retrieves three types of memories:
 
 | Type | Description | Default TTL |
 |------|-------------|-------------|
 | **fact** | Declarative knowledge ("user prefers dark mode") | None |
 | **procedural** | Behavioral rules ("always confirm before deleting") | None |
 | **episodic** | Past experiences with context and outcomes | 90 days |
-| **unclassified** | Memories that couldn't be confidently classified | None |
 
 Each memory has a confidence score (0.0-1.0). Use `min_confidence` to filter low-quality extractions.
+With Agent Memory Toolkit 0.3.0b2 or later, facts and selected episodes are ranked together under
+the single `top_k` limit. Selected procedures are compiled separately for the current task and do
+not consume that ranking budget. Older supported Toolkit versions retain their generic retrieval
+behavior.
 
 ### Processing Pipeline
 
