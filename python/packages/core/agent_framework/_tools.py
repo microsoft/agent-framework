@@ -3575,6 +3575,7 @@ def _collect_approval_responses(
     *,
     non_approval_result_ids: set[int] | None = None,
     protected_response_ids: set[int] | None = None,
+    protected_result_ids_to_remove: set[int] | None = None,
 ) -> dict[str, Content]:
     """Collect approval responses (both approved and rejected) from messages.
 
@@ -3589,7 +3590,10 @@ def _collect_approval_responses(
     latest_requests_by_id: dict[str, Content] = {}
     request_ids_by_occurrence: dict[str, str] = {}
     response_requests: dict[int, Content] = {}
+    protected_requests: list[Content] = []
     closed_request_occurrences: set[int] = set()
+    latest_closed_request_by_call_id: dict[str, Content] = {}
+    result_ids_by_request_occurrence: dict[int, set[int]] = {}
     resolved_response_ids: set[int] = set()
     for message in messages:
         for content in message.contents:
@@ -3621,10 +3625,13 @@ def _collect_approval_responses(
                 approval_responses.append(content)
                 if content.id is not None:
                     pending_by_approval_id[content.id] = content
-                if not is_protected and request is not None:
-                    response_requests[id(content)] = request
-                    if request.id is not None and pending_requests_by_id.get(request.id) is request:
-                        pending_requests_by_id.pop(request.id, None)
+                if request is not None:
+                    if is_protected:
+                        protected_requests.append(request)
+                    else:
+                        response_requests[id(content)] = request
+                        if request.id is not None and pending_requests_by_id.get(request.id) is request:
+                            pending_requests_by_id.pop(request.id, None)
                 pending_by_call_id.setdefault(function_call.call_id, deque()).append(content)
                 continue
             if content.call_id is None:
@@ -3662,8 +3669,16 @@ def _collect_approval_responses(
             if pending_requests:
                 request = pending_requests.popleft()
                 closed_request_occurrences.add(id(request))
+                latest_closed_request_by_call_id[content.call_id] = request
+                result_ids_by_request_occurrence.setdefault(id(request), set()).add(id(content))
                 if request.id is not None and pending_requests_by_id.get(request.id) is request:
                     pending_requests_by_id.pop(request.id, None)
+            elif request := latest_closed_request_by_call_id.get(content.call_id):
+                result_ids_by_request_occurrence.setdefault(id(request), set()).add(id(content))
+
+    if protected_result_ids_to_remove is not None:
+        for request in protected_requests:
+            protected_result_ids_to_remove.update(result_ids_by_request_occurrence.get(id(request), ()))
 
     collected_responses: dict[str, Content] = {}
     for content in approval_responses:
@@ -4563,15 +4578,24 @@ async def _resolve_approval_responses(
             prepared_messages.append(Message(role="user", contents=ordered_responses))
 
     # 2. With no new decision, hide any still-pending batch from model input while keeping it resumable in history.
+    protected_result_ids_to_remove: set[int] = set()
     if not (
         pending_approval_responses := _collect_approval_responses(
             prepared_messages,
             non_approval_result_ids=host_result_ids,
             protected_response_ids=bound_response_ids,
+            protected_result_ids_to_remove=protected_result_ids_to_remove,
         )
     ):
         _remove_unanswered_approval_batches_from_model_input(prepared_messages)
         return _FunctionProcessingResult(errors_in_a_row=errors_in_a_row)
+
+    if protected_result_ids_to_remove:
+        for message in prepared_messages:
+            message.contents = [
+                content for content in message.contents if id(content) not in protected_result_ids_to_remove
+            ]
+        prepared_messages[:] = [message for message in prepared_messages if message.contents]
 
     if bound_response_ids:
         pending = _load_pending_approval_requests(approval_session)
