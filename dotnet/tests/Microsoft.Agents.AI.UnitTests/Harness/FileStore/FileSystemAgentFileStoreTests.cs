@@ -3,6 +3,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
@@ -152,6 +153,68 @@ public sealed class FileSystemAgentFileStoreTests : IDisposable
 
         // Assert
         Assert.Null(content);
+    }
+
+    [Fact]
+    public async Task WriteAsync_WritesUtf8WithoutByteOrderMarkAsync()
+    {
+        // Asserted on the bytes on disk, not through ReadAsync: the reader strips a BOM, so a
+        // write/read round trip passes whether or not one was written and cannot catch this.
+
+        // Arrange
+        const string Content = "hello world";
+
+        // Act
+        await this._store.WriteAsync("bom.txt", Content);
+
+        // Assert
+        byte[] bytes = File.ReadAllBytes(Path.Combine(this._rootDir, "bom.txt"));
+        Assert.Equal(Encoding.UTF8.GetBytes(Content), bytes);
+        Assert.False(
+            bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF,
+            "the file must not start with a UTF-8 byte order mark");
+    }
+
+    [Fact]
+    public async Task WriteAsync_NonAsciiContentIsStillUtf8Async()
+    {
+        // Guards the other direction of the encoding change: dropping the BOM must not narrow the
+        // encoding. Multi-byte text has to survive byte-for-byte and round trip unchanged.
+
+        // Arrange
+        const string Content = "héllo wörld 日本語 🎉";
+
+        // Act
+        await this._store.WriteAsync("unicode.txt", Content);
+
+        // Assert
+        byte[] bytes = File.ReadAllBytes(Path.Combine(this._rootDir, "unicode.txt"));
+        Assert.Equal(Encoding.UTF8.GetBytes(Content), bytes);
+        Assert.Equal(Content, await this._store.ReadAsync("unicode.txt"));
+    }
+
+    [Fact]
+    public async Task ReadAsync_StripsByteOrderMarkFromPreexistingFileAsync()
+    {
+        // Backward compatibility: files written before this change still begin with EF BB BF and
+        // must keep loading without a stray leading U+FEFF.
+        //
+        // Note what this does and does not catch. It passes with or without the write-side fix, so
+        // it is not a regression test for that; and swapping the read encoding would not break it
+        // either, because the reader strips the mark through byte-order-mark detection rather than
+        // through the encoding argument. What it does pin is that BOM detection stays enabled on
+        // this path -- reading the bytes directly, or disabling detection, would surface the mark.
+
+        // Arrange - a file written the way the store used to write it
+        const string Content = "legacy content";
+        File.WriteAllText(Path.Combine(this._rootDir, "legacy.txt"), Content, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+
+        // Act
+        string? read = await this._store.ReadAsync("legacy.txt");
+
+        // Assert
+        Assert.Equal(Content, read);
+        Assert.DoesNotContain('\uFEFF', read!);
     }
 
     #endregion
