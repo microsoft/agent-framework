@@ -28,6 +28,17 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
     protected override IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
         => this.InnerAgent.RunStreamingAsync(messages, session, this.AgentRunOptionsWithFunctionMiddleware(options), cancellationToken);
 
+    /// <summary>
+    /// Wraps <paramref name="function"/> with the function invocation callbacks that have not yet run for the
+    /// invocation of <paramref name="context"/>.
+    /// </summary>
+    /// <param name="context">The context of the callback that is currently running.</param>
+    /// <param name="function">The function to wrap.</param>
+    /// <returns>The wrapped function, or <paramref name="function"/> when no further callbacks are pending.</returns>
+    /// <exception cref="InvalidOperationException">No function invocation callback is running for <paramref name="context"/>.</exception>
+    internal static AIFunction WrapWithPendingMiddleware(FunctionInvocationContext context, AIFunction function)
+        => MiddlewareEnabledFunction.WrapWithPendingMiddleware(context, function);
+
     // Work on a per-run copy so adding callback support does not change options that the caller may reuse.
     private ChatClientAgentRunOptions AgentRunOptionsWithFunctionMiddleware(AgentRunOptions? options)
     {
@@ -201,6 +212,29 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
             return new MiddlewareEnabledFunction(function, middleware, middlewareChain);
         }
 
+        internal static AIFunction WrapWithPendingMiddleware(FunctionInvocationContext context, AIFunction function)
+        {
+            for (var active = s_invocationScope.Value; active is not null; active = active.Parent)
+            {
+                if (ReferenceEquals(active.Context, context))
+                {
+                    // Functions are wrapped from the last callback to the first, so the callbacks that
+                    // still have to run for this invocation are the ones before the running callback.
+                    var chain = active.MiddlewareChain;
+                    var pendingCount = Array.IndexOf(chain, active.Middleware);
+                    for (var i = 0; i < pendingCount; i++)
+                    {
+                        function = Wrap(function, chain[i], chain);
+                    }
+
+                    return function;
+                }
+            }
+
+            throw new InvalidOperationException(
+                $"No function invocation callback is running for the supplied {nameof(FunctionInvocationContext)}.");
+        }
+
         protected override async ValueTask<object?> InvokeCoreAsync(AIFunctionArguments arguments, CancellationToken cancellationToken)
         {
             var context = FunctionInvokingChatClient.CurrentContext
@@ -213,6 +247,9 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
                 };
 
             var previous = s_invocationScope.Value;
+            // The callback can redirect the call by assigning a different function to the context.
+            var targetBeforeCallback = context.Function;
+
             // A custom function wrapper can lead back to this callback during the same call. Run it only once.
             for (var active = previous; active is not null; active = active.Parent)
             {
@@ -222,12 +259,13 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
                 }
             }
 
-            // Record the callback while it runs, including through wrappers that do not expose their inner function.
-            s_invocationScope.Value = new(context, this._middleware, previous);
-
             // ChatOptions.Clone keeps function wrappers but copies the tool list into a plain collection.
             // In that case, use the callback list saved on this function.
             var middlewareChain = (context.Options?.Tools as MiddlewareEnabledTools)?.MiddlewareChain ?? this._middlewareChain;
+
+            // Record the callback while it runs, including through wrappers that do not expose their inner function.
+            s_invocationScope.Value = new(context, this._middleware, middlewareChain, previous);
+
             try
             {
                 return await this._middleware._delegateFunc(this._middleware.InnerAgent, context, CoreLogicAsync, cancellationToken).ConfigureAwait(false);
@@ -241,16 +279,28 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
                 }
             }
 
-            // Continue with the next function wrapper using any arguments changed by the callback.
+            // Continue with the function the callback selected, using any arguments it changed.
+            // Every callback in the chain sees the same ctx.Function: the outermost wrapper that
+            // FunctionInvokingChatClient resolved from the tool list. base.InvokeCoreAsync instead continues
+            // with this wrapper's inner function, which is the next step of the chain. Invoking ctx.Function
+            // while it still holds that wrapper would restart the chain from the top and recurse endlessly.
             ValueTask<object?> CoreLogicAsync(FunctionInvocationContext ctx, CancellationToken cancellationToken)
-                => base.InvokeCoreAsync(ctx.Arguments, cancellationToken);
+                => ReferenceEquals(ctx.Function, targetBeforeCallback)
+                    // The callback kept the target, so continue with the next function wrapper.
+                    ? base.InvokeCoreAsync(ctx.Arguments, cancellationToken)
+                    // The callback replaced the target with a function outside the chain, so invoke that instead.
+                    : ctx.Function.InvokeAsync(ctx.Arguments, cancellationToken);
         }
 
         private sealed class InvocationScope(
-            FunctionInvocationContext context, FunctionInvocationDelegatingAgent middleware, InvocationScope? parent)
+            FunctionInvocationContext context,
+            FunctionInvocationDelegatingAgent middleware,
+            FunctionInvocationDelegatingAgent[] middlewareChain,
+            InvocationScope? parent)
         {
             internal FunctionInvocationContext Context { get; } = context;
             internal FunctionInvocationDelegatingAgent Middleware { get; } = middleware;
+            internal FunctionInvocationDelegatingAgent[] MiddlewareChain { get; } = middlewareChain;
             internal InvocationScope? Parent { get; } = parent;
         }
     }
