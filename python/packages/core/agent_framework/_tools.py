@@ -3568,20 +3568,46 @@ def _collect_approval_responses(
     approval_responses: list[Content] = []
     pending_by_call_id: dict[str, deque[Content]] = {}
     pending_by_approval_id: dict[str, Content] = {}
+    pending_requests_by_call_id: dict[str, deque[Content]] = {}
+    pending_requests_by_id: dict[str, Content] = {}
+    latest_requests_by_id: dict[str, Content] = {}
+    request_ids_by_occurrence: dict[str, str] = {}
+    response_requests: dict[int, Content] = {}
+    closed_request_occurrences: set[int] = set()
     resolved_response_ids: set[int] = set()
     for message in messages:
         for content in message.contents:
             if content.type == "function_approval_request" and content.id is not None:
                 if superseded := pending_by_approval_id.pop(content.id, None):
                     resolved_response_ids.add(id(superseded))
+                function_call = content.function_call
+                if (
+                    function_call is not None
+                    and function_call.call_id is not None
+                    and not _is_hosted_tool_approval(content)
+                    and content.id not in pending_requests_by_id
+                ):
+                    pending_requests_by_id[content.id] = content
+                    latest_requests_by_id[content.id] = content
+                    pending_requests_by_call_id.setdefault(function_call.call_id, deque()).append(content)
+                    if function_call.id is not None:
+                        request_ids_by_occurrence[function_call.id] = content.id
                 continue
             if content.type == "function_approval_response" and not _is_hosted_tool_approval(content):
                 function_call = content.function_call
                 if function_call is None or function_call.call_id is None:
                     continue
+                request_id = request_ids_by_occurrence.get(content.id, content.id) if content.id is not None else None
+                request = latest_requests_by_id.get(request_id) if request_id is not None else None
+                if request is not None and id(request) in closed_request_occurrences:
+                    continue
                 approval_responses.append(content)
                 if content.id is not None:
                     pending_by_approval_id[content.id] = content
+                if request is not None:
+                    response_requests[id(content)] = request
+                    if request.id is not None and pending_requests_by_id.get(request.id) is request:
+                        pending_requests_by_id.pop(request.id, None)
                 pending_by_call_id.setdefault(function_call.call_id, deque()).append(content)
                 continue
             if content.call_id is None:
@@ -3601,8 +3627,24 @@ def _collect_approval_responses(
             if pending_responses:
                 resolved = pending_responses.popleft()
                 resolved_response_ids.add(id(resolved))
+                if request := response_requests.get(id(resolved)):
+                    closed_request_occurrences.add(id(request))
                 if resolved.id is not None and pending_by_approval_id.get(resolved.id) is resolved:
                     pending_by_approval_id.pop(resolved.id, None)
+                continue
+            if not is_terminal_result:
+                continue
+            pending_requests = pending_requests_by_call_id.get(content.call_id)
+            while pending_requests and (
+                pending_requests[0].id is None
+                or pending_requests_by_id.get(pending_requests[0].id) is not pending_requests[0]
+            ):
+                pending_requests.popleft()
+            if pending_requests:
+                request = pending_requests.popleft()
+                closed_request_occurrences.add(id(request))
+                if request.id is not None and pending_requests_by_id.get(request.id) is request:
+                    pending_requests_by_id.pop(request.id, None)
 
     collected_responses: dict[str, Content] = {}
     for content in approval_responses:
@@ -3616,7 +3658,9 @@ def _collect_unanswered_approval_requests(messages: Sequence[Message]) -> list[C
     unanswered_by_id: dict[str, Content] = {}
     requests_by_call_id: dict[str, deque[Content]] = {}
     request_ids_by_occurrence: dict[str, str] = {}
-    answered_request_ids_by_call_id: dict[str, deque[str]] = {}
+    latest_requests_by_id: dict[str, Content] = {}
+    closed_request_occurrences: set[int] = set()
+    answered_requests_by_call_id: dict[str, deque[Content | None]] = {}
 
     for message in messages:
         for content in message.contents:
@@ -3626,6 +3670,7 @@ def _collect_unanswered_approval_requests(messages: Sequence[Message]) -> list[C
                     continue
                 if content.id not in unanswered_by_id:
                     unanswered_by_id[content.id] = content
+                    latest_requests_by_id[content.id] = content
                     requests_by_call_id.setdefault(function_call.call_id, deque()).append(content)
                     if function_call.id is not None:
                         request_ids_by_occurrence[function_call.id] = content.id
@@ -3634,9 +3679,13 @@ def _collect_unanswered_approval_requests(messages: Sequence[Message]) -> list[C
                 function_call = content.function_call
                 if content.id is not None:
                     request_id = request_ids_by_occurrence.get(content.id, content.id)
-                    unanswered_by_id.pop(request_id, None)
+                    request = latest_requests_by_id.get(request_id)
+                    if request is not None and id(request) in closed_request_occurrences:
+                        continue
+                    if request is not None and unanswered_by_id.get(request_id) is request:
+                        unanswered_by_id.pop(request_id, None)
                     if function_call is not None and function_call.call_id is not None:
-                        answered_request_ids_by_call_id.setdefault(function_call.call_id, deque()).append(request_id)
+                        answered_requests_by_call_id.setdefault(function_call.call_id, deque()).append(request)
                 continue
             if content.call_id is None:
                 continue
@@ -3647,15 +3696,18 @@ def _collect_unanswered_approval_requests(messages: Sequence[Message]) -> list[C
             }
             if not (is_terminal_result or is_follow_up_request):
                 continue
-            answered_requests = answered_request_ids_by_call_id.get(content.call_id)
+            answered_requests = answered_requests_by_call_id.get(content.call_id)
             if answered_requests:
-                answered_requests.popleft()
+                request = answered_requests.popleft()
+                if request is not None:
+                    closed_request_occurrences.add(id(request))
                 continue
             requests = requests_by_call_id.get(content.call_id)
             while requests and (requests[0].id is None or unanswered_by_id.get(requests[0].id) is not requests[0]):
                 requests.popleft()
             if requests:
                 resolved = requests.popleft()
+                closed_request_occurrences.add(id(resolved))
                 if resolved.id is not None:
                     unanswered_by_id.pop(resolved.id, None)
 

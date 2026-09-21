@@ -6030,6 +6030,28 @@ def test_collect_approval_responses_consumes_matching_follow_up_request_occurren
 
 
 @pytest.mark.parametrize("result", ["done", "before [APPROVAL_PENDING] after", "[APPROVAL_PENDING]"])
+def test_collect_approval_responses_discards_response_after_terminal_result(result: str) -> None:
+    """A stale response cannot execute after its request occurrence was terminalized."""
+    from agent_framework._tools import _collect_approval_responses
+
+    first_call, first_request, stale_response = _build_approved_tool_roundtrip(
+        call_id="reused", approval_id="approval_1", tool_name="guarded"
+    )
+    second_call, second_request, second_response = _build_approved_tool_roundtrip(
+        call_id="reused", approval_id="approval_2", tool_name="guarded"
+    )
+    messages = [
+        Message(role="assistant", contents=[first_call, first_request]),
+        Message(role="tool", contents=[Content.from_function_result(call_id="reused", result=result)]),
+        Message(role="user", contents=[stale_response]),
+        Message(role="assistant", contents=[second_call, second_request]),
+        Message(role="user", contents=[second_response]),
+    ]
+
+    assert _collect_approval_responses(messages) == {"approval_2": second_response}
+
+
+@pytest.mark.parametrize("result", ["done", "before [APPROVAL_PENDING] after", "[APPROVAL_PENDING]"])
 def test_collect_unanswered_approval_requests_consumes_terminal_result(result: str) -> None:
     """Result text cannot keep a completed request pending or consume its reused-id sibling."""
     from agent_framework._tools import _collect_unanswered_approval_requests
@@ -6046,6 +6068,28 @@ def test_collect_unanswered_approval_requests_consumes_terminal_result(result: s
         Message(role="assistant", contents=[second_call, second_request]),
     ]
     assert _collect_unanswered_approval_requests(messages) == [second_request]
+
+
+@pytest.mark.parametrize("result", ["done", "before [APPROVAL_PENDING] after", "[APPROVAL_PENDING]"])
+def test_collect_unanswered_approval_requests_discards_response_after_terminal_result(result: str) -> None:
+    """A stale response cannot consume the result for a later reused-call-id request."""
+    from agent_framework._tools import _collect_unanswered_approval_requests
+
+    first_call, first_request, stale_response = _build_approved_tool_roundtrip(
+        call_id="reused", approval_id="approval_1", tool_name="guarded"
+    )
+    second_call, second_request, _ = _build_approved_tool_roundtrip(
+        call_id="reused", approval_id="approval_2", tool_name="guarded"
+    )
+    messages = [
+        Message(role="assistant", contents=[first_call, first_request]),
+        Message(role="tool", contents=[Content.from_function_result(call_id="reused", result=result)]),
+        Message(role="user", contents=[stale_response]),
+        Message(role="assistant", contents=[second_call, second_request]),
+        Message(role="tool", contents=[Content.from_function_result(call_id="reused", result="second result")]),
+    ]
+
+    assert _collect_unanswered_approval_requests(messages) == []
 
 
 def test_pending_approval_batch_filter_keeps_resolved_sibling_pair() -> None:

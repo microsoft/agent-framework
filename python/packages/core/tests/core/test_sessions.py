@@ -467,6 +467,31 @@ def test_filter_approval_controls_consumes_terminal_result_regardless_of_text(re
     assert any(terminal_result in message.contents for message in filtered)
 
 
+@pytest.mark.parametrize("result", ["done", "before [APPROVAL_PENDING] after", "[APPROVAL_PENDING]"])
+def test_filter_approval_controls_discards_response_after_terminal_result(result: str) -> None:
+    """A late response belongs to the closed occurrence, not a reused-call-id sibling."""
+    first_call = Content.from_function_call(call_id="reused", name="guarded", arguments="{}")
+    first_request = Content.from_function_approval_request(id="approval_1", function_call=first_call)
+    stale_response = first_request.to_function_approval_response(approved=True)
+    second_call = Content.from_function_call(call_id="reused", name="guarded", arguments="{}")
+    second_request = Content.from_function_approval_request(id="approval_2", function_call=second_call)
+
+    filtered = _filter_approval_control_messages([
+        Message(role="assistant", contents=[first_call, first_request]),
+        Message(role="tool", contents=[Content.from_function_result(call_id="reused", result=result)]),
+        Message(role="user", contents=[stale_response]),
+        Message(role="assistant", contents=[second_call, second_request]),
+    ])
+
+    controls = [
+        content
+        for message in filtered
+        for content in message.contents
+        if content.type in {"function_approval_request", "function_approval_response"}
+    ]
+    assert controls == [second_request]
+
+
 def _replacement_approval_round(
     *,
     call_id: str,
