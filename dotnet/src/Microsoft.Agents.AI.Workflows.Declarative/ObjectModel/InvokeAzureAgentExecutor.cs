@@ -92,28 +92,28 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, ResponseA
         // Attempt to parse the last message as JSON and assign to the response object variable.
         PropertyPath? responseObjectPath = this.AgentOutput?.ResponseObject?.Path;
         string? lastMessageText = agentResponse.Messages.LastOrDefault()?.Text;
-        if (responseObjectPath is not null && !string.IsNullOrEmpty(lastMessageText))
+        if (responseObjectPath is not null)
         {
-            FormulaValue? responseObjectValue = null;
-            try
+            FormulaValue responseObjectValue = FormulaValue.NewBlank();
+            if (!string.IsNullOrEmpty(lastMessageText))
             {
-                using JsonDocument jsonDocument = JsonDocument.Parse(lastMessageText);
-                responseObjectValue = jsonDocument.ParseJsonValue(lastMessageText).ToFormula();
-            }
-            catch (JsonException)
-            {
-                // Not valid JSON — skip assignment.
-            }
-            catch (DeclarativeWorkflowException)
-            {
-                // Valid JSON, but not convertible to a workflow value (e.g. a mixed-type or nested array).
-                // Output parsing is best-effort — skip assignment rather than fail the action.
+                try
+                {
+                    using JsonDocument jsonDocument = JsonDocument.Parse(lastMessageText);
+                    responseObjectValue = jsonDocument.ParseJsonValue(lastMessageText).ToFormula();
+                }
+                catch (JsonException)
+                {
+                    // Not valid JSON — leave the current response blank.
+                }
+                catch (DeclarativeWorkflowException)
+                {
+                    // Valid JSON, but not convertible to a workflow value (e.g. a mixed-type or nested array).
+                    // Output parsing is best-effort — leave the current response blank rather than fail the action.
+                }
             }
 
-            if (responseObjectValue is not null)
-            {
-                await this.AssignAsync(responseObjectPath, responseObjectValue, context).ConfigureAwait(false);
-            }
+            await this.AssignAsync(responseObjectPath, responseObjectValue, context).ConfigureAwait(false);
         }
 
         if (this.Model.Input?.ExternalLoop?.When is not null)

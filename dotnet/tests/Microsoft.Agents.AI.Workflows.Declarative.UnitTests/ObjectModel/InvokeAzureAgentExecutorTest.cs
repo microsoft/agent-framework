@@ -211,6 +211,32 @@ public sealed class InvokeAzureAgentExecutorTest(ITestOutputHelper output) : Wor
         Assert.Equal(42d, number.Value);
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("hello world")]
+    [InlineData("""["alpha",1]""")]
+    [InlineData("[[1,2],[3,4]]")]
+    public async Task InvalidResponseObjectOutputClearsPreviousValueAsync(string responseText)
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        this.State.Set(
+            "Result",
+            FormulaValue.NewRecordFromFields(new NamedValue("allow", FormulaValue.New(true))));
+        CapturingAgentProvider provider = new(responseText);
+        InvokeAzureAgent model =
+            this.CreateModel(
+                displayName: nameof(InvalidResponseObjectOutputClearsPreviousValueAsync),
+                agentName: "BrainInvalidResponse",
+                responseObjectVariable: "Result");
+
+        // Act
+        await this.ExecuteAsync(new InvokeAzureAgentExecutor(model, provider, this.State), isDiscrete: false);
+
+        // Assert
+        this.VerifyUndefined("Result");
+    }
+
     [Fact]
     public async Task MixedJsonArrayOutputSkipsAssignmentAsync()
     {
