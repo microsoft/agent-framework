@@ -30,13 +30,13 @@ import time
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Mapping, MutableMapping
 from pathlib import Path
-from typing import Annotated, Any, ClassVar, Protocol, cast
+from typing import Annotated, Any, ClassVar, Final, Protocol, cast
 
 import regex
 from pydantic import BaseModel, Field
 
 from .._feature_stage import ExperimentalFeature, experimental
-from .._filesystem import _is_link_or_reparse_point  # pyright: ignore[reportPrivateUsage]
+from .._filesystem import _is_link_or_reparse_point, _storage_key_segment  # pyright: ignore[reportPrivateUsage]
 from .._serialization import SerializationMixin
 from .._sessions import AgentSession, ContextProvider, SessionContext
 from .._telemetry import FeatureIndex, mark_feature_used
@@ -63,6 +63,24 @@ DEFAULT_FILE_ACCESS_INSTRUCTIONS = (
     "- To change part of a file, find the line numbers with `file_access_grep`, "
     "read the range around them with `file_access_read_lines`, then edit with "
     "`file_access_replace_lines`. Reading the whole file first is rarely necessary."
+)
+
+# Prefix for session-derived working folders in session-scoped mode. Kept
+# distinct from the other component prefixes so the same identifier under a
+# different component never shares a storage location.
+_ENCODED_FILE_ACCESS_SESSION_PREFIX: Final[str] = "~access-"
+# Fixed namespace directory that wraps every session-scoped working folder.
+# _storage_key_segment returns literal-safe identifiers (such as "session-1")
+# unchanged, so without this outer segment a FileMemoryProvider and a
+# session-scoped FileAccessProvider sharing one store root would derive the
+# same working folder and could overwrite each other's files.
+_FILE_ACCESS_WORKSPACE_NAMESPACE: Final[str] = "~access-"
+
+# Instruction suffix appended when session-scoped mode is enabled, so the model
+# does not assume files are shared outside the resolved workspace.
+_SESSION_SCOPED_INSTRUCTIONS_SUFFIX = (
+    "\n- Your file workspace is isolated to the current session or configured scope: files written "
+    "here are not visible outside that workspace."
 )
 
 # Maximum number of characters of context to include on either side of the first
@@ -231,6 +249,15 @@ async def _run_search_with_timeout(
         return await asyncio.wait_for(work, timeout=_SEARCH_TIMEOUT_SECONDS)
     except (_SearchTimeout, asyncio.TimeoutError) as exc:
         raise ValueError(_search_timeout_message()) from exc
+
+
+def _combine_paths(base_path: str, relative_path: str) -> str:
+    """Join a working-folder path with a relative path using forward slashes."""
+    if not base_path:
+        return relative_path
+    if not relative_path:
+        return base_path
+    return f"{base_path.rstrip('/')}/{relative_path.lstrip('/')}"
 
 
 def _normalize_relative_path(path: str, *, is_directory: bool = False) -> str:
@@ -1683,10 +1710,12 @@ class FileAccessProvider(ContextProvider):
 
     Unlike :class:`~agent_framework.MemoryContextProvider`, which provides
     session-scoped memory that may be isolated per session,
-    :class:`FileAccessProvider` operates on a shared, persistent store whose
-    contents are visible across sessions and agents. The store is passed in by
-    the caller and should already be scoped to the desired folder or storage
-    location.
+    :class:`FileAccessProvider` operates by default on a shared, persistent
+    store whose contents are visible across sessions and agents. Pass
+    ``session_scoped=True`` (with an optional explicit ``scope``) to confine
+    tool operations to a workspace derived from the session id or scope
+    instead. The store is passed in by the caller and should already be scoped
+    to the desired folder or storage location.
 
     By default all tools require approval: each is registered with
     ``approval_mode="always_require"`` so the host must approve every file
@@ -1766,6 +1795,8 @@ class FileAccessProvider(ContextProvider):
         disable_write_tools: bool = False,
         disable_readonly_tool_approval: bool = False,
         disable_write_tool_approval: bool = False,
+        session_scoped: bool = False,
+        scope: str | None = None,
     ) -> None:
         """Initialize the file access provider.
 
@@ -1792,6 +1823,20 @@ class FileAccessProvider(ContextProvider):
                 ``file_access_replace``, ``file_access_replace_lines``) are
                 registered with ``approval_mode="never_require"`` so they run
                 without host approval. Defaults to ``False`` (approval required).
+            session_scoped: When ``True``, tool operations are confined to a
+                working folder derived from the active session id (or the
+                explicit ``scope``), so files are isolated to that workspace:
+                per session by default, or shared across sessions when an
+                explicit ``scope`` is set. Defaults to ``False``, preserving
+                the shared-store semantics. Passing a non-empty ``scope``
+                also enables scoped mode.
+            scope: The namespace that logically groups and isolates files
+                (for example, a user or tenant id). A non-empty ``scope``
+                enables scoped mode by itself; when ``None`` (the default)
+                and ``session_scoped`` is ``True``, the active session's
+                ``session_id`` is used. The value is treated as an opaque
+                key rather than a path: it is mapped onto exactly one folder
+                by :func:`~agent_framework._filesystem._storage_key_segment`.
         """
         super().__init__(source_id)
         self.store = store
@@ -1799,12 +1844,44 @@ class FileAccessProvider(ContextProvider):
         self.disable_write_tools = disable_write_tools
         self.disable_readonly_tool_approval = disable_readonly_tool_approval
         self.disable_write_tool_approval = disable_write_tool_approval
+        self.session_scoped = session_scoped
+        self.scope = scope
         # Serializes mutating tool operations (write/delete/replace/replace_lines).
         # The provider is shared across sessions/agents, so read-modify-write tools
         # (replace/replace_lines) could otherwise interleave and lose updates. Note
         # this only serializes within a single event loop/process, not across
         # processes sharing a FileSystemAgentFileStore on disk.
         self._write_lock = asyncio.Lock()
+
+    def _resolve_session_key(self, context: SessionContext) -> str:
+        """Resolve the working folder key for session-scoped mode.
+
+        Uses the configured ``scope`` when set, otherwise the session id. The
+        value is an opaque namespace key, not a path: it is mapped to exactly
+        one folder name by :func:`~agent_framework._filesystem._storage_key_segment`.
+        That derivation is injective except for pathologically long values,
+        which fall back to a collision-resistant digest. Two byte-distinct
+        scopes or session ids therefore do not resolve to the same working
+        folder, so a caller authorized for one of them cannot reach another's
+        files. The derived segment is placed inside a fixed ``~access-``
+        namespace directory, so a session-scoped file-access working folder
+        can never collide with a file-memory working folder even when both
+        providers share one store root and a literal-safe identifier.
+
+        Raises:
+            ValueError: When neither ``scope`` nor the session id yields a
+                namespace. Without one there is nothing to isolate on, and
+                falling back to the store root would expose every other
+                session's files.
+        """
+        raw_scope = self.scope or context.session_id or ""
+        if not raw_scope:
+            raise ValueError(
+                "FileAccessProvider session-scoped mode requires a scope: pass an explicit 'scope' or run with a "
+                "session that has a 'session_id'. Without one, files cannot be isolated from other sessions."
+            )
+        segment = _storage_key_segment(raw_scope, encoded_prefix=_ENCODED_FILE_ACCESS_SESSION_PREFIX)
+        return _combine_paths(_FILE_ACCESS_WORKSPACE_NAMESPACE, segment)
 
     @staticmethod
     def _is_local_tool_call(function_call: Content) -> bool:
@@ -1909,13 +1986,26 @@ class FileAccessProvider(ContextProvider):
         readonly_approval: ApprovalMode = "never_require" if self.disable_readonly_tool_approval else "always_require"
         write_approval: ApprovalMode = "never_require" if self.disable_write_tool_approval else "always_require"
 
+        session_key = self._resolve_session_key(context) if (self.session_scoped or bool(self.scope)) else ""
+        if session_key:
+            logger.debug("Session-scoped file access using working folder %r.", session_key)
+            await self.store.create_directory(session_key)
+
+        def _session_path(relative_path: str) -> str:
+            return _combine_paths(session_key, relative_path)
+
+        instructions = self.instructions
+        if session_key:
+            instructions += _SESSION_SCOPED_INSTRUCTIONS_SUFFIX
+
         @tool(name=FileAccessProvider.WRITE_TOOL_NAME, schema=_WriteFileInput, approval_mode=write_approval)
         async def file_access_write(file_name: str, content: str, overwrite: bool = False) -> str:
             """Write a file with the given name and content. By default, does not overwrite an existing file unless overwrite is set to true."""  # ruff:ignore[line-too-long]
             try:
                 normalized = _normalize_relative_path(file_name)
+                store_path = _session_path(normalized)
                 async with self._write_lock:
-                    await self.store.write(normalized, content, overwrite=overwrite)
+                    await self.store.write(store_path, content, overwrite=overwrite)
             except FileExistsError:
                 return f"File '{file_name}' already exists. To replace it, write again with overwrite set to true."
             except ValueError as exc:
@@ -1929,7 +2019,7 @@ class FileAccessProvider(ContextProvider):
             r"""Read the content of a file by name. Returns the file content or a message indicating the file could not be read. Line numbers count lines split on \n only: a lone \r never starts a new line, each line keeps its own terminator, and content ending in a newline has a final empty line."""  # ruff:ignore[line-too-long]
             try:
                 normalized = _normalize_relative_path(file_name)
-                content = await self.store.read(normalized)
+                content = await self.store.read(_session_path(normalized))
             except ValueError as exc:
                 return f"Could not read file '{file_name}': {exc}"
             except OSError as exc:
@@ -1945,7 +2035,7 @@ class FileAccessProvider(ContextProvider):
             r"""Read part of a file by 1-based inclusive line number; omit end_line to read to the end of the file, and an end_line past the last line is clamped. Each line is prefixed with its number and a tab; everything after that tab is verbatim, including the line's own terminator, so it can be reused as a file_access_replace_lines new_line. Line numbers count lines split on \n only: a lone \r never starts a new line, each line keeps its own terminator, and content ending in a newline has a final empty line."""  # ruff:ignore[line-too-long]
             try:
                 normalized = _normalize_relative_path(file_name)
-                content = await self.store.read(normalized)
+                content = await self.store.read(_session_path(normalized))
                 if content is None:
                     return f"File '{file_name}' not found."
                 sliced = _slice_lines(content, start_line, end_line)
@@ -1961,8 +2051,9 @@ class FileAccessProvider(ContextProvider):
             """Delete a file by name."""
             try:
                 normalized = _normalize_relative_path(file_name)
+                store_path = _session_path(normalized)
                 async with self._write_lock:
-                    deleted = await self.store.delete(normalized)
+                    deleted = await self.store.delete(store_path)
             except ValueError as exc:
                 return f"Could not delete file '{file_name}': {exc}"
             except OSError as exc:
@@ -1977,7 +2068,12 @@ class FileAccessProvider(ContextProvider):
             """List the direct child files and subdirectories of a directory. Omit ``directory`` (or pass an empty string) to list the root. To enumerate a subdirectory, pass its relative path, for example ``"reports"`` or ``"reports/2024"``. Optionally filter entries with a ``glob_pattern`` (e.g. ``"*.md"``). Subdirectories are listed before files, and each entry is ``{"name": <name>, "type": "file"|"directory"}``."""  # ruff:ignore[line-too-long]
             target = directory if directory and directory.strip() else ""
             try:
-                listed = await self.store.list_children(target)
+                if session_key:
+                    normalized_target = _normalize_relative_path(target, is_directory=True) if target else ""
+                    store_target = _session_path(normalized_target) if normalized_target else session_key
+                else:
+                    store_target = target
+                listed = await self.store.list_children(store_target)
             except ValueError as exc:
                 return f"Could not list directory '{directory or ''}': {exc}"
             except OSError as exc:
@@ -1996,12 +2092,13 @@ class FileAccessProvider(ContextProvider):
             """Replace occurrences of old_string with new_string in a file. Fails if old_string is not found, or if it occurs more than once and replace_all is false. Returns the number of occurrences replaced."""  # ruff:ignore[line-too-long]
             try:
                 normalized = _normalize_relative_path(file_name)
+                store_path = _session_path(normalized)
                 async with self._write_lock:
-                    content = await self.store.read(normalized)
+                    content = await self.store.read(store_path)
                     if content is None:
                         return f"File '{file_name}' not found."
                     new_content, count = _apply_replace(content, old_string, new_string, replace_all)
-                    await self.store.write(normalized, new_content, overwrite=True)
+                    await self.store.write(store_path, new_content, overwrite=True)
             except ValueError as exc:
                 return f"Could not replace in file '{file_name}': {exc}"
             except OSError as exc:
@@ -2017,12 +2114,13 @@ class FileAccessProvider(ContextProvider):
             r"""Replace lines in a file. Provide a list of edits, each with a 1-based line_number and a literal new_line (include your own trailing newline); an empty new_line deletes the line, including its line break. Fails on out-of-range or duplicate line numbers. Line numbers count lines split on \n only: a lone \r never starts a new line, each line keeps its own terminator, and content ending in a newline has a final empty line."""  # ruff:ignore[line-too-long]
             try:
                 normalized = _normalize_relative_path(file_name)
+                store_path = _session_path(normalized)
                 async with self._write_lock:
-                    content = await self.store.read(normalized)
+                    content = await self.store.read(store_path)
                     if content is None:
                         return f"File '{file_name}' not found."
                     new_content = _apply_replace_lines(content, _line_edits(edits))
-                    await self.store.write(normalized, new_content, overwrite=True)
+                    await self.store.write(store_path, new_content, overwrite=True)
             except ValueError as exc:
                 return f"Could not edit file '{file_name}': {exc}"
             except OSError as exc:
@@ -2056,14 +2154,20 @@ class FileAccessProvider(ContextProvider):
             glob_filter = glob_pattern if glob_pattern and glob_pattern.strip() else None
             target = directory if directory and directory.strip() else ""
             try:
-                results = await self.store.search(target, regex_pattern, glob_filter, recursive=True)
+                if session_key:
+                    normalized_target = _normalize_relative_path(target, is_directory=True) if target else ""
+                    store_target = _session_path(normalized_target) if normalized_target else session_key
+                else:
+                    normalized_target = target
+                    store_target = target
+                results = await self.store.search(store_target, regex_pattern, glob_filter, recursive=True)
             except ValueError as exc:
                 return f"Could not search files: {exc}"
             except OSError as exc:
                 return f"Could not search files: {exc.strerror or exc}"
             # ``store.search`` returns ``file_name`` relative to ``target``; re-root it to the store
             # root so the names compose directly with file_access_read/replace/delete.
-            prefix = target.strip("/")
+            prefix = normalized_target.strip("/")
             output: list[dict[str, Any]] = []
             for result in results:
                 entry = result.to_dict()
@@ -2072,7 +2176,7 @@ class FileAccessProvider(ContextProvider):
                 output.append(entry)
             return output
 
-        context.extend_instructions(self.source_id, [self.instructions])
+        context.extend_instructions(self.source_id, [instructions])
         tools = [file_access_read, file_access_read_lines, file_access_ls, file_access_grep]
         if not self.disable_write_tools:
             tools.extend([file_access_write, file_access_delete, file_access_replace, file_access_replace_lines])
