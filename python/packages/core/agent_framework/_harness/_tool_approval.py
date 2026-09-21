@@ -541,9 +541,11 @@ class ToolApprovalMiddleware(AgentMiddleware):
             # otherwise mask the parsed value (#7418).
             response = AgentResponse.from_updates(updates, output_format_type=response_format)
             final = holder["final"]
-            if final is not None and final._value_parsed:  # pyright: ignore[reportPrivateUsage]
-                response._value = final._value  # pyright: ignore[reportPrivateUsage]
-                response._value_parsed = True  # pyright: ignore[reportPrivateUsage]
+            if final is not None:
+                value = final.value
+                if final._value_parsed:  # pyright: ignore[reportPrivateUsage]
+                    response._value = value  # pyright: ignore[reportPrivateUsage]
+                    response._value_parsed = True  # pyright: ignore[reportPrivateUsage]
             return response
 
         return ResponseStream(_stream(), finalizer=_finalize)
