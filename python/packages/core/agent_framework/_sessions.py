@@ -831,11 +831,6 @@ class ContextProvider:
         """
 
 
-def _is_approval_placeholder_result(content: Content) -> bool:
-    result = getattr(content, "result", None)
-    return isinstance(result, str) and "[APPROVAL_PENDING]" in result
-
-
 def _approval_controls_to_keep(messages: Sequence[Message]) -> set[int]:
     unresolved_requests_by_id: dict[str, Content] = {}
     local_request_ids_by_call_id: dict[str, deque[str]] = {}
@@ -882,7 +877,7 @@ def _approval_controls_to_keep(messages: Sequence[Message]) -> set[int]:
                 continue
             if content.call_id is None:
                 continue
-            is_terminal_result = content.type == "function_result" and not _is_approval_placeholder_result(content)
+            is_terminal_result = content.type == "function_result"
             is_follow_up_request = content.user_input_request and content.type not in {
                 "function_approval_request",
                 "function_approval_response",

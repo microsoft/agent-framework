@@ -3588,7 +3588,7 @@ def _collect_approval_responses(
                 continue
             if non_approval_result_ids is not None and id(content) in non_approval_result_ids:
                 continue
-            is_terminal_result = content.type == "function_result" and not _is_approval_placeholder_result(content)
+            is_terminal_result = content.type == "function_result"
             is_follow_up_request = content.user_input_request and content.type not in {
                 "function_approval_request",
                 "function_approval_response",
@@ -3640,7 +3640,7 @@ def _collect_unanswered_approval_requests(messages: Sequence[Message]) -> list[C
                 continue
             if content.call_id is None:
                 continue
-            is_terminal_result = content.type == "function_result" and not _is_approval_placeholder_result(content)
+            is_terminal_result = content.type == "function_result"
             is_follow_up_request = content.user_input_request and content.type not in {
                 "function_approval_request",
                 "function_approval_response",
@@ -3793,18 +3793,10 @@ def _remove_unanswered_approval_batches_from_model_input(messages: list[Message]
     messages[:] = filtered_messages
 
 
-def _is_approval_placeholder_result(content: Content) -> bool:
-    """Whether a function_result is the stand-in emitted while approval is pending."""
-    result = getattr(content, "result", None)
-    return isinstance(result, str) and "[APPROVAL_PENDING]" in result
-
-
 @dataclass
 class _ApprovalCallOccurrence:
     function_call: Content
     approval_id: str | None = None
-    placeholder_message: Message | None = None
-    placeholder_content: Content | None = None
     closed: bool = False
 
 
@@ -3816,8 +3808,6 @@ def _replace_approval_contents_with_results(
     non_approval_result_ids: set[int] | None = None,
 ) -> list[Content]:
     """Replace approval request/response contents with function call/result contents in-place.
-
-    Also replaces placeholder tool results (marked with [APPROVAL_PENDING]) with actual results.
 
     Returns:
         The terminal contents produced while resolving the approval responses, in response order.
@@ -3849,7 +3839,6 @@ def _replace_approval_contents_with_results(
     occurrences_by_call_id: dict[str, list[_ApprovalCallOccurrence]] = {}
     occurrences_by_approval_id: dict[str, list[_ApprovalCallOccurrence]] = {}
     seen_approval_requests: set[tuple[str, str, str | None, str]] = set()
-    placeholder_replacements: list[tuple[Message, Content, list[Content]]] = []
     resolved_contents: list[Content] = []
 
     def find_open_occurrence(call_id: str, *, require_unbound: bool = False) -> _ApprovalCallOccurrence | None:
@@ -3956,19 +3945,7 @@ def _replace_approval_contents_with_results(
                     ]
                 if not replacements:
                     continue
-                if (
-                    occurrence is not None
-                    and occurrence.placeholder_message is not None
-                    and occurrence.placeholder_content is not None
-                ):
-                    placeholder_replacements.append((
-                        occurrence.placeholder_message,
-                        occurrence.placeholder_content,
-                        replacements,
-                    ))
-                    contents_to_remove.append(content_idx)
-                else:
-                    replacement_groups_by_index[content_idx] = replacements
+                replacement_groups_by_index[content_idx] = replacements
                 if occurrence is not None:
                     replacement_request = next(
                         (
@@ -3993,11 +3970,7 @@ def _replace_approval_contents_with_results(
                 occurrence = find_open_occurrence(content.call_id)
                 if occurrence is None:
                     continue
-                if _is_approval_placeholder_result(content):
-                    occurrence.placeholder_message = msg
-                    occurrence.placeholder_content = content
-                else:
-                    occurrence.closed = True
+                occurrence.closed = True
 
         if replacement_groups_by_index:
             msg.role = (
@@ -4021,12 +3994,6 @@ def _replace_approval_contents_with_results(
                 else:
                     updated_contents.append(existing)
             msg.contents = updated_contents
-
-    for placeholder_message, placeholder_content, replacements in placeholder_replacements:
-        for idx, existing in enumerate(placeholder_message.contents):
-            if existing is placeholder_content:
-                placeholder_message.contents[idx : idx + 1] = replacements
-                break
 
     messages_to_remove: list[int] = []
     for msg_idx, msg in enumerate(messages):
