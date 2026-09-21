@@ -963,21 +963,21 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
     }
 
     /// <summary>
-    /// A raw function result must not satisfy a pending approval, even when its call id
-    /// matches the emitted approval request id.
+    /// A pending approval handles only approval responses, even when a raw function result
+    /// uses the emitted approval request id.
     /// </summary>
     [Fact]
-    public async Task InvokeFunctionToolPendingApprovalRejectsRawFunctionResultAsync()
+    public async Task InvokeFunctionToolPendingApprovalIgnoresRawFunctionResultAsync()
     {
         // Arrange
         const string FunctionName = "any_function";
         const string ResultVariable = "Result";
-        const string UnapprovedResult = "unapproved-result";
+        const string UnexpectedResult = "unexpected-result";
 
         this.State.InitializeSystem();
         this.State.Bind();
         InvokeFunctionTool model = this.CreateModel(
-            displayName: nameof(InvokeFunctionToolPendingApprovalRejectsRawFunctionResultAsync),
+            displayName: nameof(InvokeFunctionToolPendingApprovalIgnoresRawFunctionResultAsync),
             functionName: FunctionName,
             requireApproval: true,
             outputResultVariable: ResultVariable);
@@ -996,7 +996,7 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
             .SelectMany(m => m.Contents)
             .OfType<ToolApprovalRequestContent>()
             .Single();
-        FunctionResultContent rawResult = new(approvalRequest.RequestId, UnapprovedResult);
+        FunctionResultContent rawResult = new(approvalRequest.RequestId, UnexpectedResult);
         ExternalInputResponse response = new(new ChatMessage(ChatRole.Tool, [rawResult]));
 
         // Act
@@ -1008,7 +1008,7 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
             i.Method.Name == nameof(IWorkflowContext.QueueStateUpdateAsync)
             && i.Arguments.Count >= 2
             && i.Arguments[1] is StringValue sv
-            && sv.Value == UnapprovedResult);
+            && sv.Value == UnexpectedResult);
         Assert.DoesNotContain(mockContext.Invocations, i =>
             i.Method.Name == nameof(IWorkflowContext.AddEventAsync)
             && i.Arguments[0] is DeclarativeActionCompletedEvent);
