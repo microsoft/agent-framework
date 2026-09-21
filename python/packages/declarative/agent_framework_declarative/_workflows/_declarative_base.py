@@ -46,6 +46,7 @@ from agent_framework import (
 from agent_framework._workflows._state import State
 
 from ._errors import DeclarativeWorkflowError
+from ._powerfx_limits import _PowerFxStateBudget, _validate_powerfx_state  # pyright: ignore[reportPrivateUsage]
 
 try:
     from powerfx import Engine
@@ -169,6 +170,8 @@ class DeclarativeEnvConfig:
         # contents of ``values`` / ``referenced_names``: caller mutations
         # to the original objects after construction cannot leak into
         # ``resolve()``.
+        _validate_powerfx_state(self.values)
+        _validate_powerfx_state(self.referenced_names)
         object.__setattr__(self, "values", MappingProxyType(dict(self.values)))
         object.__setattr__(self, "referenced_names", frozenset(self.referenced_names))
 
@@ -181,6 +184,8 @@ class DeclarativeEnvConfig:
         unrelated environment variables never enter the PowerFx scope.
         Configuration values always win over the environment fallback.
         """
+        _validate_powerfx_state(self.values)
+        _validate_powerfx_state(self.referenced_names)
         resolved = {name: str(value) for name, value in self.values.items()}
         if self.restrict_to_configuration:
             return resolved
@@ -314,10 +319,16 @@ def _make_powerfx_safe(value: Any) -> Any:
 
     Returns:
         A PowerFx-safe representation of the value
-    """
-    if value is None:
-        return value
 
+    Raises:
+        ValueError: If the input or converted symbols exceed the state budget.
+    """
+    _validate_powerfx_state(value)
+    return _convert_powerfx_value(value, _PowerFxStateBudget(), 0)
+
+
+def _convert_powerfx_value(value: Any, budget: _PowerFxStateBudget, depth: int) -> Any:
+    """Convert an already bounded value without restarting its traversal budget."""
     # Enum coercion must run BEFORE the primitive type check: many MAF
     # enums (e.g. MessageRole) are ``str``-subclass enums, so they pass
     # ``isinstance(v, str)`` but pythonnet refuses to convert them to
@@ -326,25 +337,27 @@ def _make_powerfx_safe(value: Any) -> Any:
     # to the underlying value (or its string form) so PowerFx sees a
     # plain ``str``/``int``.
     if isinstance(value, Enum):
-        return _make_powerfx_safe(value.value)
+        return _convert_powerfx_value(value.value, budget, depth)
 
+    if not isinstance(value, (*_POWERFX_SAFE_TYPES, dict, list)):
+        if hasattr(value, "__dict__"):
+            return _convert_powerfx_value(vars(value), budget, depth)
+        value = str(value)
+
+    budget.consume(value, depth)
     if isinstance(value, _POWERFX_SAFE_TYPES):
         return value
 
     if isinstance(value, dict):
         value_dict = cast(Mapping[Any, Any], value)
-        return {str(k): _make_powerfx_safe(v) for k, v in value_dict.items()}
+        result: dict[str, Any] = {}
+        for key, member in value_dict.items():
+            name = str(key)
+            budget.consume(name, depth + 1)
+            result[name] = _convert_powerfx_value(member, budget, depth + 1)
+        return result
 
-    if isinstance(value, list):
-        value_list = cast(list[Any], value)
-        return [_make_powerfx_safe(item) for item in value_list]
-
-    # Try to convert objects with __dict__ or dataclass-style attributes
-    if hasattr(value, "__dict__"):
-        return _make_powerfx_safe(vars(value))
-
-    # For other objects, try to convert to string representation
-    return str(value)
+    return [_convert_powerfx_value(item, budget, depth + 1) for item in cast(list[Any], value)]
 
 
 class DeclarativeWorkflowState:
@@ -384,6 +397,7 @@ class DeclarativeWorkflowState:
         Args:
             inputs: Initial workflow inputs (become Workflow.Inputs.*)
         """
+        _validate_powerfx_state(inputs)
         conversation_id = str(uuid.uuid4())
         state_data: DeclarativeStateData = {
             "Inputs": dict(inputs) if inputs else {},
@@ -402,10 +416,11 @@ class DeclarativeWorkflowState:
             "Conversation": {"messages": [], "history": []},
             "Custom": {},
         }
-        self._state.set(DECLARATIVE_STATE_KEY, state_data)
+        self.set_state_data(state_data)
 
     def get_state_data(self) -> DeclarativeStateData:
         """Get the full state data dict from state."""
+        self._state._validate(DECLARATIVE_STATE_KEY, _validate_powerfx_state)  # pyright: ignore[reportPrivateUsage]
         result = self._state.get(DECLARATIVE_STATE_KEY)
         if result is None:
             # Initialize if not present
@@ -421,10 +436,12 @@ class DeclarativeWorkflowState:
         scenarios), the start executor needs to avoid calling initialize()
         and clobbering the prior turn's Conversation/Local/System data.
         """
+        self._state._validate(DECLARATIVE_STATE_KEY, _validate_powerfx_state)  # pyright: ignore[reportPrivateUsage]
         return self._state.get(DECLARATIVE_STATE_KEY) is not None
 
     def set_state_data(self, data: DeclarativeStateData) -> None:
         """Set the full state data dict in state."""
+        _validate_powerfx_state(data)
         self._state.set(DECLARATIVE_STATE_KEY, data)
 
     def get(self, path: str, default: Any = None) -> Any:
@@ -617,6 +634,8 @@ class DeclarativeWorkflowState:
         Raises:
             RuntimeError: If the powerfx package is not installed and the
                 expression requires PowerFx evaluation.
+            ValueError: If state copying or symbol conversion exceeds the
+                PowerFx state budget.
         """
         if not expression:
             return expression
@@ -940,10 +959,10 @@ class DeclarativeWorkflowState:
             symbols["Env"] = env_bound
         # Debug log the Local symbols to help diagnose type issues
         if local_data:
-            for key, value in local_data.items():
+            for value in local_data.values():
                 logger.debug(
-                    f"PowerFx symbol Local.{key}: type={type(value).__name__}, "
-                    f"value_preview={str(value)[:100] if value else None}"
+                    "PowerFx Local symbol type=%s",
+                    type(value).__name__,
                 )
         result = _make_powerfx_safe(symbols)
         return cast(dict[str, Any], result)

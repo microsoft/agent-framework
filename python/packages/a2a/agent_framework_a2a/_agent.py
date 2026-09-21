@@ -355,8 +355,8 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 write=10.0,  # 10 seconds to send request
                 pool=5.0,  # 5 seconds to get connection from pool
             )
-        if isinstance(timeout, float):
-            # Simple timeout
+        if isinstance(timeout, (int, float)) and not isinstance(timeout, bool):
+            # Simple timeout (ints are accepted per PEP 484's numeric tower)
             return httpx.Timeout(timeout)
         if isinstance(timeout, httpx.Timeout):
             # Full timeout configuration provided by user
