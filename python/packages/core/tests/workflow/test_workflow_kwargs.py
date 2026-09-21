@@ -1114,8 +1114,16 @@ async def test_subworkflow_resume_tools_preserve_child_invocation_kwargs() -> No
     ]
 
 
-async def test_subworkflow_cancellation_replaces_child_invocation_kwargs() -> None:
-    """Nested cancellation applies replacement invocation kwargs to the child workflow."""
+@pytest.mark.parametrize(
+    ("replace_function_kwargs", "replace_client_kwargs"),
+    [(True, True), (True, False), (False, True)],
+    ids=["both", "function-only", "client-only"],
+)
+async def test_subworkflow_cancellation_replaces_child_invocation_kwargs(
+    replace_function_kwargs: bool,
+    replace_client_kwargs: bool,
+) -> None:
+    """Nested cancellation replaces supplied kwargs and clears a stale omitted peer channel."""
     from agent_framework import Executor, WorkflowBuilder, WorkflowContext, handler, response_handler
     from agent_framework._workflows._workflow_executor import WorkflowExecutor
 
@@ -1155,24 +1163,36 @@ async def test_subworkflow_cancellation_replaces_child_invocation_kwargs() -> No
         client_kwargs=old_client_kwargs,
     )
     [request] = paused.get_request_info_events()
-    _ = await parent.cancel_pending_requests(
-        [request.request_id],
-        function_invocation_kwargs=new_function_kwargs,
-        client_kwargs=new_client_kwargs,
-    )
+    if replace_function_kwargs and replace_client_kwargs:
+        _ = await parent.cancel_pending_requests(
+            [request.request_id],
+            function_invocation_kwargs=new_function_kwargs,
+            client_kwargs=new_client_kwargs,
+        )
+    elif replace_function_kwargs:
+        _ = await parent.cancel_pending_requests(
+            [request.request_id],
+            function_invocation_kwargs=new_function_kwargs,
+        )
+    else:
+        _ = await parent.cancel_pending_requests(
+            [request.request_id],
+            client_kwargs=new_client_kwargs,
+        )
 
-    assert captured_child_kwargs == [
-        {
-            "function_invocation_kwargs": {
-                "global_kwargs": {"phase": "new"},
-                "executor_kwargs": {"child-requester": {"request": "new"}},
-            },
-            "client_kwargs": {
-                "global_kwargs": {"model": "new"},
-                "executor_kwargs": {"child-requester": {"timeout": 30}},
-            },
+    expected_child_kwargs: dict[str, Any] = {}
+    if replace_function_kwargs:
+        expected_child_kwargs["function_invocation_kwargs"] = {
+            "global_kwargs": {"phase": "new"},
+            "executor_kwargs": {"child-requester": {"request": "new"}},
         }
-    ]
+    if replace_client_kwargs:
+        expected_child_kwargs["client_kwargs"] = {
+            "global_kwargs": {"model": "new"},
+            "executor_kwargs": {"child-requester": {"timeout": 30}},
+        }
+
+    assert captured_child_kwargs == [expected_child_kwargs]
 
 
 async def test_subworkflow_kwargs_accessible_via_state() -> None:
