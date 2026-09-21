@@ -21,28 +21,6 @@ This package ships at two different stability levels:
 
 The declarative packages provides support for building agents based on a declarative yaml specification.
 
-## HTTP request URL selection
-
-`DefaultHttpRequestHandler` validates and normalizes the workflow's URL with HTTPX
-before invoking `client_provider`. The provider receives a new `HttpRequestInfo`
-whose `url` includes the appended `query_parameters`; its `query_parameters` map is
-empty so those parameters are not applied twice. The original request is unchanged.
-Existing query escapes, bare flags and duplicate ordering are preserved.
-
-Providers now observe the canonical workflow target rather than the original URL
-text. Relative URLs, including those previously resolved through a supplied client's
-`base_url`, are rejected before client selection: supply an absolute HTTP(S) URL.
-
-Selected-client query parameters remain defaults applied **after** selection for keys
-absent from the workflow request. They are not part of the URL seen by the provider.
-Put parameters that need provider inspection in the workflow URL or `query_parameters`
-instead. Supplied clients also retain their redirect settings; automatic redirects do
-not invoke the provider again. Disable automatic redirects and handle each destination
-explicitly when per-destination authorization is required.
-
-URL normalization is not URL filtering or SSRF protection. Applications must still
-supply their own destination policy where needed.
-
 ## HTTP request client ownership and cookies
 
 **Breaking change:** The HTTP client created by `DefaultHttpRequestHandler` no longer
