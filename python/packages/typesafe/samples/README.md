@@ -1,7 +1,8 @@
 # TypeSafe AI samples
 
 These samples need extra explanation because TypeSafe System One models return
-typed judgments rather than ordinary generated chat text.
+[typed judgments](https://docs.typesafe.ai/concepts/system-one.md) rather than
+ordinary generated chat text.
 
 ## Samples
 
@@ -16,7 +17,7 @@ typed judgments rather than ordinary generated chat text.
 
 Regular chat clients commonly use `response_format` to provide a Pydantic output
 model or JSON schema. This connector instead expects a TypeSafe `Questions`
-mapping:
+[mapping](https://docs.typesafe.ai/sdk/python/api/types/questions.md):
 
 ```python
 options = {
@@ -34,17 +35,23 @@ options = {
 }
 ```
 
-The configured keys become answer IDs on `SystemOneResponse`:
+The configured keys become answer IDs on
+[`SystemOneResponse`](https://docs.typesafe.ai/sdk/python/api/types/responses.md):
 
 | Question | Meaning | Main result fields |
 | --- | --- | --- |
-| `Noul` | Probability that a statement is true or the answer is yes. | `noul` from 0 to 1. There is no separate confidence field. |
-| `Choice` | Select one label from a closed set. | `choice`, `probabilities`, and `confidence`. |
-| `Score` | Rate along ordered rubric levels. | Weighted `score`, `legend`, `probabilities`, and `confidence`. |
+| [`Noul`](https://docs.typesafe.ai/primitives/noul.md) | Probability that a statement is true or the answer is yes. | `noul` from 0 to 1. There is no separate confidence field. |
+| [`Choice`](https://docs.typesafe.ai/primitives/choice.md) | Select one label from a closed set. | `choice`, `probabilities`, and `confidence`. |
+| [`Score`](https://docs.typesafe.ai/primitives/score.md) | Rate along ordered rubric levels. | Weighted `score`, `legend`, `probabilities`, and `confidence`. |
 
 For every sample, `response.value` is the complete typed
 `SystemOneResponse`, including `answers`, the grouped `nouls`/`choices`/`scores`
 views, model name, and token usage.
+
+See the TypeSafe
+[Primitives overview](https://docs.typesafe.ai/primitives.md) for choosing a
+question type and [Confidence](https://docs.typesafe.ai/confidence.md) for the
+difference between an answer probability and confidence.
 
 `response.text` depends on the run:
 
@@ -56,6 +63,10 @@ views, model name, and token usage.
 
 Temporary questions used internally for tool routing are removed from the final
 `SystemOneResponse`.
+
+The connector's constrained tool-routing design follows TypeSafe's
+[Function calling cookbook](https://docs.typesafe.ai/cookbooks/function_calling.md):
+code owns execution, while Jev selects tools and closed-set arguments.
 
 ## Setup and run
 

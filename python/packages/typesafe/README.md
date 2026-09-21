@@ -4,9 +4,10 @@ Use [TypeSafe AI](https://docs.typesafe.ai/) System One models, including Jev,
 with Microsoft Agent Framework.
 
 This alpha package adapts TypeSafe's structured decision API to the Agent Framework
-chat client contract. Jev evaluates application state against explicit typed
-questions and returns probabilities and scores. It does not generate ordinary
-chat text.
+chat client contract. Jev evaluates
+[application state](https://docs.typesafe.ai/concepts/state.md) against explicit
+[typed questions](https://docs.typesafe.ai/primitives.md) and returns
+probabilities and scores. It does not generate ordinary chat text.
 
 ## Installation
 
@@ -49,8 +50,11 @@ finally:
 ```
 
 For this connector, Agent Framework's `response_format` option is the TypeSafe
-`Questions` mapping. The connector forwards it as the SDK's `questions` argument
-and internally uses `SystemOneResponse` as the actual response model.
+[`Questions`](https://docs.typesafe.ai/sdk/python/api/types/questions.md)
+mapping. The connector forwards it as the SDK's `questions` argument and
+internally uses
+[`SystemOneResponse`](https://docs.typesafe.ai/sdk/python/api/types/responses.md)
+as the actual response model.
 
 ## Supported options
 
@@ -76,6 +80,11 @@ function-invocation loop execute them. The client defaults to one tool call per
 run; opt into sequential round trips with
 `function_invocation_configuration={"max_function_calls": N}`. Jev can select
 another tool call after seeing each result, or select no tool to finish.
+
+This follows TypeSafe's
+[Function calling cookbook](https://docs.typesafe.ai/cookbooks/function_calling.md):
+the model selects from closed sets, while application code owns validation and
+execution.
 
 The terminal response text consolidates the current turn's tool results and any
 final TypeSafe `Choice` or `Score` decisions. The full terminal
