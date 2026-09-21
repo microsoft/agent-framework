@@ -136,6 +136,7 @@ class _AutoHandoffMiddleware(FunctionMiddleware):
     def __init__(self, handoffs: Sequence[HandoffConfiguration]) -> None:
         """Initialise middleware with the mapping from tool name to specialist id."""
         self._handoff_functions = {get_handoff_tool_name(handoff.target_id): handoff.target_id for handoff in handoffs}
+        self._invoked_handoffs: list[tuple[str, str]] = []
 
     async def process(
         self,
@@ -147,21 +148,31 @@ class _AutoHandoffMiddleware(FunctionMiddleware):
             await call_next()
             return
 
+        call_id = context.metadata.get("call_id")
+        if not isinstance(call_id, str) or not call_id:
+            raise RuntimeError("Generated handoff invocation is missing its function call ID.")
+        target_id = self._handoff_functions[context.function.name]
+        self._invoked_handoffs.append((call_id, target_id))
+
         # Short-circuit execution and provide deterministic response payload for the tool call.
         # Parse the result using the default parser to ensure in a form that can be passed directly to LLM APIs.
-        context.result = FunctionTool.parse_result({
-            HANDOFF_FUNCTION_RESULT_KEY: self._handoff_functions[context.function.name]
-        })
+        context.result = FunctionTool.parse_result({HANDOFF_FUNCTION_RESULT_KEY: target_id})
         raise MiddlewareTermination(result=context.result)
+
+    def consume_invoked_handoffs(self) -> list[tuple[str, str]]:
+        """Consume handoffs that were intercepted since the previous completed response."""
+        invoked_handoffs = self._invoked_handoffs
+        self._invoked_handoffs = []
+        return invoked_handoffs
 
 
 class _AutoHandoffContextProvider(ContextProvider):
     """Add auto-handoff middleware after application context providers."""
 
-    def __init__(self, handoffs: Sequence[HandoffConfiguration]) -> None:
+    def __init__(self, middleware: _AutoHandoffMiddleware) -> None:
         """Initialize the provider with the generated handoff middleware."""
         super().__init__("agent_framework.handoff")
-        self._middleware = _AutoHandoffMiddleware(handoffs)
+        self._middleware = middleware
 
     async def before_run(
         self,
@@ -253,11 +264,11 @@ class HandoffAgentExecutor(AgentExecutor):
                                     This will guide the agent in the absence of user input.
             autonomous_mode_turn_limit: Maximum number of autonomous turns before requesting user input.
         """
-        cloned_agent = self._prepare_agent_with_handoffs(agent, handoffs)
+        self._auto_handoff_middleware = _AutoHandoffMiddleware(handoffs)
+        cloned_agent = self._prepare_agent_with_handoffs(agent, handoffs, self._auto_handoff_middleware)
         super().__init__(cloned_agent, session=agent_session)
 
         self._handoff_targets = {handoff.target_id for handoff in handoffs}
-        self._handoff_functions = {get_handoff_tool_name(handoff.target_id): handoff.target_id for handoff in handoffs}
         self._termination_condition = termination_condition
         self._is_start_agent = is_start_agent
 
@@ -271,12 +282,14 @@ class HandoffAgentExecutor(AgentExecutor):
         self,
         agent: Agent,
         handoffs: Sequence[HandoffConfiguration],
+        auto_handoff_middleware: _AutoHandoffMiddleware,
     ) -> Agent:
         """Prepare an agent by adding handoff tools for the specified target agents.
 
         Args:
             agent: The ``Agent`` instance to prepare
             handoffs: Sequence of handoff configurations defining target agents
+            auto_handoff_middleware: Middleware that intercepts generated handoff tools
 
         Returns:
             A cloned ``Agent`` instance with handoff tools added
@@ -288,10 +301,10 @@ class HandoffAgentExecutor(AgentExecutor):
         if cloned_agent.context_providers:
             # Provider middleware is added after agent middleware. Contribute the interceptor
             # last so existing provider policies can inspect or block generated handoff calls.
-            cloned_agent.context_providers.append(_AutoHandoffContextProvider(handoffs))
+            cloned_agent.context_providers.append(_AutoHandoffContextProvider(auto_handoff_middleware))
         else:
             existing_middleware = list(cloned_agent.middleware or [])
-            existing_middleware.append(_AutoHandoffMiddleware(handoffs))
+            existing_middleware.append(auto_handoff_middleware)
             cloned_agent.middleware = existing_middleware
 
         return cloned_agent
@@ -535,24 +548,17 @@ class HandoffAgentExecutor(AgentExecutor):
             messages. By returning the full message, we can ensure the agent's chat history remains valid with
             a function result for the handoff tool call.
         """
-        if not response.messages:
+        invoked_handoffs = self._auto_handoff_middleware.consume_invoked_handoffs()
+        if not invoked_handoffs or not response.messages:
             return None
-
-        function_calls_by_id: dict[str, list[str]] = {}
-        for message in response.messages:
-            for content in message.contents:
-                if content.type == "function_call" and content.call_id and content.name:
-                    function_calls_by_id.setdefault(content.call_id, []).append(content.name)
 
         last_message = response.messages[-1]
         for content in last_message.contents:
             if content.type == "function_result" and content.call_id:
-                function_names = function_calls_by_id.get(content.call_id, [])
-                if len(function_names) != 1:
+                matching_handoffs = [target_id for call_id, target_id in invoked_handoffs if call_id == content.call_id]
+                if len(matching_handoffs) != 1:
                     continue
-                handoff_target = self._handoff_functions.get(function_names[0])
-                if handoff_target is None:
-                    continue
+                handoff_target = matching_handoffs[0]
 
                 payload = content.result
                 parsed_payload: dict[str, Any] | None = None
