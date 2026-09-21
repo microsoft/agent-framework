@@ -7576,7 +7576,7 @@ class TestVariableArgumentPolicy:
 async def test_rewritten_arguments_no_rewrites():
     """Verify normal/non-expanded path returns empty dict."""
     tracker = LabelTrackingFunctionMiddleware()
-    captured = {}
+    captured: dict[str, Any] = {}
 
     async def my_tool(files: list[str]):
         captured["rewritten"] = rewritten_arguments()
@@ -7608,18 +7608,20 @@ async def test_rewritten_arguments_explicit_context():
     store = tracker.get_variable_store()
     var_id = store.store("payload", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
 
-    captured = {}
+    captured: dict[str, Any] = {}
+    captured_context: FunctionInvocationContext | None = None
 
-    async def my_tool(files: list[str], context: FunctionInvocationContext):
-        captured["explicit"] = rewritten_arguments(context)
+    async def my_tool(files: list[str]):
+        captured["explicit"] = rewritten_arguments(captured_context)
         captured["implicit"] = rewritten_arguments()
         return "ok"
 
     tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
     context = FunctionInvocationContext(function=tool, arguments={"files": [f"[{var_id}]", "safe.txt"]})
+    captured_context = context
 
     async def call_next():
-        await tool.func(files=context.arguments["files"], context=context)
+        await tool.invoke(arguments=context.arguments)
 
     await tracker.process(context, call_next)
 
@@ -7635,7 +7637,7 @@ async def test_rewritten_arguments_multiple_args():
     var_id1 = store.store("file_content", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
     var_id2 = store.store("msg_content", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
 
-    captured = {}
+    captured: dict[str, Any] = {}
 
     async def my_tool(files: list[str], message: str):
         captured["rewritten"] = rewritten_arguments()
@@ -7663,7 +7665,7 @@ async def test_rewritten_arguments_duplicate_equal_values():
     var_id1 = store.store("same_string", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
     var_id2 = store.store("same_string", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
 
-    captured = {}
+    captured: dict[str, Any] = {}
 
     async def my_tool(files: list[str]):
         captured["rewritten"] = rewritten_arguments()
@@ -7691,7 +7693,7 @@ async def test_rewritten_arguments_multiple_list_positions():
     store = tracker.get_variable_store()
     var_id = store.store("payload", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
 
-    captured = {}
+    captured: dict[str, Any] = {}
 
     async def my_tool(files: list[str]):
         captured["rewritten"] = rewritten_arguments()
@@ -7717,7 +7719,7 @@ async def test_rewritten_arguments_scalar():
     store = tracker.get_variable_store()
     var_id = store.store("payload", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
 
-    captured = {}
+    captured: dict[str, Any] = {}
 
     async def my_tool(text: str):
         captured["rewritten"] = rewritten_arguments()
@@ -7741,7 +7743,7 @@ async def test_rewritten_arguments_nested_dict_semantics():
     store = tracker.get_variable_store()
     var_id = store.store("payload", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
 
-    captured = {}
+    captured: dict[str, Any] = {}
 
     async def my_tool(config: dict):
         captured["rewritten"] = rewritten_arguments()
@@ -7759,13 +7761,65 @@ async def test_rewritten_arguments_nested_dict_semantics():
 
 
 @pytest.mark.asyncio
+async def test_rewritten_arguments_whole_list_substitution():
+    """Test that whole-list substitution reports all resulting indices."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id = store.store(["hidden1.txt", "hidden2.txt"], ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+
+    captured: dict[str, Any] = {}
+
+    async def my_tool(files: list[str]):
+        captured["rewritten"] = rewritten_arguments()
+        captured["received"] = files
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(function=tool, arguments={"files": f"[{var_id}]"})
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+
+    assert captured["received"] == ["hidden1.txt", "hidden2.txt"]
+    assert captured["rewritten"] == {"files": {0, 1}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_integer_keyed_dict():
+    """Test that integer-keyed dictionaries are not treated as lists."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id = store.store("payload", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+
+    captured: dict[str, Any] = {}
+
+    async def my_tool(config: dict):
+        captured["rewritten"] = rewritten_arguments()
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(
+        function=tool,
+        arguments={"config": {0: f"[{var_id}]", 1: "safe.txt"}},
+    )
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+    assert captured["rewritten"] == {"config": {-1}}
+
+
+@pytest.mark.asyncio
 async def test_rewritten_arguments_asyncio_to_thread():
     """Verify async/thread/context behavior with asyncio.to_thread."""
     tracker = LabelTrackingFunctionMiddleware()
     store = tracker.get_variable_store()
     var_id = store.store("thread_content", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
 
-    captured = {}
+    captured: dict[str, Any] = {}
 
     async def threaded_tool(files: list[str]):
         def worker():
@@ -7783,29 +7837,3 @@ async def test_rewritten_arguments_asyncio_to_thread():
     await tracker.process(context, call_next)
 
     assert captured["rewritten"] == {"files": {0}}
-
-
-@pytest.mark.asyncio
-async def test_rewritten_arguments_integer_keyed_dict():
-    """Test that integer-keyed dictionaries are not treated as lists."""
-    tracker = LabelTrackingFunctionMiddleware()
-    store = tracker.get_variable_store()
-    var_id = store.store("payload", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
-
-    captured = {}
-
-    async def my_tool(config: dict):
-        captured["rewritten"] = rewritten_arguments()
-        return "ok"
-
-    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
-    context = FunctionInvocationContext(
-        function=tool,
-        arguments={"config": {0: f"[{var_id}]", 1: "safe.txt"}},
-    )
-
-    async def call_next():
-        await tool.invoke(arguments=context.arguments)
-
-    await tracker.process(context, call_next)
-    assert captured["rewritten"] == {"config": {-1}}
