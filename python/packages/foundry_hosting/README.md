@@ -103,9 +103,9 @@ No additional partitioning configuration is required when using the default stor
 
 ### Agent Sessions
 
-`ResponsesHostServer` persists the Agent Framework `AgentSession` durably. By default it
-uses the `FoundryAgentSessionStore`, backed by Foundry storage when hosted and file-based
-storage locally. Stored sessions are scoped under `agent_sessions`.
+`ResponsesHostServer` and `InvocationsHostServer` persist the Agent Framework `AgentSession`
+durably. By default they use `FoundryAgentSessionStore`, backed by Foundry storage when hosted
+and file-based storage locally. Stored sessions are scoped under `agent_sessions`.
 
 See the [custom storage provider sample](../../samples/04-hosting/foundry-hosted-agents/responses/custom_storage/)
 for an example that uses an in-memory session store locally and Azure Cosmos DB when hosted.
@@ -114,11 +114,50 @@ Native Responses refusal parts are stored as text carrying
 `additional_properties["model_output_kind"] == "refusal"` and emitted as
 `response.refusal.*` events when streamed back to clients.
 
-`InvocationsHostServer` keeps sessions in memory. When hosted, `AgentSession.session_id` is an
+#### Invocation sessions
+
+`InvocationsHostServer` loads session state for each request and saves it after agent and
+stream cleanup, including when execution fails or is interrupted. It does not retain completed
+sessions in a host-level cache. Storage errors are reported rather than silently starting a
+new conversation or falling back to memory. After streaming headers have been sent, a
+persistence failure terminates the stream and is logged; already delivered text cannot be
+retracted. A failed request is not automatically retried.
+
+When hosted, `AgentSession.session_id` is an
 opaque composite identifier that preserves the boundaries between the platform session ID
 and user ID. Consumers must use it as a whole and must not parse it or depend on its internal
-representation. Repeated requests for the same identifier pair reuse the session. Locally,
-the platform session ID is used unchanged.
+representation. Repeated requests for the same identifier pair restore the saved session.
+Locally, the platform session ID is used unchanged. Storage keys are opaque, fixed-length,
+and namespaced separately from Responses keys.
+
+New default stores expire saved sessions **30 days after the last write**. Each write renews
+that period; a read does not. Existing stores keep their creation-time retention settings.
+A missing, deleted, or expired session starts a fresh conversation on the next request, even
+if the caller reuses its ID. A running request keeps its working session until cleanup and
+does not evict other conversations.
+
+To select another store, pass `agent_session_store_provider`, implementing
+`StoreProvider[SessionStore]`, to the constructor. Its `get_store` method receives the host
+configuration and the request's platform context, as it does for `ResponsesHostServer`.
+The provider owns storage retention and deletion. An explicitly supplied in-memory store is
+still volatile and does not gain automatic eviction.
+
+**Migration from in-memory invocation sessions:** session state must now support
+`AgentSession.to_dict()` / `AgentSession.from_dict()` serialization. Register codecs for
+custom state types instead of storing arbitrary live Python objects. Requests restore
+equivalent state, not the same Python object. Existing process-local sessions are not
+migrated across deployment; the previous implementation also lost them on restart.
+Local sessions now survive a host restart and are written under `AGENTSERVER_STATE_ROOT`
+(or the default location above). Use separate storage roots or providers for independent
+applications.
+
+Requests for the same session are serialized within one host through execution, streaming,
+cleanup, and persistence. Different sessions can run concurrently. There is no cross-host
+transaction or exactly-once execution guarantee; deployments with overlapping same-session
+requests across workers must coordinate those requests. Removing the host cache does not
+impose a byte-memory limit, request-admission limit, or storage quota. The SDK's local backend
+reads a whole logical-store file per operation, so its transient memory and I/O can still
+grow with stored data.
 
 ### Workflow checkpoints
 
