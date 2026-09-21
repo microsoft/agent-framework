@@ -2256,6 +2256,97 @@ async def test_chat_agent_as_tool_approved_delegation_does_not_confuse_framework
     assert result.text == "Parent completed."
 
 
+@pytest.mark.parametrize("stream", [False, True])
+async def test_chat_agent_as_tool_isolates_custom_parent_approval_state(stream: bool) -> None:
+    """Test that a child cannot read, mutate, or replace its parent's custom approval state."""
+    parent_approval_state: dict[str, Any] = {
+        "rules": [{"tool_name": "parent_only", "type": "tool_approval_rule"}],
+        "queued_approval_requests": [],
+        "collected_approval_responses": [],
+    }
+    parent_session = AgentSession()
+    parent_session.state["parent_approval"] = parent_approval_state
+    parent_session.state["counter"] = 0
+    child_saw_parent_state: bool | None = None
+
+    @tool(approval_mode="never_require")
+    def inspect_state(ctx: FunctionInvocationContext) -> str:
+        nonlocal child_saw_parent_state
+        assert ctx.session is not None
+        child_saw_parent_state = "parent_approval" in ctx.session.state
+        child_state = ctx.session.state.setdefault("parent_approval", {"rules": []})
+        child_state["rules"].append({"tool_name": "child_only"})
+        ctx.session.state["counter"] += 1
+        return "State inspected."
+
+    child_client = MockBaseChatClient()
+    child_client.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                role="assistant",
+                contents=[Content.from_function_call(call_id="inspect-call", name="inspect_state", arguments={})],
+            )
+        ],
+        [ChatResponseUpdate(role="assistant", contents=[Content.from_text("Child completed.")])],
+    ]
+    child_agent = Agent(
+        client=child_client,
+        name="ChildAgent",
+        middleware=[ToolApprovalMiddleware(source_id="child_approval")],
+        tools=[inspect_state],
+    )
+    parent_client = MockBaseChatClient()
+    parent_call = Content.from_function_call(
+        call_id="delegate-call",
+        name="delegate",
+        arguments={"task": "Inspect the delegated session"},
+    )
+    if stream:
+        parent_client.streaming_responses = [
+            [ChatResponseUpdate(role="assistant", contents=[parent_call])],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("Parent completed.")])],
+        ]
+    else:
+        parent_client.run_responses = [
+            ChatResponse(messages=Message(role="assistant", contents=[parent_call])),
+            ChatResponse(messages=Message(role="assistant", contents=[Content.from_text("Parent completed.")])),
+        ]
+    parent_agent = Agent(
+        client=parent_client,
+        name="ParentAgent",
+        middleware=[ToolApprovalMiddleware(source_id="parent_approval")],
+        tools=[child_agent.as_tool(name="delegate", propagate_session=True)],
+    )
+
+    if stream:
+        response_stream = parent_agent.run("Delegate the task.", session=parent_session, stream=True)
+        updates = [update async for update in response_stream]
+        result = await response_stream.get_final_response()
+        assert any(
+            content.type == "function_result" and content.result == "Child completed."
+            for update in updates
+            for content in update.contents
+        )
+    else:
+        result = await parent_agent.run("Delegate the task.", session=parent_session, stream=False)
+
+    delegated_result = next(
+        content
+        for message in result.messages
+        for content in message.contents
+        if content.type == "function_result" and content.call_id == "delegate-call"
+    )
+    assert delegated_result.result == "Child completed."
+    assert delegated_result.exception is None
+    assert child_saw_parent_state is False
+    assert parent_approval_state["rules"] == [{"tool_name": "parent_only", "type": "tool_approval_rule"}]
+    assert parent_session.state["parent_approval"] == parent_approval_state
+    assert "child_approval" not in parent_session.state
+    assert parent_session.state["counter"] == 1
+    assert child_client.call_count == 2
+    assert result.text == "Parent completed."
+
+
 async def test_chat_agent_as_tool_does_not_restore_custom_approval_queue_on_fresh_delegation() -> None:
     """Test that custom child approval state cannot leak through a shared parent session."""
 

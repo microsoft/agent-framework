@@ -729,12 +729,12 @@ class BaseAgent(SerializationMixin):
             parent_session = ctx.session
             session = AgentSession()
             child_approval_source_ids = _tool_approval_source_ids(self.middleware)
+            parent_approval_source_ids: frozenset[str] = frozenset()
 
             if propagate_session and parent_session is not None:
                 from ._tools import _PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY  # pyright: ignore[reportPrivateUsage]
 
                 raw_parent_approval_source_ids = ctx.metadata.get(_PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY)
-                parent_approval_source_ids: frozenset[str]
                 parent_approval_source_ids = (
                     cast("frozenset[str]", raw_parent_approval_source_ids)
                     if isinstance(raw_parent_approval_source_ids, frozenset)
@@ -768,6 +768,7 @@ class BaseAgent(SerializationMixin):
                     _FUNCTION_INVOCATION_BUDGET_STATE_KEY,
                     _FUNCTION_RESULT_PAYLOAD_BUDGET_STATE_KEY,
                     *child_approval_source_ids,
+                    *parent_approval_source_ids,
                 })
                 parent_state = parent_session.state
                 child_state = {key: value for key, value in parent_state.items() if key not in excluded_state_keys}
