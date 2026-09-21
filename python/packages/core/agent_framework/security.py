@@ -1652,9 +1652,16 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
 
             arg_value, arg_source = _top_level_argument_value(context, arg_name)
 
-            if (
-                arg_source is not None
-                and len(path) > 1
+            if arg_source is None:
+                rewritten_args[arg_name].add(-1)
+            elif len(path) == 1:
+                if isinstance(arg_value, (list, tuple)):
+                    resolved_list = cast(Sequence[Any], arg_value)
+                    rewritten_args[arg_name].update(range(len(resolved_list)))
+                else:
+                    rewritten_args[arg_name].add(-1)
+            elif (
+                len(path) > 1
                 and isinstance(path[1], int)
                 and not isinstance(path[1], bool)
                 and isinstance(arg_value, (list, tuple))
