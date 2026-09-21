@@ -608,8 +608,10 @@ class Workflow(DictConvertible):
                         resolved_combined_kwargs["function_invocation_kwargs"] = resolved
                         routed_combined_kwargs["function_invocation_kwargs"] = sorted(routed_keys)
                         combined_kwargs["function_invocation_kwargs"] = self._to_legacy_invocation_kwargs(resolved)
-                        if isinstance(function_invocation_kwargs, WorkflowInvocationKwargs) or any(
-                            isinstance(value, Mapping) for value in function_invocation_kwargs.values()
+                        if (
+                            isinstance(function_invocation_kwargs, WorkflowInvocationKwargs)
+                            or routed_keys
+                            or any(isinstance(value, Mapping) for value in function_invocation_kwargs.values())
                         ):
                             combined_kwargs[RAW_FUNCTION_INVOCATION_KWARGS_KEY] = function_invocation_kwargs
                     if client_kwargs is not None:
@@ -617,8 +619,10 @@ class Workflow(DictConvertible):
                         resolved_combined_kwargs["client_kwargs"] = resolved
                         routed_combined_kwargs["client_kwargs"] = sorted(routed_keys)
                         combined_kwargs["client_kwargs"] = self._to_legacy_invocation_kwargs(resolved)
-                        if isinstance(client_kwargs, WorkflowInvocationKwargs) or any(
-                            isinstance(value, Mapping) for value in client_kwargs.values()
+                        if (
+                            isinstance(client_kwargs, WorkflowInvocationKwargs)
+                            or routed_keys
+                            or any(isinstance(value, Mapping) for value in client_kwargs.values())
                         ):
                             combined_kwargs[RAW_CLIENT_KWARGS_KEY] = client_kwargs
                     self._runner.state.set(WORKFLOW_RUN_KWARGS_KEY, combined_kwargs)
@@ -1237,7 +1241,11 @@ class Workflow(DictConvertible):
 
         if routed_keys:
             executor_kwargs = dict(kwargs)
-            if GLOBAL_KWARGS_KEY not in executor_ids and GLOBAL_KWARGS_KEY in executor_kwargs:
+            if (
+                GLOBAL_KWARGS_KEY not in executor_ids
+                and GLOBAL_KWARGS_KEY not in routed_keys
+                and GLOBAL_KWARGS_KEY in executor_kwargs
+            ):
                 global_kwargs = executor_kwargs.pop(GLOBAL_KWARGS_KEY)
                 logger.info(
                     "Detected legacy mixed %s with global values and executor ID(s) %s.",

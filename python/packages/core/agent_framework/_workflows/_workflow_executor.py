@@ -14,6 +14,7 @@ from ._const import (
     GLOBAL_KWARGS_KEY,
     RAW_CLIENT_KWARGS_KEY,
     RAW_FUNCTION_INVOCATION_KWARGS_KEY,
+    RESOLVED_WORKFLOW_RUN_KWARGS_KEY,
     ROUTED_WORKFLOW_RUN_KWARGS_KEY,
     WORKFLOW_RUN_KWARGS_KEY,
 )
@@ -42,6 +43,7 @@ logger = logging.getLogger(__name__)
 def _scope_invocation_kwargs_to_subworkflow(
     invocation_kwargs: WorkflowInvocationKwargs | Mapping[str, Any],
     parent_routed_keys: set[str],
+    parent_resolved_kwargs: Mapping[str, Any] | None,
 ) -> WorkflowInvocationKwargs | Mapping[str, Any] | None:
     """Remove kwargs entries already routed within the parent workflow."""
     if not parent_routed_keys:
@@ -57,6 +59,19 @@ def _scope_invocation_kwargs_to_subworkflow(
             executor_kwargs=executor_kwargs,
         )
     scoped = {key: value for key, value in invocation_kwargs.items() if key not in parent_routed_keys}
+    parent_global_kwargs = parent_resolved_kwargs.get("global_kwargs") if parent_resolved_kwargs else None
+    if (
+        GLOBAL_KWARGS_KEY in scoped
+        and GLOBAL_KWARGS_KEY not in parent_routed_keys
+        and isinstance(parent_global_kwargs, Mapping)
+    ):
+        return WorkflowInvocationKwargs(
+            global_kwargs=cast(Mapping[str, Any], parent_global_kwargs),
+            executor_kwargs=cast(
+                Mapping[str, Mapping[str, Any]],
+                {key: value for key, value in scoped.items() if key != GLOBAL_KWARGS_KEY},
+            ),
+        )
     return scoped or None
 
 
@@ -402,6 +417,7 @@ class WorkflowExecutor(Executor):
 
         # Get kwargs from parent workflow's State to propagate to subworkflow
         parent_kwargs: dict[str, Any] = ctx.get_state(WORKFLOW_RUN_KWARGS_KEY, {})
+        parent_resolved_kwargs: dict[str, Any] = ctx.get_state(RESOLVED_WORKFLOW_RUN_KWARGS_KEY, {})
         parent_routed_kwargs: dict[str, list[str]] = ctx.get_state(ROUTED_WORKFLOW_RUN_KWARGS_KEY, {})
 
         # Use the caller's raw kwargs so legacy per-executor mappings are resolved
@@ -417,6 +433,7 @@ class WorkflowExecutor(Executor):
                 resolved = _scope_invocation_kwargs_to_subworkflow(
                     cast(WorkflowInvocationKwargs | Mapping[str, Any], raw_value),
                     self._parent_routed_keys_to_exclude(set(parent_routed_kwargs.get(key, ()))),
+                    cast(Mapping[str, Any] | None, parent_resolved_kwargs.get(key)),
                 )
             else:
                 normalized: Any = parent_kwargs.get(key)
@@ -446,6 +463,8 @@ class WorkflowExecutor(Executor):
 
     def _parent_routed_keys_to_exclude(self, routed_keys: set[str]) -> set[str]:
         """Return parent-routed keys that must not be reinterpreted by the child workflow."""
+        if self.id in self.workflow.executors:
+            return routed_keys - {self.id}
         return routed_keys
 
     @handler
