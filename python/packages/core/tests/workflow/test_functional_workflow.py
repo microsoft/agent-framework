@@ -151,6 +151,27 @@ class _GatedCheckpointStorage(InMemoryCheckpointStorage):
         return await super().save(checkpoint)
 
 
+class _GatedLoadCheckpointStorage(InMemoryCheckpointStorage):
+    """Checkpoint storage that can hold the next ``load()`` open until it is released.
+
+    Models a backend that suspends while reading a checkpoint, which is what the run
+    preamble awaits before the run itself starts.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.hold_next_load = False
+        self.load_started = asyncio.Event()
+        self.load_gate = asyncio.Event()
+
+    async def load(self, checkpoint_id: str) -> WorkflowCheckpoint:
+        if self.hold_next_load:
+            self.hold_next_load = False
+            self.load_started.set()
+            await self.load_gate.wait()
+        return await super().load(checkpoint_id)
+
+
 @step
 async def add_one(x: int) -> int:
     return x + 1
@@ -1280,6 +1301,52 @@ class TestCheckpointing:
         # A single root proves the resumed run linked to the paused checkpoint: had the
         # fresh instance been treated as a different backend, the resume would start a root.
         assert len(checkpoints) == 4
+        _assert_single_checkpoint_chain(checkpoints)
+
+    async def test_cancelled_resume_releases_the_run_guard(self):
+        """A resume cancelled while validating lineage must not latch the run guard.
+
+        The guard is taken before the run starts, and the preamble awaits checkpoint
+        storage to validate that the paused checkpoint belongs to the storage being
+        written to.  A cancellation inside that await used to skip the run guard
+        release entirely, so the workflow rejected every later run as already running.
+        """
+        storage = _GatedLoadCheckpointStorage()
+
+        @step
+        async def ask_human(doc: str, ctx: RunContext) -> str:
+            return await ctx.request_info({"draft": doc}, response_type=str, request_id="req1")
+
+        @built_workflow(checkpoint_storage=storage)
+        async def review_wf(doc: str) -> str:
+            return (await ask_human(doc)).upper()
+
+        paused = await review_wf.run("hello")
+        assert paused.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
+
+        # Make the resumed run re-read the paused checkpoint instead of short-circuiting
+        # on object identity, so the lineage validation await is entered.
+        review_wf._last_checkpoint_storage = InMemoryCheckpointStorage()
+        storage.hold_next_load = True
+
+        async def drive_resume() -> None:
+            await review_wf.run(responses={"req1": "answer"})
+
+        resume = asyncio.create_task(drive_resume())
+        try:
+            await asyncio.wait_for(storage.load_started.wait(), timeout=5)
+            resume.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await resume
+        finally:
+            storage.load_gate.set()
+
+        # Before the fix the guard outlived the cancelled run and the next run was
+        # rejected as already running, so the workflow was unusable.
+        resumed = await review_wf.run(responses={"req1": "answer"})
+        assert resumed.get_outputs() == ["ANSWER"]
+
+        checkpoints = await storage.list_checkpoints(workflow_name="review_wf")
         _assert_single_checkpoint_chain(checkpoints)
 
     async def test_no_checkpoint_on_cache_hit(self):
