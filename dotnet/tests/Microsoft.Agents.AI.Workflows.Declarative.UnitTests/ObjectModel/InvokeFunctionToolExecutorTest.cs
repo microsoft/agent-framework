@@ -644,6 +644,60 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
     }
 
     /// <summary>
+    /// A raw function result with a tracked non-approval call id is consumed and completes
+    /// the invocation.
+    /// </summary>
+    [Fact]
+    public async Task InvokeFunctionToolTrackedNonApprovalResultIsAcceptedAsync()
+    {
+        // Arrange
+        const string FunctionName = "any_function";
+        const string ResultVariable = "Result";
+        const string HostResult = "host-computed-result";
+
+        this.State.InitializeSystem();
+        this.State.Bind();
+        InvokeFunctionTool model = this.CreateModel(
+            displayName: nameof(InvokeFunctionToolTrackedNonApprovalResultIsAcceptedAsync),
+            functionName: FunctionName,
+            requireApproval: false,
+            outputResultVariable: ResultVariable);
+        TestFunctionAgentProvider testAgentProvider = new(
+            [AIFunctionFactory.Create(() => "should-not-be-called", name: FunctionName)]);
+        InvokeFunctionToolExecutor action = new(model, testAgentProvider, this.State);
+
+        List<ExternalInputRequest> emittedRequests = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext(emittedRequests);
+        await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
+
+        FunctionCallContent functionCall = Assert.Single(emittedRequests)
+            .AgentResponse.Messages
+            .SelectMany(m => m.Contents)
+            .OfType<FunctionCallContent>()
+            .Single();
+        FunctionResultContent functionResult = new(functionCall.CallId, HostResult);
+        ExternalInputResponse response = new(new ChatMessage(ChatRole.Tool, [functionResult]));
+
+        // Act
+        await action.CaptureResponseAsync(mockContext.Object, response, CancellationToken.None);
+
+        // Assert
+        Assert.Contains(mockContext.Invocations, i =>
+            i.Method.Name == nameof(IWorkflowContext.QueueStateUpdateAsync)
+            && i.Arguments.Count >= 2
+            && i.Arguments[1] is StringValue sv
+            && sv.Value == HostResult);
+        Assert.Contains(mockContext.Invocations, i =>
+            i.Method.Name == nameof(IWorkflowContext.AddEventAsync)
+            && i.Arguments[0] is DeclarativeActionCompletedEvent);
+
+        ConcurrentDictionary<string, byte> pendingCallIds = (ConcurrentDictionary<string, byte>)typeof(InvokeFunctionToolExecutor)
+            .GetField("_pendingNonApprovalCallIds", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .GetValue(action)!;
+        Assert.DoesNotContain(functionCall.CallId, pendingCallIds.Keys);
+    }
+
+    /// <summary>
     /// A snapshot persisted at the legacy <c>"_approvalSnapshot"</c> key must be migrated
     /// under <c>this.Id</c> after restore so an approval response carrying
     /// <c>RequestId == this.Id</c> resumes with the snapshot's arguments.
@@ -906,6 +960,63 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
             && i.Arguments.Count >= 2
             && i.Arguments[1] is StringValue sv
             && sv.Value.Contains("No pending approval"));
+    }
+
+    /// <summary>
+    /// A raw function result must not satisfy a pending approval, even when its call id
+    /// matches the emitted approval request id.
+    /// </summary>
+    [Fact]
+    public async Task InvokeFunctionToolPendingApprovalRejectsRawFunctionResultAsync()
+    {
+        // Arrange
+        const string FunctionName = "any_function";
+        const string ResultVariable = "Result";
+        const string UnapprovedResult = "unapproved-result";
+
+        this.State.InitializeSystem();
+        this.State.Bind();
+        InvokeFunctionTool model = this.CreateModel(
+            displayName: nameof(InvokeFunctionToolPendingApprovalRejectsRawFunctionResultAsync),
+            functionName: FunctionName,
+            requireApproval: true,
+            outputResultVariable: ResultVariable);
+
+        bool functionWasInvoked = false;
+        TestFunctionAgentProvider testAgentProvider = new(
+            [AIFunctionFactory.Create(() => { functionWasInvoked = true; return "approved-result"; }, name: FunctionName)]);
+        InvokeFunctionToolExecutor action = new(model, testAgentProvider, this.State);
+
+        List<ExternalInputRequest> emittedRequests = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext(emittedRequests);
+        await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
+
+        ToolApprovalRequestContent approvalRequest = Assert.Single(emittedRequests)
+            .AgentResponse.Messages
+            .SelectMany(m => m.Contents)
+            .OfType<ToolApprovalRequestContent>()
+            .Single();
+        FunctionResultContent rawResult = new(approvalRequest.RequestId, UnapprovedResult);
+        ExternalInputResponse response = new(new ChatMessage(ChatRole.Tool, [rawResult]));
+
+        // Act
+        await action.CaptureResponseAsync(mockContext.Object, response, CancellationToken.None);
+
+        // Assert
+        Assert.False(functionWasInvoked);
+        Assert.DoesNotContain(mockContext.Invocations, i =>
+            i.Method.Name == nameof(IWorkflowContext.QueueStateUpdateAsync)
+            && i.Arguments.Count >= 2
+            && i.Arguments[1] is StringValue sv
+            && sv.Value == UnapprovedResult);
+        Assert.DoesNotContain(mockContext.Invocations, i =>
+            i.Method.Name == nameof(IWorkflowContext.AddEventAsync)
+            && i.Arguments[0] is DeclarativeActionCompletedEvent);
+
+        ConcurrentDictionary<string, ApprovalSnapshot> liveSnapshots = (ConcurrentDictionary<string, ApprovalSnapshot>)typeof(InvokeFunctionToolExecutor)
+            .GetField("_approvalSnapshots", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .GetValue(action)!;
+        Assert.True(liveSnapshots.ContainsKey(approvalRequest.RequestId));
     }
 
     /// <summary>

@@ -125,12 +125,13 @@ internal sealed class InvokeFunctionToolExecutor(
     {
         bool autoSend = this.GetAutoSendValue();
         string? conversationId = this.GetConversationId();
+        bool hadPendingApproval = !this._approvalSnapshots.IsEmpty;
 
-        // Match the inbound result by its per-invocation call id.
+        // Raw function results may satisfy only tracked non-approval invocations.
         FunctionResultContent? matchingResult = response.Messages
             .SelectMany(m => m.Contents)
             .OfType<FunctionResultContent>()
-            .FirstOrDefault(r => this.IsKnownPendingId(r.CallId));
+            .FirstOrDefault(r => this._pendingNonApprovalCallIds.ContainsKey(r.CallId));
 
         // Legacy non-approval backstop: when no pendings are tracked, accept a result
         // whose CallId equals this.Id. The runtime has already routed the response to
@@ -150,6 +151,7 @@ internal sealed class InvokeFunctionToolExecutor(
         // ToolApprovalResponseContent only), invoke the registered AIFunction here so that the
         // declarative workflow can capture the result and continue (e.g. for downstream
         // SendActivity/PropertyPath consumers like {Local.Result}).
+        bool handledApprovalResponse = false;
         if (matchingResult is null)
         {
             List<ToolApprovalResponseContent> approvals = response.Messages
@@ -165,6 +167,7 @@ internal sealed class InvokeFunctionToolExecutor(
 
             if (approval is not null)
             {
+                handledApprovalResponse = true;
                 if (!this._approvalSnapshots.ContainsKey(approval.RequestId))
                 {
                     await this.AssignErrorAsync(context, "No pending approval matched the response.").ConfigureAwait(false);
@@ -183,6 +186,11 @@ internal sealed class InvokeFunctionToolExecutor(
                     await this.AssignErrorAsync(context, "No pending approval matched the response.").ConfigureAwait(false);
                 }
             }
+        }
+
+        if (matchingResult is null && hadPendingApproval && !handledApprovalResponse)
+        {
+            return;
         }
 
         if (matchingResult is not null)
@@ -223,9 +231,6 @@ internal sealed class InvokeFunctionToolExecutor(
         // Completes the action after processing the function result.
         await context.RaiseCompletionEventAsync(this.Model, cancellationToken).ConfigureAwait(false);
     }
-
-    private bool IsKnownPendingId(string callId) =>
-        this._pendingNonApprovalCallIds.ContainsKey(callId) || this._approvalSnapshots.ContainsKey(callId);
 
     /// <inheritdoc/>
     public override ValueTask ResetAsync()
