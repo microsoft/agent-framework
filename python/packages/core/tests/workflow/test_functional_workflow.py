@@ -963,16 +963,17 @@ class TestCheckpointing:
             cursor = by_id.get(cursor.previous_checkpoint_id) if cursor.previous_checkpoint_id else None
         assert reachable == set(by_id)
 
-    async def test_request_info_checkpoint_keeps_single_lineage(self):
-        """A HITL checkpoint must not be forked by a still-running sibling step.
+    async def test_request_info_retires_orphaned_step_checkpoints(self):
+        """A step left running by a HITL interruption must not checkpoint after the run.
 
         ``asyncio.gather`` does not cancel its remaining awaitables when one of them raises,
-        so a sibling step keeps running after ``request_info()`` interrupts the run.  If the
-        HITL save neither shares the lineage lock nor advances the chain head, that later
-        completion links to the pre-interruption head and forks the chain.
+        so a sibling step keeps running after ``request_info()`` interrupts the run.  That
+        step belongs to a run whose closing checkpoint has already been written, and its
+        result is never delivered anywhere, so it must not add another checkpoint.
         """
         storage = _YieldingCheckpointStorage()
         gate = asyncio.Event()
+        peer_done = asyncio.Event()
 
         @step
         async def ask_human(doc: str, ctx: RunContext) -> str:
@@ -981,6 +982,7 @@ class TestCheckpointing:
         @step
         async def slow_peer(doc: str) -> str:
             await gate.wait()
+            peer_done.set()
             return doc.upper()
 
         @built_workflow(checkpoint_storage=storage)
@@ -993,20 +995,81 @@ class TestCheckpointing:
         # Only the HITL checkpoint exists while the sibling step is still gated.
         assert len(await storage.list_checkpoints(workflow_name="hitl_parallel")) == 1
 
-        # Release the sibling step, then let the event loop drain its completion path.
+        # Release the sibling step and let its completion path run to the end.
         gate.set()
-        for _ in range(100):
-            if len(await storage.list_checkpoints(workflow_name="hitl_parallel")) > 1:
-                break
+        await peer_done.wait()
+        for _ in range(20):
             await asyncio.sleep(0)
 
         checkpoints = await storage.list_checkpoints(workflow_name="hitl_parallel")
-        # The HITL checkpoint plus the late sibling step save.
-        assert len(checkpoints) == 2
-
-        # The late save links to the HITL checkpoint instead of forking off the old head.
+        assert len(checkpoints) == 1
         roots = [checkpoint for checkpoint in checkpoints if checkpoint.previous_checkpoint_id is None]
         assert len(roots) == 1
+
+    async def test_resume_after_request_info_keeps_single_checkpoint_lineage(self):
+        """Resuming from a HITL checkpoint must not race a still-running sibling step.
+
+        The interrupted run leaves an ``asyncio.gather`` sibling alive.  If that orphan is
+        allowed to save after a resumed run has already chained new checkpoints onto the
+        HITL checkpoint, both link to the same parent and the lineage forks even though the
+        number of roots stays at one.
+        """
+        storage = _YieldingCheckpointStorage()
+        gate = asyncio.Event()
+        peer_done = asyncio.Event()
+        peer_calls = 0
+
+        @step
+        async def ask_human(doc: str, ctx: RunContext) -> str:
+            return await ctx.request_info({"draft": doc}, response_type=str, request_id="req1")
+
+        @step
+        async def slow_peer(doc: str) -> str:
+            nonlocal peer_calls
+            peer_calls += 1
+            if peer_calls == 1:
+                # Only the interrupted run's invocation blocks, so it is still alive when
+                # the resumed run starts.
+                await gate.wait()
+                peer_done.set()
+            return doc.upper()
+
+        @built_workflow(checkpoint_storage=storage)
+        async def hitl_parallel(doc: str) -> list[str]:
+            answer, peer = await asyncio.gather(ask_human(doc), slow_peer(doc))
+            return [answer, peer]
+
+        paused = await hitl_parallel.run("hello")
+        assert paused.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
+        checkpoints = await storage.list_checkpoints(workflow_name="hitl_parallel")
+        assert len(checkpoints) == 1
+        hitl_checkpoint_id = checkpoints[0].checkpoint_id
+
+        # Resume from the HITL checkpoint while the orphan from the first run is blocked.
+        resumed = await hitl_parallel.run(checkpoint_id=hitl_checkpoint_id, responses={"req1": "answer"})
+        assert resumed.get_outputs() == [["answer", "HELLO"]]
+        assert peer_calls == 2
+
+        # Release the orphan, then let its completion path run to the end.
+        gate.set()
+        await peer_done.wait()
+        for _ in range(20):
+            await asyncio.sleep(0)
+
+        checkpoints = await storage.list_checkpoints(workflow_name="hitl_parallel")
+        by_id = {checkpoint.checkpoint_id: checkpoint for checkpoint in checkpoints}
+        roots = [checkpoint for checkpoint in checkpoints if checkpoint.previous_checkpoint_id is None]
+        assert len(roots) == 1
+
+        # Every checkpoint is reachable from the latest one - the orphan did not fork the
+        # chain the resumed run built on top of the HITL checkpoint.
+        latest = await storage.get_latest(workflow_name="hitl_parallel")
+        reachable: set[str] = set()
+        cursor = latest
+        while cursor is not None:
+            reachable.add(cursor.checkpoint_id)
+            cursor = by_id.get(cursor.previous_checkpoint_id) if cursor.previous_checkpoint_id else None
+        assert reachable == set(by_id)
 
     async def test_no_checkpoint_on_cache_hit(self):
         """During replay, cached steps should NOT create additional checkpoints."""

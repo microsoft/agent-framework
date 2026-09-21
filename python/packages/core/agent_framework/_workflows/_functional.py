@@ -1062,12 +1062,23 @@ class FunctionalWorkflow:
         # Per-step, final, and HITL saves all go through this locked helper so the
         # read/save/update of the chain head is atomic on every path.
         ckpt_chain_lock = asyncio.Lock()
+        # ``asyncio.gather`` does not cancel its remaining awaitables when one of them raises,
+        # so a step can still be running when the run writes its closing checkpoint and
+        # returns.  That RunContext belongs to a finished run: its result is never delivered
+        # anywhere, so letting it save afterwards would only fork the lineage, or push state
+        # from the interrupted run to the tip of the chain for a later resume to restore.
+        run_closed = False
 
-        async def _save_checkpoint_linked() -> None:
+        async def _save_checkpoint_linked(*, closes_run: bool = False) -> None:
+            nonlocal run_closed
             if storage is None:
                 return
             async with ckpt_chain_lock:
+                if run_closed:
+                    return
                 ckpt_chain[0] = await self._save_checkpoint(ctx, storage, ckpt_chain[0])
+                if closes_run:
+                    run_closed = True
 
         if storage is not None:
             ctx._on_step_completed = _save_checkpoint_linked
@@ -1117,7 +1128,7 @@ class FunctionalWorkflow:
 
             # Save final checkpoint if storage is available
             if storage is not None:
-                await _save_checkpoint_linked()
+                await _save_checkpoint_linked(closes_run=True)
 
             # Final status
             if saw_request:
@@ -1143,7 +1154,7 @@ class FunctionalWorkflow:
 
             # Save checkpoint
             if storage is not None:
-                await _save_checkpoint_linked()
+                await _save_checkpoint_linked(closes_run=True)
 
             yield _framework_event(WorkflowEvent.status, WorkflowRunState.IDLE_WITH_PENDING_REQUESTS)
 
@@ -1171,6 +1182,9 @@ class FunctionalWorkflow:
             # ResponseStream cleanup_hooks do not run when the generator is
             # closed by GC. Release the run lock here so a follow-up run
             # after an abandoned stream is not rejected as concurrent.
+            # Also retire the per-step callback: any step still running from
+            # this run must not checkpoint once the run is over.
+            run_closed = True
             self._release_run_guard()
             span.end()
 
