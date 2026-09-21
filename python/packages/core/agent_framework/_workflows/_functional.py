@@ -746,6 +746,9 @@ class FunctionalWorkflow:
         self._last_step_cache_auto_request_info_counts: dict[tuple[str, int], int] = {}
         self._last_state: dict[str, Any] = {}
         self._last_pending_request_ids: set[str] = set()
+        # Checkpoint written where the current HITL cycle paused, so a response-only
+        # replay continues that chain instead of starting a second root.
+        self._last_checkpoint_id: str | None = None
 
         # Signature arity is validated once at decoration time.
         self._non_ctx_param_names = self._classify_signature(func)
@@ -781,6 +784,7 @@ class FunctionalWorkflow:
         self._last_step_cache_auto_request_info_counts = {}
         self._last_state = {}
         self._last_pending_request_ids = set()
+        self._last_checkpoint_id = None
 
     @staticmethod
     def _classify_signature(func: Callable[..., Any]) -> list[str]:
@@ -1044,6 +1048,10 @@ class FunctionalWorkflow:
             replay_message = self._restore_replay_state(ctx)
             if message is None:
                 message = replay_message
+            # Continue the chain from the checkpoint this HITL cycle paused at.  Without
+            # this the resumed run seeds its chain from None and writes a second root,
+            # leaving the paused checkpoint unreachable from the resumed tip.
+            prev_checkpoint_id = self._last_checkpoint_id
 
         # Store message for future replays
         if message is not None:
@@ -1129,6 +1137,9 @@ class FunctionalWorkflow:
             # Save final checkpoint if storage is available
             if storage is not None:
                 await _save_checkpoint_linked(closes_run=True)
+                # Remember where this run stopped so a response-only replay can continue
+                # the chain.  Cleared below on clean completion.
+                self._last_checkpoint_id = ckpt_chain[0]
 
             # Final status
             if saw_request:
@@ -1155,6 +1166,9 @@ class FunctionalWorkflow:
             # Save checkpoint
             if storage is not None:
                 await _save_checkpoint_linked(closes_run=True)
+                # Remember where this HITL cycle paused so a response-only replay
+                # continues the chain from it.
+                self._last_checkpoint_id = ckpt_chain[0]
 
             yield _framework_event(WorkflowEvent.status, WorkflowRunState.IDLE_WITH_PENDING_REQUESTS)
 

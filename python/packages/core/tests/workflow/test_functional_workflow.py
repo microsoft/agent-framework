@@ -1173,6 +1173,41 @@ class TestCheckpointing:
         checkpoints = await storage.list_checkpoints(workflow_name="failing_wf")
         _assert_single_checkpoint_chain(checkpoints)
 
+    async def test_response_only_resume_keeps_single_checkpoint_lineage(self):
+        """Resuming with responses only must continue the chain, not start a second root.
+
+        ``run(responses=...)`` without ``checkpoint_id`` rebuilds the run from the replay
+        cache rather than from a checkpoint, so the resumed run has to seed its chain from
+        the checkpoint the paused cycle wrote.  Otherwise the resumed checkpoints form a
+        second root and the paused checkpoint is unreachable from the resumed tip.
+        """
+        storage = InMemoryCheckpointStorage()
+
+        @step
+        async def ask_human(doc: str, ctx: RunContext) -> str:
+            return await ctx.request_info({"draft": doc}, response_type=str, request_id="req1")
+
+        @step
+        async def polish(doc: str) -> str:
+            return doc.upper()
+
+        @built_workflow(checkpoint_storage=storage)
+        async def review_wf(doc: str) -> str:
+            answer = await ask_human(doc)
+            polished = await polish(doc)
+            return f"{answer}:{polished}"
+
+        paused = await review_wf.run("hello")
+        assert paused.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
+        assert len(await storage.list_checkpoints(workflow_name="review_wf")) == 1
+
+        # Response-only replay: no checkpoint_id is passed.
+        resumed = await review_wf.run(responses={"req1": "answer"})
+        assert resumed.get_outputs() == ["answer:HELLO"]
+
+        checkpoints = await storage.list_checkpoints(workflow_name="review_wf")
+        _assert_single_checkpoint_chain(checkpoints)
+
     async def test_no_checkpoint_on_cache_hit(self):
         """During replay, cached steps should NOT create additional checkpoints."""
         storage = InMemoryCheckpointStorage()
