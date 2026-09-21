@@ -5,15 +5,29 @@ from __future__ import annotations
 import asyncio
 
 from agent_framework import Agent, Message
+from dotenv import load_dotenv
 from typesafe_sdk import Choice, Noul, Questions, Score, SystemOneResponse
 
 from agent_framework_typesafe import TypeSafeChatClient, TypeSafeChatOptions
 
+load_dotenv()
+
 """
 TypeSafe AI Jev structured-output chat client example.
 
-Jev is a System One decision model, not a generative chat model. Every request
-provides typed questions, and every response contains structured answers.
+This connector uses Agent Framework's ``response_format`` option differently
+from regular chat clients:
+
+- ``response_format`` is a TypeSafe ``Questions`` mapping, not a Pydantic output model.
+- ``response.value`` is the typed ``SystemOneResponse`` returned by TypeSafe.
+- ``response.text`` is the serialized JSON response when no tool was executed.
+
+The three TypeSafe response primitives are:
+
+- ``Noul``: a yes/no probability in ``answer.noul``. It has no separate confidence.
+- ``Choice``: one selected label, its probability distribution, and ``confidence``.
+- ``Score``: a probability-weighted position across ordered rubric levels, plus
+  its legend, probability distribution, and ``confidence``.
 
 Environment variables:
     TYPESAFE_API_KEY — TypeSafe API key.
@@ -31,7 +45,7 @@ def print_evaluation(label: str, response: SystemOneResponse) -> None:
 
 async def main() -> None:
     """Run Jev through both the chat client and Agent Framework Agent APIs."""
-    # 1. Define the typed judgments Jev should make for every support request.
+    # 1. Define the TypeSafe Questions mapping passed through response_format.
     questions: Questions = {
         "department": Choice(
             instructions="Which team should handle the support request?",
@@ -59,6 +73,8 @@ async def main() -> None:
     }
     options: TypeSafeChatOptions = {"response_format": questions}
 
+    # The question IDs become the keys in SystemOneResponse.answers and its typed views:
+    # response.nouls, response.choices, and response.scores.
     direct_ticket = "I was charged twice for the same subscription. Please refund the duplicate charge."
     agent_ticket = "Our checkout integration has failed for three days and we are losing sales. Please help ASAP."
 
@@ -71,6 +87,7 @@ async def main() -> None:
         )
         if not isinstance(direct_response.value, SystemOneResponse):
             raise RuntimeError("TypeSafe did not return the required structured response.")
+        # Prefer response.value when code needs typed answers and probabilities.
         print_evaluation("Direct TypeSafeChatClient result:", direct_response.value)
 
         # 4. Use the same client through an Agent Framework Agent.
@@ -103,4 +120,9 @@ Department: technical
 Department confidence: 0.970
 Frustration score: 1.000
 Urgency probability: 0.980
+
+``response.value`` also contains:
+- ``answers``: all answers keyed by the configured question IDs.
+- ``choices`` / ``nouls`` / ``scores``: typed views grouped by primitive.
+- ``model`` and ``usage``: the TypeSafe model and token counts.
 """
