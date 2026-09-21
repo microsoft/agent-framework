@@ -52,10 +52,18 @@ from starlette.responses import Response, StreamingResponse
 from typing_extensions import Any
 
 from agent_framework_foundry_hosting import InvocationsHostServer, StoreProvider
+from agent_framework_foundry_hosting._state_store import FoundryAgentSessionStore
 
 pytestmark = pytest.mark.filterwarnings("ignore:.*SessionStore is experimental.*")
 
 # region Helpers
+
+
+@pytest.fixture(autouse=True)
+def configure_local_application(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FOUNDRY_AGENT_NAME", "invocation-test-application")
+    monkeypatch.delenv("FOUNDRY_AGENT_ID", raising=False)
+    monkeypatch.delenv("FOUNDRY_HOSTING_ENVIRONMENT", raising=False)
 
 
 def _mock_session_store() -> MagicMock:
@@ -225,6 +233,134 @@ async def _collect_stream(response: StreamingResponse) -> str:
 
 
 class TestSessionLifecycle:
+    async def test_default_invocations_store_is_separate_from_responses(self) -> None:
+        storage_keys: list[str] = []
+        save = FoundryAgentSessionStore.set
+        turns: list[int] = []
+
+        async def record_save(store: FoundryAgentSessionStore, key: str, session: AgentSession) -> None:
+            storage_keys.append(key)
+            await save(store, key, session)
+
+        def update_session(session: AgentSession) -> None:
+            session.state["turn"] = session.state.get("turn", 0) + 1
+            turns.append(session.state["turn"])
+
+        server = InvocationsHostServer(_make_agent(response_text="ok", update_session=update_session))
+        with (
+            _request_context(session_id="session"),
+            patch.object(FoundryAgentSessionStore, "set", record_save),
+        ):
+            await server._handle_invoke(_make_request({"message": "one"}))  # pyright: ignore[reportPrivateUsage]
+
+        responses_store = FoundryAgentSessionStore(FoundryAgentRequestContext())
+        key = storage_keys[0]
+        assert await responses_store.get(key) is None
+        responses_session = AgentSession(session_id="responses-session")
+        responses_session.state["protocol"] = "responses"
+        await responses_store.set(key, responses_session)
+        with _request_context(session_id="session"):
+            await server._handle_invoke(_make_request({"message": "two"}))  # pyright: ignore[reportPrivateUsage]
+        assert turns == [1, 2]
+        restored = await responses_store.get(key)
+        assert restored is not None
+        assert restored.state == {"protocol": "responses"}
+
+    async def test_independent_application_names_do_not_share_sessions(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        seen: list[dict[str, Any]] = []
+
+        for application in ["first-app", "second-app", "first-app"]:
+            monkeypatch.setenv("FOUNDRY_AGENT_NAME", application)
+
+            def update_session(session: AgentSession, application: str = application) -> None:
+                seen.append(dict(session.state))
+                session.state["application"] = application
+
+            server = InvocationsHostServer(_make_agent(response_text="ok", update_session=update_session))
+            with _request_context(session_id="shared-session"):
+                await server._handle_invoke(_make_request({"message": "hello"}))  # pyright: ignore[reportPrivateUsage]
+
+        assert seen == [{}, {}, {"application": "first-app"}]
+
+    @pytest.mark.parametrize("spec_version", ["2.0", "2.4"])
+    async def test_keep_alive_disconnect_joins_pump_before_session_cleanup(self, spec_version: str) -> None:
+        entered = asyncio.Event()
+        disconnected = asyncio.Event()
+        saved: list[dict[str, Any]] = []
+        pump: asyncio.Task[Any] | None = None
+        store = _mock_session_store()
+
+        async def save(key: str, session: AgentSession) -> None:
+            saved.append(dict(session.state))
+
+        store.set.side_effect = save
+
+        class IdleAgent(_FakeAgent):
+            def run(
+                self, messages: Any = None, *, stream: bool = False, session: AgentSession | None = None, **kwargs: Any
+            ) -> Any:
+                async def updates() -> AsyncIterator[AgentResponseUpdate]:
+                    nonlocal pump
+                    assert session is not None
+                    pump = asyncio.current_task()
+                    entered.set()
+                    try:
+                        await asyncio.Event().wait()
+                        yield AgentResponseUpdate(contents=[Content.from_text("unused")])
+                    finally:
+                        await asyncio.sleep(0)
+                        session.state["closed"] = True
+
+                return updates()
+
+        server = InvocationsHostServer(IdleAgent(), agent_session_store_provider=_SessionStoreProvider(store))
+        server.config.sse_keepalive_interval = 1
+        body = json.dumps({"message": "hello", "stream": True}).encode()
+        received = False
+
+        async def receive() -> Any:
+            nonlocal received
+            if not received:
+                received = True
+                return {"type": "http.request", "body": body}
+            await disconnected.wait()
+            return {"type": "http.disconnect"}
+
+        async def send(message: Any) -> None:
+            if message["type"] == "http.response.body" and message.get("body") == b": keep-alive\n\n":
+                assert entered.is_set()
+                if spec_version == "2.4":
+                    raise OSError("disconnected while idle")
+                disconnected.set()
+                await asyncio.Event().wait()
+
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": spec_version},
+            "method": "POST",
+            "scheme": "http",
+            "path": "/invocations",
+            "root_path": "",
+            "query_string": b"agent_session_id=session",
+            "headers": [(b"content-type", b"application/json")],
+            "server": ("test", 80),
+            "client": ("test", 1234),
+        }
+        try:
+            if spec_version == "2.4":
+                with pytest.raises(ClientDisconnect):
+                    await asyncio.wait_for(server(scope, receive, send), timeout=5)
+            else:
+                await asyncio.wait_for(server(scope, receive, send), timeout=5)
+            assert saved == [{"closed": True}]
+            assert server._session_locks == {}  # pyright: ignore[reportPrivateUsage]
+            assert pump is not None
+            assert pump.done()
+        finally:
+            if pump is not None and not pump.done():
+                pump.cancel()
+                await asyncio.gather(pump, return_exceptions=True)
+
     @pytest.mark.parametrize("stream", [False, True])
     async def test_http_requests_restore_sessions_without_changing_response_format(self, stream: bool) -> None:
         turns: list[int] = []
@@ -309,16 +445,61 @@ class TestSessionLifecycle:
         assert client.calls[-1][0].text == "first"
         assert client.calls[-1][-1].text == "second"
 
-    async def test_mismatched_stored_session_is_not_replaced(self) -> None:
+    async def test_custom_store_can_restore_a_different_session_id(self) -> None:
         store = _mock_session_store()
         store.get = AsyncMock(return_value=AgentSession(session_id="different"))
         store.set = AsyncMock()
         agent = _make_agent(response_text="ok")
         server = InvocationsHostServer(agent, agent_session_store_provider=_SessionStoreProvider(store))
-        with _request_context(session_id="session"), pytest.raises(ValueError, match="does not match"):
+        with _request_context(session_id="session"):
             await server._handle_invoke(_make_request({"message": "hello"}))  # pyright: ignore[reportPrivateUsage]
-        assert agent.calls == []
-        store.set.assert_not_awaited()
+        assert agent.calls[0]["session"].session_id == "different"
+        store.set.assert_awaited_once()
+        assert server._session_locks == {}  # pyright: ignore[reportPrivateUsage]
+
+    async def test_combined_failures_include_types_for_empty_messages(self) -> None:
+        store = _mock_session_store()
+        store.set.side_effect = RuntimeError()
+
+        def update_session(session: AgentSession) -> None:
+            raise ValueError
+
+        server = InvocationsHostServer(
+            _make_agent(response_text="ok", update_session=update_session),
+            agent_session_store_provider=_SessionStoreProvider(store),
+        )
+        with (
+            _request_context(session_id="session"),
+            pytest.raises(
+                RuntimeError, match="Invocation failed: ValueError; session persistence also failed: RuntimeError"
+            ) as raised,
+        ):
+            await server._handle_invoke(_make_request({"message": "hello"}))  # pyright: ignore[reportPrivateUsage]
+        assert raised.value.__cause__ is store.set.side_effect
+
+    async def test_control_flow_exception_still_closes_request_agent(self) -> None:
+        class ControlFlowExit(BaseException):
+            pass
+
+        events: list[str] = []
+        error = ControlFlowExit()
+        store = _mock_session_store()
+        store.set.side_effect = ValueError("save failed")
+
+        class ExitingAgent(_ContextAgent):
+            def run(
+                self, messages: Any = None, *, stream: bool = False, session: AgentSession | None = None, **kwargs: Any
+            ) -> Any:
+                raise error
+
+        server = InvocationsHostServer(
+            lambda: ExitingAgent(events), agent_session_store_provider=_SessionStoreProvider(store)
+        )
+        with _request_context(session_id="session"), pytest.raises(ControlFlowExit) as raised:
+            await server._handle_invoke(_make_request({"message": "hello"}))  # pyright: ignore[reportPrivateUsage]
+        assert raised.value is error
+        assert events == ["enter", "exit"]
+        store.set.assert_awaited_once()
         assert server._session_locks == {}  # pyright: ignore[reportPrivateUsage]
 
     async def test_cancelled_persistence_is_reported_and_releases_coordination(
@@ -521,7 +702,7 @@ class TestSessionLifecycle:
         agent = _make_agent(response_text="ok", stream_texts=["ok"], update_session=update_session)
         server = InvocationsHostServer(agent, agent_session_store_provider=_SessionStoreProvider(store))
         expected = (
-            "Invocation failed and session persistence also failed"
+            "Invocation failed: run failed; session persistence also failed: save failed"
             if failure == "run_and_save"
             else (f"{failure} failed")
         )
@@ -692,6 +873,36 @@ class TestSessionLifecycle:
 
 
 class TestInit:
+    def test_default_store_requires_application_identity(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("FOUNDRY_AGENT_NAME")
+        with pytest.raises(ValueError, match="Set session_store_namespace"):
+            InvocationsHostServer(_make_agent(response_text="ok"))
+
+        server = InvocationsHostServer(_make_agent(response_text="ok"), session_store_namespace="explicit-app")
+        assert server._session_namespace == "explicit-app"  # pyright: ignore[reportPrivateUsage]
+
+    def test_custom_store_can_own_application_isolation(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("FOUNDRY_AGENT_NAME")
+        server = InvocationsHostServer(
+            _make_agent(response_text="ok"), agent_session_store_provider=_SessionStoreProvider(_mock_session_store())
+        )
+        assert server._session_namespace is None  # pyright: ignore[reportPrivateUsage]
+
+    @pytest.mark.parametrize("namespace", ["", " \t", 123])
+    def test_rejects_invalid_explicit_namespace(self, namespace: Any) -> None:
+        with pytest.raises(ValueError, match="session_store_namespace must be a non-empty string"):
+            InvocationsHostServer(_make_agent(response_text="ok"), session_store_namespace=namespace)
+
+    def test_namespace_precedence_is_explicit_then_agent_id_then_name(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        agent = _make_agent(response_text="ok")
+        named = InvocationsHostServer(agent)
+        assert named._session_namespace == "invocation-test-application"  # pyright: ignore[reportPrivateUsage]
+        monkeypatch.setenv("FOUNDRY_AGENT_ID", "stable-agent-id")
+        identified = InvocationsHostServer(agent)
+        assert identified._session_namespace == "stable-agent-id"  # pyright: ignore[reportPrivateUsage]
+        explicit = InvocationsHostServer(agent, session_store_namespace="explicit-app")
+        assert explicit._session_namespace == "explicit-app"  # pyright: ignore[reportPrivateUsage]
+
     def test_accepts_supports_agent_run(self) -> None:
         server = InvocationsHostServer(_make_agent(response_text="hi"))
         assert server._agent is not None  # pyright: ignore[reportPrivateUsage]

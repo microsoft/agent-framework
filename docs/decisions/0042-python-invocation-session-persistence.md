@@ -42,6 +42,11 @@ store locally. New default stores inherit the existing SDK retention policy: 30 
 since the last write. Existing stores and custom providers retain their own policies.
 Absent or expired state starts a new conversation; there is no permanent tombstone registry.
 
+Invocations defaults to the separate `invocation_sessions` logical store. A prefix alone
+cannot isolate keys from Responses, which accepts opaque conversation identifiers in its
+`agent_sessions` store. The shared store adapter and provider accept `store_name` to select
+the logical store without changing the Responses default.
+
 ### Alignment with .NET
 
 This follows **.NET Foundry Responses hosting's persistence architecture**, not a purported
@@ -61,8 +66,17 @@ concurrency implementations.
 
 ### Lifecycle and limitations
 
-Invocation storage keys hash an unambiguous partition encoding and use a versioned,
-protocol-specific namespace; runtime `AgentSession.session_id` values remain unchanged.
+Invocation storage keys hash an unambiguous application-and-partition encoding and use a
+versioned prefix within the separate logical store. Applications can set
+`session_store_namespace`; otherwise the configured `FOUNDRY_AGENT_ID` takes precedence
+over `FOUNDRY_AGENT_NAME`. Default storage rejects a missing identity rather than guessing
+one or sharing an unnamed global application partition. Application identities must be
+stable across restarts and distinct between independent applications. Agent versions and
+per-process identifiers are not used as namespace defaults.
+
+New session IDs retain the existing hosted/local representation. Restored sessions keep
+their stored ID: the generic `SessionStore` contract does not require that ID to match a
+lookup key or the request's platform ID.
 Same-partition requests serialize within one host. Reference-counted lock entries exist
 only for active/waiting requests and are removed after the final request leaves.
 
@@ -70,8 +84,13 @@ The coordination scope includes stream closure, factory-agent cleanup, and sessi
 The host attempts to save state on success, execution failure, and interruption, without
 retrying agent execution. Disconnect cleanup is shielded from the ASGI cancellation scope.
 Persistence errors are reported; there is no success-shaped in-memory fallback.
+Combined execution/persistence failures retain both messages and the persistence cause.
 After streaming headers have been sent, a persistence failure terminates the stream and is
 logged; already delivered text cannot be retracted.
+
+AgentServer can replace the response iterator with an SSE keep-alive wrapper whose pump
+is still reading the agent stream. Disconnect cleanup closes the installed outer iterator
+first, allowing that wrapper to cancel and join its pump, then closes the original stream.
 
 Starlette uses AnyIO cancellation scopes even when running on asyncio. `asyncio.shield()`
 protects the child operation but still allows the awaiting request to unwind on cancellation.
@@ -91,13 +110,15 @@ object-identity reuse with restored state, and custom state needs registered cod
 Existing process-local invocation sessions are not migrated across deployment; the previous
 implementation also lost them on restart. Local sessions now survive host recreation and are
 written under `AGENTSERVER_STATE_ROOT` or the SDK's default state directory. Independent
-applications should use separate storage roots or providers.
+applications should configure distinct application namespaces.
 
 State must support `AgentSession.to_dict()` / `AgentSession.from_dict()`. Custom state types
 need registered codecs rather than arbitrary live Python objects. Restored sessions preserve
 state, not Python object identity.
 
 A custom provider's `get_store` receives host configuration and request platform context.
+Providers explicitly supplied by the application are responsible for application and protocol
+isolation, and may use their own scoping without `session_store_namespace`.
 The provider owns retention and deletion; an explicitly selected in-memory store remains
 volatile and does not gain automatic eviction. For new default stores, writes renew the
 30-day expiry window and reads do not. Missing, deleted, or expired state starts fresh on

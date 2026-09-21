@@ -88,7 +88,7 @@ subdirectory instead.
 Each logical store is saved as one JSON file whose name is a URL-safe Base64
 encoding of the store name. For example:
 
-- Agent sessions: `YWdlbnRfc2Vzc2lvbnM.json`
+- Responses agent sessions: `YWdlbnRfc2Vzc2lvbnM.json`
 - Function approvals: `ZnVuY3Rpb25fYXBwcm92YWxz.json`
 - Workflow checkpoints: one file per context, encoded from `checkpoints/<context_id>`
 
@@ -105,7 +105,8 @@ No additional partitioning configuration is required when using the default stor
 
 `ResponsesHostServer` and `InvocationsHostServer` persist the Agent Framework `AgentSession`
 durably. By default they use `FoundryAgentSessionStore`, backed by Foundry storage when hosted
-and file-based storage locally. Stored sessions are scoped under `agent_sessions`.
+and file-based storage locally. Responses sessions use the `agent_sessions` logical store;
+Invocations sessions use the separate `invocation_sessions` store.
 
 See the [custom storage provider sample](../../samples/04-hosting/foundry-hosted-agents/responses/custom_storage/)
 for an example that uses an in-memory session store locally and Azure Cosmos DB when hosted.
@@ -121,6 +122,8 @@ representation. Repeated requests for the same identifier pair restore the saved
 Locally, the platform session ID is used unchanged.
 
 Both hosts accept `agent_session_store_provider` to select a `StoreProvider[SessionStore]`.
+For default Invocations storage, set `session_store_namespace` to a stable application-specific
+name unless `FOUNDRY_AGENT_ID` or `FOUNDRY_AGENT_NAME` is configured.
 Session state must support `AgentSession` serialization. New default stores expire saved
 sessions 30 days after their last write; an invocation after expiry starts a fresh session.
 Existing stores retain their creation-time settings, and custom providers own their retention
