@@ -464,17 +464,20 @@ def add_usage_details(usage1: UsageDetails | None, usage2: UsageDetails | None) 
             combined = add_usage_details(usage1, usage2)
             # Result: {'input_token_count': 8, 'output_token_count': 16}
     """
-    if usage1 is None:
-        return usage2 or UsageDetails()
-    if usage2 is None:
-        return usage1
+    u1 = usage1 or UsageDetails()
+    u2 = usage2 or UsageDetails()
 
     result = UsageDetails()
     # Combine all keys from both dictionaries
-    all_keys = set(usage1.keys()) | set(usage2.keys())
+    all_keys = set(u1.keys()) | set(u2.keys())
     for key in all_keys:
-        if not isinstance((val1 := usage1.get(key, 0)), (int | None)) or not isinstance(
-            (val2 := usage2.get(key, 0)), (int | None)
+        val1 = u1.get(key, 0)
+        val2 = u2.get(key, 0)
+        if (
+            isinstance(val1, bool)
+            or isinstance(val2, bool)
+            or not isinstance(val1, (int, type(None)))
+            or not isinstance(val2, (int, type(None)))
         ):
             logger.warning("Non `int` value found in usage details, skipping.")
             continue
