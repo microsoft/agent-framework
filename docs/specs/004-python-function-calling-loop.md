@@ -500,6 +500,15 @@ that manually replay messages own the equivalent rule: do not resend an approval
   approval `Message`, approval `Content`, or an earlier returned response.
 - Approval-time `UserInputRequiredException` and `MiddlewareTermination` return immediately without another model
   call.
+- `Agent.as_tool()` keeps child function approvals inside the delegated invocation. A child
+  `ToolApprovalMiddleware` may resolve them through runtime `auto_approval_rules`; any unresolved child function
+  approval does not enter the caller's approval state or model transcript. An approval-only response fails the
+  agent-tool invocation; a mixed response preserves its non-approval user-input requests while discarding the child
+  approval continuation. Interactive, delayed, or durable approval belongs in a workflow. When
+  `propagate_session=True`, child application-state changes merge back into the parent while framework approval and
+  invocation-budget state remain isolated, including approval queues stored under custom child middleware
+  `source_id` values. Parent and child `ToolApprovalMiddleware` instances must use distinct `source_id` values; an
+  overlap fails before the child runs.
 
 ### Approval control content
 
@@ -578,6 +587,7 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Mixed approved/rejected batch | Every call gets one correctly correlated terminal result. | `packages/core/tests/core/test_function_invocation_logic.py::test_rejected_approval` |
 | Persisted approval replay | Resume executes with the prior call available. | `test_persisted_approval_messages_replay_correctly` |
 | Hosted approval pass-through | Hosted requests/responses are bound to the recorded provider request and are not processed as local calls. | `test_hosted_tool_approval_response`, `test_hosted_mcp_approval_response_passthrough`, `test_session_approval_binding_reconstructs_hosted_response`, `test_mixed_local_and_hosted_approval_flow` |
+| Agent-tool child approval | A child `ToolApprovalMiddleware` can auto-approve runtime tool requests inside one delegated invocation; unresolved child approvals execute nothing and do not enter the caller's approval state or dispatch a same-named parent tool, including with propagated application state. Mixed batches preserve non-approval user-input requests. Shared parent and child state rejects overlapping `ToolApprovalMiddleware.source_id` values before running the child; parent approval state is neither visible nor mutable inside the child, and custom child approval queues do not leak into later delegations. | `packages/core/tests/core/test_agents.py::test_chat_agent_as_tool_auto_approves_child_tool_with_middleware`, `test_chat_agent_as_tool_fails_closed_for_unresolved_child_approval`, `test_chat_agent_as_tool_child_approval_does_not_dispatch_same_named_parent_tool`, `test_chat_agent_as_tool_preserves_non_approval_requests_from_mixed_child_batch`, `test_chat_agent_as_tool_shared_session_requires_distinct_tool_approval_source_ids`, `test_chat_agent_as_tool_isolates_custom_parent_approval_state`, `test_chat_agent_as_tool_approved_delegation_does_not_confuse_framework_approval_state`, `test_chat_agent_as_tool_does_not_restore_custom_approval_queue_on_fresh_delegation` |
 | Approval-time user input | Every user-input request from one approved execution returns in order with assistant role and no extra model call; the execution consumes one call-budget unit. | `packages/core/tests/core/test_harness_tool_approval.py::test_approval_resume_returns_all_user_input_requests_without_another_model_call`, `packages/core/tests/core/test_function_invocation_logic.py::test_approval_resume_user_input_counts_toward_function_call_budget` |
 | Mixed terminal result and follow-up input | Completed siblings remain tool-role while only follow-up input requests use assistant-role messages/updates. | `packages/core/tests/core/test_function_invocation_logic.py::test_approval_resume_separates_terminal_results_from_follow_up_requests`, `packages/openai/tests/openai/test_openai_chat_completion_client.py::test_mixed_approval_resume_roles_serialize_function_result_as_tool`, `packages/core/tests/core/test_harness_tool_approval.py::test_dynamic_policy_approval_partitions_safe_sibling_result_roles` |
 | Approval-time middleware termination | Terminal result returns with no extra model call in either response mode. | `packages/core/tests/core/test_function_invocation_logic.py::test_approval_resume_honors_middleware_termination` |
