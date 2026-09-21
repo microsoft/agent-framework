@@ -37,6 +37,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    FinishReasonLiteral,
     FunctionInvocationLayer,
     HistoryProvider,
     InMemoryCheckpointStorage,
@@ -5275,13 +5276,13 @@ class TestIncompleteFinishReasonSurfacing:
     """
 
     @staticmethod
-    def _filtered_agent(*, finish_reason: str) -> MagicMock:
+    def _filtered_agent(*, finish_reason: FinishReasonLiteral) -> MagicMock:
         return _make_agent(
             stream_updates=[
                 AgentResponseUpdate(
                     contents=[Content.from_text("I'm sorry, but I cannot assist with that request.")],
                     role="assistant",
-                    finish_reason=finish_reason,  # type: ignore[arg-type]
+                    finish_reason=finish_reason,
                 )
             ]
         )
@@ -5741,16 +5742,16 @@ class _ToolApprovalWorkflowAgentMock(SupportsAgentRun):
         return ResponseStream(_iter(), finalizer=AgentResponse.from_updates)
 
 
-def _build_text_workflow_agent(text: str, *, finish_reason: str | None = None) -> WorkflowAgent:
+def _build_text_workflow_agent(text: str, *, finish_reason: FinishReasonLiteral | None = None) -> WorkflowAgent:
     """Build a minimal ``WorkflowAgent`` whose inner agent emits a fixed text."""
 
     class _TextAgent(SupportsAgentRun):
-        def __init__(self, name: str, text: str, finish_reason: str | None) -> None:
+        def __init__(self, name: str, text: str, finish_reason: FinishReasonLiteral | None) -> None:
             self.id = str(uuid.uuid4())
             self.name = name
             self.description: str | None = None
             self._text = text
-            self._finish_reason = finish_reason
+            self._finish_reason: FinishReasonLiteral | None = finish_reason
 
         def create_session(self, **kwargs: Any) -> AgentSession:
             del kwargs
@@ -5801,7 +5802,7 @@ def _build_text_workflow_agent(text: str, *, finish_reason: str | None = None) -
                     contents=[Content.from_text(text=text)],
                     role="assistant",
                     author_name=name,
-                    finish_reason=finish_reason,  # type: ignore[arg-type]
+                    finish_reason=finish_reason,
                 )
 
             return ResponseStream(_aiter(), finalizer=AgentResponse.from_updates)
@@ -6525,7 +6526,7 @@ class TestResilientBackgroundCheckpointing:
                 # The event references the live response; copy it as it is at persistence time.
                 snapshots.append((emitted_text, copy.deepcopy(dict(event.response))))
             elif isinstance(event, Mapping) and event.get("type") == "response.output_text.delta":
-                emitted_text += str(event["delta"])
+                emitted_text += str(event.get("delta", ""))
 
         assert emitted_text == "filtered by workflow"
         assert snapshots, "expected the completed workflow to be snapshotted"

@@ -1190,7 +1190,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
             def snapshot_response(
                 checkpoint_id: str | None,
-            ) -> Generator[ResponseStreamEvent | ResponseCheckpointEvent, None, None]:
+            ) -> Generator[ResponseStreamEvent | ResponseCheckpointEvent]:
                 # Pair the response output emitted so far with the workflow checkpoint it corresponds
                 # to, so recovery from that checkpoint replays exactly the updates that came after it.
                 if checkpoint_id is None or checkpoint_id == response_event_stream.internal_metadata.get(
