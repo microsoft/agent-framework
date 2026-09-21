@@ -61,3 +61,34 @@ This intentionally incurs connection and initialization overhead and does not
 retain server session state between provider-backed invocations. Applications
 that require shared session ownership must implement an explicitly scoped
 custom `MCPToolHandler`; there is no provider-backed session-cache opt-in.
+
+## Workflow runtime context and MCP approvals
+
+`InvokeAzureAgent` resolves `function_invocation_kwargs` and `client_kwargs`
+for the receiving executor, including when restoring legacy checkpoints.
+Client kwargs go only to the chat client; the outer workflow kwargs bag and
+internal routing snapshots are not copied into tool runtime context.
+Explicit caller-provided `options.additional_function_arguments` remain tool inputs.
+
+**Approval compatibility change:** `InvokeMcpTool` binds evaluated headers to
+each approval request without publishing or checkpointing header values.
+Header names are case-insensitive; values are compared exactly. Any changed,
+added, or removed header requires a new approval before dispatch, including
+credential refresh and non-authentication header changes. The replacement
+retains the originally reviewed server, tool, arguments, connection, and
+conversation; callers must approve its new request ID.
+
+Bindings use a random workflow-local HMAC key stored separately in trusted
+host checkpoint state, never in approval payloads. Unchanged approvals survive
+restoration into a fresh executor. Checkpoint storage must be tenant-scoped
+and protected against unauthorized reads and writes, like other pending
+approval authority; do not expose its binding key to approval clients.
+Legacy requests or checkpoints missing the key require fresh approval when
+headers are present. Headerless requests retain their existing resume behavior.
+No raw credentials or unkeyed credential digests are persisted.
+
+This binds the headers evaluated by the declarative action, not credentials
+resolved inside a custom `MCPToolHandler` or `client_provider`. Those components
+must keep their own credential resolution scoped to the reviewed connection
+and authorized principal; a handler must not reinterpret a stable connection
+name as permission to switch principals.
