@@ -125,7 +125,9 @@ def detect_media_type_from_base64(
     if data_bytes is not None:
         data = data_bytes
     if data_uri is not None:
-        if data is not None:
+        # The conflict check has to run before the URI payload is rebound into data_str,
+        # otherwise a caller-supplied data_str disappears instead of being rejected.
+        if data is not None or data_str is not None:
             raise ValueError("Provide exactly one of data_bytes, data_str, or data_uri.")
         # Remove data URI prefix if present
         if not data_uri.startswith("data:") or "," not in data_uri:
@@ -2103,6 +2105,8 @@ def _process_update(response: ChatResponse | AgentResponse, update: ChatResponse
             response.finish_reason = update.finish_reason
         if update.model is not None:
             response.model = update.model
+    if isinstance(response, AgentResponse) and isinstance(update, AgentResponseUpdate) and update.agent_id is not None:
+        response.agent_id = update.agent_id
     if (
         isinstance(response, AgentResponse)
         and isinstance(update, AgentResponseUpdate)
