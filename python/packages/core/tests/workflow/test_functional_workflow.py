@@ -87,6 +87,36 @@ class _YieldingCheckpointStorage(InMemoryCheckpointStorage):
         return await super().save(checkpoint)
 
 
+def _assert_single_checkpoint_chain(checkpoints: list[WorkflowCheckpoint]) -> None:
+    """Assert ``checkpoints`` form one unbranched chain.
+
+    Reachability is walked from the tip rather than from ``get_latest()``: that call picks
+    by timestamp, and platforms with a coarser clock (Windows) give consecutive saves the
+    same timestamp, where it returns an arbitrary member of the chain instead of the tip.
+    """
+    by_id = {checkpoint.checkpoint_id: checkpoint for checkpoint in checkpoints}
+
+    roots = [checkpoint for checkpoint in checkpoints if checkpoint.previous_checkpoint_id is None]
+    assert len(roots) == 1
+
+    for checkpoint in checkpoints:
+        if checkpoint.previous_checkpoint_id is not None:
+            assert checkpoint.previous_checkpoint_id in by_id
+
+    linked_parents = {
+        checkpoint.previous_checkpoint_id for checkpoint in checkpoints if checkpoint.previous_checkpoint_id
+    }
+    tips = [checkpoint for checkpoint in checkpoints if checkpoint.checkpoint_id not in linked_parents]
+    assert len(tips) == 1
+
+    reachable: set[str] = set()
+    cursor: WorkflowCheckpoint | None = tips[0]
+    while cursor is not None:
+        reachable.add(cursor.checkpoint_id)
+        cursor = by_id.get(cursor.previous_checkpoint_id) if cursor.previous_checkpoint_id else None
+    assert reachable == set(by_id)
+
+
 @step
 async def add_one(x: int) -> int:
     return x + 1
@@ -949,19 +979,8 @@ class TestCheckpointing:
         # Two per-step saves plus the final save.
         assert len(checkpoints) == 3
 
-        # Exactly one root: the chain head is read and updated under the lineage lock.
-        roots = [checkpoint for checkpoint in checkpoints if checkpoint.previous_checkpoint_id is None]
-        assert len(roots) == 1
-
-        # Every checkpoint is reachable from the latest one - no forked lineage.
-        by_id = {checkpoint.checkpoint_id: checkpoint for checkpoint in checkpoints}
-        latest = await storage.get_latest(workflow_name="parallel")
-        reachable: set[str] = set()
-        cursor = latest
-        while cursor is not None:
-            reachable.add(cursor.checkpoint_id)
-            cursor = by_id.get(cursor.previous_checkpoint_id) if cursor.previous_checkpoint_id else None
-        assert reachable == set(by_id)
+        # One unbranched chain: the head is read and updated under the lineage lock.
+        _assert_single_checkpoint_chain(checkpoints)
 
     async def test_request_info_retires_orphaned_step_checkpoints(self):
         """A step left running by a HITL interruption must not checkpoint after the run.
@@ -1003,8 +1022,7 @@ class TestCheckpointing:
 
         checkpoints = await storage.list_checkpoints(workflow_name="hitl_parallel")
         assert len(checkpoints) == 1
-        roots = [checkpoint for checkpoint in checkpoints if checkpoint.previous_checkpoint_id is None]
-        assert len(roots) == 1
+        _assert_single_checkpoint_chain(checkpoints)
 
     async def test_resume_after_request_info_keeps_single_checkpoint_lineage(self):
         """Resuming from a HITL checkpoint must not race a still-running sibling step.
@@ -1057,19 +1075,9 @@ class TestCheckpointing:
             await asyncio.sleep(0)
 
         checkpoints = await storage.list_checkpoints(workflow_name="hitl_parallel")
-        by_id = {checkpoint.checkpoint_id: checkpoint for checkpoint in checkpoints}
-        roots = [checkpoint for checkpoint in checkpoints if checkpoint.previous_checkpoint_id is None]
-        assert len(roots) == 1
-
-        # Every checkpoint is reachable from the latest one - the orphan did not fork the
-        # chain the resumed run built on top of the HITL checkpoint.
-        latest = await storage.get_latest(workflow_name="hitl_parallel")
-        reachable: set[str] = set()
-        cursor = latest
-        while cursor is not None:
-            reachable.add(cursor.checkpoint_id)
-            cursor = by_id.get(cursor.previous_checkpoint_id) if cursor.previous_checkpoint_id else None
-        assert reachable == set(by_id)
+        # One unbranched chain: the orphan did not link to the HITL checkpoint alongside
+        # the chain the resumed run built on top of it.
+        _assert_single_checkpoint_chain(checkpoints)
 
     async def test_no_checkpoint_on_cache_hit(self):
         """During replay, cached steps should NOT create additional checkpoints."""
