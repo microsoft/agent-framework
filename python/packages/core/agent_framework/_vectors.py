@@ -2394,8 +2394,7 @@ def create_delete_tool(
                 top=len(validated_keys),
             )
             keys_to_delete = [
-                cast(
-                    KeyT,
+                collection.key_from_json(
                     _encode_vector_tool_record(collection, record, include_vectors=False)[
                         collection.definition.key_name
                     ],

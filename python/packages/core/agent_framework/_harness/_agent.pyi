@@ -71,6 +71,7 @@ def create_harness_agent(
     disable_file_memory: bool = False,
     file_memory_store: AgentFileStore | None = None,
     file_access_store: AgentFileStore | None = None,
+    file_access_session_scoped: bool = False,
     file_access_disable_write_tools: bool = False,
     file_access_disable_readonly_tool_approval: bool = False,
     file_access_disable_write_tool_approval: bool = False,

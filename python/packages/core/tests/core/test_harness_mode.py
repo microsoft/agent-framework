@@ -51,6 +51,26 @@ def test_get_and_set_agent_mode_manage_session_state() -> None:
         set_agent_mode(session, "ship")
 
 
+def test_get_agent_mode_rejects_empty_available_modes() -> None:
+    """An explicitly empty mode set must not fall back to the built-in modes."""
+    session = AgentSession(session_id="session-1")
+
+    with pytest.raises(ValueError, match="available_modes must contain at least one mode"):
+        get_agent_mode(session, available_modes=[])
+
+    assert DEFAULT_MODE_SOURCE_ID not in session.state
+
+
+def test_set_agent_mode_rejects_empty_available_modes() -> None:
+    """An explicitly empty mode set must not fall back to the built-in modes."""
+    session = AgentSession(session_id="session-1")
+
+    with pytest.raises(ValueError, match="available_modes must contain at least one mode"):
+        set_agent_mode(session, "plan", available_modes=[])
+
+    assert DEFAULT_MODE_SOURCE_ID not in session.state
+
+
 def test_agent_mode_helpers_reject_non_dict_provider_state() -> None:
     """Mode helpers should not overwrite unrelated non-dict session state."""
     session = AgentSession(session_id="session-1")

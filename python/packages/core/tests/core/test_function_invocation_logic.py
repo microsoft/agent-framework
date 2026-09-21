@@ -2329,9 +2329,10 @@ async def test_stateless_sequential_approval_replay_preserves_model_order(
         for content in message.contents
         if content.type == "function_approval_request"
     ]
-    assert [
-        request.function_call.name for request in approval_requests if request.function_call is not None
-    ] == ["first_write", "second_write"]
+    assert [request.function_call.name for request in approval_requests if request.function_call is not None] == [
+        "first_write",
+        "second_write",
+    ]
 
     await chat_client_base.get_response(
         [

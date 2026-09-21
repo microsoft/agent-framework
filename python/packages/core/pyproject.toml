@@ -29,6 +29,7 @@ dependencies = [
     "python-dotenv>=1,<2",
     "opentelemetry-api>=1.39.0,<2",
     "pyyaml>=6.0,<7.0",
+    "regex>=2024.11.6",
 ]
 
 [project.optional-dependencies]

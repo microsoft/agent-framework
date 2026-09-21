@@ -16,6 +16,7 @@ import subprocess
 import sys
 import threading
 import time
+import weakref
 from collections.abc import Awaitable, Callable, Coroutine, Generator, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
@@ -2104,6 +2105,100 @@ async def test_description_format_reuses_sandbox_cache(monkeypatch: pytest.Monke
         registry.close()
 
 
+@pytest.mark.parametrize("mutation", ["remove", "clear", "replace"])
+@pytest.mark.parametrize("cleanup", ["close", "discard"])
+async def test_sandbox_cache_retains_tool_identity_until_entry_removed(
+    monkeypatch: pytest.MonkeyPatch, mutation: str, cleanup: str
+) -> None:
+    _FakeSandbox.instances.clear()
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandbox)
+    registry = execute_code_module._SandboxRegistry()
+
+    @tool(name="compute")
+    def original(a: int, b: int) -> int:
+        return a + b
+
+    original_ref = weakref.ref(original)
+    execute_code = HyperlightExecuteCodeTool(tools=[original], _registry=registry)
+    del original
+
+    try:
+        await execute_code.invoke(arguments={"code": "None"})
+        if mutation == "remove":
+            execute_code.remove_tool("compute")
+        elif mutation == "clear":
+            execute_code.clear_tools()
+        else:
+            execute_code.add_tools(compute)
+
+        gc.collect()
+        assert original_ref() is not None
+        assert len(registry._entries) == 1
+
+        if cleanup == "close":
+            registry.close()
+        else:
+            registry._discard_entry(
+                cache_key=next(iter(registry._entries)), entry=next(iter(registry._entries.values()))
+            )
+            registry._cleanup_executor.submit(lambda: None).result(timeout=5)
+
+        gc.collect()
+        assert registry._entries == {}
+        assert original_ref() is None
+    finally:
+        registry.close()
+
+
+async def test_sandbox_cache_replacement_preserves_run_snapshots_and_identity_semantics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class ValueEqualTool(FunctionTool):
+        def __eq__(self, other: object) -> bool:
+            return isinstance(other, FunctionTool) and self.name == other.name
+
+    calls: list[str] = []
+
+    def original_callback(a: int, b: int) -> int:
+        calls.append("original")
+        return a + b
+
+    def replacement_callback(a: int, b: int) -> int:
+        calls.append("replacement")
+        return a - b
+
+    _FakeSandbox.instances.clear()
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandbox)
+    registry = execute_code_module._SandboxRegistry()
+    original = ValueEqualTool(name="compute", func=original_callback)
+    replacement = ValueEqualTool(name="compute", func=replacement_callback)
+    assert original == replacement
+    with pytest.raises(TypeError):
+        hash(original)
+    execute_code = HyperlightExecuteCodeTool(tools=[original], _registry=registry)
+    previous_run = execute_code.create_run_tool()
+    code = 'print(call_tool("compute", a=20, b=22))'
+
+    try:
+        await previous_run.invoke(arguments={"code": "None"})
+        execute_code.remove_tool("compute")
+        execute_code.add_tools(replacement)
+        current_run = execute_code.create_run_tool()
+
+        result = await current_run.invoke(arguments={"code": code})
+        repeated_result = await current_run.invoke(arguments={"code": code})
+        assert result[0].text == repeated_result[0].text == "-2\n"
+        assert calls == ["replacement", "replacement"]
+        assert len(_FakeSandbox.instances) == 2
+
+        previous_result = await previous_run.invoke(arguments={"code": code})
+        assert previous_result[0].text == "42\n"
+        assert calls == ["replacement", "replacement", "original"]
+        assert len(_FakeSandbox.instances) == 2
+    finally:
+        registry.close()
+
+
 async def test_execute_code_tool_executes_with_structured_content(monkeypatch: pytest.MonkeyPatch) -> None:
     _FakeSandbox.instances.clear()
     monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandbox)
@@ -3220,7 +3315,7 @@ def test_sandbox_entry_does_not_expose_unsendable_attributes() -> None:
     assert "sandbox" not in fields, "_SandboxEntry must not expose `sandbox` directly"
     assert "snapshot" not in fields, "_SandboxEntry must not expose `snapshot` directly"
     # Whatever attributes remain must be sendable / safe to GC on any thread.
-    assert fields <= {"worker", "input_dir", "output_dir"}
+    assert fields <= {"worker", "input_dir", "output_dir", "tools"}
 
 
 def test_sandbox_survives_external_thread_holding_stale_reference(
