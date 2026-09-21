@@ -235,6 +235,10 @@ class AgentApprovalExecutor(WorkflowExecutor):
             .build()
         )
 
+    def _parent_routed_keys_to_exclude(self, routed_keys: set[str]) -> set[str]:
+        """Preserve kwargs targeting this transparent agent wrapper."""
+        return set()
+
     @property
     def description(self) -> str | None:
         """Get a description of the underlying agent."""
