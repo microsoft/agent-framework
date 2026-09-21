@@ -1043,201 +1043,213 @@ class FunctionalWorkflow:
         streaming: bool = False,
         **kwargs: Any,
     ) -> AsyncIterable[WorkflowEvent[Any]]:
-        storage = checkpoint_storage or self._checkpoint_storage
-
-        # Build context
-        ctx = RunContext(self.name, streaming=streaming, run_kwargs=kwargs if kwargs else None)
-
-        # Restore from checkpoint if requested
-        prev_checkpoint_id: str | None = None
-        if checkpoint_id is not None:
-            if storage is None:
-                raise ValueError(
-                    "Cannot restore from checkpoint without checkpoint_storage. "
-                    "Provide checkpoint_storage to build() or to this run."
-                )
-            checkpoint = await storage.load(checkpoint_id)
-            if checkpoint.graph_signature_hash != self.graph_signature_hash:
-                raise ValueError(
-                    f"Checkpoint '{checkpoint_id}' was created by a different version of workflow "
-                    f"'{checkpoint.workflow_name}' and is not compatible with the current version. "
-                    f"The workflow's step structure may have changed since this checkpoint was saved."
-                )
-            prev_checkpoint_id = checkpoint_id
-            # Restore step cache
-            step_cache_data = checkpoint.state.get("_step_cache", {})
-            ctx._import_step_cache(step_cache_data)
-            step_cache_auto_request_info_counts = checkpoint.state.get("_step_cache_auto_request_info_counts", {})
-            ctx._import_step_cache_auto_request_info_counts(step_cache_auto_request_info_counts)
-            # Restore user state
-            ctx._state = {k: v for k, v in checkpoint.state.items() if not k.startswith("_")}
-            # Restore pending request info events
-            ctx._pending_requests = dict(checkpoint.pending_request_info_events)
-            # Restore original message for replay
-            if message is None:
-                message = checkpoint.state.get("_original_message")
-
-        # For response-only replay (no checkpoint), restore cached state
-        if checkpoint_id is None and responses:
-            replay_message = self._restore_replay_state(ctx)
-            if message is None:
-                message = replay_message
-            # Continue the chain from the checkpoint this HITL cycle paused at.  Without
-            # this the resumed run seeds its chain from None and writes a second root,
-            # leaving the paused checkpoint unreachable from the resumed tip.
-            prev_checkpoint_id = await self._resume_checkpoint_parent(storage)
-
-        # Store message for future replays
-        if message is not None:
-            self._last_message = message
-
-        # Set responses for replay
-        if responses:
-            ctx._set_responses(responses)
-
-        # Checkpoint lineage is a single chain: every save reads the current head, persists
-        # it, and advances the head.  Use a mutable list so the closure can update the head.
-        ckpt_chain: list[str | None] = [prev_checkpoint_id]
-        # Concurrent @step completions (for example through ``asyncio.gather``) can read the
-        # same head before either writes the updated value back, which creates sibling root
-        # checkpoints and leaves part of the history unreachable from the latest checkpoint.
-        # Per-step, final, and HITL saves all go through this locked helper so the
-        # read/save/update of the chain head is atomic on every path.
-        ckpt_chain_lock = asyncio.Lock()
-        # ``asyncio.gather`` does not cancel its remaining awaitables when one of them raises,
-        # so a step can still be running when the run writes its closing checkpoint and
-        # returns.  That RunContext belongs to a finished run: its result is never delivered
-        # anywhere, so letting it save afterwards would only fork the lineage, or push state
-        # from the interrupted run to the tip of the chain for a later resume to restore.
-        run_closed = False
-
-        async def _save_checkpoint_linked(*, closes_run: bool = False) -> None:
-            nonlocal run_closed
-            if storage is None:
-                return
-            async with ckpt_chain_lock:
-                if run_closed:
-                    return
-                ckpt_chain[0] = await self._save_checkpoint(ctx, storage, ckpt_chain[0])
-                if closes_run:
-                    run_closed = True
-
-        if storage is not None:
-            ctx._on_step_completed = _save_checkpoint_linked
-
-        # Tracing: start the run span without attaching it. Attaching with
-        # create_workflow_span() across a yield leaves OpenTelemetry's context
-        # token set when this generator is later closed on GC from a different
-        # Context. Activate the span only around non-yielding work.
-        attributes: dict[str, Any] = {OtelAttr.WORKFLOW_NAME: self.name}
-        if self.description:
-            attributes[OtelAttr.WORKFLOW_DESCRIPTION] = self.description
-
-        span = start_workflow_span(OtelAttr.WORKFLOW_RUN_SPAN, attributes)
-        saw_request = False
+        # The guard taken by ``run()`` has to be released on every exit path from this
+        # generator, including a cancellation or failure while the preamble below is
+        # awaiting checkpoint storage.  The run body's ``finally`` is only reached once
+        # that preamble has finished, so a cancelled restore used to escape with the
+        # guard still held and every later run was rejected as already running.
         try:
-            span.add_event(OtelAttr.WORKFLOW_STARTED)
+            span = None  # bound so the ``finally`` below is safe if the preamble fails early
+            storage = checkpoint_storage or self._checkpoint_storage
 
-            yield _framework_event(WorkflowEvent.started)
-            yield _framework_event(WorkflowEvent.status, WorkflowRunState.IN_PROGRESS)
+            # Build context
+            ctx = RunContext(self.name, streaming=streaming, run_kwargs=kwargs if kwargs else None)
 
-            # Execute the user function with the run span current so nested
-            # executor/processing spans parent correctly.
-            with _activate_span(span):
-                return_value = await self._execute(ctx, message)
-
-                # Emit the return value as the workflow output.
-                if return_value is not None:
-                    await ctx.add_event(
-                        _framework_event(WorkflowEvent, "output", executor_id=self.name, data=return_value)
+            # Restore from checkpoint if requested
+            prev_checkpoint_id: str | None = None
+            if checkpoint_id is not None:
+                if storage is None:
+                    raise ValueError(
+                        "Cannot restore from checkpoint without checkpoint_storage. "
+                        "Provide checkpoint_storage to build() or to this run."
                     )
+                checkpoint = await storage.load(checkpoint_id)
+                if checkpoint.graph_signature_hash != self.graph_signature_hash:
+                    raise ValueError(
+                        f"Checkpoint '{checkpoint_id}' was created by a different version of workflow "
+                        f"'{checkpoint.workflow_name}' and is not compatible with the current version. "
+                        f"The workflow's step structure may have changed since this checkpoint was saved."
+                    )
+                prev_checkpoint_id = checkpoint_id
+                # Restore step cache
+                step_cache_data = checkpoint.state.get("_step_cache", {})
+                ctx._import_step_cache(step_cache_data)
+                step_cache_auto_request_info_counts = checkpoint.state.get("_step_cache_auto_request_info_counts", {})
+                ctx._import_step_cache_auto_request_info_counts(step_cache_auto_request_info_counts)
+                # Restore user state
+                ctx._state = {k: v for k, v in checkpoint.state.items() if not k.startswith("_")}
+                # Restore pending request info events
+                ctx._pending_requests = dict(checkpoint.pending_request_info_events)
+                # Restore original message for replay
+                if message is None:
+                    message = checkpoint.state.get("_original_message")
 
+            # For response-only replay (no checkpoint), restore cached state
+            if checkpoint_id is None and responses:
+                replay_message = self._restore_replay_state(ctx)
+                if message is None:
+                    message = replay_message
+                # Continue the chain from the checkpoint this HITL cycle paused at.  Without
+                # this the resumed run seeds its chain from None and writes a second root,
+                # leaving the paused checkpoint unreachable from the resumed tip.
+                prev_checkpoint_id = await self._resume_checkpoint_parent(storage)
+
+            # Store message for future replays
+            if message is not None:
+                self._last_message = message
+
+            # Set responses for replay
+            if responses:
+                ctx._set_responses(responses)
+
+            # Checkpoint lineage is a single chain: every save reads the current head, persists
+            # it, and advances the head.  Use a mutable list so the closure can update the head.
+            ckpt_chain: list[str | None] = [prev_checkpoint_id]
+            # Concurrent @step completions (for example through ``asyncio.gather``) can read the
+            # same head before either writes the updated value back, which creates sibling root
+            # checkpoints and leaves part of the history unreachable from the latest checkpoint.
+            # Per-step, final, and HITL saves all go through this locked helper so the
+            # read/save/update of the chain head is atomic on every path.
+            ckpt_chain_lock = asyncio.Lock()
+            # ``asyncio.gather`` does not cancel its remaining awaitables when one of them raises,
+            # so a step can still be running when the run writes its closing checkpoint and
+            # returns.  That RunContext belongs to a finished run: its result is never delivered
+            # anywhere, so letting it save afterwards would only fork the lineage, or push state
+            # from the interrupted run to the tip of the chain for a later resume to restore.
+            run_closed = False
+
+            async def _save_checkpoint_linked(*, closes_run: bool = False) -> None:
+                nonlocal run_closed
+                if storage is None:
+                    return
+                async with ckpt_chain_lock:
+                    if run_closed:
+                        return
+                    ckpt_chain[0] = await self._save_checkpoint(ctx, storage, ckpt_chain[0])
+                    if closes_run:
+                        run_closed = True
+
+            if storage is not None:
+                ctx._on_step_completed = _save_checkpoint_linked
+
+            # Tracing: start the run span without attaching it. Attaching with
+            # create_workflow_span() across a yield leaves OpenTelemetry's context
+            # token set when this generator is later closed on GC from a different
+            # Context. Activate the span only around non-yielding work.
+            attributes: dict[str, Any] = {OtelAttr.WORKFLOW_NAME: self.name}
+            if self.description:
+                attributes[OtelAttr.WORKFLOW_DESCRIPTION] = self.description
+
+            span = start_workflow_span(OtelAttr.WORKFLOW_RUN_SPAN, attributes)
+            saw_request = False
+            try:
+                span.add_event(OtelAttr.WORKFLOW_STARTED)
+
+                yield _framework_event(WorkflowEvent.started)
+                yield _framework_event(WorkflowEvent.status, WorkflowRunState.IN_PROGRESS)
+
+                # Execute the user function with the run span current so nested
+                # executor/processing spans parent correctly.
+                with _activate_span(span):
+                    return_value = await self._execute(ctx, message)
+
+                    # Emit the return value as the workflow output.
+                    if return_value is not None:
+                        await ctx.add_event(
+                            _framework_event(WorkflowEvent, "output", executor_id=self.name, data=return_value)
+                        )
+
+                    # Persist step cache for response-only replay
+                    self._capture_replay_state(ctx, message)
+
+                # Yield collected events.
+                # NOTE: Events are buffered during _execute() and yielded after
+                # the user function completes.  This is *not* true streaming —
+                # all events have already been produced by this point.  True
+                # per-token streaming from inner agent calls is a future
+                # enhancement.
+                for event in ctx._get_events():
+                    if event.type == "request_info":
+                        saw_request = True
+                    yield event
+                    if event.type == "request_info":
+                        yield _framework_event(WorkflowEvent.status, WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS)
+
+                # Save final checkpoint if storage is available
+                if storage is not None:
+                    await _save_checkpoint_linked(closes_run=True)
+                    # Remember where this run stopped so a response-only replay can continue
+                    # the chain.  Cleared below on clean completion.
+                    self._remember_paused_checkpoint(storage, ckpt_chain[0])
+
+                # Final status
+                if saw_request:
+                    yield _framework_event(WorkflowEvent.status, WorkflowRunState.IDLE_WITH_PENDING_REQUESTS)
+                else:
+                    # Clean completion — drop cross-run replay state.
+                    self._clear_replay_state()
+                    yield _framework_event(WorkflowEvent.status, WorkflowRunState.IDLE)
+
+                span.add_event(OtelAttr.WORKFLOW_COMPLETED)
+
+            except WorkflowInterrupted:
                 # Persist step cache for response-only replay
                 self._capture_replay_state(ctx, message)
 
-            # Yield collected events.
-            # NOTE: Events are buffered during _execute() and yielded after
-            # the user function completes.  This is *not* true streaming —
-            # all events have already been produced by this point.  True
-            # per-token streaming from inner agent calls is a future
-            # enhancement.
-            for event in ctx._get_events():
-                if event.type == "request_info":
-                    saw_request = True
-                yield event
-                if event.type == "request_info":
-                    yield _framework_event(WorkflowEvent.status, WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS)
+                # HITL interruption — yield events collected so far
+                for event in ctx._get_events():
+                    if event.type == "request_info":
+                        saw_request = True
+                    yield event
+                    if event.type == "request_info":
+                        yield _framework_event(WorkflowEvent.status, WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS)
 
-            # Save final checkpoint if storage is available
-            if storage is not None:
-                await _save_checkpoint_linked(closes_run=True)
-                # Remember where this run stopped so a response-only replay can continue
-                # the chain.  Cleared below on clean completion.
-                self._remember_paused_checkpoint(storage, ckpt_chain[0])
+                # Save checkpoint
+                if storage is not None:
+                    await _save_checkpoint_linked(closes_run=True)
+                    # Remember where this HITL cycle paused so a response-only replay
+                    # continues the chain from it.
+                    self._remember_paused_checkpoint(storage, ckpt_chain[0])
 
-            # Final status
-            if saw_request:
                 yield _framework_event(WorkflowEvent.status, WorkflowRunState.IDLE_WITH_PENDING_REQUESTS)
-            else:
-                # Clean completion — drop cross-run replay state.
-                self._clear_replay_state()
-                yield _framework_event(WorkflowEvent.status, WorkflowRunState.IDLE)
 
-            span.add_event(OtelAttr.WORKFLOW_COMPLETED)
+                span.add_event(OtelAttr.WORKFLOW_COMPLETED)
 
-        except WorkflowInterrupted:
-            # Persist step cache for response-only replay
-            self._capture_replay_state(ctx, message)
+            except Exception as exc:
+                # Yield any events collected before the failure
+                for event in ctx._get_events():
+                    yield event
 
-            # HITL interruption — yield events collected so far
-            for event in ctx._get_events():
-                if event.type == "request_info":
-                    saw_request = True
-                yield event
-                if event.type == "request_info":
-                    yield _framework_event(WorkflowEvent.status, WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS)
+                details = WorkflowErrorDetails.from_exception(exc)
+                yield _framework_event(WorkflowEvent.failed, details)
+                yield _framework_event(WorkflowEvent.status, WorkflowRunState.FAILED)
 
-            # Save checkpoint
-            if storage is not None:
-                await _save_checkpoint_linked(closes_run=True)
-                # Remember where this HITL cycle paused so a response-only replay
-                # continues the chain from it.
-                self._remember_paused_checkpoint(storage, ckpt_chain[0])
-
-            yield _framework_event(WorkflowEvent.status, WorkflowRunState.IDLE_WITH_PENDING_REQUESTS)
-
-            span.add_event(OtelAttr.WORKFLOW_COMPLETED)
-
-        except Exception as exc:
-            # Yield any events collected before the failure
-            for event in ctx._get_events():
-                yield event
-
-            details = WorkflowErrorDetails.from_exception(exc)
-            yield _framework_event(WorkflowEvent.failed, details)
-            yield _framework_event(WorkflowEvent.status, WorkflowRunState.FAILED)
-
-            span.add_event(
-                name=OtelAttr.WORKFLOW_ERROR,
-                attributes={
-                    "error.message": str(exc),
-                    "error.type": type(exc).__name__,
-                },
-            )
-            capture_exception(span, exception=exc)
-            raise
-        finally:
-            # ResponseStream cleanup_hooks do not run when the generator is
-            # closed by GC. Release the run lock here so a follow-up run
-            # after an abandoned stream is not rejected as concurrent.
-            # Retire the per-step callback under the lineage lock first: a save that
-            # already passed the run_closed check may still be inside storage.save(),
-            # and releasing the guard would let a restored run chain new checkpoints
-            # onto the same parent before that save lands, forking the lineage.
-            async with ckpt_chain_lock:
-                run_closed = True
-            self._release_run_guard()
+                span.add_event(
+                    name=OtelAttr.WORKFLOW_ERROR,
+                    attributes={
+                        "error.message": str(exc),
+                        "error.type": type(exc).__name__,
+                    },
+                )
+                capture_exception(span, exception=exc)
+                raise
+            finally:
+                # ResponseStream cleanup_hooks do not run when the generator is
+                # closed by GC. Release the run lock here so a follow-up run
+                # after an abandoned stream is not rejected as concurrent.
+                # Retire the per-step callback under the lineage lock first: a save that
+                # already passed the run_closed check may still be inside storage.save(),
+                # and releasing the guard would let a restored run chain new checkpoints
+                # onto the same parent before that save lands, forking the lineage.
+                async with ckpt_chain_lock:
+                    run_closed = True
+                self._release_run_guard()
             span.end()
+        finally:
+            # Also covers a preamble that failed before the run body was entered.
+            self._release_run_guard()
+            if span is not None:
+                span.end()
 
     async def _execute(self, ctx: RunContext, message: Any) -> Any:
         """Run the user's async function with the active context."""
