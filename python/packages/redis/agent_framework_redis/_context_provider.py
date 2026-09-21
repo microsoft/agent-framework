@@ -47,9 +47,10 @@ class RedisContextProvider(ContextProvider):
 
     Stores context in Redis and retrieves scoped context via full-text or
     optional hybrid vector search. Retrieval spans sessions and is filtered by
-    every non-empty ``application_id``, ``agent_id``, and ``user_id``. Omitted
-    identifiers do not constrain retrieval, so applications should provide each
-    stable, trusted identifier that represents an intended isolation boundary.
+    every non-empty ``application_id``, ``agent_id``, and ``user_id``. At least
+    one identifier must be non-empty. Omitted identifiers do not constrain
+    retrieval, so applications should provide each stable, trusted identifier
+    that represents an intended isolation boundary.
     """
 
     DEFAULT_CONTEXT_PROMPT = "## Memories\nConsider the following memories when answering user questions:"
