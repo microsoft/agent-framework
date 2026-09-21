@@ -34,7 +34,7 @@ try:
     response = await agent.run(
         "Our checkout has failed for three days and we are losing sales.",
         options={
-            "questions": {
+            "response_format": {
                 "department": Choice(
                     instructions="Which team should handle this request?",
                     criteria={"billing": None, "technical": None, "sales": None},
@@ -48,17 +48,16 @@ finally:
     await client.close()
 ```
 
-`SystemOneResponse` is the default structured response type. Pass a subclass
-through `response_format` when the full TypeSafe response needs additional
-validation.
+For this connector, Agent Framework's `response_format` option is the TypeSafe
+`Questions` mapping. The connector forwards it as the SDK's `questions` argument
+and internally uses `SystemOneResponse` as the actual response model.
 
 ## Supported options
 
 | Option | Description |
 | --- | --- |
-| `questions` | Required non-empty mapping of TypeSafe `Noul`, `Choice`, or `Score` questions. |
+| `response_format` | Required non-empty TypeSafe `Questions` mapping containing `Noul`, `Choice`, or `Score` questions. |
 | `model` | Optional per-call model override. |
-| `response_format` | Optional `SystemOneResponse` subclass; defaults to `SystemOneResponse`. |
 | `instructions` | Agent instructions included in the structured state sent to TypeSafe. |
 
 Streaming, tools, non-text message content, and generative settings such as

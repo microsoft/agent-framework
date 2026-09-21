@@ -31,7 +31,7 @@ from agent_framework.exceptions import (
 from agent_framework.observability import ChatTelemetryLayer
 from typesafe_sdk import (
     AsyncTypeSafeClient,
-    Question,
+    Questions,
     SystemOneResponse,
     TypeSafeAPIConnectionError,
     TypeSafeAPIError,
@@ -52,13 +52,13 @@ class TypeSafeChatOptions(ChatOptions[SystemOneResponse], total=False):
     """TypeSafe-specific chat options.
 
     Keys:
-        questions: Required named TypeSafe Noul, Choice, or Score questions.
+        response_format: Required TypeSafe Questions mapping. The connector forwards
+            it as the TypeSafe questions parameter and returns SystemOneResponse.
         model: Optional TypeSafe model override.
-        response_format: Optional SystemOneResponse subclass. Defaults to SystemOneResponse.
         instructions: Optional Agent instructions included in the structured state.
     """
 
-    questions: Mapping[str, Question]
+    pass
 
 
 class TypeSafeChatClient(
@@ -69,16 +69,15 @@ class TypeSafeChatClient(
     """Agent Framework chat client for TypeSafe AI System One models.
 
     The client maps text messages and Agent instructions to TypeSafe structured
-    state. Every request must provide typed questions, and every response is a
-    SystemOneResponse. Free-form generation, streaming, tools, and non-text
-    message content are not supported.
+    state. The response_format option supplies the TypeSafe Questions mapping,
+    while every response is returned as SystemOneResponse. Free-form generation,
+    streaming, tools, and non-text message content are not supported.
     """
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "typesafe.ai"
     _SUPPORTED_OPTIONS: ClassVar[frozenset[str]] = frozenset({
         "instructions",
         "model",
-        "questions",
         "response_format",
         "tool_choice",
         "tools",
@@ -181,7 +180,6 @@ class TypeSafeChatClient(
             normalized_options = await self._validate_options(options)
             self._validate_supported_options(normalized_options)
 
-            response_format = self._get_response_format(normalized_options)
             questions = self._get_questions(normalized_options)
             model = normalized_options.get("model", self.model)
             if model is not None and not isinstance(model, str):
@@ -197,7 +195,7 @@ class TypeSafeChatClient(
                     state=state,
                     questions=questions,
                     model=model,
-                    response_model=response_format,
+                    response_model=SystemOneResponse,
                 )
             except TypeSafeError as exc:
                 self._raise_sdk_error(exc)
@@ -231,7 +229,7 @@ class TypeSafeChatClient(
                 finish_reason="stop",
                 usage_details=usage_details or None,
                 value=response,
-                response_format=response_format,
+                response_format=SystemOneResponse,
                 raw_representation=response,
             )
 
@@ -245,7 +243,7 @@ class TypeSafeChatClient(
         if unsupported:
             raise ChatClientInvalidRequestException(
                 "TypeSafe does not support these chat options: "
-                f"{', '.join(unsupported)}. Use questions to define structured judgments."
+                f"{', '.join(unsupported)}. Use response_format to define structured judgments."
             )
 
         if options.get("tools"):
@@ -256,22 +254,13 @@ class TypeSafeChatClient(
             raise ChatClientInvalidRequestException("TypeSafe System One does not support required tool choice.")
 
     @staticmethod
-    def _get_response_format(options: Mapping[str, Any]) -> type[SystemOneResponse]:
+    def _get_questions(options: Mapping[str, Any]) -> Questions:
         response_format = options.get("response_format")
-        if response_format is None:
-            return SystemOneResponse
-        if isinstance(response_format, type) and issubclass(response_format, SystemOneResponse):
-            return response_format
-        raise ChatClientInvalidRequestException(
-            "TypeSafe response_format must be typesafe_sdk.SystemOneResponse or a subclass."
-        )
-
-    @staticmethod
-    def _get_questions(options: Mapping[str, Any]) -> Mapping[str, Question]:
-        questions = options.get("questions")
-        if not isinstance(questions, Mapping) or not questions:
-            raise ChatClientInvalidRequestException("TypeSafe requires a non-empty questions mapping.")
-        return cast(Mapping[str, Question], questions)
+        if not isinstance(response_format, Mapping) or not response_format:
+            raise ChatClientInvalidRequestException(
+                "TypeSafe response_format must be a non-empty typesafe_sdk.Questions mapping."
+            )
+        return cast(Questions, response_format)
 
     @staticmethod
     def _build_state(messages: Sequence[Message], *, instructions: Any) -> dict[str, Any]:

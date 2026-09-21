@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 
 from agent_framework import Agent, Message
-from typesafe_sdk import Choice, Noul, Question, Score, SystemOneResponse
+from typesafe_sdk import Choice, Noul, Questions, Score, SystemOneResponse
 
 from agent_framework_typesafe import TypeSafeChatClient, TypeSafeChatOptions
 
@@ -32,7 +32,7 @@ def print_evaluation(label: str, response: SystemOneResponse) -> None:
 async def main() -> None:
     """Run Jev through both the chat client and Agent Framework Agent APIs."""
     # 1. Define the typed judgments Jev should make for every support request.
-    questions: dict[str, Question] = {
+    questions: Questions = {
         "department": Choice(
             instructions="Which team should handle the support request?",
             criteria={
@@ -57,7 +57,7 @@ async def main() -> None:
             },
         ),
     }
-    options: TypeSafeChatOptions = {"questions": questions}
+    options: TypeSafeChatOptions = {"response_format": questions}
 
     direct_ticket = "I was charged twice for the same subscription. Please refund the duplicate charge."
     agent_ticket = "Our checkout integration has failed for three days and we are losing sales. Please help ASAP."

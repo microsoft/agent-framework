@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from typing import Any, cast
 
 import httpx2
@@ -18,7 +17,7 @@ from agent_framework.exceptions import (
 from typesafe_sdk import (
     AsyncTypeSafeClient,
     Noul,
-    Question,
+    Questions,
     SystemOneResponse,
     TypeSafeAPIConnectionError,
     TypeSafeAPIResponseValidationError,
@@ -58,7 +57,7 @@ class StubTypeSafeClient:
     async def system_one(
         self,
         state: Any,
-        questions: Mapping[str, Question],
+        questions: Questions,
         *,
         model: str | None = None,
         response_model: type[SystemOneResponse] | None = None,
@@ -96,7 +95,7 @@ def make_client(stub: StubTypeSafeClient | None = None, *, model: str | None = N
     )
 
 
-def questions() -> dict[str, Question]:
+def questions() -> Questions:
     """Create a valid question mapping."""
     return {"urgent": Noul(instructions="Is this urgent?")}
 
@@ -145,18 +144,20 @@ def test_streaming_is_rejected_immediately() -> None:
         client.get_response(
             [Message("user", ["hello"])],
             stream=True,
-            options={"questions": questions()},
+            options={"response_format": questions()},
         )
 
 
 @pytest.mark.parametrize(
     ("options", "message"),
     [
-        ({}, "non-empty questions"),
-        ({"questions": questions(), "temperature": 0.2}, "temperature"),
-        ({"questions": questions(), "tools": [object()]}, "does not support tools"),
-        ({"questions": questions(), "tool_choice": "required"}, "required tool choice"),
-        ({"questions": questions(), "response_format": dict}, "SystemOneResponse"),
+        ({}, "non-empty typesafe_sdk.Questions"),
+        ({"response_format": {}}, "non-empty typesafe_sdk.Questions"),
+        ({"response_format": questions(), "questions": questions()}, "questions"),
+        ({"response_format": questions(), "temperature": 0.2}, "temperature"),
+        ({"response_format": questions(), "tools": [object()]}, "does not support tools"),
+        ({"response_format": questions(), "tool_choice": "required"}, "required tool choice"),
+        ({"response_format": SystemOneResponse}, "non-empty typesafe_sdk.Questions"),
     ],
 )
 async def test_invalid_options_are_rejected(options: dict[str, Any], message: str) -> None:
@@ -174,14 +175,14 @@ async def test_non_text_content_is_rejected() -> None:
     message = Message("user", [Content.from_uri("https://example.com/image.png", media_type="image/png")])
 
     with pytest.raises(ChatClientInvalidRequestException, match="only supports text"):
-        await client.get_response([message], options={"questions": questions()})
+        await client.get_response([message], options={"response_format": questions()})
 
 
 async def test_empty_text_messages_are_rejected() -> None:
     client = make_client()
 
     with pytest.raises(ChatClientInvalidRequestException, match="non-empty text message"):
-        await client.get_response([Message("user", [""])], options={"questions": questions()})
+        await client.get_response([Message("user", [""])], options={"response_format": questions()})
 
 
 async def test_client_kwargs_are_rejected() -> None:
@@ -190,7 +191,7 @@ async def test_client_kwargs_are_rejected() -> None:
     with pytest.raises(ChatClientInvalidRequestException, match="client-specific arguments"):
         await client.get_response(
             [Message("user", ["hello"])],
-            options={"questions": questions()},
+            options={"response_format": questions()},
             client_kwargs={"unsupported": True},
         )
 
@@ -198,8 +199,8 @@ async def test_client_kwargs_are_rejected() -> None:
 @pytest.mark.parametrize(
     ("options", "message"),
     [
-        ({"questions": questions(), "model": 123}, "model must be a string"),
-        ({"questions": questions(), "instructions": ["invalid"]}, "instructions must be a string"),
+        ({"response_format": questions(), "model": 123}, "model must be a string"),
+        ({"response_format": questions(), "instructions": ["invalid"]}, "instructions must be a string"),
     ],
 )
 async def test_invalid_common_option_types_are_rejected(options: dict[str, Any], message: str) -> None:
@@ -222,7 +223,7 @@ async def test_request_and_response_mapping() -> None:
             Message("assistant", ["second"]),
         ],
         options={
-            "questions": questions(),
+            "response_format": questions(),
             "instructions": "Evaluate the conversation.",
             "model": "jev-preview",
         },
@@ -261,7 +262,7 @@ async def test_unexpected_sdk_exception_is_wrapped() -> None:
     with pytest.raises(ChatClientException, match="TypeSafe request failed"):
         await client.get_response(
             [Message("user", ["hello"])],
-            options={"questions": questions()},
+            options={"response_format": questions()},
         )
 
 
@@ -273,23 +274,21 @@ async def test_unexpected_response_type_is_rejected() -> None:
     with pytest.raises(ChatClientInvalidResponseException, match="does not match SystemOneResponse"):
         await client.get_response(
             [Message("user", ["hello"])],
-            options={"questions": questions()},
+            options={"response_format": questions()},
         )
 
 
-async def test_response_format_subclass_is_forwarded() -> None:
+async def test_questions_response_format_forces_system_one_response_model() -> None:
     stub = StubTypeSafeClient()
     client = make_client(stub)
 
     await client.get_response(
         [Message("user", ["hello"])],
-        options={
-            "questions": questions(),
-            "response_format": StubSystemOneResponse,
-        },
+        options={"response_format": questions()},
     )
 
-    assert stub.calls[0]["response_model"] is StubSystemOneResponse
+    assert stub.calls[0]["questions"] == questions()
+    assert stub.calls[0]["response_model"] is SystemOneResponse
 
 
 async def test_agent_integration_preserves_structured_value() -> None:
@@ -302,10 +301,11 @@ async def test_agent_integration_preserves_structured_value() -> None:
 
     response = await agent.run(
         "Please help now.",
-        options=cast(Any, {"questions": questions()}),
+        options=cast(Any, {"response_format": questions()}),
     )
 
     assert response.value is stub.response
+    assert isinstance(response.value, SystemOneResponse)
     assert stub.calls[0]["state"]["instructions"] == "Evaluate the request."
 
 
@@ -352,5 +352,5 @@ async def test_sdk_errors_are_translated(error: Exception, expected: type[Except
     with pytest.raises(expected):
         await client.get_response(
             [Message("user", ["hello"])],
-            options={"questions": questions()},
+            options={"response_format": questions()},
         )
