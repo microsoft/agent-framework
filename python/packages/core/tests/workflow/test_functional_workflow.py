@@ -11,6 +11,7 @@ import logging
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, overload
 
 import pytest
@@ -20,6 +21,7 @@ from agent_framework import (
     CheckpointStorage,
     Content,
     ExperimentalFeature,
+    FileCheckpointStorage,
     FunctionalWorkflow,
     FunctionalWorkflowAgent,
     FunctionalWorkflowDefinition,
@@ -1206,6 +1208,78 @@ class TestCheckpointing:
         assert resumed.get_outputs() == ["answer:HELLO"]
 
         checkpoints = await storage.list_checkpoints(workflow_name="review_wf")
+        _assert_single_checkpoint_chain(checkpoints)
+
+    async def test_response_only_resume_into_another_storage_starts_new_lineage(self):
+        """Resuming into a different storage must not link to a checkpoint it does not hold.
+
+        ``checkpoint_storage`` can be overridden per run, so the checkpoint a cycle paused at
+        may live in a backend the resumed run does not write to.  Linking across them would
+        leave a ``previous_checkpoint_id`` that never resolves in the storage that holds it.
+        """
+        storage_a = InMemoryCheckpointStorage()
+        storage_b = InMemoryCheckpointStorage()
+
+        @step
+        async def ask_human(doc: str, ctx: RunContext) -> str:
+            return await ctx.request_info({"draft": doc}, response_type=str, request_id="req1")
+
+        @step
+        async def polish(doc: str) -> str:
+            return doc.upper()
+
+        @built_workflow(checkpoint_storage=storage_a)
+        async def review_wf(doc: str) -> str:
+            answer = await ask_human(doc)
+            polished = await polish(doc)
+            return f"{answer}:{polished}"
+
+        paused = await review_wf.run("hello")
+        assert paused.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
+        assert len(await storage_a.list_checkpoints(workflow_name="review_wf")) == 1
+
+        # Resume with responses only, into a storage that never saw the paused checkpoint.
+        resumed = await review_wf.run(responses={"req1": "answer"}, checkpoint_storage=storage_b)
+        assert resumed.get_outputs() == ["answer:HELLO"]
+
+        # Every parent of every checkpoint in B resolves inside B, so the lineage is sound.
+        _assert_single_checkpoint_chain(await storage_b.list_checkpoints(workflow_name="review_wf"))
+        # A is untouched by the resumed run.
+        assert len(await storage_a.list_checkpoints(workflow_name="review_wf")) == 1
+
+    async def test_response_only_resume_links_across_storage_instances(self, tmp_path: Path) -> None:
+        """Two instances of one backend still share a lineage; only the object differs.
+
+        The storage association is validated by reading the checkpoint back rather than by
+        object identity, so a fresh handle on the same backend keeps the chain intact.
+        """
+        builder = FileCheckpointStorage(tmp_path)
+
+        @step
+        async def ask_human(doc: str, ctx: RunContext) -> str:
+            return await ctx.request_info({"draft": doc}, response_type=str, request_id="req1")
+
+        @step
+        async def polish(doc: str) -> str:
+            return doc.upper()
+
+        @built_workflow(checkpoint_storage=builder)
+        async def review_wf(doc: str) -> str:
+            answer = await ask_human(doc)
+            polished = await polish(doc)
+            return f"{answer}:{polished}"
+
+        paused = await review_wf.run("hello")
+        assert paused.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
+
+        # A different instance pointed at the same directory holds the paused checkpoint.
+        resumed = await review_wf.run(responses={"req1": "answer"}, checkpoint_storage=FileCheckpointStorage(tmp_path))
+        assert resumed.get_outputs() == ["answer:HELLO"]
+
+        checkpoints = await FileCheckpointStorage(tmp_path).list_checkpoints(workflow_name="review_wf")
+        # A single root proves the resumed run linked to the paused checkpoint: had the
+        # fresh instance been treated as a different backend, the resume would start a root.
+        assert len(checkpoints) == 4
         _assert_single_checkpoint_chain(checkpoints)
 
     async def test_no_checkpoint_on_cache_hit(self):
