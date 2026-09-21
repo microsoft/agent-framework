@@ -16,6 +16,8 @@ import uuid
 from collections.abc import Mapping
 from typing import Any, cast
 
+from ._powerfx_limits import _PowerFxStateLimitError, _validate_powerfx_state  # pyright: ignore[reportPrivateUsage]
+
 try:
     from powerfx import Engine
 
@@ -105,6 +107,7 @@ class WorkflowState:
             inputs: Initial inputs to the workflow. These become available
                    as Workflow.Inputs.* and are immutable after initialization.
         """
+        _validate_powerfx_state(inputs)
         self._inputs: dict[str, Any] = dict(inputs) if inputs else {}
         self._local: dict[str, Any] = {}
         self._outputs: dict[str, Any] = {}
@@ -329,7 +332,19 @@ class WorkflowState:
 
         Returns:
             A dictionary suitable for passing to PowerFx Engine.eval()
+
+        Raises:
+            ValueError: If the state or projected symbols exceed the PowerFx state budget.
         """
+        _validate_powerfx_state({
+            "Inputs": self._inputs,
+            "Outputs": self._outputs,
+            "Local": self._local,
+            "System": self._system,
+            "Agent": self._agent,
+            "Conversation": self._conversation,
+            "Custom": self._custom,
+        })
         symbols = {
             "Workflow": {
                 "Inputs": dict(self._inputs),
@@ -345,11 +360,12 @@ class WorkflowState:
         }
         # Debug log the Local symbols to help diagnose type issues
         if self._local:
-            for key, value in self._local.items():
+            for value in self._local.values():
                 logger.debug(
-                    f"PowerFx symbol Local.{key}: type={type(value).__name__}, "
-                    f"value_preview={str(value)[:100] if value else None}"
+                    "PowerFx Local symbol type=%s",
+                    type(value).__name__,
                 )
+        _validate_powerfx_state(symbols)
         return symbols
 
     def eval(self, expression: str) -> Any:
@@ -363,6 +379,9 @@ class WorkflowState:
 
         Returns:
             The evaluated result, or the original expression if not a PowerFx expression
+
+        Raises:
+            ValueError: If symbol construction exceeds the PowerFx state budget.
         """
         if not expression:
             return expression
@@ -378,6 +397,8 @@ class WorkflowState:
             try:
                 symbols = self.to_powerfx_symbols()
                 return _powerfx_engine.eval(formula, symbols=symbols)
+            except _PowerFxStateLimitError:
+                raise
             except Exception as exc:
                 logger.warning(f"PowerFx evaluation failed for '{expression[:50]}': {exc}")
                 # Fall through to simple evaluation
