@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -37,20 +38,24 @@ internal sealed class RequestExternalInputExecutor(RequestExternalInput model, R
 
     public async ValueTask CaptureResponseAsync(IWorkflowContext context, ExternalInputResponse response, CancellationToken cancellationToken)
     {
+        IEnumerable<ChatMessage> capturedMessages = response.Messages;
         string? workflowConversationId = context.GetWorkflowConversation();
         if (workflowConversationId is not null)
         {
+            List<ChatMessage> canonicalMessages = [];
             foreach (ChatMessage inputMessage in response.Messages)
             {
-                await agentProvider.CreateMessageAsync(workflowConversationId, inputMessage, cancellationToken).ConfigureAwait(false);
+                ChatMessage canonicalMessage = await agentProvider.CreateMessageAsync(workflowConversationId, inputMessage, cancellationToken).ConfigureAwait(false);
+                canonicalMessages.Add(inputMessage.MergeForLastMessage(canonicalMessage));
             }
+            capturedMessages = canonicalMessages;
         }
-        ChatMessage? lastMessage = response.Messages.LastOrDefault();
+        ChatMessage? lastMessage = capturedMessages.LastOrDefault();
         if (lastMessage is not null)
         {
             await context.SetLastMessageAsync(lastMessage).ConfigureAwait(false);
         }
-        await this.AssignAsync(this.Model.Variable?.Path, response.Messages.ToFormula(), context).ConfigureAwait(false);
+        await this.AssignAsync(this.Model.Variable?.Path, capturedMessages.ToFormula(), context).ConfigureAwait(false);
 
         await context.RaiseCompletionEventAsync(this.Model, cancellationToken).ConfigureAwait(false);
     }

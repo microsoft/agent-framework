@@ -86,6 +86,85 @@ public sealed class RequestExternalInputExecutorTest(ITestOutputHelper output) :
     }
 
     [Fact]
+    public async Task CaptureResponseUsesCanonicalMessagesWithWorkflowConversationAsync()
+    {
+        // Arrange
+        const string VariableName = "TestVariable";
+        this.State.Set(SystemScope.Names.ConversationId, FormulaValue.New("WorkflowConversationId"), VariableScopeNames.System);
+
+        RequestExternalInput model = this.CreateModel(nameof(CaptureResponseUsesCanonicalMessagesWithWorkflowConversationAsync), VariableName);
+        MockAgentProvider mockAgentProvider = new();
+        RequestExternalInputExecutor action = new(model, mockAgentProvider.Object, this.State);
+
+        ChatMessage[] inputMessages =
+        [
+            new(ChatRole.User, [new TextContent("First message"), new HostedFileContent("caller-file-1")]) { MessageId = "caller-message-1" },
+            new(ChatRole.User, [new TextContent("Second message"), new HostedFileContent("caller-file-2")]) { MessageId = "caller-message-2" },
+        ];
+        ChatMessage[] canonicalMessages =
+        [
+            new(ChatRole.User, [new TextContent("Canonical first"), new HostedFileContent("provider-file-1")]) { MessageId = "provider-message-1" },
+            new(ChatRole.User, [new TextContent("Canonical second"), new HostedFileContent("provider-file-2")]) { MessageId = "provider-message-2" },
+        ];
+        int canonicalMessageIndex = 0;
+        mockAgentProvider
+            .Setup(p => p.CreateMessageAsync("WorkflowConversationId", It.IsAny<ChatMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(() => Task.FromResult(canonicalMessages[canonicalMessageIndex++]));
+
+        ExternalInputResponse response = new(inputMessages);
+
+        // Act
+        WorkflowEvent[] events =
+            await this.ExecuteAsync(
+                RequestExternalInputExecutor.Steps.Capture(action.Id),
+                (context, message, cancellationToken) => action.CaptureResponseAsync(context, response, cancellationToken));
+
+        // Assert
+        VerifyCompletionEvent(events);
+        ChatMessage[] expectedMessages =
+        [
+            new(ChatRole.User, [new TextContent("First message"), new HostedFileContent("provider-file-1")]) { MessageId = "provider-message-1" },
+            new(ChatRole.User, [new TextContent("Second message"), new HostedFileContent("provider-file-2")]) { MessageId = "provider-message-2" },
+        ];
+        this.VerifyState(VariableName, expectedMessages.ToTable());
+        this.VerifyState(SystemScope.Names.LastMessage, VariableScopeNames.System, expectedMessages[1].ToRecord());
+        this.VerifyState(SystemScope.Names.LastMessageId, VariableScopeNames.System, FormulaValue.New("provider-message-2"));
+        this.VerifyState(SystemScope.Names.LastMessageText, VariableScopeNames.System, FormulaValue.New("Second message"));
+    }
+
+    [Fact]
+    public async Task CaptureResponseUsesCallerMessagesWithoutWorkflowConversationAsync()
+    {
+        // Arrange
+        const string VariableName = "TestVariable";
+        RequestExternalInput model = this.CreateModel(nameof(CaptureResponseUsesCallerMessagesWithoutWorkflowConversationAsync), VariableName);
+        MockAgentProvider mockAgentProvider = new();
+        RequestExternalInputExecutor action = new(model, mockAgentProvider.Object, this.State);
+        ChatMessage[] inputMessages =
+        [
+            new(ChatRole.User, [new TextContent("First message"), new HostedFileContent("caller-file-1")]) { MessageId = "caller-message-1" },
+            new(ChatRole.User, [new TextContent("Second message"), new HostedFileContent("caller-file-2")]) { MessageId = "caller-message-2" },
+        ];
+        ExternalInputResponse response = new(inputMessages);
+
+        // Act
+        WorkflowEvent[] events =
+            await this.ExecuteAsync(
+                RequestExternalInputExecutor.Steps.Capture(action.Id),
+                (context, message, cancellationToken) => action.CaptureResponseAsync(context, response, cancellationToken));
+
+        // Assert
+        VerifyCompletionEvent(events);
+        mockAgentProvider.Verify(
+            p => p.CreateMessageAsync(It.IsAny<string>(), It.IsAny<ChatMessage>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        this.VerifyState(VariableName, inputMessages.ToTable());
+        this.VerifyState(SystemScope.Names.LastMessage, VariableScopeNames.System, inputMessages[1].ToRecord());
+        this.VerifyState(SystemScope.Names.LastMessageId, VariableScopeNames.System, FormulaValue.New("caller-message-2"));
+        this.VerifyState(SystemScope.Names.LastMessageText, VariableScopeNames.System, FormulaValue.New("Second message"));
+    }
+
+    [Fact]
     public async Task CaptureResponseWithEmptyMessagesAsync()
     {
         await this.CaptureResponseTestAsync(
