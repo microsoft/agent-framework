@@ -113,12 +113,12 @@ def detect_media_type_from_base64(
 
             # Detect from base64 string
             base64_data = "iVBORw0KGgo..."
-            media_type = detect_media_type_from_base64(base64_data)
+            media_type = detect_media_type_from_base64(data_str=base64_data)
             # Returns: "image/png"
 
             # Works with data URIs too
             data_uri = "data:image/png;base64,iVBORw0KGgo..."
-            media_type = detect_media_type_from_base64(data_uri)
+            media_type = detect_media_type_from_base64(data_uri=data_uri)
             # Returns: "image/png"
     """
     data: bytes | None = None
@@ -714,7 +714,7 @@ class Content:
 
                     from agent_framework import detect_media_type_from_base64, Content
 
-                    media_type = detect_media_type_from_base64(base64_string)
+                    media_type = detect_media_type_from_base64(data_str=base64_string)
                     if media_type is None:
                         raise ValueError("Could not detect media type")
                     data_bytes = base64.b64decode(base64_string)
@@ -743,7 +743,7 @@ class Content:
 
                 # If you have a base64 string and need to detect media type
                 base64_string = "iVBORw0KGgo..."
-                media_type = detect_media_type_from_base64(base64_string)
+                media_type = detect_media_type_from_base64(data_str=base64_string)
                 if media_type is None:
                     raise ValueError("Unknown media type")
                 image_bytes = base64.b64decode(base64_string)
