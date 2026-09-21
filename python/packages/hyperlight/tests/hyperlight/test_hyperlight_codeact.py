@@ -3315,7 +3315,7 @@ def test_sandbox_entry_does_not_expose_unsendable_attributes() -> None:
     assert "sandbox" not in fields, "_SandboxEntry must not expose `sandbox` directly"
     assert "snapshot" not in fields, "_SandboxEntry must not expose `snapshot` directly"
     # Whatever attributes remain must be sendable / safe to GC on any thread.
-    assert fields <= {"worker", "input_dir", "output_dir"}
+    assert fields <= {"worker", "input_dir", "output_dir", "tools"}
 
 
 def test_sandbox_survives_external_thread_holding_stale_reference(
