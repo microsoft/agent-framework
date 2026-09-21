@@ -1827,10 +1827,10 @@ class TestExecutorKwargsForwarding:
             Content,
             FunctionInvocationContext,
             FunctionInvocationLayer,
+            MCPStreamableHTTPTool,
             Message,
             tool,
         )
-        from agent_framework._mcp import MCPTool
         from agent_framework._workflows._const import RESOLVED_WORKFLOW_RUN_KWARGS_KEY
         from mcp import types
         from mcp.client.session import ClientSession
@@ -1840,7 +1840,7 @@ class TestExecutorKwargsForwarding:
         class RecordingClient(FunctionInvocationLayer, BaseChatClient):
             def __init__(self):
                 super().__init__()
-                self.calls = []
+                self.calls: list[dict[str, Any]] = []
 
             async def _inner_get_response(self, *, messages, stream, options, **kwargs):
                 self.calls.append(kwargs)
@@ -1881,7 +1881,7 @@ class TestExecutorKwargsForwarding:
         session.call_tool = AsyncMock(
             return_value=types.CallToolResult(content=[types.TextContent(type="text", text="ok")])
         )
-        mcp = MCPTool(name="records", session=session, load_prompts=False)
+        mcp = MCPStreamableHTTPTool(name="records", url="https://mcp.example/api", session=session, load_prompts=False)
         mcp.is_connected = True
         await mcp.load_tools()
         clients = [RecordingClient(), RecordingClient()]
