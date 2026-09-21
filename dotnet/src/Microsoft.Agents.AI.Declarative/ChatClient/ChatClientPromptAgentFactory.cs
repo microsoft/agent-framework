@@ -35,6 +35,21 @@ public sealed class ChatClientPromptAgentFactory : PromptAgentFactory
     {
         // BINARY COMPAT CONSTRUCTOR
     }
+
+    /// <summary>
+    /// Creates a new instance of the <see cref="ChatClientPromptAgentFactory"/> class.
+    /// </summary>
+    /// <param name="chatClient">The chat client used by created agents.</param>
+    /// <param name="configuration">Optional configuration used to resolve explicitly allowed environment variables referenced by the agent definition.</param>
+    /// <param name="allowedConfigurationVariables">Optional explicitly allowed environment variables referenced by the agent definition.</param>
+    public ChatClientPromptAgentFactory(
+        IChatClient chatClient,
+        IConfiguration? configuration,
+        IEnumerable<string>? allowedConfigurationVariables)
+        : this(chatClient, functions: null, engine: null, configuration, loggerFactory: null, allowedConfigurationVariables)
+    {
+    }
+
     /// <summary>
     /// Creates a new instance of the <see cref="ChatClientPromptAgentFactory"/> class.
     /// </summary>
