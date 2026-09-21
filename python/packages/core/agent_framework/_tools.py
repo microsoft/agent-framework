@@ -2989,7 +2989,11 @@ def _bind_approval_responses_to_pending_requests(
                 continue
             if isinstance(request_id, str):
                 claimed_request_ids.add(request_id)
-            bound_response_ids.add(id(rebound))
+            if _is_hosted_tool_approval(rebound):
+                if not consume:
+                    _bind_approval_response_to_pending_request(rebound, invocation_session, consume=True)
+            else:
+                bound_response_ids.add(id(rebound))
             filtered_contents.append(rebound)
         if filtered_contents:
             message.contents = filtered_contents
@@ -4570,9 +4574,14 @@ async def _resolve_approval_responses(
         return _FunctionProcessingResult(errors_in_a_row=errors_in_a_row)
 
     if bound_response_ids:
+        pending = _load_pending_approval_requests(approval_session)
+        consumed_pending = False
         for response in pending_approval_responses.values():
-            if id(response) in bound_response_ids:
-                _bind_approval_response_to_pending_request(response, approval_session, consume=True)
+            request_id = response.additional_properties.get(_APPROVAL_REQUEST_ID_KEY)
+            if id(response) in bound_response_ids and isinstance(request_id, str):
+                consumed_pending = pending.pop(request_id, None) is not None or consumed_pending
+        if consumed_pending:
+            _save_pending_approval_requests(approval_session, pending)
 
     # 3. Execute approved decisions once. Rejected decisions are converted to results during normalization below.
     responses_to_execute = [
