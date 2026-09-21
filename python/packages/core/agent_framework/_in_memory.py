@@ -389,14 +389,14 @@ class InMemoryCollection(
                 ) from exc
             if score_threshold is not None and not comparison(score, score_threshold):
                 continue
-            results.append({"record": deepcopy(record), "score": score})
+            results.append({"record": record, "score": score})
         results.sort(
             key=lambda result: cast(float, result["score"]),
             reverse=distance_function in _DESCENDING_DISTANCE_FUNCTIONS,
         )
         total_count = len(results)
         return SearchResults(
-            results[skip : skip + top],
+            deepcopy(results[skip : skip + top]),
             metadata={"in_memory_total_count": total_count},
         )
 
