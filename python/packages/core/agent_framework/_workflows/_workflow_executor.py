@@ -351,6 +351,42 @@ class WorkflowExecutor(Executor):
         # For other messages, only handle if the wrapped workflow can accept them as input
         return any(is_instance_of(message.data, input_type) for input_type in self.workflow.input_types)
 
+    @staticmethod
+    def _get_child_invocation_kwargs(
+        ctx: WorkflowContext[Any, Any],
+    ) -> tuple[
+        WorkflowInvocationKwargs | Mapping[str, Any] | None,
+        WorkflowInvocationKwargs | Mapping[str, Any] | None,
+    ]:
+        """Extract invocation kwargs from the parent context for the child workflow."""
+        parent_kwargs: dict[str, Any] = ctx.get_state(WORKFLOW_RUN_KWARGS_KEY, {})
+
+        # Use the caller's raw kwargs so legacy per-executor mappings are resolved
+        # against the child workflow's executor IDs rather than the parent's.
+        fi_kwargs: WorkflowInvocationKwargs | Mapping[str, Any] | None = None
+        ci_kwargs: WorkflowInvocationKwargs | Mapping[str, Any] | None = None
+        for key in ("function_invocation_kwargs", "client_kwargs"):
+            raw_key = (
+                RAW_FUNCTION_INVOCATION_KWARGS_KEY if key == "function_invocation_kwargs" else RAW_CLIENT_KWARGS_KEY
+            )
+            raw_value = parent_kwargs.get(raw_key)
+            if raw_value is not None:
+                resolved = cast(WorkflowInvocationKwargs | Mapping[str, Any], raw_value)
+            else:
+                normalized: Any = parent_kwargs.get(key)
+                if isinstance(normalized, dict):
+                    normalized_dict = cast(dict[str, Any], normalized)
+                    if len(normalized_dict) == 1 and GLOBAL_KWARGS_KEY in normalized_dict:
+                        normalized = normalized_dict[GLOBAL_KWARGS_KEY]
+                resolved = cast(WorkflowInvocationKwargs | Mapping[str, Any] | None, normalized)
+            if resolved is not None:
+                if key == "function_invocation_kwargs":
+                    fi_kwargs = resolved
+                else:
+                    ci_kwargs = resolved
+
+        return fi_kwargs, ci_kwargs
+
     @handler
     async def process_workflow(self, input_data: object, ctx: WorkflowContext[Any, Any]) -> None:
         """Execute the sub-workflow with raw input data.
@@ -378,32 +414,7 @@ class WorkflowExecutor(Executor):
 
         logger.debug(f"WorkflowExecutor {self.id} starting sub-workflow {self.workflow.id}")
 
-        # Get kwargs from parent workflow's State to propagate to subworkflow
-        parent_kwargs: dict[str, Any] = ctx.get_state(WORKFLOW_RUN_KWARGS_KEY, {})
-
-        # Use the caller's raw kwargs so legacy per-executor mappings are resolved
-        # against the child workflow's executor IDs rather than the parent's.
-        fi_kwargs: WorkflowInvocationKwargs | Mapping[str, Any] | None = None
-        ci_kwargs: WorkflowInvocationKwargs | Mapping[str, Any] | None = None
-        for key in ("function_invocation_kwargs", "client_kwargs"):
-            raw_key = (
-                RAW_FUNCTION_INVOCATION_KWARGS_KEY if key == "function_invocation_kwargs" else RAW_CLIENT_KWARGS_KEY
-            )
-            raw_value = parent_kwargs.get(raw_key)
-            if raw_value is not None:
-                resolved = cast(WorkflowInvocationKwargs | Mapping[str, Any], raw_value)
-            else:
-                normalized: Any = parent_kwargs.get(key)
-                if isinstance(normalized, dict):
-                    normalized_dict = cast(dict[str, Any], normalized)
-                    if len(normalized_dict) == 1 and GLOBAL_KWARGS_KEY in normalized_dict:
-                        normalized = normalized_dict[GLOBAL_KWARGS_KEY]
-                resolved = cast(WorkflowInvocationKwargs | Mapping[str, Any] | None, normalized)
-            if resolved is not None:
-                if key == "function_invocation_kwargs":
-                    fi_kwargs = resolved
-                else:
-                    ci_kwargs = resolved
+        fi_kwargs, ci_kwargs = self._get_child_invocation_kwargs(ctx)
 
         # Run the sub-workflow and collect all events, passing parent kwargs
         result = await self.workflow.run(
@@ -466,9 +477,12 @@ class WorkflowExecutor(Executor):
     @override
     async def _cancel_pending_request(self, request_id: str, ctx: WorkflowContext[Any, Any]) -> None:
         """Propagate cancellation into the wrapped workflow."""
+        fi_kwargs, ci_kwargs = self._get_child_invocation_kwargs(ctx)
         result = await self.workflow.cancel_pending_requests(
             [request_id],
             tools=ctx.get_runtime_tools(),
+            function_invocation_kwargs=fi_kwargs,
+            client_kwargs=ci_kwargs,
         )
         await self._process_workflow_result(result, ctx)
 
