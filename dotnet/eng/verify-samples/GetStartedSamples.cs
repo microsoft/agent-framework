@@ -92,14 +92,5 @@ internal static class GetStartedSamples
                 "The output should not contain error messages or stack traces.",
             ],
         },
-
-        new SampleDefinition
-        {
-            Name = "06_host_your_agent",
-            ProjectPath = "samples/01-get-started/06_host_your_agent",
-            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
-            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
-            SkipReason = "Requires Azure Functions Core Tools runtime and starts a web server.",
-        },
     ];
 }

@@ -11,7 +11,8 @@
 //   TOOLBOX_NAME                     - Name of the Foundry Toolbox to connect to
 //
 // Optional:
-//   FOUNDRY_MODEL                    - Model deployment name (default: gpt-5)
+//   AZURE_AI_MODEL_DEPLOYMENT_NAME  - Model deployment name (default: gpt-5)
+//   FOUNDRY_MODEL                    - Legacy local-development fallback
 //
 // NOTE: All FOUNDRY_* and AGENT_* env-var prefixes (other than the platform-injected ones
 // listed above) are reserved by the Foundry container platform and rejected at agent-create.
@@ -23,7 +24,6 @@ using Azure.AI.Projects;
 using Azure.Core;
 using Azure.Identity;
 using DotNetEnv;
-using Hosted_Shared_Contributor_Setup;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Foundry.Hosting;
 using ModelContextProtocol.Client;
@@ -31,10 +31,13 @@ using ModelContextProtocol.Client;
 // Load .env file if present (for local development)
 Env.TraversePath().Load();
 
-var projectEndpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
+var projectEndpoint = System.Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
     ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
-var deployment = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5";
-var toolboxName = Environment.GetEnvironmentVariable("TOOLBOX_NAME")
+var deployment = FirstNonBlank(
+    System.Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME"),
+    System.Environment.GetEnvironmentVariable("FOUNDRY_MODEL"),
+    "gpt-5");
+var toolboxName = FirstNonBlank(System.Environment.GetEnvironmentVariable("TOOLBOX_NAME"))
     ?? throw new InvalidOperationException("TOOLBOX_NAME is not set.");
 
 // Build the Toolbox MCP URL from the project endpoint and toolbox name.
@@ -45,9 +48,7 @@ var toolboxMcpServerUrl = $"{projectEndpoint.TrimEnd('/')}/toolboxes/{toolboxNam
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 // Use a chained credential: try a temporary dev token first (for local Docker debugging),
 // then fall back to DefaultAzureCredential (for local dev via dotnet run / managed identity in production).
-TokenCredential credential = new ChainedTokenCredential(
-    new DevTemporaryTokenCredential(),
-    new DefaultAzureCredential());
+var credential = new DefaultAzureCredential();
 
 // ── Connect to the Foundry Toolbox MCP endpoint ─────────────────────────────
 // Create an HttpClient that attaches a fresh Foundry bearer token to every request.
@@ -78,7 +79,7 @@ var skillsProvider = new AgentSkillsProviderBuilder()
 AIAgent agent = new AIProjectClient(new Uri(projectEndpoint), credential)
     .AsAIAgent(new ChatClientAgentOptions
     {
-        Name = Environment.GetEnvironmentVariable("AGENT_NAME") ?? "hosted-toolbox-mcp-skills",
+        Name = System.Environment.GetEnvironmentVariable("AGENT_NAME") ?? "hosted-toolbox-mcp-skills",
         Description = "Hosted agent with MCP skills discovered from a Foundry Toolbox",
         ChatOptions = new()
         {
@@ -95,12 +96,11 @@ builder.Services.AddFoundryResponses(agent);
 var app = builder.Build();
 app.MapFoundryResponses();
 
-// Contributor-only: in Development, also map the per-agent OpenAI route shape that live Foundry uses
-// so a local REPL client can target this server via AIProjectClient.AsAIAgent(Uri agentEndpoint).
-// Do not use this in production. Hosted Foundry agents only support the agent-endpoint path.
-app.MapDevTemporaryLocalAgentEndpoint();
 
 app.Run();
+
+static string? FirstNonBlank(params string?[] candidates) =>
+    Array.Find(candidates, candidate => !string.IsNullOrWhiteSpace(candidate));
 
 // ---------------------------------------------------------------------------
 // HttpClientHandler: attaches a fresh Foundry bearer token to every request

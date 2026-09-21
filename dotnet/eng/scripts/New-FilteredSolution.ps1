@@ -26,7 +26,7 @@
     When specified, only test projects whose filename matches this pattern are kept.
 
 .PARAMETER TestProjectNameExcludeFilter
-    Optional wildcard pattern(s) to exclude test projects by name (e.g., *DurableTask.IntegrationTests*).
+    Optional wildcard pattern(s) to exclude test projects by name (e.g., *Slow.IntegrationTests*).
     When specified, test projects whose filename matches any of these patterns are removed.
     Applied after TestProjectNameIncludeFilter. Can be a single string or an array of strings.
 
@@ -50,8 +50,8 @@
     dotnet test --solution (./dotnet/eng/scripts/New-FilteredSolution.ps1 -Solution dotnet/agent-framework-dotnet.slnx -TargetFramework net472) --no-build -f net472
 
 .EXAMPLE
-    # Generate integration tests excluding DurableTask and AzureFunctions
-    ./dotnet/eng/scripts/New-FilteredSolution.ps1 -Solution dotnet/agent-framework-dotnet.slnx -TargetFramework net10.0 -TestProjectNameIncludeFilter "*IntegrationTests*" -TestProjectNameExcludeFilter "*DurableTask.IntegrationTests*","*AzureFunctions.IntegrationTests*" -OutputPath filtered-other-integration.slnx
+    # Generate integration tests while excluding a long-running test project
+    ./dotnet/eng/scripts/New-FilteredSolution.ps1 -Solution dotnet/agent-framework-dotnet.slnx -TargetFramework net10.0 -TestProjectNameIncludeFilter "*IntegrationTests*" -TestProjectNameExcludeFilter "*Slow.IntegrationTests*" -OutputPath filtered-integration.slnx
 #>
 
 [CmdletBinding()]

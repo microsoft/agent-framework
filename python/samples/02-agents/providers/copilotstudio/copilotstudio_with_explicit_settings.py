@@ -58,6 +58,9 @@ async def example_with_connection_settings() -> None:
         cloud=PowerPlatformCloud.PROD,  # Or PowerPlatformCloud.GOV, PowerPlatformCloud.HIGH, etc.
         copilot_agent_type=AgentType.PUBLISHED,  # Or AgentType.PREBUILT
         custom_power_platform_cloud=None,  # Optional: for custom cloud endpoints
+        # Raise aiohttp's per-line buffer above the 512 KB default so large Copilot Studio
+        # activities (for example, sizeable connector payloads) don't raise LineTooLong.
+        client_session_settings={"read_bufsize": 1024 * 1024},
     )
 
     # Create CopilotClient with explicit settings

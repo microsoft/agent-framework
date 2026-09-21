@@ -19,6 +19,7 @@ from agent_framework_purview._exceptions import (
     PurviewRequestError,
     PurviewServiceError,
 )
+from agent_framework_purview._feature_usage import FeatureIndex
 from agent_framework_purview._models import (
     ContentActivitiesRequest,
     ContentActivitiesResponse,
@@ -167,9 +168,13 @@ class TestPurviewClient:
         mock_response.headers = {}
         mock_response.json.return_value = {"id": "response-123", "protectionScopeState": "notModified"}
 
-        with patch.object(client._client, "post", return_value=mock_response):
+        with (
+            patch.object(client._client, "post", return_value=mock_response),
+            patch("agent_framework_purview._client.mark_feature_used") as mark_feature_used,
+        ):
             response = await client.process_content(request)
 
+            mark_feature_used.assert_called_once_with(FeatureIndex.PURVIEW)
             assert response.id == "response-123"
             assert response.protection_scope_state == "notModified"
 

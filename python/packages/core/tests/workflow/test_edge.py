@@ -1191,6 +1191,92 @@ async def test_fan_in_edge_group_with_multiple_message_types_failed() -> None:
         )
 
 
+class TraceCapturingAggregator(Executor):
+    """Fan-in aggregator that captures the trace contexts received by its handler.
+
+    Captures the source trace data from the :class:`WorkflowContext` passed to
+    the handler rather than overriding :meth:`Executor.execute` (which is
+    documented as *do not override* — it owns locking, span creation, handler
+    dispatch, and context construction).
+    """
+
+    def __init__(self, *, id: str) -> None:
+        super().__init__(id=id)
+        self.captured_trace_contexts: list[dict[str, str]] | None = None
+        self.captured_source_span_ids: list[str] | None = None
+        self.call_count: int = 0
+
+    @handler
+    async def mock_aggregator_handler(self, message: list[MockMessage], ctx: WorkflowContext) -> None:
+        self.call_count += 1
+        self.captured_trace_contexts = list(ctx._trace_contexts)
+        self.captured_source_span_ids = list(ctx._source_span_ids)
+
+
+async def test_fan_in_preserves_multiple_trace_contexts_per_message() -> None:
+    """Fan-in must aggregate ALL trace contexts, not just the first per message.
+
+    Each incoming message may carry multiple trace_contexts (e.g. when it is
+    itself the product of a prior fan-in). The aggregated message must include
+    every trace context and source span ID from every source message; using the
+    singular backward-compat properties (trace_context / source_span_id) would
+    silently drop all but the first context per message.
+    """
+    source1 = MockExecutor(id="source_executor_1")
+    source2 = MockExecutor(id="source_executor_2")
+    target = TraceCapturingAggregator(id="target_executor")
+
+    executors: dict[str, Executor] = {source1.id: source1, source2.id: source2, target.id: target}
+    edge_group = FanInEdgeGroup(source_ids=[source1.id, source2.id], target_id=target.id)
+    edge_runner = create_edge_runner(edge_group, executors)
+
+    state = State()
+    ctx = InProcRunnerContext()
+    data = MockMessage(data="test")
+
+    # Source 1 carries TWO trace contexts (simulating a prior fan-in aggregation)
+    multi_contexts_1 = [
+        {"traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"},
+        {"traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-aaaaaaaaaaaaaaaa-01"},
+    ]
+    multi_span_ids_1 = ["00f067aa0ba902b7", "aaaaaaaaaaaaaaaa"]
+
+    # Source 2 carries a single trace context
+    single_contexts_2 = [
+        {"traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b8-01"},
+    ]
+    single_span_ids_2 = ["00f067aa0ba902b8"]
+
+    # Send first message (buffered)
+    assert await edge_runner.send_message(
+        WorkflowMessage(
+            data=data, source_id=source1.id, trace_contexts=multi_contexts_1, source_span_ids=multi_span_ids_1
+        ),
+        state,
+        ctx,
+    )
+
+    # Send second message (triggers delivery)
+    assert await edge_runner.send_message(
+        WorkflowMessage(
+            data=data, source_id=source2.id, trace_contexts=single_contexts_2, source_span_ids=single_span_ids_2
+        ),
+        state,
+        ctx,
+    )
+
+    # The target executor should have received ALL 3 trace contexts (2 + 1),
+    # not just 2 (one per message via the singular property).
+    assert target.call_count == 1
+    assert target.captured_trace_contexts is not None
+    assert len(target.captured_trace_contexts) == 3
+    assert target.captured_trace_contexts == multi_contexts_1 + single_contexts_2
+
+    assert target.captured_source_span_ids is not None
+    assert len(target.captured_source_span_ids) == 3
+    assert target.captured_source_span_ids == multi_span_ids_1 + single_span_ids_2
+
+
 # endregion FanInEdgeGroup
 
 # region SwitchCaseEdgeGroup
@@ -1301,6 +1387,113 @@ async def test_switch_case_edge_group_send_message() -> None:
 
         assert success is True
         assert mock_send.call_count == 1
+
+
+def test_switch_case_edge_group_condition_error_propagates() -> None:
+    """A failing case condition surfaces instead of falling through to the default."""
+    source = MockExecutor(id="source_executor")
+    target1 = MockExecutor(id="target_executor_1")
+    target2 = MockExecutor(id="target_executor_2")
+
+    def broken_condition(message: MockMessage) -> bool:
+        raise ValueError("condition is broken")
+
+    edge_group = SwitchCaseEdgeGroup(
+        source_id=source.id,
+        cases=[
+            SwitchCaseEdgeGroupCase(condition=broken_condition, target_id=target1.id),
+            SwitchCaseEdgeGroupDefault(target_id=target2.id),
+        ],
+    )
+
+    assert edge_group._selection_func is not None  # type: ignore[reportPrivateUsage]
+    with pytest.raises(ValueError, match="condition is broken"):
+        edge_group._selection_func(MockMessage(data=1), [target1.id, target2.id])  # type: ignore[reportPrivateUsage]
+
+
+async def test_switch_case_edge_group_send_message_condition_error_propagates() -> None:
+    """A failing case condition surfaces from send_message and delivers nothing."""
+    source = MockExecutor(id="source_executor")
+    target1 = MockExecutor(id="target_executor_1")
+    target2 = MockExecutor(id="target_executor_2")
+
+    def broken_condition(message: MockMessage) -> bool:
+        raise ValueError("condition is broken")
+
+    edge_group = SwitchCaseEdgeGroup(
+        source_id=source.id,
+        cases=[
+            SwitchCaseEdgeGroupCase(condition=broken_condition, target_id=target1.id),
+            SwitchCaseEdgeGroupDefault(target_id=target2.id),
+        ],
+    )
+    executors: dict[str, Executor] = {source.id: source, target1.id: target1, target2.id: target2}
+    edge_runner = create_edge_runner(edge_group, executors)
+
+    message = WorkflowMessage(data=MockMessage(data=1), source_id=source.id)
+
+    with patch("agent_framework._workflows._edge_runner.EdgeRunner._execute_on_target") as mock_send:
+        with pytest.raises(ValueError, match="condition is broken"):
+            await edge_runner.send_message(message, State(), InProcRunnerContext())
+
+        assert mock_send.call_count == 0
+
+
+async def test_fan_out_edge_group_send_message_with_target_outside_group() -> None:
+    """A message addressed to an executor outside the group never reaches the selection function."""
+    source = MockExecutor(id="source_executor")
+    target1 = MockExecutor(id="target_executor_1")
+    target2 = MockExecutor(id="target_executor_2")
+
+    def broken_condition(message: MockMessage) -> bool:
+        raise ValueError("condition is broken")
+
+    edge_group = SwitchCaseEdgeGroup(
+        source_id=source.id,
+        cases=[
+            SwitchCaseEdgeGroupCase(condition=broken_condition, target_id=target1.id),
+            SwitchCaseEdgeGroupDefault(target_id=target2.id),
+        ],
+    )
+    executors: dict[str, Executor] = {source.id: source, target1.id: target1, target2.id: target2}
+    edge_runner = create_edge_runner(edge_group, executors)
+
+    # RunnerImpl fans every message out to all of the source's edge runners, so a message
+    # addressed to an executor reached through a different edge still arrives here. It must be
+    # dropped as a target mismatch, not evaluated -- raising would cancel its real delivery.
+    message = WorkflowMessage(data=MockMessage(data=1), source_id=source.id, target_id="unrelated_executor")
+
+    success = await edge_runner.send_message(message, State(), InProcRunnerContext())
+
+    assert success is False
+
+
+async def test_fan_out_edge_group_send_message_with_unhandleable_data() -> None:
+    """A message no target can handle is dropped before the selection function runs."""
+    source = MockExecutor(id="source_executor")
+    target1 = MockExecutor(id="target_executor_1")
+    target2 = MockExecutor(id="target_executor_2")
+
+    calls: list[Any] = []
+
+    def selection_func(message: Any, targets: list[str]) -> list[str]:
+        calls.append(message)
+        return targets
+
+    edge_group = FanOutEdgeGroup(
+        source_id=source.id,
+        target_ids=[target1.id, target2.id],
+        selection_func=selection_func,
+    )
+    executors: dict[str, Executor] = {source.id: source, target1.id: target1, target2.id: target2}
+    edge_runner = create_edge_runner(edge_group, executors)
+
+    message = WorkflowMessage(data="invalid_data", source_id=source.id)
+
+    success = await edge_runner.send_message(message, State(), InProcRunnerContext())
+
+    assert success is False
+    assert calls == []
 
 
 async def test_switch_case_edge_group_send_message_with_invalid_target() -> None:

@@ -9,6 +9,7 @@ This module provides ``CosmosMemoryContextProvider``, built on the
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import sys
 from collections.abc import Mapping, Sequence
@@ -17,6 +18,9 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypedDict, cast
 
 from agent_framework import AgentSession, ContextProvider, Message, SessionContext
 from agent_framework._settings import load_settings
+from agent_framework._telemetry import mark_feature_used
+
+from ._feature_usage import FeatureIndex
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
@@ -235,6 +239,12 @@ class CosmosMemoryContextProvider(ContextProvider):
         self.memory_client = memory_client
         self._cosmos_endpoint = cosmos_endpoint
         self._foundry_endpoint = foundry_endpoint
+        procedural_builder = getattr(self.memory_client, "build_procedural_context", None)
+        self._supports_toolkit_03_retrieval = (
+            "include_episodes" in inspect.signature(self.memory_client.search_cosmos).parameters
+            and procedural_builder is not None
+            and "task" in inspect.signature(procedural_builder).parameters
+        )
 
     def _resolve_user_id(self, state: dict[str, Any], session: AgentSession) -> str:
         """Resolve the user id for memory scoping.
@@ -344,6 +354,8 @@ class CosmosMemoryContextProvider(ContextProvider):
             context: The invocation context to add memories to.
             state: Provider-scoped mutable state.
         """
+        mark_feature_used(FeatureIndex.AZURE_COSMOS_MEMORY)
+
         # Extract query from input messages
         query_text = "\n".join(msg.text for msg in context.input_messages if msg.text and msg.text.strip())
 
@@ -353,26 +365,51 @@ class CosmosMemoryContextProvider(ContextProvider):
         # Get user_id from state or session (warns once if no stable user_id was provided)
         user_id = self._resolve_user_id(state, session)
 
-        # Memory search and user-summary retrieval are independent: the user summary
-        # provides baseline context even when no memories match the query, so a failure
-        # in one must not suppress the other. They get separate error handling.
-        try:
-            results = await self.memory_client.search_cosmos(
-                search_terms=query_text,
-                user_id=user_id,
-                top_k=self.top_k,
-                memory_types=[str(t) for t in self.memory_types],
-                min_confidence=self.min_confidence,
-            )
+        memory_sections: list[str] = []
 
-            if results:
-                # Format and inject memories
-                memory_content = self._format_memories(results)
-                context.extend_messages(
-                    self.source_id, [Message(role="user", contents=[f"{self.context_prompt}\n{memory_content}"])]
+        # Toolkit 0.3.0b2 compiles task-aware procedures separately. Older supported
+        # clients keep their existing generic procedural search behavior.
+        search_memory_types = [
+            str(memory_type)
+            for memory_type in self.memory_types
+            if not self._supports_toolkit_03_retrieval or memory_type != "procedural"
+        ]
+        if search_memory_types:
+            try:
+                search_kwargs: dict[str, Any] = {
+                    "search_terms": query_text,
+                    "user_id": user_id,
+                    "top_k": self.top_k,
+                    "memory_types": search_memory_types,
+                    "min_confidence": self.min_confidence,
+                }
+                if self._supports_toolkit_03_retrieval:
+                    search_kwargs["include_episodes"] = "episodic" in self.memory_types
+
+                results = await self.memory_client.search_cosmos(**search_kwargs)
+                if results:
+                    memory_sections.append(self._format_memories(results))
+            except Exception as e:
+                logger.warning("Failed to retrieve memories: %s", e, exc_info=True)
+
+        if self._supports_toolkit_03_retrieval and "procedural" in self.memory_types:
+            try:
+                procedural_builder = cast("Any", self.memory_client.build_procedural_context)
+                procedural_context = await procedural_builder(
+                    user_id=user_id,
+                    task=query_text,
                 )
-        except Exception as e:
-            logger.warning("Failed to retrieve memories: %s", e, exc_info=True)
+                if procedural_context and procedural_context.strip():
+                    memory_sections.append(procedural_context.strip())
+            except Exception as e:
+                logger.warning("Failed to retrieve procedural context: %s", e, exc_info=True)
+
+        if memory_sections:
+            memory_content = "\n".join(memory_sections)
+            context.extend_messages(
+                self.source_id,
+                [Message(role="user", contents=[f"{self.context_prompt}\n{memory_content}"])],
+            )
 
         # Retrieve and inject user summary as untrusted context.
         # This is INDEPENDENT of search results - even if no memories match the query,
@@ -424,9 +461,17 @@ class CosmosMemoryContextProvider(ContextProvider):
             context: The invocation context with response populated.
             state: Provider-scoped mutable state.
         """
+        mark_feature_used(FeatureIndex.AZURE_COSMOS_MEMORY)
+
         # Get user_id and thread_id from provider-scoped state (falling back to the session id)
         user_id = self._resolve_user_id(state, session)
         thread_id = state.get("thread_id") or session.session_id or "default"
+
+        # TODO(atty57): The toolkit renamed add_cosmos -> upsert_memory (same kwargs); accept either
+        # until the declared azure-cosmos-agent-memory floor is past the rename, then inline it.
+        write_turn = getattr(self.memory_client, "upsert_memory", None)
+        if write_turn is None:
+            write_turn = getattr(self.memory_client, "add_cosmos")  # ruff: ignore[get-attr-with-constant]
 
         try:
             # Store input messages (skip empty/whitespace-only content to avoid junk turns)
@@ -434,7 +479,7 @@ class CosmosMemoryContextProvider(ContextProvider):
                 if hasattr(msg, "role") and hasattr(msg, "text") and msg.text and msg.text.strip():
                     role_value = getattr(msg.role, "value", None) or str(msg.role)
                     if role_value in {"user", "assistant", "system"}:
-                        await self.memory_client.add_cosmos(
+                        await write_turn(
                             user_id=user_id,
                             thread_id=thread_id,
                             role=self._ROLE_MAP.get(role_value, role_value),
@@ -447,7 +492,7 @@ class CosmosMemoryContextProvider(ContextProvider):
                     if hasattr(msg, "role") and hasattr(msg, "text") and msg.text and msg.text.strip():
                         role_value = getattr(msg.role, "value", None) or str(msg.role)
                         if role_value in {"user", "assistant", "system"}:
-                            await self.memory_client.add_cosmos(
+                            await write_turn(
                                 user_id=user_id,
                                 thread_id=thread_id,
                                 role=self._ROLE_MAP.get(role_value, role_value),
@@ -455,7 +500,7 @@ class CosmosMemoryContextProvider(ContextProvider):
                             )
 
             # Auto-extraction and processing:
-            # When auto_extract is True (default), add_cosmos() schedules cadence-aware background
+            # When auto_extract is True (default), the turn write schedules cadence-aware background
             # processing (fact extraction, summaries, reconciliation) based on the configured
             # thresholds (FACT_EXTRACTION_EVERY_N, DEDUP_EVERY_N, etc.), so no explicit
             # process_now() call is needed. When auto_extract is False, those thresholds were

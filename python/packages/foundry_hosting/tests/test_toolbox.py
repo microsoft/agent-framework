@@ -9,11 +9,11 @@ from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import cast
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
-from agent_framework import SkillsProvider, SkillsSourceContext, SupportsAgentRun
+from agent_framework import MCPStreamableHTTPTool, SkillsProvider, SkillsSourceContext, SupportsAgentRun
 from azure.ai.agentserver.core import (
     FoundryAgentRequestContext,
     reset_request_context,
@@ -21,6 +21,7 @@ from azure.ai.agentserver.core import (
 )
 
 from agent_framework_foundry_hosting import FoundryToolbox
+from agent_framework_foundry_hosting._feature_usage import FeatureIndex
 from agent_framework_foundry_hosting._toolbox import (
     _FoundryToolboxSkillsSource,
     _resolve_toolbox_endpoint,
@@ -117,6 +118,40 @@ def test_init_derives_name_and_defaults() -> None:
     assert toolbox.url == "https://h/toolboxes/sales/mcp?api-version=v1"
     # Toolboxes expose tools, not prompts.
     assert toolbox.load_prompts_flag is False
+
+
+def test_init_forwards_additional_tool_arguments_and_parent_kwargs() -> None:
+    toolbox = FoundryToolbox(
+        _FakeCredential(),  # type: ignore
+        url="https://h/toolboxes/sales/mcp?api-version=v1",
+        description="Sales tools",
+        additional_tool_argument_names={"*": ["tenant_id"], "search": ["thread"]},
+    )
+
+    assert toolbox.description == "Sales tools"
+    assert toolbox._global_extra_arg_names == {"tenant_id"}
+    assert toolbox._tool_extra_arg_names == {"search": {"thread"}}
+
+
+def test_toolbox_owns_feature_index_53() -> None:
+    assert FeatureIndex.FOUNDRY_TOOLBOX == 53
+
+
+async def test_toolbox_marks_feature_on_successful_connect_not_construction() -> None:
+    with (
+        patch.object(MCPStreamableHTTPTool, "connect", new=AsyncMock()) as connect,
+        patch("agent_framework_foundry_hosting._toolbox.mark_feature_used") as mark_used,
+    ):
+        toolbox = FoundryToolbox(
+            _FakeCredential(),  # type: ignore
+            url="https://h/toolboxes/sales/mcp?api-version=v1",
+        )
+        mark_used.assert_not_called()
+
+        await toolbox.connect()
+
+    connect.assert_awaited_once_with(reset=False)
+    mark_used.assert_called_once_with(FeatureIndex.FOUNDRY_TOOLBOX)
 
 
 async def test_auth_flow_injects_bearer_token() -> None:
@@ -259,10 +294,12 @@ async def test_skills_source_uses_connected_session(monkeypatch: pytest.MonkeyPa
     toolbox.session = sentinel_session  # type: ignore
 
     captured: dict[str, Callable[[], object]] = {}
+    captured_kwargs: dict[str, object] = {}
 
     class _StubSkillsSource:
-        def __init__(self, *, session_provider: Callable[[], object]) -> None:
+        def __init__(self, *, session_provider: Callable[[], object], **kwargs: object) -> None:
             captured["session_provider"] = session_provider
+            captured_kwargs.update(kwargs)
 
         async def get_skills(self, context: SkillsSourceContext) -> list[str]:
             return ["skill-a"]
@@ -279,6 +316,36 @@ async def test_skills_source_uses_connected_session(monkeypatch: pytest.MonkeyPa
     new_session = object()
     toolbox.session = new_session  # type: ignore
     assert provider() is new_session
+    # No archive options set -> MCPSkillsSource is constructed with defaults.
+    assert captured_kwargs == {}
+
+
+async def test_skills_source_forwards_archive_options(monkeypatch: pytest.MonkeyPatch) -> None:
+    toolbox = FoundryToolbox(
+        _FakeCredential(),  # type: ignore
+        url="https://h/toolboxes/tb/mcp",
+    )
+    toolbox.session = object()  # type: ignore
+
+    captured: dict[str, object] = {}
+
+    class _StubSkillsSource:
+        def __init__(self, *, session_provider: object, **kwargs: object) -> None:
+            captured["kwargs"] = kwargs
+
+        async def get_skills(self, context: SkillsSourceContext) -> list[str]:
+            return []
+
+    monkeypatch.setattr("agent_framework_foundry_hosting._toolbox.MCPSkillsSource", _StubSkillsSource)
+
+    source = _FoundryToolboxSkillsSource(
+        toolbox,
+        archive_options={"archive_resource_search_depth": 3, "archive_max_file_count": 5},
+    )
+    await source.get_skills(_source_context())
+
+    # Only the explicitly-set archive options are forwarded to MCPSkillsSource.
+    assert captured["kwargs"] == {"archive_resource_search_depth": 3, "archive_max_file_count": 5}
 
 
 async def test_skills_source_requires_connection_via_provider() -> None:
@@ -374,6 +441,34 @@ async def test_as_skills_provider_cache_refresh_interval_rereads_after_staleness
         await provider._source.get_skills(context)
 
     assert read_count[0] == 3
+
+
+def test_as_skills_provider_forwards_only_set_archive_options() -> None:
+    toolbox = FoundryToolbox(
+        _FakeCredential(),  # type: ignore
+        url="https://h/toolboxes/tb/mcp",
+    )
+    # Unset archive kwargs are not forwarded (fall back to MCPSkillsSource defaults);
+    # set ones are collected for forwarding. ``disable_caching=True`` keeps ``_source``
+    # the bare ``_FoundryToolboxSkillsSource`` (no caching/dedup decorators wrapping it).
+    default_source = cast(
+        _FoundryToolboxSkillsSource,
+        toolbox.as_skills_provider(disable_caching=True)._source,  # pyright: ignore[reportPrivateUsage]
+    )
+    assert default_source._archive_options == {}  # pyright: ignore[reportPrivateUsage]
+
+    source = cast(
+        _FoundryToolboxSkillsSource,
+        toolbox.as_skills_provider(
+            disable_caching=True,
+            archive_max_size_bytes=2048,
+            archive_resource_search_depth=1,
+        )._source,  # pyright: ignore[reportPrivateUsage]
+    )
+    assert source._archive_options == {  # pyright: ignore[reportPrivateUsage]
+        "archive_max_size_bytes": 2048,
+        "archive_resource_search_depth": 1,
+    }
 
 
 class TestFoundryToolboxReconnection:

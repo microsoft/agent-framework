@@ -21,17 +21,19 @@ from urllib import error as urllib_error
 from urllib import request as urllib_request
 
 import tomli
-from packaging.requirements import InvalidRequirement, Requirement
+from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 from rich import print
 
 from scripts.dependencies._dependency_bounds_runtime import (
     extend_command_with_runtime_tools,
     extend_command_with_task,
+    load_workspace_package_configs,
+    resolve_internal_editables,
 )
 from scripts.task_runner import discover_projects, extract_poe_tasks, project_filter_matches
 
-CHECK_TASK_PRIORITY = ("check", "typing", "pyright", "mypy", "lint")
+CHECK_TASK_PRIORITY = ("dependency-pyright", "check", "typing", "pyright", "mypy", "lint")
 REQ_PATTERN = r"^\s*([A-Za-z0-9_.-]+(?:\[[^\]]+\])?)\s*(.*?)\s*$"
 SECTION_HEADER_PATTERN = re.compile(r"^\s*\[([^\]]+)\]\s*$")
 INLINE_ARRAY_ASSIGNMENT_PATTERN = re.compile(
@@ -422,13 +424,6 @@ def _load_package_name(pyproject_file: Path) -> str:
     return str(data["project"]["name"])
 
 
-def _extract_requirement_name(requirement: str) -> str | None:
-    try:
-        return Requirement(requirement).name.lower()
-    except InvalidRequirement:
-        return None
-
-
 def _select_validation_tasks(available_tasks: set[str]) -> list[str]:
     check_task = next((task for task in CHECK_TASK_PRIORITY if task in available_tasks), None)
     tasks: list[str] = []
@@ -437,62 +432,6 @@ def _select_validation_tasks(available_tasks: set[str]) -> list[str]:
     if "test" in available_tasks and "test" not in tasks:
         tasks.append("test")
     return tasks
-
-
-def _build_workspace_package_map(workspace_root: Path) -> dict[str, Path]:
-    package_map: dict[str, Path] = {}
-    for pyproject_file in sorted((workspace_root / "packages").glob("*/pyproject.toml")):
-        with pyproject_file.open("rb") as f:
-            data = tomli.load(f)
-        package_name = str(data.get("project", {}).get("name", "")).strip()
-        if package_name:
-            package_map[package_name] = pyproject_file.parent
-    return package_map
-
-
-def _build_internal_graph(workspace_root: Path, package_map: dict[str, Path]) -> dict[str, set[str]]:
-    graph: dict[str, set[str]] = {}
-    for package_name, package_path in package_map.items():
-        pyproject_file = package_path / "pyproject.toml"
-        with pyproject_file.open("rb") as f:
-            data = tomli.load(f)
-        project = data.get("project", {}) or {}
-        dependencies: list[str] = list(project.get("dependencies", []) or [])
-        for values in (project.get("optional-dependencies", {}) or {}).values():
-            dependencies.extend([value for value in (values or []) if isinstance(value, str)])
-        for values in (data.get("dependency-groups", {}) or {}).values():
-            dependencies.extend([value for value in (values or []) if isinstance(value, str)])
-        internal = set()
-        for dependency in dependencies:
-            dependency_name = _extract_requirement_name(dependency)
-            if dependency_name is None:
-                continue
-            if dependency_name.startswith("agent-framework"):
-                for candidate_name in package_map:
-                    if candidate_name.lower() == dependency_name:
-                        internal.add(candidate_name)
-                        break
-        graph[package_name] = internal
-    return graph
-
-
-def _resolve_internal_editables(
-    package_name: str, package_map: dict[str, Path], graph: dict[str, set[str]]
-) -> list[Path]:
-    visited: set[str] = set()
-    stack = [package_name]
-    results: set[Path] = set()
-    while stack:
-        current = stack.pop()
-        if current in visited:
-            continue
-        visited.add(current)
-        for dependency_name in graph.get(current, set()):
-            dependency_path = package_map.get(dependency_name)
-            if dependency_path and dependency_name != package_name:
-                results.add(dependency_path.resolve())
-            stack.append(dependency_name)
-    return sorted(results)
 
 
 def _collect_targets(
@@ -648,7 +587,7 @@ def _run_tasks(
         if dependency_pin is not None:
             dependency_name, dependency_version = dependency_pin
             command.extend(["--with", f"{dependency_name}=={dependency_version}"])
-        extend_command_with_task(command, task_name)
+        extend_command_with_task(command, task_name, workspace_root=workspace_root)
         try:
             result = subprocess.run(
                 command,
@@ -1024,8 +963,7 @@ def main() -> None:
     output_json_path = (workspace_root / args.output_json).resolve()
 
     # Phase 1: prepare shared workspace metadata and collect package execution plans.
-    package_map = _build_workspace_package_map(workspace_root)
-    internal_graph = _build_internal_graph(workspace_root, package_map)
+    workspace_packages = load_workspace_package_configs(workspace_root)
     lock_versions = _load_lock_versions(workspace_root)
     catalog = VersionCatalog(lock_versions=lock_versions, source=args.version_source)
 
@@ -1036,11 +974,15 @@ def main() -> None:
             print(f"[yellow]Skipping {project_path}: missing pyproject.toml[/yellow]")
             continue
         package_name = _load_package_name(pyproject_file)
-        with pyproject_file.open("rb") as f:
-            package_config = tomli.load(f)
-        project_section = package_config.get("project", {})
-        optional_dependencies = project_section.get("optional-dependencies", {}) or {}
-        dependency_groups = package_config.get("dependency-groups", {}) or {}
+        workspace_package = workspace_packages[str(canonicalize_name(package_name))]
+        dependency_group_names = sorted(workspace_package.dependency_groups)
+        include_dev_extra = "dev" in workspace_package.optional_dependencies
+        optional_extra_names = sorted(
+            name for name in workspace_package.optional_dependencies if name not in {"all", "dev"}
+        )
+        selected_extra_names = list(optional_extra_names)
+        if include_dev_extra:
+            selected_extra_names.append("dev")
         # Reuse the shared selector matcher so direct optimizer runs accept the
         # same short-name package filters as the contributor-facing Poe tasks.
         if package_filters and not any(
@@ -1052,10 +994,15 @@ def main() -> None:
                 project_path=project_path,
                 package_name=package_name,
                 pyproject_path=pyproject_file,
-                internal_editables=_resolve_internal_editables(package_name, package_map, internal_graph),
-                dependency_groups=sorted(dependency_groups),
-                include_dev_extra="dev" in optional_dependencies,
-                optional_extras=sorted(name for name in optional_dependencies if name not in {"all", "dev"}),
+                internal_editables=resolve_internal_editables(
+                    package_name,
+                    workspace_packages,
+                    dependency_groups=dependency_group_names,
+                    optional_extras=selected_extra_names,
+                ),
+                dependency_groups=dependency_group_names,
+                include_dev_extra=include_dev_extra,
+                optional_extras=optional_extra_names,
             )
         )
 

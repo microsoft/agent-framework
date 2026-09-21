@@ -30,6 +30,12 @@ public static class FunctionInvocationDelegatingAgentBuilderExtensions
     /// unless it intends to completely replace the function's behavior.
     /// </para>
     /// <para>
+    /// The callbacks also apply to functions added to or replaced in the current <see cref="ChatOptions.Tools"/>
+    /// collection during execution. Replacing the collection within a function or callback preserves the
+    /// callbacks for subsequent invocations, including when the function-calling client clones the options
+    /// between iterations. A per-request chat-client factory can replace the client without removing the callbacks.
+    /// </para>
+    /// <para>
     /// The inner agent or the pipeline wrapping it must include a <see cref="FunctionInvokingChatClient"/>. If one does not exist,
     /// the <see cref="AIAgent"/> added to the pipline by this method will throw an exception when it is invoked.
     /// </para>

@@ -219,10 +219,12 @@ from agent_framework import Agent, tool
 from agent_framework import SupportsChatGetResponse
 from agent_framework.ag_ui import AgentFrameworkAgent
 
+
 @tool
 def my_tool(param: str) -> str:
     """My custom tool."""
     return f"Result: {param}"
+
 
 def my_custom_agent(client: SupportsChatGetResponse) -> AgentFrameworkAgent:
     """Create a custom agent with the specified chat client.
@@ -246,8 +248,10 @@ def my_custom_agent(client: SupportsChatGetResponse) -> AgentFrameworkAgent:
         description="My custom agent description",
     )
 
+
 # Use it
 from agent_framework.openai import OpenAIChatCompletionClient
+
 client = OpenAIChatCompletionClient()
 agent = my_custom_agent(client)
 ```
@@ -268,19 +272,11 @@ agent = Agent(
 )
 
 state_schema = {
-    "recipe": {
-        "type": "object",
-        "properties": {
-            "name": {"type": "string"},
-            "ingredients": {"type": "array"}
-        }
-    }
+    "recipe": {"type": "object", "properties": {"name": {"type": "string"}, "ingredients": {"type": "array"}}}
 }
 
 # Configure which tool updates which state fields
-predict_state_config = {
-    "recipe": {"tool": "update_recipe", "tool_argument": "recipe_data"}
-}
+predict_state_config = {"recipe": {"tool": "update_recipe", "tool_argument": "recipe_data"}}
 
 wrapped_agent = AgentFrameworkAgent(
     agent=agent,
@@ -324,10 +320,12 @@ Human-in-the-loop is automatically handled when tools are marked for approval:
 ```python
 from agent_framework import tool
 
+
 @tool(approval_mode="always_require")
 def sensitive_action(param: str) -> str:
     """This action requires user approval."""
     return f"Executed with {param}"
+
 
 # The orchestrator automatically detects approval responses and handles them
 ```

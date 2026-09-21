@@ -19,6 +19,7 @@ from collections.abc import Sequence
 from typing import Any, Literal, cast
 
 from agent_framework import Message, SupportsAgentRun
+from agent_framework._telemetry import mark_feature_used
 from agent_framework._workflows._agent_executor import AgentExecutor
 from agent_framework._workflows._agent_utils import resolve_agent_id
 from agent_framework._workflows._checkpoint import CheckpointStorage
@@ -28,9 +29,9 @@ from agent_framework._workflows._executor import (
 )
 from agent_framework._workflows._message_utils import normalize_messages_input
 from agent_framework._workflows._workflow import Workflow
-from agent_framework._workflows._workflow_builder import WorkflowBuilder
 from agent_framework._workflows._workflow_context import WorkflowContext
 
+from ._feature_usage import FeatureIndex
 from ._orchestration_request_info import AgentApprovalExecutor
 from ._participant_output_config import (
     UNSET,
@@ -40,8 +41,10 @@ from ._participant_output_config import (
     _ParticipantOutputSpecifier,  # pyright: ignore[reportPrivateUsage]
     _resolve_participant_output_config,  # pyright: ignore[reportPrivateUsage]
 )
+from ._workflow_builder import OrchestrationWorkflowBuilder as WorkflowBuilder
 
 logger = logging.getLogger(__name__)
+DEFAULT_WORKFLOW_NAME = "Sequential"
 
 
 class _InputToConversation(Executor):
@@ -96,6 +99,7 @@ class SequentialBuilder:
     def __init__(
         self,
         *,
+        name: str | None = None,
         participants: Sequence[SupportsAgentRun | Executor],
         checkpoint_storage: CheckpointStorage | None = None,
         chain_only_agent_responses: bool = False,
@@ -105,6 +109,7 @@ class SequentialBuilder:
         """Initialize the SequentialBuilder.
 
         Args:
+            name: Optional workflow identifier. Defaults to ``"Sequential"``.
             participants: Sequence of agent or executor instances to run sequentially.
             checkpoint_storage: Optional checkpoint storage for enabling workflow state persistence.
             chain_only_agent_responses: If True, only agent responses are chained between agents.
@@ -116,6 +121,7 @@ class SequentialBuilder:
                 surface as workflow ``intermediate`` events. Pass ``"all_other"`` to select every participant
                 not selected by ``output_from``. Unlisted participant outputs are hidden.
         """
+        self._name = name or DEFAULT_WORKFLOW_NAME
         self._participants: list[SupportsAgentRun | Executor] = []
         self._checkpoint_storage: CheckpointStorage | None = checkpoint_storage
         self._chain_only_agent_responses: bool = chain_only_agent_responses
@@ -241,6 +247,7 @@ class SequentialBuilder:
           terminator's own `yield_output` is Workflow Output (`AgentResponse`,
           or per-chunk `AgentResponseUpdate` when streaming).
         """
+        mark_feature_used(FeatureIndex.ORCHESTRATION_SEQUENTIAL)
         input_conv = _InputToConversation(id="input-conversation")
 
         # Resolve participants and participant factories to executors
@@ -255,6 +262,7 @@ class SequentialBuilder:
             default_output_from=[participants[-1]],
         )
         builder = WorkflowBuilder(
+            name=self._name,
             start_executor=input_conv,
             checkpoint_storage=self._checkpoint_storage,
             output_from=designated,

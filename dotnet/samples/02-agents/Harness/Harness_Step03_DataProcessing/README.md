@@ -55,7 +55,8 @@ E.g. try the following prompt `Please process the sales.csv file by first filter
 
 This sample uses `FileAccessProvider.ReadOnlyToolsAutoApprovalRule` to auto-approve read-only file
 access tools. Built-in auto-approval rules match tool calls **solely by tool name**, so any other
-registered tool that shares one of the approved names (`file_access_read`, `file_access_ls`,
+registered tool that shares one of the approved names (`file_access_read`, `file_access_read_lines`,
+`file_access_ls`,
 `file_access_grep`) would be **silently auto-approved**, bypassing the
 human approval boundary. Ensure no other tool's name collides with the reserved names an
 auto-approval rule approves.

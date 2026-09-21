@@ -16,6 +16,7 @@ import contextlib
 import json
 import logging
 import uuid
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any, cast
 
@@ -35,6 +36,218 @@ from ._declarative_base import (
 )
 
 logger = logging.getLogger(__name__)
+
+_CODE_FENCE = "```"
+_JSON_CODE_FENCE_QUALIFIER = "json"
+_MAX_JSON_DECODE_BUDGET_MULTIPLIER = 4
+_NO_JSON = object()
+
+
+def _iter_fenced_blocks(text: str, *, require_json_qualifier: bool) -> Iterator[str]:
+    """Yield non-overlapping fenced blocks in source order."""
+    search_start = 0
+    while True:
+        opening_index = text.find(_CODE_FENCE, search_start)
+        if opening_index < 0:
+            return
+
+        content_start = opening_index + len(_CODE_FENCE)
+        if require_json_qualifier:
+            if not text.startswith(_JSON_CODE_FENCE_QUALIFIER, content_start):
+                search_start = content_start
+                continue
+
+            qualifier_end = content_start + len(_JSON_CODE_FENCE_QUALIFIER)
+            if (
+                qualifier_end < len(text)
+                and not text[qualifier_end].isspace()
+                and text[qualifier_end] not in "{["
+                and not text.startswith(_CODE_FENCE, qualifier_end)
+            ):
+                search_start = content_start
+                continue
+            content_start = qualifier_end
+
+        while content_start < len(text) and text[content_start].isspace():
+            content_start += 1
+
+        closing_index = text.find(_CODE_FENCE, content_start)
+        if closing_index < 0:
+            return
+
+        yield text[content_start:closing_index].strip()
+        search_start = closing_index + len(_CODE_FENCE)
+
+
+def _index_escaped_quotes(text: str) -> bytearray:
+    """Index quote characters preceded by an odd-length backslash run."""
+    escaped_quotes = bytearray(len(text))
+    backslash_count = 0
+
+    for index, char in enumerate(text):
+        if char == "\\":
+            backslash_count += 1
+            continue
+
+        if char == '"' and backslash_count % 2 == 1:
+            escaped_quotes[index] = 1
+        backslash_count = 0
+
+    return escaped_quotes
+
+
+def _index_json_candidates_forward(text: str, escaped_quotes: bytearray) -> set[tuple[int, int]]:
+    """Index JSON candidate ranges from left to right."""
+    candidates: set[tuple[int, int]] = set()
+    object_openings: list[int] = []
+    array_openings: list[int] = []
+    in_string = False
+
+    for index, char in enumerate(text):
+        if not object_openings and not array_openings:
+            if char in "{[":
+                (object_openings if char == "{" else array_openings).append(index)
+            continue
+
+        if char == '"' and not escaped_quotes[index]:
+            in_string = not in_string
+            continue
+
+        if in_string:
+            continue
+
+        if char in "{[":
+            (object_openings if char == "{" else array_openings).append(index)
+        elif char == "}" and object_openings:
+            candidates.add((object_openings.pop(), index))
+        elif char == "]" and array_openings:
+            candidates.add((array_openings.pop(), index))
+
+    return candidates
+
+
+def _index_json_candidates_reverse(text: str, escaped_quotes: bytearray) -> set[tuple[int, int]]:
+    """Index JSON candidate ranges from right to left."""
+    candidates: set[tuple[int, int]] = set()
+    object_closings: list[int] = []
+    array_closings: list[int] = []
+    in_string = False
+
+    for index in range(len(text) - 1, -1, -1):
+        char = text[index]
+        if not object_closings and not array_closings:
+            if char in "}]":
+                (object_closings if char == "}" else array_closings).append(index)
+            continue
+
+        if char == '"' and not escaped_quotes[index]:
+            in_string = not in_string
+            continue
+
+        if in_string:
+            continue
+
+        if char in "}]":
+            (object_closings if char == "}" else array_closings).append(index)
+        elif char == "{" and object_closings:
+            candidates.add((index, object_closings.pop()))
+        elif char == "[" and array_closings:
+            candidates.add((index, array_closings.pop()))
+
+    return candidates
+
+
+def _find_last_decodable_json(text: str) -> Any:
+    """Find the last decodable JSON object or array within text."""
+    escaped_quotes = _index_escaped_quotes(text)
+    candidates = _index_json_candidates_forward(text, escaped_quotes)
+    candidates.update(_index_json_candidates_reverse(text, escaped_quotes))
+
+    candidate_groups: list[tuple[int, int, list[tuple[int, int]]]] = []
+    for candidate in sorted(candidates):
+        json_start, json_end = candidate
+        if not candidate_groups or json_start > candidate_groups[-1][1]:
+            candidate_groups.append((json_start, json_end, [candidate]))
+            continue
+
+        group_start, group_end, group_candidates = candidate_groups[-1]
+        group_candidates.append(candidate)
+        candidate_groups[-1] = (group_start, max(group_end, json_end), group_candidates)
+
+    for group_start, group_end, group_candidates in reversed(candidate_groups):
+        group_span = group_end - group_start + 1
+        primary_decode_budget = group_span * (_MAX_JSON_DECODE_BUDGET_MULTIPLIER // 2)
+        recovery_decode_budget = group_span * (
+            _MAX_JSON_DECODE_BUDGET_MULTIPLIER - (_MAX_JSON_DECODE_BUDGET_MULTIPLIER // 2)
+        )
+        attempted_candidates: set[tuple[int, int]] = set()
+        last_json: Any = _NO_JSON
+        consumed_end = -1
+        candidate_index = 0
+
+        while candidate_index < len(group_candidates) and primary_decode_budget > 0:
+            json_start, json_end = group_candidates[candidate_index]
+            candidate_index += 1
+            if json_start <= consumed_end:
+                continue
+
+            candidate_length = json_end - json_start + 1
+            if candidate_length > primary_decode_budget:
+                continue
+
+            primary_decode_budget -= candidate_length
+            attempted_candidates.add((json_start, json_end))
+            try:
+                last_json = json.loads(text[json_start : json_end + 1])
+            except json.JSONDecodeError:
+                continue
+
+            consumed_end = json_end
+            while candidate_index < len(group_candidates) and group_candidates[candidate_index][0] <= consumed_end:
+                candidate_index += 1
+
+        recovery_candidates = sorted(
+            group_candidates,
+            key=lambda candidate: (candidate[1] - candidate[0], -candidate[0]),
+        )
+        recovered_json: Any = _NO_JSON
+        recovered_range: tuple[int, int] | None = None
+        for json_start, json_end in recovery_candidates:
+            if recovery_decode_budget == 0:
+                break
+            if (json_start, json_end) in attempted_candidates or json_start <= consumed_end:
+                continue
+
+            candidate_length = json_end - json_start + 1
+            if candidate_length > recovery_decode_budget:
+                continue
+
+            recovery_decode_budget -= candidate_length
+            try:
+                candidate_json = json.loads(text[json_start : json_end + 1])
+            except json.JSONDecodeError:
+                continue
+
+            candidate_contains_recovered = (
+                recovered_range is not None and json_start <= recovered_range[0] and json_end >= recovered_range[1]
+            )
+            recovered_contains_candidate = (
+                recovered_range is not None and recovered_range[0] <= json_start and recovered_range[1] >= json_end
+            )
+            if (
+                recovered_range is None
+                or candidate_contains_recovered
+                or (not recovered_contains_candidate and json_start > recovered_range[0])
+            ):
+                recovered_json = candidate_json
+                recovered_range = (json_start, json_end)
+
+        if recovered_json is not _NO_JSON:
+            return recovered_json
+        if last_json is not _NO_JSON:
+            return last_json
+
+    raise json.JSONDecodeError("No valid JSON found in response", text, 0)
 
 
 def _extract_json_from_response(text: str) -> Any:
@@ -58,13 +271,11 @@ def _extract_json_from_response(text: str) -> Any:
         text: The raw text response from an agent
 
     Returns:
-        Parsed JSON as a Python dict/list, or None if parsing fails
+        Parsed JSON, or None if the response is empty.
 
     Raises:
         json.JSONDecodeError: If no valid JSON can be extracted
     """
-    import re
-
     if not text:
         return None
 
@@ -79,96 +290,18 @@ def _extract_json_from_response(text: str) -> Any:
     except json.JSONDecodeError:
         pass
 
-    # Try extracting from markdown code blocks: ```json ... ``` or ``` ... ```
-    # Use the last code block if there are multiple
-    code_block_patterns = [
-        r"```json\s*\n?(.*?)\n?```",  # ```json ... ```
-        r"```\s*\n?(.*?)\n?```",  # ``` ... ```
-    ]
-    for pattern in code_block_patterns:
-        matches = list(re.finditer(pattern, text, re.DOTALL))
-        if matches:
-            # Try the last match first (most likely to be the final result)
-            for match in reversed(matches):
-                try:
-                    return json.loads(match.group(1).strip())
-                except json.JSONDecodeError:
-                    continue
-
-    # Find ALL JSON objects {...} or arrays [...] in the text and return the last valid one
-    # This handles cases where agents stream multiple JSON objects (partial, then final)
-    all_json_objects: list[Any] = []
-
-    pos = 0
-    while pos < len(text):
-        # Find next { or [
-        json_start = -1
-        bracket_char = None
-        for i in range(pos, len(text)):
-            if text[i] == "{":
-                json_start = i
-                bracket_char = "{"
-                break
-            if text[i] == "[":
-                json_start = i
-                bracket_char = "["
-                break
-
-        if json_start < 0:
-            break  # No more JSON objects
-
-        # Find matching closing bracket
-        open_bracket = bracket_char
-        close_bracket = "}" if open_bracket == "{" else "]"
-        depth = 0
-        in_string = False
-        escape_next = False
-        found_end = False
-
-        for i in range(json_start, len(text)):
-            char = text[i]
-
-            if escape_next:
-                escape_next = False
+    # Exactly-qualified JSON fences take precedence over plain fences.
+    for require_json_qualifier in (True, False):
+        last_fenced_json: Any = _NO_JSON
+        for block in _iter_fenced_blocks(text, require_json_qualifier=require_json_qualifier):
+            try:
+                last_fenced_json = json.loads(block)
+            except json.JSONDecodeError:
                 continue
+        if last_fenced_json is not _NO_JSON:
+            return last_fenced_json
 
-            if char == "\\":
-                escape_next = True
-                continue
-
-            if char == '"' and not escape_next:
-                in_string = not in_string
-                continue
-
-            if in_string:
-                continue
-
-            if char == open_bracket:
-                depth += 1
-            elif char == close_bracket:
-                depth -= 1
-                if depth == 0:
-                    # Found the end
-                    potential_json = text[json_start : i + 1]
-                    try:
-                        parsed = json.loads(potential_json)
-                        all_json_objects.append(parsed)
-                    except json.JSONDecodeError:
-                        pass
-                    pos = i + 1
-                    found_end = True
-                    break
-
-        if not found_end:
-            # Malformed JSON, move past the start character
-            pos = json_start + 1
-
-    # Return the last valid JSON object (most likely to be the final/complete result)
-    if all_json_objects:
-        return all_json_objects[-1]
-
-    # Unable to extract JSON
-    raise json.JSONDecodeError("No valid JSON found in response", text, 0)
+    return _find_last_decodable_json(text)
 
 
 def _validate_conversation_history(messages: list[Message], agent_name: str) -> None:
@@ -373,6 +506,13 @@ def _normalize_variable_path(variable: str) -> str:
 class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
     """Executor that invokes a Microsoft Foundry agent.
 
+    ``output.autoSend`` defaults to true and accepts a Boolean or a
+    ``=``-prefixed PowerFx Boolean expression, such as ``=Local.publishResult``.
+    Expressions use current state before each invocation, including resumed
+    external-loop turns. False suppresses automatic output, not invocation,
+    result storage or conversation history; later actions can explicitly emit
+    the stored results.
+
     This executor supports both Python-style and .NET-style YAML schemas:
 
     Python-style (simple):
@@ -482,8 +622,8 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
 
         return arguments, messages, external_loop_when, max_iterations
 
-    def _get_output_config(self) -> tuple[str | None, str | None, str | None, bool]:
-        """Parse output configuration.
+    def _get_output_config(self, state: DeclarativeWorkflowState) -> tuple[str | None, str | None, str | None, bool]:
+        """Parse output bindings and evaluate autoSend against the current state.
 
         Returns:
             Tuple of (messages var, responseObject var, resultProperty, autoSend)
@@ -504,7 +644,7 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
         property_val: Any = output_dict.get("property")
         property_var: str | None = str(property_val) if property_val is not None else None
         auto_send_val: Any = output_dict.get("autoSend", True)
-        auto_send: bool = bool(auto_send_val)
+        auto_send: bool = bool(state.eval_if_expression(auto_send_val))
 
         return messages_var, response_obj_var, property_var or result_property, auto_send
 
@@ -542,6 +682,12 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
     async def _build_input_text(self, state: Any, arguments: dict[str, Any], messages_expr: Any) -> str:
         """Build input text from arguments and messages.
 
+        ``input.arguments`` are formatted as ``key: value`` lines (same shape as the
+        multi-value ``Workflow.Inputs`` fallback) and included in the text sent to
+        ``agent.run()``. Python's agent ``run()`` has no separate structured-inputs
+        channel, so arguments must be folded into this text rather than discarded
+        (#7902).
+
         Args:
             state: Workflow state for expression evaluation
             arguments: Input arguments to evaluate
@@ -550,55 +696,61 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
         Returns:
             Input text for the agent
         """
-        # Evaluate arguments
         evaluated_args: dict[str, Any] = {}
         for key, value in arguments.items():
             evaluated_args[key] = state.eval_if_expression(value)
+        args_text = "\n".join(f"{k}: {v}" for k, v in evaluated_args.items()) if evaluated_args else ""
 
-        # Evaluate messages/input
+        messages_text = ""
         if messages_expr:
             evaluated_input: Any = state.eval_if_expression(messages_expr)
             if isinstance(evaluated_input, str):
-                return evaluated_input
-            if isinstance(evaluated_input, list) and evaluated_input:
+                messages_text = evaluated_input
+            elif isinstance(evaluated_input, list) and evaluated_input:
                 # Extract text from last message
                 last: Any = evaluated_input[-1]  # type: ignore
                 if isinstance(last, str):
-                    return last
-                if isinstance(last, dict):
+                    messages_text = last
+                elif isinstance(last, dict):
                     last_dict = cast(dict[str, Any], last)
                     content_val: Any = last_dict.get("content", last_dict.get("text", ""))
-                    return str(content_val) if content_val else ""
-                if last is not None and hasattr(last, "text"):  # type: ignore
-                    return str(getattr(last, "text", ""))  # type: ignore
-            if evaluated_input:
-                return str(cast(Any, evaluated_input))
-            return ""
+                    messages_text = str(content_val) if content_val else ""
+                elif last is not None and hasattr(last, "text"):  # type: ignore
+                    messages_text = str(getattr(last, "text", ""))  # type: ignore
+            elif evaluated_input:
+                messages_text = str(cast(Any, evaluated_input))
+        elif not evaluated_args:
+            # Fallback chain for implicit input (like .NET conversationId pattern):
+            # Only when neither explicit messages nor explicit arguments are present.
+            # Otherwise arguments-only actions (e.g. customer-support TicketingAgent)
+            # would append System.LastMessage (prior agent's response) or
+            # Workflow.Inputs to their structured fields in chained workflows.
+            # 1. Local.input / Local.userInput (explicit turn state)
+            # 2. System.LastMessage.Text (previous agent's response)
+            # 3. Workflow.Inputs (first agent gets workflow inputs)
+            messages_text = str(state.get("Local.input") or state.get("Local.userInput") or "")
+            if not messages_text:
+                # Try System.LastMessage.Text (used by external loop and agent chaining)
+                last_message: Any = state.get("System.LastMessage")
+                if isinstance(last_message, dict):
+                    last_msg_dict = cast(dict[str, Any], last_message)
+                    text_val: Any = last_msg_dict.get("Text", "")
+                    messages_text = str(text_val) if text_val else ""
+            if not messages_text:
+                # Fall back to workflow inputs (for first agent in chain)
+                inputs: Any = state.get("Workflow.Inputs")
+                if isinstance(inputs, dict):
+                    inputs_dict = cast(dict[str, Any], inputs)
+                    # If single input, use its value directly
+                    if len(inputs_dict) == 1:
+                        messages_text = str(next(iter(inputs_dict.values())))
+                    else:
+                        # Multiple inputs - format as key: value pairs
+                        messages_text = "\n".join(f"{k}: {v}" for k, v in inputs_dict.items())
 
-        # Fallback chain for implicit input (like .NET conversationId pattern):
-        # 1. Local.input / Local.userInput (explicit turn state)
-        # 2. System.LastMessage.Text (previous agent's response)
-        # 3. Workflow.Inputs (first agent gets workflow inputs)
-        input_text: str = str(state.get("Local.input") or state.get("Local.userInput") or "")
-        if not input_text:
-            # Try System.LastMessage.Text (used by external loop and agent chaining)
-            last_message: Any = state.get("System.LastMessage")
-            if isinstance(last_message, dict):
-                last_msg_dict = cast(dict[str, Any], last_message)
-                text_val: Any = last_msg_dict.get("Text", "")
-                input_text = str(text_val) if text_val else ""
-        if not input_text:
-            # Fall back to workflow inputs (for first agent in chain)
-            inputs: Any = state.get("Workflow.Inputs")
-            if isinstance(inputs, dict):
-                inputs_dict = cast(dict[str, Any], inputs)
-                # If single input, use its value directly
-                if len(inputs_dict) == 1:
-                    input_text = str(next(iter(inputs_dict.values())))
-                else:
-                    # Multiple inputs - format as key: value pairs
-                    input_text = "\n".join(f"{k}: {v}" for k, v in inputs_dict.items())
-        return input_text if input_text else ""
+        if args_text and messages_text:
+            return f"{args_text}\n{messages_text}"
+        return args_text or messages_text or ""
 
     def _get_agent(self, agent_name: str, ctx: WorkflowContext[Any, Any]) -> Any:
         """Get agent from registry (sync helper for response handler)."""
@@ -655,16 +807,28 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
             _validate_conversation_history(messages_for_agent, agent_name)
 
         # Retrieve kwargs passed to workflow.run() so they propagate to agent tools
-        from agent_framework._workflows._const import WORKFLOW_RUN_KWARGS_KEY
+        from agent_framework._workflows import _agent_utils as workflow_agent_utils
+        from agent_framework._workflows import _const as workflow_const
 
-        run_kwargs: dict[str, Any] = ctx.get_state(WORKFLOW_RUN_KWARGS_KEY, {})
+        run_kwargs: dict[str, Any] = ctx.get_state(workflow_const.WORKFLOW_RUN_KWARGS_KEY, {})
+        prepare_run_kwargs = getattr(workflow_agent_utils, "prepare_executor_run_kwargs", None)
+        resolved_state_key = getattr(workflow_const, "RESOLVED_WORKFLOW_RUN_KWARGS_KEY", None)
+        if callable(prepare_run_kwargs) and isinstance(resolved_state_key, str):
+            missing_resolved_state = object()
+            resolved_run_kwargs: Any = ctx.get_state(resolved_state_key, missing_resolved_state)
+            if resolved_run_kwargs is not missing_resolved_state:
+                if not isinstance(resolved_run_kwargs, dict):
+                    raise TypeError("Resolved workflow run kwargs state must be a dict.")
+                run_kwargs = cast(Any, prepare_run_kwargs)(self.id, run_kwargs, resolved_run_kwargs)
         options: dict[str, Any] | None = None
         if run_kwargs:
             # Merge caller-provided options to avoid duplicate keyword argument
             options = dict(run_kwargs.get("options") or {})
             options["additional_function_arguments"] = run_kwargs
-            # Exclude 'options' from splat to avoid TypeError on duplicate keyword
-            run_kwargs = {k: v for k, v in run_kwargs.items() if k != "options"}
+            # Exclude 'options' from splat to avoid TypeError on duplicate keyword,
+            # and keep internal workflow-routing copies (stored under underscore
+            # keys for nested executors) out of the public Agent.run signature
+            run_kwargs = {k: v for k, v in run_kwargs.items() if k != "options" and not k.startswith("_")}
 
         # Use run() method to get properly structured messages (including tool calls and results)
         # This is critical for multi-turn conversations where tool calls must be followed
@@ -780,7 +944,7 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
         logger.debug("handle_action: starting agent '%s'", agent_name)
 
         arguments, messages_expr, external_loop_when, max_iterations = self._get_input_config()
-        messages_var, response_obj_var, result_property, auto_send = self._get_output_config()
+        messages_var, response_obj_var, result_property, auto_send = self._get_output_config(state)
 
         # Get conversation-specific messages path if conversationId is specified
         conversation_id_expr = self._get_conversation_id()
@@ -950,6 +1114,9 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
                 f"Agent '{agent_name}' invocation failed: not found during loop resumption"
             )
 
+        _, _, _, auto_send = self._get_output_config(state)
+        loop_state.auto_send = auto_send
+
         try:
             accumulated_response, all_messages, tool_calls = await self._invoke_agent_and_store_results(
                 agent=agent,
@@ -960,7 +1127,7 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
                 messages_var=loop_state.messages_var,
                 response_obj_var=loop_state.response_obj_var,
                 result_property=loop_state.result_property,
-                auto_send=loop_state.auto_send,
+                auto_send=auto_send,
                 messages_path=loop_state.messages_path,
             )
         except (AgentInvalidRequestException, AgentInvalidResponseException):

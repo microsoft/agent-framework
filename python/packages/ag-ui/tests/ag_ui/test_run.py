@@ -2,11 +2,12 @@
 
 """Tests for _agent_run.py helper functions and FlowState."""
 
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from ag_ui.core import (
     CustomEvent,
+    MessagesSnapshotEvent,
     ReasoningEncryptedValueEvent,
     ReasoningEndEvent,
     ReasoningMessageContentEvent,
@@ -17,6 +18,7 @@ from ag_ui.core import (
     TextMessageEndEvent,
     TextMessageStartEvent,
     ToolCallArgsEvent,
+    ToolCallStartEvent,
 )
 from agent_framework import AgentResponseUpdate, Content, Message, ResponseStream
 from agent_framework.exceptions import AgentInvalidResponseException
@@ -24,19 +26,24 @@ from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ign
 
 from agent_framework_ag_ui._agent import AgentConfig
 from agent_framework_ag_ui._agent_run import (
-    PendingApprovalEntry,
-    PendingApprovalKey,
+    _build_messages_snapshot,
     _build_safe_metadata,
     _canonical_approval_resume_messages,
     _create_state_context_message,
+    _filter_local_approval_responses_for_provider,
     _inject_state_context,
-    _make_pending_approval_entry,
     _normalize_response_stream,
-    _pending_approval_key,
     _resume_to_tool_messages,
     _should_suppress_intermediate_snapshot,
     run_agent_stream,
 )
+from agent_framework_ag_ui._approval_lifecycle import (
+    ApprovalExecutionOwner,
+    ApprovalLifecycle,
+    ApprovalStatus,
+    ResumeDecision,
+)
+from agent_framework_ag_ui._approval_state import InMemoryAGUIApprovalStateStore
 from agent_framework_ag_ui._run_common import (
     FlowState,
     _build_run_finished_event,
@@ -54,10 +61,224 @@ from agent_framework_ag_ui._run_common import (
 )
 
 
+def _open_tool_call(flow: FlowState, call_id: str, name: str = "tool") -> None:
+    """Register a tool call as started in this run so TOOL_CALL_END is eligible."""
+    entry = {
+        "id": call_id,
+        "type": "function",
+        "function": {"name": name, "arguments": "{}"},
+    }
+    flow.pending_tool_calls.append(entry)
+    flow.tool_calls_by_id[call_id] = entry
+
+
 def _message_role(message: object) -> object:
     if isinstance(message, dict):
         return cast(dict[str, object], message).get("role")
     return getattr(message, "role", None)
+
+
+def test_filter_local_approval_responses_for_provider_removes_only_completed_local_controls() -> None:
+    """Provider-bound filtering removes completed local controls without mutating caller messages."""
+    local_call = Content.from_function_call(call_id="call_local_mixed", name="local_tool", arguments={})
+    local_response = Content.from_function_approval_response(
+        approved=True,
+        id="approval_local_mixed",
+        function_call=local_call,
+    )
+    control_call = Content.from_function_call(call_id="call_local_control", name="local_tool", arguments={})
+    control_response = Content.from_function_approval_response(
+        approved=True,
+        id="approval_local_control",
+        function_call=control_call,
+    )
+    hosted_call = Content.from_function_call(
+        call_id="call_hosted",
+        name="hosted_tool",
+        arguments={},
+        additional_properties={"server_label": "hosted-server"},
+    )
+    hosted_response = Content.from_function_approval_response(
+        approved=True,
+        id="approval_hosted",
+        function_call=hosted_call,
+    )
+    pending_call = Content.from_function_call(call_id="call_pending", name="pending_tool", arguments={})
+    pending_response = Content.from_function_approval_response(
+        approved=True,
+        id="approval_pending",
+        function_call=pending_call,
+    )
+    completed_message = Message(
+        role="tool",
+        contents=[
+            Content.from_function_result(call_id="call_local_mixed", result="completed"),
+            Content.from_function_result(call_id="call_local_control", result="completed"),
+        ],
+    )
+    mixed_message = Message(
+        role="user",
+        contents=[Content.from_text(text="Keep this text"), local_response],
+    )
+    control_only_message = Message(role="user", contents=[control_response])
+    hosted_message = Message(role="user", contents=[hosted_response])
+    pending_message = Message(role="user", contents=[pending_response])
+    empty_message = Message(role="user", contents=[])
+
+    filtered = _filter_local_approval_responses_for_provider(
+        [completed_message, mixed_message, control_only_message, hosted_message, pending_message, empty_message]
+    )
+
+    assert len(filtered) == 5
+    assert filtered[0] is completed_message
+    assert filtered[1] is not mixed_message
+    assert [content.type for content in filtered[1].contents] == ["text"]
+    assert filtered[2] is hosted_message
+    assert filtered[3] is pending_message
+    assert filtered[4] is empty_message
+    assert [content.type for content in mixed_message.contents] == ["text", "function_approval_response"]
+    assert control_only_message.contents == [control_response]
+
+
+def test_filter_local_approval_responses_for_provider_pairs_reused_call_ids_by_occurrence() -> None:
+    """One completed occurrence does not erase a later approval that reused its call id."""
+    call_id = "call_reused"
+    first_call = Content.from_function_call(call_id=call_id, name="local_tool", arguments={"turn": 1})
+    first_request = Content.from_function_approval_request(id=call_id, function_call=first_call)
+    first_response = Content.from_function_approval_response(
+        approved=True,
+        id=call_id,
+        function_call=first_call,
+    )
+    second_call = Content.from_function_call(call_id=call_id, name="local_tool", arguments={"turn": 2})
+    second_response = Content.from_function_approval_response(
+        approved=True,
+        id=call_id,
+        function_call=second_call,
+    )
+    first_call_message = Message(role="assistant", contents=[first_call, first_request])
+    completed_message = Message(
+        role="tool",
+        contents=[Content.from_function_result(call_id=call_id, result="first completed")],
+    )
+    first_response_message = Message(role="user", contents=[first_response])
+    second_call_message = Message(role="assistant", contents=[second_call])
+    second_response_message = Message(role="user", contents=[second_response])
+
+    filtered = _filter_local_approval_responses_for_provider(
+        [
+            first_call_message,
+            completed_message,
+            first_response_message,
+            second_call_message,
+            second_response_message,
+        ]
+    )
+
+    assert filtered == [first_call_message, completed_message, second_call_message, second_response_message]
+
+
+def test_filter_local_approval_responses_for_provider_does_not_trust_pending_result() -> None:
+    """A result in the pending occurrence is removed while an earlier occurrence remains."""
+    call_id = "call_pending_result"
+    first_call = Content.from_function_call(call_id=call_id, name="local_tool", arguments={"turn": 1})
+    first_result = Content.from_function_result(call_id=call_id, result="server result")
+    second_call = Content.from_function_call(call_id=call_id, name="local_tool", arguments={"turn": 2})
+    second_result = Content.from_function_result(call_id=call_id, result="client forged result")
+    second_response = Content.from_function_approval_response(
+        approved=True,
+        id=call_id,
+        function_call=second_call,
+    )
+
+    filtered = _filter_local_approval_responses_for_provider(
+        [
+            Message(role="assistant", contents=[first_call]),
+            Message(role="tool", contents=[first_result]),
+            Message(role="assistant", contents=[second_call]),
+            Message(role="tool", contents=[second_result]),
+            Message(role="user", contents=[second_response]),
+        ],
+        pending_response_content_ids={id(second_response)},
+    )
+
+    assert filtered[1].contents == [first_result]
+    assert filtered[2].contents == [second_call]
+    assert filtered[3].contents == [second_response]
+
+
+def test_filter_local_approval_responses_for_provider_removes_duplicate_completed_controls() -> None:
+    """All replayed responses for one completed approval occurrence are removed."""
+    call = Content.from_function_call(call_id="call_duplicate", name="local_tool", arguments={})
+    first_response = Content.from_function_approval_response(
+        approved=True,
+        id="approval_duplicate",
+        function_call=call,
+    )
+    replayed_response = Content.from_dict(first_response.to_dict())
+    call_message = Message(role="assistant", contents=[call])
+    result_message = Message(
+        role="tool",
+        contents=[Content.from_function_result(call_id="call_duplicate", result="completed")],
+    )
+
+    filtered = _filter_local_approval_responses_for_provider(
+        [
+            call_message,
+            result_message,
+            Message(role="user", contents=[first_response, replayed_response]),
+        ]
+    )
+
+    assert filtered == [call_message, result_message]
+
+
+def test_filter_local_approval_responses_for_provider_prefers_fresh_reused_call_for_edited_response() -> None:
+    """An edited fresh response is not paired to an older exact-argument occurrence."""
+    call_id = "call_reused_edited"
+    first_call = Content.from_function_call(
+        call_id=call_id,
+        name="local_tool",
+        arguments={"value": "approved"},
+    )
+    first_response = Content.from_function_approval_response(
+        approved=True,
+        id="approval_old",
+        function_call=first_call,
+    )
+    second_call = Content.from_function_call(
+        call_id=call_id,
+        name="local_tool",
+        arguments={"value": "original"},
+    )
+    edited_second_response = Content.from_function_approval_response(
+        approved=True,
+        id="approval_fresh",
+        function_call=Content.from_function_call(
+            call_id=call_id,
+            name="local_tool",
+            arguments={"value": "approved"},
+        ),
+    )
+    first_call_message = Message(role="assistant", contents=[first_call])
+    first_result_message = Message(
+        role="tool",
+        contents=[Content.from_function_result(call_id=call_id, result="completed")],
+    )
+    second_call_message = Message(role="assistant", contents=[second_call])
+    fresh_response_message = Message(role="user", contents=[edited_second_response])
+
+    filtered = _filter_local_approval_responses_for_provider(
+        [
+            first_call_message,
+            first_result_message,
+            Message(role="user", contents=[first_response]),
+            second_call_message,
+            fresh_response_message,
+        ]
+    )
+
+    assert filtered == [first_call_message, first_result_message, second_call_message, fresh_response_message]
 
 
 class TestBuildSafeMetadata:
@@ -407,6 +628,207 @@ def test_emit_text_skips_when_waiting_for_approval():
     assert len(events) == 0
 
 
+def _snapshot_kinds(event):
+    """Flatten a MessagesSnapshotEvent into (kind, message) pairs for order assertions."""
+    kinds = []
+    for message in event.messages:
+        dumped = message if isinstance(message, dict) else message.model_dump(exclude_none=True)
+        if dumped.get("role") == "assistant" and dumped.get("tool_calls"):
+            kinds.append(("tool_calls", dumped))
+        elif dumped.get("role") == "assistant":
+            kinds.append(("text", dumped))
+        elif dumped.get("role") == "tool":
+            kinds.append(("result", dumped))
+        elif dumped.get("role") == "reasoning":
+            kinds.append(("reasoning", dumped))
+    return kinds
+
+
+def test_snapshot_places_lead_in_text_before_tool_calls():
+    """Lead-in narration streamed before the tool calls stays in front of them."""
+    flow = FlowState()
+    _emit_text(Content.from_text("Let me research the docs first."), flow)
+    _emit_tool_call(Content.from_function_call(call_id="call_1", name="docs_fetch", arguments="{}"), flow)
+
+    event = _build_messages_snapshot(flow, [])
+
+    kinds = _snapshot_kinds(event)
+    assert [kind for kind, _ in kinds] == ["text", "tool_calls"]
+    assert kinds[0][1]["content"] == "Let me research the docs first."
+    assert kinds[0][1]["id"] == flow.message_id
+    assert kinds[1][1]["tool_calls"][0]["id"] == "call_1"
+
+
+def test_snapshot_preserves_stream_order_around_tool_results():
+    """A turn shaped text -> calls -> results -> text snapshots in that order."""
+    flow = FlowState()
+    _emit_text(Content.from_text("First, the plan."), flow)
+    _emit_tool_call(Content.from_function_call(call_id="call_1", name="docs_fetch", arguments="{}"), flow)
+    _emit_tool_result(Content.from_function_result(call_id="call_1", result="done"), flow)
+    _emit_text(Content.from_text("And the summary."), flow)
+
+    event = _build_messages_snapshot(flow, [])
+
+    kinds = _snapshot_kinds(event)
+    assert [kind for kind, _ in kinds] == ["text", "tool_calls", "result", "text"]
+    assert kinds[0][1]["content"] == "First, the plan."
+    assert kinds[2][1].get("toolCallId", kinds[2][1].get("tool_call_id")) == "call_1"
+    assert kinds[3][1]["content"] == "And the summary."
+    assert kinds[3][1]["id"] != kinds[0][1]["id"]
+
+
+def test_snapshot_reuses_streamed_tool_message_id_after_text():
+    """Tool-call snapshots reuse the stream ID used by the reference client merge."""
+    flow = FlowState()
+    _emit_text(Content.from_text("First, the plan."), flow)
+    tool_events = _emit_tool_call(Content.from_function_call(call_id="call_1", name="docs_fetch", arguments="{}"), flow)
+    tool_start = next(event for event in tool_events if isinstance(event, ToolCallStartEvent))
+    _emit_tool_result(Content.from_function_result(call_id="call_1", result="done"), flow)
+    _emit_text(Content.from_text("And the summary."), flow)
+
+    event = _build_messages_snapshot(flow, [])
+
+    kinds = _snapshot_kinds(event)
+    assert [kind for kind, _ in kinds] == ["text", "tool_calls", "result", "text"]
+    assert tool_start.parent_message_id is not None
+    assert kinds[1][1]["id"] == tool_start.parent_message_id
+    assert kinds[1][1]["id"] != kinds[0][1]["id"]
+
+
+def test_snapshot_tool_only_message_reuses_stream_message_id():
+    """Tool-only turns keep the message id the stream opened with."""
+    flow = FlowState()
+    flow.message_id = "tool-only-msg"
+    _emit_tool_call(Content.from_function_call(call_id="call_1", name="docs_fetch", arguments="{}"), flow)
+
+    event = _build_messages_snapshot(flow, [])
+
+    kinds = _snapshot_kinds(event)
+    assert [kind for kind, _ in kinds] == ["tool_calls"]
+    assert kinds[0][1]["id"] == "tool-only-msg"
+
+
+def test_snapshot_tool_only_segments_get_unique_ids_across_reasoning():
+    """A tool-only opening ID is consumed once across separated tool segments."""
+    flow = FlowState(message_id="tool-only-msg")
+    first_events = _emit_tool_call(
+        Content.from_function_call(call_id="call_1", name="first_tool", arguments="{}"), flow
+    )
+    _emit_text_reasoning(Content.from_text("Thinking between calls."), flow)
+    second_events = _emit_tool_call(
+        Content.from_function_call(call_id="call_2", name="second_tool", arguments="{}"), flow
+    )
+
+    snapshot = _build_messages_snapshot(flow, [])
+    tool_messages = [message for kind, message in _snapshot_kinds(snapshot) if kind == "tool_calls"]
+    first_start = next(event for event in first_events if isinstance(event, ToolCallStartEvent))
+    second_start = next(event for event in second_events if isinstance(event, ToolCallStartEvent))
+
+    assert [message["id"] for message in tool_messages] == ["tool-only-msg", second_start.parent_message_id]
+    assert first_start.parent_message_id == "tool-only-msg"
+    assert second_start.parent_message_id != first_start.parent_message_id
+
+
+def test_snapshot_keeps_reasoning_in_emission_order():
+    """Reasoning blocks keep their streamed position instead of always trailing."""
+    flow = FlowState()
+    _emit_text_reasoning(Content.from_text("thinking out loud"), flow)
+    _emit_text(Content.from_text("Answer incoming."), flow)
+    _emit_tool_call(Content.from_function_call(call_id="call_1", name="docs_fetch", arguments="{}"), flow)
+
+    event = _build_messages_snapshot(flow, [])
+
+    kinds = _snapshot_kinds(event)
+    assert [kind for kind, _ in kinds] == ["reasoning", "text", "tool_calls"]
+
+
+def test_snapshot_without_segment_tracking_keeps_legacy_layout():
+    """Flows assembled without the emit helpers keep the old fixed grouping."""
+    flow = FlowState()
+    flow.accumulated_text = "late text"
+    tool_entry = {"id": "call_1", "type": "function", "function": {"name": "docs_fetch", "arguments": ""}}
+    flow.pending_tool_calls.append(tool_entry)
+    flow.tool_calls_by_id["call_1"] = tool_entry
+    flow.tool_results.append({"id": "r1", "role": "tool", "toolCallId": "call_1", "content": "done"})
+
+    event = _build_messages_snapshot(flow, [])
+
+    kinds = _snapshot_kinds(event)
+    assert [kind for kind, _ in kinds] == ["tool_calls", "result", "text"]
+
+
+def test_snapshot_includes_text_when_message_preopened_by_tool_only_path():
+    """Text after a tool-only preopen gets a unique snapshot message ID."""
+    flow = FlowState()
+    # The tool-only detection in agent_run.py preopens message_id without
+    # going through _emit_text, so the first text has no segment yet.
+    flow.message_id = "preopened"
+    _emit_tool_call(Content.from_function_call(call_id="call_1", name="docs_fetch", arguments="{}"), flow)
+    text_events = _emit_text(Content.from_text("Let me check the docs."), flow)
+
+    event = _build_messages_snapshot(flow, [])
+
+    kinds = _snapshot_kinds(event)
+    assert [kind for kind, _ in kinds] == ["tool_calls", "text"]
+    assert kinds[1][1]["content"] == "Let me check the docs."
+    assert kinds[0][1]["id"] == "preopened"
+    assert kinds[1][1]["id"] != kinds[0][1]["id"]
+    assert len({message["id"] for _, message in kinds}) == len(kinds)
+    assert isinstance(text_events[0], TextMessageEndEvent)
+    assert isinstance(text_events[1], TextMessageStartEvent)
+    assert text_events[0].message_id == "preopened"
+    assert text_events[1].message_id == kinds[1][1]["id"]
+
+
+def test_snapshot_separates_calls_across_results():
+    """call A -> result A -> call B -> result B snapshots as two pairs, not grouped."""
+    flow = FlowState()
+    _emit_tool_call(Content.from_function_call(call_id="call_a", name="tool_a", arguments="{}"), flow)
+    _emit_tool_result(Content.from_function_result(call_id="call_a", result="a done"), flow)
+    _emit_tool_call(Content.from_function_call(call_id="call_b", name="tool_b", arguments="{}"), flow)
+    _emit_tool_result(Content.from_function_result(call_id="call_b", result="b done"), flow)
+
+    event = _build_messages_snapshot(flow, [])
+
+    kinds = _snapshot_kinds(event)
+    assert [kind for kind, _ in kinds] == ["tool_calls", "result", "tool_calls", "result"]
+    assert kinds[0][1]["tool_calls"][0]["id"] == "call_a"
+    assert kinds[1][1].get("toolCallId", kinds[1][1].get("tool_call_id")) == "call_a"
+    assert kinds[2][1]["tool_calls"][0]["id"] == "call_b"
+    assert kinds[3][1].get("toolCallId", kinds[3][1].get("tool_call_id")) == "call_b"
+
+
+def test_snapshot_leftover_call_keeps_its_result():
+    """A pending call untracked by segments still appears with its result."""
+    flow = FlowState()
+    tool_entry = {"id": "call_x", "type": "function", "function": {"name": "tool_x", "arguments": ""}}
+    flow.pending_tool_calls.append(tool_entry)
+    flow.tool_calls_by_id["call_x"] = tool_entry
+    flow.tool_results.append({"id": "r1", "role": "tool", "toolCallId": "call_x", "content": "done"})
+
+    event = _build_messages_snapshot(flow, [])
+
+    kinds = _snapshot_kinds(event)
+    assert [kind for kind, _ in kinds] == ["tool_calls", "result"]
+    assert kinds[1][1].get("toolCallId", kinds[1][1].get("tool_call_id")) == "call_x"
+
+
+def test_snapshot_stale_segment_id_falls_back_to_leftover():
+    """A segment id missing from tool_calls_by_id stays eligible for the fallback."""
+    flow = FlowState()
+    flow.snapshot_segments.append({"kind": "tool_calls", "call_ids": ["call_x"]})
+    tool_entry = {"id": "call_x", "type": "function", "function": {"name": "tool_x", "arguments": ""}}
+    flow.pending_tool_calls.append(tool_entry)
+    # tool_calls_by_id intentionally lacks call_x, so the segment emits nothing
+    flow.tool_results.append({"id": "r1", "role": "tool", "toolCallId": "call_x", "content": "done"})
+
+    event = _build_messages_snapshot(flow, [])
+
+    kinds = _snapshot_kinds(event)
+    assert [kind for kind, _ in kinds] == ["tool_calls", "result"]
+    assert kinds[0][1]["tool_calls"][0]["id"] == "call_x"
+
+
 def test_emit_text_skips_when_skip_text_flag():
     """Test _emit_text skips with skip_text flag."""
     flow = FlowState()
@@ -492,6 +914,7 @@ def test_emit_tool_result_closes_open_message():
     # Simulate an open text message (e.g., from Feature #4 tool-only detection)
     flow.message_id = "open-msg-123"
     flow.tool_call_id = "call_456"
+    _open_tool_call(flow, "call_456")
 
     content = Content.from_function_result(call_id="call_456", result="tool result")
 
@@ -565,14 +988,130 @@ def test_emit_approval_request_populates_interrupt_metadata():
     assert flow.interrupts[0]["reason"] == "tool_call"
     assert flow.interrupts[0]["toolCallId"] == "call_123"
     assert flow.interrupts[0]["message"] == "Approve running write_doc?"
-    assert flow.interrupts[0]["responseSchema"]["required"] == ["accepted"]
-    assert flow.interrupts[0]["responseSchema"]["properties"]["accepted"]["type"] == "boolean"
-    assert flow.interrupts[0]["responseSchema"]["properties"]["content"]["type"] == "string"
+    response_schema = flow.interrupts[0]["responseSchema"]
+    assert response_schema["anyOf"] == [{"required": ["approved"]}, {"required": ["accepted"]}]
+    assert response_schema["properties"]["approved"]["type"] == "boolean"
+    assert response_schema["properties"]["accepted"]["type"] == "boolean"
+    assert response_schema["properties"]["content"]["type"] == "string"
+    assert response_schema["properties"]["editedArgs"]["required"] == ["content"]
     assert flow.interrupts[0]["metadata"]["agent_framework"]["type"] == "function_approval_request"
     assert flow.interrupts[0]["metadata"]["agent_framework"]["function_call"] == {
         "call_id": "call_123",
         "name": "write_doc",
         "arguments": {"content": "x"},
+    }
+
+
+def test_emit_local_approval_request_prefers_function_call_occurrence_id() -> None:
+    """Local approval interrupts use occurrence identity without rewriting tool correlation."""
+    flow = FlowState(message_id="msg-1")
+    function_call = Content.from_function_call(
+        call_id="call_123",
+        name="write_doc",
+        arguments={"content": "x"},
+        id="af-call-occurrence",
+    )
+    with pytest.warns(FutureWarning, match="id differs from function_call.id.*legacy"):
+        approval_content = Content.from_function_approval_request(id="call_123", function_call=function_call)
+
+    events = _emit_approval_request(approval_content, flow)
+
+    custom_event = next(event for event in events if isinstance(event, CustomEvent))
+    assert custom_event.value["id"] == "af-call-occurrence"
+    assert flow.interrupts[0]["id"] == "af-call-occurrence"
+    assert flow.interrupts[0]["toolCallId"] == "call_123"
+
+
+def test_emit_approval_request_normalizes_empty_server_label_for_identity() -> None:
+    """Client events and lifecycle registration treat an empty server label as local."""
+    flow = FlowState(message_id="msg-1")
+    function_call = Content.from_function_call(
+        call_id="provider-call",
+        name="write_doc",
+        arguments={"content": "x"},
+        id="af-call-occurrence",
+        additional_properties={"server_label": ""},
+    )
+    approval_content = Content.from_function_approval_request(
+        id="provider-approval-request",
+        function_call=function_call,
+    )
+
+    events = _emit_approval_request(approval_content, flow)
+
+    custom_event = next(event for event in events if getattr(event, "name", None) == "function_approval_request")
+    assert custom_event.value["id"] == "af-call-occurrence"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert flow.interrupts[0]["id"] == "af-call-occurrence"
+
+
+def test_emit_hosted_approval_request_preserves_provider_request_id() -> None:
+    """Hosted approval interrupts retain the provider protocol request identity."""
+    flow = FlowState(message_id="msg-1")
+    function_call = Content.from_function_call(
+        call_id="provider-call",
+        name="hosted_search",
+        arguments={"query": "x"},
+        id="af-call-occurrence",
+        additional_properties={"server_label": "provider"},
+    )
+    approval_content = Content.from_function_approval_request(
+        id="provider-approval-request",
+        function_call=function_call,
+    )
+
+    events = _emit_approval_request(approval_content, flow)
+
+    custom_event = next(event for event in events if isinstance(event, CustomEvent))
+    assert custom_event.value["id"] == "provider-approval-request"
+    assert flow.interrupts[0]["id"] == "provider-approval-request"
+    assert flow.interrupts[0]["toolCallId"] == "provider-call"
+
+
+def test_emit_approval_request_reuses_confirmation_message_id_in_snapshot():
+    """Confirmation tool events and snapshots share the same message ID."""
+    flow = FlowState()
+    _emit_text(Content.from_text("Before approval."), flow)
+    text_message_id = flow.message_id
+    function_call = Content.from_function_call(call_id="call_123", name="write_doc", arguments={"content": "x"})
+    approval_content = Content.from_function_approval_request(id="approval_1", function_call=function_call)
+
+    events = _emit_approval_request(approval_content, flow)
+    confirm_start = next(
+        event for event in events if isinstance(event, ToolCallStartEvent) and event.tool_call_name == "confirm_changes"
+    )
+    snapshot = _build_messages_snapshot(flow, [])
+    kinds = _snapshot_kinds(snapshot)
+
+    assert [kind for kind, _ in kinds] == ["text", "tool_calls"]
+    assert confirm_start.parent_message_id == kinds[1][1]["id"]
+    assert confirm_start.parent_message_id != text_message_id
+
+
+def test_emit_approval_request_keeps_protocol_fields_when_tool_arguments_use_reserved_names() -> None:
+    """Reserved protocol fields remain controls while editedArgs carries colliding tool arguments."""
+    flow = FlowState(message_id="msg-1")
+    function_call = Content.from_function_call(
+        call_id="call_reserved",
+        name="write_doc",
+        arguments={"approved": "draft", "accepted": 1, "editedArgs": {"value": True}},
+    )
+    approval_content = Content.from_function_approval_request(id="approval_reserved", function_call=function_call)
+
+    _emit_approval_request(approval_content, flow)
+
+    properties = flow.interrupts[0]["responseSchema"]["properties"]
+    assert properties["approved"]["type"] == "boolean"
+    assert properties["accepted"]["type"] == "boolean"
+    assert properties["editedArgs"] == {
+        "type": "object",
+        "description": "Full replacement of the tool arguments. Not merged.",
+        "properties": {
+            "approved": {"type": "string"},
+            "accepted": {"type": "integer"},
+            "editedArgs": {"type": "object", "additionalProperties": True},
+        },
+        "required": ["approved", "accepted", "editedArgs"],
+        "additionalProperties": False,
     }
 
 
@@ -648,6 +1187,14 @@ async def test_predictive_confirmation_run_finished_interrupt_links_tool_call():
         "arguments": {"content": "Draft"},
     }
 
+    confirm_start = next(
+        event for event in events if isinstance(event, ToolCallStartEvent) and event.tool_call_name == "confirm_changes"
+    )
+    snapshots = [event for event in events if isinstance(event, MessagesSnapshotEvent)]
+    assert snapshots
+    snapshot_tool_message = next(message for message in snapshots[-1].messages if getattr(message, "tool_calls", None))
+    assert confirm_start.parent_message_id == snapshot_tool_message.id
+
 
 def test_resume_to_tool_messages_from_interrupts_payload():
     """Resume payload interrupt responses map to tool messages."""
@@ -680,29 +1227,31 @@ def test_resume_to_tool_messages_skips_cancelled_entries():
 
 def test_canonical_approval_resume_does_not_mutate_arguments_until_batch_validates():
     """Edited approval arguments are committed only after every resume entry validates."""
-    pending_entry = _make_pending_approval_entry(
-        "get_weather",
-        '{"city":"Seattle"}',
-        request_id="call_a",
+    lifecycle = ApprovalLifecycle()
+    pending_entry = lifecycle.register(
+        owner=ApprovalExecutionOwner.LOCAL,
+        thread_id="thread-weather",
         interrupt_id="call_a",
+        call_id="call_a",
+        name="get_weather",
+        arguments='{"city":"Seattle"}',
     )
-    pending_approvals: dict[PendingApprovalKey, PendingApprovalEntry] = {
-        _pending_approval_key("thread-weather", "call_a"): pending_entry,
-        _pending_approval_key("thread-weather", "call_b"): _make_pending_approval_entry(
-            "get_weather",
-            '{"city":"Portland"}',
-            request_id="call_b",
-            interrupt_id="call_b",
-        ),
-    }
+    lifecycle.register(
+        owner=ApprovalExecutionOwner.LOCAL,
+        thread_id="thread-weather",
+        interrupt_id="call_b",
+        call_id="call_b",
+        name="get_weather",
+        arguments='{"city":"Portland"}',
+    )
 
     messages, handled_ids, cancelled_ids, error = _canonical_approval_resume_messages(
         [
             {"interruptId": "call_a", "status": "resolved", "payload": {"accepted": True, "city": "Portland"}},
             {"interruptId": "call_b", "status": "resolved", "payload": "not an object"},
         ],
-        pending_approvals,
         "thread-weather",
+        lifecycle=lifecycle,
     )
 
     assert messages == []
@@ -710,22 +1259,218 @@ def test_canonical_approval_resume_does_not_mutate_arguments_until_batch_validat
     assert cancelled_ids == set()
     assert error is not None
     assert error.code == "APPROVAL_RESUME_INVALID"
-    assert pending_entry["arguments"] == '{"city":"Seattle"}'
+    assert pending_entry.arguments == '{"city":"Seattle"}'
 
 
-def test_pending_approval_registry_scans_exact_thread_keys_with_colons():
-    """A thread id that prefixes another thread id must not inherit its pending approval contract."""
-    pending_approvals: dict[PendingApprovalKey, PendingApprovalEntry] = {
-        _pending_approval_key("tenant:thread", "call_1"): _make_pending_approval_entry(
-            "get_weather",
-            '{"city":"Seattle"}',
-            request_id="call_1",
-            interrupt_id="call_1",
+def test_canonical_approval_resume_does_not_cancel_until_resolved_siblings_validate() -> None:
+    """A malformed resolved sibling leaves every approval in the batch pending."""
+    lifecycle = ApprovalLifecycle()
+    cancelled = lifecycle.register(
+        owner=ApprovalExecutionOwner.LOCAL,
+        thread_id="thread-weather",
+        interrupt_id="call_a",
+        call_id="call_a",
+        name="get_weather",
+        arguments='{"city":"Seattle"}',
+    )
+    resolved = lifecycle.register(
+        owner=ApprovalExecutionOwner.LOCAL,
+        thread_id="thread-weather",
+        interrupt_id="call_b",
+        call_id="call_b",
+        name="get_weather",
+        arguments='{"city":"Portland"}',
+    )
+
+    _, _, _, error = _canonical_approval_resume_messages(
+        [
+            {"interruptId": "call_a", "status": "cancelled"},
+            {"interruptId": "call_b", "status": "resolved", "payload": "not an object"},
+        ],
+        "thread-weather",
+        lifecycle=lifecycle,
+    )
+
+    assert error is not None
+    assert error.code == "APPROVAL_RESUME_INVALID"
+    assert lifecycle.get(cancelled.identity).status is ApprovalStatus.PENDING
+    assert lifecycle.get(resolved.identity).status is ApprovalStatus.PENDING
+
+
+def test_terminal_approval_retry_validates_standard_edited_arguments() -> None:
+    """A terminal retry cannot bypass the pending path's editedArgs contract."""
+    lifecycle = ApprovalLifecycle()
+    lifecycle.register(
+        owner=ApprovalExecutionOwner.LOCAL,
+        thread_id="thread-weather",
+        interrupt_id="call_a",
+        call_id="call_a",
+        name="get_weather",
+        arguments='{"city":"Seattle"}',
+    )
+    lifecycle.claim_batch(
+        thread_id="thread-weather",
+        decisions=[
+            ResumeDecision(
+                interrupt_id="call_a",
+                accepted=False,
+                arguments='{"city":"Seattle"}',
+                name="get_weather",
+                original_arguments='{"city":"Seattle"}',
+            )
+        ],
+    )
+    retained_results: list[Content] = []
+
+    _, handled_ids, _, error = _canonical_approval_resume_messages(
+        [
+            {
+                "interruptId": "call_a",
+                "status": "resolved",
+                "payload": {"approved": False, "editedArgs": "not an object"},
+            }
+        ],
+        "thread-weather",
+        lifecycle=lifecycle,
+        retained_results=retained_results,
+    )
+
+    assert handled_ids == set()
+    assert error is not None
+    assert error.code == "APPROVAL_RESUME_INVALID_RESPONSE"
+    assert retained_results == []
+
+
+def test_terminal_rejection_retry_does_not_project_a_live_tool_result() -> None:
+    """An identical rejected retry has the same no-result projection as the original rejection."""
+    lifecycle = ApprovalLifecycle()
+    lifecycle.register(
+        owner=ApprovalExecutionOwner.LOCAL,
+        thread_id="thread-weather",
+        interrupt_id="call_a",
+        call_id="call_a",
+        name="get_weather",
+        arguments='{"city":"Seattle"}',
+    )
+    decision = ResumeDecision(
+        interrupt_id="call_a",
+        accepted=False,
+        arguments='{"city":"Seattle"}',
+        name="get_weather",
+        original_arguments='{"city":"Seattle"}',
+    )
+    lifecycle.claim_batch(thread_id="thread-weather", decisions=[decision])
+    retained_results: list[Content] = []
+
+    _, handled_ids, _, error = _canonical_approval_resume_messages(
+        [
+            {
+                "interruptId": "call_a",
+                "status": "resolved",
+                "payload": {"approved": False},
+            }
+        ],
+        "thread-weather",
+        lifecycle=lifecycle,
+        retained_results=retained_results,
+    )
+
+    assert error is None
+    assert handled_ids == {"call_a"}
+    assert retained_results == []
+
+
+async def test_run_settles_server_collected_rejection_in_lifecycle() -> None:
+    """A rejection restored from approval middleware state no longer remains pending."""
+    function_call = Content.from_function_call(
+        call_id="call_rejected",
+        name="write_record",
+        arguments={"value": "draft"},
+    )
+    response = Content.from_function_approval_response(
+        approved=False,
+        id="approval_rejected",
+        function_call=function_call,
+    )
+    store = InMemoryAGUIApprovalStateStore()
+    store.set_tool_approval_state(
+        "thread-server-rejection",
+        {"collected_approval_responses": [response.to_dict()]},
+    )
+    agent = StubAgent(updates=[AgentResponseUpdate(contents=[Content.from_text(text="Done.")], role="assistant")])
+
+    events = [
+        event
+        async for event in run_agent_stream(
+            {
+                "runId": "run-server-rejection",
+                "threadId": "thread-server-rejection",
+                "messages": [{"role": "user", "content": "Continue"}],
+            },
+            agent,
+            AgentConfig(),
+            approval_state_store=store,
         )
-    }
+    ]
 
-    _, _, _, unrelated_error = _canonical_approval_resume_messages(None, pending_approvals, "tenant")
-    _, _, _, owning_error = _canonical_approval_resume_messages(None, pending_approvals, "tenant:thread")
+    assert not [event for event in events if event.type == "RUN_ERROR"]
+    occurrence = store.lifecycle.occurrence_for_alias(
+        thread_id="thread-server-rejection",
+        interrupt_id="approval_rejected",
+    )
+    assert occurrence is not None
+    assert occurrence.status is ApprovalStatus.REJECTED
+    assert store.lifecycle.pending_interrupt_ids(thread_id="thread-server-rejection") == set()
+
+
+def test_canonical_hosted_approval_resume_rejects_edited_arguments_without_mutating_pending() -> None:
+    """Hosted approvals accept a decision only because providers ignore edited arguments."""
+    lifecycle = ApprovalLifecycle()
+    pending_entry = lifecycle.register(
+        owner=ApprovalExecutionOwner.HOSTED,
+        thread_id="thread-hosted",
+        interrupt_id="mcpr_docs",
+        call_id="mcpr_docs",
+        name="docs_search",
+        arguments='{"query":"azure"}',
+        server_label="Microsoft_Learn_MCP",
+    )
+
+    messages, handled_ids, cancelled_ids, error = _canonical_approval_resume_messages(
+        [
+            {
+                "interruptId": "mcpr_docs",
+                "status": "resolved",
+                "payload": {"accepted": True, "query": "untrusted edit"},
+            }
+        ],
+        "thread-hosted",
+        lifecycle=lifecycle,
+    )
+
+    assert messages == []
+    assert handled_ids == {"mcpr_docs"}
+    assert cancelled_ids == set()
+    assert error is not None
+    assert error.code == "APPROVAL_RESUME_INVALID_RESPONSE"
+    assert pending_entry.arguments == '{"query":"azure"}'
+    assert lifecycle.pending_occurrence(thread_id="thread-hosted", interrupt_id="mcpr_docs") is pending_entry
+
+
+def test_approval_lifecycle_scans_exact_thread_keys_with_colons():
+    """A thread id that prefixes another thread id must not inherit its pending approval contract."""
+    lifecycle = ApprovalLifecycle()
+    lifecycle.register(
+        owner=ApprovalExecutionOwner.LOCAL,
+        thread_id="tenant:thread",
+        interrupt_id="call_1",
+        call_id="call_1",
+        name="get_weather",
+        arguments='{"city":"Seattle"}',
+    )
+
+    _, _, _, unrelated_error = _canonical_approval_resume_messages(None, "tenant", lifecycle=lifecycle)
+    _, _, _, owning_error = _canonical_approval_resume_messages(None, "tenant:thread", lifecycle=lifecycle)
 
     assert unrelated_error is None
     assert owning_error is not None
@@ -781,7 +1526,7 @@ def test_extract_approved_state_updates_no_handler():
 def test_extract_approved_state_updates_no_approval():
     """Test _extract_approved_state_updates returns empty when no approval content."""
     from agent_framework_ag_ui._agent_run import _extract_approved_state_updates
-    from agent_framework_ag_ui._orchestration._predictive_state import PredictiveStateHandler
+    from agent_framework_ag_ui._predictive_state import PredictiveStateHandler
 
     handler = PredictiveStateHandler(predict_state_config={"doc": {"tool": "write", "tool_argument": "content"}})
     messages = [Message(role="user", contents=[Content.from_text("Hello")])]
@@ -1003,8 +1748,8 @@ class TestTextMessageEventBalancing:
             all_events.append(event)
 
         # Step 4: End of stream - emit final TextMessageEndEvent
-        if flow.message_id:
-            all_events.append(TextMessageEndEvent(message_id=flow.message_id))
+        assert flow.message_id is not None
+        all_events.append(TextMessageEndEvent(message_id=flow.message_id))
 
         # Verify event counts
         start_events = [e for e in all_events if isinstance(e, TextMessageStartEvent)]
@@ -1155,6 +1900,44 @@ async def test_run_agent_stream_accumulates_multiple_confirm_interrupts():
     assert interrupt_tool_names == {"generate_tasks", "generate_notes"}
 
 
+async def test_run_agent_stream_suppresses_messages_snapshot_if_configured():
+    """When emit_messages_snapshot=False, no terminal MessagesSnapshotEvent is yielded."""
+    from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
+
+    from agent_framework_ag_ui import AgentFrameworkAgent
+
+    updates = [
+        AgentResponseUpdate(contents=[Content.from_text("Hello")], role="assistant"),
+    ]
+
+    stub = StubAgent(updates=updates)
+    agent = AgentFrameworkAgent(
+        agent=stub,
+        emit_messages_snapshot=False,
+    )
+
+    payload = {
+        "thread_id": "thread-1",
+        "run_id": "run-1",
+        "messages": [{"role": "user", "content": "Hi"}],
+    }
+
+    events = [event async for event in agent.run(payload)]
+
+    # We should have TextMessageStart/Delta/End, but no MessagesSnapshot
+    snapshot_events = [e for e in events if getattr(e, "type", None) == "MESSAGES_SNAPSHOT"]
+    assert len(snapshot_events) == 0, "MessagesSnapshotEvent should be suppressed"
+
+    # Still finishes normally
+    finished_events = [
+        e
+        for e in events
+        if getattr(e, "type", None) == "RUN_FINISHED"
+        or getattr(getattr(e, "type", None), "value", None) == "RUN_FINISHED"
+    ]
+    assert len(finished_events) == 1
+
+
 def test_emit_oauth_consent_request():
     """Test that oauth_consent_request content emits a CustomEvent."""
     content = Content.from_oauth_consent_request(
@@ -1189,6 +1972,8 @@ class TestEmitMcpToolCall:
     def test_produces_start_and_args_events(self):
         """MCP tool call emits ToolCallStart + ToolCallArgs events."""
         flow = FlowState()
+        _emit_text(Content.from_text("Before MCP call."), flow)
+        text_message_id = flow.message_id
         content = Content.from_mcp_server_tool_call(
             call_id="mcp_call_1",
             tool_name="search",
@@ -1205,6 +1990,12 @@ class TestEmitMcpToolCall:
         assert events[1].type == "TOOL_CALL_ARGS"
         assert events[1].tool_call_id == "mcp_call_1"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         assert "weather" in events[1].delta  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+        snapshot = _build_messages_snapshot(flow, [])
+        kinds = _snapshot_kinds(snapshot)
+        assert [kind for kind, _ in kinds] == ["text", "tool_calls"]
+        assert events[0].parent_message_id == kinds[1][1]["id"]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        assert events[0].parent_message_id != text_message_id  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     def test_tracks_in_flow_state(self):
         """MCP tool call is tracked in flow.pending_tool_calls and tool_calls_by_id."""
@@ -1277,6 +2068,7 @@ class TestEmitMcpToolResult:
     def test_produces_end_and_result_events(self):
         """MCP tool result emits ToolCallEnd + ToolCallResult events."""
         flow = FlowState()
+        _open_tool_call(flow, "mcp_call_1", name="mcp_tool")
         content = Content.from_mcp_server_tool_result(
             call_id="mcp_call_1",
             output={"results": [{"title": "Weather", "url": "https://example.com"}]},
@@ -1318,6 +2110,7 @@ class TestEmitMcpToolResult:
     def test_serializes_non_string_output(self):
         """Non-string output is serialized to JSON."""
         flow = FlowState()
+        _open_tool_call(flow, "mcp_call_6", name="mcp_tool")
         content = Content.from_mcp_server_tool_result(
             call_id="mcp_call_6",
             output={"key": "value", "count": 42},
@@ -1332,6 +2125,7 @@ class TestEmitMcpToolResult:
     def test_output_none_falls_back_to_empty_string(self):
         """When output is None (default), the result content is an empty string."""
         flow = FlowState()
+        _open_tool_call(flow, "mcp_call_none", name="mcp_tool")
         content = Content(type="mcp_server_tool_result", call_id="mcp_call_none")
 
         events = _emit_mcp_tool_result(content, flow)
@@ -1502,6 +2296,7 @@ class TestEmitContentMcpRouting:
     def test_routes_mcp_server_tool_result(self):
         """_emit_content dispatches mcp_server_tool_result to _emit_mcp_tool_result."""
         flow = FlowState()
+        _open_tool_call(flow, "route_test_2", name="mcp_tool")
         content = Content.from_mcp_server_tool_result(
             call_id="route_test_2",
             output="result data",
@@ -1619,7 +2414,7 @@ class TestReasoningInSnapshot:
         assert isinstance(events[0], ReasoningStartEvent)
 
     def test_snapshot_reasoning_ordering(self):
-        """Reasoning messages appear after assistant text in snapshot."""
+        """Reasoning keeps its streamed position in the snapshot."""
         from agent_framework_ag_ui._agent_run import _build_messages_snapshot
 
         flow = FlowState()
@@ -1631,10 +2426,10 @@ class TestReasoningInSnapshot:
 
         snapshot = _build_messages_snapshot(flow, [{"id": "u1", "role": "user", "content": "Hi"}])
 
-        # user -> assistant text -> reasoning
+        # reasoning streamed before the answer, so it snapshots before it too
         assert len(snapshot.messages) == 3
         roles = [_message_role(m) for m in snapshot.messages]
-        assert roles == ["user", "assistant", "reasoning"]
+        assert roles == ["user", "reasoning", "assistant"]
 
     def test_reasoning_accumulates_incremental_deltas(self):
         """Multiple reasoning deltas with the same id accumulate into one entry."""
@@ -1892,7 +2687,11 @@ async def test_session_id_matches_thread_id_with_service_session():
     from agent_framework_ag_ui import AgentFrameworkAgent
 
     stub = StubAgent()
-    agent = AgentFrameworkAgent(agent=stub, use_service_session=True)
+    agent = AgentFrameworkAgent(
+        agent=stub,
+        use_service_session=True,
+        service_session_id_from_thread_id=True,
+    )
 
     payload = {
         "thread_id": "service-thread-789",
@@ -1905,6 +2704,98 @@ async def test_session_id_matches_thread_id_with_service_session():
     assert stub.last_session is not None
     assert stub.last_session.session_id == "service-thread-789"
     assert stub.last_session.service_session_id == "service-thread-789"
+
+
+async def test_scoped_session_id_preserves_service_session_id_thread_compatibility():
+    """Trusted scope changes internal identity without changing the provider continuation compatibility id."""
+    from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
+
+    from agent_framework_ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
+
+    stub = StubAgent()
+    agent = AgentFrameworkAgent(
+        agent=stub,
+        use_service_session=True,
+        service_session_id_from_thread_id=True,
+        snapshot_store=InMemoryAGUIThreadSnapshotStore(),
+    )
+
+    payload = {
+        "thread_id": "service-thread-789",
+        "run_id": "run-scoped-service",
+        "__ag_ui_snapshot_scope": "tenant-a",
+        "messages": [{"role": "user", "content": "Hello"}],
+    }
+
+    events = [event async for event in agent.run(payload)]
+
+    assert stub.last_session is not None
+    assert stub.last_session.session_id != "service-thread-789"
+    assert stub.last_session.service_session_id == "service-thread-789"
+    assert events[0].thread_id == "service-thread-789"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert events[-1].thread_id == "service-thread-789"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+
+async def test_scoped_session_id_supports_deprecated_legacy_mapping():
+    """The explicit migration escape hatch warns and preserves the raw internal session id."""
+    from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
+
+    from agent_framework_ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
+
+    stub = StubAgent()
+    with pytest.warns(DeprecationWarning, match="legacy_session_id_from_thread_id=True is deprecated"):
+        agent = AgentFrameworkAgent(
+            agent=stub,
+            snapshot_store=InMemoryAGUIThreadSnapshotStore(),
+            legacy_session_id_from_thread_id=True,
+        )
+
+    payload = {
+        "thread_id": "legacy-thread",
+        "run_id": "run-legacy-session",
+        "__ag_ui_snapshot_scope": "tenant-a",
+        "messages": [{"role": "user", "content": "Hello"}],
+    }
+
+    _ = [event async for event in agent.run(payload)]
+
+    assert stub.last_session is not None
+    assert stub.last_session.session_id == "legacy-thread"
+
+
+async def test_scoped_session_id_is_used_to_create_service_conversation():
+    """Provider-owned conversation creation uses the scope-isolated internal session id."""
+    from agent_framework import AgentSession
+
+    from agent_framework_ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
+
+    stub = StubAgent()
+    created_session_ids: list[str] = []
+
+    def create_conversation(*, session_id: str) -> AgentSession:
+        created_session_ids.append(session_id)
+        return AgentSession(session_id=session_id, service_session_id="provider-conversation")
+
+    setattr(stub, "create_conversation", create_conversation)
+    agent = AgentFrameworkAgent(
+        agent=stub,
+        use_service_session=True,
+        snapshot_store=InMemoryAGUIThreadSnapshotStore(),
+    )
+    payload = {
+        "thread_id": "service-thread-789",
+        "run_id": "run-create-scoped-service",
+        "__ag_ui_snapshot_scope": "tenant-a",
+        "messages": [{"role": "user", "content": "Hello"}],
+    }
+
+    _ = [event async for event in agent.run(payload)]
+
+    assert len(created_session_ids) == 1
+    assert created_session_ids[0] != "service-thread-789"
+    assert stub.last_session is not None
+    assert stub.last_session.session_id == created_session_ids[0]
+    assert stub.last_session.service_session_id == "provider-conversation"
 
 
 async def test_session_id_generated_when_no_thread_id():
@@ -1939,7 +2830,11 @@ async def test_service_session_no_thread_id_generates_uuid():
     from agent_framework_ag_ui import AgentFrameworkAgent
 
     stub = StubAgent()
-    agent = AgentFrameworkAgent(agent=stub, use_service_session=True)
+    agent = AgentFrameworkAgent(
+        agent=stub,
+        use_service_session=True,
+        service_session_id_from_thread_id=True,
+    )
 
     payload = {
         "run_id": "run-5",
@@ -1953,3 +2848,179 @@ async def test_service_session_no_thread_id_generates_uuid():
     uuid.UUID(stub.last_session.session_id)
     # service_session_id should be None since no thread_id was supplied
     assert stub.last_session.service_session_id is None
+
+
+async def test_provider_owned_service_session_requires_snapshot_persistence():
+    """Provider-owned continuation needs private snapshot storage across AG-UI requests."""
+    from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
+
+    from agent_framework_ag_ui import AgentFrameworkAgent
+
+    agent = AgentFrameworkAgent(agent=StubAgent(), use_service_session=True)
+
+    with pytest.raises(ValueError, match="requires snapshot persistence"):
+        _ = [
+            event
+            async for event in agent.run(
+                {
+                    "thread_id": "frontend-thread",
+                    "run_id": "run-6",
+                    "messages": [{"role": "user", "content": "Hello"}],
+                }
+            )
+        ]
+
+
+async def test_service_session_rejects_disabled_provider_storage():
+    """Service-session continuation cannot work when provider storage is disabled."""
+    from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
+
+    from agent_framework_ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
+
+    agent = AgentFrameworkAgent(
+        agent=StubAgent(default_options={"store": False}),
+        use_service_session=True,
+        snapshot_store=InMemoryAGUIThreadSnapshotStore(),
+    )
+
+    with pytest.raises(ValueError, match="requires provider storage"):
+        _ = [
+            event
+            async for event in agent.run(
+                {
+                    "thread_id": "frontend-thread",
+                    "run_id": "run-store-false",
+                    "__ag_ui_snapshot_scope": "test",
+                    "messages": [{"role": "user", "content": "Hello"}],
+                }
+            )
+        ]
+
+
+async def test_stateless_snapshot_excludes_only_provider_service_session_state():
+    """Stateless runs restore unrelated private state but not provider-owned continuation."""
+    from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
+
+    from agent_framework_ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
+
+    stub = StubAgent()
+    setattr(stub, "service_session_state_keys", frozenset({"provider_continuation"}))
+    observed_state: list[dict[str, Any]] = []
+    original_run = stub.run
+
+    def capture_state(*args: Any, **kwargs: Any) -> Any:
+        session = kwargs["session"]
+        observed_state.append(dict(session.state))
+        session.state["provider_continuation"] = "provider-session"
+        session.state["private"] = "preserved"
+        return original_run(*args, **kwargs)
+
+    stub.run = capture_state  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+    store = InMemoryAGUIThreadSnapshotStore()
+    agent = AgentFrameworkAgent(agent=stub, snapshot_store=store)
+    payload = {
+        "thread_id": "frontend-thread",
+        "__ag_ui_snapshot_scope": "test",
+        "messages": [{"role": "user", "content": "Hello"}],
+        "state": {
+            "provider_continuation": "client-injected",
+            "client_value": "available",
+        },
+    }
+
+    _ = [event async for event in agent.run(payload)]
+    first_snapshot = await store.get(scope="test", thread_id="frontend-thread")
+    assert first_snapshot is not None
+    _ = [event async for event in agent.run(payload)]
+
+    assert first_snapshot.session_state == {"private": "preserved"}
+    assert observed_state == [
+        {"client_value": "available"},
+        {"private": "preserved", "client_value": "available"},
+    ]
+
+
+async def test_reserved_service_session_keys_protected_without_agent_declaration():
+    """Reserved provider keys stay server-owned even if the agent declares nothing.
+
+    ``service_session_state_keys`` is resolved from the agent object AG-UI is handed, so an agent that does not
+    declare it, such as a wrapper that forgets to forward the attribute or an older provider package, would
+    otherwise silently fall back to accepting a client-supplied value. Reserving the key in
+    ``_RESERVED_SERVICE_SESSION_STATE_KEYS`` is the backstop that keeps those combinations safe.
+    """
+    from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
+
+    from agent_framework_ag_ui import AgentFrameworkAgent
+
+    stub = StubAgent()
+    assert not hasattr(stub, "service_session_state_keys")
+
+    observed_state: list[dict[str, Any]] = []
+    original_run = stub.run
+
+    def capture_state(*args: Any, **kwargs: Any) -> Any:
+        observed_state.append(dict(kwargs["session"].state))
+        return original_run(*args, **kwargs)
+
+    stub.run = capture_state  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+
+    agent = AgentFrameworkAgent(agent=stub)
+    _ = [
+        event
+        async for event in agent.run(
+            {
+                "thread_id": "frontend-thread",
+                "run_id": "attacker-run",
+                "messages": [{"role": "user", "content": "Hello"}],
+                "state": {
+                    "foundry_hosted_agent_session_id": "victim-sandbox",
+                    "client_value": "available",
+                },
+            }
+        )
+    ]
+
+    assert observed_state == [{"client_value": "available"}]
+
+
+async def test_request_state_cannot_assign_service_session_id():
+    """Chat history held by the provider is addressed by ``service_session_id``, never by client state.
+
+    ``AgentSession`` keeps ``service_session_id`` as its own attribute rather than a ``state`` entry, and only
+    trusted snapshot storage or a provider response may set it. This test locks in that boundary so a future
+    refactor cannot start sourcing conversation continuation from request Shared State.
+    """
+    from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
+
+    from agent_framework_ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
+
+    for use_service_session in (False, True):
+        stub = StubAgent()
+        observed: list[Any] = []
+        original_run = stub.run
+
+        def capture(*args: Any, **kwargs: Any) -> Any:
+            observed.append(kwargs["session"].service_session_id)
+            return original_run(*args, **kwargs)
+
+        stub.run = capture  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+
+        agent = AgentFrameworkAgent(
+            agent=stub,
+            use_service_session=use_service_session,
+            snapshot_store=InMemoryAGUIThreadSnapshotStore(),
+        )
+        _ = [
+            event
+            async for event in agent.run(
+                {
+                    "thread_id": "frontend-thread",
+                    "run_id": "attacker-run",
+                    "__ag_ui_snapshot_scope": "test",
+                    "messages": [{"role": "user", "content": "Hello"}],
+                    "state": {"__ag_ui_provider_service_session_id": "victim-conversation"},
+                }
+            )
+        ]
+
+        assert observed == [None], f"client state selected a conversation (use_service_session={use_service_session})"

@@ -6,8 +6,8 @@ This sample demonstrates the helper-first hosting shape:
 
 1. ``agent-framework-hosting-responses`` converts Responses request/response
    payloads to and from Agent Framework run values.
-2. ``agent-framework-hosting`` owns shared execution state via
-   ``AgentState`` and ``SessionStore``.
+2. ``agent-framework-hosting`` owns ``AgentState``; core provides its
+   ``SessionStore``.
 3. FastAPI owns the route, request parsing, policy decisions, and response
    object.
 
@@ -18,12 +18,12 @@ route to callers, add authentication and authorization at the infrastructure
 layer, the FastAPI app layer, or inside the route body.
 
 Session continuation deserves particular care: treat ``previous_response_id``
-and ``conversation_id`` as untrusted request values, authorize the caller
+and ``conversation`` as untrusted request values, authorize the caller
 before loading or storing a session for those ids, and partition durable session
 storage by tenant/user as appropriate for your application. See
 ``README.md#production-readiness``.
 
-Unknown ``conversation_id`` values create a new local session in this sample.
+Unknown ids supplied through ``conversation`` create a new local session in this sample.
 Your app can choose a different policy, such as requiring a separate API to
 create new conversations before callers can continue them.
 
@@ -55,7 +55,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Annotated, Any, cast
 
-from agent_framework import Agent, FileHistoryProvider, ResponseStream, tool
+from agent_framework import Agent, FileHistoryProvider, FileSessionStore, ResponseStream, tool
 from agent_framework_foundry import FoundryChatClient
 from agent_framework_hosting import AgentState
 from agent_framework_hosting_responses import (
@@ -105,7 +105,10 @@ def create_agent() -> Agent:
 
 
 app = FastAPI()
-state = AgentState(create_agent)
+state = AgentState(
+    create_agent,
+    session_store=FileSessionStore(SESSIONS_DIR / "snapshots"),
+)
 
 ALLOWED_REQUEST_OPTIONS = frozenset({"max_tokens", "reasoning"})
 
@@ -131,7 +134,7 @@ async def responses(body: dict[str, Any] = Body(...)) -> JSONResponse | Streamin
 
     target = await state.get_target()
     lookup_id = session_id or response_id
-    # An unknown `conversation_id` becomes a new session here. Production apps
+    # An unknown id supplied through `conversation` becomes a new session here. Production apps
     # can choose to require a separate "create conversation" API instead.
     session = await state.get_or_create_session(lookup_id)
     if run["stream"]:

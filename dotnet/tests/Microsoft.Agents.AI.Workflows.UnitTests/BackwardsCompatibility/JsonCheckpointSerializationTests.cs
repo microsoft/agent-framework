@@ -1,8 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
-using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests.BackwardsCompatibility;
@@ -30,10 +30,10 @@ public class JsonCheckpointSerializationTests
     {
         WorkflowOutputEvent evt = new(data: "hello", executorId: "e1", tag: OutputTag.Intermediate);
 
-        evt.ExecutorId.Should().Be("e1");
-        evt.Tags.Should().BeEquivalentTo(new[] { OutputTag.Intermediate });
-        evt.HasTag(OutputTag.Intermediate).Should().BeTrue();
-        evt.IsIntermediate().Should().BeTrue();
+        Assert.Equal("e1", evt.ExecutorId);
+        Assert.Equivalent(new[] { OutputTag.Intermediate }, evt.Tags);
+        Assert.True(evt.HasTag(OutputTag.Intermediate));
+        Assert.True(evt.IsIntermediate());
     }
 
     [Fact]
@@ -41,8 +41,8 @@ public class JsonCheckpointSerializationTests
     {
         WorkflowOutputEvent evt = new(data: "hello", executorId: "e1");
 
-        evt.Tags.Should().BeEmpty();
-        evt.IsIntermediate().Should().BeFalse("an event with no tags is a terminal/regular output");
+        Assert.Empty(evt.Tags ?? []);
+        Assert.False(evt.IsIntermediate());
     }
 
     [Fact]
@@ -52,10 +52,10 @@ public class JsonCheckpointSerializationTests
 
         WorkflowOutputEvent evt = new(data: "hello", executorId: "e1", tags: new[] { OutputTag.Intermediate, customTag });
 
-        evt.Tags.Should().HaveCount(2);
-        evt.HasTag(OutputTag.Intermediate).Should().BeTrue();
-        evt.HasTag(customTag).Should().BeTrue();
-        evt.IsIntermediate().Should().BeTrue();
+        Assert.Equal(2, evt.Tags.Count());
+        Assert.True(evt.HasTag(OutputTag.Intermediate));
+        Assert.True(evt.HasTag(customTag));
+        Assert.True(evt.IsIntermediate());
     }
 
     // ---------- WorkflowInfo.OutputExecutorIds shape ----------
@@ -81,10 +81,10 @@ public class JsonCheckpointSerializationTests
 
         WorkflowInfo? info = JsonSerializer.Deserialize<WorkflowInfo>(LegacyJson, s_options);
 
-        info.Should().NotBeNull();
-        info!.OutputExecutorIds.Should().HaveCount(2);
-        info.OutputExecutorIds["a"].Should().BeEmpty("legacy ids are untagged regular outputs");
-        info.OutputExecutorIds["b"].Should().BeEmpty();
+        Assert.NotNull(info);
+        Assert.Equal(2, info!.OutputExecutorIds.Count);
+        Assert.Empty(info.OutputExecutorIds["a"] ?? []);
+        Assert.Empty(info.OutputExecutorIds["b"] ?? []);
     }
 
     [Fact]
@@ -102,20 +102,20 @@ public class JsonCheckpointSerializationTests
 
         WorkflowInfo? back = JsonSerializer.Deserialize<WorkflowInfo>(json, s_options);
 
-        back.Should().NotBeNull();
-        back!.OutputExecutorIds.Should().HaveCount(2);
-        back.OutputExecutorIds["a"].Should().BeEmpty();
-        back.OutputExecutorIds["b"].Should().BeEquivalentTo(new[] { OutputTag.Intermediate });
+        Assert.NotNull(back);
+        Assert.Equal(2, back!.OutputExecutorIds.Count);
+        Assert.Empty(back.OutputExecutorIds["a"] ?? []);
+        Assert.Equivalent(new[] { OutputTag.Intermediate }, back.OutputExecutorIds["b"]);
 
         // The map shape is detectable in the serialized JSON: the property value starts with `{`, not `[`.
         int idx = json.IndexOf("\"outputExecutorIds\"", System.StringComparison.Ordinal);
-        idx.Should().BeGreaterThan(-1);
+        Assert.True(idx > (-1));
         int colon = json.IndexOf(':', idx);
         int firstNonSpace = colon + 1;
         while (firstNonSpace < json.Length && char.IsWhiteSpace(json[firstNonSpace]))
         {
             firstNonSpace++;
         }
-        json[firstNonSpace].Should().Be('{', "OutputExecutorIds is written in the new map shape");
+        Assert.Equal('{', json[firstNonSpace]);
     }
 }

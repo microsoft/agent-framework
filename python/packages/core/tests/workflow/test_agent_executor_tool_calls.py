@@ -25,6 +25,7 @@ from agent_framework import (
     WorkflowBuilder,
     WorkflowContext,
     WorkflowEvent,
+    WorkflowExecutor,
     executor,
     tool,
 )
@@ -366,6 +367,97 @@ async def test_agent_executor_parallel_tool_call_with_approval() -> None:
     assert final_response[0] == "Tool executed successfully."
 
 
+async def test_workflow_cancels_nested_pending_request_without_blocking_sibling() -> None:
+    """Cancelling one nested request lets its resolved sibling complete the workflow."""
+    agent = Agent(
+        client=MockChatClient(parallel_request=True),
+        name="ApprovalAgent",
+        tools=[mock_tool_requiring_approval],
+    )
+    child = WorkflowBuilder(start_executor=agent, output_from=[test_executor]).add_edge(agent, test_executor).build()
+    nested = WorkflowExecutor(
+        child,
+        id="nested-workflow",
+        propagate_request=True,
+        allow_direct_output=True,
+    )
+    parent = WorkflowBuilder(start_executor=nested).build()
+
+    paused = await parent.run([Message(role="user", contents=["Invoke tool requiring approval"])])
+    first_request, second_request = paused.get_request_info_events()
+
+    await parent.cancel_pending_requests([first_request.request_id])
+    resumed = await parent.run(
+        responses={
+            second_request.request_id: second_request.data.to_function_approval_response(True),
+        }
+    )
+
+    assert resumed.get_outputs() == ["Tool executed successfully."]
+
+
+async def test_workflow_final_cancellation_resumes_accumulated_sibling_response() -> None:
+    """Cancelling the final request resumes an agent that already received its sibling response."""
+    agent = Agent(
+        client=MockChatClient(parallel_request=True),
+        name="ApprovalAgent",
+        tools=[mock_tool_requiring_approval],
+    )
+    workflow = WorkflowBuilder(start_executor=agent, output_from=[test_executor]).add_edge(agent, test_executor).build()
+
+    paused = await workflow.run("Invoke tool requiring approval")
+    first_request, second_request = paused.get_request_info_events()
+    partial = await workflow.run(
+        responses={
+            first_request.request_id: first_request.data.to_function_approval_response(True),
+        }
+    )
+
+    cancelled = await workflow.cancel_pending_requests([second_request.request_id])
+
+    assert partial.get_outputs() == []
+    assert cancelled.get_outputs() == ["Tool executed successfully."]
+
+
+async def test_workflow_final_cancellation_preserves_runtime_tool_for_approved_sibling() -> None:
+    """Cancellation continuation keeps request-scoped tools needed by an accepted sibling."""
+    executed_queries: list[str] = []
+
+    def execute_runtime_tool(query: str) -> str:
+        executed_queries.append(query)
+        return f"Executed runtime tool with query: {query}"
+
+    runtime_tool = FunctionTool(
+        name="mock_tool_requiring_approval",
+        description="Request-scoped approval tool",
+        func=execute_runtime_tool,
+        approval_mode="always_require",
+    )
+    agent = Agent(
+        client=MockChatClient(parallel_request=True),
+        name="ApprovalAgent",
+    )
+    workflow = WorkflowBuilder(start_executor=agent, output_from=[test_executor]).add_edge(agent, test_executor).build()
+
+    paused = await workflow.run("Invoke tool requiring approval", tools=[runtime_tool])
+    first_request, second_request = paused.get_request_info_events()
+    partial = await workflow.run(
+        responses={
+            first_request.request_id: first_request.data.to_function_approval_response(True),
+        },
+        tools=[runtime_tool],
+    )
+
+    cancelled = await workflow.cancel_pending_requests(
+        [second_request.request_id],
+        tools=[runtime_tool],
+    )
+
+    assert partial.get_outputs() == []
+    assert cancelled.get_outputs() == ["Tool executed successfully."]
+    assert executed_queries == ["test"]
+
+
 async def test_agent_executor_parallel_tool_call_with_approval_streaming() -> None:
     """Test that AgentExecutor handles parallel tool calls requiring approval in streaming mode."""
     # Arrange
@@ -419,11 +511,42 @@ declaration_only_tool = FunctionTool(
 class DeclarationOnlyMockChatClient(FunctionInvocationLayer[Any], BaseChatClient[Any]):
     """Mock chat client that calls a declaration-only tool on first iteration."""
 
-    def __init__(self, parallel_request: bool = False) -> None:
+    def __init__(
+        self,
+        parallel_request: bool = False,
+        mixed_request: bool = False,
+        duplicate_host_call_id: bool = False,
+    ) -> None:
         FunctionInvocationLayer.__init__(self)
         BaseChatClient.__init__(self)
         self._iteration: int = 0
         self._parallel_request: bool = parallel_request
+        self._mixed_request: bool = mixed_request
+        self._duplicate_host_call_id: bool = duplicate_host_call_id
+        self.received_messages: list[list[Message]] = []
+
+    def _mixed_request_contents(self) -> list[Content]:
+        contents = [
+            Content.from_function_call(
+                call_id="approval-call",
+                name="mock_tool_requiring_approval",
+                arguments='{"query": "approved"}',
+            ),
+            Content.from_function_call(
+                call_id="host-call",
+                name="client_side_tool",
+                arguments='{"query": "hosted"}',
+            ),
+        ]
+        if self._duplicate_host_call_id:
+            contents.append(
+                Content.from_function_call(
+                    call_id="host-call",
+                    name="client_side_tool",
+                    arguments='{"query": "also-hosted"}',
+                )
+            )
+        return contents
 
     def _inner_get_response(
         self,
@@ -433,6 +556,7 @@ class DeclarationOnlyMockChatClient(FunctionInvocationLayer[Any], BaseChatClient
         options: Mapping[str, Any],
         **kwargs: Any,
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        self.received_messages.append(list(messages))
         if stream:
             return self._build_response_stream(self._stream_response())
 
@@ -443,7 +567,9 @@ class DeclarationOnlyMockChatClient(FunctionInvocationLayer[Any], BaseChatClient
 
     def _create_response(self) -> ChatResponse:
         if self._iteration == 0:
-            if self._parallel_request:
+            if self._mixed_request:
+                response = ChatResponse(messages=Message("assistant", self._mixed_request_contents()))
+            elif self._parallel_request:
                 response = ChatResponse(
                     messages=Message(
                         "assistant",
@@ -476,7 +602,12 @@ class DeclarationOnlyMockChatClient(FunctionInvocationLayer[Any], BaseChatClient
 
     async def _stream_response(self) -> AsyncIterable[ChatResponseUpdate]:
         if self._iteration == 0:
-            if self._parallel_request:
+            if self._mixed_request:
+                yield ChatResponseUpdate(
+                    contents=self._mixed_request_contents(),
+                    role="assistant",
+                )
+            elif self._parallel_request:
                 yield ChatResponseUpdate(
                     contents=[
                         Content.from_function_call(call_id="1", name="client_side_tool", arguments='{"query": "test"}'),
@@ -532,6 +663,36 @@ async def test_agent_executor_declaration_only_tool_emits_request_info() -> None
     final_response = events.get_outputs()
     assert len(final_response) == 1
     assert final_response[0] == "Tool executed successfully."
+
+
+async def test_workflow_agent_preserves_structured_declaration_only_tool_result() -> None:
+    """WorkflowAgent keeps a client-tool result typed and tool-role for the owning AgentExecutor."""
+    client = DeclarationOnlyMockChatClient()
+    agent = Agent(
+        client=client,
+        name="DeclarationOnlyAgent",
+        tools=[declaration_only_tool],
+    )
+    workflow = WorkflowBuilder(start_executor=agent).build()
+    workflow_agent = workflow.as_agent()
+
+    paused = await workflow_agent.run("Use the client side tool")
+    [request] = paused.user_input_requests
+    assert request.call_id is not None
+
+    resumed = await workflow_agent.run(
+        Message(
+            role="tool",
+            contents=[Content.from_function_result(call_id=request.call_id, result={"answer": 42})],
+        )
+    )
+
+    assert resumed.text == "Tool executed successfully."
+    tool_messages = [message for message in client.received_messages[-1] if message.role == "tool"]
+    assert len(tool_messages) == 1
+    [result] = tool_messages[0].contents
+    assert result.type == "function_result"
+    assert result.result == '{"answer": 42}'
 
 
 async def test_agent_executor_declaration_only_tool_emits_request_info_streaming() -> None:
@@ -604,3 +765,86 @@ async def test_agent_executor_parallel_declaration_only_tool_emits_request_info(
     final_response = events.get_outputs()
     assert len(final_response) == 1
     assert final_response[0] == "Tool executed successfully."
+
+
+async def test_workflow_cancels_host_member_of_mixed_batch_with_terminal_result() -> None:
+    """Cancelling a Host-owned sibling completes the mixed batch with its exact call identity."""
+    client = DeclarationOnlyMockChatClient(mixed_request=True)
+    agent = Agent(
+        client=client,
+        name="MixedApprovalAgent",
+        tools=[mock_tool_requiring_approval, declaration_only_tool],
+    )
+    workflow = WorkflowBuilder(start_executor=agent, output_from=[test_executor]).add_edge(agent, test_executor).build()
+
+    paused = await workflow.run("Run both tools")
+    requests = paused.get_request_info_events()
+    approval_request = next(request for request in requests if request.data.type == "function_approval_request")
+    host_request = next(request for request in requests if request.data.type == "function_call")
+
+    cancelled = await workflow.cancel_pending_requests([host_request.request_id])
+    assert cancelled.get_outputs() == []
+
+    resumed = await workflow.run(
+        responses={
+            approval_request.request_id: approval_request.data.to_function_approval_response(approved=True),
+        }
+    )
+
+    assert resumed.get_outputs() == ["Tool executed successfully."]
+    function_results = [
+        content
+        for message in client.received_messages[-1]
+        for content in message.contents
+        if content.type == "function_result"
+    ]
+    cancelled_result = next(result for result in function_results if result.call_id == host_request.data.call_id)
+    assert cancelled_result.additional_properties["cancelled"] is True
+
+
+async def test_workflow_host_cancellation_preserves_occurrence_with_reused_call_id() -> None:
+    """A Host cancellation identifies the exact occurrence when sibling call IDs are reused."""
+    client = DeclarationOnlyMockChatClient(mixed_request=True, duplicate_host_call_id=True)
+    agent = Agent(
+        client=client,
+        name="MixedApprovalAgent",
+        tools=[mock_tool_requiring_approval, declaration_only_tool],
+    )
+    workflow = WorkflowBuilder(start_executor=agent, output_from=[test_executor]).add_edge(agent, test_executor).build()
+
+    paused = await workflow.run("Run all tools")
+    requests = paused.get_request_info_events()
+    approval_request = next(request for request in requests if request.data.type == "function_approval_request")
+    host_requests = [request for request in requests if request.data.type == "function_call"]
+    assert len(host_requests) == 2
+    assert host_requests[0].data.call_id == host_requests[1].data.call_id
+    assert host_requests[0].data.id != host_requests[1].data.id
+
+    cancelled = await workflow.cancel_pending_requests([host_requests[0].request_id])
+    assert cancelled.get_outputs() == []
+
+    sibling_result = Content.from_function_result(
+        call_id=host_requests[1].data.call_id,
+        result="Host sibling completed.",
+    )
+    sibling_result.id = host_requests[1].data.id
+    resumed = await workflow.run(
+        responses={
+            approval_request.request_id: approval_request.data.to_function_approval_response(approved=True),
+            host_requests[1].request_id: sibling_result,
+        }
+    )
+
+    assert resumed.get_outputs() == ["Tool executed successfully."]
+    function_results = [
+        content
+        for message in client.received_messages[-1]
+        for content in message.contents
+        if content.type == "function_result" and content.call_id == host_requests[0].data.call_id
+    ]
+    assert {result.id for result in function_results} == {
+        host_requests[0].data.id,
+        host_requests[1].data.id,
+    }
+    cancelled_result = next(result for result in function_results if result.id == host_requests[0].data.id)
+    assert cancelled_result.additional_properties["cancelled"] is True

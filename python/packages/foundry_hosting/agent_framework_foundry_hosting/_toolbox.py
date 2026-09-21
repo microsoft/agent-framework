@@ -5,6 +5,7 @@ from __future__ import annotations
 import inspect
 import logging
 import os
+from collections.abc import Mapping, Sequence
 from contextlib import _AsyncGeneratorContextManager  # pyright: ignore[reportPrivateUsage]
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
@@ -19,8 +20,11 @@ from agent_framework import (
     SkillsSource,
     SkillsSourceContext,
 )
+from agent_framework._telemetry import mark_feature_used
 from azure.ai.agentserver.core import get_request_context
 from typing_extensions import override
+
+from ._feature_usage import FeatureIndex
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Generator
@@ -177,7 +181,9 @@ class FoundryToolbox(MCPStreamableHTTPTool):
         token_scope: str = DEFAULT_TOOLBOX_SCOPE,
         load_prompts: bool = False,
         load_tools: bool = True,
+        additional_tool_argument_names: Sequence[str] | Mapping[str, Sequence[str]] | None = None,
         timeout: float = _DEFAULT_TIMEOUT,
+        **kwargs: Any,
     ) -> None:
         """Initialize a Foundry toolbox tool.
 
@@ -197,7 +203,11 @@ class FoundryToolbox(MCPStreamableHTTPTool):
             load_prompts: Whether to load prompts from the toolbox. Defaults to ``False``
                 because toolboxes expose tools.
             load_tools: Whether to load tools from the toolbox. Defaults to ``True``.
+            additional_tool_argument_names: Extra argument names to forward in addition to
+                parameters declared by toolbox functions. A sequence applies globally; a
+                mapping configures names per remote function, with ``"*"`` as the global key.
             timeout: Request timeout in seconds for the underlying HTTP client.
+            kwargs: Additional options forwarded to :class:`~agent_framework.MCPStreamableHTTPTool`.
         """
         endpoint = url or _resolve_toolbox_endpoint()
         tool_name = name or os.environ.get("TOOLBOX_NAME") or _toolbox_name_from_endpoint(endpoint)
@@ -216,7 +226,15 @@ class FoundryToolbox(MCPStreamableHTTPTool):
             http_client=http_client,
             load_prompts=load_prompts,
             load_tools=load_tools,
+            additional_tool_argument_names=additional_tool_argument_names,
+            **kwargs,
         )
+
+    @override
+    async def connect(self, *, reset: bool = False) -> None:
+        """Connect to the toolbox and mark its first meaningful activation."""
+        await super().connect(reset=reset)
+        mark_feature_used(FeatureIndex.FOUNDRY_TOOLBOX)
 
     @override
     def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
@@ -252,6 +270,11 @@ class FoundryToolbox(MCPStreamableHTTPTool):
         disable_load_skill_approval: bool = False,
         disable_read_skill_resource_approval: bool = False,
         disable_run_skill_script_approval: bool = False,
+        archive_resource_extensions: tuple[str, ...] | None = None,
+        archive_resource_search_depth: int | None = None,
+        archive_max_file_count: int | None = None,
+        archive_max_size_bytes: int | None = None,
+        archive_max_uncompressed_size_bytes: int | None = None,
     ) -> SkillsProvider:
         """Return a :class:`~agent_framework.SkillsProvider` backed by this toolbox.
 
@@ -264,6 +287,12 @@ class FoundryToolbox(MCPStreamableHTTPTool):
         happens lazily on the first agent run). Connect it by passing the toolbox to
         the agent via ``tools=`` -- set ``load_tools=False`` if you want skills only
         and no tools -- or by entering it as an ``async with`` context manager.
+
+        Skills served as ``archive`` entries (a packaged ZIP) are downloaded and
+        unpacked **in memory** and served like file-based skills; nothing is written to
+        disk. The ``archive_*`` keyword arguments configure that behavior; see
+        :class:`~agent_framework.MCPSkillsSource` for their full semantics. Any left
+        as ``None`` fall back to the ``MCPSkillsSource`` defaults.
 
         Keyword Args:
             source_id: Unique identifier for the provider instance.
@@ -289,10 +318,23 @@ class FoundryToolbox(MCPStreamableHTTPTool):
                 cannot satisfy the default approval flow). Defaults to ``False``.
             disable_read_skill_resource_approval: When ``True``, register the
                 provider's ``read_skill_resource`` tool with
-                ``approval_mode="never_require"``. Defaults to ``False``.
+                ``approval_mode="never_require"``. Set this alongside
+                ``disable_load_skill_approval`` for an unattended agent that reads
+                archive-skill resources. Defaults to ``False``.
             disable_run_skill_script_approval: When ``True``, register the provider's
                 ``run_skill_script`` tool with ``approval_mode="never_require"``.
                 Defaults to ``False``.
+            archive_resource_extensions: Allowed file extensions for resources
+                discovered in archive skills. ``None`` uses the default set.
+            archive_resource_search_depth: Maximum depth to search for resource files
+                within each archive skill. ``None`` uses the default.
+            archive_max_file_count: Maximum number of files that may be extracted from
+                a single archive skill (DoS guard). ``None`` uses the default.
+            archive_max_size_bytes: Maximum size, in bytes, of a downloaded archive
+                skill resource. ``None`` uses the default.
+            archive_max_uncompressed_size_bytes: Maximum total uncompressed size, in
+                bytes, of all files extracted from a single archive skill
+                (decompression-bomb guard). ``None`` uses the default.
 
         Returns:
             A :class:`~agent_framework.SkillsProvider` that advertises and loads the
@@ -314,11 +356,25 @@ class FoundryToolbox(MCPStreamableHTTPTool):
                 )
                 await ResponsesHostServer(agent).run_async()
         """
+        # Forward only explicitly-set archive options so unset ones fall back to the
+        # MCPSkillsSource defaults (avoids duplicating those defaults here).
+        archive_options: dict[str, Any] = {}
+        if archive_resource_extensions is not None:
+            archive_options["archive_resource_extensions"] = archive_resource_extensions
+        if archive_resource_search_depth is not None:
+            archive_options["archive_resource_search_depth"] = archive_resource_search_depth
+        if archive_max_file_count is not None:
+            archive_options["archive_max_file_count"] = archive_max_file_count
+        if archive_max_size_bytes is not None:
+            archive_options["archive_max_size_bytes"] = archive_max_size_bytes
+        if archive_max_uncompressed_size_bytes is not None:
+            archive_options["archive_max_uncompressed_size_bytes"] = archive_max_uncompressed_size_bytes
+
         # The toolbox advertises the same skill set to every caller (the per-request
         # call-id governs execution/authorization, not which skills are listed), so a
         # single shared cache is safe. SkillsProvider won't auto-cache a caller source,
         # so we compose the caching ourselves.
-        source: SkillsSource = _FoundryToolboxSkillsSource(self)
+        source: SkillsSource = _FoundryToolboxSkillsSource(self, archive_options=archive_options)
         if not disable_caching:
             source = DeduplicatingSkillsSource(CachingSkillsSource(source, refresh_interval=cache_refresh_interval))
         return SkillsProvider(
@@ -341,8 +397,10 @@ class _FoundryToolboxSkillsSource(SkillsSource):
     fetch, so cached skills keep using the live session instead of a closed one.
     """
 
-    def __init__(self, toolbox: FoundryToolbox) -> None:
+    def __init__(self, toolbox: FoundryToolbox, *, archive_options: dict[str, Any] | None = None) -> None:
         self._toolbox = toolbox
+        # Explicitly-set MCPSkillsSource archive kwargs; empty means use its defaults.
+        self._archive_options: dict[str, Any] = archive_options or {}
 
     def _require_session(self) -> ClientSession:
         """Return the toolbox's current MCP session, or raise if not connected."""
@@ -359,4 +417,6 @@ class _FoundryToolboxSkillsSource(SkillsSource):
         # Fail fast at discovery if not connected, then hand the source a provider
         # (not a fixed session) so skills survive a reconnect that swaps the session.
         self._require_session()
-        return await MCPSkillsSource(session_provider=self._require_session).get_skills(context)
+        return await MCPSkillsSource(session_provider=self._require_session, **self._archive_options).get_skills(
+            context
+        )

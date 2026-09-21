@@ -183,6 +183,26 @@ class TestFunctionToolApprovalBinding:
         assert call_log == [1]
 
     @pytest.mark.asyncio
+    async def test_truthy_malformed_response_does_not_invoke(self, mock_state, mock_context) -> None:
+        """Authorization remains strict even if response construction was bypassed."""
+        _seed_state(mock_state)
+        call_log: list[int] = []
+
+        def my_tool(x: int) -> int:
+            call_log.append(x)
+            return x
+
+        executor = InvokeFunctionToolExecutor(self._action(), tools={"my_tool": my_tool})
+        request = ToolApprovalRequest(request_id="r-bool", function_name="my_tool", arguments={"x": 1})
+        response = object.__new__(ToolApprovalResponse)
+        response.approved = "true"  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
+        response.reason = None
+
+        await executor.handle_approval_response(request, response, mock_context)
+
+        assert call_log == []
+
+    @pytest.mark.asyncio
     async def test_concurrent_pending_approvals_do_not_swap(self, mock_state, mock_context) -> None:
         """Two pending approvals, responses delivered out of order — each invocation uses its own payload."""
         _seed_state(mock_state)
@@ -324,6 +344,28 @@ class TestMcpToolApprovalBinding:
         assert inv.server_label == "prod"
         assert inv.arguments == {"q": "x"}
         assert inv.connection_name == "conn-A"
+
+    @pytest.mark.asyncio
+    async def test_truthy_malformed_response_does_not_invoke(self, mock_state, mock_context) -> None:
+        """MCP authorization remains strict if response construction was bypassed."""
+        _seed_state(mock_state)
+        handler = _RecordingMcpHandler()
+        executor = InvokeMcpToolActionExecutor(self._action(), mcp_tool_handler=handler)
+        request = MCPToolApprovalRequest(
+            request_id="r-bool",
+            tool_name="search",
+            server_url="https://mcp.example/api",
+            server_label=None,
+            arguments={"q": "x"},
+            connection_name=None,
+        )
+        response = object.__new__(ToolApprovalResponse)
+        response.approved = 1  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
+        response.reason = None
+
+        await executor.handle_approval_response(request, response, mock_context)
+
+        assert handler.call_count == 0
 
     @pytest.mark.asyncio
     async def test_concurrent_pending_mcp_approvals_do_not_swap(self, mock_state, mock_context) -> None:

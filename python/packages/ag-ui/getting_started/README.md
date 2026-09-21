@@ -453,7 +453,7 @@ For long-running agents, increase the timeout accordingly.
 Ensure you're using the correct `Accept` header:
 
 ```python
-headers={"Accept": "text/event-stream"}
+headers = {"Accept": "text/event-stream"}
 ```
 
 And parsing SSE format correctly (lines starting with `data: `).

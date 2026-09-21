@@ -33,6 +33,7 @@ from agent_framework import (
     UsageDetails,
 )
 from agent_framework._settings import load_settings
+from agent_framework._telemetry import mark_feature_used
 from agent_framework.exceptions import (
     ChatClientException,
     ChatClientInvalidRequestException,
@@ -44,6 +45,8 @@ from ollama import AsyncClient
 from ollama._types import ChatResponse as OllamaChatResponse
 from ollama._types import Message as OllamaMessage
 from pydantic import BaseModel
+
+from ._feature_usage import FeatureIndex
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
@@ -358,6 +361,7 @@ class OllamaChatClient(
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
                 validated_options = await self._validate_options(options)
                 options_dict = self._prepare_options(messages, validated_options)
+                mark_feature_used(FeatureIndex.OLLAMA)
                 try:
                     response_object: AsyncIterable[OllamaChatResponse] = await self.client.chat(  # type: ignore[misc]
                         stream=True,
@@ -376,6 +380,7 @@ class OllamaChatClient(
         async def _get_response() -> ChatResponse:
             validated_options = await self._validate_options(options)
             options_dict = self._prepare_options(messages, validated_options)
+            mark_feature_used(FeatureIndex.OLLAMA)
             try:
                 response: OllamaChatResponse = await self.client.chat(  # type: ignore[misc]
                     stream=False,

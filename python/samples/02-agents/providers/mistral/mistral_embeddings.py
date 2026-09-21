@@ -21,23 +21,26 @@ async def basic_embedding_example() -> None:
     """Generate embeddings for a list of texts."""
     print("=== Basic Embedding Generation ===")
 
-    # 1. Create the embedding client (uses MISTRAL_API_KEY and MISTRAL_EMBEDDING_MODEL env vars).
+    # 1. Create the embedding client using environment-based configuration.
     client = MistralEmbeddingClient()
 
     # 2. Generate embeddings for multiple texts.
     texts = ["Hello, world!", "How are you?", "Agent Framework with Mistral AI"]
-    result = await client.get_embeddings(texts)
+    try:
+        result = await client.get_embeddings(texts)
 
-    # 3. Print results.
-    print(f"Generated {len(result)} embeddings")
-    for i, embedding in enumerate(result):
-        print(f"  Text {i + 1}: dimensions={embedding.dimensions}, vector={embedding.vector[:5]}...")
+        # 3. Print the generated vectors and usage metadata.
+        print(f"Generated {len(result)} embeddings")
+        for i, embedding in enumerate(result):
+            print(f"  Text {i + 1}: dimensions={embedding.dimensions}, vector={embedding.vector[:5]}...")
 
-    if result.usage:
-        print(
-            f"  Usage: {result.usage['input_token_count']} input tokens, "
-            f"{result.usage['total_token_count']} total tokens"
-        )
+        if result.usage:
+            print(
+                f"  Usage: {result.usage['input_token_count']} input tokens, "
+                f"{result.usage['total_token_count']} total tokens"
+            )
+    finally:
+        await client.close()
 
 
 async def embedding_with_options_example() -> None:
@@ -46,14 +49,16 @@ async def embedding_with_options_example() -> None:
 
     from agent_framework.mistral import MistralEmbeddingOptions
 
-    client = MistralEmbeddingClient()
+    # Only some models support a custom output dimension (e.g. codestral-embed; mistral-embed does not).
+    client = MistralEmbeddingClient(model="codestral-embed")
 
-    # Request a specific output dimension (model must support it).
     options: MistralEmbeddingOptions = {"dimensions": 256}
-    result = await client.get_embeddings(["Dimensionality reduction example"], options=options)
-
-    print(f"  Dimensions: {result[0].dimensions}")
-    print(f"  Vector (first 5): {result[0].vector[:5]}...")
+    try:
+        result = await client.get_embeddings(["Dimensionality reduction example"], options=options)
+        print(f"  Dimensions: {result[0].dimensions}")
+        print(f"  Vector (first 5): {result[0].vector[:5]}...")
+    finally:
+        await client.close()
 
 
 async def main() -> None:

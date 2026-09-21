@@ -9,11 +9,13 @@ from collections.abc import Mapping
 from typing import Any, Generic, TypeVar, cast
 
 from agent_framework import AgentResponse, Message, Workflow, WorkflowRunResult
+from agent_framework._telemetry import mark_feature_used
 from agent_framework_hosting import WorkflowState
 from mcp import types
 from pydantic import TypeAdapter
 
 from ._conversion import mcp_from_run
+from ._feature_usage import FeatureIndex
 
 WorkflowT = TypeVar("WorkflowT", bound=Workflow)
 
@@ -53,6 +55,7 @@ class WorkflowMCPTool(Generic[WorkflowT]):
 
     async def list_tools(self) -> list[types.Tool]:
         """Return the native MCP tool definition for the target workflow."""
+        mark_feature_used(FeatureIndex.HOSTING_MCP)
         workflow = await self.state.get_target()
         return [self._tool_for_workflow(workflow)]
 
@@ -134,6 +137,7 @@ class WorkflowMCPTool(Generic[WorkflowT]):
         Raises:
             ValueError: If the tool name or workflow input contract is invalid.
         """
+        mark_feature_used(FeatureIndex.HOSTING_MCP)
         workflow = await self.state.get_target()
         tool = self._tool_for_workflow(workflow)
         if name != tool.name:

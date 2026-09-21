@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import warnings
 from collections.abc import Callable
 from copy import copy
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Literal, Protocol, TypeVar, runtime_checkable
 
+from .._tools import ToolTypes
 from ._checkpoint import CheckpointID, CheckpointStorage, WorkflowCheckpoint
 from ._const import INTERNAL_SOURCE_ID
 from ._events import WorkflowEvent
@@ -176,7 +178,12 @@ class RunnerContext(Protocol):
         ...
 
     def reset_for_new_run(self) -> None:
-        """Reset the context for a new workflow run."""
+        """Reset the context for a new workflow run.
+
+        .. deprecated::
+            ``reset_for_new_run`` is deprecated and will be removed in a future version.
+            ``apply_checkpoint`` should reset the context prior to applying a checkpoint.
+        """
         ...
 
     def set_streaming(self, streaming: bool) -> None:
@@ -193,6 +200,18 @@ class RunnerContext(Protocol):
         Returns:
             True if streaming mode is enabled, False otherwise.
         """
+        ...
+
+    def set_runtime_tools(self, tools: list[ToolTypes] | None) -> None:
+        """Set request-scoped tools for the active workflow run."""
+        ...
+
+    def get_runtime_tools(self) -> list[ToolTypes] | None:
+        """Get request-scoped tools for the active workflow run."""
+        ...
+
+    def clear_runtime_tools(self) -> None:
+        """Clear request-scoped tools after the active workflow run."""
         ...
 
     async def build_checkpoint(
@@ -297,6 +316,10 @@ class RunnerContext(Protocol):
         """
         ...
 
+    async def cancel_request_info_events(self, request_ids: set[str]) -> dict[str, WorkflowEvent[Any]]:
+        """Remove and return pending request_info events selected for cancellation."""
+        ...
+
     def set_yield_output_classifier(self, classifier: YieldOutputClassifier) -> None:
         """Set the classifier used by WorkflowContext.yield_output()."""
         ...
@@ -333,6 +356,7 @@ class InProcRunnerContext:
 
         # Streaming flag - set by workflow's run(..., stream=True) vs run(..., stream=False)
         self._streaming: bool = False
+        self._runtime_tools: list[ToolTypes] | None = None
         self._yield_output_classifier: YieldOutputClassifier = lambda _executor_id: "output"
 
     # region Messaging and Events
@@ -469,7 +493,19 @@ class InProcRunnerContext:
 
         This clears messages, events, and resets streaming flag.
         Runtime checkpoint storage is NOT cleared here as it's managed at the workflow level.
+
+        .. deprecated::
+            ``reset_for_new_run`` is deprecated and will be removed in a future version.
+            ``apply_checkpoint`` should reset the context prior to applying a checkpoint.
         """
+        warnings.warn(
+            (
+                "`reset_for_new_run` is deprecated and will be removed in a future version. "
+                "`apply_checkpoint` should reset the context prior to applying a checkpoint."
+            ),
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self._messages.clear()
         # Drop any pending events. The queue and its loop marker are cleared so the queue
         # rebinds lazily under the running loop on next use.
@@ -479,6 +515,10 @@ class InProcRunnerContext:
 
     async def apply_checkpoint(self, checkpoint: WorkflowCheckpoint) -> None:
         """Apply a checkpoint to the current context, mutating its state."""
+        # Drop any events left over from a prior run so the restored state starts clean.
+        self._event_queue = None
+        self._event_queue_loop = None
+
         # Restore messages
         self._messages.clear()
         messages_data = checkpoint.messages
@@ -508,6 +548,18 @@ class InProcRunnerContext:
             True if streaming mode is enabled, False otherwise.
         """
         return self._streaming
+
+    def set_runtime_tools(self, tools: list[ToolTypes] | None) -> None:
+        """Set request-scoped tools for the active workflow run."""
+        self._runtime_tools = tools
+
+    def get_runtime_tools(self) -> list[ToolTypes] | None:
+        """Get request-scoped tools for the active workflow run."""
+        return self._runtime_tools
+
+    def clear_runtime_tools(self) -> None:
+        """Clear request-scoped tools after the active workflow run."""
+        self._runtime_tools = None
 
     async def add_request_info_event(self, event: WorkflowEvent[Any]) -> None:
         """Add a request_info event to the context and track it for correlation.
@@ -558,6 +610,14 @@ class InProcRunnerContext:
             A dictionary mapping request IDs to their corresponding WorkflowEvent (type='request_info').
         """
         return dict(self._pending_request_info_events)
+
+    async def cancel_request_info_events(self, request_ids: set[str]) -> dict[str, WorkflowEvent[Any]]:
+        """Remove and return pending request_info events selected for cancellation."""
+        return {
+            request_id: event
+            for request_id in request_ids
+            if (event := self._pending_request_info_events.pop(request_id, None)) is not None
+        }
 
     def set_yield_output_classifier(self, classifier: YieldOutputClassifier) -> None:
         """Set the classifier used by WorkflowContext.yield_output()."""

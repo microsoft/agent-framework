@@ -4,7 +4,7 @@
 // The agent can then be consumed from various M365 channels.
 // See the README.md for more information.
 
-using Azure.AI.OpenAI;
+using System.ClientModel.Primitives;
 using Azure.Identity;
 using M365Agent;
 using M365Agent.Agents;
@@ -34,14 +34,15 @@ IChatClient chatClient;
 if (builder.Configuration.GetSection("AIServices").GetValue<bool>("UseAzureOpenAI"))
 {
     var deploymentName = builder.Configuration.GetSection("AIServices:AzureOpenAI").GetValue<string>("DeploymentName")!;
-    var endpoint = builder.Configuration.GetSection("AIServices:AzureOpenAI").GetValue<string>("Endpoint")!;
+    Uri endpoint = AzureOpenAIEndpoint.From(builder.Configuration.GetSection("AIServices:AzureOpenAI").GetValue<string>("Endpoint"))
+        ?? throw new InvalidOperationException("AIServices:AzureOpenAI:Endpoint is not set.");
 
     // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
     // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
     // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-    chatClient = new AzureOpenAIClient(
-        new Uri(endpoint),
-        new DefaultAzureCredential())
+    chatClient = new OpenAIClient(
+        new BearerTokenPolicy(new DefaultAzureCredential(), "https://ai.azure.com/.default"),
+        new OpenAIClientOptions { Endpoint = endpoint })
          .GetChatClient(deploymentName)
          .AsIChatClient();
 }

@@ -5,7 +5,7 @@
 #     "agent-framework-hosting",
 #     "agent-framework-hosting-telegram",
 #     "aiogram>=3.29.1,<4",
-#     "fastapi>=0.115.0,<0.138.1",
+#     "fastapi>=0.115.0,<0.142.0",
 #     "hypercorn>=0.17",
 # ]
 # ///

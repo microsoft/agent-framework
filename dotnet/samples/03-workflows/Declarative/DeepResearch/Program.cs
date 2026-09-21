@@ -123,20 +123,27 @@ internal sealed class Program
     private static DeclarativeAgentDefinition DefinePlannerAgent(IConfiguration configuration) =>
         new(configuration.GetValue(Application.Settings.FoundryModel))
         {
-            Instructions = // TODO: Use Structured Inputs / Prompt Template
+            Instructions =
                 """
                 Your only job is to devise an efficient plan that identifies (by name) how a team member may contribute to addressing the user request.
 
                 Only select the following team which is listed as "- [Name]: [Description]"
 
-                - WeatherAgent: Able to retrieve weather information
-                - CoderAgent: Able to write and execute Python code
-                - KnowledgeAgent: Able to perform generic websearches
+                {{team}}
 
                 The plan must be a bullet point list must be in the form "- [AgentName]: [Specific action or task for that agent to perform]"
   
                 Remember, there is no requirement to involve the entire team -- only select team member's whose particular expertise is required for this task.
-                """
+                """,
+            StructuredInputs =
+            {
+                ["team"] =
+                    new StructuredInputDefinition
+                    {
+                        IsRequired = true,
+                        Description = "The available team members and their capabilities.",
+                    }
+            }
         };
 
     private static DeclarativeAgentDefinition DefineManagerAgent(IConfiguration configuration) =>
@@ -151,7 +158,7 @@ internal sealed class Program
                 - WeatherAgent: Able to retrieve weather information
                                 
                 To make progress on the request, please answer the following questions, including necessary reasoning:
-                - Is the request fully satisfied? (True if complete, or False if the original request has yet to be SUCCESSFULLY and FULLY addressed)
+                - Is the request fully satisfied? (True if the requested work is complete and enough information is available to provide the final answer. A verified negative or empty result, such as confirming that a requested resource does not exist, can fully satisfy the request. False if work remains or if a negative or empty result may be caused by an execution, authorization, connectivity, or investigation failure.)
                 - Are we in a loop where we are repeating the same requests and / or getting the same responses from an agent multiple times? Loops can span multiple turns, and can include repeated actions like scrolling up or down more than a handful of times.
                 - Are we making forward progress? (True if just starting, or recent messages are adding value. False if recent messages show evidence of being stuck in a loop or if there is evidence of significant barriers to success such as the inability to read from a required file)
                 - Who should speak next? (select from: KnowledgeAgent, CoderAgent, WeatherAgent) 

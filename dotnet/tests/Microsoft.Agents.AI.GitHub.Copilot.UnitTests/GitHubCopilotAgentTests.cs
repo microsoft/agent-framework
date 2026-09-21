@@ -3,11 +3,15 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Linq.Expressions;
+using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 using GitHub.Copilot;
 using GitHub.Copilot.Rpc;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
+using Moq;
 
 namespace Microsoft.Agents.AI.GitHub.Copilot.UnitTests;
 
@@ -141,20 +145,20 @@ public sealed class GitHubCopilotAgentTests
         Assert.Equal("gpt-4o", result.Model);
         Assert.Equal("high", result.ReasoningEffort);
         Assert.Equal(systemMessage, result.SystemMessage);
-        Assert.Equal(new List<string> { "tool1", "tool2" }, result.AvailableTools);
-        Assert.Equal(new List<string> { "tool3" }, result.ExcludedTools);
+        Assert.Equal(["tool1", "tool2"], result.AvailableTools);
+        Assert.Equal(["tool3"], result.ExcludedTools);
         Assert.Equal("/workspace", result.WorkingDirectory);
         Assert.Equal("/config", result.ConfigDirectory);
         Assert.Same(hooks, result.Hooks);
         Assert.Same(infiniteSessions, result.InfiniteSessions);
         Assert.Same(permissionHandler, result.OnPermissionRequest);
         Assert.Same(userInputHandler, result.OnUserInputRequest);
-        Assert.Equal(new List<string> { "skill1" }, result.DisabledSkills);
+        Assert.Equal(["skill1"], result.DisabledSkills);
         Assert.True(result.Streaming);
     }
 
     [Fact]
-    public void CopyResumeSessionConfig_CopiesAllProperties()
+    public void ToResumeSessionConfig_CopiesAllProperties()
     {
         // Arrange
         List<AIFunctionDeclaration> tools = [AIFunctionFactory.Create(() => "test", "TestFunc", "Test function")];
@@ -169,6 +173,8 @@ public sealed class GitHubCopilotAgentTests
         {
             Model = "gpt-4o",
             ReasoningEffort = "high",
+            ReasoningSummary = ReasoningSummary.Detailed,
+            ContextTier = ContextTier.LongContext,
             Tools = tools,
             SystemMessage = systemMessage,
             AvailableTools = ["tool1", "tool2"],
@@ -184,15 +190,17 @@ public sealed class GitHubCopilotAgentTests
         };
 
         // Act
-        ResumeSessionConfig result = GitHubCopilotAgent.CopyResumeSessionConfig(source);
+        ResumeSessionConfig result = GitHubCopilotAgent.ToResumeSessionConfig(source);
 
         // Assert
         Assert.Equal("gpt-4o", result.Model);
         Assert.Equal("high", result.ReasoningEffort);
+        Assert.Equal(ReasoningSummary.Detailed, result.ReasoningSummary);
+        Assert.Equal(ContextTier.LongContext, result.ContextTier);
         Assert.Same(tools, result.Tools);
         Assert.Same(systemMessage, result.SystemMessage);
-        Assert.Equal(new List<string> { "tool1", "tool2" }, result.AvailableTools);
-        Assert.Equal(new List<string> { "tool3" }, result.ExcludedTools);
+        Assert.Equal(["tool1", "tool2"], result.AvailableTools);
+        Assert.Equal(["tool3"], result.ExcludedTools);
         Assert.Equal("/workspace", result.WorkingDirectory);
         Assert.Equal("/config", result.ConfigDirectory);
         Assert.Same(hooks, result.Hooks);
@@ -200,19 +208,84 @@ public sealed class GitHubCopilotAgentTests
         Assert.Same(permissionHandler, result.OnPermissionRequest);
         Assert.Same(userInputHandler, result.OnUserInputRequest);
         Assert.Same(mcpServers, result.McpServers);
-        Assert.Equal(new List<string> { "skill1" }, result.DisabledSkills);
+        Assert.Equal(["skill1"], result.DisabledSkills);
         Assert.True(result.Streaming);
     }
 
     [Fact]
-    public void CopyResumeSessionConfig_WithNullSource_ReturnsDefaults()
+    public void ToResumeSessionConfig_WithFileHooksDisabled_PreservesDisabledValue()
+    {
+        // Arrange
+        var source = new SessionConfig
+        {
+            EnableFileHooks = false,
+        };
+
+        // Act
+        ResumeSessionConfig result = GitHubCopilotAgent.ToResumeSessionConfig(source);
+
+        // Assert
+        Assert.False(result.EnableFileHooks);
+    }
+
+    [Fact]
+    public void ToResumeSessionConfig_WithGitHubToken_PreservesToken()
+    {
+        // Arrange
+        var source = new SessionConfig
+        {
+            GitHubToken = "per-session-token",
+        };
+
+        // Act
+        ResumeSessionConfig result = GitHubCopilotAgent.ToResumeSessionConfig(source);
+
+        // Assert
+        Assert.Equal("per-session-token", result.GitHubToken);
+    }
+
+    [Fact]
+    public void ToResumeSessionConfig_PreservesEverySharedProperty()
+    {
+        // Arrange
+        PropertyInfo[] sharedProperties = typeof(SessionConfigBase)
+            .GetProperties(BindingFlags.Instance | BindingFlags.Public)
+            .Where(property => property.CanRead && property.CanWrite)
+            .ToArray();
+        var source = new SessionConfig();
+
+        foreach ((PropertyInfo property, int index) in sharedProperties.Select((property, index) => (property, index)))
+        {
+            property.SetValue(source, CreateNonDefaultValue(property.PropertyType, index));
+        }
+
+        // Act
+        ResumeSessionConfig result = GitHubCopilotAgent.ToResumeSessionConfig(source);
+
+        // Assert
+        List<string> propertiesNotPreserved = [];
+        foreach (PropertyInfo property in sharedProperties)
+        {
+            if (!Equals(property.GetValue(source), property.GetValue(result)))
+            {
+                propertiesNotPreserved.Add(property.Name);
+            }
+        }
+
+        Assert.True(propertiesNotPreserved.Count == 0, $"Properties not preserved: {string.Join(", ", propertiesNotPreserved)}");
+    }
+
+    [Fact]
+    public void ToResumeSessionConfig_WithNullSource_ReturnsDefaults()
     {
         // Act
-        ResumeSessionConfig result = GitHubCopilotAgent.CopyResumeSessionConfig(null);
+        ResumeSessionConfig result = GitHubCopilotAgent.ToResumeSessionConfig(null);
 
         // Assert
         Assert.Null(result.Model);
         Assert.Null(result.ReasoningEffort);
+        Assert.Null(result.ReasoningSummary);
+        Assert.Null(result.ContextTier);
         Assert.Null(result.Tools);
         Assert.Null(result.SystemMessage);
         Assert.Null(result.OnPermissionRequest);
@@ -221,6 +294,29 @@ public sealed class GitHubCopilotAgentTests
         Assert.Null(result.WorkingDirectory);
         Assert.Null(result.ConfigDirectory);
         Assert.True(result.Streaming);
+        Assert.False(result.SuppressResumeEvent);
+        Assert.Null(result.ContinuePendingWork);
+        Assert.Null(result.OpenCanvases);
+    }
+
+    [Fact]
+    public void ToResumeSessionConfig_RoundTripsReasoningSummary()
+    {
+        // Regression: ReasoningSummary controls whether the model returns readable
+        // extended-thinking summaries. It must round-trip onto resumed turns, just like
+        // ReasoningEffort, otherwise callers lose readable reasoning after the first turn.
+        var source = new SessionConfig
+        {
+            ReasoningEffort = "high",
+            ReasoningSummary = ReasoningSummary.Detailed,
+        };
+
+        // Act
+        ResumeSessionConfig result = GitHubCopilotAgent.ToResumeSessionConfig(source);
+
+        // Assert
+        Assert.Equal(ReasoningSummary.Detailed, result.ReasoningSummary);
+        Assert.Equal("high", result.ReasoningEffort);
     }
 
     [Fact]
@@ -257,7 +353,7 @@ public sealed class GitHubCopilotAgentTests
     }
 
     [Fact]
-    public void CopyResumeSessionConfig_WithStreamingDisabled_PreservesStreamingValue()
+    public void ToResumeSessionConfig_WithStreamingDisabled_PreservesStreamingValue()
     {
         // Arrange
         var source = new SessionConfig
@@ -267,14 +363,14 @@ public sealed class GitHubCopilotAgentTests
         };
 
         // Act
-        ResumeSessionConfig result = GitHubCopilotAgent.CopyResumeSessionConfig(source);
+        ResumeSessionConfig result = GitHubCopilotAgent.ToResumeSessionConfig(source);
 
         // Assert
         Assert.False(result.Streaming);
     }
 
     [Fact]
-    public void CopyResumeSessionConfig_WithStreamingNull_DefaultsToTrue()
+    public void ToResumeSessionConfig_WithStreamingNull_DefaultsToTrue()
     {
         // Arrange
         var source = new SessionConfig
@@ -283,7 +379,7 @@ public sealed class GitHubCopilotAgentTests
         };
 
         // Act
-        ResumeSessionConfig result = GitHubCopilotAgent.CopyResumeSessionConfig(source);
+        ResumeSessionConfig result = GitHubCopilotAgent.ToResumeSessionConfig(source);
 
         // Assert
         Assert.True(result.Streaming);
@@ -516,6 +612,68 @@ public sealed class GitHubCopilotAgentTests
         Assert.Same(callerHooks, sessionConfig.Hooks);
     }
 
+    private static object CreateNonDefaultValue(Type type, int index)
+    {
+        Type? nullableType = Nullable.GetUnderlyingType(type);
+        if (nullableType is not null)
+        {
+            return nullableType == typeof(bool) ? false : CreateNonDefaultValue(nullableType, index);
+        }
+
+        if (type == typeof(bool))
+        {
+            return true;
+        }
+
+        if (type == typeof(string))
+        {
+            return $"value-{index}";
+        }
+
+        if (type.IsEnum)
+        {
+            return Enum.GetValues(type).GetValue(0)!;
+        }
+
+        if (typeof(Delegate).IsAssignableFrom(type))
+        {
+            MethodInfo invokeMethod = type.GetMethod(nameof(Action.Invoke))!;
+            ParameterExpression[] parameters = invokeMethod.GetParameters()
+                .Select(parameter => Expression.Parameter(parameter.ParameterType, parameter.Name))
+                .ToArray();
+            Expression body = invokeMethod.ReturnType == typeof(void)
+                ? Expression.Empty()
+                : Expression.Default(invokeMethod.ReturnType);
+            return Expression.Lambda(type, body, parameters).Compile();
+        }
+
+        if (type.IsGenericType)
+        {
+            Type genericType = type.GetGenericTypeDefinition();
+            Type[] genericArguments = type.GetGenericArguments();
+            if (genericType == typeof(IList<>) || genericType == typeof(ICollection<>))
+            {
+                return Activator.CreateInstance(typeof(List<>).MakeGenericType(genericArguments))!;
+            }
+
+            if (genericType == typeof(IDictionary<,>))
+            {
+                return Activator.CreateInstance(typeof(Dictionary<,>).MakeGenericType(genericArguments))!;
+            }
+        }
+
+        if (type.IsInterface)
+        {
+            Type mockType = typeof(Mock<>).MakeGenericType(type);
+            object mock = Activator.CreateInstance(mockType)!;
+            PropertyInfo objectProperty = mockType.GetProperties()
+                .Single(property => property.Name == nameof(Mock<object>.Object) && property.PropertyType == type);
+            return objectProperty.GetValue(mock)!;
+        }
+
+        return RuntimeHelpers.GetUninitializedObject(type);
+    }
+
     private static Task<PreToolUseHookOutput?> InvokePreToolUseAsync(SessionConfig sessionConfig, string toolName)
     {
         var input = new PreToolUseHookInput { ToolName = toolName };
@@ -524,9 +682,9 @@ public sealed class GitHubCopilotAgentTests
 
     private static SessionConfig GetSessionConfigFromAgent(GitHubCopilotAgent agent)
     {
-        System.Reflection.FieldInfo field = typeof(GitHubCopilotAgent).GetField(
+        FieldInfo field = typeof(GitHubCopilotAgent).GetField(
             "_sessionConfig",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
         return (SessionConfig)field.GetValue(agent)!;
     }
 

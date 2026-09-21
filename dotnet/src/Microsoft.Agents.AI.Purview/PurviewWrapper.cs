@@ -66,6 +66,7 @@ internal sealed class PurviewWrapper : IDisposable
     /// <returns>The chat client's response. This could be the response from the chat client or a message indicating that Purview has blocked the prompt or response.</returns>
     public async Task<ChatResponse> ProcessChatContentAsync(IEnumerable<ChatMessage> messages, ChatOptions? options, IChatClient innerChatClient, CancellationToken cancellationToken)
     {
+        FeatureUsageMarker.MarkUsed();
         string? resolvedUserId = null;
 
         try
@@ -136,6 +137,7 @@ internal sealed class PurviewWrapper : IDisposable
     /// <returns>The agent's response. This could be the response from the agent or a message indicating that Purview has blocked the prompt or response.</returns>
     public async Task<AgentResponse> ProcessAgentContentAsync(IEnumerable<ChatMessage> messages, AgentSession? session, AgentRunOptions? options, AIAgent innerAgent, CancellationToken cancellationToken)
     {
+        FeatureUsageMarker.MarkUsed();
         string? resolvedUserId = null;
         string sessionId = string.Empty;
         try

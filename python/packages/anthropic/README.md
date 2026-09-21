@@ -40,3 +40,7 @@ system_blocks: list[BetaTextBlockParam] = [
 
 response = await client.get_response("Hello", options={"instructions": system_blocks})
 ```
+
+Instructions contributed later in a run — by a context provider such as `SkillsProvider`, or by per-run
+`options` — are appended as an additional text block after the configured blocks. The blocks you supply keep
+their structure and their position, so a `cache_control` breakpoint stays valid.

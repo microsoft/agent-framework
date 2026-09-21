@@ -21,11 +21,14 @@ from agent_framework import (
     Workflow,
     WorkflowRunResult,
 )
+from agent_framework._telemetry import mark_feature_used
 from agent_framework_hosting import AgentRunArgs
 from google.protobuf.json_format import MessageToDict, ParseDict
 from google.protobuf.struct_pb2 import Value
 from pydantic import TypeAdapter
 from pydantic.errors import PydanticSchemaGenerationError
+
+from ._feature_usage import FeatureIndex
 
 logger = logging.getLogger("agent_framework.hosting.a2a")
 
@@ -189,6 +192,7 @@ def a2a_to_run(
         ValueError: If the message has no supported content parts or contains
             a part outside ``input_modes``.
     """
+    mark_feature_used(FeatureIndex.HOSTING_A2A)
     if input_modes is not None:
         _validate_part_modes(message.parts, input_modes, "input")
 
@@ -279,6 +283,7 @@ def a2a_from_run(
         ValueError: If Agent Framework data content contains an invalid data URI
             or produces a part outside ``output_modes``.
     """
+    mark_feature_used(FeatureIndex.HOSTING_A2A)
     items: Sequence[Message | AgentResponseUpdate] = result.messages if isinstance(result, AgentResponse) else [result]
 
     parts: list[Part] = []

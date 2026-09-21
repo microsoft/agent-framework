@@ -9,12 +9,14 @@
  * @param {object} opts.core - GitHub Actions core toolkit
  * @param {string} opts.teamSlug - Team slug to check membership against
  * @param {string|number} opts.issueNumber - Issue or pull request number to resolve author for
+ * @param {string} [opts.username] - Explicit user to check instead of the issue or pull request author
  * @returns {Promise<{author: string|null, isTeamMember: boolean}>}
  */
-async function checkTeamMembership({ github, context, core, teamSlug, issueNumber }) {
-  let author =
+async function checkTeamMembership({ github, context, core, teamSlug, issueNumber, username = '' }) {
+  let author = username.trim() || (
     context.payload.issue?.user?.login ??
-    context.payload.pull_request?.user?.login;
+    context.payload.pull_request?.user?.login
+  );
 
   if (!author) {
     const number = Number(issueNumber);

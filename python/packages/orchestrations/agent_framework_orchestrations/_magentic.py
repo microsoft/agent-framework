@@ -18,6 +18,7 @@ from agent_framework import (
     Message,
     SupportsAgentRun,
 )
+from agent_framework._telemetry import mark_feature_used
 from agent_framework._workflows._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
 from agent_framework._workflows._checkpoint import CheckpointStorage
 from agent_framework._workflows._events import WorkflowEvent
@@ -25,7 +26,6 @@ from agent_framework._workflows._executor import Executor, handler
 from agent_framework._workflows._model_utils import DictConvertible, encode_value
 from agent_framework._workflows._request_info_mixin import response_handler
 from agent_framework._workflows._workflow import Workflow
-from agent_framework._workflows._workflow_builder import WorkflowBuilder
 from agent_framework._workflows._workflow_context import WorkflowContext
 from typing_extensions import Never, Sentinel
 
@@ -37,6 +37,7 @@ from ._base_group_chat_orchestrator import (
     GroupChatWorkflowContextOutT,
     ParticipantRegistry,
 )
+from ._feature_usage import FeatureIndex
 from ._participant_output_config import (
     UNSET,
     _coalesce_output_from,  # pyright: ignore[reportPrivateUsage]
@@ -45,6 +46,7 @@ from ._participant_output_config import (
     _ParticipantOutputSpecifier,  # pyright: ignore[reportPrivateUsage]
     _resolve_participant_output_config,  # pyright: ignore[reportPrivateUsage]
 )
+from ._workflow_builder import OrchestrationWorkflowBuilder as WorkflowBuilder
 
 if sys.version_info >= (3, 12):
     from typing import override  # pragma: no cover
@@ -53,6 +55,7 @@ else:
 
 
 logger = logging.getLogger(__name__)
+DEFAULT_WORKFLOW_NAME = "Magentic"
 
 # Consistent author name for messages produced by the Magentic manager/orchestrator
 MAGENTIC_MANAGER_NAME = "magentic_manager"
@@ -878,6 +881,8 @@ class MagenticOrchestrator(BaseGroupChatOrchestrator):
     5. The outer loop handles replanning and reenters the inner loop.
     """
 
+    MANAGER_NAME: ClassVar[str] = "magentic_orchestrator"
+
     def __init__(
         self,
         manager: MagenticManagerBase,
@@ -894,7 +899,7 @@ class MagenticOrchestrator(BaseGroupChatOrchestrator):
         Keyword Args:
             require_plan_signoff: If True, requires human approval of the initial plan before proceeding.
         """
-        super().__init__("magentic_orchestrator", participant_registry)
+        super().__init__(self.MANAGER_NAME, participant_registry)
         self._manager = manager
         self._require_plan_signoff = require_plan_signoff
 
@@ -1414,10 +1419,11 @@ class MagenticBuilder:
         task_ledger_plan_update_prompt: str | None = None,
         progress_ledger_prompt: str | None = None,
         final_answer_prompt: str | None = None,
-        max_stall_count: int | Sentinel = UNSET,  # type: ignore[reportArgumentType]
+        max_stall_count: int | Sentinel = UNSET,
         max_reset_count: int | None = None,
         max_round_count: int | None = None,
         # Existing params
+        name: str | None = None,
         enable_plan_review: bool = False,
         checkpoint_storage: CheckpointStorage | None = None,
         output_from: Sequence[_ParticipantOutputSpecifier] | Literal["all"] | None = cast(Any, UNSET),
@@ -1426,6 +1432,7 @@ class MagenticBuilder:
         """Initialize the Magentic workflow builder.
 
         Args:
+            name: Optional workflow identifier. Defaults to ``"Magentic"``.
             participants: Sequence of agent or executor instances for the workflow.
             manager: Pre-configured manager instance (subclass of MagenticManagerBase).
             manager_factory: Callable that returns a new MagenticManagerBase instance.
@@ -1451,6 +1458,7 @@ class MagenticBuilder:
                 surface as workflow ``intermediate`` events. Pass ``"all_other"`` to select every participant
                 not selected by ``output_from``. Unlisted participant outputs are hidden.
         """
+        self._name = name or DEFAULT_WORKFLOW_NAME
         self._participants: dict[str, SupportsAgentRun | Executor] = {}
 
         # Manager related members
@@ -1624,7 +1632,7 @@ class MagenticBuilder:
         progress_ledger_prompt: str | None = None,
         final_answer_prompt: str | None = None,
         # Limits
-        max_stall_count: int | Sentinel = UNSET,  # type: ignore[reportArgumentType]
+        max_stall_count: int | Sentinel = UNSET,
         max_reset_count: int | None = None,
         max_round_count: int | None = None,
     ) -> None:
@@ -1774,6 +1782,7 @@ class MagenticBuilder:
 
     def build(self) -> Workflow:
         """Build a Magentic workflow with the orchestrator and all agent executors."""
+        mark_feature_used(FeatureIndex.ORCHESTRATION_MAGENTIC)
         logger.info(f"Building Magentic workflow with {len(self._participants)} participants")
 
         participants: list[Executor] = self._resolve_participants()
@@ -1789,6 +1798,7 @@ class MagenticBuilder:
             extra_output_executors=[orchestrator],
         )
         workflow_builder = WorkflowBuilder(
+            name=self._name,
             start_executor=orchestrator,
             checkpoint_storage=self._checkpoint_storage,
             output_from=designated,

@@ -77,7 +77,9 @@ public static class A2AEndpointRouteBuilderExtensions
         // by any agent - returning a stub agent card here is safe.
         var stubAgentCard = new AgentCard { Name = "A2A Agent" };
 
-        return endpoints.MapHttpA2A(a2aServer, stubAgentCard, path);
+        IEndpointConventionBuilder endpoint = endpoints.MapHttpA2A(a2aServer, stubAgentCard, path);
+        MarkFeatureUsed();
+        return endpoint;
     }
 
     /// <summary>
@@ -133,6 +135,15 @@ public static class A2AEndpointRouteBuilderExtensions
                 $"No A2AServer is registered for agent '{agentName}'. " +
                 $"Call services.AddA2AServer(\"{agentName}\") or agentBuilder.AddA2AServer() during service registration to register one.");
 
-        return endpoints.MapA2A(a2aServer, path);
+        IEndpointConventionBuilder endpoint = endpoints.MapA2A(a2aServer, path);
+        MarkFeatureUsed();
+        return endpoint;
+    }
+
+    private static void MarkFeatureUsed()
+    {
+#pragma warning disable MAAI001
+        FeatureUsage.MarkUsed((int)FeatureIndex.HostingA2A);
+#pragma warning restore MAAI001
     }
 }

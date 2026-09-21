@@ -2,6 +2,7 @@ dirs:
   - .
 excludedFiles:
   - ./python/CHANGELOG.md
+  - "**/SKILL.md"
 ignorePatterns:
   - pattern: "/github/"
   - pattern: "./actions"
@@ -26,7 +27,7 @@ ignorePatterns:
   - pattern: "https:\/\/dotnet.microsoft.com"
   - pattern: "https://github.com/Rel1cx/eslint-react"
 # excludedDirs:
-  # Folders which include links to localhost, since it's not ignored with regular expressions
+# Folders which include links to localhost, since it's not ignored with regular expressions
 baseUrl: https://github.com/microsoft/agent-framework/
 aliveStatusCodes:
   - 200

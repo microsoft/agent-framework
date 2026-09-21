@@ -510,6 +510,48 @@ internal static class AgentsSamples
             SkipReason = "Requires a running Neo4j instance; standalone sample outside the repo's CPM build.",
         },
 
+        new SampleDefinition
+        {
+            Name = "AgentWithMemory_Step07_FileMemoryProvider",
+            ProjectPath = "samples/02-agents/AgentWithMemory/AgentWithMemory_Step07_FileMemoryProvider",
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
+            MustContain =
+            [
+                "Memory files will be written to:",
+                "=== First conversation ===",
+                "=== Memory files on disk ===",
+                "=== Second conversation (new session) ===",
+            ],
+            ExpectedOutputDescription =
+            [
+                "The output should acknowledge that the user is vegetarian and travels with a dog, indicating the agent stored these preferences.",
+                "The memory files section should list at least one memory file written by the agent, such as a file about the user's preferences.",
+                "The second conversation should recommend a hotel and a restaurant in Paris that are consistent with the remembered preferences, for example a pet-friendly hotel and a restaurant with vegetarian options, even though it is a new session.",
+                "The output should not contain error messages or stack traces.",
+            ],
+        },
+
+        new SampleDefinition
+        {
+            Name = "AgentWithMemory_Step08_MemoryUsingCosmosNoSql",
+            ProjectPath = "samples/02-agents/AgentWithMemory/AgentWithMemory_Step08_MemoryUsingCosmosNoSql",
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT", "COSMOS_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL", "FOUNDRY_EMBEDDING_MODEL", "COSMOS_DATABASE_NAME"],
+            MustContain =
+            [
+                "First session:",
+                "Second session (recalling prior chat history from Cosmos DB):",
+            ],
+            ExpectedOutputDescription =
+            [
+                "The output should contain two joke responses.",
+                "The first joke should be about a pirate (as explicitly requested).",
+                "The second joke should also be pirate-themed or similar to what the user likes, since chat history from the first session should be recalled from Cosmos DB.",
+                "The output should not contain error messages or stack traces.",
+            ],
+        },
+
         // ── AgentWithRAG ────────────────────────────────────────────────────
 
         new SampleDefinition
@@ -832,6 +874,19 @@ internal static class AgentsSamples
             ExpectedOutputDescription =
             [
                 "The output should contain a user prompt and a response listing files in the current directory.",
+                "The output should not contain error messages or stack traces.",
+            ],
+        },
+
+        new SampleDefinition
+        {
+            Name = "Agent_With_GitHubCopilot_BYOK",
+            ProjectPath = "samples/02-agents/AgentProviders/github-copilot/Agent_With_GitHubCopilot_BYOK",
+            RequiredEnvironmentVariables = ["BYOK_BASE_URL", "BYOK_API_KEY"],
+            OptionalEnvironmentVariables = ["BYOK_PROVIDER_TYPE", "BYOK_MODEL_ID"],
+            ExpectedOutputDescription =
+            [
+                "The output should contain a user prompt and a response about the benefits of BYOK.",
                 "The output should not contain error messages or stack traces.",
             ],
         },
@@ -1248,6 +1303,7 @@ internal static class AgentsSamples
             OptionalEnvironmentVariables = ["AZURE_OPENAI_DEPLOYMENT_NAME"],
             MustContain =
             [
+                "MCP 2026-07-28 Tasks extension enabled.",
                 "=== Transparent long-running MCP task (RunAsync) ===",
                 "=== Transparent long-running MCP task (RunStreamingAsync) ===",
             ],

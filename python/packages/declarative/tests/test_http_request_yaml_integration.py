@@ -12,7 +12,9 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
+import httpx
 import pytest
 
 try:
@@ -36,6 +38,7 @@ pytestmark = [
 from agent_framework_declarative import WorkflowFactory  # noqa: E402
 from agent_framework_declarative._workflows import DECLARATIVE_STATE_KEY  # noqa: E402
 from agent_framework_declarative._workflows._http_handler import (  # noqa: E402
+    DefaultHttpRequestHandler,
     HttpRequestInfo,
     HttpRequestResult,
 )
@@ -96,6 +99,49 @@ async def test_http_request_yaml_roundtrip() -> None:
     assert sent.url == "https://api.github.com/repos/dotnet/runtime"
     assert sent.headers["Accept"] == "application/vnd.github+json"
     assert sent.headers["User-Agent"] == "agent-framework-integration-test"
+
+
+async def test_http_request_yaml_shared_handler_does_not_replay_cookies() -> None:
+    requests: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text="ok",
+            headers={"Set-Cookie": "session=first; Path=/; HttpOnly; Secure"} if len(requests) == 1 else {},
+        )
+
+    original_ctor = httpx.AsyncClient
+
+    def create_client(**kwargs: Any) -> httpx.AsyncClient:
+        return original_ctor(transport=httpx.MockTransport(respond), **kwargs)
+
+    definition = """
+kind: Workflow
+trigger:
+  kind: OnConversationStart
+  id: http_cookie_test
+  actions:
+    - kind: HttpRequestAction
+      id: request
+      method: GET
+      url: https://api.example.test/x
+      headers:
+        Authorization: caller-a
+      response: Local.Response
+"""
+    with patch("httpx.AsyncClient", side_effect=create_client):
+        async with DefaultHttpRequestHandler() as handler:
+            factory = WorkflowFactory(http_request_handler=handler)
+            first = factory.create_workflow_from_yaml(definition)
+            second = factory.create_workflow_from_yaml(definition.replace("caller-a", "caller-b"))
+            await first.run({})
+            client = handler._owned_client
+            await second.run({})
+            assert handler._owned_client is client
+    assert [request.headers["Authorization"] for request in requests] == ["caller-a", "caller-b"]
+    assert all("Cookie" not in request.headers for request in requests)
 
 
 @pytest.mark.asyncio

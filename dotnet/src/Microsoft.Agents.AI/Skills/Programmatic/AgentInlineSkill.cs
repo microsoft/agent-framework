@@ -104,12 +104,20 @@ public sealed class AgentInlineSkill : AgentSkill
     /// <inheritdoc/>
     public override ValueTask<string> GetContentAsync(CancellationToken cancellationToken = default)
     {
+#pragma warning disable MAAI001
+        FeatureUsage.MarkUsed((int)FeatureIndex.CoreInlineSkill);
+#pragma warning restore MAAI001
+
         return new(this._cachedContent ??= AgentInlineSkillContentBuilder.Build(this.Frontmatter.Name, this.Frontmatter.Description, this._instructions, this._resources, this._scripts));
     }
 
     /// <inheritdoc/>
     public override ValueTask<AgentSkillResource?> GetResourceAsync(string name, CancellationToken cancellationToken = default)
     {
+#pragma warning disable MAAI001
+        FeatureUsage.MarkUsed((int)FeatureIndex.CoreInlineSkill);
+#pragma warning restore MAAI001
+
         var resource = this._resources?.FirstOrDefault(r => r.Name == name);
         return new(resource);
     }
@@ -117,6 +125,10 @@ public sealed class AgentInlineSkill : AgentSkill
     /// <inheritdoc/>
     public override ValueTask<AgentSkillScript?> GetScriptAsync(string name, CancellationToken cancellationToken = default)
     {
+#pragma warning disable MAAI001
+        FeatureUsage.MarkUsed((int)FeatureIndex.CoreInlineSkill);
+#pragma warning restore MAAI001
+
         var script = this._scripts?.FirstOrDefault(s => s.Name == name);
         return new(script);
     }

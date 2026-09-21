@@ -21,6 +21,8 @@ _IMPORTS: dict[str, tuple[str, str]] = {
     "RawOpenAIChatClient": ("agent_framework_openai", "agent-framework-openai"),
     "OpenAIChatCompletionClient": ("agent_framework_openai", "agent-framework-openai"),
     "OpenAIChatCompletionOptions": ("agent_framework_openai", "agent-framework-openai"),
+    "OpenAIChatMessagePreparer": ("agent_framework_openai", "agent-framework-openai"),
+    "OpenAIChatResponseContentsParser": ("agent_framework_openai", "agent-framework-openai"),
     "RawOpenAIChatCompletionClient": ("agent_framework_openai", "agent-framework-openai"),
     "OpenAIEmbeddingClient": ("agent_framework_openai", "agent-framework-openai"),
     "OpenAIEmbeddingOptions": ("agent_framework_openai", "agent-framework-openai"),

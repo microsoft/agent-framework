@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from agent_framework_tools._feature_usage import FeatureIndex
 from agent_framework_tools.shell import (
     DockerNotAvailableError,
     DockerShellTool,
@@ -367,10 +368,14 @@ async def test_run_dispatches_to_private_stateless_runner() -> None:
     tool = DockerShellTool(mode="stateless")
     expected = ShellResult(stdout="ok", stderr="", exit_code=0, duration_ms=1)
 
-    with patch.object(tool, "_run_stateless", AsyncMock(return_value=expected)) as run_stateless:
+    with (
+        patch.object(tool, "_run_stateless", AsyncMock(return_value=expected)) as run_stateless,
+        patch("agent_framework_tools.shell._docker.mark_feature_used") as mark_feature_used,
+    ):
         result = await tool.run("echo hi", timeout=9.0)
 
     assert result is expected
+    mark_feature_used.assert_called_once_with(FeatureIndex.TOOLS_SHELL)
     run_stateless.assert_awaited_once_with("echo hi", timeout=9.0)
 
 

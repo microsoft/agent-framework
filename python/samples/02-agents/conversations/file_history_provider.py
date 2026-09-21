@@ -20,12 +20,6 @@ from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import Field
 
-try:
-    import orjson  # pyright: ignore[reportMissingImports]
-except ImportError:
-    orjson = None
-
-
 # Load environment variables from .env file.
 load_dotenv()
 
@@ -42,7 +36,7 @@ Environment variables:
 
 Key components:
 - `FileHistoryProvider`: Stores one message JSON object per line in a local
-  `.jsonl` file for each session.
+  `.jsonl` file for each session using msgspec JSON by default.
 - `lookup_weather`: A function tool that makes the persisted file show the
   assistant function call and tool result lines.
 - `json.dumps(..., indent=2)`: Pretty-prints selected records in the sample
@@ -110,15 +104,7 @@ async def main() -> None:
                 "answer with the tool result in one sentence."
             ),
             tools=[lookup_weather],
-            # if orjson is available, use it for faster JSON serialization in the FileHistoryProvider,
-            # otherwise fall back to the default json module.
-            context_providers=[
-                FileHistoryProvider(
-                    storage_directory,
-                    dumps=orjson.dumps if orjson else None,
-                    loads=orjson.loads if orjson else None,
-                )
-            ],
+            context_providers=[FileHistoryProvider(storage_directory)],
             default_options={"store": False},
         )
 

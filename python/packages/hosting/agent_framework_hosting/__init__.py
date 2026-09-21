@@ -7,7 +7,6 @@ import importlib.metadata
 from ._state import (
     AgentRunArgs,
     AgentState,
-    SessionStore,
     SupportsBuild,
     WorkflowRunArgs,
     WorkflowState,
@@ -21,7 +20,6 @@ except importlib.metadata.PackageNotFoundError:
 __all__ = [
     "AgentRunArgs",
     "AgentState",
-    "SessionStore",
     "SupportsBuild",
     "WorkflowRunArgs",
     "WorkflowState",

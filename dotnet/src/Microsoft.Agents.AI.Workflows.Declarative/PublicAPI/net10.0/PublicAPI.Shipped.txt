@@ -1,0 +1,194 @@
+﻿#nullable enable
+Microsoft.Agents.AI.Workflows.Declarative.ConversationUpdateEvent
+Microsoft.Agents.AI.Workflows.Declarative.ConversationUpdateEvent.ConversationId.get -> string!
+Microsoft.Agents.AI.Workflows.Declarative.ConversationUpdateEvent.ConversationUpdateEvent(string! conversationId) -> void
+Microsoft.Agents.AI.Workflows.Declarative.ConversationUpdateEvent.IsWorkflow.get -> bool
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeActionCompletedEvent
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeActionCompletedEvent.ActionId.get -> string!
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeActionCompletedEvent.ActionType.get -> string!
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeActionCompletedEvent.ParentActionId.get -> string?
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeActionCompletedEvent.PriorActionId.get -> string?
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeActionException
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeActionException.DeclarativeActionException() -> void
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeActionException.DeclarativeActionException(string? message) -> void
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeActionException.DeclarativeActionException(string? message, System.Exception? innerException) -> void
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeActionInvokedEvent
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeActionInvokedEvent.ActionId.get -> string!
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeActionInvokedEvent.ActionType.get -> string!
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeActionInvokedEvent.ParentActionId.get -> string?
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeActionInvokedEvent.PriorActionId.get -> string?
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeModelException
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeModelException.DeclarativeModelException() -> void
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeModelException.DeclarativeModelException(string? message) -> void
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeModelException.DeclarativeModelException(string? message, System.Exception? innerException) -> void
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowBuilder
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowException
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowException.DeclarativeWorkflowException() -> void
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowException.DeclarativeWorkflowException(string? message) -> void
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowException.DeclarativeWorkflowException(string? message, System.Exception? innerException) -> void
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowOptions
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowOptions.AgentProvider.get -> Microsoft.Agents.AI.Workflows.Declarative.ResponseAgentProvider!
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowOptions.Configuration.get -> Microsoft.Extensions.Configuration.IConfiguration?
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowOptions.Configuration.init -> void
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowOptions.ConfigureTelemetry.get -> System.Action<Microsoft.Agents.AI.Workflows.Observability.WorkflowTelemetryOptions!>?
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowOptions.ConfigureTelemetry.init -> void
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowOptions.ConversationId.get -> string?
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowOptions.ConversationId.init -> void
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowOptions.DeclarativeWorkflowOptions(Microsoft.Agents.AI.Workflows.Declarative.ResponseAgentProvider! agentProvider) -> void
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowOptions.HttpRequestHandler.get -> Microsoft.Agents.AI.Workflows.Declarative.IHttpRequestHandler?
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowOptions.HttpRequestHandler.init -> void
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowOptions.LoggerFactory.get -> Microsoft.Extensions.Logging.ILoggerFactory!
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowOptions.LoggerFactory.init -> void
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowOptions.MaximumCallDepth.get -> int?
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowOptions.MaximumCallDepth.init -> void
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowOptions.MaximumExpressionLength.get -> int?
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowOptions.MaximumExpressionLength.init -> void
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowOptions.McpToolHandler.get -> Microsoft.Agents.AI.Workflows.Declarative.IMcpToolHandler?
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowOptions.McpToolHandler.init -> void
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowOptions.TelemetryActivitySource.get -> System.Diagnostics.ActivitySource?
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowOptions.TelemetryActivitySource.init -> void
+Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler
+Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler.DefaultHttpRequestHandler() -> void
+Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler.DefaultHttpRequestHandler(System.Func<Microsoft.Agents.AI.Workflows.Declarative.HttpRequestInfo!, System.Threading.CancellationToken, System.Threading.Tasks.Task<System.Net.Http.HttpClient?>!>? httpClientProvider) -> void
+Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler.DefaultHttpRequestHandler(System.Net.Http.HttpClient! httpClient) -> void
+Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler.DisposeAsync() -> System.Threading.Tasks.ValueTask
+Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler.SendAsync(Microsoft.Agents.AI.Workflows.Declarative.HttpRequestInfo! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<Microsoft.Agents.AI.Workflows.Declarative.HttpRequestResult!>!
+Microsoft.Agents.AI.Workflows.Declarative.Events.ExternalInputRequest
+Microsoft.Agents.AI.Workflows.Declarative.Events.ExternalInputRequest.AgentResponse.get -> Microsoft.Agents.AI.AgentResponse!
+Microsoft.Agents.AI.Workflows.Declarative.Events.ExternalInputResponse
+Microsoft.Agents.AI.Workflows.Declarative.Events.ExternalInputResponse.ExternalInputResponse(Microsoft.Extensions.AI.ChatMessage! message) -> void
+Microsoft.Agents.AI.Workflows.Declarative.Events.ExternalInputResponse.ExternalInputResponse(System.Collections.Generic.IList<Microsoft.Extensions.AI.ChatMessage!>! messages) -> void
+Microsoft.Agents.AI.Workflows.Declarative.Events.ExternalInputResponse.Messages.get -> System.Collections.Generic.IList<Microsoft.Extensions.AI.ChatMessage!>!
+Microsoft.Agents.AI.Workflows.Declarative.HttpRequestInfo
+Microsoft.Agents.AI.Workflows.Declarative.HttpRequestInfo.Body.get -> string?
+Microsoft.Agents.AI.Workflows.Declarative.HttpRequestInfo.Body.init -> void
+Microsoft.Agents.AI.Workflows.Declarative.HttpRequestInfo.BodyContentType.get -> string?
+Microsoft.Agents.AI.Workflows.Declarative.HttpRequestInfo.BodyContentType.init -> void
+Microsoft.Agents.AI.Workflows.Declarative.HttpRequestInfo.ConnectionName.get -> string?
+Microsoft.Agents.AI.Workflows.Declarative.HttpRequestInfo.ConnectionName.init -> void
+Microsoft.Agents.AI.Workflows.Declarative.HttpRequestInfo.Headers.get -> System.Collections.Generic.IReadOnlyDictionary<string!, string!>?
+Microsoft.Agents.AI.Workflows.Declarative.HttpRequestInfo.Headers.init -> void
+Microsoft.Agents.AI.Workflows.Declarative.HttpRequestInfo.HttpRequestInfo() -> void
+Microsoft.Agents.AI.Workflows.Declarative.HttpRequestInfo.Method.get -> string!
+Microsoft.Agents.AI.Workflows.Declarative.HttpRequestInfo.Method.init -> void
+Microsoft.Agents.AI.Workflows.Declarative.HttpRequestInfo.QueryParameters.get -> System.Collections.Generic.IReadOnlyDictionary<string!, string!>?
+Microsoft.Agents.AI.Workflows.Declarative.HttpRequestInfo.QueryParameters.init -> void
+Microsoft.Agents.AI.Workflows.Declarative.HttpRequestInfo.Timeout.get -> System.TimeSpan?
+Microsoft.Agents.AI.Workflows.Declarative.HttpRequestInfo.Timeout.init -> void
+Microsoft.Agents.AI.Workflows.Declarative.HttpRequestInfo.Url.get -> string!
+Microsoft.Agents.AI.Workflows.Declarative.HttpRequestInfo.Url.init -> void
+Microsoft.Agents.AI.Workflows.Declarative.HttpRequestResult
+Microsoft.Agents.AI.Workflows.Declarative.HttpRequestResult.Body.get -> string?
+Microsoft.Agents.AI.Workflows.Declarative.HttpRequestResult.Body.init -> void
+Microsoft.Agents.AI.Workflows.Declarative.HttpRequestResult.Headers.get -> System.Collections.Generic.IReadOnlyDictionary<string!, System.Collections.Generic.IReadOnlyList<string!>!>?
+Microsoft.Agents.AI.Workflows.Declarative.HttpRequestResult.Headers.init -> void
+Microsoft.Agents.AI.Workflows.Declarative.HttpRequestResult.HttpRequestResult() -> void
+Microsoft.Agents.AI.Workflows.Declarative.HttpRequestResult.IsSuccessStatusCode.get -> bool
+Microsoft.Agents.AI.Workflows.Declarative.HttpRequestResult.IsSuccessStatusCode.init -> void
+Microsoft.Agents.AI.Workflows.Declarative.HttpRequestResult.StatusCode.get -> int
+Microsoft.Agents.AI.Workflows.Declarative.HttpRequestResult.StatusCode.init -> void
+Microsoft.Agents.AI.Workflows.Declarative.IHttpRequestHandler
+Microsoft.Agents.AI.Workflows.Declarative.IHttpRequestHandler.SendAsync(Microsoft.Agents.AI.Workflows.Declarative.HttpRequestInfo! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<Microsoft.Agents.AI.Workflows.Declarative.HttpRequestResult!>!
+Microsoft.Agents.AI.Workflows.Declarative.IMcpToolHandler
+Microsoft.Agents.AI.Workflows.Declarative.IMcpToolHandler.InvokeToolAsync(string! serverUrl, string? serverLabel, string! toolName, System.Collections.Generic.IDictionary<string!, object?>? arguments, System.Collections.Generic.IDictionary<string!, string!>? headers, string? connectionName, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<Microsoft.Extensions.AI.McpServerToolResultContent!>!
+Microsoft.Agents.AI.Workflows.Declarative.Kit.ActionExecutor
+Microsoft.Agents.AI.Workflows.Declarative.Kit.ActionExecutor.ActionExecutor(string! id, Microsoft.Agents.AI.Workflows.Declarative.Kit.FormulaSession! session) -> void
+Microsoft.Agents.AI.Workflows.Declarative.Kit.ActionExecutor<TMessage>
+Microsoft.Agents.AI.Workflows.Declarative.Kit.ActionExecutor<TMessage>.ActionExecutor(string! id, Microsoft.Agents.AI.Workflows.Declarative.Kit.FormulaSession! session) -> void
+Microsoft.Agents.AI.Workflows.Declarative.Kit.ActionExecutor<TMessage>.ResetAsync() -> System.Threading.Tasks.ValueTask
+Microsoft.Agents.AI.Workflows.Declarative.Kit.ActionExecutorResult
+Microsoft.Agents.AI.Workflows.Declarative.Kit.ActionExecutorResult.<Clone>$() -> Microsoft.Agents.AI.Workflows.Declarative.Kit.ActionExecutorResult!
+Microsoft.Agents.AI.Workflows.Declarative.Kit.ActionExecutorResult.Equals(Microsoft.Agents.AI.Workflows.Declarative.Kit.ActionExecutorResult? other) -> bool
+Microsoft.Agents.AI.Workflows.Declarative.Kit.ActionExecutorResult.ExecutorId.get -> string!
+Microsoft.Agents.AI.Workflows.Declarative.Kit.ActionExecutorResult.Result.get -> object?
+Microsoft.Agents.AI.Workflows.Declarative.Kit.AgentExecutor
+Microsoft.Agents.AI.Workflows.Declarative.Kit.AgentExecutor.AgentExecutor(string! id, Microsoft.Agents.AI.Workflows.Declarative.Kit.FormulaSession! session, Microsoft.Agents.AI.Workflows.Declarative.ResponseAgentProvider! agentProvider) -> void
+Microsoft.Agents.AI.Workflows.Declarative.Kit.AgentExecutor.InvokeAgentAsync(Microsoft.Agents.AI.Workflows.IWorkflowContext! context, string! agentName, string? conversationId, bool autoSend, System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>? inputMessages = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.AgentResponse!>
+Microsoft.Agents.AI.Workflows.Declarative.Kit.DelegateAction<TMessage>
+Microsoft.Agents.AI.Workflows.Declarative.Kit.DelegateExecutor
+Microsoft.Agents.AI.Workflows.Declarative.Kit.DelegateExecutor.DelegateExecutor(string! id, Microsoft.Agents.AI.Workflows.Declarative.Kit.FormulaSession! session, Microsoft.Agents.AI.Workflows.Declarative.Kit.DelegateAction<Microsoft.Agents.AI.Workflows.Declarative.Kit.ActionExecutorResult!>? action = null) -> void
+Microsoft.Agents.AI.Workflows.Declarative.Kit.DelegateExecutor<TMessage>
+Microsoft.Agents.AI.Workflows.Declarative.Kit.DelegateExecutor<TMessage>.DelegateExecutor(string! id, Microsoft.Agents.AI.Workflows.Declarative.Kit.FormulaSession! session, Microsoft.Agents.AI.Workflows.Declarative.Kit.DelegateAction<TMessage>? action = null) -> void
+Microsoft.Agents.AI.Workflows.Declarative.Kit.FormulaSession
+Microsoft.Agents.AI.Workflows.Declarative.Kit.FormulaSession.FormulaSession() -> void
+Microsoft.Agents.AI.Workflows.Declarative.Kit.IWorkflowContextExtensions
+Microsoft.Agents.AI.Workflows.Declarative.Kit.PortableValueExtensions
+Microsoft.Agents.AI.Workflows.Declarative.Kit.RootExecutor<TInput>
+Microsoft.Agents.AI.Workflows.Declarative.Kit.RootExecutor<TInput>.InitializeEnvironmentAsync(Microsoft.Agents.AI.Workflows.IWorkflowContext! context, params string![]! variableNames) -> System.Threading.Tasks.ValueTask
+Microsoft.Agents.AI.Workflows.Declarative.Kit.RootExecutor<TInput>.ResetAsync() -> System.Threading.Tasks.ValueTask
+Microsoft.Agents.AI.Workflows.Declarative.Kit.RootExecutor<TInput>.RootExecutor(string! id, Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowOptions! options, System.Func<TInput, Microsoft.Extensions.AI.ChatMessage!>? inputTransform) -> void
+Microsoft.Agents.AI.Workflows.Declarative.Kit.RootExecutor<TInput>.Session.get -> Microsoft.Agents.AI.Workflows.Declarative.Kit.FormulaSession!
+Microsoft.Agents.AI.Workflows.Declarative.Kit.UnassignedValue
+Microsoft.Agents.AI.Workflows.Declarative.Kit.UnassignedValue.<Clone>$() -> Microsoft.Agents.AI.Workflows.Declarative.Kit.UnassignedValue!
+Microsoft.Agents.AI.Workflows.Declarative.Kit.UnassignedValue.Equals(Microsoft.Agents.AI.Workflows.Declarative.Kit.UnassignedValue? other) -> bool
+Microsoft.Agents.AI.Workflows.Declarative.Kit.UnassignedValue.UnassignedValue() -> void
+Microsoft.Agents.AI.Workflows.Declarative.Kit.VariableType
+Microsoft.Agents.AI.Workflows.Declarative.Kit.VariableType.Equals(Microsoft.Agents.AI.Workflows.Declarative.Kit.VariableType? other) -> bool
+Microsoft.Agents.AI.Workflows.Declarative.Kit.VariableType.HasSchema.get -> bool
+Microsoft.Agents.AI.Workflows.Declarative.Kit.VariableType.IsList.get -> bool
+Microsoft.Agents.AI.Workflows.Declarative.Kit.VariableType.IsRecord.get -> bool
+Microsoft.Agents.AI.Workflows.Declarative.Kit.VariableType.IsValid() -> bool
+Microsoft.Agents.AI.Workflows.Declarative.Kit.VariableType.Schema.get -> System.Collections.Frozen.FrozenDictionary<string!, Microsoft.Agents.AI.Workflows.Declarative.Kit.VariableType!>?
+Microsoft.Agents.AI.Workflows.Declarative.Kit.VariableType.Schema.init -> void
+Microsoft.Agents.AI.Workflows.Declarative.Kit.VariableType.Type.get -> System.Type!
+Microsoft.Agents.AI.Workflows.Declarative.Kit.VariableType.VariableType(System.Type! type) -> void
+Microsoft.Agents.AI.Workflows.Declarative.MessageActivityEvent
+Microsoft.Agents.AI.Workflows.Declarative.MessageActivityEvent.Message.get -> string!
+Microsoft.Agents.AI.Workflows.Declarative.ResponseAgentProvider
+Microsoft.Agents.AI.Workflows.Declarative.ResponseAgentProvider.AllowConcurrentInvocation.get -> bool
+Microsoft.Agents.AI.Workflows.Declarative.ResponseAgentProvider.AllowConcurrentInvocation.init -> void
+Microsoft.Agents.AI.Workflows.Declarative.ResponseAgentProvider.AllowMultipleToolCalls.get -> bool
+Microsoft.Agents.AI.Workflows.Declarative.ResponseAgentProvider.AllowMultipleToolCalls.init -> void
+Microsoft.Agents.AI.Workflows.Declarative.ResponseAgentProvider.Functions.get -> System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.AIFunction!>?
+Microsoft.Agents.AI.Workflows.Declarative.ResponseAgentProvider.Functions.init -> void
+Microsoft.Agents.AI.Workflows.Declarative.ResponseAgentProvider.ResponseAgentProvider() -> void
+[MAAI001]Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowJsonOptions
+[MAAI001]static Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowJsonOptions.Default.get -> System.Text.Json.JsonSerializerOptions!
+abstract Microsoft.Agents.AI.Workflows.Declarative.Kit.ActionExecutor.ExecuteAsync(Microsoft.Agents.AI.Workflows.IWorkflowContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<object?>
+abstract Microsoft.Agents.AI.Workflows.Declarative.Kit.ActionExecutor<TMessage>.ExecuteAsync(Microsoft.Agents.AI.Workflows.IWorkflowContext! context, TMessage message, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<object?>
+abstract Microsoft.Agents.AI.Workflows.Declarative.Kit.RootExecutor<TInput>.ExecuteAsync(TInput message, Microsoft.Agents.AI.Workflows.IWorkflowContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+abstract Microsoft.Agents.AI.Workflows.Declarative.ResponseAgentProvider.CreateConversationAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<string!>!
+abstract Microsoft.Agents.AI.Workflows.Declarative.ResponseAgentProvider.CreateMessageAsync(string! conversationId, Microsoft.Extensions.AI.ChatMessage! conversationMessage, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<Microsoft.Extensions.AI.ChatMessage!>!
+abstract Microsoft.Agents.AI.Workflows.Declarative.ResponseAgentProvider.GetMessageAsync(string! conversationId, string! messageId, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<Microsoft.Extensions.AI.ChatMessage!>!
+abstract Microsoft.Agents.AI.Workflows.Declarative.ResponseAgentProvider.GetMessagesAsync(string! conversationId, int? limit = null, string? after = null, string? before = null, bool newestFirst = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<Microsoft.Extensions.AI.ChatMessage!>!
+abstract Microsoft.Agents.AI.Workflows.Declarative.ResponseAgentProvider.InvokeAgentAsync(string! agentId, string? agentVersion, string? conversationId, System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>? messages, System.Collections.Generic.IDictionary<string!, object?>? inputArguments, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<Microsoft.Agents.AI.AgentResponseUpdate!>!
+override Microsoft.Agents.AI.Workflows.Declarative.Kit.ActionExecutor.ExecuteAsync(Microsoft.Agents.AI.Workflows.IWorkflowContext! context, Microsoft.Agents.AI.Workflows.Declarative.Kit.ActionExecutorResult! message, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<object?>
+override Microsoft.Agents.AI.Workflows.Declarative.Kit.ActionExecutor<TMessage>.HandleAsync(TMessage message, Microsoft.Agents.AI.Workflows.IWorkflowContext! context, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask
+override Microsoft.Agents.AI.Workflows.Declarative.Kit.ActionExecutorResult.Equals(object? obj) -> bool
+override Microsoft.Agents.AI.Workflows.Declarative.Kit.ActionExecutorResult.GetHashCode() -> int
+override Microsoft.Agents.AI.Workflows.Declarative.Kit.ActionExecutorResult.ToString() -> string!
+override Microsoft.Agents.AI.Workflows.Declarative.Kit.DelegateExecutor<TMessage>.ExecuteAsync(Microsoft.Agents.AI.Workflows.IWorkflowContext! context, TMessage message, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<object?>
+override Microsoft.Agents.AI.Workflows.Declarative.Kit.RootExecutor<TInput>.HandleAsync(TInput message, Microsoft.Agents.AI.Workflows.IWorkflowContext! context, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask
+override Microsoft.Agents.AI.Workflows.Declarative.Kit.UnassignedValue.Equals(object? obj) -> bool
+override Microsoft.Agents.AI.Workflows.Declarative.Kit.UnassignedValue.GetHashCode() -> int
+override Microsoft.Agents.AI.Workflows.Declarative.Kit.UnassignedValue.ToString() -> string!
+override Microsoft.Agents.AI.Workflows.Declarative.Kit.VariableType.Equals(object? obj) -> bool
+override Microsoft.Agents.AI.Workflows.Declarative.Kit.VariableType.GetHashCode() -> int
+static Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowBuilder.Build<TInput>(System.IO.TextReader! yamlReader, Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowOptions! options, System.Func<TInput, Microsoft.Extensions.AI.ChatMessage!>? inputTransform = null) -> Microsoft.Agents.AI.Workflows.Workflow!
+static Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowBuilder.Build<TInput>(string! workflowFile, Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowOptions! options, System.Func<TInput, Microsoft.Extensions.AI.ChatMessage!>? inputTransform = null) -> Microsoft.Agents.AI.Workflows.Workflow!
+static Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowBuilder.DefaultTransform(object! message) -> Microsoft.Extensions.AI.ChatMessage!
+static Microsoft.Agents.AI.Workflows.Declarative.Kit.ActionExecutor.IsMatch<TValue>(TValue! value, object? message) -> bool
+static Microsoft.Agents.AI.Workflows.Declarative.Kit.ActionExecutorResult.operator !=(Microsoft.Agents.AI.Workflows.Declarative.Kit.ActionExecutorResult? left, Microsoft.Agents.AI.Workflows.Declarative.Kit.ActionExecutorResult? right) -> bool
+static Microsoft.Agents.AI.Workflows.Declarative.Kit.ActionExecutorResult.operator ==(Microsoft.Agents.AI.Workflows.Declarative.Kit.ActionExecutorResult? left, Microsoft.Agents.AI.Workflows.Declarative.Kit.ActionExecutorResult? right) -> bool
+static Microsoft.Agents.AI.Workflows.Declarative.Kit.IWorkflowContextExtensions.ConvertValueAsync(this Microsoft.Agents.AI.Workflows.IWorkflowContext! context, Microsoft.Agents.AI.Workflows.Declarative.Kit.VariableType! targetType, string! expression, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<object?>
+static Microsoft.Agents.AI.Workflows.Declarative.Kit.IWorkflowContextExtensions.ConvertValueAsync(this Microsoft.Agents.AI.Workflows.IWorkflowContext! context, Microsoft.Agents.AI.Workflows.Declarative.Kit.VariableType! targetType, string! key, string? scopeName = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<object?>
+static Microsoft.Agents.AI.Workflows.Declarative.Kit.IWorkflowContextExtensions.EvaluateListAsync<TElement>(this Microsoft.Agents.AI.Workflows.IWorkflowContext! context, string! expression, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.IList<TElement>?>
+static Microsoft.Agents.AI.Workflows.Declarative.Kit.IWorkflowContextExtensions.EvaluateValueAsync(this Microsoft.Agents.AI.Workflows.IWorkflowContext! context, string! expression, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<object?>
+static Microsoft.Agents.AI.Workflows.Declarative.Kit.IWorkflowContextExtensions.EvaluateValueAsync<TValue>(this Microsoft.Agents.AI.Workflows.IWorkflowContext! context, string! expression, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<TValue?>
+static Microsoft.Agents.AI.Workflows.Declarative.Kit.IWorkflowContextExtensions.FormatTemplateAsync(this Microsoft.Agents.AI.Workflows.IWorkflowContext! context, System.Collections.Generic.IEnumerable<string!>! lines, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<string!>
+static Microsoft.Agents.AI.Workflows.Declarative.Kit.IWorkflowContextExtensions.FormatTemplateAsync(this Microsoft.Agents.AI.Workflows.IWorkflowContext! context, string! line, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<string!>
+static Microsoft.Agents.AI.Workflows.Declarative.Kit.IWorkflowContextExtensions.ReadListAsync<TElement>(this Microsoft.Agents.AI.Workflows.IWorkflowContext! context, string! key, string? scopeName = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.IList<TElement>?>
+static Microsoft.Agents.AI.Workflows.Declarative.Kit.PortableValueExtensions.Normalize(this Microsoft.Agents.AI.Workflows.PortableValue! value) -> object?
+static Microsoft.Agents.AI.Workflows.Declarative.Kit.PortableValueExtensions.NormalizePortableValue(this object? value) -> object?
+static Microsoft.Agents.AI.Workflows.Declarative.Kit.PortableValueExtensions.NormalizePortableValues(this System.Collections.Generic.IDictionary<string!, object?>? source) -> System.Collections.Generic.IDictionary<string!, object?>?
+static Microsoft.Agents.AI.Workflows.Declarative.Kit.RootExecutor<TInput>.DefaultInputTransform(TInput message) -> Microsoft.Extensions.AI.ChatMessage!
+static Microsoft.Agents.AI.Workflows.Declarative.Kit.UnassignedValue.Instance.get -> Microsoft.Agents.AI.Workflows.Declarative.Kit.UnassignedValue!
+static Microsoft.Agents.AI.Workflows.Declarative.Kit.UnassignedValue.operator !=(Microsoft.Agents.AI.Workflows.Declarative.Kit.UnassignedValue? left, Microsoft.Agents.AI.Workflows.Declarative.Kit.UnassignedValue? right) -> bool
+static Microsoft.Agents.AI.Workflows.Declarative.Kit.UnassignedValue.operator ==(Microsoft.Agents.AI.Workflows.Declarative.Kit.UnassignedValue? left, Microsoft.Agents.AI.Workflows.Declarative.Kit.UnassignedValue? right) -> bool
+static Microsoft.Agents.AI.Workflows.Declarative.Kit.VariableType.IsValid(System.Type! type) -> bool
+static Microsoft.Agents.AI.Workflows.Declarative.Kit.VariableType.IsValid<TValue>() -> bool
+static Microsoft.Agents.AI.Workflows.Declarative.Kit.VariableType.List(params System.Collections.Generic.IEnumerable<(string! Key, Microsoft.Agents.AI.Workflows.Declarative.Kit.VariableType! Type)>! fields) -> Microsoft.Agents.AI.Workflows.Declarative.Kit.VariableType!
+static Microsoft.Agents.AI.Workflows.Declarative.Kit.VariableType.Record(params System.Collections.Generic.IEnumerable<(string! Key, Microsoft.Agents.AI.Workflows.Declarative.Kit.VariableType! Type)>! fields) -> Microsoft.Agents.AI.Workflows.Declarative.Kit.VariableType!
+static Microsoft.Agents.AI.Workflows.Declarative.Kit.VariableType.implicit operator Microsoft.Agents.AI.Workflows.Declarative.Kit.VariableType!(System.Type! type) -> Microsoft.Agents.AI.Workflows.Declarative.Kit.VariableType!
+static Microsoft.Agents.AI.Workflows.Declarative.ResponseAgentProvider.ConvertDictionaryToJson(System.Collections.Generic.IDictionary<string!, object?>! inputArguments) -> System.Text.Json.Nodes.JsonNode!
+virtual Microsoft.Agents.AI.Workflows.Declarative.Kit.DelegateAction<TMessage>.Invoke(Microsoft.Agents.AI.Workflows.IWorkflowContext! context, TMessage message, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask

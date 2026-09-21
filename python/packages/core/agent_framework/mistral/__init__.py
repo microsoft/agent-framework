@@ -9,9 +9,13 @@ import importlib
 from typing import Any
 
 _IMPORTS: dict[str, tuple[str, str]] = {
+    "MistralChatClient": ("agent_framework_mistral", "agent-framework-mistral"),
+    "MistralChatOptions": ("agent_framework_mistral", "agent-framework-mistral"),
     "MistralEmbeddingClient": ("agent_framework_mistral", "agent-framework-mistral"),
     "MistralEmbeddingOptions": ("agent_framework_mistral", "agent-framework-mistral"),
     "MistralEmbeddingSettings": ("agent_framework_mistral", "agent-framework-mistral"),
+    "MistralSettings": ("agent_framework_mistral", "agent-framework-mistral"),
+    "RawMistralChatClient": ("agent_framework_mistral", "agent-framework-mistral"),
 }
 
 

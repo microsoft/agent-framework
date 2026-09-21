@@ -53,8 +53,10 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Literal
 
 from agent_framework import FunctionTool, tool
+from agent_framework._telemetry import mark_feature_used
 from agent_framework._tools import SHELL_TOOL_KIND_VALUE
 
+from .._feature_usage import FeatureIndex
 from ._policy import ShellPolicy, ShellRequest
 from ._session import ShellSession
 from ._truncate import truncate_head_tail as _truncate_bytes
@@ -445,6 +447,7 @@ class DockerShellTool:
                 caller does not need to wrap the call in
                 :func:`asyncio.wait_for`.
         """
+        mark_feature_used(FeatureIndex.TOOLS_SHELL)
         request = ShellRequest(command=command, workdir=self._workdir)
         decision = self._policy.evaluate(request)
         if decision.decision == "deny":

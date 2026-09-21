@@ -8,8 +8,10 @@ import inspect
 import json
 import logging
 import uuid
-from collections.abc import AsyncGenerator
-from typing import Any, cast, get_args, get_origin
+from collections.abc import AsyncGenerator, Awaitable, Callable
+from functools import partial
+from types import UnionType
+from typing import Any, Union, cast, get_args, get_origin, get_type_hints
 
 from ag_ui.core import (
     ActivitySnapshotEvent,
@@ -24,15 +26,34 @@ from ag_ui.core import (
     ToolCallEndEvent,
     ToolCallStartEvent,
 )
-from agent_framework import AgentResponse, AgentResponseUpdate, Content, Message, Workflow, WorkflowRunState
+from agent_framework import (
+    AgentResponse,
+    AgentResponseUpdate,
+    CheckpointStorage,
+    Content,
+    Message,
+    Workflow,
+    WorkflowEvent,
+    WorkflowRunState,
+)
+from agent_framework._workflows._typing_utils import (  # pyright: ignore[reportPrivateUsage]
+    is_instance_of,
+    try_coerce_to_type,
+)
+from agent_framework.observability import (
+    _use_telemetry_conversation_id,  # pyright: ignore[reportPrivateUsage]
+)
 
 from ._message_adapters import normalize_agui_input_messages
 from ._run_common import (
     FlowState,
+    _approval_interrupt_for_function_call,  # pyright: ignore[reportPrivateUsage]
+    _approval_response_schema,  # pyright: ignore[reportPrivateUsage]
     _build_run_finished_event,
     _close_reasoning_block,
     _emit_content,
     _extract_resume_payload,
+    _iterate_with_context,
     _normalize_resume_interrupts,
     _resume_contract_error,
 )
@@ -40,6 +61,10 @@ from ._utils import canonical_function_arguments, generate_event_id, make_json_s
 
 logger = logging.getLogger(__name__)
 
+_BASELINE_OMITTED = object()
+
+
+_PUBLIC_WORKFLOW_ERROR_MESSAGE = "Workflow execution failed."
 
 _TERMINAL_STATES: set[str] = {
     WorkflowRunState.IDLE.value,
@@ -107,7 +132,10 @@ def _workflow_interrupt_value(request_data: Any) -> Any:
     return {"data": safe_request_data}
 
 
-def _workflow_interrupt_metadata(request_payload: dict[str, Any], value: Any) -> dict[str, Any]:
+def _workflow_interrupt_metadata(
+    request_payload: dict[str, Any],
+    value: Any,
+) -> dict[str, Any]:
     """Build Agent Framework metadata for workflow request_info interrupts."""
     agent_framework_metadata = {
         key: make_json_safe(value)
@@ -123,6 +151,99 @@ def _workflow_interrupt_metadata(request_payload: dict[str, Any], value: Any) ->
         if value is not None
     }
     return {"agent_framework": agent_framework_metadata}
+
+
+def _attach_checkpoint_id_to_interrupts(
+    interrupts: list[dict[str, Any]],
+    checkpoint_id: str | None,
+) -> list[dict[str, Any]]:
+    """Attach ``checkpoint_id`` to each interrupt's ``metadata.agent_framework``.
+
+    Multi-worker hosts need the pause checkpoint on the wire so the next resume can pass
+    ``forwardedProps.checkpoint_id`` without a side-channel lookup. No-op when checkpointing
+    is inactive or the id is already present.
+    """
+    if not checkpoint_id or not interrupts:
+        return interrupts
+
+    attached: list[dict[str, Any]] = []
+    for interrupt in interrupts:
+        entry = dict(interrupt)
+        metadata = entry.get("metadata")
+        if isinstance(metadata, dict):
+            metadata = dict(metadata)
+        else:
+            metadata = {}
+        agent_framework = metadata.get("agent_framework")
+        if isinstance(agent_framework, dict):
+            agent_framework = dict(agent_framework)
+        else:
+            agent_framework = {}
+        agent_framework.setdefault("checkpoint_id", checkpoint_id)
+        metadata["agent_framework"] = agent_framework
+        entry["metadata"] = metadata
+        attached.append(entry)
+    return attached
+
+
+def _interrupt_request_ids(interrupts: list[dict[str, Any]]) -> set[str]:
+    return {str(item["id"]) for item in interrupts if item.get("id") is not None}
+
+
+async def _pause_checkpoint_id_for_interrupts(
+    *,
+    workflow: Workflow,
+    checkpoint_storage: CheckpointStorage | None,
+    interrupts: list[dict[str, Any]],
+    known_checkpoint_id: str | None = None,
+    baseline_checkpoint_id: Any = _BASELINE_OMITTED,
+) -> str | None:
+    """Resolve the pause checkpoint for *this* run's interrupts via core.
+
+    When ``baseline_checkpoint_id`` is omitted, core uses the baseline captured at
+    ``workflow.run()`` start. Pass ``None`` explicitly for short-circuit paths that
+    did not call ``run()`` and should advertise the current runner id when present.
+    """
+    if not interrupts:
+        return None
+
+    resolve = getattr(workflow, "resolve_pause_checkpoint_id", None)
+    if not callable(resolve):
+        return None
+
+    # getattr returns a plain object to the type checker; cast to an awaitable callable.
+    resolve_fn = cast(
+        Callable[..., Awaitable[str | None]],
+        resolve,
+    )
+    kwargs: dict[str, Any] = {
+        "checkpoint_storage": checkpoint_storage,
+        "known_checkpoint_id": known_checkpoint_id,
+    }
+    if baseline_checkpoint_id is not _BASELINE_OMITTED:
+        kwargs["baseline_checkpoint_id"] = baseline_checkpoint_id
+    return await resolve_fn(_interrupt_request_ids(interrupts), **kwargs)
+
+
+async def _interrupts_with_pause_checkpoint(
+    *,
+    interrupts: list[dict[str, Any]],
+    workflow: Workflow,
+    checkpoint_storage: CheckpointStorage | None,
+    known_checkpoint_id: str | None = None,
+    baseline_checkpoint_id: Any = _BASELINE_OMITTED,
+) -> list[dict[str, Any]]:
+    """Attach a run-scoped pause checkpoint id to interrupts when available."""
+    if not interrupts:
+        return interrupts
+    pause_checkpoint_id = await _pause_checkpoint_id_for_interrupts(
+        workflow=workflow,
+        checkpoint_storage=checkpoint_storage,
+        interrupts=interrupts,
+        known_checkpoint_id=known_checkpoint_id,
+        baseline_checkpoint_id=baseline_checkpoint_id,
+    )
+    return _attach_checkpoint_id_to_interrupts(interrupts, pause_checkpoint_id)
 
 
 async def _pending_request_events(workflow: Workflow) -> dict[str, Any]:
@@ -146,6 +267,51 @@ async def _pending_request_events(workflow: Workflow) -> dict[str, Any]:
     return {}
 
 
+async def _pending_request_events_from_checkpoint(
+    checkpoint_id: str,
+    checkpoint_storage: CheckpointStorage | None = None,
+    *,
+    workflow: Any | None = None,
+) -> dict[str, Any]:
+    """Read pending request_info events from a persisted checkpoint without restoring it.
+
+    Resume responses are coerced against the requests that were pending when the
+    checkpoint was written. On a cold checkpoint resume those requests are not yet live
+    on the workflow instance, so the coercion cannot see them. Reading
+    ``pending_request_info_events`` straight from the persisted ``WorkflowCheckpoint``
+    exposes them without running any executor ``on_checkpoint_restore`` hook; the single
+    ``workflow.run(checkpoint_id=...)`` then performs the one real restore, so the
+    restore -- and every custom restore hook -- runs exactly once per resume.
+
+    ``checkpoint_storage`` is preferred when provided. Otherwise the workflow's
+    effective builder/runtime storage is used when ``has_checkpointing()`` is true,
+    so AG-UI can round-trip pause IDs emitted from ``WorkflowBuilder(checkpoint_storage=...)``
+    without requiring a duplicate AG-UI storage argument.
+    """
+    try:
+        if checkpoint_storage is not None:
+            checkpoint = await checkpoint_storage.load(checkpoint_id)
+        else:
+            context = getattr(getattr(workflow, "_runner", None), "context", None)
+            if context is None or not context.has_checkpointing():
+                raise ValueError(
+                    "Resuming a checkpoint with an AG-UI resume payload requires checkpoint_storage "
+                    "(or WorkflowBuilder checkpoint storage on the workflow instance)."
+                )
+            checkpoint = await context.load_checkpoint(checkpoint_id)
+    except ValueError:
+        raise
+    except Exception:
+        logger.warning(
+            "Could not load checkpoint for resume-response coercion; the core run will surface any error.",
+            exc_info=True,
+        )
+        return {}
+    if checkpoint is None:
+        return {}
+    return dict(checkpoint.pending_request_info_events or {})
+
+
 def _interrupt_entry_for_request_event(request_event: Any) -> dict[str, Any] | None:
     """Build AG-UI interrupt payload from a workflow request_info event."""
     request_payload = _request_payload_from_request_event(request_event)
@@ -153,6 +319,26 @@ def _interrupt_entry_for_request_event(request_event: Any) -> dict[str, Any] | N
         return None
 
     value = _workflow_interrupt_value(request_payload.get("data"))
+    request_data = getattr(request_event, "data", None)
+    if (
+        isinstance(request_data, Content)
+        and request_data.type == "function_approval_request"
+        and request_data.function_call is not None
+    ):
+        workflow_metadata = _workflow_interrupt_metadata(request_payload, value)["agent_framework"]
+        workflow_metadata.pop("type", None)
+        response_schema = (
+            _approval_response_schema()
+            if request_data.function_call.additional_properties.get("server_label")
+            else None
+        )
+        return _approval_interrupt_for_function_call(
+            interrupt_id=str(request_payload["request_id"]),
+            function_call=request_data.function_call,
+            metadata=workflow_metadata,
+            response_schema=response_schema,
+        )
+
     entry: dict[str, Any] = {
         "id": str(request_payload["request_id"]),
         "reason": "input_required",
@@ -265,36 +451,16 @@ def _pending_workflow_interrupt_ids(pending_events: dict[str, Any]) -> set[str]:
 def _resume_error_for_pending_workflow_requests(
     resume_entries: list[dict[str, Any]],
 ) -> RunErrorEvent | None:
-    """Return a workflow resume error for explicit non-resolved canonical resume entries."""
+    """Return a workflow resume error for unsupported canonical resume entries."""
     for entry in resume_entries:
         interrupt_id = str(entry["interrupt_id"])
         status = entry.get("status")
-        if status == "cancelled":
-            return RunErrorEvent(
-                message=f"Workflow resume for interruptId '{interrupt_id}' was cancelled.",
-                code="WORKFLOW_RESUME_CANCELLED",
-            )
-        if status not in {None, "resolved"}:
+        if status not in {None, "resolved", "cancelled"}:
             return RunErrorEvent(
                 message=f"Unsupported workflow resume status '{status}' for interruptId '{interrupt_id}'.",
                 code="WORKFLOW_RESUME_INVALID",
             )
     return None
-
-
-def _consume_cancelled_workflow_requests(workflow: Workflow, resume_entries: list[dict[str, Any]]) -> None:
-    """Remove cancelled workflow request_info events from the runner context."""
-    cancelled_ids = {str(entry["interrupt_id"]) for entry in resume_entries if entry.get("status") == "cancelled"}
-    if not cancelled_ids:
-        return
-
-    runner_context = getattr(workflow, "_runner_context", None)
-    pending_events = getattr(runner_context, "_pending_request_info_events", None)
-    if not isinstance(pending_events, dict):
-        return
-
-    for interrupt_id in cancelled_ids:
-        pending_events.pop(interrupt_id, None)
 
 
 def _coerce_json_value(value: Any) -> Any:
@@ -401,6 +567,121 @@ def _coerce_message(value: Any) -> Message | None:
     )
 
 
+def _approval_argument_value_matches(original_value: Any, edited_value: Any) -> bool:
+    """Return whether an edited approval argument preserves its JSON value type."""
+    if isinstance(original_value, bool):
+        return isinstance(edited_value, bool)
+    if isinstance(original_value, int) and not isinstance(original_value, bool):
+        return isinstance(edited_value, int) and not isinstance(edited_value, bool)
+    if isinstance(original_value, float):
+        return isinstance(edited_value, (int, float)) and not isinstance(edited_value, bool)
+    if isinstance(original_value, str):
+        return isinstance(edited_value, str)
+    if isinstance(original_value, list):
+        return isinstance(edited_value, list)
+    if isinstance(original_value, dict):
+        return isinstance(edited_value, dict)
+    return True
+
+
+def _coerce_compact_approval_response(request_data: Content, candidate: dict[str, Any]) -> Content | None:
+    """Reconstruct a workflow approval response from client-owned decision fields."""
+    if {"type", "id", "function_call"}.intersection(candidate):
+        return None
+
+    approved = candidate.get("approved", candidate.get("accepted"))
+    if not isinstance(approved, bool):
+        return None
+
+    direct_edited_arguments = {
+        key: value for key, value in candidate.items() if key not in {"approved", "accepted", "editedArgs"}
+    }
+    standard_edited_arguments = candidate.get("editedArgs")
+    if request_data.function_call is None:
+        return None
+    if (
+        direct_edited_arguments or standard_edited_arguments is not None
+    ) and request_data.function_call.additional_properties.get("server_label"):
+        return None
+
+    original_arguments = request_data.function_call.parse_arguments() or {}
+    if standard_edited_arguments is not None:
+        if not isinstance(standard_edited_arguments, dict) or direct_edited_arguments:
+            return None
+        edited_arguments = cast(dict[str, Any], standard_edited_arguments)
+        if set(edited_arguments) != set(original_arguments):
+            return None
+        final_arguments = dict(edited_arguments)
+    else:
+        edited_arguments = direct_edited_arguments
+        if not set(edited_arguments).issubset(original_arguments):
+            return None
+        final_arguments = {**original_arguments, **edited_arguments}
+
+    if any(
+        not _approval_argument_value_matches(original_arguments[name], edited_arguments[name])
+        for name in edited_arguments
+    ):
+        return None
+    if not edited_arguments:
+        return request_data.to_function_approval_response(approved)
+
+    edited_function_call = Content.from_function_call(
+        call_id=request_data.function_call.call_id or "",
+        name=request_data.function_call.name or "",
+        arguments=final_arguments,
+        informational_only=request_data.function_call.informational_only,
+        annotations=request_data.function_call.annotations,
+        additional_properties=request_data.function_call.additional_properties,
+        raw_representation=request_data.function_call.raw_representation,
+    )
+    response = request_data.to_function_approval_response(approved)
+    response.function_call = edited_function_call
+    return response
+
+
+def _without_optional(annotation: Any) -> Any:
+    """Unwrap ``X | None`` so optional fields normalize like their plain counterpart."""
+    if get_origin(annotation) not in (Union, UnionType):
+        return annotation
+    members = [member for member in get_args(annotation) if member is not type(None)]
+    return members[0] if len(members) == 1 else annotation
+
+
+def _normalize_agui_message_fields(response_type: Any, candidate: Any) -> Any:
+    """Convert AG-UI message payloads for fields the response type declares as Message.
+
+    Core coercion only understands the canonical ``contents`` form, so AG-UI wire shapes
+    (``{"role": ..., "content": ...}`` and bare strings) are translated here.
+    """
+    if not isinstance(candidate, dict):
+        return candidate
+
+    try:
+        field_types = get_type_hints(response_type)
+    except Exception:
+        return candidate
+
+    normalized = dict(cast(dict[str, Any], candidate))
+    for name, annotation in field_types.items():
+        if name not in normalized:
+            continue
+        annotation = _without_optional(annotation)
+        target_type = get_origin(annotation) or annotation
+        if target_type is Message:
+            message = _coerce_message(normalized[name])
+            if message is not None:
+                normalized[name] = message
+        elif target_type is list and get_args(annotation)[:1] == (Message,):
+            items = normalized[name]
+            if not isinstance(items, list):
+                continue
+            messages = [_coerce_message(item) for item in cast(list[Any], items)]
+            if all(message is not None for message in messages):
+                normalized[name] = messages
+    return normalized
+
+
 def _coerce_response_for_request(request_event: Any, value: Any) -> Any | None:
     """Coerce a candidate value into the request's expected response type."""
     response_type = getattr(request_event, "response_type", None)
@@ -447,6 +728,15 @@ def _coerce_response_for_request(request_event: Any, value: Any) -> Any | None:
     if target_type is Message:
         return _coerce_message(candidate)
     if target_type is Content:
+        request_data = getattr(request_event, "data", None)
+        if (
+            isinstance(request_data, Content)
+            and request_data.type == "function_approval_request"
+            and isinstance(candidate, dict)
+        ):
+            compact_response = _coerce_compact_approval_response(request_data, cast(dict[str, Any], candidate))
+            if compact_response is not None:
+                return compact_response
         return _coerce_content(candidate)
     if target_type is bool:
         return candidate if isinstance(candidate, bool) else None
@@ -455,13 +745,28 @@ def _coerce_response_for_request(request_event: Any, value: Any) -> Any | None:
     if target_type is float:
         return candidate if isinstance(candidate, (int, float)) and not isinstance(candidate, bool) else None
     if isinstance(target_type, type):
-        return candidate if isinstance(candidate, target_type) else None
+        coerced = try_coerce_to_type(_normalize_agui_message_fields(response_type, candidate), response_type)
+        return coerced if is_instance_of(coerced, response_type) else None
 
     # Unknown typing metadata: preserve value as-is.
     return candidate
 
 
-def _approval_response_matches_request(request_id: str, request_event: Any, response: Any) -> bool:
+def _is_compact_approval_response_payload(value: Any) -> bool:
+    """Return whether a value contains only client-owned approval decision fields."""
+    candidate = _coerce_json_value(value)
+    return isinstance(candidate, dict) and not {"type", "id", "function_call"}.intersection(
+        cast(dict[str, Any], candidate)
+    )
+
+
+def _approval_response_matches_request(
+    request_id: str,
+    request_event: Any,
+    response: Any,
+    *,
+    allow_edited_arguments: bool = False,
+) -> bool:
     """Check whether an approval response matches the pending approval request."""
     request_data = getattr(request_event, "data", None)
     if not isinstance(request_data, Content) or request_data.type != "function_approval_request":
@@ -481,6 +786,8 @@ def _approval_response_matches_request(request_id: str, request_event: Any, resp
     if getattr(response_call, "name", None) != getattr(request_call, "name", None):
         return False
 
+    if allow_edited_arguments:
+        return True
     return canonical_function_arguments(response_call) == canonical_function_arguments(request_call)
 
 
@@ -503,7 +810,12 @@ def _single_pending_response_from_value(pending_events: dict[str, Any], value: A
         )
         return {}
 
-    if not _approval_response_matches_request(str(request_id), request_event, coerced_value):
+    if not _approval_response_matches_request(
+        str(request_id),
+        request_event,
+        coerced_value,
+        allow_edited_arguments=_is_compact_approval_response_payload(value),
+    ):
         logger.info(
             "Ignoring pending request response for request_id=%s: approval response does not match pending request",
             request_id,
@@ -544,7 +856,12 @@ def _coerce_responses_for_pending_requests(
                 _response_type_name(request_event),
             )
             continue
-        if not _approval_response_matches_request(request_key, request_event, coerced_value):
+        if not _approval_response_matches_request(
+            request_key,
+            request_event,
+            coerced_value,
+            allow_edited_arguments=_is_compact_approval_response_payload(value),
+        ):
             logger.info(
                 "Ignoring resume response for request_id=%s: approval response does not match pending request",
                 request_key,
@@ -589,7 +906,12 @@ def _coerce_responses_for_pending_requests_strict(
                     code="WORKFLOW_RESUME_INVALID_RESPONSE",
                 ),
             )
-        if not _approval_response_matches_request(request_key, request_event, coerced_value):
+        if not _approval_response_matches_request(
+            request_key,
+            request_event,
+            coerced_value,
+            allow_edited_arguments=_is_compact_approval_response_payload(value),
+        ):
             return (
                 {},
                 RunErrorEvent(
@@ -709,6 +1031,17 @@ def _workflow_payload_to_contents(payload: Any) -> list[Content] | None:
     if isinstance(payload, AgentResponseUpdate):
         contents = list(payload.contents or [])
         role_field = payload.role
+        if role_field is None:
+            # ``role`` is optional and streamed continuation chunks routinely omit it.
+            # Keep their text -- previously dropped, so role-less text surfaced as a
+            # CUSTOM workflow_output instead of reasoning/assistant text -- alongside tool
+            # content. Approval requests stay excluded (see _TOOL_CONTENT_TYPES): a
+            # role-less approval interrupt from streamed content has no pending request to
+            # resume against.
+            role_less_contents = [
+                content for content in contents if content.type == "text" or content.type in _TOOL_CONTENT_TYPES
+            ]
+            return role_less_contents or None
         if isinstance(role_field, str):
             role = role_field
         else:
@@ -732,6 +1065,30 @@ def _workflow_payload_to_contents(payload: Any) -> list[Content] | None:
     return None
 
 
+def _as_reasoning_content(content: Content) -> Content:
+    """Re-tag plain text content as ``text_reasoning``.
+
+    Intermediate workflow output should surface as AG-UI reasoning (a collapsible
+    "thinking" block) rather than a final assistant message. Only ``text`` content
+    is converted; tool calls, results, and other content types pass through
+    unchanged so they still emit as their native AG-UI events.
+    """
+    if content.type != "text":
+        return content
+    return Content.from_text_reasoning(
+        id=content.id,
+        text=content.text,
+        # Carry encrypted reasoning metadata through unchanged: _emit_text_reasoning
+        # turns protected_data into a ReasoningEncryptedValueEvent and an
+        # ``encryptedValue`` on the snapshot entry, so dropping it here would break
+        # reasoning state continuity for intermediate content that carries it.
+        protected_data=content.protected_data,
+        annotations=content.annotations,
+        additional_properties=content.additional_properties or None,
+        raw_representation=content.raw_representation,
+    )
+
+
 def _event_name(event: Any) -> str:
     event_type = getattr(event, "type", None)
     if isinstance(event_type, str) and event_type:
@@ -753,8 +1110,9 @@ def _custom_event_value(event: Any) -> Any:
 
 
 def _details_message(details: Any) -> str:
+    """Extract an internal diagnostic message for server-side logging only."""
     if details is None:
-        return "Workflow execution failed."
+        return _PUBLIC_WORKFLOW_ERROR_MESSAGE
     if hasattr(details, "message"):
         message = getattr(details, "message")
         if isinstance(message, str) and message:
@@ -775,9 +1133,29 @@ def _details_code(details: Any) -> str | None:
 async def run_workflow_stream(
     input_data: dict[str, Any],
     workflow: Workflow,
+    *,
+    checkpoint_storage: CheckpointStorage | None = None,
+    checkpoint_id: str | None = None,
 ) -> AsyncGenerator[BaseEvent]:
-    """Run a Workflow and emit AG-UI protocol events."""
-    thread_id = input_data.get("thread_id") or input_data.get("threadId") or str(uuid.uuid4())
+    """Run a Workflow and emit AG-UI protocol events.
+
+    Execution failures expose a generic message and error code. Internal messages
+    and tracebacks are logged server-side, not included in public error events.
+
+    Args:
+        input_data: Normalized AG-UI request payload (a ``RunAgentInput`` dump).
+        workflow: The core ``Workflow`` instance to execute.
+        checkpoint_storage: Optional checkpoint storage forwarded to the core
+            workflow. When provided, the workflow creates a checkpoint at the end
+            of each superstep, mirroring ``Workflow.run(checkpoint_storage=...)``.
+        checkpoint_id: Optional checkpoint id to resume from. When provided the run
+            restores the persisted workflow state instead of starting a fresh turn,
+            mirroring ``Workflow.run(checkpoint_id=...)``. Any incoming messages are
+            treated as request-info responses (or ignored) rather than a new
+            start-executor message, so resume stays consistent with the core API.
+    """
+    supplied_thread_id = input_data.get("thread_id") or input_data.get("threadId")
+    thread_id = supplied_thread_id or str(uuid.uuid4())
     run_id = input_data.get("run_id") or input_data.get("runId") or str(uuid.uuid4())
     available_interrupts = input_data.get("available_interrupts") or input_data.get("availableInterrupts")
     if available_interrupts:
@@ -794,9 +1172,28 @@ async def run_workflow_stream(
     last_assistant_text: str | None = None
 
     resume_payload = _extract_resume_payload(input_data)
-    pending_before_run = await _pending_request_events(workflow)
+
+    # A checkpoint resume that carries an explicit resume payload targets the requests
+    # that were pending when the checkpoint was written; those only reappear on the live
+    # instance once the checkpoint is restored, so coerce against the checkpoint's
+    # persisted pending set instead. Only do so when a resume payload is present, so a
+    # pure checkpoint restore still surfaces its pending interrupts instead of tripping
+    # the "resume required" contract.
+    if checkpoint_id is not None and resume_payload is not None:
+        # Prefer the explicit AG-UI storage argument; otherwise allow the workflow's
+        # builder/runtime storage so builder-emitted pause IDs remain round-trippable.
+        if checkpoint_storage is None and not workflow._runner.context.has_checkpointing():  # pyright: ignore[reportPrivateUsage]
+            raise ValueError("Resuming a checkpoint with an AG-UI resume payload requires checkpoint_storage.")
+        pending_before_run = await _pending_request_events_from_checkpoint(
+            checkpoint_id,
+            checkpoint_storage,
+            workflow=workflow,
+        )
+    else:
+        pending_before_run = await _pending_request_events(workflow)
     pending_interrupt_ids = _pending_workflow_interrupt_ids(pending_before_run)
     resume_entries: list[dict[str, Any]] = []
+    cancelled_request_ids: set[str] = set()
     if pending_interrupt_ids:
         resume_entries, contract_error, contract_code = _resume_contract_error(
             resume_payload,
@@ -812,11 +1209,12 @@ async def run_workflow_stream(
             return
         resume_error = _resume_error_for_pending_workflow_requests(resume_entries)
         if resume_error is not None:
-            if getattr(resume_error, "code", None) == "WORKFLOW_RESUME_CANCELLED":
-                _consume_cancelled_workflow_requests(workflow, resume_entries)
             yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
             yield resume_error
             return
+        cancelled_request_ids = {
+            str(entry["interrupt_id"]) for entry in resume_entries if entry.get("status") == "cancelled"
+        }
 
     resume_responses = (
         _resume_entries_to_workflow_responses(resume_entries)
@@ -834,9 +1232,25 @@ async def run_workflow_stream(
         yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
         yield response_error
         return
+    if cancelled_request_ids:
+        await workflow.cancel_pending_requests(
+            cancelled_request_ids,
+            checkpoint_id=checkpoint_id,
+            checkpoint_storage=checkpoint_storage,
+        )
+        checkpoint_id = None
+        pending_before_run = {
+            request_id: request_event
+            for request_id, request_event in pending_before_run.items()
+            if str(getattr(request_event, "request_id", None) or request_id) not in cancelled_request_ids
+        }
     pending_interrupts = _interrupts_from_pending_requests(pending_before_run)
 
-    if not responses and pending_before_run:
+    # A checkpoint resume must always reach ``workflow.run(checkpoint_id=...)`` so the
+    # core restores persisted state and re-emits any pending requests from the
+    # checkpoint. ``pending_before_run`` reflects the live (pre-restore) instance, so
+    # short-circuiting on it here would skip the restore entirely.
+    if checkpoint_id is None and not responses and pending_before_run:
         yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
         for request_event in pending_before_run.values():
             request_payload = _request_payload_from_request_event(request_event)
@@ -850,12 +1264,30 @@ async def run_workflow_stream(
             interrupt_event_value = _workflow_interrupt_event_value(request_payload)
             if interrupt_event_value is not None:
                 yield CustomEvent(name=_INTERRUPT_CARD_EVENT_NAME, value=interrupt_event_value)
-        yield _build_run_finished_event(run_id=run_id, thread_id=thread_id, interrupts=pending_interrupts)
+        yield _build_run_finished_event(
+            run_id=run_id,
+            thread_id=thread_id,
+            interrupts=await _interrupts_with_pause_checkpoint(
+                interrupts=pending_interrupts,
+                workflow=workflow,
+                checkpoint_storage=checkpoint_storage,
+                baseline_checkpoint_id=None,
+            ),
+        )
         return
 
-    if not responses and not messages:
+    if checkpoint_id is None and not responses and not messages:
         yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
-        yield _build_run_finished_event(run_id=run_id, thread_id=thread_id, interrupts=pending_interrupts)
+        yield _build_run_finished_event(
+            run_id=run_id,
+            thread_id=thread_id,
+            interrupts=await _interrupts_with_pause_checkpoint(
+                interrupts=pending_interrupts,
+                workflow=workflow,
+                checkpoint_storage=checkpoint_storage,
+                baseline_checkpoint_id=None,
+            ),
+        )
         return
 
     def _drain_open_message() -> list[TextMessageEndEvent]:
@@ -866,6 +1298,49 @@ async def run_workflow_stream(
         flow.message_id = None
         flow.accumulated_text = ""
         return [TextMessageEndEvent(message_id=current_message_id)]
+
+    def _drain_open_tool_calls() -> list[ToolCallEndEvent]:
+        """Close any still-open real tool calls tracked in flow state.
+
+        AG-UI clients reject ``RUN_FINISHED`` (and a subsequent ``request_info``
+        tool call) while a prior ``TOOL_CALL_START`` remains open. Participant
+        agents that stream a ``function_call`` before pausing for approval leave
+        that real tool id open; end it here so the interrupt path matches the
+        native Agent ``_emit_approval_request`` behavior.
+
+        Marking the id in ``flow.tool_calls_ended`` also lets a later real
+        ``function_result`` in this run skip a duplicate ``TOOL_CALL_END``. On
+        resume, a fresh ``FlowState`` never STARTs that id, so
+        ``_emit_tool_result_common`` likewise suppresses an unmatched END and
+        emits ``TOOL_CALL_RESULT`` only — same as Agent approval resume.
+        """
+        events: list[ToolCallEndEvent] = []
+        for tool_call in flow.get_pending_without_end():
+            tool_call_id = tool_call.get("id")
+            if not tool_call_id:
+                continue
+            events.append(ToolCallEndEvent(tool_call_id=tool_call_id))
+            flow.tool_calls_ended.add(tool_call_id)
+        return events
+
+    def _drain_open_blocks() -> list[BaseEvent]:
+        """Close any open reasoning block, assistant text message, and tool calls.
+
+        Emitted before content that must not sit inside an open block: a terminal event
+        (RUN_FINISHED / RUN_ERROR, which must be the final events in the stream) or a
+        request_info tool call (non-reasoning message content). Otherwise the block's
+        REASONING_* / TEXT_MESSAGE_* end events would be flushed only by the post-loop
+        cleanup -- after the terminal event, or after the tool call. Open tool calls
+        must also end before those boundaries so clients do not reject the stream
+        with active tool-call errors. The inner helpers are no-ops when nothing is
+        open, so this is always safe to call (a later cleanup pass then simply does
+        nothing).
+        """
+        events: list[BaseEvent] = []
+        events.extend(_close_reasoning_block(flow))
+        events.extend(_drain_open_message())
+        events.extend(_drain_open_tool_calls())
+        return events
 
     fwd_kwargs: dict[str, Any] = {}
     if "forwarded_props" in input_data:
@@ -889,13 +1364,28 @@ async def run_workflow_stream(
             logger.debug("workflow.run() does not accept function_invocation_kwargs; dropping forwarded_props")
             fwd_kwargs = {}
 
-    try:
-        if responses:
-            event_stream = workflow.run(responses=responses, stream=True, **fwd_kwargs)
-        else:
-            event_stream = workflow.run(message=messages, stream=True, **fwd_kwargs)
+    # When checkpointing is not in play, keep the exact legacy call shape so duck-typed
+    # workflows with narrower ``run`` signatures keep working. Otherwise forward the
+    # checkpoint arguments as-is (``None`` included) and let core validate conflicts.
+    checkpoint_kwargs: dict[str, Any] = {}
+    if checkpoint_storage is not None or checkpoint_id is not None:
+        checkpoint_kwargs = {"checkpoint_storage": checkpoint_storage, "checkpoint_id": checkpoint_id}
 
-        async for event in event_stream:
+    # Core workflows emit failure events before re-raising; prefer one full exception traceback.
+    failure_event: WorkflowEvent | None = None
+    try:
+        telemetry_conversation_id = str(supplied_thread_id) if supplied_thread_id is not None else None
+        telemetry_context = partial(_use_telemetry_conversation_id, telemetry_conversation_id)
+        with telemetry_context():
+            if responses or checkpoint_id is not None:
+                # ``message`` is mutually exclusive with both ``responses`` and
+                # ``checkpoint_id`` in the core API; ``responses`` + ``checkpoint_id``
+                # restores the checkpoint and delivers the responses in a single call.
+                event_stream = workflow.run(stream=True, responses=responses or None, **checkpoint_kwargs, **fwd_kwargs)
+            else:
+                event_stream = workflow.run(message=messages, stream=True, **checkpoint_kwargs, **fwd_kwargs)
+
+        async for event in _iterate_with_context(event_stream, telemetry_context):
             event_type = getattr(event, "type", None)
 
             if event_type == "started":
@@ -909,8 +1399,13 @@ async def run_workflow_stream(
                 run_started_emitted = True
 
             if event_type == "failed":
+                failure_event = event
+                # Close any open reasoning block / text message so RUN_ERROR stays the
+                # last event a client receives for this run.
+                for end_event in _drain_open_blocks():
+                    yield end_event
                 details = getattr(event, "details", None)
-                yield RunErrorEvent(message=_details_message(details), code=_details_code(details))
+                yield RunErrorEvent(message=_PUBLIC_WORKFLOW_ERROR_MESSAGE, code=_details_code(details))
                 run_error_emitted = True
                 terminal_emitted = True
                 continue
@@ -922,9 +1417,21 @@ async def run_workflow_stream(
                 else:
                     state_value = str(getattr(state, "value", state))
                 if state_value in _TERMINAL_STATES and not terminal_emitted:
+                    # Close any open reasoning block and assistant text message before the
+                    # terminal event so RUN_FINISHED is always the last emitted event.
+                    for end_event in _drain_open_blocks():
+                        yield end_event
                     if not interrupts:
                         interrupts.extend(_interrupts_from_pending_requests(await _pending_request_events(workflow)))
-                    yield _build_run_finished_event(run_id=run_id, thread_id=thread_id, interrupts=interrupts)
+                    yield _build_run_finished_event(
+                        run_id=run_id,
+                        thread_id=thread_id,
+                        interrupts=await _interrupts_with_pause_checkpoint(
+                            interrupts=interrupts,
+                            workflow=workflow,
+                            checkpoint_storage=checkpoint_storage,
+                        ),
+                    )
                     terminal_emitted = True
                 elif state_value not in _TERMINAL_STATES:
                     yield CustomEvent(name="status", value={"state": state_value})
@@ -961,7 +1468,13 @@ async def run_workflow_stream(
                     "status": status,
                 }
                 if event_type == "executor_failed":
-                    executor_payload["details"] = make_json_safe(getattr(event, "details", None))
+                    failure_event = event
+                    details = getattr(event, "details", None)
+                    # Only project public fields; traceback and extra can contain backend data.
+                    executor_payload["details"] = {
+                        "message": _PUBLIC_WORKFLOW_ERROR_MESSAGE,
+                        "error_type": _details_code(details),
+                    }
                 else:
                     executor_payload["data"] = make_json_safe(getattr(event, "data", None))
 
@@ -973,7 +1486,10 @@ async def run_workflow_stream(
                 continue
 
             if event_type == "request_info":
-                for end_event in _drain_open_message():
+                # A request_info emits a tool call (non-reasoning message content), so any
+                # open reasoning block / text message must be closed first -- otherwise the
+                # tool call would sit inside an unclosed reasoning block.
+                for end_event in _drain_open_blocks():
                     yield end_event
                 request_payload = _request_payload_from_request_event(event)
                 if request_payload is None:
@@ -993,7 +1509,12 @@ async def run_workflow_stream(
                     yield CustomEvent(name=_INTERRUPT_CARD_EVENT_NAME, value=interrupt_event_value)
                 continue
 
-            if event_type in {"output", "data"}:
+            if event_type in {"output", "intermediate", "data"}:
+                # "intermediate" (and its deprecated alias "data") carry non-terminal
+                # output. Their text is surfaced as AG-UI reasoning so consumers render
+                # it as a collapsible "thinking" block instead of a final assistant
+                # message. "output" keeps the terminal-message behavior.
+                is_intermediate = event_type in {"intermediate", "data"}
                 output_payload = getattr(event, "data", None)
                 if isinstance(output_payload, BaseEvent):
                     yield output_payload
@@ -1012,15 +1533,25 @@ async def run_workflow_stream(
                             yield out_event
                 contents = _workflow_payload_to_contents(output_payload)
                 if contents:
-                    output_text = _text_from_contents(contents)
-                    skip_text = bool(output_text and output_text == last_assistant_text)
-                    for content in contents:
-                        for out_event in _emit_content(content, flow, predictive_handler=None, skip_text=skip_text):
-                            yield out_event
-                    if flow.message_id and flow.accumulated_text:
-                        last_assistant_text = flow.accumulated_text.strip() or last_assistant_text
-                    elif output_text:
-                        last_assistant_text = output_text
+                    if is_intermediate:
+                        # Reasoning is a separate channel from the final assistant
+                        # message, so the last_assistant_text dedup does not apply.
+                        for content in contents:
+                            reasoning_content = _as_reasoning_content(content)
+                            for out_event in _emit_content(
+                                reasoning_content, flow, predictive_handler=None, skip_text=False
+                            ):
+                                yield out_event
+                    else:
+                        output_text = _text_from_contents(contents)
+                        skip_text = bool(output_text and output_text == last_assistant_text)
+                        for content in contents:
+                            for out_event in _emit_content(content, flow, predictive_handler=None, skip_text=skip_text):
+                                yield out_event
+                        if flow.message_id and flow.accumulated_text:
+                            last_assistant_text = flow.accumulated_text.strip() or last_assistant_text
+                        elif output_text:
+                            last_assistant_text = output_text
                 else:
                     yield CustomEvent(name="workflow_output", value=make_json_safe(output_payload))
                 continue
@@ -1029,19 +1560,35 @@ async def run_workflow_stream(
             yield CustomEvent(name=_event_name(event), value=_custom_event_value(event))
 
     except Exception as exc:
+        failure_event = None
         logger.exception("Workflow AG-UI stream failed: %s", exc)
         if not run_started_emitted:
             yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
             run_started_emitted = True
+        # Close any open reasoning block / text message so RUN_ERROR stays the final event.
+        for end_event in _drain_open_blocks():
+            yield end_event
         if not run_error_emitted:
-            yield RunErrorEvent(message=str(exc), code=type(exc).__name__)
+            yield RunErrorEvent(message=_PUBLIC_WORKFLOW_ERROR_MESSAGE, code=type(exc).__name__)
             run_error_emitted = True
         terminal_emitted = True
+    finally:
+        if failure_event is not None:
+            details = getattr(failure_event, "details", None)
+            logger.error(
+                "Workflow execution failed (executor=%s): %s\n%s",
+                getattr(failure_event, "executor_id", None) or getattr(details, "executor_id", None),
+                _details_message(details),
+                getattr(details, "traceback", None) or "",
+            )
 
     for reasoning_evt in _close_reasoning_block(flow):
         yield reasoning_evt
 
     for end_event in _drain_open_message():
+        yield end_event
+
+    for end_event in _drain_open_tool_calls():
         yield end_event
 
     if not run_started_emitted:
@@ -1050,4 +1597,12 @@ async def run_workflow_stream(
     if not terminal_emitted and not run_error_emitted:
         if not interrupts:
             interrupts.extend(_interrupts_from_pending_requests(await _pending_request_events(workflow)))
-        yield _build_run_finished_event(run_id=run_id, thread_id=thread_id, interrupts=interrupts)
+        yield _build_run_finished_event(
+            run_id=run_id,
+            thread_id=thread_id,
+            interrupts=await _interrupts_with_pause_checkpoint(
+                interrupts=interrupts,
+                workflow=workflow,
+                checkpoint_storage=checkpoint_storage,
+            ),
+        )

@@ -60,6 +60,7 @@ covering basics, function tools, structured output, middleware, MCP, code interp
 | Sample | Description |
 | --- | --- |
 | [GitHub Copilot](./github-copilot/Agent_With_GitHubCopilot/) | Create an AIAgent using GitHub Copilot SDK |
+| [GitHub Copilot BYOK](./github-copilot/Agent_With_GitHubCopilot_BYOK/) | Route GitHub Copilot agent requests through your own endpoint (Bring Your Own Key) |
 
 ### [Google Gemini](./google-gemini/)
 

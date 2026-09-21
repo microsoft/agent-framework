@@ -3,36 +3,48 @@
 // Hosted Local CodeAct sample. Wires Microsoft.Agents.AI.LocalCodeAct into a
 // Foundry hosted agent. The model only sees a single `execute_code` tool;
 // `compute` and `fetch_data` are registered as sandbox-only host tools that
-// generated Python reaches via `await call_tool(...)`. This mirrors the Python
-// `foundry_hosted_agent.py` sample for the local-codeact package.
+// generated Python reaches via `await call_tool(...)`. It is deployed to Foundry
+// directly from source (code / ZIP upload), so the platform builds and runs your
+// code with no container image.
 //
 // SECURITY: LocalCodeAct executes LLM-generated Python in the agent process.
 // Only deploy this sample to an externally sandboxed environment such as a
 // Foundry hosted-agent container.
+//
+// RUNTIME: this sample runs generated Python with a Python interpreter. The
+// hosted dotnet_10 source-deployment runtime provides python3. Local runs use
+// python.exe on Windows and python3 elsewhere; LOCAL_CODEACT_PYTHON overrides
+// that selection when a different executable is required.
 
 using System.ComponentModel;
 using Azure.AI.Projects;
-using Azure.Core;
 using Azure.Identity;
 using DotNetEnv;
-using Hosted_Shared_Contributor_Setup;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Foundry.Hosting;
 using Microsoft.Agents.AI.LocalCodeAct;
 using Microsoft.Extensions.AI;
 
-// Load .env file if present (for local development)
+// Load a local .env file when present (local development only). In Foundry the
+// platform injects the required environment variables at runtime.
 Env.TraversePath().Load();
 
-string endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
+var endpoint = System.Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
     ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
-string deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-4o";
-string pythonExecutable = Environment.GetEnvironmentVariable("LOCAL_CODEACT_PYTHON")
-    ?? (OperatingSystem.IsWindows() ? "python.exe" : "python3");
 
-TokenCredential credential = new ChainedTokenCredential(
-    new DevTemporaryTokenCredential(),
-    new DefaultAzureCredential());
+// Environment variables can arrive set but blank: azd substitutes an empty string when the azd
+// environment does not define the variable referenced from azure.yaml. An empty string is not
+// null, so a plain ?? chain would pass the blank straight through and fail deep inside the SDK.
+var deploymentName = FirstNonBlank(
+    System.Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME"),
+    System.Environment.GetEnvironmentVariable("FOUNDRY_MODEL"),
+    "gpt-4o");
+
+var agentName = System.Environment.GetEnvironmentVariable("AGENT_NAME") ?? "hosted-local-codeact";
+
+var pythonExecutable = FirstNonBlank(
+    System.Environment.GetEnvironmentVariable("LOCAL_CODEACT_PYTHON"),
+    OperatingSystem.IsWindows() ? "python.exe" : "python3");
 
 // ── Sandbox-only tools (model never sees these directly) ─────────────────────
 
@@ -87,10 +99,14 @@ var codeAct = new LocalCodeActProvider(pythonExecutable, codeActOptions);
 
 // ── Build the hosted agent ───────────────────────────────────────────────────
 
-AIAgent agent = new AIProjectClient(new Uri(endpoint), credential)
+// WARNING: DefaultAzureCredential is convenient for development but requires careful
+// consideration in production. Consider a specific credential (for example
+// ManagedIdentityCredential) to avoid latency, unintended credential probing, and
+// fallback security risks.
+AIAgent agent = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential())
     .AsAIAgent(new ChatClientAgentOptions
     {
-        Name = Environment.GetEnvironmentVariable("AGENT_NAME") ?? "hosted-local-codeact",
+        Name = agentName,
         Description = "Hosted CodeAct agent with sandbox-only compute and fetch_data tools.",
         ChatOptions = new ChatOptions
         {
@@ -105,15 +121,15 @@ AIAgent agent = new AIProjectClient(new Uri(endpoint), credential)
         AIContextProviders = [codeAct],
     });
 
+// Host the agent using the Responses protocol.
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddFoundryResponses(agent);
 
 var app = builder.Build();
 app.MapFoundryResponses();
 
-// Contributor-only: in Development, also map the per-agent OpenAI route shape that live Foundry uses
-// so a local REPL client can target this server via AIProjectClient.AsAIAgent(Uri agentEndpoint).
-// Do not use this in production. Hosted Foundry agents only support the agent-endpoint path.
-app.MapDevTemporaryLocalAgentEndpoint();
-
 app.Run();
+
+// Returns the first candidate that has an actual value, ignoring null and blank entries.
+static string FirstNonBlank(params string?[] candidates) =>
+    Array.Find(candidates, c => !string.IsNullOrWhiteSpace(c))!;

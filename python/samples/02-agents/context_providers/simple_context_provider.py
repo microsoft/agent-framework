@@ -5,7 +5,14 @@ import os
 from contextlib import suppress
 from typing import Any
 
-from agent_framework import Agent, AgentSession, ContextProvider, SessionContext, SupportsChatGetResponse
+from agent_framework import (
+    Agent,
+    AgentSession,
+    ContextProvider,
+    SessionContext,
+    SupportsChatGetResponse,
+    register_state_type,
+)
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -18,6 +25,13 @@ load_dotenv()
 class UserInfo(BaseModel):
     name: str | None = None
     age: int | None = None
+
+
+# In order for the State to be serialized well, we need to make sure to register
+# this class, and since this uses a Pydantic model, we do not need to tell the state
+# how to serialize/deserialize the object. Default Python types do not need to be
+# registered.
+register_state_type(UserInfo, type_id="sample_user_info")
 
 
 class UserInfoMemory(ContextProvider):

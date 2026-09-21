@@ -3,7 +3,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using FluentAssertions;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
@@ -29,10 +28,8 @@ public class HandoffWorkflowBuilderTests
 
         Dictionary<string, HashSet<OutputTag>> designations = workflow.OutputExecutors;
 
-        designations.Where(kvp => kvp.Value.Count == 0)
-            .Should().ContainSingle("the handoff end executor is the sole terminal output by default");
-        designations.Where(kvp => kvp.Value.Contains(OutputTag.Intermediate))
-            .Should().HaveCount(2, "both the coordinator and the specialist are designated intermediate by default");
+        Assert.Single(designations, kvp => kvp.Value.Count == 0);
+        Assert.Equal(2, designations.Where(kvp => kvp.Value.Contains(OutputTag.Intermediate))?.Count());
     }
 
     [Fact]
@@ -50,12 +47,9 @@ public class HandoffWorkflowBuilderTests
 
         Dictionary<string, HashSet<OutputTag>> designations = workflow.OutputExecutors;
 
-        designations.Should().HaveCount(2,
-            "only the user-specified designations land on the inner builder; the handoff-end default is suppressed");
-        designations.Values.Where(tags => tags.Count == 0)
-            .Should().ContainSingle("coordinator is the only terminal designation");
-        designations.Values.Where(tags => tags.Contains(OutputTag.Intermediate))
-            .Should().ContainSingle("specialist is the only intermediate designation");
+        Assert.Equal(2, designations.Count);
+        Assert.Single(designations.Values, tags => tags.Count == 0);
+        Assert.Single(designations.Values, tags => tags.Contains(OutputTag.Intermediate));
     }
 
     [Fact]
@@ -70,8 +64,8 @@ public class HandoffWorkflowBuilderTests
             .WithHandoff(coordinator, specialist)
             .WithIntermediateOutputFrom([stranger]);
 
-        Action build = () => builder.Build();
-        build.Should().Throw<InvalidOperationException>().WithMessage("*stranger*");
+        void build() => builder.Build();
+        Assert.Contains("stranger", Assert.Throws<InvalidOperationException>(build).Message);
     }
 }
 #pragma warning restore MAAIW001

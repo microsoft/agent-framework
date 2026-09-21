@@ -6,7 +6,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.Specialized.Magentic;
 using Microsoft.Extensions.AI;
 
@@ -16,19 +15,20 @@ public class MagenticManagerTests
 {
     private static void CheckMessage(ChatMessage message, string expectedText, bool runPropertySmokeTest = false, bool skipCreatedAt = true)
     {
-        message.Text.Should().Be(expectedText);
+        Assert.Equal(expectedText, message.Text);
 
         if (runPropertySmokeTest)
         {
-            message.AuthorName.Should().Be(nameof(MagenticOrchestrator));
+            Assert.Equal(nameof(MagenticOrchestrator), message.AuthorName);
 
             if (!skipCreatedAt)
             {
-                message.CreatedAt.Should().NotBeNull().And.NotBeBefore(DateTimeOffset.UtcNow.AddDays(-1));
+                Assert.NotNull(message.CreatedAt);
+                Assert.True(message.CreatedAt >= DateTimeOffset.UtcNow.AddDays(-1));
             }
 
-            message.Role.Should().Be(ChatRole.Assistant);
-            message.MessageId.Should().NotBeNull();
+            Assert.Equal(ChatRole.Assistant, message.Role);
+            Assert.NotNull(message.MessageId);
         }
     }
 
@@ -60,19 +60,19 @@ public class MagenticManagerTests
         CheckMessage(newPlan.CurrentFacts, "Facts");
         CheckMessage(newPlan.CurrentPlan, "Plan");
 
-        taskContext.ChatHistory.Should().HaveCount(4);
+        Assert.Equal(4, taskContext.ChatHistory.Count);
 
         if (hasExistingPlan)
         {
             ChatMessage factsRequest = taskContext.ChatHistory[0];
-            factsRequest.Text.Should().Contain("OldFacts");
+            Assert.Contains("OldFacts", factsRequest.Text);
         }
 
         ChatMessage facts = taskContext.ChatHistory[1];
-        facts.Should().Be(newPlan.CurrentFacts);
+        Assert.Equal(newPlan.CurrentFacts, facts);
 
         ChatMessage plan = taskContext.ChatHistory[3];
-        plan.Should().Be(newPlan.CurrentPlan);
+        Assert.Equal(newPlan.CurrentPlan, plan);
     }
 
     [Theory]
@@ -89,7 +89,7 @@ public class MagenticManagerTests
                                                         state => [new ChatMessage(ChatRole.Assistant, state.ToJsonString())])
                                                    .ToList();
 
-        turns.Should().HaveCount(failures);
+        Assert.Equal(failures, turns.Count);
         turns.Add([new ChatMessage(ChatRole.Assistant, TestProgressLedgerState.Default.ToJsonString())]);
 
         TestReplayAgent testAgent = new(name: nameof(MagenticOrchestrator),
@@ -105,26 +105,28 @@ public class MagenticManagerTests
         IWorkflowContext workflowContext = runContext.BindWorkflowContext(nameof(MagenticOrchestrator));
 
         // Precondition check: ProgressLedger should be not "started"
-        taskContext.ProgressLedger.IsStarted.Should().BeFalse();
+        Assert.False(taskContext.ProgressLedger.IsStarted);
 
-        Func<Task> action = () => manager.UpdateProgressLedgerAsync(taskContext, workflowContext, CancellationToken.None).AsTask();
+        Task actionAsync() => manager.UpdateProgressLedgerAsync(taskContext, workflowContext, CancellationToken.None).AsTask();
 
         if (failures >= taskContext.TaskLimits.MaxProgressLedgerRetryCount)
         {
             // We expect to see an exception if the number of failures exceeds the maximum retry count
-            await action.Should().ThrowAsync();
-            taskContext.ProgressLedger.IsStarted.Should().BeFalse();
+            Exception? exception = await Record.ExceptionAsync(actionAsync);
+            Assert.NotNull(exception);
+            Assert.False(taskContext.ProgressLedger.IsStarted);
         }
         else
         {
-            await action.Should().NotThrowAsync();
-            taskContext.ProgressLedger.IsStarted.Should().BeTrue();
+            Assert.Null(await Record.ExceptionAsync(actionAsync));
+            Assert.True(taskContext.ProgressLedger.IsStarted);
             TestProgressLedgerState.Default.Validate(taskContext.ProgressLedger);
         }
 
         int expectedWarnings = Math.Min(failures, 3);
 
-        runContext.Events.Should().HaveCount(expectedWarnings).And.AllBeOfType<WorkflowWarningEvent>();
+        Assert.Equal(expectedWarnings, runContext.Events.Count);
+        Assert.All(runContext.Events, e => Assert.IsType<WorkflowWarningEvent>(e));
     }
 
     [Fact]

@@ -7,7 +7,7 @@ import base64
 import json
 import re
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from agent_framework import Content, Message, SessionContext
 from agent_framework._sessions import AgentSession
@@ -18,6 +18,7 @@ from agent_framework_azure_contentunderstanding import (
     DocumentStatus,
 )
 from agent_framework_azure_contentunderstanding._detection import SUPPORTED_MEDIA_TYPES, derive_doc_key
+from agent_framework_azure_contentunderstanding._feature_usage import FeatureIndex
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -983,7 +984,12 @@ class TestErrorHandling:
         state: dict[str, Any] = {}
         session = AgentSession()
 
-        await provider.before_run(agent=_make_mock_agent(), session=session, context=context, state=state)
+        with patch(
+            "agent_framework_azure_contentunderstanding._context_provider.mark_feature_used"
+        ) as mark_feature_used:
+            await provider.before_run(agent=_make_mock_agent(), session=session, context=context, state=state)
+
+        mark_feature_used.assert_called_once_with(FeatureIndex.AZURE_CONTENTUNDERSTANDING)
         # Client should still be set
         assert provider._client is not None
 
@@ -1657,13 +1663,13 @@ class TestAnalyzerAutoDetectionE2E:
 class TestWarningsExtraction:
     """Verify that CU RAI warnings are surfaced via ``to_llm_input`` rendering.
 
-    The SDK serializes ``result.warnings`` under the reserved ``rai_warnings``
+    The SDK serializes ``result.warnings`` under the reserved ``warnings``
     YAML front-matter key. Telemetry filtering of stray ``LLMStats:`` lines is
     handled by the SDK helper (azure-ai-contentunderstanding >= 1.2.0b2).
     """
 
     def test_warnings_included_when_present(self) -> None:
-        """Non-empty warnings should appear under ``rai_warnings`` front-matter key."""
+        """Non-empty warnings should appear under ``warnings`` front-matter key."""
         provider = _make_provider()
         fixture = {
             "contents": [
@@ -1688,16 +1694,16 @@ class TestWarningsExtraction:
         result_obj = AnalysisResult(fixture)
         rendered = provider._render_for_llm(result_obj, "doc.pdf")
 
-        assert "rai_warnings:" in rendered
+        assert "warnings:" in rendered
         assert "ContentFiltered" in rendered
         assert "Content was filtered due to Responsible AI policy." in rendered
         assert "Violence content detected and filtered." in rendered
 
     def test_warnings_omitted_when_empty(self, pdf_analysis_result: AnalysisResult) -> None:
-        """The PDF fixture has no warnings, so ``rai_warnings:`` should not appear."""
+        """The PDF fixture has no warnings, so ``warnings:`` should not appear."""
         provider = _make_provider()
         rendered = provider._render_for_llm(pdf_analysis_result, "report.pdf")
-        assert "rai_warnings:" not in rendered
+        assert "warnings:" not in rendered
 
 
 class TestCategoryExtraction:

@@ -7,7 +7,7 @@
       inherits the default tests TFM list (net10.0;net472). The intersection is net10.0.
     -->
     <TargetFrameworks>net10.0</TargetFrameworks>
-    <NoWarn>$(NoWarn);CS8793;NU1605;NU1903;AAIP001</NoWarn>
+    <NoWarn>$(NoWarn);CS8793;NU1605;NU1903;AAIP001;SCME0001</NoWarn>
     <CentralPackageTransitivePinningEnabled>false</CentralPackageTransitivePinningEnabled>
     <InjectSharedIntegrationTestCode>True</InjectSharedIntegrationTestCode>
     <InjectSharedIntegrationTestAzureCredentialsCode>True</InjectSharedIntegrationTestAzureCredentialsCode>

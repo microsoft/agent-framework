@@ -7,7 +7,6 @@ using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.InProc;
 using Microsoft.Extensions.AI;
 
@@ -177,10 +176,8 @@ public class GroupChatWorkflowBuilderTests
 
         Dictionary<string, HashSet<OutputTag>> designations = workflow.OutputExecutors;
 
-        designations.Where(kvp => kvp.Value.Count == 0)
-            .Should().ContainSingle("group-chat host is the sole terminal output executor by default");
-        designations.Where(kvp => kvp.Value.Contains(OutputTag.Intermediate))
-            .Should().HaveCount(3, "every participant is designated intermediate by default");
+        Assert.Single(designations, kvp => kvp.Value.Count == 0);
+        Assert.Equal(3, designations.Where(kvp => kvp.Value.Contains(OutputTag.Intermediate))?.Count());
     }
 
     [Fact]
@@ -199,12 +196,9 @@ public class GroupChatWorkflowBuilderTests
 
         Dictionary<string, HashSet<OutputTag>> designations = workflow.OutputExecutors;
 
-        designations.Should().HaveCount(2,
-            "only the two explicitly-designated agents land on the inner builder; the host default is suppressed");
-        designations.Values.Where(tags => tags.Count == 0)
-            .Should().ContainSingle("agent1 is the only terminal designation");
-        designations.Values.Where(tags => tags.Contains(OutputTag.Intermediate))
-            .Should().ContainSingle("agent2 is the only intermediate designation");
+        Assert.Equal(2, designations.Count);
+        Assert.Single(designations.Values, tags => tags.Count == 0);
+        Assert.Single(designations.Values, tags => tags.Contains(OutputTag.Intermediate));
     }
 
     [Fact]
@@ -218,8 +212,8 @@ public class GroupChatWorkflowBuilderTests
             .AddParticipants(participant)
             .WithOutputFrom(stranger);
 
-        Action build = () => builder.Build();
-        build.Should().Throw<InvalidOperationException>().WithMessage("*stranger*");
+        void build() => builder.Build();
+        Assert.Contains("stranger", Assert.Throws<InvalidOperationException>(build).Message);
     }
 
     private sealed class RecordingAgent(string name) : AIAgent

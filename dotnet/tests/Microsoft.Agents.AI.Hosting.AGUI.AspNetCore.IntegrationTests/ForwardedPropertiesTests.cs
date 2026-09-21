@@ -13,8 +13,8 @@ using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using AGUI.Abstractions;
+using AGUI.Client;
 using AGUI.Server;
-using FluentAssertions;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.TestHost;
@@ -27,6 +27,37 @@ public sealed class ForwardedPropertiesTests : IAsyncDisposable
 {
     private WebApplication? _app;
     private HttpClient? _client;
+
+    [Fact]
+    public async Task ChatClient_ForwardsContextAndForwardedPropsFromRawRepresentationFactoryAsync()
+    {
+        // Arrange
+        FakeForwardedPropsAgent fakeAgent = new();
+        await this.SetupTestServerAsync(fakeAgent);
+        var chatClient = new AGUIChatClient(new(this._client!, "/agent"));
+        JsonElement forwardedProperties = JsonSerializer.SerializeToElement(new { tenantId = "tenant-123" });
+        ChatOptions options = new()
+        {
+            RawRepresentationFactory = _ => new RunAgentInput
+            {
+                Context = [new AGUIContext { Description = "Current user", Value = "Ada Lovelace" }],
+                ForwardedProperties = forwardedProperties,
+            },
+        };
+
+        // Act
+        await foreach (ChatResponseUpdate _ in chatClient.GetStreamingResponseAsync(
+            [new ChatMessage(ChatRole.User, "test client forwarding")],
+            options))
+        {
+        }
+
+        // Assert
+        Assert.Single(fakeAgent.ReceivedContext ?? []);
+        Assert.Equal("Current user", fakeAgent.ReceivedContext![0].Description);
+        Assert.Equal("Ada Lovelace", fakeAgent.ReceivedContext[0].Value);
+        Assert.Equal("tenant-123", fakeAgent.ReceivedForwardedProperties.GetProperty("tenantId").GetString());
+    }
 
     [Fact]
     public async Task ForwardedProps_AreParsedAndPassedToAgent_WhenProvidedInRequestAsync()
@@ -51,10 +82,10 @@ public sealed class ForwardedPropertiesTests : IAsyncDisposable
         HttpResponseMessage response = await this._client!.PostAsync(new Uri("/agent", UriKind.Relative), content);
 
         // Assert
-        response.IsSuccessStatusCode.Should().BeTrue();
-        fakeAgent.ReceivedForwardedProperties.ValueKind.Should().Be(JsonValueKind.Object);
-        fakeAgent.ReceivedForwardedProperties.GetProperty("customProp").GetString().Should().Be("customValue");
-        fakeAgent.ReceivedForwardedProperties.GetProperty("sessionId").GetString().Should().Be("test-session-123");
+        Assert.True(response.IsSuccessStatusCode);
+        Assert.Equal(JsonValueKind.Object, fakeAgent.ReceivedForwardedProperties.ValueKind);
+        Assert.Equal("customValue", fakeAgent.ReceivedForwardedProperties.GetProperty("customProp").GetString());
+        Assert.Equal("test-session-123", fakeAgent.ReceivedForwardedProperties.GetProperty("sessionId").GetString());
     }
 
     [Fact]
@@ -82,16 +113,16 @@ public sealed class ForwardedPropertiesTests : IAsyncDisposable
         HttpResponseMessage response = await this._client!.PostAsync(new Uri("/agent", UriKind.Relative), content);
 
         // Assert
-        response.IsSuccessStatusCode.Should().BeTrue();
-        fakeAgent.ReceivedForwardedProperties.ValueKind.Should().Be(JsonValueKind.Object);
+        Assert.True(response.IsSuccessStatusCode);
+        Assert.Equal(JsonValueKind.Object, fakeAgent.ReceivedForwardedProperties.ValueKind);
 
         JsonElement user = fakeAgent.ReceivedForwardedProperties.GetProperty("user");
-        user.GetProperty("id").GetString().Should().Be("user-1");
-        user.GetProperty("name").GetString().Should().Be("Test User");
+        Assert.Equal("user-1", user.GetProperty("id").GetString());
+        Assert.Equal("Test User", user.GetProperty("name").GetString());
 
         JsonElement metadata = fakeAgent.ReceivedForwardedProperties.GetProperty("metadata");
-        metadata.GetProperty("version").GetString().Should().Be("1.0");
-        metadata.GetProperty("feature").GetString().Should().Be("test");
+        Assert.Equal("1.0", metadata.GetProperty("version").GetString());
+        Assert.Equal("test", metadata.GetProperty("feature").GetString());
     }
 
     [Fact]
@@ -119,16 +150,16 @@ public sealed class ForwardedPropertiesTests : IAsyncDisposable
         HttpResponseMessage response = await this._client!.PostAsync(new Uri("/agent", UriKind.Relative), content);
 
         // Assert
-        response.IsSuccessStatusCode.Should().BeTrue();
-        fakeAgent.ReceivedForwardedProperties.ValueKind.Should().Be(JsonValueKind.Object);
+        Assert.True(response.IsSuccessStatusCode);
+        Assert.Equal(JsonValueKind.Object, fakeAgent.ReceivedForwardedProperties.ValueKind);
 
         JsonElement tags = fakeAgent.ReceivedForwardedProperties.GetProperty("tags");
-        tags.GetArrayLength().Should().Be(3);
-        tags[0].GetString().Should().Be("tag1");
+        Assert.Equal(3, tags.GetArrayLength());
+        Assert.Equal("tag1", tags[0].GetString());
 
         JsonElement scores = fakeAgent.ReceivedForwardedProperties.GetProperty("scores");
-        scores.GetArrayLength().Should().Be(5);
-        scores[2].GetInt32().Should().Be(3);
+        Assert.Equal(5, scores.GetArrayLength());
+        Assert.Equal(3, scores[2].GetInt32());
     }
 
     [Fact]
@@ -153,7 +184,7 @@ public sealed class ForwardedPropertiesTests : IAsyncDisposable
         HttpResponseMessage response = await this._client!.PostAsync(new Uri("/agent", UriKind.Relative), content);
 
         // Assert
-        response.IsSuccessStatusCode.Should().BeTrue();
+        Assert.True(response.IsSuccessStatusCode);
     }
 
     [Fact]
@@ -177,8 +208,8 @@ public sealed class ForwardedPropertiesTests : IAsyncDisposable
         HttpResponseMessage response = await this._client!.PostAsync(new Uri("/agent", UriKind.Relative), content);
 
         // Assert
-        response.IsSuccessStatusCode.Should().BeTrue();
-        fakeAgent.ReceivedForwardedProperties.ValueKind.Should().Be(JsonValueKind.Undefined);
+        Assert.True(response.IsSuccessStatusCode);
+        Assert.Equal(JsonValueKind.Undefined, fakeAgent.ReceivedForwardedProperties.ValueKind);
     }
 
     [Fact]
@@ -211,20 +242,20 @@ public sealed class ForwardedPropertiesTests : IAsyncDisposable
         }
 
         // Assert
-        events.Should().NotBeEmpty();
+        Assert.NotEmpty(events);
 
         // SSE events have EventType = "message" and the actual type is in the JSON data
         // Should have run_started event
-        events.Should().Contain(e => e.Data != null && e.Data.Contains("\"type\":\"RUN_STARTED\""));
+        Assert.Contains(events, e => e.Data?.Contains("\"type\":\"RUN_STARTED\"") == true);
 
         // Should have text_message_start event
-        events.Should().Contain(e => e.Data != null && e.Data.Contains("\"type\":\"TEXT_MESSAGE_START\""));
+        Assert.Contains(events, e => e.Data?.Contains("\"type\":\"TEXT_MESSAGE_START\"") == true);
 
         // Should have text_message_content event with the response text
-        events.Should().Contain(e => e.Data != null && e.Data.Contains("\"type\":\"TEXT_MESSAGE_CONTENT\""));
+        Assert.Contains(events, e => e.Data?.Contains("\"type\":\"TEXT_MESSAGE_CONTENT\"") == true);
 
         // Should have run_finished event
-        events.Should().Contain(e => e.Data != null && e.Data.Contains("\"type\":\"RUN_FINISHED\""));
+        Assert.Contains(events, e => e.Data?.Contains("\"type\":\"RUN_FINISHED\"") == true);
     }
 
     [Fact]
@@ -256,15 +287,15 @@ public sealed class ForwardedPropertiesTests : IAsyncDisposable
         HttpResponseMessage response = await this._client!.PostAsync(new Uri("/agent", UriKind.Relative), content);
 
         // Assert
-        response.IsSuccessStatusCode.Should().BeTrue();
-        fakeAgent.ReceivedForwardedProperties.ValueKind.Should().Be(JsonValueKind.Object);
+        Assert.True(response.IsSuccessStatusCode);
+        Assert.Equal(JsonValueKind.Object, fakeAgent.ReceivedForwardedProperties.ValueKind);
 
-        fakeAgent.ReceivedForwardedProperties.GetProperty("stringProp").GetString().Should().Be("text");
-        fakeAgent.ReceivedForwardedProperties.GetProperty("numberProp").GetInt32().Should().Be(42);
-        fakeAgent.ReceivedForwardedProperties.GetProperty("boolProp").GetBoolean().Should().BeTrue();
-        fakeAgent.ReceivedForwardedProperties.GetProperty("nullProp").ValueKind.Should().Be(JsonValueKind.Null);
-        fakeAgent.ReceivedForwardedProperties.GetProperty("arrayProp").GetArrayLength().Should().Be(3);
-        fakeAgent.ReceivedForwardedProperties.GetProperty("objectProp").GetProperty("nested").GetString().Should().Be("value");
+        Assert.Equal("text", fakeAgent.ReceivedForwardedProperties.GetProperty("stringProp").GetString());
+        Assert.Equal(42, fakeAgent.ReceivedForwardedProperties.GetProperty("numberProp").GetInt32());
+        Assert.True(fakeAgent.ReceivedForwardedProperties.GetProperty("boolProp").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, fakeAgent.ReceivedForwardedProperties.GetProperty("nullProp").ValueKind);
+        Assert.Equal(3, fakeAgent.ReceivedForwardedProperties.GetProperty("arrayProp").GetArrayLength());
+        Assert.Equal("value", fakeAgent.ReceivedForwardedProperties.GetProperty("objectProp").GetProperty("nested").GetString());
     }
 
     private async Task SetupTestServerAsync(FakeForwardedPropsAgent fakeAgent)
@@ -304,6 +335,8 @@ internal sealed class FakeForwardedPropsAgent : AIAgent
 
     public override string? Description => "Agent for forwarded properties testing";
 
+    public IList<AGUIContext>? ReceivedContext { get; private set; }
+
     public JsonElement ReceivedForwardedProperties { get; private set; }
 
     protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
@@ -319,10 +352,14 @@ internal sealed class FakeForwardedPropsAgent : AIAgent
     {
         // Recover the originating AG-UI input from the request options (set by the hosting layer).
         if (options is ChatClientAgentRunOptions { ChatOptions: { } chatOptions } &&
-            chatOptions.TryGetRunAgentInput(out RunAgentInput? agentInput) &&
-            agentInput.ForwardedProperties is { ValueKind: not JsonValueKind.Undefined } forwardedProps)
+            chatOptions.TryGetRunAgentInput(out RunAgentInput? agentInput))
         {
-            this.ReceivedForwardedProperties = forwardedProps;
+            this.ReceivedContext = agentInput.Context;
+
+            if (agentInput.ForwardedProperties is { ValueKind: not JsonValueKind.Undefined } forwardedProps)
+            {
+                this.ReceivedForwardedProperties = forwardedProps;
+            }
         }
 
         // Always return a text response

@@ -9,10 +9,12 @@ from collections.abc import Collection, Mapping
 from typing import Any, Generic, TypeVar, cast
 
 from agent_framework import AgentResponse, Message, SupportsAgentRun
+from agent_framework._telemetry import mark_feature_used
 from agent_framework_hosting import AgentRunArgs, AgentState
 from mcp import types
 
 from ._conversion import mcp_from_run, mcp_to_run
+from ._feature_usage import FeatureIndex
 
 AgentT = TypeVar("AgentT", bound=SupportsAgentRun)
 
@@ -86,6 +88,7 @@ class AgentMCPTool(Generic[AgentT]):
 
     async def list_tools(self) -> list[types.Tool]:
         """Return the native MCP tool definition for the target agent."""
+        mark_feature_used(FeatureIndex.HOSTING_MCP)
         target = await self.state.get_target()
         return [self._tool_for_target(target)]
 
@@ -145,6 +148,7 @@ class AgentMCPTool(Generic[AgentT]):
         Raises:
             ValueError: If the tool name or configured session id is invalid.
         """
+        mark_feature_used(FeatureIndex.HOSTING_MCP)
         target = await self.state.get_target()
         tool = self._tool_for_target(target)
         if name != tool.name:

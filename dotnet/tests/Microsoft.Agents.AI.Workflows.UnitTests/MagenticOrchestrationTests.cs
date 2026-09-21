@@ -6,7 +6,6 @@ using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
-using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.InProc;
 using Microsoft.Agents.AI.Workflows.Specialized.Magentic;
 using Microsoft.Extensions.AI;
@@ -47,10 +46,10 @@ public class MagenticOrchestrationTests
         WorkflowRunResult runResult = await RunMagenticWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "Do the task")]);
 
         // Assert: Check the result contains the final answer
-        runResult.Result.Should().NotBeNull();
-        runResult.Result.Should().ContainSingle();
-        runResult.Result![0].Text.Should().Contain("Task completed successfully!");
-        runResult.PendingRequests.Should().BeEmpty();
+        Assert.NotNull(runResult.Result);
+        Assert.Single(runResult.Result);
+        Assert.Contains("Task completed successfully!", runResult.Result![0].Text);
+        Assert.Empty(runResult.PendingRequests ?? []);
     }
 
     [Fact]
@@ -85,11 +84,11 @@ public class MagenticOrchestrationTests
             [new ChatMessage(ChatRole.User, "Execute plan")],
             checkpointManager: checkpointManager);
 
-        firstResult.PendingRequests.Should().ContainSingle();
+        Assert.Single(firstResult.PendingRequests);
         ExternalRequest request = firstResult.PendingRequests[0].Request;
         MagenticPlanReviewRequest? reviewRequest = request.Data.As<MagenticPlanReviewRequest>();
-        reviewRequest.Should().NotBeNull();
-        reviewRequest!.Plan.Text.Should().Contain("Execute the plan");
+        Assert.NotNull(reviewRequest);
+        Assert.Contains("Execute the plan", reviewRequest!.Plan.Text);
 
         // Act: Resume with approval
         MagenticPlanReviewResponse approval = reviewRequest.Approve();
@@ -101,8 +100,8 @@ public class MagenticOrchestrationTests
             firstResult.LastCheckpoint);
 
         // Assert
-        secondResult.Result.Should().NotBeNull();
-        secondResult.Result![0].Text.Should().Contain("Plan executed successfully");
+        Assert.NotNull(secondResult.Result);
+        Assert.Contains("Plan executed successfully", secondResult.Result![0].Text);
     }
 
     [Fact]
@@ -138,9 +137,9 @@ public class MagenticOrchestrationTests
             eventCollector: collectedEvents);
 
         // Assert
-        collectedEvents.OfType<MagenticPlanCreatedEvent>().Should().NotBeEmpty();
+        Assert.NotEmpty(collectedEvents.OfType<MagenticPlanCreatedEvent>());
         MagenticPlanCreatedEvent planEvent = collectedEvents.OfType<MagenticPlanCreatedEvent>().First();
-        planEvent.FullTaskLedger.Should().NotBeNull();
+        Assert.NotNull(planEvent.FullTaskLedger);
     }
 
     [Fact]
@@ -176,10 +175,9 @@ public class MagenticOrchestrationTests
             eventCollector: collectedEvents);
 
         // Assert: Warning should be emitted and final answer prepared
-        collectedEvents.OfType<WorkflowWarningEvent>()
-            .Should().Contain(e => e.Data != null && e.Data.ToString()!.Contains("Invalid next speaker"));
-        runResult.Result.Should().NotBeNull();
-        runResult.Result![0].Text.Should().Contain("Forced to conclude");
+        Assert.Contains(collectedEvents.OfType<WorkflowWarningEvent>(), e => e.Data?.ToString()?.Contains("Invalid next speaker") == true);
+        Assert.NotNull(runResult.Result);
+        Assert.Contains("Forced to conclude", runResult.Result![0].Text);
     }
 
     [Fact]
@@ -215,10 +213,10 @@ public class MagenticOrchestrationTests
             eventCollector: collectedEvents);
 
         // Assert
-        collectedEvents.OfType<MagenticProgressLedgerUpdatedEvent>().Should().NotBeEmpty();
+        Assert.NotEmpty(collectedEvents.OfType<MagenticProgressLedgerUpdatedEvent>());
         MagenticProgressLedgerUpdatedEvent ledgerEvent = collectedEvents.OfType<MagenticProgressLedgerUpdatedEvent>().First();
-        ledgerEvent.ProgressLedger.Should().NotBeNull();
-        ledgerEvent.ProgressLedger.IsRequestSatisfied.Should().BeTrue();
+        Assert.NotNull(ledgerEvent.ProgressLedger);
+        Assert.True(ledgerEvent.ProgressLedger.IsRequestSatisfied);
     }
 
     [Fact]
@@ -254,10 +252,10 @@ public class MagenticOrchestrationTests
             eventCollector: collectedEvents);
 
         // Assert: No plan review request, workflow completes immediately
-        runResult.PendingRequests.Should().BeEmpty("plan signoff is disabled, so no review should be requested");
-        collectedEvents.OfType<RequestInfoEvent>().Should().BeEmpty();
-        runResult.Result.Should().NotBeNull();
-        runResult.Result![0].Text.Should().Contain("Immediate completion");
+        Assert.Empty(runResult.PendingRequests ?? []);
+        Assert.Empty(collectedEvents.OfType<RequestInfoEvent>() ?? []);
+        Assert.NotNull(runResult.Result);
+        Assert.Contains("Immediate completion", runResult.Result![0].Text);
     }
 
     [Fact]
@@ -305,10 +303,9 @@ public class MagenticOrchestrationTests
             eventCollector: collectedEvents);
 
         // Assert: Warning about empty next speaker should be emitted
-        collectedEvents.OfType<WorkflowWarningEvent>()
-            .Should().Contain(e => e.Data != null && e.Data.ToString()!.Contains("empty"));
-        runResult.Result.Should().NotBeNull();
-        runResult.Result![0].Text.Should().Contain("Task completed after fallback");
+        Assert.Contains(collectedEvents.OfType<WorkflowWarningEvent>(), e => e.Data?.ToString()?.Contains("empty") == true);
+        Assert.NotNull(runResult.Result);
+        Assert.Contains("Task completed after fallback", runResult.Result![0].Text);
     }
 
     [Fact]
@@ -354,11 +351,11 @@ public class MagenticOrchestrationTests
             eventCollector: collectedEvents);
 
         // Assert: One plan created, one progress ledger per round, final answer
-        collectedEvents.OfType<MagenticProgressLedgerUpdatedEvent>().Should().HaveCount(2);
-        collectedEvents.OfType<MagenticPlanCreatedEvent>().Should().ContainSingle("only one initial plan, no replan on agent return");
-        collectedEvents.OfType<MagenticReplannedEvent>().Should().BeEmpty("no replan occurs on normal agent return");
-        runResult.Result.Should().NotBeNull();
-        runResult.Result![0].Text.Should().Contain("Multi-round task completed!");
+        Assert.Equal(2, collectedEvents.OfType<MagenticProgressLedgerUpdatedEvent>()?.Count());
+        Assert.Single(collectedEvents.OfType<MagenticPlanCreatedEvent>());
+        Assert.Empty(collectedEvents.OfType<MagenticReplannedEvent>() ?? []);
+        Assert.NotNull(runResult.Result);
+        Assert.Contains("Multi-round task completed!", runResult.Result![0].Text);
     }
 
     [Fact]
@@ -402,21 +399,17 @@ public class MagenticOrchestrationTests
             workflow,
             [new ChatMessage(ChatRole.User, TaskPrompt)]);
 
-        runResult.Result.Should().NotBeNull();
-        runResult.Result![0].Text.Should().Contain("All good");
+        Assert.NotNull(runResult.Result);
+        Assert.Contains("All good", runResult.Result![0].Text);
 
         // Calls in order: facts, plan, ledger1, ledger2, finalAnswer.
-        manager.RecordedInputs.Should().HaveCount(5);
+        Assert.Equal(5, manager.RecordedInputs.Count);
 
-        manager.RecordedInputs[3].Should().Contain(
-            m => m.Role == ChatRole.Assistant
+        Assert.Contains(manager.RecordedInputs[3], m => m.Role == ChatRole.Assistant
               && m.AuthorName == "Worker"
-              && m.Text.Contains(TaskPrompt),
-            "round-2 progress ledger must see the worker's reply; without it the manager loops to MaxRounds");
+              && m.Text.Contains(TaskPrompt));
 
-        manager.RecordedInputs[4].Should().Contain(
-            m => m.Role == ChatRole.Assistant && m.AuthorName == "Worker",
-            "final-answer synthesis must see what participants actually said");
+        Assert.Contains(manager.RecordedInputs[4], m => m.Role == ChatRole.Assistant && m.AuthorName == "Worker");
     }
 
     [Fact]
@@ -468,31 +461,26 @@ public class MagenticOrchestrationTests
             workflow,
             [new ChatMessage(ChatRole.User, "Check system health")]);
 
-        runResult.Result.Should().NotBeNull();
-        runResult.Result![0].Text.Should().Contain("All systems checked");
+        Assert.NotNull(runResult.Result);
+        Assert.Contains("All systems checked", runResult.Result![0].Text);
 
         // Each participant takes exactly one turn.
-        healthChecker.RecordedInputs.Should().ContainSingle();
-        databaseChecker.RecordedInputs.Should().ContainSingle();
+        Assert.Single(healthChecker.RecordedInputs);
+        Assert.Single(databaseChecker.RecordedInputs);
 
         // The first speaker receives its own instruction.
         List<ChatMessage> healthInput = healthChecker.RecordedInputs[0];
-        healthInput.Should().Contain(m => m.Text.Contains(HealthInstruction), "the first speaker receives its own instruction");
+        Assert.Contains(healthInput, m => m.Text.Contains(HealthInstruction));
 
         // The second speaker must see the first speaker's RESPONSE (authored by HealthChecker, carrying the echo
         // prefix that only the response — not the raw instruction — has), plus its own instruction.
         List<ChatMessage> databaseInput = databaseChecker.RecordedInputs[0];
-        databaseInput.Should().Contain(
-            m => m.AuthorName == "HealthChecker" && m.Text.Contains(HealthEchoPrefix),
-            "the next speaker must receive the prior participant's response (the running conversation)");
-        databaseInput.Should().Contain(m => m.Text.Contains(DatabaseInstruction),
-            "the next speaker must receive its own instruction");
+        Assert.Contains(databaseInput, m => m.AuthorName == "HealthChecker" && m.Text.Contains(HealthEchoPrefix));
+        Assert.Contains(databaseInput, m => m.Text.Contains(DatabaseInstruction));
 
         // The leaked-instruction bug: the second speaker must not receive HealthChecker's instruction as a
         // bare message (it should only appear, if at all, embedded in HealthChecker's prefixed response).
-        databaseInput.Should().NotContain(
-            m => m.AuthorName != "HealthChecker" && m.Text.Trim() == HealthInstruction,
-            "the prior speaker's instruction must not leak into the next speaker's context as a standalone message");
+        Assert.DoesNotContain(databaseInput, m => m.AuthorName != "HealthChecker" && m.Text.Trim() == HealthInstruction);
     }
 
     [Fact]
@@ -534,11 +522,11 @@ public class MagenticOrchestrationTests
             checkpointManager: checkpointManager,
             eventCollector: allEvents);
 
-        firstResult.PendingRequests.Should().ContainSingle();
+        Assert.Single(firstResult.PendingRequests);
         ExternalRequest request1 = firstResult.PendingRequests[0].Request;
         MagenticPlanReviewRequest? reviewRequest1 = request1.Data.As<MagenticPlanReviewRequest>();
-        reviewRequest1.Should().NotBeNull();
-        reviewRequest1!.Plan.Text.Should().Contain("Initial plan");
+        Assert.NotNull(reviewRequest1);
+        Assert.Contains("Initial plan", reviewRequest1!.Plan.Text);
 
         // Act 2: Resume with revision (reject the plan)
         MagenticPlanReviewResponse revision = reviewRequest1.Revise("Please include more detail");
@@ -551,11 +539,11 @@ public class MagenticOrchestrationTests
             eventCollector: allEvents);
 
         // Should pause again for review of the revised plan (stream may include prior request too)
-        secondResult.PendingRequests.Should().NotBeEmpty();
+        Assert.NotEmpty(secondResult.PendingRequests);
         ExternalRequest request2 = secondResult.PendingRequests[^1].Request;
         MagenticPlanReviewRequest? reviewRequest2 = request2.Data.As<MagenticPlanReviewRequest>();
-        reviewRequest2.Should().NotBeNull();
-        reviewRequest2!.Plan.Text.Should().Contain("Revised plan");
+        Assert.NotNull(reviewRequest2);
+        Assert.Contains("Revised plan", reviewRequest2!.Plan.Text);
 
         // Act 3: Resume with approval
         MagenticPlanReviewResponse approval = reviewRequest2.Approve();
@@ -568,10 +556,10 @@ public class MagenticOrchestrationTests
             eventCollector: allEvents);
 
         // Assert: MagenticReplannedEvent should have been emitted, and final answer produced
-        allEvents.OfType<MagenticPlanCreatedEvent>().Should().NotBeEmpty("initial plan emits PlanCreatedEvent");
-        allEvents.OfType<MagenticReplannedEvent>().Should().NotBeEmpty("revision triggers ReplannedEvent");
-        thirdResult.Result.Should().NotBeNull();
-        thirdResult.Result![0].Text.Should().Contain("Revised plan executed successfully");
+        Assert.NotEmpty(allEvents.OfType<MagenticPlanCreatedEvent>());
+        Assert.NotEmpty(allEvents.OfType<MagenticReplannedEvent>());
+        Assert.NotNull(thirdResult.Result);
+        Assert.Contains("Revised plan executed successfully", thirdResult.Result![0].Text);
     }
 
     [Fact]
@@ -607,8 +595,8 @@ public class MagenticOrchestrationTests
             [new ChatMessage(ChatRole.User, "Do task")]);
 
         // Assert: Workflow terminates with round limit message
-        runResult.Result.Should().NotBeNull();
-        runResult.Result![0].Text.Should().Contain("maximum round count limit");
+        Assert.NotNull(runResult.Result);
+        Assert.Contains("maximum round count limit", runResult.Result![0].Text);
     }
 
     [Fact]
@@ -658,10 +646,10 @@ public class MagenticOrchestrationTests
             eventCollector: collectedEvents);
 
         // Assert: MagenticReplannedEvent should be emitted (reset triggers replan), final answer produced
-        collectedEvents.OfType<MagenticPlanCreatedEvent>().Should().NotBeEmpty("initial plan created");
-        collectedEvents.OfType<MagenticReplannedEvent>().Should().NotBeEmpty("stall triggers reset and replan");
-        runResult.Result.Should().NotBeNull();
-        runResult.Result![0].Text.Should().Contain("Recovered after stall reset");
+        Assert.NotEmpty(collectedEvents.OfType<MagenticPlanCreatedEvent>());
+        Assert.NotEmpty(collectedEvents.OfType<MagenticReplannedEvent>());
+        Assert.NotNull(runResult.Result);
+        Assert.Contains("Recovered after stall reset", runResult.Result![0].Text);
     }
 
     [Fact]
@@ -709,10 +697,10 @@ public class MagenticOrchestrationTests
 
         // Assert: The workflow completed successfully, proving the instruction path executed without error.
         // The update text should contain the instruction text since it is sent to participants as a ChatMessage.
-        runResult.Result.Should().NotBeNull();
-        runResult.Result![0].Text.Should().Contain("Task completed with instruction");
+        Assert.NotNull(runResult.Result);
+        Assert.Contains("Task completed with instruction", runResult.Result![0].Text);
         // Verify the delegation happened (two progress ledger events for two rounds)
-        collectedEvents.OfType<MagenticProgressLedgerUpdatedEvent>().Should().HaveCount(2);
+        Assert.Equal(2, collectedEvents.OfType<MagenticProgressLedgerUpdatedEvent>()?.Count());
     }
 
     [Fact]
@@ -766,12 +754,12 @@ public class MagenticOrchestrationTests
             checkpointManager: checkpointManager,
             eventCollector: allEvents);
 
-        firstResult.PendingRequests.Should().ContainSingle();
+        Assert.Single(firstResult.PendingRequests);
         ExternalRequest request1 = firstResult.PendingRequests[0].Request;
         MagenticPlanReviewRequest? reviewRequest1 = request1.Data.As<MagenticPlanReviewRequest>();
-        reviewRequest1.Should().NotBeNull();
-        reviewRequest1!.Plan.Text.Should().Contain("Initial plan");
-        reviewRequest1.IsStalled.Should().BeFalse("the initial plan review is not stall-triggered");
+        Assert.NotNull(reviewRequest1);
+        Assert.Contains("Initial plan", reviewRequest1!.Plan.Text);
+        Assert.False(reviewRequest1.IsStalled);
 
         // Act 2: Approve initial plan → stall occurs → reset → replan → new plan review
         MagenticPlanReviewResponse approval1 = reviewRequest1.Approve();
@@ -784,12 +772,12 @@ public class MagenticOrchestrationTests
             eventCollector: allEvents);
 
         // Should pause for review of the replanned plan
-        secondResult.PendingRequests.Should().NotBeEmpty();
+        Assert.NotEmpty(secondResult.PendingRequests);
         ExternalRequest request2 = secondResult.PendingRequests[^1].Request;
         MagenticPlanReviewRequest? reviewRequest2 = request2.Data.As<MagenticPlanReviewRequest>();
-        reviewRequest2.Should().NotBeNull();
-        reviewRequest2!.Plan.Text.Should().Contain("Fresh plan after stall reset");
-        reviewRequest2.IsStalled.Should().BeTrue("the replan was triggered by a stall");
+        Assert.NotNull(reviewRequest2);
+        Assert.Contains("Fresh plan after stall reset", reviewRequest2!.Plan.Text);
+        Assert.True(reviewRequest2.IsStalled);
 
         // Act 3: Approve the revised plan → satisfied → final answer
         MagenticPlanReviewResponse approval2 = reviewRequest2.Approve();
@@ -802,10 +790,10 @@ public class MagenticOrchestrationTests
             eventCollector: allEvents);
 
         // Assert
-        allEvents.OfType<MagenticPlanCreatedEvent>().Should().NotBeEmpty("initial plan emits PlanCreatedEvent");
-        allEvents.OfType<MagenticReplannedEvent>().Should().NotBeEmpty("stall reset triggers ReplannedEvent");
-        thirdResult.Result.Should().NotBeNull();
-        thirdResult.Result![0].Text.Should().Contain("Recovered after stall with plan review");
+        Assert.NotEmpty(allEvents.OfType<MagenticPlanCreatedEvent>());
+        Assert.NotEmpty(allEvents.OfType<MagenticReplannedEvent>());
+        Assert.NotNull(thirdResult.Result);
+        Assert.Contains("Recovered after stall with plan review", thirdResult.Result![0].Text);
     }
 
     [Fact]
@@ -848,8 +836,8 @@ public class MagenticOrchestrationTests
             [new ChatMessage(ChatRole.User, "Do task")]);
 
         // Assert: Workflow terminates with reset limit message
-        runResult.Result.Should().NotBeNull();
-        runResult.Result![0].Text.Should().Contain("maximum reset count limit");
+        Assert.NotNull(runResult.Result);
+        Assert.Contains("maximum reset count limit", runResult.Result![0].Text);
     }
 
     [Fact]
@@ -889,10 +877,9 @@ public class MagenticOrchestrationTests
             eventCollector: collectedEvents);
 
         // Assert: Warning emitted for parse failure, but workflow completes successfully
-        collectedEvents.OfType<WorkflowWarningEvent>()
-            .Should().Contain(e => e.Data != null && e.Data.ToString()!.Contains("Progress ledger JSON parse failed"));
-        runResult.Result.Should().NotBeNull();
-        runResult.Result![0].Text.Should().Contain("Completed after ledger retry");
+        Assert.Contains(collectedEvents.OfType<WorkflowWarningEvent>(), e => e.Data?.ToString()?.Contains("Progress ledger JSON parse failed") == true);
+        Assert.NotNull(runResult.Result);
+        Assert.Contains("Completed after ledger retry", runResult.Result![0].Text);
     }
 
     [Fact]
@@ -938,14 +925,12 @@ public class MagenticOrchestrationTests
             eventCollector: collectedEvents);
 
         // Assert: Parse failure warnings emitted, reset triggered (ReplannedEvent), workflow completes
-        collectedEvents.OfType<WorkflowWarningEvent>()
-            .Where(e => e.Data?.ToString()?.Contains("Progress ledger JSON parse failed") == true)
-            .Should().HaveCountGreaterThanOrEqualTo(3, "all 3 retry attempts should emit warnings");
-        collectedEvents.OfType<WorkflowWarningEvent>()
-            .Should().Contain(e => e.Data != null && e.Data.ToString()!.Contains("triggering reset"));
-        collectedEvents.OfType<MagenticReplannedEvent>().Should().NotBeEmpty("reset triggers replan");
-        runResult.Result.Should().NotBeNull();
-        runResult.Result![0].Text.Should().Contain("Recovered after max retries reset");
+        Assert.True(collectedEvents.OfType<WorkflowWarningEvent>()
+            .Count(e => e.Data?.ToString()?.Contains("Progress ledger JSON parse failed") == true) >= 3);
+        Assert.Contains(collectedEvents.OfType<WorkflowWarningEvent>(), e => e.Data?.ToString()?.Contains("triggering reset") == true);
+        Assert.NotEmpty(collectedEvents.OfType<MagenticReplannedEvent>());
+        Assert.NotNull(runResult.Result);
+        Assert.Contains("Recovered after max retries reset", runResult.Result![0].Text);
     }
 
     [Fact]
@@ -996,9 +981,9 @@ public class MagenticOrchestrationTests
             eventCollector: collectedEvents);
 
         // Assert: Stall detected via no-progress, reset triggered, replan emitted, workflow completes
-        collectedEvents.OfType<MagenticReplannedEvent>().Should().NotBeEmpty("no-progress stall triggers reset and replan");
-        runResult.Result.Should().NotBeNull();
-        runResult.Result![0].Text.Should().Contain("Recovered after no-progress stall");
+        Assert.NotEmpty(collectedEvents.OfType<MagenticReplannedEvent>());
+        Assert.NotNull(runResult.Result);
+        Assert.Contains("Recovered after no-progress stall", runResult.Result![0].Text);
     }
 
     [Fact]
@@ -1050,15 +1035,13 @@ public class MagenticOrchestrationTests
         List<AgentResponseUpdateEvent> agentUpdates = collectedEvents.OfType<AgentResponseUpdateEvent>().ToList();
 
         // WorkerA's executor should appear in the events
-        agentUpdates.Should().Contain(e => e.Update.AuthorName == "WorkerA",
-            "WorkerA was selected as next speaker and should have responded");
+        Assert.Contains(agentUpdates, e => e.Update.AuthorName == "WorkerA");
 
         // WorkerB should NOT have responded
-        agentUpdates.Should().NotContain(e => e.Update.AuthorName == "WorkerB",
-            "WorkerB was not selected and should not have responded");
+        Assert.DoesNotContain(agentUpdates, e => e.Update.AuthorName == "WorkerB");
 
-        runResult.Result.Should().NotBeNull();
-        runResult.Result![0].Text.Should().Contain("Delegated correctly!");
+        Assert.NotNull(runResult.Result);
+        Assert.Contains("Delegated correctly!", runResult.Result![0].Text);
     }
 
     [Fact]
@@ -1117,17 +1100,14 @@ public class MagenticOrchestrationTests
             eventCollector: collectedEvents);
 
         // Assert: Three progress ledger updates, no stall-triggered reset
-        collectedEvents.OfType<MagenticProgressLedgerUpdatedEvent>().Should().HaveCount(3,
-            "three coordination rounds should produce three progress ledger events");
+        Assert.Equal(3, collectedEvents.OfType<MagenticProgressLedgerUpdatedEvent>()?.Count());
 
         // One initial plan, no replans (agent returns go directly to coordination, no replan)
-        collectedEvents.OfType<MagenticPlanCreatedEvent>().Should().ContainSingle(
-            "only one initial plan should be created");
-        collectedEvents.OfType<MagenticReplannedEvent>().Should().BeEmpty(
-            "no replan occurs on normal agent return; stall count never exceeded threshold");
+        Assert.Single(collectedEvents.OfType<MagenticPlanCreatedEvent>());
+        Assert.Empty(collectedEvents.OfType<MagenticReplannedEvent>() ?? []);
 
-        runResult.Result.Should().NotBeNull();
-        runResult.Result![0].Text.Should().Contain("Completed without reset!");
+        Assert.NotNull(runResult.Result);
+        Assert.Contains("Completed without reset!", runResult.Result![0].Text);
     }
 
     [Fact]
@@ -1187,16 +1167,14 @@ public class MagenticOrchestrationTests
             eventCollector: collectedEvents);
 
         // Assert: Two pre-reset coordination rounds + one post-reset round = 3 ledger events
-        collectedEvents.OfType<MagenticProgressLedgerUpdatedEvent>().Should().HaveCount(3,
-            "two pre-reset rounds and one post-reset round");
+        Assert.Equal(3, collectedEvents.OfType<MagenticProgressLedgerUpdatedEvent>()?.Count());
 
         // One initial plan + one stall-triggered reset replan (no normal re-entry replans anymore)
-        collectedEvents.OfType<MagenticPlanCreatedEvent>().Should().ContainSingle();
-        collectedEvents.OfType<MagenticReplannedEvent>().Should().ContainSingle(
-            "only one replan from stall-triggered reset; no replan on normal agent return");
+        Assert.Single(collectedEvents.OfType<MagenticPlanCreatedEvent>());
+        Assert.Single(collectedEvents.OfType<MagenticReplannedEvent>());
 
-        runResult.Result.Should().NotBeNull();
-        runResult.Result![0].Text.Should().Contain("Recovered after consecutive stalls!");
+        Assert.NotNull(runResult.Result);
+        Assert.Contains("Recovered after consecutive stalls!", runResult.Result![0].Text);
     }
 
     [Fact]
@@ -1244,11 +1222,11 @@ public class MagenticOrchestrationTests
             checkpointManager: checkpointManager,
             eventCollector: allEvents);
 
-        firstResult.PendingRequests.Should().ContainSingle();
+        Assert.Single(firstResult.PendingRequests);
         ExternalRequest request1 = firstResult.PendingRequests[0].Request;
         MagenticPlanReviewRequest? reviewRequest1 = request1.Data.As<MagenticPlanReviewRequest>();
-        reviewRequest1.Should().NotBeNull();
-        reviewRequest1!.Plan.Text.Should().Contain("Initial plan");
+        Assert.NotNull(reviewRequest1);
+        Assert.Contains("Initial plan", reviewRequest1!.Plan.Text);
 
         // Act 2: Resume with first revision
         MagenticPlanReviewResponse revision1 = reviewRequest1.Revise("Too vague, add more detail");
@@ -1260,11 +1238,11 @@ public class MagenticOrchestrationTests
             firstResult.LastCheckpoint,
             eventCollector: allEvents);
 
-        secondResult.PendingRequests.Should().NotBeEmpty();
+        Assert.NotEmpty(secondResult.PendingRequests);
         ExternalRequest request2 = secondResult.PendingRequests[^1].Request;
         MagenticPlanReviewRequest? reviewRequest2 = request2.Data.As<MagenticPlanReviewRequest>();
-        reviewRequest2.Should().NotBeNull();
-        reviewRequest2!.Plan.Text.Should().Contain("Revised plan v2");
+        Assert.NotNull(reviewRequest2);
+        Assert.Contains("Revised plan v2", reviewRequest2!.Plan.Text);
 
         // Act 3: Resume with second revision
         MagenticPlanReviewResponse revision2 = reviewRequest2.Revise("Still needs more work on step 3");
@@ -1276,11 +1254,11 @@ public class MagenticOrchestrationTests
             secondResult.LastCheckpoint,
             eventCollector: allEvents);
 
-        thirdResult.PendingRequests.Should().NotBeEmpty();
+        Assert.NotEmpty(thirdResult.PendingRequests);
         ExternalRequest request3 = thirdResult.PendingRequests[^1].Request;
         MagenticPlanReviewRequest? reviewRequest3 = request3.Data.As<MagenticPlanReviewRequest>();
-        reviewRequest3.Should().NotBeNull();
-        reviewRequest3!.Plan.Text.Should().Contain("Revised plan v3");
+        Assert.NotNull(reviewRequest3);
+        Assert.Contains("Revised plan v3", reviewRequest3!.Plan.Text);
 
         // Act 4: Resume with approval
         MagenticPlanReviewResponse approval = reviewRequest3.Approve();
@@ -1293,11 +1271,10 @@ public class MagenticOrchestrationTests
             eventCollector: allEvents);
 
         // Assert: Multiple replan events emitted, final answer produced
-        allEvents.OfType<MagenticPlanCreatedEvent>().Should().NotBeEmpty("initial plan emits PlanCreatedEvent");
-        allEvents.OfType<MagenticReplannedEvent>().Should().HaveCountGreaterThanOrEqualTo(2,
-            "two revisions should emit at least two ReplannedEvents");
-        fourthResult.Result.Should().NotBeNull();
-        fourthResult.Result![0].Text.Should().Contain("Completed after multiple revisions");
+        Assert.NotEmpty(allEvents.OfType<MagenticPlanCreatedEvent>());
+        Assert.True(allEvents.OfType<MagenticReplannedEvent>().Count() >= 2);
+        Assert.NotNull(fourthResult.Result);
+        Assert.Contains("Completed after multiple revisions", fourthResult.Result![0].Text);
     }
 
     [Fact]
@@ -1313,9 +1290,8 @@ public class MagenticOrchestrationTests
             .RequirePlanSignoff(false);
 
         // Act & Assert: Build() should throw because the team is empty.
-        Action buildAction = () => builder.Build();
-        buildAction.Should().Throw<InvalidOperationException>()
-            .WithMessage("*participant*");
+        void buildAction() => builder.Build();
+        Assert.Contains("participant", Assert.Throws<InvalidOperationException>(buildAction).Message);
     }
 
     [Fact]
@@ -1364,11 +1340,11 @@ public class MagenticOrchestrationTests
             }
         }
 
-        output.Should().NotBeNull("workflow should have completed with output");
+        Assert.NotNull(output);
 
         // Act: Send a new message after termination — framework accepts it, but Magentic errors out
         bool accepted = await run.TrySendMessageAsync(new List<ChatMessage> { new(ChatRole.User, "Another message") });
-        accepted.Should().BeTrue("framework does not have a terminal state — it always queues messages");
+        Assert.True(accepted);
 
         await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
 
@@ -1384,12 +1360,12 @@ public class MagenticOrchestrationTests
 
         // Assert: Magentic should have rejected the message with an InvalidOperationException
         // (may be wrapped in TargetInvocationException by the framework's reflection-based dispatch)
-        errorEvent.Should().NotBeNull("sending a message after termination should produce a WorkflowErrorEvent");
+        Assert.NotNull(errorEvent);
         Exception actual = errorEvent!.Exception is System.Reflection.TargetInvocationException tie && tie.InnerException != null
             ? tie.InnerException
             : errorEvent.Exception!;
-        actual.Should().BeOfType<InvalidOperationException>();
-        actual.Message.Should().Contain("terminated");
+        Assert.True(actual is InvalidOperationException);
+        Assert.Contains("terminated", actual.Message);
     }
 
     #region Helper Methods

@@ -7,13 +7,12 @@
 
 ```
 dotnet/samples/
-├── 01-get-started/                    # Progressive tutorial (steps 01–06)
+├── 01-get-started/                    # Progressive tutorial (steps 01–05)
 │   ├── 01_hello_agent/                # Create and run your first agent
 │   ├── 02_add_tools/                  # Add function tools
 │   ├── 03_multi_turn/                 # Multi-turn conversations with AgentSession
 │   ├── 04_memory/                     # Agent memory with AIContextProvider
-│   ├── 05_first_workflow/             # Build a workflow with executors and edges
-│   └── 06_host_your_agent/            # Host your agent via Azure Functions
+│   └── 05_first_workflow/             # Build a workflow with executors and edges
 ├── 02-agents/                         # Deep-dive concept samples
 │   ├── Agents/                        # Core agent patterns (tools, structured output,
 │   │                                  #   conversations, middleware, plugins, MCP, etc.)
@@ -50,9 +49,7 @@ dotnet/samples/
 │   └── Visualization/                 # Workflow visualization
 ├── 04-hosting/                        # Deployment & hosting
 │   ├── A2A/                           # Agent-to-Agent protocol
-│   └── DurableAgents/                 # Durable task framework
-│       ├── AzureFunctions/            #   Azure Functions hosting
-│       └── ConsoleApps/               #   Console app hosting
+│   └── FoundryHostedAgents/           # Foundry hosted agents
 ├── 05-end-to-end/                     # Complete applications
 │   ├── A2AClientServer/               # A2A client/server demo
 │   ├── AgentWebChat/                  # Aspire-based web chat
@@ -66,7 +63,7 @@ dotnet/samples/
 ## Design principles
 
 1. **Progressive complexity**: Sections 01→05 build from "hello world" to
-   production. Within 01-get-started, projects are numbered 01–06 and each step
+   production. Within 01-get-started, projects are numbered 01–05 and each step
    adds exactly one concept.
 
 2. **One concept per project** in 01-get-started. Each step is a standalone
@@ -133,5 +130,6 @@ dotnet run
 - `AgentSession` manages multi-turn conversation state
 - `AIContextProvider` injects memory and context
 - Prefer `AIProjectClient.AsAIAgent(...)` for Foundry-backed canonical samples
-- Azure Functions hosting uses `ConfigureDurableAgents(options => options.AddAIAgent(agent))`
 - Workflows use `WorkflowBuilder` with `Executor<TIn, TOut>` and edge connections
+
+Durable agent and Azure Functions samples are maintained in the [Durable Agent Framework extension](https://github.com/microsoft/agent-framework-durable-extension/tree/main/dotnet/samples).

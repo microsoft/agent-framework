@@ -1,7 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI;
 
@@ -58,6 +60,19 @@ public sealed class ChatClientAgentOptions
     /// with the desired decorators.
     /// </remarks>
     public bool UseProvidedChatClientAsIs { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether functions may be invoked concurrently when a model response
+    /// contains multiple function calls.
+    /// </summary>
+    /// <remarks>
+    /// This setting is independent of <see cref="ChatOptions.AllowMultipleToolCalls"/>, which controls whether
+    /// a model may return multiple tool calls in a single response. The default is <see langword="false"/>.
+    /// This option has no effect when <see cref="UseProvidedChatClientAsIs"/> is <see langword="true"/>.
+    /// When using a custom chat client stack, configure <see cref="FunctionInvokingChatClient.AllowConcurrentInvocation"/>
+    /// directly on its <see cref="FunctionInvokingChatClient"/> instance.
+    /// </remarks>
+    public bool AllowConcurrentInvocation { get; set; }
 
     /// <summary>
     /// Gets or sets a value indicating whether to set the <see cref="ChatClientAgent.ChatHistoryProvider"/> to <see langword="null"/>
@@ -239,6 +254,41 @@ public sealed class ChatClientAgentOptions
     public bool DisableApprovalResponseBinding { get; set; }
 
     /// <summary>
+    /// Gets or sets a value indicating whether to enable bypassing that stores invocable (backend) function
+    /// calls in the session state and executes them on the next request when they are returned alongside
+    /// declaration-only (frontend) function calls in the same response.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="FunctionInvokingChatClient"/> terminates the function-calling loop as soon as it encounters
+    /// a non-invocable (declaration-only) <see cref="FunctionCallContent"/>, returning every
+    /// <see cref="FunctionCallContent"/> in that iteration — including invocable backend calls — to the caller
+    /// unexecuted. When the caller only resolves the declaration-only call (for example an AG-UI frontend
+    /// tool), the backend call's <c>call_id</c> is left orphaned, which causes the AI provider to reject the
+    /// next request.
+    /// </para>
+    /// <para>
+    /// When this property is set to <see langword="true"/>, an <see cref="InvocableFunctionBypassingChatClient"/>
+    /// decorator is injected above <see cref="FunctionInvokingChatClient"/> in the pipeline. For responses that
+    /// contain both invocable and declaration-only function calls, the decorator removes the invocable calls,
+    /// stores them in the session, and returns only the declaration-only calls to the caller. On the next
+    /// request the stored calls are re-injected as pre-approved responses so
+    /// <see cref="FunctionInvokingChatClient"/> reconstructs and executes them.
+    /// </para>
+    /// <para>
+    /// This option has no effect when <see cref="UseProvidedChatClientAsIs"/> is <see langword="true"/>.
+    /// When using a custom chat client stack, you can add an <see cref="InvocableFunctionBypassingChatClient"/>
+    /// manually via the <see cref="ChatClientBuilderExtensions.UseInvocableFunctionBypassing"/>
+    /// extension method.
+    /// </para>
+    /// </remarks>
+    /// <value>
+    /// Default is <see langword="false"/>.
+    /// </value>
+    [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
+    public bool EnableInvocableFunctionBypassing { get; set; }
+
+    /// <summary>
     /// Creates a new instance of <see cref="ChatClientAgentOptions"/> with the same values as this instance.
     /// </summary>
     public ChatClientAgentOptions Clone()
@@ -251,6 +301,7 @@ public sealed class ChatClientAgentOptions
             ChatHistoryProvider = this.ChatHistoryProvider,
             AIContextProviders = this.AIContextProviders is null ? null : new List<AIContextProvider>(this.AIContextProviders),
             UseProvidedChatClientAsIs = this.UseProvidedChatClientAsIs,
+            AllowConcurrentInvocation = this.AllowConcurrentInvocation,
             ClearOnChatHistoryProviderConflict = this.ClearOnChatHistoryProviderConflict,
             WarnOnChatHistoryProviderConflict = this.WarnOnChatHistoryProviderConflict,
             ThrowOnChatHistoryProviderConflict = this.ThrowOnChatHistoryProviderConflict,
@@ -258,5 +309,6 @@ public sealed class ChatClientAgentOptions
             EnableMessageInjection = this.EnableMessageInjection,
             DisableApprovalNotRequiredFunctionBypassing = this.DisableApprovalNotRequiredFunctionBypassing,
             DisableApprovalResponseBinding = this.DisableApprovalResponseBinding,
+            EnableInvocableFunctionBypassing = this.EnableInvocableFunctionBypassing,
         };
 }

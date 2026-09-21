@@ -81,7 +81,12 @@ public static class Program
         }
         Console.WriteLine($"Number of checkpoints created: {checkpoints.Count}");
 
-        // Rehydrate a new workflow instance from a saved checkpoint and continue execution
+        // <rehydrate_workflow>
+        // A rehydrated workflow must preserve the topology and executor identities of the workflow that
+        // created the checkpoint. This executor-only workflow rebuilds identically because its executors
+        // use fixed ids. Agent-based workflows must recreate each local agent with the same
+        // ChatClientAgentOptions.Id (and, if set, the same Name), otherwise the executor ids no longer
+        // match the checkpoint and resume fails.
         var newWorkflow = WorkflowFactory.BuildWorkflow();
         const int CheckpointIndex = 5;
         Console.WriteLine($"\n\nHydrating a new workflow instance from the {CheckpointIndex + 1}th checkpoint.");
@@ -89,6 +94,7 @@ public static class Program
 
         await using StreamingRun newCheckpointedRun =
             await InProcessExecution.ResumeStreamingAsync(newWorkflow, savedCheckpoint, checkpointManager);
+        // </rehydrate_workflow>
 
         await foreach (WorkflowEvent evt in newCheckpointedRun.WatchStreamAsync())
         {

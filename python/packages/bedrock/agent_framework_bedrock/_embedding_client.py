@@ -19,11 +19,13 @@ from agent_framework import (
     UsageDetails,
     load_settings,
 )
-from agent_framework._telemetry import get_user_agent
+from agent_framework._telemetry import get_user_agent, mark_feature_used
 from agent_framework.observability import EmbeddingTelemetryLayer
 from boto3.session import Session as Boto3Session
 from botocore.client import BaseClient
 from botocore.config import Config as BotoConfig
+
+from ._feature_usage import FeatureIndex
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
@@ -99,9 +101,9 @@ class RawBedrockEmbeddingClient(
         *,
         region: str | None = None,
         model: str | None = None,
-        access_key: str | None = None,
-        secret_key: str | None = None,
-        session_token: str | None = None,
+        access_key: str | SecretString | None = None,
+        secret_key: str | SecretString | None = None,
+        session_token: str | SecretString | None = None,
         client: BaseClient | None = None,
         boto3_session: Boto3Session | None = None,
         additional_properties: dict[str, Any] | None = None,
@@ -180,6 +182,7 @@ class RawBedrockEmbeddingClient(
         if not model:
             raise ValueError("model is required")
 
+        mark_feature_used(FeatureIndex.BEDROCK)
         embedding_results = await asyncio.gather(
             *(self._generate_embedding_for_text(opts, model, text) for text in values)
         )
@@ -268,9 +271,9 @@ class BedrockEmbeddingClient(
         *,
         region: str | None = None,
         model: str | None = None,
-        access_key: str | None = None,
-        secret_key: str | None = None,
-        session_token: str | None = None,
+        access_key: str | SecretString | None = None,
+        secret_key: str | SecretString | None = None,
+        session_token: str | SecretString | None = None,
         client: BaseClient | None = None,
         boto3_session: Boto3Session | None = None,
         otel_provider_name: str | None = None,

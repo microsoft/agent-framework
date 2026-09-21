@@ -1,7 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import ast
+import inspect
 import os
 import re
+import textwrap
 from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
 from typing import Annotated, Any, cast
 from unittest.mock import AsyncMock, MagicMock
@@ -9,8 +12,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from agent_framework import (
     Agent,
+    AgentContext,
     AgentResponse,
     AgentResponseUpdate,
+    CharacterEstimatorTokenizer,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
@@ -19,8 +24,10 @@ from agent_framework import (
     InMemoryHistoryProvider,
     Message,
     ResponseStream,
+    ToolResultCompactionStrategy,
     WorkflowEvent,
     WorkflowRunState,
+    agent_middleware,
     function_middleware,
     resolve_agent_id,
     tool,
@@ -257,6 +264,28 @@ async def test_handoff():
     request = requests[0]
     assert isinstance(request.data, HandoffAgentUserRequest)
     assert request.source_executor_id == escalation.name
+
+
+def test_handoff_builder_uses_stable_default_and_custom_name() -> None:
+    participant = MockHandoffAgent(name="agent")
+
+    default_workflow = (
+        HandoffBuilder(participants=[participant], termination_condition=lambda _: True)
+        .with_start_agent(participant)
+        .build()
+    )
+    custom_workflow = (
+        HandoffBuilder(
+            name="custom-handoff",
+            participants=[participant],
+            termination_condition=lambda _: True,
+        )
+        .with_start_agent(participant)
+        .build()
+    )
+
+    assert default_workflow.name == "Handoff"
+    assert custom_workflow.name == "custom-handoff"
 
 
 def _latest_request_info_event(events: list[WorkflowEvent]) -> WorkflowEvent[Any]:
@@ -577,6 +606,138 @@ async def test_handoff_replay_serializes_handoff_function_results() -> None:
     assert requests[-1].source_executor_id == triage.name
 
 
+@pytest.mark.parametrize("stream", [False, True])
+async def test_textless_handoff_preserves_target_context_without_synthetic_user_turn(stream: bool) -> None:
+    """Textless handoffs route accumulated context without inventing user input."""
+
+    class TextlessHandoffClient(FunctionInvocationLayer[Any], ChatMiddlewareLayer[Any], BaseChatClient[Any]):
+        def __init__(self, name: str, handoff_sequence: list[str | None]) -> None:
+            ChatMiddlewareLayer.__init__(self)
+            FunctionInvocationLayer.__init__(self)
+            BaseChatClient.__init__(self)
+            self._name = name
+            self._handoff_sequence = handoff_sequence
+            self.received_messages: list[list[Message]] = []
+
+        def _inner_get_response(
+            self,
+            *,
+            messages: Sequence[Message],
+            stream: bool,
+            options: Mapping[str, Any],
+            **kwargs: Any,
+        ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+            del options
+            del kwargs
+
+            self.received_messages.append(list(messages))
+            call_index = len(self.received_messages) - 1
+            handoff_to = self._handoff_sequence[call_index]
+            if handoff_to is None:
+                contents = [Content.from_text(text=f"{self._name} complete")]
+            else:
+                contents = [
+                    Content.from_function_call(
+                        call_id=f"{self._name}-handoff-{call_index}",
+                        name=get_handoff_tool_name(handoff_to),
+                        arguments={},
+                    )
+                ]
+
+            if stream:
+
+                async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                    yield ChatResponseUpdate(contents=contents, role="assistant", finish_reason="stop")
+
+                return ResponseStream(_stream(), finalizer=lambda updates: ChatResponse.from_updates(updates))
+
+            async def _get() -> ChatResponse:
+                return ChatResponse(
+                    messages=[Message(role="assistant", contents=contents)],
+                    response_id=f"{self._name}-{call_index}",
+                )
+
+            return _get()
+
+    initial_task = "Investigate order 1234."
+    source_client = TextlessHandoffClient("source", ["target", None])
+    target_client = TextlessHandoffClient("target", ["source"])
+    source = Agent(
+        id="source",
+        name="source",
+        client=source_client,
+        require_per_service_call_history_persistence=True,
+    )
+    target = Agent(
+        id="target",
+        name="target",
+        client=target_client,
+        require_per_service_call_history_persistence=True,
+    )
+    observed_user_turns: list[list[str]] = []
+
+    def terminate_after_second_real_user_turn(conversation: list[Message]) -> bool:
+        user_turns = [message.text or "" for message in conversation if message.role == "user"]
+        observed_user_turns.append(user_turns)
+        return len(user_turns) >= 2
+
+    workflow = (
+        HandoffBuilder(
+            participants=_as_handoff_agents(source, target),
+            termination_condition=terminate_after_second_real_user_turn,
+        )
+        .with_start_agent(_as_handoff_agent(source))
+        .build()
+    )
+
+    if stream:
+        events = await _drain(workflow.run(initial_task, stream=True))
+        final_state = [event.state for event in events if event.type == "status"][-1]
+    else:
+        result = await workflow.run(initial_task)
+        events = list(result)
+        final_state = result.get_final_state()
+
+    received_messages = [
+        [(message.role, message.text) for message in invocation]
+        for invocation in [*source_client.received_messages, *target_client.received_messages]
+    ]
+    assert received_messages == [
+        [("user", initial_task)],
+        [("user", initial_task), ("assistant", ""), ("tool", "")],
+        [("user", initial_task)],
+    ]
+
+    revisited_source_messages = source_client.received_messages[1]
+    source_call_ids = {
+        content.call_id
+        for message in revisited_source_messages
+        for content in message.contents
+        if content.type == "function_call"
+    }
+    source_result_ids = {
+        content.call_id
+        for message in revisited_source_messages
+        for content in message.contents
+        if content.type == "function_result"
+    }
+    assert "source-handoff-0" in source_call_ids
+    assert "source-handoff-0" in source_result_ids
+
+    assert observed_user_turns
+    assert all(user_turns == [initial_task] for user_turns in observed_user_turns)
+
+    handoffs = [event.data for event in events if event.type == "handoff_sent"]
+    assert handoffs == [
+        HandoffSentEvent(source=resolve_agent_id(source), target=resolve_agent_id(target)),
+        HandoffSentEvent(source=resolve_agent_id(target), target=resolve_agent_id(source)),
+    ]
+    requests = [event for event in events if event.type == "request_info"]
+    assert len(requests) == 1
+    assert requests[0].source_executor_id == resolve_agent_id(source)
+    assert final_state == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
+
+
 async def test_handoff_resume_preserves_approved_tool_output_for_stateless_runs() -> None:
     """Approved calls must keep function_call/function_result pairs for later replays."""
     submit_call_id = "call_submit_refund_approved"
@@ -805,6 +966,144 @@ async def test_handoff_clone_preserves_all_middleware_types() -> None:
     assert tracking_middleware in cloned_middleware, "User function middleware should be preserved on cloned agent"
 
 
+async def test_handoff_clone_preserves_additional_properties() -> None:
+    """Handoff clones should preserve additional_properties from the original agent."""
+    tracked_properties: list[dict[str, Any]] = []
+
+    @agent_middleware
+    async def observe_properties(context: AgentContext, call_next):
+        agent = cast(Agent, context.agent)
+        tracked_properties.append(dict(agent.additional_properties))
+        await call_next()
+
+    coordinator = Agent(
+        id="coordinator",
+        name="coordinator",
+        client=MockChatClient(name="coordinator"),
+        additional_properties={"tenant": "contoso", "trace_tag": "triage"},
+        middleware=[observe_properties],
+        require_per_service_call_history_persistence=True,
+    )
+    specialist = Agent(
+        id="specialist",
+        name="specialist",
+        client=MockChatClient(name="specialist"),
+        require_per_service_call_history_persistence=True,
+    )
+
+    workflow = (
+        HandoffBuilder(
+            participants=_as_handoff_agents(coordinator, specialist),
+            termination_condition=lambda conversation: any(msg.role == "assistant" for msg in conversation),
+        )
+        .with_start_agent(_as_handoff_agent(coordinator))
+        .build()
+    )
+
+    await _drain(workflow.run("hello", stream=True))
+
+    assert tracked_properties == [{"tenant": "contoso", "trace_tag": "triage"}]
+
+    # The clone owns its own copy; the original agent's properties stay untouched.
+    executor = workflow.executors[resolve_agent_id(coordinator)]
+    assert isinstance(executor, HandoffAgentExecutor)
+    cloned_additional_properties = cast(Agent, executor.agent).additional_properties
+    assert cloned_additional_properties == {"tenant": "contoso", "trace_tag": "triage"}
+    assert cloned_additional_properties is not coordinator.additional_properties
+
+
+async def test_handoff_clone_preserves_compaction_strategy_and_tokenizer() -> None:
+    """Handoff clones must keep agent-level compaction configuration (#8320).
+
+    Both live outside ``default_options``, so rebuilding the agent through its constructor
+    drops them unless they are forwarded explicitly. The clone then silently falls back to
+    no compaction, and a long handoff conversation grows unbounded until it trips the
+    model's context limit -- a failure that shows up as cost and latency long before it
+    shows up as an error.
+    """
+    strategy = ToolResultCompactionStrategy()
+    tokenizer = CharacterEstimatorTokenizer()
+
+    coordinator = Agent(
+        id="coordinator",
+        name="coordinator",
+        client=MockChatClient(name="coordinator"),
+        compaction_strategy=strategy,
+        tokenizer=tokenizer,
+        require_per_service_call_history_persistence=True,
+    )
+    specialist = Agent(
+        id="specialist",
+        name="specialist",
+        client=MockChatClient(name="specialist"),
+        require_per_service_call_history_persistence=True,
+    )
+
+    workflow = (
+        HandoffBuilder(
+            participants=_as_handoff_agents(coordinator, specialist),
+            termination_condition=lambda conversation: any(msg.role == "assistant" for msg in conversation),
+        )
+        .with_start_agent(_as_handoff_agent(coordinator))
+        .build()
+    )
+
+    await _drain(workflow.run("hello", stream=True))
+
+    executor = workflow.executors[resolve_agent_id(coordinator)]
+    assert isinstance(executor, HandoffAgentExecutor)
+    cloned = cast(Agent, executor.agent)
+
+    # Shared by reference, like context_providers and middleware: these hold immutable
+    # configuration, and a tokenizer may carry a vocabulary that is costly to copy.
+    assert cloned.compaction_strategy is strategy
+    assert cloned.tokenizer is tokenizer
+
+
+def test_handoff_clone_forwards_every_agent_constructor_field() -> None:
+    """Guard against the next field being dropped the way #8320 dropped two.
+
+    ``_clone_chat_agent`` rebuilds the agent by listing constructor arguments by hand, so
+    every parameter added to ``Agent.__init__`` has to be added here too or it is silently
+    lost. That has already happened repeatedly -- the ``test_handoff_clone_preserves_*``
+    tests above were each written after a field went missing. This asserts the inverse:
+    every constructor parameter is either forwarded or named below as deliberately handled
+    another way, so a new parameter fails here instead of in a user's workflow.
+    """
+    handled_elsewhere = {
+        # Recombined with `agent.mcp_tools` and passed through `default_options["tools"]`,
+        # because the constructor re-separates MCP tools from regular ones.
+        "tools",
+        # Carried inside `default_options` rather than as its own argument.
+        "instructions",
+    }
+
+    parameters = {
+        name
+        for name, param in inspect.signature(Agent.__init__).parameters.items()
+        if name != "self" and param.kind not in (param.VAR_POSITIONAL, param.VAR_KEYWORD)
+    }
+
+    # Read the keyword names off the `Agent(...)` call itself rather than substring-matching
+    # the source: a commented-out argument would satisfy a substring check, and renaming the
+    # local would break every match at once.
+    tree = ast.parse(textwrap.dedent(inspect.getsource(HandoffAgentExecutor._clone_chat_agent)))
+    forwarded = {
+        keyword.arg
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "Agent"
+        for keyword in node.keywords
+        if keyword.arg is not None
+    }
+    assert forwarded, "could not find the Agent(...) call in _clone_chat_agent; this guard needs updating"
+
+    missing = parameters - forwarded - handled_elsewhere
+    assert not missing, (
+        f"_clone_chat_agent does not forward {sorted(missing)}; add them to the Agent(...) "
+        f"call, or to `handled_elsewhere` with a comment saying why."
+    )
+
+
 def test_clean_conversation_for_handoff_keeps_text_only_history() -> None:
     """Tool-control messages must be excluded from persisted handoff history."""
     function_call = Content.from_function_call(
@@ -841,6 +1140,63 @@ def test_clean_conversation_for_handoff_keeps_text_only_history() -> None:
         "My order arrived damaged.",
         "Triage Agent: Routing you to Refund.",
     ]
+
+
+def test_clean_conversation_for_handoff_preserves_user_multimodal_content() -> None:
+    """Semantic multimodal content on user messages must survive handoff routing (#7822).
+
+    Tool-control payloads are runtime-only and must still be dropped, and assistant
+    messages must stay text-only because providers treat multimodal items as
+    input-only and reject them when replayed on assistant turns.
+    """
+    user_image = Content.from_uri(uri="https://example.com/damage.png", media_type="image/png")
+    user_inline_data = Content.from_data(data=b"\x89PNG-fake", media_type="image/png")
+    user_upload = Content.from_hosted_file(file_id="file-abc123")
+    user_store = Content.from_hosted_vector_store(vector_store_id="vs-xyz789")
+
+    conversation = [
+        Message(
+            role="user",
+            contents=[
+                "My order arrived damaged, see the attached photos.",
+                user_image,
+                user_inline_data,
+                user_upload,
+                user_store,
+            ],
+        ),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_text(text="Triage Agent: Routing you to Refund."),
+                # Providers reject input-only multimodal parts replayed on assistant turns.
+                Content.from_uri(uri="https://example.com/generated.png", media_type="image/png"),
+                Content.from_function_call(call_id="handoff-call-1", name="handoff_to_refund_agent"),
+            ],
+        ),
+        Message(role="tool", contents=[Content.from_function_result(call_id="handoff-call-1", result="ok")]),
+    ]
+
+    cleaned = clean_conversation_for_handoff(conversation)
+    assert [message.role for message in cleaned] == ["user", "assistant"]
+
+    cleaned_user = cleaned[0]
+    assert [content.type for content in cleaned_user.contents] == [
+        "text",
+        "uri",
+        "data",
+        "hosted_file",
+        "hosted_vector_store",
+    ]
+    assert cleaned_user.contents[1].uri == "https://example.com/damage.png"
+    assert cleaned_user.contents[2].uri is not None
+    assert cleaned_user.contents[2].uri.startswith("data:image/png;base64,")
+    assert cleaned_user.contents[3].file_id == "file-abc123"
+    assert cleaned_user.contents[4].vector_store_id == "vs-xyz789"
+
+    cleaned_assistant = cleaned[1]
+    assert [content.type for content in cleaned_assistant.contents] == ["text"]
+    assert cleaned_assistant.text == "Triage Agent: Routing you to Refund."
 
 
 async def test_autonomous_mode_yields_output_without_user_request():

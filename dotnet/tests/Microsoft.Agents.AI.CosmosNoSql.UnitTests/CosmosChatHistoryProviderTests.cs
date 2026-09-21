@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Azure.Core;
 using Azure.Identity;
@@ -805,6 +806,137 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         Assert.Single(hierarchicalMessageList);
         Assert.Equal("Simple partitioning message", simpleMessageList[0].Text);
         Assert.Equal("Hierarchical partitioning message", hierarchicalMessageList[0].Text);
+    }
+
+    [Fact]
+    [Trait("Category", "CosmosDB")]
+    public async Task GetMessagesAsync_WithMessages_ShouldReturnAllMessagesAcrossPagesAsync()
+    {
+        // Arrange
+        this.SkipIfEmulatorNotAvailable();
+        var session = CreateMockSession();
+        const string ConversationId = "get-messages-test";
+
+        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId,
+            _ => new CosmosChatHistoryProvider.State(ConversationId))
+        {
+            MaxItemCount = 2,
+        };
+
+        List<ChatMessage> messages =
+        [
+            new(ChatRole.User, "Message 1"),
+            new(ChatRole.Assistant, "Message 2"),
+            new(ChatRole.User, "Message 3"),
+            new(ChatRole.Assistant, "Message 4"),
+            new(ChatRole.User, "Message 5"),
+        ];
+
+        var context = new ChatHistoryProvider.InvokedContext(s_mockAgent, session, messages, []);
+        await provider.InvokedAsync(context);
+
+        // Wait a moment for eventual consistency
+        await Task.Delay(100);
+
+        // Act
+        var retrievedMessages = (await provider.GetMessagesAsync(session)).ToList();
+
+        // Assert
+        Assert.Equal(messages.Count, retrievedMessages.Count);
+        // Batch writes share a Unix-seconds timestamp, so this test intentionally verifies page completeness
+        // without asserting relative order among tied messages.
+        Assert.Equal(
+            messages.Select(message => message.Text).Order(),
+            retrievedMessages.Select(message => message.Text).Order());
+    }
+
+    [Fact]
+    [Trait("Category", "CosmosDB")]
+    public async Task GetMessagesAsync_WithNoMessages_ShouldReturnEmptyAsync()
+    {
+        // Arrange
+        this.SkipIfEmulatorNotAvailable();
+        var session = CreateMockSession();
+
+        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId,
+            _ => new CosmosChatHistoryProvider.State("get-messages-empty-test"));
+
+        // Act
+        var messages = await provider.GetMessagesAsync(session);
+
+        // Assert
+        Assert.Empty(messages);
+    }
+
+    [Fact]
+    [Trait("Category", "CosmosDB")]
+    public async Task GetMessagesAsync_DoesNotApplyInvocationFilterOrSourceAttributionAsync()
+    {
+        // Arrange
+        this.SkipIfEmulatorNotAvailable();
+        var session = CreateMockSession();
+
+        using var provider = new CosmosChatHistoryProvider(
+            this._connectionString,
+            s_testDatabaseId,
+            TestContainerId,
+            _ => new CosmosChatHistoryProvider.State("get-messages-filter-test"),
+            provideOutputMessageFilter: messages => messages.Where(message => message.Text != "Hidden"));
+
+        List<ChatMessage> messages =
+        [
+            new(ChatRole.User, "Visible"),
+            new(ChatRole.Assistant, "Hidden"),
+        ];
+
+        var invokedContext = new ChatHistoryProvider.InvokedContext(s_mockAgent, session, messages, []);
+        await provider.InvokedAsync(invokedContext);
+
+        // Act
+        var directMessages = (await provider.GetMessagesAsync(session)).ToList();
+        var invokingContext = new ChatHistoryProvider.InvokingContext(s_mockAgent, session, []);
+        var invocationMessages = (await provider.InvokingAsync(invokingContext)).ToList();
+
+        // Assert
+        Assert.Equal(2, directMessages.Count);
+        Assert.All(directMessages, message => Assert.Equal(AgentRequestMessageSourceType.External, message.GetAgentRequestMessageSourceType()));
+        Assert.Single(invocationMessages);
+        Assert.Equal("Visible", invocationMessages[0].Text);
+        Assert.Equal(AgentRequestMessageSourceType.ChatHistory, invocationMessages[0].GetAgentRequestMessageSourceType());
+    }
+
+    [Fact]
+    [Trait("Category", "CosmosDB")]
+    public async Task GetMessagesAsync_AfterDispose_ShouldThrowObjectDisposedExceptionAsync()
+    {
+        // Arrange
+        this.SkipIfEmulatorNotAvailable();
+        var session = CreateMockSession();
+        var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId,
+            _ => new CosmosChatHistoryProvider.State("get-messages-disposed-test"));
+        provider.Dispose();
+
+        // Act & Assert
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => provider.GetMessagesAsync(session));
+    }
+
+    [Fact]
+    [Trait("Category", "CosmosDB")]
+    public async Task GetMessagesAsync_WithCanceledToken_ShouldThrowOperationCanceledExceptionAsync()
+    {
+        // Arrange
+        this.SkipIfEmulatorNotAvailable();
+        var session = CreateMockSession();
+
+        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId,
+            _ => new CosmosChatHistoryProvider.State("get-messages-cancellation-test"));
+
+        using var cancellationTokenSource = new CancellationTokenSource();
+        cancellationTokenSource.Cancel();
+
+        // Act & Assert
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => provider.GetMessagesAsync(session, cancellationTokenSource.Token));
     }
 
     [Fact]

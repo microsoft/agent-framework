@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Extensions.AI;
 
@@ -30,7 +29,7 @@ public class WorkflowSessionTests
         Dictionary<string, RequestPort> ports = new() { [port.Id] = port };
         RequestPortInfo portInfo = new(new TypeId(live), new TypeId(typeof(object)), port.Id);
 
-        WorkflowSession.ResolveEnvelopeType(portInfo, ports).Should().Be(live);
+        Assert.Equal(live, WorkflowSession.ResolveEnvelopeType(portInfo, ports));
     }
 
     [Fact]
@@ -44,7 +43,7 @@ public class WorkflowSessionTests
         string mutatedAssemblyName = $"{simpleAssemblyName}, Version=99.0.0.0, Culture=neutral, PublicKeyToken=null";
         RequestPortInfo portInfo = new(new TypeId(mutatedAssemblyName, live.FullName!), new TypeId(typeof(object)), port.Id);
 
-        WorkflowSession.ResolveEnvelopeType(portInfo, ports).Should().Be(live);
+        Assert.Equal(live, WorkflowSession.ResolveEnvelopeType(portInfo, ports));
     }
 
     [Fact]
@@ -59,7 +58,7 @@ public class WorkflowSessionTests
         string mutatedTypeName = $"System.Collections.Generic.List`1[[Microsoft.Extensions.AI.ChatMessage, {innerSimpleName}, Version=99.0.0.0, Culture=neutral, PublicKeyToken=null]]";
         RequestPortInfo portInfo = new(new TypeId(outerSimpleName, mutatedTypeName), new TypeId(typeof(object)), port.Id);
 
-        WorkflowSession.ResolveEnvelopeType(portInfo, ports).Should().Be(live);
+        Assert.Equal(live, WorkflowSession.ResolveEnvelopeType(portInfo, ports));
     }
 
     [Fact]
@@ -71,7 +70,7 @@ public class WorkflowSessionTests
         };
         RequestPortInfo portInfo = new(new TypeId(typeof(TestEnvelope)), new TypeId(typeof(object)), "missing-port");
 
-        WorkflowSession.ResolveEnvelopeType(portInfo, ports).Should().BeNull();
+        Assert.Null(WorkflowSession.ResolveEnvelopeType(portInfo, ports));
     }
 
     [Fact]
@@ -83,7 +82,7 @@ public class WorkflowSessionTests
         };
         RequestPortInfo portInfo = new(new TypeId("Some.Unloaded.Assembly", "Some.Unknown.Type"), new TypeId(typeof(object)), "port-1");
 
-        WorkflowSession.ResolveEnvelopeType(portInfo, ports).Should().BeNull();
+        Assert.Null(WorkflowSession.ResolveEnvelopeType(portInfo, ports));
     }
 
     [Fact]
@@ -93,8 +92,8 @@ public class WorkflowSessionTests
         Dictionary<string, RequestPort> ports = new() { [port.Id] = port };
         ExternalRequest request = ExternalRequest.Create(port, new TestEnvelope());
 
-        WorkflowSession.TryGetRequestEnvelope(request, ports, out IExternalRequestEnvelope? envelope).Should().BeTrue();
-        envelope.Should().BeOfType<TestEnvelope>();
+        Assert.True(WorkflowSession.TryGetRequestEnvelope(request, ports, out IExternalRequestEnvelope? envelope));
+        Assert.True(envelope is TestEnvelope);
     }
 
     [Fact]
@@ -104,8 +103,8 @@ public class WorkflowSessionTests
         Dictionary<string, RequestPort> ports = new() { [port.Id] = port };
         ExternalRequest request = ExternalRequest.Create(port, "not-an-envelope");
 
-        WorkflowSession.TryGetRequestEnvelope(request, ports, out IExternalRequestEnvelope? envelope).Should().BeFalse();
-        envelope.Should().BeNull();
+        Assert.False(WorkflowSession.TryGetRequestEnvelope(request, ports, out IExternalRequestEnvelope? envelope));
+        Assert.Null(envelope);
     }
 
     [Fact]
@@ -116,7 +115,7 @@ public class WorkflowSessionTests
         RequestPortInfo recordedPortInfo = new(new TypeId("Some.Unloaded.Assembly", "Some.Unknown.Type"), new TypeId(typeof(object)), port.Id);
         ExternalRequest request = new(recordedPortInfo, "req-1", new PortableValue(new TestEnvelope()));
 
-        WorkflowSession.TryGetRequestEnvelope(request, ports, out IExternalRequestEnvelope? envelope).Should().BeFalse();
-        envelope.Should().BeNull();
+        Assert.False(WorkflowSession.TryGetRequestEnvelope(request, ports, out IExternalRequestEnvelope? envelope));
+        Assert.Null(envelope);
     }
 }

@@ -1,8 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import base64
 import json
-from collections.abc import AsyncIterable, Sequence
+import warnings
+from collections.abc import AsyncIterable, Awaitable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Literal, cast
@@ -36,6 +38,7 @@ from agent_framework._compaction import (
     GROUP_TOKEN_COUNT_KEY,
 )
 from agent_framework._types import (
+    _append_instructions,
     _get_data_bytes,
     _get_data_bytes_as_str,
     _parse_content_list,
@@ -110,6 +113,93 @@ def test_text_content_keyword():
     assert isinstance(content, Content)
     # Note: No longer using Pydantic validation, so type assignment should work
     content.type = "text"  # This should work fine now
+
+
+def test_marked_refusal_text_is_visible_and_serializable() -> None:
+    content = Content.from_text(
+        "I cannot help with that.",
+        additional_properties={"model_output_kind": "refusal"},
+        raw_representation={"type": "refusal"},
+    )
+    message = Message("assistant", [content])
+    chat_update = ChatResponseUpdate(contents=[content])
+    agent_update = AgentResponseUpdate(contents=[content])
+
+    assert content.type == "text"
+    assert str(content) == "I cannot help with that."
+    assert message.text == "I cannot help with that."
+    assert chat_update.text == "I cannot help with that."
+    assert agent_update.text == "I cannot help with that."
+    assert content.to_dict() == {
+        "type": "text",
+        "text": "I cannot help with that.",
+        "additional_properties": {"model_output_kind": "refusal"},
+    }
+    assert Content.from_dict(content.to_dict()) == Content.from_text(
+        "I cannot help with that.",
+        additional_properties={"model_output_kind": "refusal"},
+    )
+
+
+def test_marked_refusal_text_is_excluded_from_structured_output() -> None:
+    response = ChatResponse(
+        messages=[
+            Message(
+                "assistant",
+                [
+                    Content.from_text(
+                        '{"should_not": "parse"}',
+                        additional_properties={"model_output_kind": "refusal"},
+                    )
+                ],
+            )
+        ],
+        response_format={"type": "object"},
+    )
+
+    assert response.text == '{"should_not": "parse"}'
+    assert response.value is None
+
+
+@pytest.mark.parametrize("response_type", [ChatResponse, AgentResponse])
+def test_final_marked_refusal_does_not_fall_back_to_earlier_structured_output(response_type: type) -> None:
+    response = response_type(
+        messages=[
+            Message("assistant", [Content.from_text('{"result": "stale"}')]),
+            Message(
+                "assistant",
+                [
+                    Content.from_text(
+                        "I cannot provide a result.",
+                        additional_properties={"model_output_kind": "refusal"},
+                    )
+                ],
+            ),
+        ],
+        response_format={"type": "object"},
+    )
+
+    assert response.value is None
+
+
+def test_mixed_final_message_with_refusal_has_no_structured_output() -> None:
+    response = ChatResponse(
+        messages=[
+            Message(
+                "assistant",
+                [
+                    Content.from_text('{"result": "partial"}'),
+                    Content.from_text(
+                        "I cannot continue.",
+                        additional_properties={"model_output_kind": "refusal"},
+                    ),
+                ],
+            )
+        ],
+        response_format={"type": "object"},
+    )
+
+    assert response.value is None
 
 
 # region DataContent
@@ -571,6 +661,15 @@ def test_function_call_content_add_merging_and_errors():
     c = a + b
     assert c.informational_only is True
 
+    # control metadata is preserved when a metadata-only update follows argument chunks
+    metadata = Content.from_function_call(call_id="1", name="f", arguments=None)
+    metadata.id = "1"
+    metadata.user_input_request = True
+    c = c + metadata
+    assert c.arguments == '{"x":1}'
+    assert c.id == "1"
+    assert c.user_input_request is True
+
     # incompatible argument types
     a = Content.from_function_call(call_id="1", name="f", arguments="abc")
     b = Content.from_function_call(call_id="1", name="f", arguments={"y": 2})
@@ -582,6 +681,12 @@ def test_function_call_content_add_merging_and_errors():
     b = Content.from_function_call(call_id="2", name="f", arguments="def")
 
     with raises(ContentError):
+        _ = a + b
+
+    # incompatible occurrence ids
+    a = Content.from_function_call(call_id="1", name="f", arguments="abc", id="occurrence-a")
+    b = Content.from_function_call(call_id="1", name="f", arguments="def", id="occurrence-b")
+    with raises(AdditionItemMismatch, match="different ids"):
         _ = a + b
 
     # name merging: when the first chunk has no name (e.g. a streaming delta where
@@ -728,6 +833,67 @@ def test_function_approval_serialization_roundtrip():
 
     # Skip the BaseModel validation test since we're no longer using Pydantic
     # The Content union will need to be handled differently when we fully migrate
+
+
+def test_function_call_occurrence_id_roundtrips_without_regeneration():
+    function_call = Content.from_function_call(
+        call_id="provider-call",
+        name="f",
+        arguments={"x": 1},
+        id="af-call-existing",
+    )
+
+    restored = Content.from_dict(function_call.to_dict())
+
+    assert restored.id == "af-call-existing"
+    assert restored.call_id == "provider-call"
+
+
+def test_local_function_approval_request_warns_for_legacy_occurrence_identity() -> None:
+    function_call = Content.from_function_call(
+        call_id="provider-call",
+        name="f",
+        id="af-call-occurrence",
+    )
+
+    with pytest.warns(FutureWarning, match="id differs from function_call.id.*legacy"):
+        request = Content.from_function_approval_request(id="provider-call", function_call=function_call)
+
+    assert request.id == "provider-call"
+    assert request.function_call is function_call
+
+
+def test_hosted_function_approval_request_allows_provider_request_identity_without_warning() -> None:
+    function_call = Content.from_function_call(
+        call_id="provider-call",
+        name="hosted",
+        id="af-call-occurrence",
+        additional_properties={"server_label": "provider"},
+    )
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        request = Content.from_function_approval_request(
+            id="provider-approval-request",
+            function_call=function_call,
+        )
+
+    assert request.id == "provider-approval-request"
+    assert caught == []
+
+
+def test_legacy_function_call_deserialization_does_not_generate_an_occurrence_id():
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        restored = Content.from_dict({
+            "type": "function_call",
+            "call_id": "legacy-call",
+            "name": "f",
+            "arguments": {},
+        })
+
+    assert restored.id is None
+    assert caught == []
 
 
 def test_function_approval_request_function_call_none_guard():
@@ -1187,7 +1353,7 @@ def test_chat_response_updates_to_chat_response_multiple_multiple():
     assert len(chat_response.messages) == 1
     assert isinstance(chat_response.messages[0], Message)
     assert chat_response.messages[0].message_id == "1"
-    assert chat_response.messages[0].contents[0].raw_representation is not None
+    assert chat_response.messages[0].contents[0].raw_representation is None
 
     assert len(chat_response.messages[0].contents) == 3
     assert chat_response.messages[0].contents[0].type == "text"
@@ -1419,6 +1585,65 @@ def test_chat_options_merge(tool_tool, ai_tool) -> None:
     assert options3.get("metadata") == {"a": "b"}  # base value preserved
 
 
+def test_append_instructions_combines_plain_strings() -> None:
+    """String instructions are concatenated with a newline."""
+    assert _append_instructions("Base.", "Added.") == "Base.\nAdded."
+
+
+def test_append_instructions_returns_the_populated_side_when_one_is_empty() -> None:
+    """An empty base or addition leaves the other side untouched."""
+    blocks = [{"type": "text", "text": "Base."}]
+
+    assert _append_instructions(None, "Added.") == "Added."
+    assert _append_instructions("Base.", None) == "Base."
+    assert _append_instructions([], "Added.") == "Added."
+    assert _append_instructions(blocks, "") == blocks
+
+
+def test_append_instructions_preserves_structured_instructions() -> None:
+    """A structured base is extended element-wise instead of being coerced to a string."""
+    blocks = [
+        {"type": "text", "text": "Stable.", "block_options": {"pinned": True}},
+        {"type": "text", "text": "Dynamic."},
+    ]
+
+    combined = _append_instructions(blocks, "Added.")
+
+    # The leading blocks must stay unchanged for providers that treat them as a stable prefix.
+    assert combined == [*blocks, "Added."]
+    assert blocks == [
+        {"type": "text", "text": "Stable.", "block_options": {"pinned": True}},
+        {"type": "text", "text": "Dynamic."},
+    ]
+
+
+def test_append_instructions_promotes_a_string_base_when_the_addition_is_structured() -> None:
+    """A string base becomes the first element when structured instructions are appended."""
+    assert _append_instructions("Base.", [{"type": "text", "text": "Added."}]) == [
+        "Base.",
+        {"type": "text", "text": "Added."},
+    ]
+
+
+def test_append_instructions_treats_a_single_mapping_as_one_element() -> None:
+    """A lone structured block is appended whole, not iterated into its keys."""
+    block = {"type": "text", "text": "Stable.", "block_options": {"pinned": True}}
+
+    assert _append_instructions(block, "Added.") == [block, "Added."]
+    assert _append_instructions("Base.", block) == ["Base.", block]
+
+
+def test_chat_options_merge_preserves_structured_instructions() -> None:
+    """merge_chat_options must not stringify provider-native structured instructions."""
+    blocks = [{"type": "text", "text": "Stable.", "block_options": {"pinned": True}}]
+    base: ChatOptions = {"instructions": blocks}  # type: ignore[typeddict-item]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    override: ChatOptions = {"instructions": "Added."}
+
+    merged = merge_chat_options(base, override)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+
+    assert merged.get("instructions") == [*blocks, "Added."]
+
+
 def test_chat_options_and_tool_choice_override() -> None:
     """Test that tool_choice from other takes precedence in ChatOptions merge."""
     # Agent-level defaults to "auto"
@@ -1526,6 +1751,16 @@ def test_agent_run_response_from_updates(agent_response_update: AgentResponseUpd
     response = AgentResponse.from_updates(updates)
     assert len(response.messages) > 0
     assert response.text == "Test contentTest content"
+
+
+def test_agent_run_response_from_updates_uses_last_non_none_agent_id() -> None:
+    response = AgentResponse.from_updates([
+        AgentResponseUpdate(agent_id="first-agent"),
+        AgentResponseUpdate(agent_id="source-agent"),
+        AgentResponseUpdate(agent_id=None),
+    ])
+
+    assert response.agent_id == "source-agent"
 
 
 def test_agent_run_response_str_method(chat_message: Message) -> None:
@@ -1688,6 +1923,114 @@ def test_function_call_incompatible_ids_are_not_merged():
     assert len(fcs) == 2
 
 
+def test_function_call_interleaved_parallel_streaming_merges_by_call_id():
+    """Argument deltas for two parallel tool calls can interleave; each must land on its own call.
+
+    This mirrors how the OpenAI Responses API streams parallel tool calls: every
+    ``response.function_call_arguments.delta`` event is tagged with the call's real
+    call_id (tracked per output_index), but deltas for different calls are not
+    guaranteed to arrive grouped together. Before this fix, only the trailing
+    content item was ever considered a merge target, so an out-of-turn delta for an
+    earlier call_id was appended as a stray duplicate instead of being folded into
+    its call, leaving both calls with incomplete, unparsable arguments.
+    """
+    updates = [
+        ChatResponseUpdate(contents=[Content.from_function_call(call_id="call_1", name="get_weather", arguments="")]),
+        ChatResponseUpdate(contents=[Content.from_function_call(call_id="call_2", name="get_time", arguments="")]),
+        ChatResponseUpdate(
+            contents=[Content.from_function_call(call_id="call_1", name="get_weather", arguments='{"location":')]
+        ),
+        ChatResponseUpdate(
+            contents=[Content.from_function_call(call_id="call_2", name="get_time", arguments='{"timezone":')]
+        ),
+        ChatResponseUpdate(
+            contents=[Content.from_function_call(call_id="call_1", name="get_weather", arguments='"NYC"}')]
+        ),
+        ChatResponseUpdate(
+            contents=[Content.from_function_call(call_id="call_2", name="get_time", arguments='"EST"}')]
+        ),
+    ]
+
+    resp = ChatResponse.from_updates(updates)
+    assert len(resp.messages) == 1
+    fcs = [c for c in resp.messages[0].contents if c.type == "function_call"]
+    assert len(fcs) == 2
+
+    by_call_id = {c.call_id: c for c in fcs}
+    assert by_call_id["call_1"].arguments == '{"location":"NYC"}'
+    assert by_call_id["call_2"].arguments == '{"timezone":"EST"}'
+
+
+def test_function_call_merge_falls_back_to_trailing_item_without_call_id():
+    """Continuation deltas some providers never re-stamp with a call_id still merge.
+
+    Not every provider repeats the call_id on every streamed chunk (e.g. the OpenAI
+    Chat Completions API only sends it on the first delta for a tool call), so the
+    fallback of merging into the trailing function_call item must still hold for the
+    single-call-in-flight case.
+    """
+    updates = [
+        ChatResponseUpdate(contents=[Content.from_function_call(call_id="call_1", name="f", arguments="{")]),
+        ChatResponseUpdate(contents=[Content.from_function_call(call_id="", name="", arguments="}")]),
+    ]
+
+    resp = ChatResponse.from_updates(updates)
+    fcs = [c for c in resp.messages[0].contents if c.type == "function_call"]
+    assert len(fcs) == 1
+    assert fcs[0].call_id == "call_1"
+    assert fcs[0].arguments == "{}"
+
+
+def test_function_call_reused_call_id_does_not_absorb_untagged_chunk():
+    """A reused call_id must not let an untagged chunk merge into an already-identified call.
+
+    The Chat Completions client stamps a stable occurrence ``id`` on every function-call
+    chunk it emits, precisely so a provider reusing a ``call_id`` (or a client that only
+    tags the first chunk) can't be confused with an unrelated call. If a later, untagged
+    chunk happens to carry the same ``call_id`` as a call that already has an occurrence
+    id, it must not be assumed to be that call's continuation - it should be treated as
+    a new, separate call instead of corrupting the finished one's arguments.
+    """
+    updates = [
+        ChatResponseUpdate(
+            contents=[Content.from_function_call(id="af-call-1", call_id="call_1", name="get_weather", arguments="{}")]
+        ),
+        # No `id` and a reused call_id: an unrelated call, not a continuation.
+        ChatResponseUpdate(contents=[Content.from_function_call(call_id="call_1", name="get_time", arguments="{}")]),
+    ]
+
+    resp = ChatResponse.from_updates(updates)
+    fcs = [c for c in resp.messages[0].contents if c.type == "function_call"]
+    assert len(fcs) == 2
+    assert fcs[0].name == "get_weather"
+    assert fcs[0].arguments == "{}"
+    assert fcs[1].name == "get_time"
+    assert fcs[1].arguments == "{}"
+
+
+def test_function_call_tagged_chunk_does_not_absorb_into_untagged_trailing_call():
+    """A tagged chunk with no matching in-progress call must not merge into an untagged one.
+
+    Content.__add__ only rejects a merge when *both* sides carry a call_id and they
+    differ, so an untagged trailing item (call_id falsy) would otherwise silently
+    accept a chunk tagged with a brand-new call_id, adopting that id and
+    concatenating unrelated arguments. The trailing-item fallback must be reserved
+    for chunks that carry no call_id at all.
+    """
+    untagged = Content("function_call", call_id=None, name="a", arguments="partial-a")
+    resp = ChatResponse.from_updates([
+        ChatResponseUpdate(contents=[untagged]),
+        ChatResponseUpdate(contents=[Content.from_function_call(call_id="call_new", name="b", arguments="{}")]),
+    ])
+
+    fcs = [c for c in resp.messages[0].contents if c.type == "function_call"]
+    assert len(fcs) == 2
+    assert fcs[0].call_id is None
+    assert fcs[0].arguments == "partial-a"
+    assert fcs[1].call_id == "call_new"
+    assert fcs[1].arguments == "{}"
+
+
 # region Role & FinishReason basics
 
 
@@ -1727,17 +2070,17 @@ def test_response_update_propagates_fields_and_metadata():
     assert resp.messages[0].message_id == "mid"
 
 
-def test_text_coalescing_preserves_first_properties():
+def test_text_coalescing_preserves_first_serializable_properties():
     t1 = Content.from_text("A", raw_representation={"r": 1}, additional_properties={"p": 1})
     t2 = Content.from_text("B")
     upd1 = ChatResponseUpdate(contents=[t1], message_id="x")
     upd2 = ChatResponseUpdate(contents=[t2], message_id="x")
     resp = ChatResponse.from_updates([upd1, upd2])
-    # After coalescing there should be a single TextContent with merged text and preserved props from first
+    # After coalescing there should be a single TextContent with merged text and serializable props from first.
     items = [c for c in resp.messages[0].contents if c.type == "text"]
     assert len(items) >= 1
     assert items[0].text == "AB"
-    assert items[0].raw_representation == {"r": 1}
+    assert items[0].raw_representation is None
     assert items[0].additional_properties == {"p": 1}
 
 
@@ -1909,6 +2252,27 @@ def test_text_reasoning_content_add_conflicting_ids_raises():
         _ = t1 + t2
 
 
+def test_text_reasoning_content_add_preserves_empty_text_with_signature():
+    """Empty thinking text plus a signature delta must keep text="" (not None).
+
+    Regression for microsoft/agent-framework#8168: collapsing "" to None makes a
+    real empty signed Anthropic thinking block look like an orphan signature.
+    """
+
+    empty_thinking = Content.from_text_reasoning(text="")
+    signature_only = Content.from_text_reasoning(text=None, protected_data="synthetic-signature")
+
+    result = empty_thinking + signature_only
+    assert result.text == ""
+    assert result.protected_data == "synthetic-signature"
+
+    both_none = Content.from_text_reasoning(text=None) + Content.from_text_reasoning(
+        text=None, protected_data="orphan-sig"
+    )
+    assert both_none.text is None
+    assert both_none.protected_data == "orphan-sig"
+
+
 def test_text_reasoning_content_add_neither_has_id():
     """Test that coalescing text_reasoning Content when neither has an id results in None id."""
 
@@ -1942,6 +2306,68 @@ def test_coalesce_text_reasoning_with_different_ids():
     assert contents[0].text == "Thinking A1 A2"
     assert contents[1].id == "rs_bbb"
     assert contents[1].text == "Thinking B1 B2"
+
+
+def test_agent_response_from_updates_preserves_refusal_marker() -> None:
+    marker = {"model_output_kind": "refusal"}
+    response = AgentResponse.from_updates([
+        AgentResponseUpdate(
+            contents=[Content.from_text("I cannot ", additional_properties=marker)],
+            role="assistant",
+        ),
+        AgentResponseUpdate(
+            contents=[Content.from_text("help.", additional_properties=marker)],
+            role="assistant",
+        ),
+    ])
+
+    assert len(response.messages[0].contents) == 1
+    assert response.messages[0].contents[0].type == "text"
+    assert response.messages[0].contents[0].text == "I cannot help."
+    assert response.messages[0].contents[0].additional_properties == marker
+    assert response.text == "I cannot help."
+
+
+@pytest.mark.parametrize(
+    ("updates", "expected"),
+    [
+        (
+            [
+                Content.from_text("Partial answer."),
+                Content.from_text(
+                    "I cannot continue.",
+                    additional_properties={"model_output_kind": "refusal"},
+                ),
+            ],
+            [
+                ("Partial answer.", {}),
+                ("I cannot continue.", {"model_output_kind": "refusal"}),
+            ],
+        ),
+        (
+            [
+                Content.from_text(
+                    "I cannot continue.",
+                    additional_properties={"model_output_kind": "refusal"},
+                ),
+                Content.from_text("Additional context."),
+            ],
+            [
+                ("I cannot continue.", {"model_output_kind": "refusal"}),
+                ("Additional context.", {}),
+            ],
+        ),
+    ],
+)
+def test_response_coalescing_preserves_model_output_kind_boundaries(
+    updates: list[Content],
+    expected: list[tuple[str, dict[str, str]]],
+) -> None:
+    response = AgentResponse.from_updates([
+        AgentResponseUpdate(contents=[content], role="assistant") for content in updates
+    ])
+
+    assert [(content.text, content.additional_properties) for content in response.messages[0].contents] == expected
 
 
 def test_comprehensive_to_dict_exclude_options():
@@ -2170,6 +2596,49 @@ def test_content_to_dict_exclude_fields() -> None:
     assert parsed["type"] == "text"
 
 
+def test_function_result_exception_is_internal_by_default() -> None:
+    diagnostic = "test-token-value at /srv/private/tool.py"
+    content = Content.from_function_result(
+        call_id="call-1",
+        result="Error: Function failed.",
+        exception=diagnostic,
+    )
+
+    assert content.exception == diagnostic
+    assert content.to_dict()["exception"] == "FunctionInvocationError"
+    assert content.to_dict(exclude_none=False)["exception"] == "FunctionInvocationError"
+    response = AgentResponse(messages=[Message(role="tool", contents=[content])])
+    serialized = json.dumps(response.to_dict())
+    assert diagnostic not in serialized
+    assert "FunctionInvocationError" in serialized
+
+    restored = Content.from_dict(content.to_dict())
+    assert restored.exception == "FunctionInvocationError"
+    assert restored != Content.from_function_result(
+        call_id="call-1",
+        result="Error: Function failed.",
+        exception="different diagnostic",
+    )
+
+    empty_diagnostic = Content.from_function_result(call_id="call-2", exception="")
+    assert empty_diagnostic.to_dict()["exception"] == "FunctionInvocationError"
+
+
+def test_content_equality_compares_nested_raw_exception_diagnostics() -> None:
+    first = Content(
+        "function_result",
+        call_id="outer",
+        items=[Content.from_function_result(call_id="inner", exception="diagnostic-a")],
+    )
+    second = Content(
+        "function_result",
+        call_id="outer",
+        items=[Content.from_function_result(call_id="inner", exception="diagnostic-b")],
+    )
+
+    assert first != second
+
+
 def test_chat_response_roundtrip_preserves_compaction_annotation_dict() -> None:
     response = ChatResponse(
         messages=[
@@ -2245,6 +2714,24 @@ def test_function_approval_response_content_serialization():
     response_dict = response_content.to_dict()
     assert isinstance(response_dict["function_call"], dict)
     assert response_dict["function_call"]["call_id"] == "call123"
+
+
+@pytest.mark.parametrize("approved", ["false", "no", 1, "0", 0, None])
+def test_function_approval_response_deserialization_rejects_non_boolean_decisions(approved: Any) -> None:
+    """Serialized non-boolean approval decisions must fail closed."""
+    response = Content.from_dict({
+        "type": "function_approval_response",
+        "id": "response123",
+        "approved": approved,
+        "function_call": {
+            "type": "function_call",
+            "call_id": "call123",
+            "name": "test_func",
+            "arguments": {},
+        },
+    })
+
+    assert response.approved is False
 
 
 def test_chat_response_complex_serialization():
@@ -2413,18 +2900,43 @@ class _NonCopyableRaw:
         raise TypeError("Cannot deepcopy this object")
 
 
-def test_content_deepcopy_preserves_raw_representation():
-    """Test that deepcopy of Content keeps raw_representation by reference."""
+def test_content_deepcopy_discards_raw_representation(caplog: pytest.LogCaptureFixture) -> None:
+    """Test that deepcopy of Content discards raw_representation and logs at debug level."""
     import copy
 
     raw = _NonCopyableRaw()
     content = Content.from_text("hello", raw_representation=raw)
 
-    cloned = copy.deepcopy(content)
+    with caplog.at_level("DEBUG", logger="agent_framework"):
+        cloned = copy.deepcopy(content)
 
     assert cloned.text == "hello"
-    assert cloned.raw_representation is raw
+    assert cloned.raw_representation is None
     assert cloned.additional_properties is not content.additional_properties
+    assert caplog.messages == ["Discarding field 'raw_representation' while deep-copying Content."]
+
+
+def test_content_pickle_discards_nested_annotation_raw_representation() -> None:
+    """Pickle should omit provider objects stored on annotations."""
+    import pickle
+
+    raw = object()
+    annotation: Annotation = {"type": "citation", "url": "https://example.com", "raw_representation": raw}
+    content = Content.from_text("hello", annotations=[annotation])
+
+    restored = pickle.loads(pickle.dumps(content))
+
+    assert restored.annotations == [{"type": "citation", "url": "https://example.com"}]
+
+
+def test_content_shallow_copy_preserves_raw_representation() -> None:
+    """Shallow copies of Content retain provider runtime fields."""
+    import copy
+
+    raw = _NonCopyableRaw()
+    cloned = copy.copy(Content.from_text("hello", raw_representation=raw))
+
+    assert cloned.raw_representation is raw
 
 
 def test_message_deepcopy_preserves_raw_representation():
@@ -2530,21 +3042,20 @@ def test_nested_deepcopy_preserves_raw_representation():
     assert cloned.text == "hello"
 
 
-def test_content_deepcopy_shallow_copy_fields_identity():
-    """Test that Content._SHALLOW_COPY_FIELDS fields are identity-preserved while others are deep-copied."""
+def test_content_deepcopy_does_not_log_for_empty_shallow_copy_fields(caplog: pytest.LogCaptureFixture) -> None:
+    """Test that empty shallow-copy fields do not emit discard logs."""
     import copy
 
-    raw = _NonCopyableRaw()
-    content = Content.from_text("hello", raw_representation=raw)
+    content = Content.from_text("hello")
     content.additional_properties["key"] = "value"
 
-    cloned = copy.deepcopy(content)
+    with caplog.at_level("DEBUG", logger="agent_framework"):
+        cloned = copy.deepcopy(content)
 
-    # _SHALLOW_COPY_FIELDS (raw_representation) should be same object
-    assert cloned.raw_representation is raw
-    # Non-shallow fields should be independent deep copies
+    assert cloned.raw_representation is None
     assert cloned.additional_properties is not content.additional_properties
     assert cloned.additional_properties == {"key": "value"}
+    assert caplog.messages == []
 
 
 def test_chat_response_deepcopy_deep_copies_additional_properties():
@@ -3691,6 +4202,48 @@ class TestResponseStreamTransformHooks:
 class TestResponseStreamCleanupHooks:
     """Tests for cleanup hooks (after stream consumption, before finalizer)."""
 
+    async def test_close_closes_iterator_and_runs_cleanup_once(self) -> None:
+        """Closing a partially consumed stream releases its iterator and cleanup hooks."""
+        events: list[str] = []
+
+        async def updates() -> AsyncIterable[ChatResponseUpdate]:
+            try:
+                yield ChatResponseUpdate(contents=[Content.from_text("first")], role="assistant")
+                yield ChatResponseUpdate(contents=[Content.from_text("second")], role="assistant")
+            finally:
+                events.append("iterator")
+
+        stream: ResponseStream[ChatResponseUpdate, Sequence[ChatResponseUpdate]] = ResponseStream(
+            updates(), cleanup_hooks=[lambda: events.append("cleanup")]
+        )
+        await anext(stream)
+
+        await stream.close()
+        await stream.close()
+
+        assert events == ["iterator", "cleanup"]
+
+    async def test_close_closes_wrapped_stream(self) -> None:
+        """Closing a wrapper releases the concrete inner stream."""
+        events: list[str] = []
+
+        async def updates() -> AsyncIterable[ChatResponseUpdate]:
+            try:
+                yield ChatResponseUpdate(contents=[Content.from_text("first")], role="assistant")
+                yield ChatResponseUpdate(contents=[Content.from_text("second")], role="assistant")
+            finally:
+                events.append("iterator")
+
+        inner: ResponseStream[ChatResponseUpdate, Sequence[ChatResponseUpdate]] = ResponseStream(
+            updates(), cleanup_hooks=[lambda: events.append("inner")]
+        )
+        outer = inner.map(lambda update: update, _combine_updates).with_cleanup_hook(lambda: events.append("outer"))
+        await anext(outer)
+
+        await outer.close()
+
+        assert events == ["iterator", "inner", "outer"]
+
     async def test_cleanup_hook_called_after_iteration(self) -> None:
         """Cleanup hook is called after iteration completes."""
         cleanup_called = {"value": False}
@@ -4180,13 +4733,22 @@ class TestResponseStreamMapAndWithFinalizer:
 
         assert collected == ["async_update_0", "async_update_1"]
 
-    async def test_from_awaitable(self) -> None:
+    @pytest.mark.parametrize("source_kind", ["coroutine", "task", "future"])
+    async def test_from_awaitable(self, source_kind: str) -> None:
         """from_awaitable() wraps an awaitable ResponseStream."""
 
         async def get_stream() -> ResponseStream[ChatResponseUpdate, ChatResponse]:
             return ResponseStream(_generate_updates(2), finalizer=_combine_updates)
 
-        outer = ResponseStream.from_awaitable(get_stream())
+        source: Awaitable[ResponseStream[ChatResponseUpdate, ChatResponse]]
+        if source_kind == "task":
+            source = asyncio.create_task(get_stream())
+        elif source_kind == "future":
+            source = asyncio.get_running_loop().create_future()
+            source.set_result(await get_stream())
+        else:
+            source = get_stream()
+        outer = ResponseStream.from_awaitable(source)
 
         collected: list[str] = []
         async for update in outer:
@@ -4265,13 +4827,22 @@ class TestResponseStreamExecutionOrder:
 class TestResponseStreamAwaitableSource:
     """Tests for ResponseStream with awaitable stream sources."""
 
-    async def test_awaitable_stream_source(self) -> None:
+    @pytest.mark.parametrize("source_kind", ["coroutine", "task", "future"])
+    async def test_awaitable_stream_source(self, source_kind: str) -> None:
         """ResponseStream can accept an awaitable that resolves to an async iterable."""
 
         async def get_stream() -> AsyncIterable[ChatResponseUpdate]:
             return _generate_updates(2)
 
-        stream = ResponseStream(get_stream(), finalizer=_combine_updates)
+        source: Awaitable[AsyncIterable[ChatResponseUpdate]]
+        if source_kind == "task":
+            source = asyncio.create_task(get_stream())
+        elif source_kind == "future":
+            source = asyncio.get_running_loop().create_future()
+            source.set_result(await get_stream())
+        else:
+            source = get_stream()
+        stream = ResponseStream(source, finalizer=_combine_updates)
 
         collected: list[str] = []
         async for update in stream:
@@ -4497,6 +5068,48 @@ def test_prepend_instructions_custom_role():
     result = prepend_instructions_to_messages(messages, "Be concise.", role="developer")
     assert len(result) == 2
     assert result[0].role == "developer"
+
+
+def test_prepend_instructions_partial_dedup_preserves_order():
+    """Test that partially deduplicated instructions keep their relative order.
+
+    When only a prefix of the instructions is already present as leading
+    messages, the remaining instructions must still appear in their original
+    order after the matched prefix, not inverted in front of it.
+    """
+    from agent_framework._types import prepend_instructions_to_messages
+
+    messages = [
+        Message("system", ["First instruction"]),
+        Message("user", ["Hello"]),
+    ]
+    result = prepend_instructions_to_messages(messages, ["First instruction", "Second instruction"])
+
+    assert [message.text for message in result] == [
+        "First instruction",
+        "Second instruction",
+        "Hello",
+    ]
+    assert result[0] is messages[0]
+    assert result[2] is messages[1]
+
+
+def test_prepend_instructions_partial_dedup_no_match_keeps_prefix_behavior():
+    """Test that a non-matching leading message still yields a plain prepend."""
+    from agent_framework._types import prepend_instructions_to_messages
+
+    messages = [
+        Message("system", ["Different instruction"]),
+        Message("user", ["Hello"]),
+    ]
+    result = prepend_instructions_to_messages(messages, ["First instruction", "Second instruction"])
+
+    assert [message.text for message in result] == [
+        "First instruction",
+        "Second instruction",
+        "Different instruction",
+        "Hello",
+    ]
 
 
 # endregion

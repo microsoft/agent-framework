@@ -11,7 +11,7 @@ from typing import Any, Literal, TypeVar, Union, overload
 from uuid import uuid4
 
 import httpx
-from agent_framework._telemetry import get_user_agent
+from agent_framework._telemetry import get_user_agent, mark_feature_used
 from agent_framework.observability import get_tracer
 from azure.core.credentials import TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
@@ -24,6 +24,7 @@ from ._exceptions import (
     PurviewRequestError,
     PurviewServiceError,
 )
+from ._feature_usage import FeatureIndex
 from ._models import (
     ContentActivitiesRequest,
     ContentActivitiesResponse,
@@ -96,10 +97,12 @@ class PurviewClient:
         }
 
     async def get_user_info_from_token(self, *, tenant_id: str | None = None) -> dict[str, Any]:
+        mark_feature_used(FeatureIndex.PURVIEW)
         token = await self._get_token(tenant_id=tenant_id)
         return self._extract_token_info(token)
 
     async def process_content(self, request: ProcessContentRequest) -> ProcessContentResponse:
+        mark_feature_used(FeatureIndex.PURVIEW)
         with get_tracer().start_as_current_span("purview.process_content"):
             token = await self._get_token(tenant_id=request.tenant_id)
             url = f"{self._graph_uri}/users/{request.user_id}/dataSecurityAndGovernance/processContent"
@@ -122,6 +125,7 @@ class PurviewClient:
             return response
 
     async def get_protection_scopes(self, request: ProtectionScopesRequest) -> ProtectionScopesResponse:
+        mark_feature_used(FeatureIndex.PURVIEW)
         with get_tracer().start_as_current_span("purview.get_protection_scopes"):
             token = await self._get_token()
             url = f"{self._graph_uri}/users/{request.user_id}/dataSecurityAndGovernance/protectionScopes/compute"
@@ -140,6 +144,7 @@ class PurviewClient:
             return response
 
     async def send_content_activities(self, request: ContentActivitiesRequest) -> ContentActivitiesResponse:
+        mark_feature_used(FeatureIndex.PURVIEW)
         with get_tracer().start_as_current_span("purview.send_content_activities"):
             token = await self._get_token()
             url = f"{self._graph_uri}/users/{request.user_id}/dataSecurityAndGovernance/activities/contentActivities"

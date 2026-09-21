@@ -14,6 +14,7 @@ from agent_framework import (
 )
 from agent_framework.foundry import FoundryChatClient
 from agent_framework.orchestrations import GroupChatRequestSentEvent, MagenticBuilder, MagenticProgressLedger
+from agent_framework_orchestrations import MagenticOrchestrator
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -113,17 +114,21 @@ async def main() -> None:
     print("\nStarting workflow execution...")
 
     # Keep track of the last executor to format output nicely in streaming mode
-    last_response_id: str | None = None
+    last_message_id: str | None = None
     output_event: WorkflowEvent | None = None
     async for event in workflow.run(task, stream=True):
-        if event.type in ("intermediate", "output") and isinstance(event.data, AgentResponseUpdate):
-            response_id = event.data.response_id
-            if response_id != last_response_id:
-                if last_response_id is not None:
-                    print("\n")
-                print(f"- {event.executor_id}:", end=" ", flush=True)
-                last_response_id = response_id
-            print(event.data, end="", flush=True)
+        if event.type in ("intermediate", "output"):
+            if event.executor_id == MagenticOrchestrator.MANAGER_NAME:
+                output_event = event
+            else:
+                event_data = cast(AgentResponseUpdate, event.data)
+                message_id = event_data.message_id
+                if message_id != last_message_id:
+                    if last_message_id is not None:
+                        print("\n")
+                    print(f"- {event.executor_id}:", end=" ", flush=True)
+                    last_message_id = message_id
+                print(event_data, end="", flush=True)
 
         elif event.type == "magentic_orchestrator":
             print(f"\n[Magentic Orchestrator Event] Type: {event.data.event_type.name}")
@@ -137,21 +142,20 @@ async def main() -> None:
             # Block to allow user to read the plan/progress before continuing
             # Note: this is for demonstration only and is not the recommended way to handle human interaction.
             # Please refer to `with_plan_review` for proper human interaction during planning phases.
-            await asyncio.get_event_loop().run_in_executor(None, input, "Press Enter to continue...")
+            # await asyncio.get_event_loop().run_in_executor(None, input, "Press Enter to continue...")
 
         elif event.type == "group_chat" and isinstance(event.data, GroupChatRequestSentEvent):
             print(f"\n[REQUEST SENT ({event.data.round_index})] to agent: {event.data.participant_name}")
 
-        elif event.type == "output":
-            output_event = event
+    if not output_event:
+        raise RuntimeError("Workflow did not produce a final output event.")
 
-    if output_event:
-        # The output of the magentic workflow is a collection of chat messages from all participants
-        outputs = cast(list[Message], output_event.data)
-        print("\n" + "=" * 80)
-        print("\nFinal Conversation Transcript:\n")
-        for message in outputs:
-            print(f"{message.author_name or message.role}: {message.text}\n")
+    print("\n\nWorkflow completed!")
+    print("Final Output:")
+    # The output of the Magentic workflow is an AgentResponse or AgentResponseUpdate,
+    # which contains the final message text.
+    output_message = cast(AgentResponseUpdate, output_event.data)
+    print(output_message.text)
 
 
 if __name__ == "__main__":

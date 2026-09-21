@@ -17,14 +17,10 @@ These container files **cannot** be downloaded using the standard Files API (`Ge
 
 ### Getting the ContainerClient with Foundry
 
-`AzureOpenAIClient.GetContainerClient()` is not supported and throws `InvalidOperationException`. Instead, use the project's OpenAI client which inherits directly from `OpenAI.OpenAIClient`:
+Use the Foundry project OpenAI client from `AIProjectClient` to access the Containers API:
 
 ```csharp
-// ❌ AzureOpenAIClient does not support ContainerClient
-var azureClient = new AzureOpenAIClient(endpoint, credential);
-azureClient.GetContainerClient();  // Throws InvalidOperationException
-
-// ✅ Use AIProjectClient's project OpenAI client
+// Use AIProjectClient's project OpenAI client
 var containerClient = aiProjectClient.GetProjectOpenAIClient().GetContainerClient();
 await containerClient.DownloadContainerFileAsync("cntr_...", "cfile_...");
 ```

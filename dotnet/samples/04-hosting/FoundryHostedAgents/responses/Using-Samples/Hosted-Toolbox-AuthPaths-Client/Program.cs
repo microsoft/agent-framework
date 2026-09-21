@@ -20,9 +20,8 @@
 //      delegated token, so the retried tool call succeeds.
 //
 // Important: an OAuth consent request is resumed by RE-SENDING the prompt, NOT by replying
-// with a ToolApprovalResponseContent. The consent request records no approval-id mapping on
-// the server, so a CreateResponse(...) reply would be rejected. Only function-tool approvals
-// (which this client also handles, for completeness) use the CreateResponse path.
+// with an approval item. Function-tool approvals use ToolApprovalResponseContent; hosted MCP
+// approvals use the native OpenAI mcp_approval_response item.
 //
 // Required environment variables:
 //   AZURE_AI_PROJECT_ENDPOINT  - Foundry project endpoint, or the local dev server base
@@ -30,14 +29,17 @@
 //   AZURE_AI_AGENT_NAME        - The registered server-side agent name
 //                                (default: hosted-toolbox-auth-paths-agent).
 
+using System.ClientModel;
 using System.ClientModel.Primitives;
 using System.Text.Json;
-using Azure.AI.Projects;
+using Azure.AI.Extensions.OpenAI;
+using Azure.Core;
 using Azure.Identity;
 using DotNetEnv;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Foundry;
 using Microsoft.Extensions.AI;
+using OpenAI.Responses;
 
 // Load .env file if present (for local development)
 Env.TraversePath().Load();
@@ -52,19 +54,21 @@ string agentName = Environment.GetEnvironmentVariable("AZURE_AI_AGENT_NAME")
 // Derive the per-agent OpenAI endpoint that hosted Foundry agents require.
 Uri agentEndpoint = new($"{projectEndpoint}/agents/{agentName}/endpoint/protocols/openai");
 
-var options = new AIProjectClientOptions();
+var options = new ProjectOpenAIClientOptions();
 
 if (projectEndpoint.Scheme == "http")
 {
     // For local HTTP dev: present HTTPS to satisfy BearerTokenPolicy's TLS check, then swap
-    // the scheme back to HTTP right before the request hits the wire.
-    projectEndpoint = new UriBuilder(projectEndpoint) { Scheme = "https" }.Uri;
-    agentEndpoint = new UriBuilder(agentEndpoint) { Scheme = "https" }.Uri;
-    options.AddPolicy(new HttpSchemeRewritePolicy(), PipelinePosition.BeforeTransport);
+    // the request to the local server's standard /responses route before transport.
+    Uri localResponsesEndpoint = new(projectEndpoint, "/responses");
+    agentEndpoint = new UriBuilder(agentEndpoint) { Scheme = "https", Port = agentEndpoint.Port }.Uri;
+    options.AddPolicy(new HttpSchemeRewritePolicy(localResponsesEndpoint), PipelinePosition.BeforeTransport);
 }
 
-var aiProjectClient = new AIProjectClient(projectEndpoint, new AzureCliCredential(), options);
-FoundryAgent agent = aiProjectClient.AsAIAgent(agentEndpoint);
+FoundryAgent agent = new(
+    agentEndpoint,
+    new TokenCredentialProvider(new AzureCliCredential(), "https://ai.azure.com/.default"),
+    options);
 
 AgentSession session = await agent.CreateSessionAsync();
 
@@ -158,7 +162,15 @@ while (true)
                 Console.Write($"Approve tool call '{name}'? [Y/N] ");
                 Console.ResetColor();
                 bool approved = Console.ReadLine()?.Trim().Equals("Y", StringComparison.OrdinalIgnoreCase) ?? false;
-                return new ChatMessage(ChatRole.User, [approval.CreateResponse(approved)]);
+                // Hosted MCP approval IDs use the mcpr_ wire prefix. They need the native OpenAI
+                // response item; CreateResponse produces the Agent Framework function-tool shape.
+                AIContent decision = approval.RequestId.StartsWith("mcpr_", StringComparison.Ordinal)
+                    ? new AIContent
+                    {
+                        RawRepresentation = new McpToolCallApprovalResponseItem(approval.RequestId, approved),
+                    }
+                    : approval.CreateResponse(approved);
+                return new ChatMessage(ChatRole.User, [decision]);
             });
 
             response = await agent.RunAsync(decisions, session);
@@ -284,29 +296,47 @@ static bool LooksLikeUrl(string value) =>
 
 /// <summary>
 /// For Local Development Only.
-/// Rewrites HTTPS URIs to HTTP right before transport, allowing AIProjectClient to target a
-/// local HTTP dev server while satisfying BearerTokenPolicy's TLS check.
+/// Routes the per-agent HTTPS request to the local server's HTTP <c>/responses</c> endpoint while
+/// satisfying the bearer-token policy's TLS check during pipeline construction.
 /// </summary>
-internal sealed class HttpSchemeRewritePolicy : PipelinePolicy
+internal sealed class HttpSchemeRewritePolicy(Uri localResponsesEndpoint) : PipelinePolicy
 {
     public override void Process(PipelineMessage message, IReadOnlyList<PipelinePolicy> pipeline, int currentIndex)
     {
-        RewriteScheme(message);
+        this.RewriteRequestUri(message);
         ProcessNext(message, pipeline, currentIndex);
     }
 
     public override async ValueTask ProcessAsync(PipelineMessage message, IReadOnlyList<PipelinePolicy> pipeline, int currentIndex)
     {
-        RewriteScheme(message);
+        this.RewriteRequestUri(message);
         await ProcessNextAsync(message, pipeline, currentIndex).ConfigureAwait(false);
     }
 
-    private static void RewriteScheme(PipelineMessage message)
+    private void RewriteRequestUri(PipelineMessage message) =>
+        message.Request.Uri = localResponsesEndpoint;
+}
+
+// Adapts an Azure.Core TokenCredential to the System.ClientModel provider used by FoundryAgent's
+// per-agent endpoint constructor.
+internal sealed class TokenCredentialProvider(TokenCredential credential, string scope) : AuthenticationTokenProvider
+{
+    private readonly TokenRequestContext _tokenRequestContext = new([scope]);
+
+    public override GetTokenOptions? CreateTokenOptions(IReadOnlyDictionary<string, object> properties) =>
+        new(new Dictionary<string, object>());
+
+    public override AuthenticationToken GetToken(GetTokenOptions options, CancellationToken cancellationToken)
     {
-        var uri = message.Request.Uri!;
-        if (uri.Scheme == Uri.UriSchemeHttps)
-        {
-            message.Request.Uri = new UriBuilder(uri) { Scheme = "http" }.Uri;
-        }
+        AccessToken token = credential.GetToken(this._tokenRequestContext, cancellationToken);
+        return new AuthenticationToken(token.Token, "Bearer", token.ExpiresOn);
+    }
+
+    public override async ValueTask<AuthenticationToken> GetTokenAsync(
+        GetTokenOptions options,
+        CancellationToken cancellationToken)
+    {
+        AccessToken token = await credential.GetTokenAsync(this._tokenRequestContext, cancellationToken).ConfigureAwait(false);
+        return new AuthenticationToken(token.Token, "Bearer", token.ExpiresOn);
     }
 }

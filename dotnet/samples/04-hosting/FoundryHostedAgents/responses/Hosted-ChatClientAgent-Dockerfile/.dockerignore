@@ -1,0 +1,20 @@
+# Keeps local-only files out of the image build context. Without this, `COPY . .` in the Dockerfile
+# would copy the local .env into a build layer, so local credentials would ship inside the image.
+.env
+.env.*
+.azure/
+.git/
+
+# Build output: the image builds from source, so shipping host binaries only bloats the context and
+# risks copying binaries built for a different platform into the container.
+bin/
+obj/
+*.user
+*.suo
+.vs/
+
+# Agent session state written during local runs.
+.checkpoints/
+
+# Note: local-feed/ and nuget.config are deliberately NOT excluded. When present (contributor mode)
+# the `dotnet restore` inside the image build resolves the Agent Framework from them.

@@ -2,15 +2,19 @@
 
 import asyncio
 import logging
+import os
+import stat
+import subprocess
 import sys
 import warnings
 from collections.abc import AsyncIterable, Awaitable, MutableSequence, Sequence
+from pathlib import Path
 from typing import Any, Generic
 from typing import TypedDict as TypedDict  # noqa: F401  # pydantic mypy plugin needs TypedDict in module scope
 from unittest.mock import patch
 from uuid import uuid4
 
-from pytest import fixture
+from pytest import fixture, skip
 
 warnings.filterwarnings(
     "ignore",
@@ -44,6 +48,28 @@ else:
 # region Chat History
 
 logger = logging.getLogger(__name__)
+
+
+def create_junction_or_skip(*, link: Path, target: Path) -> None:
+    """Create a Windows directory junction or skip when the environment cannot."""
+    if sys.platform != "win32":
+        skip("Windows directory junctions are only available on Windows")
+
+    result = subprocess.run(
+        [os.environ.get("COMSPEC", "cmd"), "/c", "mklink", "/J", str(link), str(target)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        skip(f"Could not create Windows directory junction: {result.stderr or result.stdout}")
+
+    is_junction = getattr(link, "is_junction", None)
+    reparse_attribute = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    is_reparse_point = bool(reparse_attribute and getattr(link.lstat(), "st_file_attributes", 0) & reparse_attribute)
+    if not (callable(is_junction) and is_junction()) and not is_reparse_point:
+        link.rmdir()
+        skip("Created junction was not reported as a reparse point")
 
 
 @fixture(scope="function")

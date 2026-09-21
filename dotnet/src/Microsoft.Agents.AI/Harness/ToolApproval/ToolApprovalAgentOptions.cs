@@ -46,4 +46,24 @@ public class ToolApprovalAgentOptions
     /// </para>
     /// </remarks>
     public IEnumerable<Func<ToolAutoApprovalRuleContext, ValueTask<bool>>>? AutoApprovalRules { get; set; }
+
+    /// <summary>
+    /// Gets or sets the safety cap on how many times the inner agent is re-invoked within a single run
+    /// because every surfaced approval request was auto-approved, or <see langword="null"/> to use
+    /// <see cref="ToolApprovalAgent.DefaultMaxAutoApprovalIterations"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Each re-invocation is a fresh call to the inner agent, so a per-request cap such as
+    /// <c>FunctionInvokingChatClient.MaximumIterationsPerRequest</c> restarts every time and cannot bound this
+    /// loop. Without this cap a model that keeps requesting an auto-approved tool, drives an unbounded sequence of
+    /// billable model calls.
+    /// </para>
+    /// <para>
+    /// On reaching the cap the agent performs one final inner invocation without auto-approving again, so any
+    /// remaining approval request is surfaced to the caller to decide instead of being approved automatically.
+    /// Raise this value if you intend to allow longer auto-approval chains.
+    /// </para>
+    /// </remarks>
+    public int? MaxAutoApprovalIterations { get; set; }
 }

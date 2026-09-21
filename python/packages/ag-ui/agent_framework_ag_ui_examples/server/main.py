@@ -6,16 +6,25 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 from typing import Any, cast
 
 import uvicorn
 from agent_framework import ChatOptions
 from agent_framework._clients import SupportsChatGetResponse
 from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
+from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.openai import OpenAIChatCompletionClient
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from ..agents.a2ui_agents import (
+    A2UI_DEMO_CONFIG,
+    a2ui_advanced_agent,
+    a2ui_dynamic_schema_agent,
+    a2ui_fixed_schema_agent,
+    a2ui_recovery_agent,
+)
 from ..agents.document_writer_agent import document_writer_agent
 from ..agents.human_in_the_loop_agent import human_in_the_loop_agent
 from ..agents.recipe_agent import recipe_agent
@@ -74,15 +83,36 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Load the examples .env (OPENAI_API_KEY etc.) before constructing any chat client.
+# python-dotenv is an examples-only convenience; if it isn't installed, fall back to
+# whatever the shell already exported. override=True so a stale/empty exported
+# OPENAI_API_KEY doesn't shadow the .env value.
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    load_dotenv = None  # type: ignore[assignment]
+if load_dotenv is not None:
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env", override=True)
+
 # Create a shared chat client for all agents
 # You can use different chat clients for different agents if needed
-# Set CHAT_CLIENT=anthropic to use Anthropic, defaults to Azure OpenAI
-client: SupportsChatGetResponse[ChatOptions] = cast(
-    SupportsChatGetResponse[ChatOptions],
-    AnthropicClient()
-    if AnthropicClient is not None and os.getenv("CHAT_CLIENT", "").lower() == "anthropic"
-    else OpenAIChatCompletionClient(),
-)
+# Set CHAT_CLIENT=anthropic for Anthropic, CHAT_CLIENT=openai (or just an
+# OPENAI_API_KEY) for OpenAI Chat-Completions; otherwise defaults to Azure OpenAI.
+_chat_client_kind = os.getenv("CHAT_CLIENT", "").lower()
+
+
+def _default_shared_client() -> SupportsChatGetResponse[ChatOptions]:
+    if AnthropicClient is not None and _chat_client_kind == "anthropic":
+        return cast(SupportsChatGetResponse[ChatOptions], AnthropicClient())
+    if _chat_client_kind == "openai" or (not _chat_client_kind and os.getenv("OPENAI_API_KEY")):
+        return cast(
+            SupportsChatGetResponse[ChatOptions],
+            OpenAIChatCompletionClient(model=os.getenv("OPENAI_CHAT_MODEL_ID", "gpt-4o")),
+        )
+    return cast(SupportsChatGetResponse[ChatOptions], AzureOpenAIChatClient())
+
+
+client: SupportsChatGetResponse[ChatOptions] = _default_shared_client()
 
 # Agentic Chat - basic chat agent
 add_agent_framework_fastapi_endpoint(
@@ -148,6 +178,54 @@ add_agent_framework_fastapi_endpoint(
     app=app,
     agent=weather_state_agent(client),
     path="/deterministic_state",
+)
+
+# --- A2UI (agent-generated UI) demos ---------------------------------------
+# A2UI surface streaming needs a Chat-Completions client: it emits render_a2ui
+# argument deltas per chunk (progressive paint) and replays the balancing tool
+# result cleanly, where the Responses/Azure path buffers. Use a dedicated
+# OpenAIChatCompletionClient for these endpoints when OPENAI_API_KEY is set; otherwise fall
+# back to the shared client with a warning (streaming may not paint incrementally).
+if os.getenv("OPENAI_API_KEY"):
+    a2ui_client: SupportsChatGetResponse[ChatOptions] = cast(
+        SupportsChatGetResponse[ChatOptions],
+        OpenAIChatCompletionClient(model=os.getenv("OPENAI_CHAT_MODEL_ID", "gpt-4o")),
+    )
+else:
+    logging.getLogger(__name__).warning(
+        "OPENAI_API_KEY not set; A2UI demos fall back to the shared client and may not "
+        "stream render_a2ui deltas incrementally. Set it in the examples .env."
+    )
+    a2ui_client = client
+
+# Dynamic schema — subagent generates a surface against the dojo catalog.
+add_agent_framework_fastapi_endpoint(
+    app=app,
+    agent=a2ui_dynamic_schema_agent(a2ui_client),
+    path="/a2ui_dynamic_schema",
+    a2ui_config=A2UI_DEMO_CONFIG,
+)
+
+# Advanced — ZERO-CONFIG: no backend catalog/guide; catalog arrives on forwardedProps.
+add_agent_framework_fastapi_endpoint(
+    app=app,
+    agent=a2ui_advanced_agent(a2ui_client),
+    path="/a2ui_advanced",
+)
+
+# Recovery — validate->retry loop; structural validation drives regeneration.
+add_agent_framework_fastapi_endpoint(
+    app=app,
+    agent=a2ui_recovery_agent(a2ui_client),
+    path="/a2ui_recovery",
+    a2ui_config=A2UI_DEMO_CONFIG,
+)
+
+# Fixed schema — direct backend tool returns a pre-authored a2ui_operations envelope.
+add_agent_framework_fastapi_endpoint(
+    app=app,
+    agent=a2ui_fixed_schema_agent(a2ui_client),
+    path="/a2ui_fixed_schema",
 )
 
 

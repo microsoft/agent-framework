@@ -20,11 +20,11 @@ from agent_framework import (
     SessionContext,
     load_settings,
 )
-from agent_framework._telemetry import get_user_agent
-from azure.ai.projects.aio import AIProjectClient
+from agent_framework._telemetry import IS_TELEMETRY_ENABLED, get_user_agent, mark_feature_used
 from azure.core.credentials import TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
-from openai.types.responses import ResponseInputItemParam
+
+from ._feature_usage import FeatureIndex, create_feature_usage_policy
 
 if sys.version_info >= (3, 11):
     from typing import Self, TypedDict  # pragma: no cover
@@ -33,6 +33,8 @@ else:
 
 if TYPE_CHECKING:
     from agent_framework import SupportsAgentRun
+    from azure.ai.projects.aio import AIProjectClient
+    from openai.types.responses import ResponseInputItemParam
 
 
 logger = logging.getLogger(__name__)
@@ -108,6 +110,8 @@ class FoundryMemoryProvider(ContextProvider):
         )
 
         if project_client is None:
+            from azure.ai.projects.aio import AIProjectClient
+
             resolved_endpoint = foundry_settings.get("project_endpoint")
             if not resolved_endpoint:
                 raise ValueError(
@@ -119,8 +123,10 @@ class FoundryMemoryProvider(ContextProvider):
             project_client_kwargs: dict[str, Any] = {
                 "endpoint": resolved_endpoint,
                 "credential": credential,
-                "user_agent": get_user_agent(),
+                "per_retry_policies": [create_feature_usage_policy()],
             }
+            if IS_TELEMETRY_ENABLED:
+                project_client_kwargs["user_agent"] = get_user_agent()
             if allow_preview is not None:
                 project_client_kwargs["allow_preview"] = allow_preview
             project_client = AIProjectClient(**project_client_kwargs)
@@ -164,6 +170,7 @@ class FoundryMemoryProvider(ContextProvider):
         2. Searches for contextual memories based on input messages
         3. Combines and injects memories into the context
         """
+        mark_feature_used(FeatureIndex.FOUNDRY_MEMORY)
         # On first run, retrieve static memories (user profile memories)
         if not state.get("initialized"):
             try:

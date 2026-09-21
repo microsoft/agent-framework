@@ -74,6 +74,28 @@ const BASE_OPTS = { teamSlug: 'my-team', issueNumber: '123' };
 // ---------------------------------------------------------------------------
 
 describe('author resolution', () => {
+  it('uses an explicit username instead of the issue author', async () => {
+    const { github, context, core } = createMocks({
+      payloadIssue: { user: { login: 'issue-author' } },
+    });
+    let issuesGetCalled = false;
+    github.rest.issues.get = async () => {
+      issuesGetCalled = true;
+      return { data: { user: { login: 'api-user' } } };
+    };
+
+    const result = await checkTeamMembership({
+      github,
+      context,
+      core,
+      ...BASE_OPTS,
+      username: 'comment-author',
+    });
+
+    assert.equal(result.author, 'comment-author');
+    assert.equal(issuesGetCalled, false);
+  });
+
   it('resolves author from event payload', async () => {
     const { github, context, core } = createMocks({
       payloadIssue: { user: { login: 'payload-user' } },

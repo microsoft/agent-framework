@@ -3,8 +3,8 @@ name = "agent-framework-github-copilot"
 description = "GitHub Copilot integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
-requires-python = ">=3.10"
-version = "1.0.0"
+requires-python = ">=3.11"
+version = "2.0.0"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -15,7 +15,6 @@ classifiers = [
   "Development Status :: 5 - Production/Stable",
   "Intended Audience :: Developers",
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
@@ -23,12 +22,12 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core>=1.11.0,<2",
-    "github-copilot-sdk==1.0.2; python_version >= '3.11'",
+    "agent-framework-core>=1.15.0,<2",
+    "github-copilot-sdk==1.0.11; python_version >= '3.11'",
 ]
 
 [tool.uv]
-prerelease = "if-necessary-or-explicit"
+prerelease = "if-necessary"
 environments = [
     "sys_platform == 'darwin'",
     "sys_platform == 'linux'",

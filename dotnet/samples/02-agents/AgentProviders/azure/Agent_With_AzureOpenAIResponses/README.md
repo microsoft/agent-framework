@@ -11,6 +11,8 @@ Before you begin, ensure you have the following prerequisites:
 Set the following environment variables:
 
 ```powershell
-$env:AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/" # Replace with your Azure OpenAI resource endpoint
+# Resource root is fine (sample appends /openai/v1). You can also set the full v1 endpoint.
+$env:AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
+# or: $env:AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/openai/v1/"
 $env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-5.4-mini"  # Optional, defaults to gpt-5.4-mini
 ```

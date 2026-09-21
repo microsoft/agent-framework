@@ -10,11 +10,12 @@ from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypedDict, ov
 
 from agent_framework._clients import BaseEmbeddingClient
 from agent_framework._settings import SecretString
-from agent_framework._telemetry import USER_AGENT_KEY
+from agent_framework._telemetry import USER_AGENT_KEY, mark_feature_used
 from agent_framework._types import Embedding, EmbeddingGenerationOptions, GeneratedEmbeddings, UsageDetails
 from agent_framework.observability import EmbeddingTelemetryLayer
 from openai import AsyncAzureOpenAI, AsyncOpenAI
 
+from ._feature_usage import FeatureIndex
 from ._shared import AzureTokenProvider, load_openai_service_settings
 
 if sys.version_info >= (3, 13):
@@ -68,6 +69,7 @@ class RawOpenAIEmbeddingClient(
     """Raw OpenAI embedding client without telemetry."""
 
     INJECTABLE: ClassVar[set[str]] = {"client"}
+    _FEATURE_USAGE_INDEX: ClassVar[int | None] = FeatureIndex.OPENAI
 
     @overload
     def __init__(
@@ -276,6 +278,8 @@ class RawOpenAIEmbeddingClient(
             raise ValueError("model is required")
 
         kwargs: dict[str, Any] = {"input": list(values), "model": model}
+        if self._FEATURE_USAGE_INDEX is not None:
+            mark_feature_used(self._FEATURE_USAGE_INDEX)
         if dimensions := opts.get("dimensions"):
             kwargs["dimensions"] = dimensions
         if encoding_format := opts.get("encoding_format"):
@@ -287,7 +291,7 @@ class RawOpenAIEmbeddingClient(
 
         encoding = kwargs.get("encoding_format", "float")
         embeddings: list[Embedding[list[float]]] = []
-        for item in response.data:
+        for item in sorted(response.data, key=lambda item: item.index):
             vector: list[float]
             if encoding == "base64" and isinstance(item.embedding, str):
                 # Decode base64-encoded floats (little-endian IEEE 754)
@@ -327,7 +331,7 @@ class OpenAIEmbeddingClient(
         self,
         *,
         model: str | None = None,
-        api_key: str | Callable[[], str | Awaitable[str]] | None = None,
+        api_key: str | SecretString | Callable[[], str | Awaitable[str]] | None = None,
         org_id: str | None = None,
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncOpenAI | None = None,
@@ -364,7 +368,7 @@ class OpenAIEmbeddingClient(
         azure_endpoint: str | None = None,
         credential: AzureCredentialTypes | AzureTokenProvider | None = None,
         api_version: str | None = None,
-        api_key: str | Callable[[], str | Awaitable[str]] | None = None,
+        api_key: str | SecretString | Callable[[], str | Awaitable[str]] | None = None,
         base_url: str | None = None,
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncAzureOpenAI | AsyncOpenAI | None = None,
@@ -403,7 +407,7 @@ class OpenAIEmbeddingClient(
         self,
         *,
         model: str | None = None,
-        api_key: str | Callable[[], str | Awaitable[str]] | None = None,
+        api_key: str | SecretString | Callable[[], str | Awaitable[str]] | None = None,
         credential: AzureCredentialTypes | AzureTokenProvider | None = None,
         org_id: str | None = None,
         default_headers: Mapping[str, str] | None = None,

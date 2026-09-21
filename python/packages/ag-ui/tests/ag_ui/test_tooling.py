@@ -6,10 +6,9 @@ from unittest.mock import MagicMock
 import pytest
 from agent_framework import Agent, tool
 
-from agent_framework_ag_ui._orchestration._tooling import (
+from agent_framework_ag_ui._tooling import (
     collect_server_tools,
     merge_tools,
-    register_additional_client_tools,
 )
 
 
@@ -50,21 +49,6 @@ def test_merge_tools_filters_duplicates() -> None:
 
     with pytest.raises(ValueError, match="Duplicate tool name 'b'"):
         merge_tools(server, client)
-
-
-def test_register_additional_client_tools_assigns_when_configured() -> None:
-    """register_additional_client_tools should set additional_tools on the chat client."""
-    from agent_framework import BaseChatClient, normalize_function_invocation_configuration
-
-    mock_chat_client = MagicMock(spec=BaseChatClient)
-    mock_chat_client.function_invocation_configuration = normalize_function_invocation_configuration(None)
-
-    agent = Agent(client=mock_chat_client)
-
-    tools = [DummyTool("x")]
-    register_additional_client_tools(cast(Any, agent), tools)
-
-    assert mock_chat_client.function_invocation_configuration["additional_tools"] == tools
 
 
 def test_collect_server_tools_includes_mcp_tools_when_connected() -> None:
@@ -154,29 +138,6 @@ def test_collect_server_tools_no_default_options() -> None:
     agent = MockAgent()
     tools = collect_server_tools(cast(Any, agent))
     assert tools == []
-
-
-def test_register_additional_client_tools_no_tools() -> None:
-    """register_additional_client_tools does nothing with None tools."""
-    mock_chat_client = MagicMock()
-    agent = Agent(client=mock_chat_client)
-
-    # Should not raise
-    register_additional_client_tools(agent, None)
-
-
-def test_register_additional_client_tools_no_chat_client() -> None:
-    """register_additional_client_tools does nothing when agent has no client."""
-    from agent_framework_ag_ui._orchestration._tooling import register_additional_client_tools
-
-    class MockAgent:
-        pass
-
-    agent = MockAgent()
-    tools = [DummyTool("x")]
-
-    # Should not raise
-    register_additional_client_tools(cast(Any, agent), tools)
 
 
 def test_merge_tools_no_client_tools() -> None:

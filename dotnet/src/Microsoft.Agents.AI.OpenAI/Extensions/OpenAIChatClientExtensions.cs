@@ -77,12 +77,14 @@ public static class OpenAIChatClientExtensions
         Throw.IfNull(options);
 
         var chatClient = client.AsIChatClient();
+        _ = Microsoft.Agents.AI.OpenAI.OpenAIUserAgentPolicies.Registration.TryRegister(chatClient);
 
         if (clientFactory is not null)
         {
             chatClient = clientFactory(chatClient);
         }
 
+        chatClient = new Microsoft.Agents.AI.OpenAI.FeatureUsageChatClient(chatClient);
         return new ChatClientAgent(chatClient, options, loggerFactory, services);
     }
 }

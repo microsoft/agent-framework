@@ -8,8 +8,9 @@ import json
 import logging
 import re
 import sys
-from asyncio import iscoroutine
+import warnings
 from collections.abc import (
+    AsyncGenerator,
     AsyncIterable,
     AsyncIterator,
     Awaitable,
@@ -27,7 +28,8 @@ from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, NewTyp
 
 from typing_extensions import TypedDict
 
-from ._serialization import SerializationMixin
+from ._feature_stage import ExperimentalFeature, experimental
+from ._serialization import SerializationMixin, get_pickle_state, restore_pickle_state
 from .exceptions import AdditionItemMismatch, ContentError
 
 if sys.version_info >= (3, 13):
@@ -36,6 +38,8 @@ else:
     from typing_extensions import TypeVar  # pragma: no cover
 
 logger = logging.getLogger("agent_framework")
+
+_SERIALIZED_EXCEPTION_MARKER: Final[str] = "FunctionInvocationError"
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -269,16 +273,24 @@ def _validate_uri(uri: str, media_type: str | None) -> dict[str, Any]:
     raise ContentError("URI must contain a scheme (e.g., http://, data:, file://)")
 
 
-def _serialize_value(value: Any, exclude_none: bool) -> Any:
+def _serialize_value(value: Any, exclude_none: bool, *, redact_exception: bool = True) -> Any:
     """Recursively serialize a value for to_dict."""
     if value is None:
         return None
     if isinstance(value, Content):
-        return value.to_dict(exclude_none=exclude_none)
+        return value._to_dict(  # pyright: ignore[reportPrivateUsage]
+            exclude_none=exclude_none, redact_exception=redact_exception
+        )
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-        return [_serialize_value(item, exclude_none) for item in cast(Iterable[Any], value)]
+        return [
+            _serialize_value(item, exclude_none, redact_exception=redact_exception)
+            for item in cast(Iterable[Any], value)
+        ]
     if isinstance(value, Mapping):
-        return {k: _serialize_value(v, exclude_none) for k, v in value.items()}  # type: ignore[reportUnknownVariableType]
+        return {
+            k: _serialize_value(v, exclude_none, redact_exception=redact_exception)
+            for k, v in cast(Mapping[Any, Any], value).items()
+        }
     if hasattr(value, "to_dict"):
         return value.to_dict()  # type: ignore[call-arg]
     return value
@@ -397,6 +409,8 @@ class Annotation(TypedDict, total=False):
 
 
 ContentT = TypeVar("ContentT", bound="Content")
+_MODEL_OUTPUT_KIND_KEY = "model_output_kind"
+_MODEL_OUTPUT_REFUSAL = "refusal"
 
 # endregion
 
@@ -475,9 +489,14 @@ class Content:
     This class provides a single unified type that handles all content variants.
     Use the class methods like `Content.from_text()`, `Content.from_data()`,
     `Content.from_uri()`, etc. to create instances.
+
+    The ``exception`` field is host-internal diagnostic state. Its value may originate from a tool, middleware,
+    provider, or caller and must always be treated as potentially sensitive. Dictionary serialization replaces it
+    with a fixed marker that preserves failure state; channel-visible error information belongs in the public result.
     """
 
     _SHALLOW_COPY_FIELDS: ClassVar[set[str]] = {"raw_representation"}
+    _PICKLE_OMIT_FIELDS: ClassVar[set[str]] = {"raw_representation"}
 
     def __init__(
         self,
@@ -587,10 +606,10 @@ class Content:
         self.consent_link = consent_link
 
     def __deepcopy__(self, memo: dict[int, Any]) -> Content:
-        """Create a deep copy, preserving ``_SHALLOW_COPY_FIELDS`` by reference.
+        """Create a deep copy, discarding non-``None`` ``_SHALLOW_COPY_FIELDS``.
 
         Fields listed in ``_SHALLOW_COPY_FIELDS`` may contain LLM SDK objects
-        (e.g., proto/gRPC responses) that are not safe to deep-copy.
+        (e.g., proto/gRPC responses) that are not safe to deep-copy or share.
         """
         cls = type(self)
         result = cls.__new__(cls)
@@ -598,10 +617,34 @@ class Content:
         shallow = cls._SHALLOW_COPY_FIELDS
         for k, v in self.__dict__.items():
             if k in shallow:
-                object.__setattr__(result, k, v)
+                if v is not None:
+                    logger.debug("Discarding field '%s' while deep-copying Content.", k)
+                object.__setattr__(result, k, None)
             else:
                 object.__setattr__(result, k, deepcopy(v, memo))
         return result
+
+    def __copy__(self) -> Content:
+        """Create a shallow copy while preserving provider runtime fields."""
+        cls = type(self)
+        result = cls.__new__(cls)
+        for field_name, value in self.__dict__.items():
+            object.__setattr__(result, field_name, value)
+        return result
+
+    def __getstate__(self) -> dict[str, Any]:
+        """Return pickle state without runtime-only shallow-copy fields."""
+        state = get_pickle_state(self, self._PICKLE_OMIT_FIELDS)
+        if self.annotations is not None:
+            state["annotations"] = [
+                {key: value for key, value in annotation.items() if key != "raw_representation"}
+                for annotation in self.annotations
+            ]
+        return state
+
+    def __setstate__(self, state: dict[str, Any] | tuple[dict[str, Any], dict[str, Any]]) -> None:
+        """Restore pickle state and reset runtime-only shallow-copy fields."""
+        restore_pickle_state(self, state, self._PICKLE_OMIT_FIELDS)
 
     @classmethod
     def from_text(
@@ -812,6 +855,7 @@ class Content:
         arguments: str | Mapping[str, Any] | None = None,
         exception: str | None = None,
         informational_only: bool = False,
+        id: str | None = None,
         annotations: Sequence[Annotation] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any = None,
@@ -826,10 +870,12 @@ class Content:
         Keyword Args:
             arguments: The arguments for the requested function call. May be a JSON string, a mapping that can be
                 serialized as arguments, or None when no arguments were provided.
-            exception: Error information associated with the function call, if the provider returned the call in an
-                error state.
+            exception: Host-internal diagnostic information when the provider returned the call in an error state.
+                Treat it as potentially sensitive regardless of its source; serialization replaces it with a marker.
             informational_only: Whether the function call is present only for transcript fidelity and should not be
                 executed by Agent Framework function invocation.
+            id: Stable Agent Framework identity for this occurrence. When omitted, the function invocation layer
+                assigns one before a locally actionable call is processed.
             annotations: Optional annotations attached to this content item.
             additional_properties: Extra provider-specific properties to preserve with the content item.
             raw_representation: The original provider-specific object or payload this content item was created from.
@@ -844,6 +890,7 @@ class Content:
             arguments=arguments,
             exception=exception,
             informational_only=informational_only,
+            id=id,
             annotations=annotations,
             additional_properties=additional_properties,
             raw_representation=raw_representation,
@@ -873,7 +920,9 @@ class Content:
             result: The tool output.  Accepts a ``list[Content]`` (the canonical
                 form produced by :meth:`~FunctionTool.parse_result`), a plain
                 ``str``, or any other value (which is stringified).
-            exception: The exception message if the function call failed.
+            exception: Host-internal diagnostic information when the function call failed. Treat it as potentially
+                sensitive regardless of whether it came from a tool, middleware, provider, or caller. Serialization
+                replaces it with a fixed failure marker; use ``result`` for channel-visible error text.
             annotations: Optional annotations for the content.
             additional_properties: Optional additional properties.
             raw_representation: Optional raw representation from the provider.
@@ -1278,6 +1327,20 @@ class Content:
         raw_representation: Any = None,
     ) -> ContentT:
         """Create function approval request content."""
+        if (
+            function_call.type == "function_call"
+            and function_call.id is not None
+            and id != function_call.id
+            and function_call.additional_properties.get("server_label") is None
+            and not (additional_properties or {}).get("_replacement_approval_request", False)
+        ):
+            warnings.warn(
+                "Creating a local function_approval_request whose id differs from function_call.id uses the legacy "
+                "provider call_id binding. Use function_call.id as the approval request id; legacy binding support "
+                "will be removed in a future release.",
+                FutureWarning,
+                stacklevel=2,
+            )
         return cls(
             "function_approval_request",
             id=id,
@@ -1302,7 +1365,7 @@ class Content:
         """Create function approval response content."""
         return cls(
             "function_approval_response",
-            approved=approved,
+            approved=approved if type(approved) is bool else False,
             id=id,
             function_call=function_call,
             annotations=annotations,
@@ -1360,7 +1423,21 @@ class Content:
         )
 
     def to_dict(self, *, exclude_none: bool = True, exclude: set[str] | None = None) -> dict[str, Any]:
-        """Serialize the content to a dictionary."""
+        """Serialize content without host-internal exception diagnostics.
+
+        Exception diagnostics are replaced with a fixed marker regardless of their source because they may contain
+        sensitive information. The marker preserves failure status across persistence round-trips.
+        """
+        return self._to_dict(exclude_none=exclude_none, exclude=exclude, redact_exception=True)
+
+    def _to_dict(
+        self,
+        *,
+        exclude_none: bool,
+        exclude: set[str] | None = None,
+        redact_exception: bool,
+    ) -> dict[str, Any]:
+        """Serialize content with explicit control over internal exception redaction."""
         fields_to_capture = (
             "text",
             "protected_data",
@@ -1408,11 +1485,13 @@ class Content:
             value = getattr(self, field, None)
             if field in exclude:
                 continue
+            if field == "exception" and value is not None and redact_exception:
+                value = _SERIALIZED_EXCEPTION_MARKER
             if field == "informational_only" and (self.type != "function_call" or not value):
                 continue
             if exclude_none and value is None:
                 continue
-            result[field] = _serialize_value(value, exclude_none)
+            result[field] = _serialize_value(value, exclude_none, redact_exception=redact_exception)
 
         if "annotations" not in exclude and self.annotations is not None:
             result["annotations"] = [dict(annotation) for annotation in self.annotations]
@@ -1423,7 +1502,10 @@ class Content:
         """Check if two Content instances are equal by comparing their dict representations."""
         if not isinstance(other, Content):
             return False
-        return self.to_dict(exclude_none=False) == other.to_dict(exclude_none=False)
+        return self._to_dict(exclude_none=False, redact_exception=False) == other._to_dict(
+            exclude_none=False,
+            redact_exception=False,
+        )
 
     def __str__(self) -> str:
         """Return a string representation of the Content."""
@@ -1454,6 +1536,9 @@ class Content:
         # Handle nested Content objects (e.g., function_call in function_approval_request)
         if (function_call := remaining.get("function_call")) and isinstance(function_call, dict):
             remaining["function_call"] = cls.from_dict(function_call)  # type: ignore[reportUnknownArgumentType]
+
+        if content_type == "function_approval_response" and type(remaining.get("approved")) is not bool:
+            remaining["approved"] = False
 
         # Handle list of Content objects (e.g., inputs in code_interpreter_tool_call)
         if (input_items := remaining.get("inputs")) and isinstance(input_items, list):
@@ -1508,7 +1593,11 @@ class Content:
             )
         combined_id = self.id or other.id
 
-        # Concatenate text, handling None values
+        # Concatenate text, handling None values.
+        # Preserve empty string "" as distinct from None. Anthropic can emit a thinking
+        # block with thinking="" followed by a signature_delta; collapsing "" to None
+        # makes a real empty signed thinking block look like an orphan signature and
+        # gets dropped on replay (see microsoft/agent-framework#8168).
         self_text = self.text or ""
         other_text = other.text or ""
         if (
@@ -1517,7 +1606,7 @@ class Content:
             and ("reasoning_text" in self.additional_properties) != ("reasoning_text" in other.additional_properties)
         ):
             raise AdditionItemMismatch("Cannot merge reasoning text with a reasoning summary")
-        combined_text = self_text + other_text if (self_text or other_text) else None
+        combined_text = None if self.text is None and other.text is None else self_text + other_text
 
         # Handle protected_data replacement
         protected_data = other.protected_data if other.protected_data is not None else self.protected_data
@@ -1534,9 +1623,11 @@ class Content:
 
     def _add_function_call_content(self, other: Content) -> Content:
         """Add two FunctionCallContent instances."""
+        if self.id and other.id and self.id != other.id:
+            raise AdditionItemMismatch("Cannot merge function calls with different ids")
         other_call_id = getattr(other, "call_id", None)
         self_call_id = getattr(self, "call_id", None)
-        if other_call_id and self_call_id != other_call_id:
+        if self_call_id and other_call_id and self_call_id != other_call_id:
             raise ContentError("Cannot add function calls with different call_ids")
 
         self_arguments = getattr(self, "arguments", None)
@@ -1555,9 +1646,11 @@ class Content:
 
         return Content(
             "function_call",
-            call_id=self_call_id,
+            call_id=self_call_id or other_call_id,
             name=getattr(self, "name", None) or getattr(other, "name", None),
             arguments=arguments,
+            id=self.id or other.id,
+            user_input_request=self.user_input_request or other.user_input_request,
             exception=getattr(self, "exception", None) or getattr(other, "exception", None),
             informational_only=getattr(self, "informational_only", False)
             or getattr(other, "informational_only", False),
@@ -1916,20 +2009,27 @@ def prepend_instructions_to_messages(
     if isinstance(instructions, str):
         instructions = [instructions]
 
-    # Skip instructions that are already present as leading messages with the
+    # Skip instructions that are already present as the leading messages with the
     # same role and text.  This prevents duplicate system messages when
     # instructions are injected by multiple layers (e.g. Agent + chat client).
-    deduplicated: list[str] = []
+    # Only a *prefix* of instructions can be deduplicated: once an instruction
+    # does not match, any remaining instructions must keep their relative order.
+    # Prepending the non-matching remainder in front of the matched messages
+    # would invert the instruction order (e.g. ["First", "Second"] with a
+    # leading "First" message becoming ["Second", "First", ...]), so the
+    # remainder is inserted right after the matched prefix instead.
+    matched_count = 0
     for idx, instr in enumerate(instructions):
         if idx < len(messages) and messages[idx].role == role and messages[idx].text == instr:
-            continue
-        deduplicated.append(instr)
+            matched_count += 1
+        else:
+            break
 
-    if not deduplicated:
+    if matched_count == len(instructions):
         return messages
 
-    instruction_messages = [Message(role, [instr]) for instr in deduplicated]
-    return [*instruction_messages, *messages]
+    instruction_messages = [Message(role, [instr]) for instr in instructions[matched_count:]]
+    return [*messages[:matched_count], *instruction_messages, *messages[matched_count:]]
 
 
 # region ChatResponse
@@ -1973,12 +2073,8 @@ def _process_update(response: ChatResponse | AgentResponse, update: ChatResponse
                 logger.warning(f"Skipping unknown content type or invalid content: {exc}")
                 continue
         match content_type:
-            # mypy doesn't narrow type based on match/case, but we know these are FunctionCallContents
-            case "function_call" if message.contents and message.contents[-1].type == "function_call":
-                try:
-                    message.contents[-1] += content
-                except (AdditionItemMismatch, ContentError):
-                    message.contents.append(content)
+            case "function_call":
+                _merge_function_call_content(message, content)
             case "usage":
                 if response.usage_details is None:
                     response.usage_details = UsageDetails()
@@ -2007,6 +2103,8 @@ def _process_update(response: ChatResponse | AgentResponse, update: ChatResponse
             response.finish_reason = update.finish_reason
         if update.model is not None:
             response.model = update.model
+    if isinstance(response, AgentResponse) and isinstance(update, AgentResponseUpdate) and update.agent_id is not None:
+        response.agent_id = update.agent_id
     if (
         isinstance(response, AgentResponse)
         and isinstance(update, AgentResponseUpdate)
@@ -2014,6 +2112,47 @@ def _process_update(response: ChatResponse | AgentResponse, update: ChatResponse
     ):
         response.finish_reason = update.finish_reason
     response.continuation_token = update.continuation_token
+
+
+def _merge_function_call_content(message: Message, content: Content) -> None:
+    """Merge a streamed function_call chunk into the in-progress call it belongs to.
+
+    Providers can stream multiple tool calls in parallel, so the next function_call
+    chunk is not necessarily a continuation of the most recently appended one; a chunk
+    with a call_id is matched against existing contents by that id first. Chunks with
+    no call_id (continuation deltas some providers only stamp on the first chunk) fall
+    back to merging with the trailing function_call item, preserving prior behavior.
+    """
+    call_id = getattr(content, "call_id", None)
+    content_id = getattr(content, "id", None)
+    if call_id:
+        for index in range(len(message.contents) - 1, -1, -1):
+            existing = message.contents[index]
+            if existing.type != "function_call" or getattr(existing, "call_id", None) != call_id:
+                continue
+            if existing.id is not None and content_id is None:
+                # existing already has a stable occurrence id from its client (e.g. the
+                # Chat Completions client stamps one on every chunk); an untagged chunk
+                # that merely happens to share its call_id isn't proof it's a continuation
+                # of that specific occurrence - a provider could reuse a call_id for a
+                # later, unrelated call. Keep scanning rather than merge on a hunch.
+                continue
+            try:
+                message.contents[index] = existing + content
+            except (AdditionItemMismatch, ContentError):
+                break
+            return
+        # A tagged chunk that matches no in-progress call is a new call, not a
+        # continuation - an untagged trailing item would silently absorb it otherwise.
+        message.contents.append(content)
+        return
+    if message.contents and message.contents[-1].type == "function_call":
+        try:
+            message.contents[-1] += content
+            return
+        except (AdditionItemMismatch, ContentError):
+            pass
+    message.contents.append(content)
 
 
 def _coalesce_text_content(contents: list[Content], type_str: Literal["text", "text_reasoning"]) -> None:
@@ -2025,6 +2164,11 @@ def _coalesce_text_content(contents: list[Content], type_str: Literal["text", "t
     for content in contents:
         if content.type == type_str:
             if first_new_content is None:
+                first_new_content = deepcopy(content)
+            elif type_str == "text" and first_new_content.additional_properties.get(
+                _MODEL_OUTPUT_KIND_KEY
+            ) != content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY):
+                coalesced_contents.append(first_new_content)
                 first_new_content = deepcopy(content)
             else:
                 try:
@@ -2139,6 +2283,30 @@ def _finalize_response(response: ChatResponse | AgentResponse) -> None:
         _coalesce_text_content(msg.contents, "text")
         _coalesce_text_content(msg.contents, "text_reasoning")
         _coalesce_code_interpreter_content(msg.contents)
+    _coalesce_function_call_occurrences(response)
+
+
+def _coalesce_function_call_occurrences(response: ChatResponse | AgentResponse) -> None:
+    """Merge streamed function-call fragments that share a stable occurrence id."""
+    occurrences: dict[str, tuple[list[Content], int, Content]] = {}
+    for message in response.messages:
+        original_contents = message.contents
+        coalesced_contents: list[Content] = []
+        message.contents = coalesced_contents
+        for content in original_contents:
+            if content.type != "function_call" or content.id is None:
+                coalesced_contents.append(content)
+                continue
+            existing = occurrences.get(content.id)
+            if existing is None:
+                coalesced_contents.append(content)
+                occurrences[content.id] = (coalesced_contents, len(coalesced_contents) - 1, content)
+                continue
+            contents, index, accumulated = existing
+            merged = accumulated + content
+            contents[index] = merged
+            occurrences[content.id] = (contents, index, merged)
+    response.messages[:] = [message for message in response.messages if message.contents]
 
 
 # region ContinuationToken
@@ -2201,7 +2369,18 @@ def _last_non_empty_assistant_message_text(messages: Sequence[Message]) -> str:
     for message in reversed(messages):
         if message.role != "assistant":
             continue
-        text = "".join((content.text or "") for content in message.contents if content.type == "text")
+        if any(
+            content.type == "text"
+            and content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY) == _MODEL_OUTPUT_REFUSAL
+            for content in message.contents
+        ):
+            return ""
+        text = "".join(
+            (content.text or "")
+            for content in message.contents
+            if content.type == "text"
+            and content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY) != _MODEL_OUTPUT_REFUSAL
+        )
         if text.strip():
             return text
     return ""
@@ -3221,13 +3400,67 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         stream._wrap_inner = True
         return stream
 
+    @classmethod
+    @experimental(feature_id=ExperimentalFeature.AGENT_HOOKS)
+    def buffered_and_gated(
+        cls,
+        consume: Callable[[], Awaitable[tuple[Sequence[UpdateT], FinalT]]],
+        gate: Callable[[list[UpdateT], FinalT], Awaitable[tuple[FinalT, bool]]],
+        rederive: Callable[[FinalT], Sequence[UpdateT]],
+    ) -> ResponseStream[UpdateT, FinalT]:
+        """Create a fully buffered stream whose content is finalized by a gate.
+
+        This combinator exists for egress-gating middleware (e.g. policy enforcement)
+        that must apply a verdict to a run's *complete* content before anything is
+        released, and it states the hook-ordering contract in one place:
+
+        1. On the first pull, ``consume`` runs and produces the buffered updates and
+           the finalized result. Nothing has egressed yet.
+        2. Every transform/result/cleanup hook registered on the *returned* stream so
+           far (for example hooks attached by middleware pipelines after they unwind)
+           is applied to the buffered updates and result now — **before** the gate —
+           so the gate's verdict covers their effect. The hooks are consumed: they are
+           not applied again during replay. Because they run ahead of the verdict,
+           these hooks also *see* pre-verdict content: they are rewriters inside the
+           enforcement boundary. A host-facing observer must consume the released
+           stream instead of registering a hook here.
+        3. ``gate`` receives the post-hook updates and the post-hook result. It
+           returns the result to release and whether it transformed that result (it
+           may raise to block egress entirely).
+        4. The combinator owns the no-divergence rule: whenever pending hooks were
+           applied or the gate reports a transform, the released updates are
+           re-derived from the gated result via ``rederive``, so streamed egress can
+           never diverge from the verdicted content. Otherwise the buffered updates
+           are replayed as-is.
+        5. The stream is then sealed: the released updates and result are replayed
+           verbatim, and registering further transform or result hooks raises
+           ``RuntimeError`` — nothing can rewrite content past the gate.
+
+        Args:
+            consume: Produces the buffered updates and finalized result. Runs inside
+                the caller's context (the caller owns any context-variable scoping).
+            gate: Receives ``(updates, final)`` after pending hooks are applied;
+                returns ``(final, transformed)`` — the result to release and whether
+                the gate changed it.
+            rederive: Rebuilds the released updates from the gated result; applied by
+                the combinator whenever hooks ran or the gate transformed, so no
+                caller can accidentally egress un-verdicted updates.
+
+        Returns:
+            A sealed, fully buffered ResponseStream.
+        """
+        return cast(
+            "ResponseStream[UpdateT, FinalT]",
+            cast(Any, _GatedResponseStream).create_buffered_and_gated(consume, gate, rederive),
+        )
+
     async def _get_stream(self) -> AsyncIterable[UpdateT]:
         if self._stream is None:
             if hasattr(self._stream_source, "__aiter__"):
                 self._stream = self._stream_source  # type: ignore[assignment]
             else:
-                if not iscoroutine(self._stream_source):
-                    self._stream = self._stream_source  # type: ignore[assignment]
+                if not isawaitable(self._stream_source):
+                    self._stream = self._stream_source
                 else:
                     self._stream = await self._stream_source
             if isinstance(self._stream, ResponseStream) and self._wrap_inner:
@@ -3288,6 +3521,24 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
                 if isawaitable(update):
                     update = await update
             return await self._record_update(update)
+
+    async def close(self) -> None:
+        """Close the active iterator and run cleanup hooks.
+
+        This method is idempotent and also closes nested ``ResponseStream`` wrappers.
+        """
+        try:
+            iterator: AsyncIterator[UpdateT] | None = self._iterator
+            if iterator is not None:
+                if isinstance(iterator, ResponseStream):
+                    await cast(ResponseStream[UpdateT, Any], iterator).close()
+                else:
+                    close = getattr(iterator, "aclose", None)
+                    if close is not None:
+                        await close()
+        finally:
+            self._consumed = True
+            await self._run_cleanup_hooks()
 
     async def _resolve_stream_with_pull_contexts(self) -> AsyncIterable[UpdateT]:
         """Resolve the underlying stream while activating any registered pull context managers.
@@ -3477,6 +3728,103 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
     @property
     def updates(self) -> Sequence[UpdateT]:
         return self._updates
+
+
+class _GatedResponseStream(ResponseStream[UpdateT, FinalT]):
+    """ResponseStream whose content is sealed once its gate has run.
+
+    Created by :meth:`ResponseStream.buffered_and_gated`. Hooks registered before
+    the gate runs are applied to the buffered content ahead of the gate; once the
+    gate has run, registering transform or result hooks raises so nothing can
+    rewrite content past the gate. (Cleanup hooks remain allowed: they cannot
+    influence content.)
+    """
+
+    _gate_sealed: bool = False
+
+    def with_transform_hook(
+        self,
+        hook: Callable[[UpdateT], UpdateT | Awaitable[UpdateT | None] | None],
+    ) -> ResponseStream[UpdateT, FinalT]:
+        """Register a transform hook; rejected once the stream's gate has run."""
+        if self._gate_sealed:
+            raise RuntimeError(
+                "Cannot register a transform hook on a gated ResponseStream after its gate has "
+                "run: content is sealed by the gate's verdict."
+            )
+        return super().with_transform_hook(hook)
+
+    def with_result_hook(
+        self,
+        hook: Callable[[FinalT], FinalT | Awaitable[FinalT | None] | None],
+    ) -> ResponseStream[UpdateT, FinalT]:
+        """Register a result hook; rejected once the stream's gate has run."""
+        if self._gate_sealed:
+            raise RuntimeError(
+                "Cannot register a result hook on a gated ResponseStream after its gate has "
+                "run: content is sealed by the gate's verdict."
+            )
+        return super().with_result_hook(hook)
+
+    @classmethod
+    def create_buffered_and_gated(
+        cls,
+        consume: Callable[[], Awaitable[tuple[Sequence[UpdateT], FinalT]]],
+        gate: Callable[[list[UpdateT], FinalT], Awaitable[tuple[FinalT, bool]]],
+        rederive: Callable[[FinalT], Sequence[UpdateT]],
+    ) -> _GatedResponseStream[UpdateT, FinalT]:
+        """Build the gated stream for :meth:`ResponseStream.buffered_and_gated`."""
+        holder: dict[str, Any] = {}
+
+        async def _materialize() -> AsyncGenerator[UpdateT]:
+            stream = cast(_GatedResponseStream[UpdateT, FinalT], holder["stream"])
+            updates, final = await consume()
+            # Drain the hooks registered on the gated stream so far and apply them to
+            # the buffered content before the gate (contract step 2). Draining also
+            # means _record_update applies nothing during replay.
+            transform_hooks = list(stream._transform_hooks)
+            stream._transform_hooks.clear()
+            result_hooks = list(stream._result_hooks)
+            stream._result_hooks.clear()
+            cleanup_hooks = list(stream._cleanup_hooks)
+            stream._cleanup_hooks.clear()
+            hooked_updates: list[UpdateT] = []
+            for update in updates:
+                hooked_update = update
+                for hook in transform_hooks:
+                    hooked = hook(hooked_update)
+                    if isawaitable(hooked):
+                        hooked = await hooked
+                    if hooked is not None:
+                        hooked_update = cast(UpdateT, hooked)
+                hooked_updates.append(hooked_update)
+            for result_hook in result_hooks:
+                hooked_final = result_hook(final)
+                if isawaitable(hooked_final):
+                    hooked_final = await hooked_final
+                if hooked_final is not None:
+                    final = cast(FinalT, hooked_final)
+            for cleanup_hook in cleanup_hooks:
+                cleanup_result = cleanup_hook()
+                if isawaitable(cleanup_result):
+                    await cleanup_result
+            gated_final, gate_transformed = await gate(hooked_updates, final)
+            holder["final"] = gated_final
+            stream._gate_sealed = True
+            # No-divergence rule (contract step 4), owned here: hooks or a gate
+            # transform mean the buffered updates may no longer match the verdicted
+            # result, so the released updates are re-derived from it.
+            hooks_applied = bool(transform_hooks or result_hooks)
+            released = rederive(gated_final) if (hooks_applied or gate_transformed) else hooked_updates
+            for update in released:
+                yield update
+
+        def _finalizer(_: Sequence[UpdateT]) -> FinalT:
+            return cast(FinalT, holder["final"])
+
+        stream: _GatedResponseStream[UpdateT, FinalT] = cls(_materialize(), finalizer=_finalizer)
+        holder["stream"] = stream
+        return stream
 
 
 # region ChatOptions
@@ -3759,6 +4107,38 @@ def validate_tool_mode(
     return tool_choice
 
 
+def _append_instructions(
+    base: str | Mapping[str, Any] | Sequence[Any] | None,
+    addition: str | Mapping[str, Any] | Sequence[Any] | None,
+) -> str | Mapping[str, Any] | Sequence[Any] | None:
+    """Append instructions to existing instructions without discarding their structure.
+
+    ``instructions`` is declared as ``str`` on :class:`ChatOptions`, but chat clients may widen it to a
+    provider-native structured form, such as a sequence of typed instruction blocks. Combining such a
+    value with string formatting would coerce it to its ``repr``, silently turning structured metadata
+    into literal text, so a non-string base is extended element-wise instead.
+
+    The addition is always placed after the existing instructions, so the leading portion stays
+    unchanged for providers that treat it as a stable, structure-sensitive prefix.
+
+    Args:
+        base: The existing instructions, if any.
+        addition: The instructions to append, if any.
+
+    Returns:
+        The combined instructions, preserving the structure of ``base`` when it is not a string.
+    """
+    if not base:
+        return addition
+    if not addition:
+        return base
+    if isinstance(base, str) and isinstance(addition, str):
+        return f"{base}\n{addition}"
+    combined: list[Any] = [base] if isinstance(base, (str, Mapping)) else list(base)
+    combined.extend([addition] if isinstance(addition, (str, Mapping)) else addition)
+    return combined
+
+
 def merge_chat_options(
     base: dict[str, Any] | None,
     override: dict[str, Any] | None,
@@ -3808,12 +4188,8 @@ def merge_chat_options(
             continue
 
         if key == "instructions":
-            # Concatenate instructions
-            base_instructions = result.get("instructions")
-            if base_instructions:
-                result["instructions"] = f"{base_instructions}\n{value}"
-            else:
-                result["instructions"] = value
+            # Concatenate instructions, preserving provider-native structured values
+            result["instructions"] = _append_instructions(result.get("instructions"), value)
         elif key == "tools":
             # Merge tools lists
             base_tools = result.get("tools")

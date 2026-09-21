@@ -20,7 +20,7 @@ For more information, please refer to the following resources:
 
 The Agent Framework Python SDK is **natively instrumented** to emit logs, traces, and metrics throughout agent/model invocation and tool execution, so you can monitor your AI application's performance and track token consumption. Instrumentation follows the OpenTelemetry [Semantic Conventions for GenAI](https://opentelemetry.io/docs/specs/semconv/gen-ai/), and workflows emit their own spans for end-to-end visibility.
 
-Setting up observability is also easy: a single call to `configure_otel_providers()` from the `agent_framework.observability` module wires up the trace, log, and metric providers. It reads the standard OpenTelemetry environment variables to configure exporters automatically.
+> See [GenAI semantic-conventions versioning](#genai-semantic-conventions-versioning) for details on how Agent Framework supports different versions of the conventions.
 
 ### Five patterns for configuring observability
 
@@ -88,6 +88,18 @@ from microsoft.opentelemetry import use_microsoft_opentelemetry
 use_microsoft_opentelemetry(enable_azure_monitor=True)
 ```
 
+To disable Agent Framework's baseline GenAI message events without changing providers or exporters configured by a third party, use the instrumentation-only API:
+
+```python
+from agent_framework.observability import enable_instrumentation
+
+enable_instrumentation(enable_message_events=False)
+```
+
+An explicit `True` or `False` overrides the current message-event setting, including a value read from `ENABLE_MESSAGE_EVENTS`. Omitting the argument or passing `None` preserves the current setting without re-reading the environment, including settings established by `configure_otel_providers()` or an earlier explicit call.
+
+This flag controls baseline v1.36.0 events such as `gen_ai.user.message` and `gen_ai.choice`; it does not disable experimental message span attributes, spans, or metrics. Message events still require sensitive-data capture to be enabled separately. Existing `enable_sensitive_data` behavior is unchanged, and [sticky disable](#disabling-instrumentation) still requires `force=True` to re-enable instrumentation.
+
 ```python
 from azure.monitor.opentelemetry import configure_azure_monitor
 from agent_framework.observability import create_resource, enable_sensitive_telemetry
@@ -103,7 +115,8 @@ configure_azure_monitor(
 enable_sensitive_telemetry()
 ```
 
-For Microsoft Foundry projects, use `client.configure_azure_monitor()` which retrieves the connection string from the project and configures everything:
+For model calls through `FoundryChatClient`, use `client.configure_azure_monitor()`
+to retrieve the connection string and configure Azure Monitor:
 
 ```python
 from agent_framework.foundry import FoundryChatClient
@@ -118,6 +131,29 @@ client = FoundryChatClient(
 # Automatically configures Azure Monitor with connection string from project
 await client.configure_azure_monitor(enable_sensitive_data=True)
 ```
+
+For calls to an **existing prompt or hosted agent**, use
+[`foundry_agent_tracing.py`](foundry_agent_tracing.py) and
+`await agent.configure_azure_monitor()`.
+
+Install Azure Monitor 1.8.10 or later to connect client and service traces:
+
+```shell
+pip install --upgrade "azure-monitor-opentelemetry>=1.8.10,<2"
+```
+
+Connect Application Insights to your project and set `FOUNDRY_PROJECT_ENDPOINT`
+and `FOUNDRY_AGENT_NAME`. `FOUNDRY_AGENT_VERSION` is required for PromptAgents
+and optional for HostedAgents. Run from `python/` using the workspace packages:
+
+```powershell
+uv run --group test python samples\02-agents\observability\foundry_agent_tracing.py
+uv run --group test python samples\02-agents\observability\foundry_agent_tracing.py --stream
+```
+
+View the connected trace under **Build > Agents > your agent > Traces** in
+Foundry. Select the agent version and a time range covering the run, then open
+the printed trace ID.
 
 Or with [Langfuse](https://langfuse.com/integrations/frameworks/microsoft-agent-framework):
 
@@ -151,6 +187,23 @@ os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "<opik_otlp_endpoint>"
 os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = "<opik_otlp_headers>"
 
 # Agent Framework instrumentation is on by default.
+# Optional: opt in to capturing sensitive data
+enable_sensitive_telemetry()
+```
+
+Or with [MLflow](https://mlflow.org/docs/latest/genai/tracing/integrations/listing/microsoft-agent-framework/), which ingests traces over OTLP/HTTP at `<tracking-uri>/v1/traces` and routes them to an experiment via a header. MLflow accepts traces only, so pass a span exporter rather than a base `OTEL_EXPORTER_OTLP_ENDPOINT` (which would also aim log and metric exporters at endpoints MLflow does not serve):
+
+```python
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from agent_framework.observability import configure_otel_providers, enable_sensitive_telemetry
+
+# Start a tracking server first, e.g. `mlflow server --backend-store-uri sqlite:///mlflow.db --port 5000`
+exporter = OTLPSpanExporter(
+    endpoint="http://localhost:5000/v1/traces",
+    headers={"x-mlflow-experiment-id": "<mlflow_experiment_id>"},
+)
+configure_otel_providers(exporters=[exporter])
+
 # Optional: opt in to capturing sensitive data
 enable_sensitive_telemetry()
 ```
@@ -199,11 +252,42 @@ Agent Framework reads the following environment variables:
 | `ENABLE_INSTRUMENTATION` | `true` | Set to `false` to disable native instrumentation. See [Disabling instrumentation](#disabling-instrumentation) for the programmatic alternative with sticky semantics. |
 | `ENABLE_SENSITIVE_DATA` | `false` | Set to `true` to emit sensitive data (prompts, responses, etc.). |
 | `ENABLE_CONSOLE_EXPORTERS` | `false` | Set to `true` to add console exporters. Only used by `configure_otel_providers()`. |
+| `ENABLE_MESSAGE_EVENTS` | `true` | Set to `false` to stop emitting the baseline v1.36.0 GenAI message events (`gen_ai.system.message`, etc.) for model invocation. **Has no effect unless `ENABLE_SENSITIVE_DATA=true`.** See [GenAI semantic-conventions versioning](#genai-semantic-conventions-versioning). |
+| `OTEL_SEMCONV_STABILITY_OPT_IN` | unset (conventions above v1.36.0) | A comma-separated list of category-specific values, following the standard OpenTelemetry comma-separated opt-in list format, currently only containing a single token ``"gen_ai_latest_experimental"``. v1.36.0 is the OTel-recommended baseline; every version above it is referred to here as "latest" (even the baseline is an expeirmental release). The default, unlike upstream OpenTelemetry which retains the baseline conventions, ``"gen_ai_latest_experimental"`` selects the latest conventions above v1.36.0; a list that omits that token (e.g. ``""``) selects the v1.36.0 conventions instead. See [GenAI semantic-conventions versioning](#genai-semantic-conventions-versioning). |
 | `VS_CODE_EXTENSION_PORT` | unset | Port used by the [AI Toolkit for VS Code](https://marketplace.visualstudio.com/items?itemName=ms-windows-ai-studio.windows-ai-studio#tracing) tracing integration. Only used by `configure_otel_providers()`. |
 
 You can also call `enable_sensitive_telemetry()` from `agent_framework.observability` to opt in to sensitive-data capture programmatically.
 
 > **Note**: Sensitive data includes prompts, responses, and tool arguments. Only enable it in development or test environments — it may expose user or system secrets in production.
+
+### GenAI semantic-conventions versioning
+
+[v1.36.0](https://github.com/open-telemetry/semantic-conventions/blob/v1.36.0/docs/gen-ai) is the OpenTelemetry-recommended **baseline** for existing GenAI instrumentations. Releases above it (v1.37.0 and later) are referred to as **latest** and, per OTel's own [stability warning](https://github.com/open-telemetry/semantic-conventions/blob/v1.37.0/docs/gen-ai), keep changing in more than one way. `OTEL_SEMCONV_STABILITY_OPT_IN` is the OTel-standard switch between these two rule sets, and Agent Framework applies it consistently across every attribute/representation it knows differs between the two:
+
+| Aspect | v1.36.0 (baseline) | Above v1.36.0 (latest, the default) |
+|--------|------------------|--------------------------------------------|
+| Input/output message representation | Log-record **events** (`gen_ai.system.message`, `gen_ai.user.message`, `gen_ai.assistant.message`, `gen_ai.tool.message`, `gen_ai.choice`) | `gen_ai.input.messages`/`gen_ai.output.messages` **span attributes** |
+| Provider-identifying attribute | `gen_ai.system` | `gen_ai.provider.name` |
+| Tool call arguments/results on `execute_tool` spans | Not emitted (introduced in v1.38.0) | `gen_ai.tool.call.arguments` / `gen_ai.tool.call.result` |
+
+`invoke_agent` spans always use `INTERNAL` span kind (the OTel default), regardless of semconv version. The v1.41.0 spec defines `CLIENT` for agents that are themselves a remote service and `INTERNAL` for agents that run in-process (no `server.address`/`server.port`/token-usage attributes, since the actual network call happens on a nested `chat` span instead). Agent Framework's own agents run in-process — `agent.run()` orchestrates a locally-running chat client, which creates its own nested `chat` span for the actual network call — so `INTERNAL` applies uniformly, without needing to classify each agent implementation across packages. What's **not yet covered** by this flag is the rest of the v1.41.0 attribute-group split: under the conventions above v1.36.0, the `invoke_agent` client span is defined to drop `gen_ai.response.id`, `gen_ai.response.model`, and `gen_ai.response.finish_reasons` and add `gen_ai.agent.version` instead. Agent Framework **still emits** the former **three** unconditionally on `invoke_agent` spans and **does not** emit `gen_ai.agent.version` at all under either semconv version.
+
+> **`ENABLE_SENSITIVE_DATA=true` is a prerequisite for the message-representation and tool-call-attribute rows above.** Chat content (prompts, responses, tool arguments/results) is only ever captured when sensitive-data capture is enabled (see [`ENABLE_SENSITIVE_DATA`](#environment-variables) above); the provider-attribute rename applies regardless, since `gen_ai.system`/`gen_ai.provider.name` is not sensitive data. If `ENABLE_SENSITIVE_DATA` is `false` (the default), `ENABLE_MESSAGE_EVENTS` has nothing to switch and is effectively ignored, and no `gen_ai.tool.call.*` attributes are emitted under either semconv version.
+
+Agent Framework defaults to the conventions above v1.36.0 (unlike upstream OpenTelemetry, which retains the baseline conventions) because most users already depend on them, and — to avoid a breaking change for anyone consuming the older message events for modelinvocation — also keeps emitting those events by default via `ENABLE_MESSAGE_EVENTS`. `ENABLE_MESSAGE_EVENTS` is controlled independently of `OTEL_SEMCONV_STABILITY_OPT_IN`:
+
+```bash
+# Capture agent/chat client/tool input and output contents (default: false):
+export ENABLE_SENSITIVE_DATA=true
+
+# Opt into the baseline v1.36.0 conventions only (default: "gen_ai_latest_experimental"):
+export OTEL_SEMCONV_STABILITY_OPT_IN=""
+
+# Agent Framework still emits the baseline v1.36.0 message events for model invocations even
+# when the semconv opt-in is set to latest for compatibility reasons. To stop emitting those
+# events (default: true):
+export ENABLE_MESSAGE_EVENTS=false
+```
 
 ### Disabling instrumentation
 

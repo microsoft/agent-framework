@@ -19,6 +19,14 @@ memories per session by default: every session writes under its own working
 folder (derived from the session id). Pass an explicit ``scope`` to group
 memories differently, for example by user id.
 
+A ``scope`` (and the session id it defaults to) is treated as an **opaque
+namespace key**, not as a path: it is mapped to exactly one storage folder by a
+derivation that is injective for all but pathologically long values, so two
+byte-distinct values cannot share a working folder. Applications that derive a
+scope from an externally supplied value should still canonicalize and authorize
+that value themselves; the mapping here is the storage-layer guarantee, not a
+substitute for that check.
+
 The provider exposes the following tools to the agent (registered on the
 per-invocation :class:`~agent_framework.SessionContext` in
 :meth:`FileMemoryProvider.before_run`):
@@ -40,6 +48,7 @@ from typing import Annotated, Any
 
 from pydantic import BaseModel, Field
 
+from .._filesystem import _storage_key_segment  # pyright: ignore[reportPrivateUsage]
 from .._sessions import AgentSession, ContextProvider, SessionContext
 from .._tools import tool
 from .._types import Message
@@ -73,9 +82,14 @@ DEFAULT_FILE_MEMORY_INSTRUCTIONS = (
     "compacted or truncated. This ensures important data remains accessible across long-running sessions."
 )
 
+
 _DESCRIPTION_SUFFIX = "_description.md"
 _MEMORY_INDEX_FILE_NAME = "memories.md"
 _MAX_INDEX_ENTRIES = 50
+# Prefix for scopes that are not usable verbatim as a folder name. Kept distinct
+# from the other harness prefixes so the same value under a different component
+# never lands in the same directory.
+_ENCODED_SCOPE_PREFIX = "~scope-"
 
 
 def _description_file_name(file_name: str) -> str:
@@ -189,6 +203,18 @@ class _LineEdit(BaseModel):
             )
         ),
     ]
+    expected_line: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=(
+                "Optional: the text you believe is currently on that line, as reported by "
+                "file_memory_grep. When supplied, the edit is rejected unless it matches, which "
+                "catches an out-of-date line number or a file that changed since you looked. "
+                "The trailing newline is ignored in the comparison."
+            ),
+        ),
+    ] = None
 
 
 class _ReplaceLinesInput(BaseModel):
@@ -234,6 +260,11 @@ class FileMemoryProvider(ContextProvider):
     Memories are isolated per session: each session reads and writes under a
     working folder derived from its session id. Pass an explicit ``scope`` to
     group memories differently (for example, per user id) across sessions.
+
+    The scope (or session id) is an opaque namespace key, not a path. It is
+    mapped to a single folder by a derivation that is injective for all but
+    pathologically long values, so two byte-distinct values cannot share a
+    working folder.
     """
 
     def __init__(
@@ -254,7 +285,11 @@ class FileMemoryProvider(ContextProvider):
             scope: The namespace that logically groups and isolates memories
                 (for example, a user ID). Used as the working folder within the
                 store. When ``None`` (the default), the active session's
-                ``session_id`` is used, isolating memories per session.
+                ``session_id`` is used, isolating memories per session. The
+                value is treated as an opaque key rather than a path: it is
+                mapped onto exactly one folder, so a multi-segment value
+                such as ``"tenants/alice"`` becomes a single encoded folder
+                instead of a nested directory.
             instructions: Optional instruction override. When ``None`` the
                 default file-memory instructions are used.
         """
@@ -271,11 +306,26 @@ class FileMemoryProvider(ContextProvider):
         """Resolve the working folder for the current invocation.
 
         Uses the configured ``scope`` when set, otherwise the session id. The
-        result is normalized as a relative directory path so it cannot escape
-        the store root.
+        value is an opaque namespace key, not a path: it is mapped to exactly
+        one folder name by :func:`~agent_framework._filesystem._storage_key_segment`.
+        That derivation is injective except for pathologically long values,
+        which fall back to a collision-resistant digest. Two byte-distinct
+        scopes or session ids therefore do not resolve to the same working
+        folder, so a caller authorized for one of them cannot reach another's
+        memories.
+
+        Raises:
+            ValueError: When neither ``scope`` nor the session id yields a
+                namespace. Without one there is nothing to isolate on, and
+                falling back to the store root would expose every other scope.
         """
         raw_scope = self.scope or context.session_id or ""
-        return _normalize_relative_path(raw_scope, is_directory=True)
+        if not raw_scope:
+            raise ValueError(
+                "FileMemoryProvider requires a memory scope: pass an explicit 'scope' or run with a session "
+                "that has a 'session_id'. Without one, memories cannot be isolated from other scopes."
+            )
+        return _storage_key_segment(raw_scope, encoded_prefix=_ENCODED_SCOPE_PREFIX)
 
     async def _rebuild_index(self, working_folder: str) -> None:
         """Rebuild the ``memories.md`` index for ``working_folder``.
@@ -350,7 +400,7 @@ class FileMemoryProvider(ContextProvider):
 
         @tool(name="file_memory_read", schema=_ReadFileInput, approval_mode="never_require")
         async def file_memory_read(file_name: str) -> str:
-            """Read the content of a memory file by name. Returns the file content or a message indicating the file was not found."""  # ruff:ignore[line-too-long]
+            r"""Read the content of a memory file by name. Returns the file content or a message indicating the file was not found. Line numbers count lines split on \n only: a lone \r never starts a new line, each line keeps its own terminator, and content ending in a newline has a final empty line."""  # ruff:ignore[line-too-long]
             try:
                 normalized = _normalize_relative_path(file_name)
             except ValueError as exc:
@@ -443,7 +493,7 @@ class FileMemoryProvider(ContextProvider):
 
         @tool(name="file_memory_replace_lines", schema=_ReplaceLinesInput, approval_mode="never_require")
         async def file_memory_replace_lines(file_name: str, edits: list[_LineEdit]) -> str:
-            """Replace lines in a memory file. Provide a list of edits, each with a 1-based line_number and a literal new_line (include your own trailing newline); an empty new_line deletes the line, including its line break. Fails on out-of-range or duplicate line numbers."""  # ruff:ignore[line-too-long]
+            r"""Replace lines in a memory file. Provide a list of edits, each with a 1-based line_number and a literal new_line (include your own trailing newline); an empty new_line deletes the line, including its line break. Fails on out-of-range or duplicate line numbers. Line numbers count lines split on \n only: a lone \r never starts a new line, each line keeps its own terminator, and content ending in a newline has a final empty line."""  # ruff:ignore[line-too-long]
             try:
                 normalized = _normalize_relative_path(file_name)
             except ValueError as exc:
@@ -478,11 +528,15 @@ class FileMemoryProvider(ContextProvider):
             glob_filter = glob_pattern if glob_pattern and glob_pattern.strip() else None
             try:
                 results = await self.store.search(working_folder, regex_pattern, glob_filter, recursive=False)
+                # The index and the description sidecars are the provider's own bookkeeping and
+                # are never shown to the agent, so a match inside one is dropped rather than
+                # reported.
+                visible = [result for result in results if not _is_internal_file(result.file_name)]
             except ValueError as exc:
                 return f"Could not search memory files: {exc}"
             except OSError as exc:
                 return f"Could not search memory files: {exc.strerror or exc}"
-            return [result.to_dict() for result in results if not _is_internal_file(result.file_name)]
+            return [result.to_dict() for result in visible]
 
         context.extend_instructions(self.source_id, [self.instructions])
         context.extend_tools(

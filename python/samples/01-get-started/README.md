@@ -29,7 +29,8 @@ export FOUNDRY_MODEL="gpt-4o"   # optional, defaults to gpt-4o
 | 5 | [05_functional_workflow_with_agents.py](05_functional_workflow_with_agents.py) | Call agents inside a functional workflow. |
 | 6 | [06_functional_workflow_basics.py](06_functional_workflow_basics.py) | Write a workflow as a plain async function. |
 | 7 | [07_first_graph_workflow.py](07_first_graph_workflow.py) | Chain executors into a graph workflow with edges. |
-| 8 | [08_host_your_agent.py](08_host_your_agent.py) | Host a single agent with Azure Functions. |
+
+To host agents and workflows with Durable Task or Azure Functions, continue with the [Durable Agent Framework extension samples](https://github.com/microsoft/agent-framework-durable-extension/tree/main/python/samples).
 
 Run any sample with:
 

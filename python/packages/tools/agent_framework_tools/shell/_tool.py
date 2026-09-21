@@ -11,8 +11,10 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Literal
 
 from agent_framework import FunctionTool, tool
+from agent_framework._telemetry import mark_feature_used
 from agent_framework._tools import SHELL_TOOL_KIND_VALUE
 
+from .._feature_usage import FeatureIndex
 from ._executor import run_stateless
 from ._policy import ShellPolicy, ShellRequest
 from ._resolve import is_powershell, resolve_shell
@@ -244,6 +246,7 @@ class LocalShellTool:
                 so callers do not need to wrap this call in
                 :func:`asyncio.wait_for`.
         """
+        mark_feature_used(FeatureIndex.TOOLS_SHELL)
         request = ShellRequest(command=command, workdir=self._workdir)
         decision = self._policy.evaluate(request)
         if decision.decision == "deny":

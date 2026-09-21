@@ -24,6 +24,22 @@ Use `OpenAIChatClient` for new work unless you specifically need the Chat Comple
 
 The previous deprecated Responses alias has been removed. Use `OpenAIChatClient` directly.
 
+## Hosted function results
+
+`OpenAIChatClient` parses hosted `function_call_output` items in both streaming and non-streaming responses.
+Each result retains its `call_id` for correlation with the corresponding function call.
+Outputs explicitly marked `in_progress` are deferred without claiming their deduplication ID, so an empty
+or partial `.added` placeholder cannot suppress a later `.done` result. Completed empty results remain valid.
+
+Rich output parts are available through the function result's `items`; the backward-compatible `result`
+field contains only their text. Image and file parts retain their explicit provider type in OpenAI replay,
+including hosted file references, extensionless image URLs, and files whose names have image extensions.
+
+The ordinary AG-UI `TOOL_CALL_RESULT` emitter currently reads only `result`, not `items`. It emits the text
+for mixed text/attachment outputs and empty event content for image/file-only outputs. Preserving rich parts
+in framework content and OpenAI replay does not provide frontend attachment display; that is a separate
+transport/frontend capability, outside this parser's scope.
+
 ## Environment variables
 
 ### OpenAI
@@ -111,3 +127,14 @@ from agent_framework.openai import OpenAIChatCompletionClient
 
 client = OpenAIChatCompletionClient(model="gpt-4o-mini")
 ```
+
+## Concurrent reuse
+
+This contract applies to the Responses API `OpenAIChatClient`, not the `OpenAIChatCompletionClient` shown above.
+An `OpenAIChatClient` instance can be shared by concurrent asynchronous calls on the same event loop. Streaming,
+non-streaming, and mixed calls are supported. Keep mutable run state isolated by creating a separate `Agent` and
+`AgentSession` for each concurrent run and by passing separate messages and options.
+
+This guarantee does not extend to user-supplied middleware, tools, or callbacks unless those implementations are
+also safe for concurrent use. Do not share one client across OS threads or event loops, and do not mutate its
+configuration while calls are active.

@@ -19,8 +19,10 @@ from agent_framework import (
     Message,
     SupportsAgentRun,
 )
+from agent_framework._telemetry import mark_feature_used
 from typing_extensions import override
 
+from ._feature_usage import FeatureIndex
 from ._utils import get_uri_data
 
 logger = logging.getLogger("agent_framework.a2a")
@@ -147,6 +149,7 @@ class A2AExecutor(AgentExecutor):
         if context.message is None:
             raise ValueError("Message must be provided in the RequestContext")
 
+        mark_feature_used(FeatureIndex.A2A)
         query = context.get_user_input()
         task = context.current_task
 

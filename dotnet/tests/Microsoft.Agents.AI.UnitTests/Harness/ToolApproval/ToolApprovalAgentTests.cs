@@ -21,6 +21,50 @@ public class ToolApprovalAgentTests
     private static ToolAutoApprovalRuleContext CreateRuleContext(FunctionCallContent functionCall) =>
         new(functionCall, new Mock<AIAgent>().Object, session: null, requestMessages: [], agentRunOptions: null);
 
+    /// <summary>
+    /// Surfaces <paramref name="request"/> to the caller through a throwaway agent on the shared
+    /// <paramref name="session"/>, so the harness records it as a request it actually issued.
+    /// </summary>
+    /// <remarks>
+    /// Approval state lives in the session, so a throwaway agent leaves the call counts of the mock
+    /// under test untouched while still recording the surfaced request.
+    /// </remarks>
+    private static async Task SurfaceApprovalRequestAsync(AgentSession session, ToolApprovalRequestContent request)
+    {
+        var surfacingAgent = new ToolApprovalAgent(
+            CreateMockAgent(new AgentResponse([new ChatMessage(ChatRole.Assistant, [request])])).Object);
+
+        await surfacingAgent.RunAsync([new ChatMessage(ChatRole.User, "surface approval request")], session);
+    }
+
+    /// <summary>
+    /// Establishes a standing approval rule the way a real caller must: the harness first surfaces
+    /// <paramref name="request"/> to the caller, and only then does the caller answer it with an
+    /// "always approve" response bound to that surfaced request.
+    /// </summary>
+    /// <remarks>
+    /// A standing rule can only be created from a request the agent actually issued, so tests cannot
+    /// establish one by fabricating a request and wrapping it.
+    /// </remarks>
+    private static async Task EstablishStandingRuleAsync(
+        AgentSession session,
+        ToolApprovalRequestContent request,
+        bool withArguments = false,
+        string? reason = null)
+    {
+        await SurfaceApprovalRequestAsync(session, request);
+
+        // Answer it with the always-approve wrapper, which now binds to the surfaced request.
+        var wrapper = withArguments
+            ? request.CreateAlwaysApproveToolWithArgumentsResponse(reason)
+            : request.CreateAlwaysApproveToolResponse(reason);
+
+        var respondingAgent = new ToolApprovalAgent(
+            CreateMockAgent(new AgentResponse([new ChatMessage(ChatRole.Assistant, "rule recorded")])).Object);
+
+        await respondingAgent.RunAsync([new ChatMessage(ChatRole.User, [wrapper])], session);
+    }
+
     #region Constructor
 
     /// <summary>
@@ -156,9 +200,9 @@ public class ToolApprovalAgentTests
         var agent = new ToolApprovalAgent(innerAgent.Object);
 
         // Call 1: send always-approve → establishes rule, inner returns TARc → auto-approved → re-calls inner
-        var alwaysApproveResponse = approvalRequest.CreateAlwaysApproveToolResponse("User said always");
+        await EstablishStandingRuleAsync(session, approvalRequest, reason: "User said always");
         var response1 = await agent.RunAsync(
-            [new ChatMessage(ChatRole.User, [alwaysApproveResponse])],
+            [new ChatMessage(ChatRole.User, "Do something")],
             session);
 
         // Assert — inner agent was called twice within the same RunAsync call
@@ -207,10 +251,7 @@ public class ToolApprovalAgentTests
         var agent = new ToolApprovalAgent(innerAgent.Object);
 
         // Call 1: set up the rule
-        var alwaysApproveResponse = approvalRequest.CreateAlwaysApproveToolWithArgumentsResponse();
-        await agent.RunAsync(
-            [new ChatMessage(ChatRole.User, [alwaysApproveResponse])],
-            session);
+        await EstablishStandingRuleAsync(session, approvalRequest, withArguments: true);
 
         // Call 2: pending auto-approval injected
         var response = await agent.RunAsync(
@@ -233,7 +274,6 @@ public class ToolApprovalAgentTests
         // Set up rule with args { path: "test.txt" }
         var ruleArgs = new Dictionary<string, object?> { ["path"] = "test.txt" };
         var ruleRequest = new ToolApprovalRequestContent("req0", new FunctionCallContent("call0", "ReadFile", ruleArgs));
-        var alwaysApproveResponse = ruleRequest.CreateAlwaysApproveToolWithArgumentsResponse();
 
         // Then the inner agent returns an approval for DIFFERENT args
         var differentArgs = new Dictionary<string, object?> { ["path"] = "other.txt" };
@@ -251,9 +291,10 @@ public class ToolApprovalAgentTests
             .ReturnsAsync(approvalResponseMsg);
 
         var agent = new ToolApprovalAgent(innerAgent.Object);
+        await EstablishStandingRuleAsync(session, ruleRequest, withArguments: true);
         var inputMessages = new List<ChatMessage>
         {
-            new(ChatRole.User, [alwaysApproveResponse]),
+            new(ChatRole.User, "Read another file"),
         };
 
         // Act
@@ -278,7 +319,6 @@ public class ToolApprovalAgentTests
 
         // Approve a no-argument SendPayment call with "always approve with exact arguments".
         var ruleRequest = new ToolApprovalRequestContent("req0", new FunctionCallContent("call0", "SendPayment"));
-        var alwaysApproveResponse = ruleRequest.CreateAlwaysApproveToolWithArgumentsResponse();
 
         // The inner agent then requests SendPayment WITH sensitive arguments.
         var sensitiveArgs = new Dictionary<string, object?>
@@ -291,9 +331,10 @@ public class ToolApprovalAgentTests
 
         var innerAgent = CreateMockAgent(approvalResponseMsg);
         var agent = new ToolApprovalAgent(innerAgent.Object);
+        await EstablishStandingRuleAsync(session, ruleRequest, withArguments: true);
         var inputMessages = new List<ChatMessage>
         {
-            new(ChatRole.User, [alwaysApproveResponse]),
+            new(ChatRole.User, "Send a payment"),
         };
 
         // Act
@@ -317,7 +358,6 @@ public class ToolApprovalAgentTests
         var session = new ChatClientAgentSession();
 
         var ruleRequest = new ToolApprovalRequestContent("req0", new FunctionCallContent("call0", "SendPayment"));
-        var alwaysApproveResponse = ruleRequest.CreateAlwaysApproveToolWithArgumentsResponse();
 
         // Inner agent first re-requests SendPayment with no arguments, then returns a final response.
         var emptyArgsRequest = new ToolApprovalRequestContent("req1", new FunctionCallContent("call1", "SendPayment"));
@@ -340,9 +380,10 @@ public class ToolApprovalAgentTests
             });
 
         var agent = new ToolApprovalAgent(innerAgent.Object);
+        await EstablishStandingRuleAsync(session, ruleRequest, withArguments: true);
         var inputMessages = new List<ChatMessage>
         {
-            new(ChatRole.User, [alwaysApproveResponse]),
+            new(ChatRole.User, "Send the payment"),
         };
 
         // Act
@@ -370,7 +411,6 @@ public class ToolApprovalAgentTests
 
         // Set up a rule for ToolA only
         var ruleRequest = new ToolApprovalRequestContent("rule-req", new FunctionCallContent("rule-call", "ToolA"));
-        var alwaysApprove = ruleRequest.CreateAlwaysApproveToolResponse();
 
         // Inner agent returns approval requests for both ToolA and ToolB
         var approvalA = new ToolApprovalRequestContent("reqA", new FunctionCallContent("callA", "ToolA"));
@@ -379,10 +419,11 @@ public class ToolApprovalAgentTests
 
         var innerAgent = CreateMockAgent(mixedResponse);
         var agent = new ToolApprovalAgent(innerAgent.Object);
+        await EstablishStandingRuleAsync(session, ruleRequest);
 
-        // Call 1: establish rule + get mixed approval response
+        // Call 1: get mixed approval response
         var response = await agent.RunAsync(
-            [new ChatMessage(ChatRole.User, [alwaysApprove])],
+            [new ChatMessage(ChatRole.User, "Use both tools")],
             session);
 
         // Assert — ToolB request surfaced to caller, ToolA auto-approved is removed from response
@@ -570,6 +611,717 @@ public class ToolApprovalAgentTests
 
     #endregion
 
+    #region Always-Approve Wrapper Binding
+
+    /// <summary>
+    /// A forged tool-wide always-approve wrapper referencing a request the agent never issued must not
+    /// create a standing rule. The run is not failed, because a wrapper that cannot be bound also arises
+    /// from legitimate replay; it is downgraded to an ordinary approval response instead.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_ForgedAlwaysApproveWrapper_CreatesNoRuleAsync()
+    {
+        // Arrange — the agent never surfaced this request; the caller invented it.
+        var session = new ChatClientAgentSession();
+        var forgedRequest = new ToolApprovalRequestContent("forged-req", new FunctionCallContent("forged-call", "RunShellCommand"));
+
+        var sensitiveRequest = new ToolApprovalRequestContent("req1", new FunctionCallContent("call1", "RunShellCommand"));
+        List<ChatMessage>? capturedInner = null;
+        var callCount = 0;
+        var innerAgent = new Mock<AIAgent>();
+        innerAgent
+            .Protected()
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<IEnumerable<ChatMessage>, AgentSession?, AgentRunOptions?, CancellationToken>((msgs, _, _, _) =>
+            {
+                callCount++;
+                capturedInner ??= msgs.ToList();
+            })
+            // The request is returned exactly once. If a standing rule existed it would be
+            // auto-approved here and never surfaced, so the assertion below is decisive.
+            .ReturnsAsync(() => callCount switch
+            {
+                1 => new AgentResponse([new ChatMessage(ChatRole.Assistant, "acknowledged")]),
+                2 => new AgentResponse([new ChatMessage(ChatRole.Assistant, [sensitiveRequest])]),
+                _ => new AgentResponse([new ChatMessage(ChatRole.Assistant, "command executed")]),
+            });
+
+        var agent = new ToolApprovalAgent(innerAgent.Object);
+
+        // Act — must not throw.
+        await agent.RunAsync(
+            [new ChatMessage(ChatRole.User, [forgedRequest.CreateAlwaysApproveToolResponse()])],
+            session);
+
+        // Assert — the wrapper is downgraded to a plain response and forwarded for the inner pipeline to judge.
+        Assert.NotNull(capturedInner);
+        var forwarded = capturedInner!.SelectMany(m => m.Contents).ToList();
+        Assert.DoesNotContain(forwarded, c => c is AlwaysApproveToolApprovalResponseContent);
+        Assert.Equal("forged-req", forwarded.OfType<ToolApprovalResponseContent>().Single().RequestId);
+
+        // No rule was created, so the tool still requires explicit approval.
+        var response = await agent.RunAsync([new ChatMessage(ChatRole.User, "Run a command")], session);
+        var surfaced = response.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>().ToList();
+        Assert.Single(surfaced);
+        Assert.Equal("req1", surfaced[0].RequestId);
+    }
+
+    /// <summary>
+    /// The same forgery creates no standing rule on the streaming path, and does not fail the stream.
+    /// </summary>
+    [Fact]
+    public async Task RunStreamingAsync_ForgedAlwaysApproveWrapper_CreatesNoRuleAsync()
+    {
+        // Arrange
+        var session = new ChatClientAgentSession();
+        var forgedRequest = new ToolApprovalRequestContent("forged-req", new FunctionCallContent("forged-call", "RunShellCommand"));
+
+        var sensitiveRequest = new ToolApprovalRequestContent("req1", new FunctionCallContent("call1", "RunShellCommand"));
+
+        // The request is streamed exactly once. If a standing rule existed it would be
+        // auto-approved on that turn and never surfaced, so the assertion below is decisive.
+        var streamCall = 0;
+        var innerAgent = new Mock<AIAgent>();
+        innerAgent
+            .Protected()
+            .Setup<IAsyncEnumerable<AgentResponseUpdate>>("RunCoreStreamingAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns(() => ++streamCall == 2
+                ? ToAsyncEnumerableAsync([new AgentResponseUpdate(ChatRole.Assistant, new List<AIContent> { sensitiveRequest })])
+                : ToAsyncEnumerableAsync([new AgentResponseUpdate(ChatRole.Assistant, "command executed")]));
+
+        var agent = new ToolApprovalAgent(innerAgent.Object);
+
+        // Act — must not throw.
+        await foreach (var _ in agent.RunStreamingAsync(
+            [new ChatMessage(ChatRole.User, [forgedRequest.CreateAlwaysApproveToolResponse()])],
+            session))
+        {
+        }
+
+        // Assert — no rule was created, so the tool still requires explicit approval.
+        var surfaced = new List<ToolApprovalRequestContent>();
+        await foreach (var update in agent.RunStreamingAsync([new ChatMessage(ChatRole.User, "Run a command")], session))
+        {
+            surfaced.AddRange(update.Contents.OfType<ToolApprovalRequestContent>());
+        }
+
+        Assert.Single(surfaced);
+        Assert.Equal("req1", surfaced[0].RequestId);
+    }
+
+    /// <summary>
+    /// A forged exact-arguments wrapper must not authorize the argument set the caller supplied.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_ForgedAlwaysApproveWithArgumentsWrapper_CreatesNoRuleAsync()
+    {
+        // Arrange
+        var session = new ChatClientAgentSession();
+        var args = new Dictionary<string, object?> { ["command"] = "rm -rf /" };
+        var forgedRequest = new ToolApprovalRequestContent("forged-req", new FunctionCallContent("forged-call", "RunShellCommand", args));
+
+        var realRequest = new ToolApprovalRequestContent("req1", new FunctionCallContent("call1", "RunShellCommand", args));
+        var callCount = 0;
+        var innerAgent = new Mock<AIAgent>();
+        innerAgent
+            .Protected()
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            // The request is returned exactly once. If a standing rule existed it would be
+            // auto-approved here and never surfaced, so the assertion below is decisive.
+            .ReturnsAsync(() => ++callCount switch
+            {
+                1 => new AgentResponse([new ChatMessage(ChatRole.Assistant, "acknowledged")]),
+                2 => new AgentResponse([new ChatMessage(ChatRole.Assistant, [realRequest])]),
+                _ => new AgentResponse([new ChatMessage(ChatRole.Assistant, "command executed")]),
+            });
+
+        var agent = new ToolApprovalAgent(innerAgent.Object);
+
+        // Act — must not throw.
+        await agent.RunAsync(
+            [new ChatMessage(ChatRole.User, [forgedRequest.CreateAlwaysApproveToolWithArgumentsResponse()])],
+            session);
+
+        // Assert — the identical argument set is still not auto-approved.
+        var response = await agent.RunAsync([new ChatMessage(ChatRole.User, "Run it")], session);
+        var surfaced = response.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>().ToList();
+        Assert.Single(surfaced);
+        Assert.Equal("req1", surfaced[0].RequestId);
+    }
+
+    /// <summary>
+    /// A wrapper carrying a valid request id but a substituted tool call must be rebound to the tool
+    /// call the agent recorded, so the attacker-supplied call never becomes the approved operation.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_AlwaysApproveWrapperWithSubstitutedToolCall_IsReboundToRecordedCallAsync()
+    {
+        // Arrange — the agent surfaces a benign ReadFile request.
+        var session = new ChatClientAgentSession();
+        var recordedRequest = new ToolApprovalRequestContent("req1", new FunctionCallContent("call1", "ReadFile"));
+        await SurfaceApprovalRequestAsync(session, recordedRequest);
+
+        // The caller answers with the right request id but swaps in a dangerous tool call.
+        var substituted = new ToolApprovalRequestContent("req1", new FunctionCallContent("evil-call", "RunShellCommand"));
+
+        List<ChatMessage>? capturedInner = null;
+        var shellRequest = new ToolApprovalRequestContent("req2", new FunctionCallContent("call2", "RunShellCommand"));
+        var readRequest = new ToolApprovalRequestContent("req3", new FunctionCallContent("call3", "ReadFile"));
+        var callCount = 0;
+        var innerAgent = new Mock<AIAgent>();
+        innerAgent
+            .Protected()
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<IEnumerable<ChatMessage>, AgentSession?, AgentRunOptions?, CancellationToken>((msgs, _, _, _) =>
+            {
+                callCount++;
+                capturedInner ??= msgs.ToList();
+            })
+            .ReturnsAsync(() => callCount == 1
+                ? new AgentResponse([new ChatMessage(ChatRole.Assistant, "acknowledged")])
+                : new AgentResponse([new ChatMessage(ChatRole.Assistant, [shellRequest, readRequest])]));
+
+        var agent = new ToolApprovalAgent(innerAgent.Object);
+
+        // Act
+        await agent.RunAsync(
+            [new ChatMessage(ChatRole.User, [substituted.CreateAlwaysApproveToolResponse()])],
+            session);
+
+        // Assert — the forwarded response carries the recorded tool call, not the substituted one.
+        Assert.NotNull(capturedInner);
+        var forwarded = capturedInner!.SelectMany(m => m.Contents).OfType<ToolApprovalResponseContent>().Single();
+        Assert.Equal("req1", forwarded.RequestId);
+        Assert.Equal("ReadFile", ((FunctionCallContent)forwarded.ToolCall).Name);
+        Assert.Equal("call1", forwarded.ToolCall.CallId);
+
+        // The rule covers ReadFile only; RunShellCommand still surfaces for approval.
+        var response = await agent.RunAsync([new ChatMessage(ChatRole.User, "Do both")], session);
+        var surfaced = response.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>().ToList();
+        Assert.Single(surfaced);
+        Assert.Equal("RunShellCommand", ((FunctionCallContent)surfaced[0].ToolCall).Name);
+    }
+
+    /// <summary>
+    /// A bound wrapper carrying a denial is a legitimate user action: the denial is forwarded, no
+    /// standing rule is created, and no exception is raised.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_BoundAlwaysApproveWrapperWithDenial_CreatesNoRuleAsync()
+    {
+        // Arrange
+        var session = new ChatClientAgentSession();
+        var recordedRequest = new ToolApprovalRequestContent("req1", new FunctionCallContent("call1", "RunShellCommand"));
+        await SurfaceApprovalRequestAsync(session, recordedRequest);
+
+        var denial = new AlwaysApproveToolApprovalResponseContent(
+            recordedRequest.CreateResponse(approved: false),
+            alwaysApproveTool: true,
+            alwaysApproveToolWithArguments: false);
+
+        List<ChatMessage>? capturedInner = null;
+        var nextRequest = new ToolApprovalRequestContent("req2", new FunctionCallContent("call2", "RunShellCommand"));
+        var callCount = 0;
+        var innerAgent = new Mock<AIAgent>();
+        innerAgent
+            .Protected()
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<IEnumerable<ChatMessage>, AgentSession?, AgentRunOptions?, CancellationToken>((msgs, _, _, _) =>
+            {
+                callCount++;
+                capturedInner ??= msgs.ToList();
+            })
+            // The request is returned exactly once. If a standing rule existed it would be
+            // auto-approved here and never surfaced, so the assertion below is decisive.
+            .ReturnsAsync(() => callCount switch
+            {
+                1 => new AgentResponse([new ChatMessage(ChatRole.Assistant, "acknowledged")]),
+                2 => new AgentResponse([new ChatMessage(ChatRole.Assistant, [nextRequest])]),
+                _ => new AgentResponse([new ChatMessage(ChatRole.Assistant, "command executed")]),
+            });
+
+        var agent = new ToolApprovalAgent(innerAgent.Object);
+
+        // Act — must not throw.
+        await agent.RunAsync([new ChatMessage(ChatRole.User, [denial])], session);
+
+        // Assert — the denial is forwarded as a plain response.
+        Assert.NotNull(capturedInner);
+        var forwarded = capturedInner!.SelectMany(m => m.Contents).OfType<ToolApprovalResponseContent>().Single();
+        Assert.False(forwarded.Approved);
+
+        // No rule was created, so the next call to the same tool still surfaces.
+        var response = await agent.RunAsync([new ChatMessage(ChatRole.User, "Try again")], session);
+        var surfaced = response.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>().ToList();
+        Assert.Single(surfaced);
+        Assert.Equal("req2", surfaced[0].RequestId);
+    }
+
+    /// <summary>
+    /// A wrapper targeting a request that is still queued, and therefore has not yet been presented to
+    /// the caller, must not establish a standing rule for it.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_AlwaysApproveWrapperForQueuedRequest_CreatesNoRuleAsync()
+    {
+        // Arrange — the inner agent surfaces two requests, so only the first is presented.
+        var session = new ChatClientAgentSession();
+        var approvalA = new ToolApprovalRequestContent("reqA", new FunctionCallContent("callA", "ToolA"));
+        var approvalB = new ToolApprovalRequestContent("reqB", new FunctionCallContent("callB", "ToolB"));
+
+        var innerAgent = CreateMockAgent(new AgentResponse([new ChatMessage(ChatRole.Assistant, [approvalA, approvalB])]));
+        var agent = new ToolApprovalAgent(innerAgent.Object);
+
+        var firstTurn = await agent.RunAsync([new ChatMessage(ChatRole.User, "Use both tools")], session);
+        var presented = firstTurn.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>().Single();
+        Assert.Equal("reqA", presented.RequestId);
+
+        // Act — answer the queued-but-unseen reqB instead of the presented reqA. Must not throw.
+        var secondTurn = await agent.RunAsync(
+            [new ChatMessage(ChatRole.User, [approvalB.CreateAlwaysApproveToolResponse()])],
+            session);
+
+        // Assert — reqB is still surfaced for a decision rather than being auto-approved by a forged rule.
+        var stillQueued = secondTurn.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>().Single();
+        Assert.Equal("reqB", stillQueued.RequestId);
+    }
+
+    /// <summary>
+    /// A plain approval response that this agent cannot bind is passed through untouched so the inner
+    /// approval-binding layer can apply its own policy, rather than being silently discarded here.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_UnboundPlainApprovalResponse_IsPassedThroughAsync()
+    {
+        // Arrange
+        var session = new ChatClientAgentSession();
+        var unknownRequest = new ToolApprovalRequestContent("unknown-req", new FunctionCallContent("unknown-call", "MyTool"));
+
+        List<ChatMessage>? capturedInner = null;
+        var innerAgent = new Mock<AIAgent>();
+        innerAgent
+            .Protected()
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<IEnumerable<ChatMessage>, AgentSession?, AgentRunOptions?, CancellationToken>((msgs, _, _, _) =>
+                capturedInner = msgs.ToList())
+            .ReturnsAsync(new AgentResponse([new ChatMessage(ChatRole.Assistant, "OK")]));
+
+        var agent = new ToolApprovalAgent(innerAgent.Object);
+
+        // Act
+        await agent.RunAsync(
+            [new ChatMessage(ChatRole.User, [unknownRequest.CreateResponse(approved: true)])],
+            session);
+
+        // Assert — forwarded verbatim; binding policy for plain responses belongs to the inner pipeline.
+        Assert.NotNull(capturedInner);
+        var forwarded = capturedInner!.SelectMany(m => m.Contents).OfType<ToolApprovalResponseContent>().Single();
+        Assert.Equal("unknown-req", forwarded.RequestId);
+    }
+
+    /// <summary>
+    /// A wrapper whose inner response carries no usable tool call cannot establish a rule.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_AlwaysApproveWrapperWithNoRuleFlags_CreatesNoRuleAsync()
+    {
+        // Arrange
+        var session = new ChatClientAgentSession();
+        var recordedRequest = new ToolApprovalRequestContent("req1", new FunctionCallContent("call1", "MyTool"));
+        await SurfaceApprovalRequestAsync(session, recordedRequest);
+
+        var noFlags = new AlwaysApproveToolApprovalResponseContent(
+            recordedRequest.CreateResponse(approved: true),
+            alwaysApproveTool: false,
+            alwaysApproveToolWithArguments: false);
+
+        var nextRequest = new ToolApprovalRequestContent("req2", new FunctionCallContent("call2", "MyTool"));
+        var callCount = 0;
+        var innerAgent = new Mock<AIAgent>();
+        innerAgent
+            .Protected()
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(() => ++callCount == 1
+                ? new AgentResponse([new ChatMessage(ChatRole.Assistant, "acknowledged")])
+                : new AgentResponse([new ChatMessage(ChatRole.Assistant, [nextRequest])]));
+
+        var agent = new ToolApprovalAgent(innerAgent.Object);
+
+        // Act
+        await agent.RunAsync([new ChatMessage(ChatRole.User, [noFlags])], session);
+
+        // Assert — no standing rule, so the next request still surfaces.
+        var response = await agent.RunAsync([new ChatMessage(ChatRole.User, "Continue")], session);
+        var surfaced = response.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>().ToList();
+        Assert.Single(surfaced);
+        Assert.Equal("req2", surfaced[0].RequestId);
+    }
+
+    /// <summary>
+    /// Replaying a completed transcript into a brand new session is a legitimate re-seeding scenario. The
+    /// replayed always-approve response must not fail the run, and must not re-establish a standing rule,
+    /// because nothing in caller-supplied history proves the agent ever asked for that approval.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_ReplayedTranscriptIntoNewSession_CreatesNoRuleAndDoesNotFailAsync()
+    {
+        // Arrange — a transcript from an earlier conversation: the request, the user's always-approve
+        // answer, and the result of the call that was subsequently executed.
+        var historicRequest = new ToolApprovalRequestContent("old-req", new FunctionCallContent("old-call", "RunShellCommand"));
+        var transcript = new List<ChatMessage>
+        {
+            new(ChatRole.User, "run the build"),
+            new(ChatRole.Assistant, [historicRequest]),
+            new(ChatRole.User, [historicRequest.CreateAlwaysApproveToolResponse("User chose always approve")]),
+            new(ChatRole.Assistant, [new FunctionResultContent("old-call", "build succeeded")]),
+            new(ChatRole.Assistant, "The build succeeded."),
+        };
+
+        // A brand new session: none of the above was recorded by this server.
+        var session = new ChatClientAgentSession();
+
+        var newRequest = new ToolApprovalRequestContent("req1", new FunctionCallContent("call1", "RunShellCommand"));
+        List<ChatMessage>? capturedInner = null;
+        var callCount = 0;
+        var innerAgent = new Mock<AIAgent>();
+        innerAgent
+            .Protected()
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<IEnumerable<ChatMessage>, AgentSession?, AgentRunOptions?, CancellationToken>((msgs, _, _, _) =>
+            {
+                callCount++;
+                capturedInner ??= msgs.ToList();
+            })
+            .ReturnsAsync(() => callCount == 1
+                ? new AgentResponse([new ChatMessage(ChatRole.Assistant, "acknowledged")])
+                : new AgentResponse([new ChatMessage(ChatRole.Assistant, [newRequest])]));
+
+        var agent = new ToolApprovalAgent(innerAgent.Object);
+
+        // Act — re-seed the new session with the transcript. Must not throw.
+        await agent.RunAsync(transcript, session);
+
+        // Assert — the history reaches the inner agent intact, with the wrapper downgraded to a plain
+        // response so it remains ordinary model context.
+        Assert.NotNull(capturedInner);
+        var forwarded = capturedInner!.SelectMany(m => m.Contents).ToList();
+        Assert.DoesNotContain(forwarded, c => c is AlwaysApproveToolApprovalResponseContent);
+        Assert.Contains(forwarded, c => c is ToolApprovalRequestContent r && r.RequestId == "old-req");
+        Assert.Contains(forwarded, c => c is ToolApprovalResponseContent r && r.RequestId == "old-req");
+
+        // No standing rule was re-established from the replayed history, so the tool still needs approval.
+        var response = await agent.RunAsync([new ChatMessage(ChatRole.User, "run it again")], session);
+        var surfacedAfterReplay = response.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>().ToList();
+        Assert.Single(surfacedAfterReplay);
+        Assert.Equal("req1", surfacedAfterReplay[0].RequestId);
+    }
+
+    /// <summary>
+    /// A request answered once with a plain approval must not remain bindable. Otherwise a caller could replay
+    /// the same request id as an always-approve wrapper and promote a one-time consent into a standing rule.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_PlainApprovalThenWrapperReplay_CreatesNoRuleAsync()
+    {
+        // Arrange — the agent surfaces a request, and the caller answers it normally.
+        var session = new ChatClientAgentSession();
+        var recordedRequest = new ToolApprovalRequestContent("req1", new FunctionCallContent("call1", "RunShellCommand"));
+        await SurfaceApprovalRequestAsync(session, recordedRequest);
+
+        var laterRequest = new ToolApprovalRequestContent("req2", new FunctionCallContent("call2", "RunShellCommand"));
+        var callCount = 0;
+        var innerAgent = new Mock<AIAgent>();
+        innerAgent
+            .Protected()
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(() => ++callCount switch
+            {
+                3 => new AgentResponse([new ChatMessage(ChatRole.Assistant, [laterRequest])]),
+                _ => new AgentResponse([new ChatMessage(ChatRole.Assistant, "acknowledged")]),
+            });
+
+        var agent = new ToolApprovalAgent(innerAgent.Object);
+
+        // The one-time approval consumes the surfaced request.
+        await agent.RunAsync(
+            [new ChatMessage(ChatRole.User, [recordedRequest.CreateResponse(approved: true)])],
+            session);
+
+        // Act — replay the very same request id, this time as an always-approve wrapper.
+        await agent.RunAsync(
+            [new ChatMessage(ChatRole.User, [recordedRequest.CreateAlwaysApproveToolResponse()])],
+            session);
+
+        // Assert — the consent was spent, so no standing rule exists and the tool still surfaces.
+        var response = await agent.RunAsync([new ChatMessage(ChatRole.User, "Run a command")], session);
+        var surfaced = response.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>().ToList();
+        Assert.Single(surfaced);
+        Assert.Equal("req2", surfaced[0].RequestId);
+    }
+
+    /// <summary>
+    /// A request the user explicitly denied must not remain bindable. Approval is read from the caller-supplied
+    /// response, so a stale entry would let a replayed wrapper overturn the denial and create a standing rule
+    /// for the very tool the user refused.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_PlainDenialThenWrapperReplay_CreatesNoRuleAsync()
+    {
+        // Arrange — the agent surfaces a request and the caller denies it.
+        var session = new ChatClientAgentSession();
+        var recordedRequest = new ToolApprovalRequestContent("req1", new FunctionCallContent("call1", "RunShellCommand"));
+        await SurfaceApprovalRequestAsync(session, recordedRequest);
+
+        var laterRequest = new ToolApprovalRequestContent("req2", new FunctionCallContent("call2", "RunShellCommand"));
+        var callCount = 0;
+        var innerAgent = new Mock<AIAgent>();
+        innerAgent
+            .Protected()
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(() => ++callCount switch
+            {
+                3 => new AgentResponse([new ChatMessage(ChatRole.Assistant, [laterRequest])]),
+                _ => new AgentResponse([new ChatMessage(ChatRole.Assistant, "acknowledged")]),
+            });
+
+        var agent = new ToolApprovalAgent(innerAgent.Object);
+
+        // The denial consumes the surfaced request.
+        await agent.RunAsync(
+            [new ChatMessage(ChatRole.User, [recordedRequest.CreateResponse(approved: false)])],
+            session);
+
+        // Act — replay the denied request id as an approving always-approve wrapper.
+        await agent.RunAsync(
+            [new ChatMessage(ChatRole.User, [recordedRequest.CreateAlwaysApproveToolResponse()])],
+            session);
+
+        // Assert — the denial stands; no rule was created for the refused tool.
+        var response = await agent.RunAsync([new ChatMessage(ChatRole.User, "Run a command")], session);
+        var surfaced = response.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>().ToList();
+        Assert.Single(surfaced);
+        Assert.Equal("req2", surfaced[0].RequestId);
+    }
+
+    /// <summary>
+    /// Consuming a surfaced request on a plain response must not swallow the response itself: outside a queue
+    /// cycle it still has to reach the inner pipeline, rebound to the recorded tool call.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_PlainApprovalOutsideQueueCycle_IsForwardedAsync()
+    {
+        // Arrange — the agent surfaces a request; the caller answers it with a substituted tool call.
+        var session = new ChatClientAgentSession();
+        var recordedRequest = new ToolApprovalRequestContent("req1", new FunctionCallContent("call1", "ReadFile"));
+        await SurfaceApprovalRequestAsync(session, recordedRequest);
+
+        var substituted = new ToolApprovalRequestContent("req1", new FunctionCallContent("evil-call", "RunShellCommand"));
+
+        List<ChatMessage>? capturedInner = null;
+        var innerAgent = new Mock<AIAgent>();
+        innerAgent
+            .Protected()
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<IEnumerable<ChatMessage>, AgentSession?, AgentRunOptions?, CancellationToken>((msgs, _, _, _) => capturedInner ??= msgs.ToList())
+            .ReturnsAsync(new AgentResponse([new ChatMessage(ChatRole.Assistant, "done")]));
+
+        var agent = new ToolApprovalAgent(innerAgent.Object);
+
+        // Act
+        await agent.RunAsync(
+            [new ChatMessage(ChatRole.User, [substituted.CreateResponse(approved: true)])],
+            session);
+
+        // Assert — the response is forwarded, not dropped, and carries the recorded call rather than the
+        // caller's substitute.
+        Assert.NotNull(capturedInner);
+        var forwarded = capturedInner!.SelectMany(m => m.Contents).OfType<ToolApprovalResponseContent>().Single();
+        Assert.Equal("req1", forwarded.RequestId);
+        Assert.True(forwarded.Approved);
+        var forwardedCall = Assert.IsType<FunctionCallContent>(forwarded.ToolCall);
+        Assert.Equal("ReadFile", forwardedCall.Name);
+        Assert.Equal("call1", forwardedCall.CallId);
+    }
+
+    /// <summary>
+    /// A consumer that stops reading the stream as soon as it sees an approval request must still be able
+    /// to answer it, so the request has to be recorded before it is yielded rather than after the stream
+    /// completes.
+    /// </summary>
+    [Fact]
+    public async Task RunStreamingAsync_AbandonedStream_StillRecordsSurfacedRequestAsync()
+    {
+        // Arrange — MaxAutoApprovalIterations = 1 routes the second pass through the capped path.
+        var session = new ChatClientAgentSession();
+        var ruleRequest = new ToolApprovalRequestContent("rule-req", new FunctionCallContent("rule-call", "AutoTool"));
+        var cappedRequest = new ToolApprovalRequestContent("capped-req", new FunctionCallContent("capped-call", "ReadFile"));
+
+        var innerAgent = new Mock<AIAgent>();
+        innerAgent
+            .Protected()
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new AgentResponse([new ChatMessage(ChatRole.Assistant, "ack")]));
+
+        var streamCallCount = 0;
+        innerAgent
+            .Protected()
+            .Setup<IAsyncEnumerable<AgentResponseUpdate>>("RunCoreStreamingAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns(() => ++streamCallCount == 1
+                // Pass 1 is fully auto-approved by the standing rule, driving the loop to the cap.
+                ? ToAsyncEnumerableAsync([new AgentResponseUpdate(ChatRole.Assistant, new List<AIContent> { new ToolApprovalRequestContent("auto-req", new FunctionCallContent("auto-call", "AutoTool")) })])
+                // Pass 2 is the capped turn: an approval request followed by more content.
+                : ToAsyncEnumerableAsync(
+                [
+                    new AgentResponseUpdate(ChatRole.Assistant, new List<AIContent> { cappedRequest }),
+                    new AgentResponseUpdate(ChatRole.Assistant, "trailing content the consumer never reads"),
+                ]));
+
+        var agent = new ToolApprovalAgent(
+            innerAgent.Object,
+            new ToolApprovalAgentOptions { MaxAutoApprovalIterations = 1 });
+
+        await EstablishStandingRuleAsync(session, ruleRequest);
+
+        // Act — abandon the stream as soon as the approval request appears.
+        ToolApprovalRequestContent? seen = null;
+        await foreach (var update in agent.RunStreamingAsync([new ChatMessage(ChatRole.User, "go")], session))
+        {
+            seen = update.Contents.OfType<ToolApprovalRequestContent>().FirstOrDefault();
+            if (seen is not null)
+            {
+                break;
+            }
+        }
+
+        Assert.NotNull(seen);
+        Assert.Equal("capped-req", seen!.RequestId);
+
+        // Assert — the abandoned request was recorded, so an always-approve answer establishes a rule.
+        var ruleAgent = new ToolApprovalAgent(
+            CreateMockAgent(new AgentResponse([new ChatMessage(ChatRole.Assistant, "ack")])).Object);
+        await ruleAgent.RunAsync([new ChatMessage(ChatRole.User, [seen.CreateAlwaysApproveToolResponse()])], session);
+
+        var laterRequest = new ToolApprovalRequestContent("later-req", new FunctionCallContent("later-call", "ReadFile"));
+        var laterCallCount = 0;
+        var laterMock = new Mock<AIAgent>();
+        laterMock
+            .Protected()
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(() => ++laterCallCount == 1
+                ? new AgentResponse([new ChatMessage(ChatRole.Assistant, [laterRequest])])
+                : new AgentResponse([new ChatMessage(ChatRole.Assistant, "Auto-approved")]));
+
+        var laterAgent = new ToolApprovalAgent(laterMock.Object);
+        var response2 = await laterAgent.RunAsync([new ChatMessage(ChatRole.User, "read again")], session);
+        Assert.Equal("Auto-approved", response2.Text);
+    }
+
+    /// <summary>
+    /// After a session is serialized and restored, a wrapper still binds to the request recorded by the
+    /// server, while an unknown request id is still rejected.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_RestoredSession_BindsRecordedRequestAndRejectsUnknownAsync()
+    {
+        // Arrange — surface a request, then round-trip the session through serialization.
+        var session = new ChatClientAgentSession();
+        var recordedRequest = new ToolApprovalRequestContent("req1", new FunctionCallContent("call1", "ReadFile"));
+        await SurfaceApprovalRequestAsync(session, recordedRequest);
+
+        var serialized = session.Serialize();
+        var restored = ChatClientAgentSession.Deserialize(serialized);
+
+        var innerAgent = CreateMockAgent(new AgentResponse([new ChatMessage(ChatRole.Assistant, "OK")]));
+        var agent = new ToolApprovalAgent(innerAgent.Object);
+
+        // Act / Assert — an unknown request id creates no rule against the restored state.
+        var unknown = new ToolApprovalRequestContent("req-unknown", new FunctionCallContent("call-x", "ReadFile"));
+        await agent.RunAsync(
+            [new ChatMessage(ChatRole.User, [unknown.CreateAlwaysApproveToolResponse()])],
+            restored);
+
+        // The recorded request still binds successfully.
+        await agent.RunAsync(
+            [new ChatMessage(ChatRole.User, [recordedRequest.CreateAlwaysApproveToolResponse()])],
+            restored);
+
+        var laterRequest = new ToolApprovalRequestContent("req2", new FunctionCallContent("call2", "ReadFile"));
+        var laterCallCount = 0;
+        var laterAgentMock = new Mock<AIAgent>();
+        laterAgentMock
+            .Protected()
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(() => ++laterCallCount == 1
+                ? new AgentResponse([new ChatMessage(ChatRole.Assistant, [laterRequest])])
+                : new AgentResponse([new ChatMessage(ChatRole.Assistant, "Auto-approved")]));
+
+        var laterAgent = new ToolApprovalAgent(laterAgentMock.Object);
+        var response = await laterAgent.RunAsync([new ChatMessage(ChatRole.User, "Read again")], restored);
+        Assert.Equal("Auto-approved", response.Text);
+    }
+
+    #endregion
+
     #region Content Ordering
 
     /// <summary>
@@ -604,6 +1356,7 @@ public class ToolApprovalAgentTests
             .ReturnsAsync(finalResponse);
 
         var agent = new ToolApprovalAgent(innerAgent.Object);
+        await SurfaceApprovalRequestAsync(session, approvalRequest);
 
         // Act
         await agent.RunAsync([inputMessage], session);
@@ -651,6 +1404,7 @@ public class ToolApprovalAgentTests
             .ReturnsAsync(finalResponse);
 
         var agent = new ToolApprovalAgent(innerAgent.Object);
+        await SurfaceApprovalRequestAsync(session, approvalRequest);
         var inputMessages = new List<ChatMessage>
         {
             new(ChatRole.User, [alwaysApprove]),
@@ -713,6 +1467,7 @@ public class ToolApprovalAgentTests
         var agent = new ToolApprovalAgent(innerAgent.Object);
 
         // Call 1: establish rule (no approval requests returned)
+        await SurfaceApprovalRequestAsync(session, approvalRequest);
         await agent.RunAsync(
             [new ChatMessage(ChatRole.User, [alwaysApprove])],
             session);
@@ -775,6 +1530,7 @@ public class ToolApprovalAgentTests
         var agent = new ToolApprovalAgent(innerAgent.Object);
 
         // Call 1: establish rule (callCount → 1)
+        await SurfaceApprovalRequestAsync(session, approvalRequest);
         await agent.RunAsync([new ChatMessage(ChatRole.User, [alwaysApprove])], session);
 
         // Call 2: inner returns TARc → auto-approved → loop → callCount → 2, 3
@@ -1087,31 +1843,35 @@ public class ToolApprovalAgentTests
     #region Duplicate Rule Prevention
 
     /// <summary>
-    /// Verify that sending the same always-approve response twice does not create duplicate rules.
+    /// Verify that an always-approve response cannot be replayed to create a second, duplicate rule,
+    /// and that the single rule established by the original response remains functional.
     /// </summary>
+    /// <remarks>
+    /// Once a tool-wide rule exists, later calls to that tool are auto-approved and never surfaced,
+    /// so a second legitimate always-approve response for the same tool cannot be obtained. The only
+    /// way to attempt a duplicate is to replay the original response, which must not be honored.
+    /// </remarks>
     [Fact]
     public async Task RunAsync_DuplicateAlwaysApprove_DoesNotDuplicateRuleAsync()
     {
         // Arrange
         var session = new ChatClientAgentSession();
         var request1 = new ToolApprovalRequestContent("req1", new FunctionCallContent("call1", "MyTool"));
-        var request2 = new ToolApprovalRequestContent("req2", new FunctionCallContent("call2", "MyTool"));
 
         var finalResponse = new AgentResponse([new ChatMessage(ChatRole.Assistant, "OK")]);
         var innerAgent = CreateMockAgent(finalResponse);
         var agent = new ToolApprovalAgent(innerAgent.Object);
 
-        // Act — send two always-approve responses for the same tool
+        // Act — establish the rule once, then replay the same always-approve response
+        await EstablishStandingRuleAsync(session, request1);
+
         await agent.RunAsync(
             [new ChatMessage(ChatRole.User, [request1.CreateAlwaysApproveToolResponse()])],
             session);
-        await agent.RunAsync(
-            [new ChatMessage(ChatRole.User, [request2.CreateAlwaysApproveToolResponse()])],
-            session);
 
-        // Assert — verify the state works correctly (rule still matches on subsequent call)
-        var thirdApproval = new ToolApprovalRequestContent("req3", new FunctionCallContent("call3", "MyTool"));
-        var approvalResponseMsg = new AgentResponse([new ChatMessage(ChatRole.Assistant, [thirdApproval])]);
+        // Assert — verify the state works correctly (the original rule still matches on subsequent calls)
+        var secondApproval = new ToolApprovalRequestContent("req2", new FunctionCallContent("call2", "MyTool"));
+        var approvalResponseMsg = new AgentResponse([new ChatMessage(ChatRole.Assistant, [secondApproval])]);
         var afterAutoResponse = new AgentResponse([new ChatMessage(ChatRole.Assistant, "Auto-approved")]);
 
         var callCount = 0;
@@ -1128,11 +1888,7 @@ public class ToolApprovalAgentTests
                 return callCount == 1 ? approvalResponseMsg : afterAutoResponse;
             });
 
-        // Call 3: triggers approval → stored as pending
-        await agent.RunAsync([new ChatMessage(ChatRole.User, "test")], session);
-
-        // Call 4: pending injected
-        var response = await agent.RunAsync([new ChatMessage(ChatRole.User, "continue")], session);
+        var response = await agent.RunAsync([new ChatMessage(ChatRole.User, "test")], session);
         Assert.Equal("Auto-approved", response.Text);
     }
 
@@ -1171,6 +1927,7 @@ public class ToolApprovalAgentTests
         var agent = new ToolApprovalAgent(innerAgent.Object);
 
         // Act: establish rule + inner returns matching approval request → auto-approved → re-call
+        await SurfaceApprovalRequestAsync(session, approvalRequest);
         var response = await agent.RunAsync(
             [new ChatMessage(ChatRole.User, [alwaysApprove])],
             session);
@@ -1230,6 +1987,7 @@ public class ToolApprovalAgentTests
         var agent = new ToolApprovalAgent(innerAgent.Object);
 
         // Establish the rule
+        await SurfaceApprovalRequestAsync(session, approvalRequest);
         await agent.RunAsync(
             [new ChatMessage(ChatRole.User, [alwaysApprove])],
             session);
@@ -1312,6 +2070,7 @@ public class ToolApprovalAgentTests
         var agent = new ToolApprovalAgent(innerAgent.Object);
 
         // Act
+        await SurfaceApprovalRequestAsync(session, ruleRequest);
         var response = await agent.RunAsync(
             [new ChatMessage(ChatRole.User, [alwaysApprove])],
             session);
@@ -1362,6 +2121,7 @@ public class ToolApprovalAgentTests
         var agent = new ToolApprovalAgent(innerAgent.Object);
 
         // Establish rule
+        await SurfaceApprovalRequestAsync(session, ruleRequest);
         await agent.RunAsync(
             [new ChatMessage(ChatRole.User, [alwaysApprove])],
             session);
@@ -1778,6 +2538,136 @@ public class ToolApprovalAgentTests
         var requests = results2[0].Contents.OfType<ToolApprovalRequestContent>().ToList();
         Assert.Single(requests);
         Assert.Equal("ToolB", ((FunctionCallContent)requests[0].ToolCall).Name);
+    }
+
+    #endregion
+
+    #region Usage aggregation
+
+    /// <summary>
+    /// Verify that usage from every auto-approval re-invocation of the inner agent is summed into the
+    /// response returned to the caller.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_AutoApprovalLoop_AggregatesUsageAcrossInvocationsAsync()
+    {
+        // Arrange
+        var session = new ChatClientAgentSession();
+        var callCount = 0;
+        var innerAgent = new Mock<AIAgent>();
+        innerAgent
+            .Protected()
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(() =>
+            {
+                callCount++;
+                var usage = new UsageDetails { InputTokenCount = callCount is 1 ? 2 : callCount is 2 ? 11 : 29, OutputTokenCount = callCount is 1 ? 3 : callCount is 2 ? 5 : 7, TotalTokenCount = callCount is 1 ? 5 : callCount is 2 ? 16 : 36 };
+                if (callCount < 3)
+                {
+                    var request = new ToolApprovalRequestContent($"req{callCount}", new FunctionCallContent($"call{callCount}", "DangerousTool"));
+                    return new AgentResponse([new ChatMessage(ChatRole.Assistant, [request])]) { Usage = usage };
+                }
+
+                return new AgentResponse([new ChatMessage(ChatRole.Assistant, "Done")]) { Usage = usage };
+            });
+
+        var options = new ToolApprovalAgentOptions
+        {
+            AutoApprovalRules = [ToolApprovalAgent.AllToolsAutoApprovalRule]
+        };
+        var agent = new ToolApprovalAgent(innerAgent.Object, options);
+
+        // Act
+        var response = await agent.RunAsync([new ChatMessage(ChatRole.User, "Hi")], session);
+
+        // Assert
+        Assert.Equal(3, callCount);
+        Assert.Equal("Done", response.Text);
+        Assert.NotNull(response.Usage);
+        Assert.Equal(42, response.Usage!.InputTokenCount);
+        Assert.Equal(15, response.Usage.OutputTokenCount);
+        Assert.Equal(57, response.Usage.TotalTokenCount);
+    }
+
+    /// <summary>
+    /// Verify that a single inner invocation still surfaces its usage unchanged and does not mutate the
+    /// inner agent's usage instance.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_SingleInvocation_SurfacesUsageWithoutMutatingInnerResponseAsync()
+    {
+        // Arrange
+        var session = new ChatClientAgentSession();
+        var innerUsage = new UsageDetails { InputTokenCount = 12, OutputTokenCount = 3, TotalTokenCount = 15 };
+        var innerResponse = new AgentResponse([new ChatMessage(ChatRole.Assistant, "Done")]) { Usage = innerUsage };
+        var agent = new ToolApprovalAgent(CreateMockAgent(innerResponse).Object);
+
+        // Act
+        var response = await agent.RunAsync([new ChatMessage(ChatRole.User, "Hi")], session);
+
+        // Assert
+        Assert.NotNull(response.Usage);
+        Assert.NotSame(innerUsage, response.Usage);
+        Assert.Equal(12, response.Usage!.InputTokenCount);
+        Assert.Equal(3, response.Usage.OutputTokenCount);
+        Assert.Equal(15, response.Usage.TotalTokenCount);
+        Assert.Equal(12, innerUsage.InputTokenCount);
+        Assert.Equal(3, innerUsage.OutputTokenCount);
+        Assert.Equal(15, innerUsage.TotalTokenCount);
+    }
+
+    /// <summary>
+    /// Verify that the streaming path surfaces every auto-approval iteration's usage so an aggregated
+    /// response built from the updates reports the usage of the whole run.
+    /// </summary>
+    [Fact]
+    public async Task RunStreamingAsync_AutoApprovalLoop_SurfacesUsageFromEveryInvocationAsync()
+    {
+        // Arrange
+        var session = new ChatClientAgentSession();
+        var callCount = 0;
+        var innerAgent = new Mock<AIAgent>();
+        innerAgent
+            .Protected()
+            .Setup<IAsyncEnumerable<AgentResponseUpdate>>("RunCoreStreamingAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns<IEnumerable<ChatMessage>, AgentSession?, AgentRunOptions?, CancellationToken>((_, _, _, ct) =>
+            {
+                callCount++;
+                var usageUpdate = new AgentResponseUpdate(ChatRole.Assistant, [new UsageContent(new UsageDetails { InputTokenCount = callCount is 1 ? 2 : callCount is 2 ? 11 : 29, OutputTokenCount = callCount is 1 ? 3 : callCount is 2 ? 5 : 7, TotalTokenCount = callCount is 1 ? 5 : callCount is 2 ? 16 : 36 })]);
+                AgentResponseUpdate[] updates = callCount < 3
+                    ? [new AgentResponseUpdate(ChatRole.Assistant, [new ToolApprovalRequestContent($"req{callCount}", new FunctionCallContent($"call{callCount}", "DangerousTool"))]), usageUpdate]
+                    : [new AgentResponseUpdate(ChatRole.Assistant, "Done"), usageUpdate];
+                return ToAsyncEnumerableAsync(updates, ct);
+            });
+
+        var options = new ToolApprovalAgentOptions
+        {
+            AutoApprovalRules = [ToolApprovalAgent.AllToolsAutoApprovalRule]
+        };
+        var agent = new ToolApprovalAgent(innerAgent.Object, options);
+
+        // Act
+        var updates = new List<AgentResponseUpdate>();
+        await foreach (var update in agent.RunStreamingAsync([new ChatMessage(ChatRole.User, "Hi")], session))
+        {
+            updates.Add(update);
+        }
+
+        // Assert
+        Assert.Equal(3, callCount);
+        var response = updates.ToAgentResponse();
+        Assert.NotNull(response.Usage);
+        Assert.Equal(42, response.Usage!.InputTokenCount);
+        Assert.Equal(15, response.Usage.OutputTokenCount);
+        Assert.Equal(57, response.Usage.TotalTokenCount);
     }
 
     #endregion
@@ -2239,9 +3129,10 @@ public class ToolApprovalAgentTests
         Assert.True(heuristicCalled);
         Assert.Equal("Done", response1.Text);
 
-        // Now establish a standing rule by sending AlwaysApprove
+        // Now establish a standing rule by sending AlwaysApprove for a genuinely surfaced request
         heuristicCalled = false;
         callCount = 0;
+        await SurfaceApprovalRequestAsync(session, approvalRequest);
         var alwaysApprove = new AlwaysApproveToolApprovalResponseContent(
             approvalRequest.CreateResponse(approved: true),
             alwaysApproveTool: true,
@@ -2300,6 +3191,7 @@ public class ToolApprovalAgentTests
         var agent = new ToolApprovalAgent(innerAgent.Object, options);
 
         // Establish a standing rule for "StandingTool" via an AlwaysApprove response in the same call.
+        await SurfaceApprovalRequestAsync(session, standingRequest);
         var alwaysApprove = standingRequest.CreateAlwaysApproveToolResponse("User said always");
 
         // Act — both requests auto-approve (heuristic + standing rule), so the inner agent is re-invoked.
@@ -2389,6 +3281,318 @@ public class ToolApprovalAgentTests
         Assert.Same(runOptions, capturedContext.RunOptions);
         Assert.Equal("ReadTool", capturedContext.FunctionCallContent.Name);
         Assert.Contains(capturedContext.RequestMessages, m => m.Text == "Hi");
+    }
+
+    #endregion
+
+    #region Auto-approval iteration cap
+
+    /// <summary>
+    /// Verify that a model which never stops requesting an auto-approved tool cannot drive an
+    /// unbounded number of inner invocations. Regression test for the runaway auto-approval loop
+    /// where every pass is a fresh inner call, so no per-request cap can bound it.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_AutoApprovedToolRequestedForever_StopsAtIterationCapAsync()
+    {
+        // Arrange — the inner agent always asks for an auto-approved tool and never answers.
+        var session = new ChatClientAgentSession();
+        var callCount = 0;
+        var innerAgent = new Mock<AIAgent>();
+        innerAgent
+            .Protected()
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(() =>
+            {
+                callCount++;
+                return new AgentResponse([new ChatMessage(ChatRole.Assistant,
+                    [new ToolApprovalRequestContent($"req{callCount}", new FunctionCallContent($"call{callCount}", "load_skill"))])]);
+            });
+
+        var options = new ToolApprovalAgentOptions
+        {
+            AutoApprovalRules = [ToolApprovalAgent.AllToolsAutoApprovalRule],
+            MaxAutoApprovalIterations = 3,
+        };
+        var agent = new ToolApprovalAgent(innerAgent.Object, options);
+
+        // Act
+        var response = await agent.RunAsync([new ChatMessage(ChatRole.User, "Hi")], session);
+
+        // Assert — 3 auto-approving passes plus one final turn that does not auto-approve.
+        Assert.Equal(4, callCount);
+
+        // The final turn's approval request is surfaced to the caller instead of being auto-approved,
+        // so the caller regains control rather than receiving the stripped (empty) response.
+        Assert.NotEmpty(response.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>());
+    }
+
+    /// <summary>
+    /// Verify the streaming path is bounded by the same cap as the non-streaming path.
+    /// </summary>
+    [Fact]
+    public async Task RunStreamingAsync_AutoApprovedToolRequestedForever_StopsAtIterationCapAsync()
+    {
+        // Arrange
+        var session = new ChatClientAgentSession();
+        var callCount = 0;
+        var innerAgent = new Mock<AIAgent>();
+        innerAgent
+            .Protected()
+            .Setup<IAsyncEnumerable<AgentResponseUpdate>>("RunCoreStreamingAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns(() =>
+            {
+                callCount++;
+                return ToAsyncEnumerableAsync([
+                    new AgentResponseUpdate(ChatRole.Assistant,
+                        new List<AIContent> { new ToolApprovalRequestContent($"req{callCount}", new FunctionCallContent($"call{callCount}", "load_skill")) })
+                ]);
+            });
+
+        var options = new ToolApprovalAgentOptions
+        {
+            AutoApprovalRules = [ToolApprovalAgent.AllToolsAutoApprovalRule],
+            MaxAutoApprovalIterations = 3,
+        };
+        var agent = new ToolApprovalAgent(innerAgent.Object, options);
+
+        // Act
+        var updates = new List<AgentResponseUpdate>();
+        await foreach (var update in agent.RunStreamingAsync([new ChatMessage(ChatRole.User, "Hi")], session))
+        {
+            updates.Add(update);
+        }
+
+        // Assert — bounded the same way, and the final turn's request reaches the caller.
+        Assert.Equal(4, callCount);
+        Assert.NotEmpty(updates.SelectMany(u => u.Contents).OfType<ToolApprovalRequestContent>());
+    }
+
+    /// <summary>
+    /// Verify that hitting <see cref="ToolApprovalAgentOptions.MaxAutoApprovalIterations"/> still reports the
+    /// usage of the entire run. The capped path takes an extra final turn outside the accumulating loop, so a
+    /// naive early return there would discard every prior turn's cost — the exact under-reporting this
+    /// aggregation exists to prevent, and the case most likely to involve a large token spend.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_StopsAtIterationCap_AggregatesUsageAcrossEveryTurnAsync()
+    {
+        // Arrange — always asks for an auto-approved tool, reporting distinct usage per turn.
+        var session = new ChatClientAgentSession();
+        var callCount = 0;
+        var innerAgent = new Mock<AIAgent>();
+        innerAgent
+            .Protected()
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(() =>
+            {
+                callCount++;
+                return new AgentResponse([new ChatMessage(ChatRole.Assistant,
+                    [new ToolApprovalRequestContent($"req{callCount}", new FunctionCallContent($"call{callCount}", "load_skill"))])])
+                {
+                    Usage = new UsageDetails
+                    {
+                        InputTokenCount = callCount,
+                        OutputTokenCount = callCount * 10,
+                        TotalTokenCount = callCount * 11,
+                    },
+                };
+            });
+
+        var options = new ToolApprovalAgentOptions
+        {
+            AutoApprovalRules = [ToolApprovalAgent.AllToolsAutoApprovalRule],
+            MaxAutoApprovalIterations = 3,
+        };
+        var agent = new ToolApprovalAgent(innerAgent.Object, options);
+
+        // Act
+        var response = await agent.RunAsync([new ChatMessage(ChatRole.User, "Hi")], session);
+
+        // Assert — 3 auto-approving passes plus the final capped turn, all four counted.
+        Assert.Equal(4, callCount);
+        Assert.NotNull(response.Usage);
+        Assert.Equal(1 + 2 + 3 + 4, response.Usage!.InputTokenCount);
+        Assert.Equal(10 + 20 + 30 + 40, response.Usage.OutputTokenCount);
+        Assert.Equal(11 + 22 + 33 + 44, response.Usage.TotalTokenCount);
+    }
+
+    /// <summary>
+    /// Verify that a derived <see cref="AgentResponse"/> returned by the inner agent survives the
+    /// auto-approval loop. Usage is reported by updating the inner agent's response rather than by building a
+    /// replacement, so a subclass such as <c>AgentResponse&lt;T&gt;</c> keeps its runtime type and the state
+    /// it carries instead of being silently downgraded to a base response.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_InnerAgentReturnsDerivedResponse_PreservesRuntimeTypeWhileAggregatingUsageAsync()
+    {
+        // Arrange — turn 1 asks for an auto-approved tool, turn 2 answers; both return a derived response.
+        var session = new ChatClientAgentSession();
+        var callCount = 0;
+        var innerAgent = new Mock<AIAgent>();
+        innerAgent
+            .Protected()
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(() =>
+            {
+                callCount++;
+                IList<ChatMessage> messages = callCount == 1
+                    ? [new ChatMessage(ChatRole.Assistant, [new ToolApprovalRequestContent("req1", new FunctionCallContent("call1", "load_skill"))])]
+                    : [new ChatMessage(ChatRole.Assistant, "done")];
+
+                return new TestDerivedAgentResponse(messages)
+                {
+                    DerivedState = $"turn{callCount}",
+                    Usage = new UsageDetails { InputTokenCount = callCount, OutputTokenCount = callCount * 10 },
+                };
+            });
+
+        var options = new ToolApprovalAgentOptions { AutoApprovalRules = [ToolApprovalAgent.AllToolsAutoApprovalRule] };
+        var agent = new ToolApprovalAgent(innerAgent.Object, options);
+
+        // Act
+        var response = await agent.RunAsync([new ChatMessage(ChatRole.User, "Hi")], session);
+
+        // Assert
+        Assert.Equal(2, callCount);
+        var derived = Assert.IsType<TestDerivedAgentResponse>(response);
+        Assert.Equal("turn2", derived.DerivedState);
+        Assert.Equal(1 + 2, derived.Usage!.InputTokenCount);
+        Assert.Equal(10 + 20, derived.Usage.OutputTokenCount);
+    }
+
+    /// <summary>
+    /// Verify the streaming path reports the whole run's usage when the cap is hit. Streaming aggregates by
+    /// passing every <see cref="UsageContent"/> through to the caller, including those from the final capped
+    /// turn, so no update may be swallowed by the cap branch.
+    /// </summary>
+    [Fact]
+    public async Task RunStreamingAsync_StopsAtIterationCap_AggregatesUsageAcrossEveryTurnAsync()
+    {
+        // Arrange
+        var session = new ChatClientAgentSession();
+        var callCount = 0;
+        var innerAgent = new Mock<AIAgent>();
+        innerAgent
+            .Protected()
+            .Setup<IAsyncEnumerable<AgentResponseUpdate>>("RunCoreStreamingAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns(() =>
+            {
+                callCount++;
+                int call = callCount;
+                return ToAsyncEnumerableAsync([
+                    new AgentResponseUpdate(ChatRole.Assistant,
+                        new List<AIContent> { new ToolApprovalRequestContent($"req{call}", new FunctionCallContent($"call{call}", "load_skill")) }),
+                    new AgentResponseUpdate(ChatRole.Assistant,
+                        new List<AIContent>
+                        {
+                            new UsageContent(new UsageDetails
+                            {
+                                InputTokenCount = call,
+                                OutputTokenCount = call * 10,
+                                TotalTokenCount = call * 11,
+                            }),
+                        }),
+                ]);
+            });
+
+        var options = new ToolApprovalAgentOptions
+        {
+            AutoApprovalRules = [ToolApprovalAgent.AllToolsAutoApprovalRule],
+            MaxAutoApprovalIterations = 3,
+        };
+        var agent = new ToolApprovalAgent(innerAgent.Object, options);
+
+        // Act
+        var updates = new List<AgentResponseUpdate>();
+        await foreach (var update in agent.RunStreamingAsync([new ChatMessage(ChatRole.User, "Hi")], session))
+        {
+            updates.Add(update);
+        }
+
+        var response = updates.ToAgentResponse();
+
+        // Assert
+        Assert.Equal(4, callCount);
+        Assert.NotNull(response.Usage);
+        Assert.Equal(1 + 2 + 3 + 4, response.Usage!.InputTokenCount);
+        Assert.Equal(10 + 20 + 30 + 40, response.Usage.OutputTokenCount);
+        Assert.Equal(11 + 22 + 33 + 44, response.Usage.TotalTokenCount);
+    }
+
+    /// <summary>
+    /// Verify that the cap defaults to <see cref="ToolApprovalAgent.DefaultMaxAutoApprovalIterations"/>
+    /// when the caller does not configure one.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_NoCapConfigured_UsesDefaultMaxAutoApprovalIterationsAsync()
+    {
+        // Arrange
+        var session = new ChatClientAgentSession();
+        var callCount = 0;
+        var innerAgent = new Mock<AIAgent>();
+        innerAgent
+            .Protected()
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(() =>
+            {
+                callCount++;
+                return new AgentResponse([new ChatMessage(ChatRole.Assistant,
+                    [new ToolApprovalRequestContent($"req{callCount}", new FunctionCallContent($"call{callCount}", "load_skill"))])]);
+            });
+
+        var agent = new ToolApprovalAgent(innerAgent.Object, new ToolApprovalAgentOptions
+        {
+            AutoApprovalRules = [ToolApprovalAgent.AllToolsAutoApprovalRule],
+        });
+
+        // Act
+        await agent.RunAsync([new ChatMessage(ChatRole.User, "Hi")], session);
+
+        // Assert
+        Assert.Equal(ToolApprovalAgent.DefaultMaxAutoApprovalIterations + 1, callCount);
+    }
+
+    /// <summary>
+    /// Verify that a cap below 1 is rejected, since it would leave no turn to run.
+    /// </summary>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void Constructor_MaxAutoApprovalIterationsBelowOne_Throws(int value)
+    {
+        // Arrange
+        var innerAgent = new Mock<AIAgent>().Object;
+
+        // Act & Assert
+        Assert.Throws<ArgumentOutOfRangeException>(() => new ToolApprovalAgent(innerAgent, new ToolApprovalAgentOptions
+        {
+            MaxAutoApprovalIterations = value,
+        }));
     }
 
     #endregion

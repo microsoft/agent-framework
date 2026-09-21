@@ -17,7 +17,7 @@ route to callers, add authentication and authorization at the infrastructure
 layer, the FastAPI app layer, or inside the route body.
 
 This sample demonstrates continuation with ``previous_response_id`` only. It
-rejects ``conversation_id`` continuity with HTTP 400. Treat every
+rejects ``conversation`` continuity with HTTP 400. Treat every
 ``previous_response_id`` as an untrusted request value, authorize the caller
 before restoring or storing a checkpoint cursor for that id, and partition
 durable checkpoint/cursor storage by tenant/user as appropriate for your
@@ -230,13 +230,13 @@ async def responses(body: dict[str, Any] = Body(...)) -> JSONResponse:  # noqa: 
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     # This sample demonstrates only Responses `previous_response_id`
-    # continuation, so reject `conversation_id` instead of treating it as a
+    # continuation, so reject `conversation` instead of treating it as a
     # checkpoint cursor.
     previous_response_id, is_conversation_id = responses_session_id(body)
     if is_conversation_id:
         raise HTTPException(
             status_code=400,
-            detail="This server supports previous_response_id continuation only; conversation_id is not implemented.",
+            detail="This server supports previous_response_id continuation only; conversation is not implemented.",
         )
     response_id = create_response_id()
 
