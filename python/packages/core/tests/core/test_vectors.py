@@ -2581,7 +2581,10 @@ async def test_vector_crud_tools_round_trip_records() -> None:
     assert await get_tool.invoke(arguments={"keys": ["one"]}, skip_parsing=True) == {"records": []}
 
 
-async def test_vector_crud_tools_support_auto_generated_keys_when_model_can_omit_them() -> None:
+@pytest.mark.parametrize("key_values", [{}, {"id": None}, {"id": "provided"}])
+async def test_vector_crud_tools_support_auto_generated_keys_when_model_can_omit_them(
+    key_values: dict[str, Any],
+) -> None:
     definition = VectorStoreCollectionDefinition(
         [
             VectorStoreField("key", name="id", type_="str", is_auto_generated=True),
@@ -2594,12 +2597,16 @@ async def test_vector_crud_tools_support_auto_generated_keys_when_model_can_omit
     upsert_tool = create_upsert_tool(collection, generate_vectors=False)
 
     record_schema = upsert_tool.parameters()["properties"]["records"]["items"]
-    assert record_schema["properties"]["id"] == {"type": "string"}
+    content = await upsert_tool.invoke(arguments={"records": [{**key_values, "text": "generated"}]})
+    assert content[0].text is not None
+    result = msgspec.json.decode(content[0].text)
+    assert record_schema["properties"]["id"] == {"anyOf": [{"type": "string"}, {"type": "null"}]}
     assert record_schema["required"] == ["text"]
-
-    result = await upsert_tool.invoke(arguments={"records": [{"text": "generated"}]}, skip_parsing=True)
     assert len(result["keys"]) == 1
     assert isinstance(result["keys"][0], str)
+    assert await collection.get(result["keys"]) == [{"id": result["keys"][0], "text": "generated"}]
+    if key_values.get("id") is not None:
+        assert result["keys"] == [key_values["id"]]
 
 
 def test_vector_upsert_tool_requires_auto_key_when_typed_model_has_no_default() -> None:
@@ -2614,9 +2621,11 @@ def test_vector_upsert_tool_requires_auto_key_when_typed_model_has_no_default() 
     record_schema = create_upsert_tool(collection).parameters()["properties"]["records"]["items"]
 
     assert record_schema["required"] == ["id", "text"]
+    assert record_schema["properties"]["id"] == {"type": "string"}
 
 
-async def test_vector_upsert_tool_omits_auto_key_when_typed_model_has_default() -> None:
+@pytest.mark.parametrize("key_values", [{}, {"id": None}, {"id": "provided"}])
+async def test_vector_upsert_tool_omits_auto_key_when_typed_model_has_default(key_values: dict[str, Any]) -> None:
     @vectorstoremodel(collection_name="default_auto_key")
     @dataclass
     class DefaultAutoKey:
@@ -2628,10 +2637,96 @@ async def test_vector_upsert_tool_omits_auto_key_when_typed_model_has_default() 
     tool = create_upsert_tool(collection, generate_vectors=False)
 
     record_schema = tool.parameters()["properties"]["records"]["items"]
-    result = await tool.invoke(arguments={"records": [{"text": "generated"}]}, skip_parsing=True)
+    content = await tool.invoke(arguments={"records": [{**key_values, "text": "generated"}]})
+    assert content[0].text is not None
+    result = msgspec.json.decode(content[0].text)
 
     assert record_schema["required"] == ["text"]
+    assert record_schema["properties"]["id"] == {"anyOf": [{"type": "string"}, {"type": "null"}]}
     assert len(result["keys"]) == 1
+    assert await collection.get(result["keys"]) == [DefaultAutoKey(text="generated", id=result["keys"][0])]
+    if key_values.get("id") is not None:
+        assert result["keys"] == [key_values["id"]]
+
+
+@pytest.mark.parametrize("auto_generated", [False, True])
+async def test_vector_upsert_tool_rejects_invalid_non_null_keys(auto_generated: bool) -> None:
+    definition = VectorStoreCollectionDefinition(
+        [
+            VectorStoreField("key", name="id", type_="str", is_auto_generated=auto_generated),
+            VectorStoreField("data", name="text", type_="str"),
+        ],
+        collection_name="invalid_keys",
+    )
+    collection: InMemoryCollection[str, dict[str, Any]] = InMemoryCollection(dict, definition=definition)
+    await collection.ensure_collection_exists()
+    tool = create_upsert_tool(collection, generate_vectors=False)
+
+    with pytest.raises(TypeError, match="Key value must match"):
+        await tool.invoke(arguments={"records": [{"id": 1, "text": "invalid"}]})
+    if not auto_generated:
+        with pytest.raises(TypeError, match="Key value must match"):
+            await tool.invoke(arguments={"records": [{"id": None, "text": "invalid"}]})
+        assert tool.parameters()["properties"]["records"]["items"]["properties"]["id"] == {"type": "string"}
+    assert await collection.get() == []
+
+
+async def test_vector_upsert_tool_preserves_non_nullable_model_key_validation() -> None:
+    @vectorstoremodel(collection_name="non_nullable_auto_key")
+    @dataclass
+    class NonNullableAutoKey:
+        text: Annotated[str, VectorStoreField("data")]
+        id: Annotated[str, VectorStoreField("key", is_auto_generated=True)] = "provided"
+
+    collection: InMemoryCollection[str, NonNullableAutoKey] = InMemoryCollection(NonNullableAutoKey)
+    await collection.ensure_collection_exists()
+    tool = create_upsert_tool(collection, generate_vectors=False)
+
+    assert tool.parameters()["properties"]["records"]["items"]["properties"]["id"] == {"type": "string"}
+    with pytest.raises((TypeError, msgspec.ValidationError)):
+        await tool.invoke(arguments={"records": [{"id": None, "text": "invalid"}]})
+    assert await collection.get() == []
+
+
+@pytest.mark.parametrize("nullable", [False, True])
+async def test_vector_upsert_tool_respects_constructor_key_nullability(nullable: bool) -> None:
+    @vectorstoremodel(collection_name="constructor_auto_key", encoder=vars)
+    class PlainRecord:
+        def __init__(
+            self,
+            text: Annotated[str, VectorStoreField("data")],
+            id: Annotated[str, VectorStoreField("key", is_auto_generated=True)] = "provided",
+        ) -> None:
+            self.text = text
+            self.id = id
+
+    @vectorstoremodel(collection_name="nullable_constructor_auto_key", encoder=vars)
+    class NullablePlainRecord:
+        def __init__(
+            self,
+            text: Annotated[str, VectorStoreField("data")],
+            id: Annotated[str | None, VectorStoreField("key", is_auto_generated=True)] = None,
+        ) -> None:
+            self.text = text
+            self.id = id
+
+    record_type = NullablePlainRecord if nullable else PlainRecord
+    collection = InMemoryCollection(record_type)
+    await collection.ensure_collection_exists()
+    tool = create_upsert_tool(collection, generate_vectors=False)
+
+    if nullable:
+        content = await tool.invoke(arguments={"records": [{"id": None, "text": "generated"}]})
+        assert content[0].text is not None
+        key = msgspec.json.decode(content[0].text)["keys"][0]
+        assert isinstance(key, str)
+        record = (await collection.get([key]))[0]
+        assert isinstance(record, NullablePlainRecord)
+        assert record.text == "generated"
+    else:
+        with pytest.raises(TypeError, match="Key value must match"):
+            await tool.invoke(arguments={"records": [{"id": None, "text": "invalid"}]})
+        assert await collection.get() == []
 
 
 async def test_vector_crud_tools_round_trip_uuid_keys_as_json_strings() -> None:
