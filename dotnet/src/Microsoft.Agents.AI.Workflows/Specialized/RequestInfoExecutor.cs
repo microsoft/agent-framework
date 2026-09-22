@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
@@ -118,15 +119,13 @@ internal sealed class RequestInfoExecutor : Executor
     [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Request types are preserved by their workflow port and serialization registrations.")]
     private static Type? ResolveType(TypeId typeId)
     {
-        foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+        foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies()
+            .Where(assembly => string.Equals(assembly.GetName().Name, typeId.SimpleAssemblyName, StringComparison.Ordinal)))
         {
-            if (string.Equals(assembly.GetName().Name, typeId.SimpleAssemblyName, StringComparison.Ordinal))
+            Type? resolvedType = assembly.GetType(typeId.NormalizedTypeName, throwOnError: false);
+            if (resolvedType is not null)
             {
-                Type? resolvedType = assembly.GetType(typeId.NormalizedTypeName, throwOnError: false);
-                if (resolvedType is not null)
-                {
-                    return resolvedType;
-                }
+                return resolvedType;
             }
         }
 
