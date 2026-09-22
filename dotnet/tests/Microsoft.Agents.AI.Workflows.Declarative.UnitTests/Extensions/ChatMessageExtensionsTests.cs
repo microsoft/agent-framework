@@ -852,6 +852,68 @@ public sealed class ChatMessageExtensionsTests
     }
 
     [Fact]
+    public void MergeForLastMessagePreservesOriginalMediaWhenCanonicalCountDiffers()
+    {
+        // Arrange
+        DataContent firstInput = new("data:image/jpeg;base64,QUE=", "image/jpeg");
+        DataContent secondInput = new("data:image/jpeg;base64,QkI=", "image/jpeg");
+        HostedFileContent canonical = new("file-b");
+        ChatMessage input = new(ChatRole.User, [firstInput, secondInput]);
+        ChatMessage roundTripped = new(ChatRole.User, [canonical]) { MessageId = "id" };
+
+        // Act
+        ChatMessage result = input.MergeForLastMessage(roundTripped);
+
+        // Assert
+        Assert.Collection(result.Contents,
+            content => Assert.Same(firstInput, content),
+            content => Assert.Same(secondInput, content));
+    }
+
+    [Fact]
+    public void MergeForLastMessagePreservesOriginalMediaWhenCanonicalOrderIsAmbiguous()
+    {
+        // Arrange
+        DataContent firstInput = new("data:image/jpeg;base64,QUE=", "image/jpeg");
+        DataContent secondInput = new("data:image/jpeg;base64,QkI=", "image/jpeg");
+        ChatMessage input = new(ChatRole.User, [firstInput, secondInput]);
+        ChatMessage roundTripped = new(
+            ChatRole.User,
+            [new HostedFileContent("file-b"), new HostedFileContent("file-a")])
+        {
+            MessageId = "id"
+        };
+
+        // Act
+        ChatMessage result = input.MergeForLastMessage(roundTripped);
+
+        // Assert
+        Assert.Collection(result.Contents,
+            content => Assert.Same(firstInput, content),
+            content => Assert.Same(secondInput, content));
+    }
+
+    [Fact]
+    public void MergeForLastMessageMatchesReorderedCanonicalMediaByStableIdentity()
+    {
+        // Arrange
+        HostedFileContent firstInput = new("file-a");
+        HostedFileContent secondInput = new("file-b");
+        HostedFileContent firstCanonical = new("file-a");
+        HostedFileContent secondCanonical = new("file-b");
+        ChatMessage input = new(ChatRole.User, [firstInput, secondInput]);
+        ChatMessage roundTripped = new(ChatRole.User, [secondCanonical, firstCanonical]) { MessageId = "id" };
+
+        // Act
+        ChatMessage result = input.MergeForLastMessage(roundTripped);
+
+        // Assert
+        Assert.Collection(result.Contents,
+            content => Assert.Same(firstCanonical, content),
+            content => Assert.Same(secondCanonical, content));
+    }
+
+    [Fact]
     public void MergeForLastMessageReplacesMultipleTextSlotsInOrder()
     {
         // Arrange: input has two text items; round-tripped has two text slots interleaved with media.

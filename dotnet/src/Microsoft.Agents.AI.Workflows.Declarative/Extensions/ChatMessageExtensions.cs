@@ -32,7 +32,8 @@ internal static class ChatMessageExtensions
     /// <see cref="ChatMessage.MessageId"/> and any provider-augmented metadata, and is forward-
     /// compatible with new properties added on <see cref="ChatMessage"/> in the abstractions
     /// layer. Only the <see cref="ChatMessage.Contents"/> list is mutated to preserve the
-    /// caller's ordering while substituting server-side references for original non-text content.
+    /// caller's ordering while substituting server-side references when their correspondence
+    /// to the original non-text content is unambiguous.
     /// </para>
     /// </remarks>
     public static ChatMessage MergeForLastMessage(this ChatMessage input, ChatMessage? inputMessage)
@@ -42,15 +43,43 @@ internal static class ChatMessageExtensions
             return input;
         }
 
-        Queue<AIContent> canonicalNonTextContents = new(inputMessage.Contents.Where(content => content is not TextContent));
+        List<AIContent> inputNonTextContents = [.. input.Contents.Where(content => content is not TextContent)];
+        List<AIContent> canonicalNonTextContents = [.. inputMessage.Contents.Where(content => content is not TextContent)];
+        AIContent[] replacements = [.. inputNonTextContents];
+        bool[] canonicalContentUsed = new bool[canonicalNonTextContents.Count];
+
+        for (int inputIndex = 0; inputIndex < inputNonTextContents.Count; inputIndex++)
+        {
+            for (int canonicalIndex = 0; canonicalIndex < canonicalNonTextContents.Count; canonicalIndex++)
+            {
+                if (!canonicalContentUsed[canonicalIndex] &&
+                    HasSameStableIdentity(inputNonTextContents[inputIndex], canonicalNonTextContents[canonicalIndex]))
+                {
+                    replacements[inputIndex] = canonicalNonTextContents[canonicalIndex];
+                    canonicalContentUsed[canonicalIndex] = true;
+                    break;
+                }
+            }
+        }
+
+        if (inputNonTextContents.Count == 1 &&
+            canonicalNonTextContents.Count == 1 &&
+            !canonicalContentUsed[0] &&
+            IsMediaContent(inputNonTextContents[0]) &&
+            IsMediaContent(canonicalNonTextContents[0]))
+        {
+            replacements[0] = canonicalNonTextContents[0];
+        }
+
         List<AIContent> mergedContents = [];
+        int nonTextIndex = 0;
 
         foreach (AIContent content in input.Contents)
         {
             mergedContents.Add(
                 content is TextContent
                     ? content
-                    : canonicalNonTextContents.Count > 0 ? canonicalNonTextContents.Dequeue() : content);
+                    : replacements[nonTextIndex++]);
         }
 
         if (mergedContents.Count == 0 && !string.IsNullOrEmpty(input.Text))
@@ -63,7 +92,11 @@ internal static class ChatMessageExtensions
             return inputMessage;
         }
 
-        mergedContents.AddRange(canonicalNonTextContents);
+        if (inputNonTextContents.Count == 0)
+        {
+            mergedContents.AddRange(canonicalNonTextContents);
+        }
+
         inputMessage.Contents.Clear();
         foreach (AIContent content in mergedContents)
         {
@@ -72,6 +105,24 @@ internal static class ChatMessageExtensions
 
         return inputMessage;
     }
+
+    private static bool HasSameStableIdentity(AIContent input, AIContent canonical) =>
+        ReferenceEquals(input, canonical) ||
+        (input, canonical) switch
+        {
+            (HostedFileContent inputFile, HostedFileContent canonicalFile) =>
+                string.Equals(inputFile.FileId, canonicalFile.FileId, StringComparison.Ordinal),
+            (UriContent inputUri, UriContent canonicalUri) =>
+                inputUri.Uri == canonicalUri.Uri &&
+                string.Equals(inputUri.MediaType, canonicalUri.MediaType, StringComparison.OrdinalIgnoreCase),
+            (DataContent inputData, DataContent canonicalData) =>
+                string.Equals(inputData.Uri, canonicalData.Uri, StringComparison.Ordinal) &&
+                string.Equals(inputData.MediaType, canonicalData.MediaType, StringComparison.OrdinalIgnoreCase),
+            _ => false
+        };
+
+    private static bool IsMediaContent(AIContent content) =>
+        content is DataContent or UriContent or HostedFileContent;
 
     public static TableValue ToTable(this IEnumerable<ChatMessage> messages) =>
         FormulaValue.NewTable(TypeSchema.Message.RecordType, messages.Select(message => message.ToRecord()));
