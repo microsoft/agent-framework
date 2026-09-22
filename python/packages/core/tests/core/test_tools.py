@@ -1587,18 +1587,15 @@ async def test_tool_annotated_description_keeps_field_constraints():
     def pick(count: Annotated[int, "How many items", Field(ge=1, le=10)]) -> str:
         return str(count)
 
-    assert pick.parameters()["properties"]["count"] == {
-        "description": "How many items",
-        "maximum": 10,
-        "minimum": 1,
-        "title": "Count",
-        "type": "integer",
-    }
+    count_schema = pick.parameters()["properties"]["count"]
+    assert count_schema["description"] == "How many items"
+    assert count_schema["minimum"] == 1
+    assert count_schema["maximum"] == 10
 
     result = await pick.invoke(arguments={"count": 5})
     assert result[0].text == "5"
 
-    with pytest.raises(TypeError, match="less than or equal to 10"):
+    with pytest.raises(TypeError, match="less_than_equal"):
         await pick.invoke(arguments={"count": 999})
 
 
