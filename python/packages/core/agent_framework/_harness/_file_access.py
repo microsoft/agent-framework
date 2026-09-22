@@ -1113,6 +1113,7 @@ class InMemoryAgentFileStore(AgentFileStore):
         prefix = _normalize_relative_path(directory, is_directory=True).lower()
         if prefix and not prefix.endswith("/"):
             prefix += "/"
+        prefix_depth = prefix.count("/")
         async with self._lock:
             entries = [(key, display) for key, (display, _) in self._files.items()]
         files: list[str] = []
@@ -1121,18 +1122,18 @@ class InMemoryAgentFileStore(AgentFileStore):
         for key, display in entries:
             if not key.startswith(prefix):
                 continue
-            remainder = key[len(prefix) :]
-            separator_index = remainder.find("/")
-            if separator_index == -1:
-                # ``display`` is the original-case normalized path; strip the
-                # directory prefix using the same length we matched on ``key``.
-                files.append(display[len(prefix) :])
-            elif separator_index > 0:
-                segment_key = remainder[:separator_index]
+            # Unicode lowercasing can change character counts, so key offsets
+            # cannot be used to slice the original display path.
+            remainder = display.split("/", prefix_depth)[-1]
+            segment, separator, _ = remainder.partition("/")
+            if not separator:
+                files.append(remainder)
+            elif segment:
+                segment_key = segment.lower()
                 if segment_key in seen_dirs:
                     continue
                 seen_dirs.add(segment_key)
-                directories.append(display[len(prefix) : len(prefix) + separator_index])
+                directories.append(segment)
         results: list[FileStoreEntry] = [FileStoreEntry(name, FileStoreEntry.DIRECTORY) for name in directories]
         results.extend(FileStoreEntry(name, FileStoreEntry.FILE) for name in files)
         return results
@@ -1165,6 +1166,7 @@ class InMemoryAgentFileStore(AgentFileStore):
         prefix = _normalize_relative_path(directory, is_directory=True).lower()
         if prefix and not prefix.endswith("/"):
             prefix += "/"
+        prefix_depth = prefix.count("/")
         search_pattern = _compile_search_regex(regex_pattern)
 
         async with self._lock:
@@ -1178,7 +1180,7 @@ class InMemoryAgentFileStore(AgentFileStore):
                 relative_key = key[len(prefix) :]
                 if not recursive and "/" in relative_key:
                     continue
-                relative_display = display[len(prefix) :]
+                relative_display = display.split("/", prefix_depth)[-1]
                 if not _matches_glob(relative_display, glob_pattern):
                     continue
                 result = AgentFileStore.scan_content(relative_display, file_content, search_pattern)
