@@ -1861,9 +1861,15 @@ def _determine_middleware_type(middleware: Any) -> MiddlewareType:
 
         # Must have at least 2 parameters (context and call_next)
         if len(params) >= 2:
-            first_param = params[0]
-            if hasattr(first_param.annotation, "__name__"):
-                annotation_name = first_param.annotation.__name__
+            annotation = params[0].annotation
+            # Postponed (``from __future__ import annotations``) or quoted annotations are
+            # strings; match them by class name without evaluating them.
+            annotation_name = (
+                annotation.rsplit(".", 1)[-1].strip()
+                if isinstance(annotation, str)
+                else getattr(annotation, "__name__", None)
+            )
+            if annotation_name is not None:
                 if annotation_name == "AgentContext":
                     param_type = MiddlewareType.AGENT
                 elif annotation_name == "FunctionInvocationContext":
