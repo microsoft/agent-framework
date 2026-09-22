@@ -13,16 +13,20 @@ Security notes:
 - Approval requests surface header NAMES only; header values are not echoed,
   matching the posture of :mod:`._executors_http`.
 - :class:`MCPToolApprovalRequest` carries the values the resume handler will
-  use; header values are re-evaluated on resume to keep secrets out of
-  checkpoint state.
+  use; header values are re-evaluated and checked against a workflow-local
+  keyed binding. Changed or unverifiable headers require fresh approval.
+  The key stays in trusted host checkpoint state, never in approval payloads;
+  header values are not checkpointed.
 - Tool outputs flow back into agent conversations through ``conversationId``
   and through Tool-role messages emitted to ``output.messages``. They share
   the same prompt-injection risk surface as ``HttpRequestAction``: workflow
   authors must trust the MCP server they invoke.
 """
 
+import hmac
 import json
 import logging
+import secrets
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -53,6 +57,7 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
+_HEADER_BINDING_KEY = "_declarative_mcp_header_binding_key"
 
 
 # ---------------------------------------------------------------------------
@@ -74,6 +79,8 @@ class MCPToolApprovalRequest:
         connection_name: Connection identifier the invocation will use.
         metadata: Internal routing data pinned at approval-request time
             (e.g. ``conversation_id``) for use by the resume handler.
+        header_binding: Opaque binding of the reviewed headers. The verification
+            key is retained separately in trusted workflow state.
     """
 
     request_id: str
@@ -84,6 +91,7 @@ class MCPToolApprovalRequest:
     header_names: list[str] = field(default_factory=lambda: [])
     connection_name: str | None = None
     metadata: dict[str, Any] = field(default_factory=lambda: {})
+    header_binding: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -156,7 +164,8 @@ class InvokeMcpToolActionExecutor(DeclarativeActionExecutor):
     - When ``requireApproval=true``: emits a :class:`MCPToolApprovalRequest`
       via ``ctx.request_info()`` and yields. On resume, the response is
       checked; on rejection, ``output.result`` is set to ``"Error: ..."`` and
-      no tool call is made.
+      no tool call is made. Changed headers, legacy unbound headers, or a
+      missing verification state require another approval.
     - On success: parses each :class:`agent_framework.Content` output (text →
       JSON-first / data / uri → URI string) and assigns the parsed list to
       ``output.result``. Builds a single Tool-role :class:`Message`
@@ -220,29 +229,6 @@ class InvokeMcpToolActionExecutor(DeclarativeActionExecutor):
         output_messages_path = _get_output_path(self._action_def, "messages")
         output_result_path = _get_output_path(self._action_def, "result")
 
-        if require_approval:
-            request_id = str(uuid.uuid4())
-            conversation_id = _evaluate_conversation_id(state, conversation_id_expr)
-            request = MCPToolApprovalRequest(
-                request_id=request_id,
-                tool_name=tool_name,
-                server_url=server_url,
-                server_label=server_label,
-                arguments=arguments,
-                header_names=sorted(headers.keys()),
-                connection_name=connection_name,
-                metadata={"conversation_id": conversation_id},
-            )
-            logger.info(
-                "%s: requesting approval for MCP tool '%s' on '%s'",
-                self.__class__.__name__,
-                tool_name,
-                server_url,
-            )
-            await ctx.request_info(request, ToolApprovalResponse, request_id=request_id)
-            return
-
-        # No approval required - invoke directly.
         invocation = MCPToolInvocation(
             server_url=server_url,
             tool_name=tool_name,
@@ -251,6 +237,12 @@ class InvokeMcpToolActionExecutor(DeclarativeActionExecutor):
             headers=headers,
             connection_name=connection_name,
         )
+        if require_approval:
+            await self._request_approval(
+                invocation, {"conversation_id": _evaluate_conversation_id(state, conversation_id_expr)}, ctx
+            )
+            return
+
         result = await self._invoke_with_narrow_catch(invocation)
         await self._process_result(
             ctx=ctx,
@@ -265,6 +257,54 @@ class InvokeMcpToolActionExecutor(DeclarativeActionExecutor):
 
     # ----- Approval response handler ------------------------------------------
 
+    def _bind_headers(
+        self,
+        ctx: WorkflowContext[ActionComplete, str],
+        request_id: str,
+        headers: Mapping[str, str],
+        *,
+        create_key: bool = False,
+    ) -> str | None:
+        key = ctx.state.get(_HEADER_BINDING_KEY, None)
+        if key is None:
+            if not create_key:
+                return None
+            key = secrets.token_hex(32)
+            ctx.state.set(_HEADER_BINDING_KEY, key)
+        if not isinstance(key, str) or len(key) != 64 or any(char not in "0123456789abcdef" for char in key):
+            raise ValueError("Invalid MCP approval header binding state.")
+        # Stable sorting preserves the order of duplicate case-insensitive names.
+        canonical_headers = sorted(((name.lower(), value) for name, value in headers.items()), key=lambda item: item[0])
+        payload = json.dumps(
+            [request_id, canonical_headers],
+            ensure_ascii=True,
+            separators=(",", ":"),
+        ).encode()
+        return hmac.digest(key.encode(), payload, "sha256").hex()
+
+    async def _request_approval(
+        self,
+        invocation: MCPToolInvocation,
+        metadata: dict[str, Any],
+        ctx: WorkflowContext[ActionComplete, str],
+    ) -> None:
+        request_id = str(uuid.uuid4())
+        request = MCPToolApprovalRequest(
+            request_id=request_id,
+            tool_name=invocation.tool_name,
+            server_url=invocation.server_url,
+            server_label=invocation.server_label,
+            arguments=invocation.arguments,
+            header_names=sorted(invocation.headers),
+            connection_name=invocation.connection_name,
+            metadata=metadata,
+            header_binding=(
+                self._bind_headers(ctx, request_id, invocation.headers, create_key=True) if invocation.headers else None
+            ),
+        )
+        logger.info("%s: requesting approval for MCP tool '%s'", self.__class__.__name__, invocation.tool_name)
+        await ctx.request_info(request, ToolApprovalResponse, request_id=request_id)
+
     @response_handler
     async def handle_approval_response(
         self,
@@ -272,7 +312,7 @@ class InvokeMcpToolActionExecutor(DeclarativeActionExecutor):
         response: ToolApprovalResponse,
         ctx: WorkflowContext[ActionComplete, str],
     ) -> None:
-        """Resume the invocation using the values pinned on ``original_request``."""
+        """Resume the pinned operation only with the reviewed header context."""
         state = self._get_state(ctx.state)
 
         tool_name = original_request.tool_name
@@ -303,6 +343,20 @@ class InvokeMcpToolActionExecutor(DeclarativeActionExecutor):
             headers=self._evaluate_headers(state, self._action_def.get("headers")),
             connection_name=getattr(original_request, "connection_name", None),
         )
+        if invocation.headers or original_request.header_names:
+            binding = getattr(original_request, "header_binding", None)
+            expected_binding = self._bind_headers(ctx, original_request.request_id, invocation.headers)
+            if (
+                not isinstance(binding, str)
+                or expected_binding is None
+                or not hmac.compare_digest(binding.encode(), expected_binding.encode())
+            ):
+                logger.warning(
+                    "%s: MCP header context changed or could not be verified; requesting fresh approval.",
+                    self.__class__.__name__,
+                )
+                await self._request_approval(invocation, dict(metadata), ctx)
+                return
         result = await self._invoke_with_narrow_catch(invocation)
         await self._process_result(
             ctx=ctx,
