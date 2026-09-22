@@ -25,11 +25,10 @@ namespace Microsoft.Agents.AI.A2A;
 /// that can be used to poll for results or reconnect to the task's response stream.
 /// </para>
 /// <para>
-/// Using a continuation token requires a session already bound to the task's conversation by its
-/// context ID. Reuse the original session, restore it from serialized state, or explicitly bind one using
-/// <see cref="CreateSessionAsync(string)"/> or <see cref="CreateSessionAsync(string, string)"/>.
-/// A new session without a context ID is rejected because it has no expected conversation against which
-/// to validate the returned task, and could otherwise adopt an unrelated task's conversation.
+/// A continuation token identifies the task to resume; a context ID is not required.
+/// Reusing or restoring the original session preserves any known conversation and task state.
+/// When both the session and a response provide a non-empty context ID, they must match.
+/// Streaming responses update the session as they arrive, so its state is retained if enumeration stops early.
 /// </para>
 /// </remarks>
 public sealed class A2AAgent : AIAgent
@@ -127,7 +126,7 @@ public sealed class A2AAgent : AIAgent
 
         this._logger.LogA2AAgentInvokingAgent(nameof(RunAsync), this.Id, this.Name);
 
-        if (GetContinuationToken(inputMessages, typedSession, options) is { } token)
+        if (GetContinuationToken(inputMessages, options) is { } token)
         {
             AgentTask agentTask = await this._a2aClient.GetTaskAsync(new GetTaskRequest { Id = token.TaskId }, cancellationToken).ConfigureAwait(false);
 
@@ -182,7 +181,7 @@ public sealed class A2AAgent : AIAgent
 
         ConfiguredCancelableAsyncEnumerable<StreamResponse> streamEvents;
 
-        if (GetContinuationToken(inputMessages, typedSession, options) is { } token)
+        if (GetContinuationToken(inputMessages, options) is { } token)
         {
             streamEvents = this.SubscribeToTaskWithFallbackAsync(token.TaskId, cancellationToken).ConfigureAwait(false);
         }
@@ -199,56 +198,47 @@ public sealed class A2AAgent : AIAgent
 
         this._logger.LogAgentChatClientInvokedAgent(nameof(RunStreamingAsync), this.Id, this.Name);
 
-        string? contextId = null;
         string? taskId = null;
         TaskState? taskState = null;
 
         await foreach (var streamResponse in streamEvents)
         {
-            AgentResponseUpdate update;
-
+            // Validate and persist each event's session state before converting or yielding it.
             switch (streamResponse.PayloadCase)
             {
                 case StreamResponseCase.Message:
                     var message = streamResponse.Message!;
-                    contextId = message.ContextId;
-                    update = this.ConvertToAgentResponseUpdate(message);
+                    UpdateSession(typedSession, message.ContextId, taskId, taskState);
+                    yield return this.ConvertToAgentResponseUpdate(message);
                     break;
 
                 case StreamResponseCase.Task:
                     var task = streamResponse.Task!;
-                    contextId = task.ContextId;
                     taskId = task.Id;
                     taskState = task.Status.State;
-                    update = this.ConvertToAgentResponseUpdate(task);
+                    UpdateSession(typedSession, task.ContextId, taskId, taskState);
+                    yield return this.ConvertToAgentResponseUpdate(task);
                     break;
 
                 case StreamResponseCase.StatusUpdate:
                     var statusUpdate = streamResponse.StatusUpdate!;
-                    contextId = statusUpdate.ContextId;
                     taskId = statusUpdate.TaskId;
                     taskState = statusUpdate.Status.State;
-                    update = this.ConvertToAgentResponseUpdate(statusUpdate);
+                    UpdateSession(typedSession, statusUpdate.ContextId, taskId, taskState);
+                    yield return this.ConvertToAgentResponseUpdate(statusUpdate);
                     break;
 
                 case StreamResponseCase.ArtifactUpdate:
                     var artifactUpdate = streamResponse.ArtifactUpdate!;
-                    contextId = artifactUpdate.ContextId;
                     taskId = artifactUpdate.TaskId;
-                    update = this.ConvertToAgentResponseUpdate(artifactUpdate);
+                    taskState = typedSession.TaskId == taskId ? typedSession.TaskState : null;
+                    UpdateSession(typedSession, artifactUpdate.ContextId, taskId, taskState);
+                    yield return this.ConvertToAgentResponseUpdate(artifactUpdate);
                     break;
 
                 default:
                     throw new NotSupportedException($"Only message, task, task update events are supported from A2A agents. Received: {streamResponse.PayloadCase}");
             }
-
-            // The session is validated and updated before the update is surfaced so that a response
-            // belonging to a different context is rejected before any of its content reaches the caller,
-            // and so that a stream abandoned part way through still leaves the session bound to the
-            // context and task it observed, allowing the caller to resume it later.
-            UpdateSession(typedSession, contextId, taskId, taskState);
-
-            yield return update;
         }
     }
 
@@ -366,14 +356,18 @@ public sealed class A2AAgent : AIAgent
 
         // Surface cases where the A2A agent responds with a response that
         // has a different context Id than the session's conversation Id.
-        if (session.ContextId is not null && contextId is not null && session.ContextId != contextId)
+        if (!string.IsNullOrEmpty(session.ContextId) && !string.IsNullOrEmpty(contextId) && session.ContextId != contextId)
         {
             throw new InvalidOperationException(
                 $"The {nameof(contextId)} returned from the A2A agent is different from the conversation Id of the provided {nameof(AgentSession)}.");
         }
 
-        // Assign a server-generated context Id to the session if it's not already set.
-        session.ContextId ??= contextId;
+        // An omitted or empty optional context Id does not replace an established conversation.
+        if (!string.IsNullOrEmpty(contextId))
+        {
+            session.ContextId = contextId;
+        }
+
         session.TaskId = taskId;
         session.TaskState = taskState;
     }
@@ -403,18 +397,13 @@ public sealed class A2AAgent : AIAgent
         return a2aMessage;
     }
 
-    private static A2AContinuationToken? GetContinuationToken(IEnumerable<ChatMessage> messages, A2AAgentSession session, AgentRunOptions? options = null)
+    private static A2AContinuationToken? GetContinuationToken(IEnumerable<ChatMessage> messages, AgentRunOptions? options = null)
     {
         if (options?.ContinuationToken is ResponseContinuationToken token)
         {
             if (messages.Any())
             {
                 throw new InvalidOperationException("Messages are not allowed when continuing a background response using a continuation token.");
-            }
-
-            if (string.IsNullOrWhiteSpace(session.ContextId))
-            {
-                throw new InvalidOperationException("A session with an existing context Id must be provided when using a continuation token.");
             }
 
             return A2AContinuationToken.FromToken(token);
