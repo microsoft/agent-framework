@@ -102,6 +102,10 @@ internal sealed class WorkflowInfo
         return true;
     }
 
+    /// <summary>
+    /// Compares saved and current edges in both directions, consuming each match so duplicate edge multiplicity is preserved;
+    /// a LINQ membership comparison would not enforce this one-to-one matching.
+    /// </summary>
     private static bool EdgesMatch(IReadOnlyList<EdgeInfo> savedEdges, IReadOnlyCollection<Edge> currentEdges)
     {
         List<EdgeInfo> unmatchedEdges = [.. savedEdges];

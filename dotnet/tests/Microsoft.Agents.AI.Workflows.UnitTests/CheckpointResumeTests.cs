@@ -589,15 +589,16 @@ public class CheckpointResumeTests
         }
 
         Assert.NotNull(checkpoint);
+        CheckpointInfo nonNullCheckpoint = checkpoint;
         Checkpoint storedCheckpoint = await ((ICheckpointManager)checkpointManager)
-            .LookupCheckpointAsync(checkpoint.SessionId, checkpoint);
+            .LookupCheckpointAsync(nonNullCheckpoint.SessionId, nonNullCheckpoint);
         Assert.Equal(2, storedCheckpoint.RunnerData.QueuedMessages.Values.Sum(messages => messages.Count));
 
         // Act
         ValueTask<StreamingRun> resumeTask = env.WithCheckpointing(checkpointManager)
                                                 .ResumeStreamingAsync(
                                                     CreateConditionalRoutingWorkflow(duplicateFirstTarget: true),
-                                                    checkpoint);
+                                                    nonNullCheckpoint);
 
         // Assert
         InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(
