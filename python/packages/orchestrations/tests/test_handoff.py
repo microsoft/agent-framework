@@ -359,6 +359,11 @@ async def test_handoff_user_response_routing(
     assert second_request.source_executor_id == specialist.name
     assert len(triage_client.received_messages) == expected_start_agent_calls
     assert len(specialist_client.received_messages) == 2
+    if return_to_previous is False:
+        assert any(
+            message.role == "user" and message.text == "Additional details"
+            for message in triage_client.received_messages[-1]
+        )
     assert any(
         message.role == "user" and message.text == "Additional details"
         for message in specialist_client.received_messages[-1]
