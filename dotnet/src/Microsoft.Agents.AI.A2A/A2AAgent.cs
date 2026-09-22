@@ -205,12 +205,14 @@ public sealed class A2AAgent : AIAgent
 
         await foreach (var streamResponse in streamEvents)
         {
+            AgentResponseUpdate update;
+
             switch (streamResponse.PayloadCase)
             {
                 case StreamResponseCase.Message:
                     var message = streamResponse.Message!;
                     contextId = message.ContextId;
-                    yield return this.ConvertToAgentResponseUpdate(message);
+                    update = this.ConvertToAgentResponseUpdate(message);
                     break;
 
                 case StreamResponseCase.Task:
@@ -218,7 +220,7 @@ public sealed class A2AAgent : AIAgent
                     contextId = task.ContextId;
                     taskId = task.Id;
                     taskState = task.Status.State;
-                    yield return this.ConvertToAgentResponseUpdate(task);
+                    update = this.ConvertToAgentResponseUpdate(task);
                     break;
 
                 case StreamResponseCase.StatusUpdate:
@@ -226,22 +228,28 @@ public sealed class A2AAgent : AIAgent
                     contextId = statusUpdate.ContextId;
                     taskId = statusUpdate.TaskId;
                     taskState = statusUpdate.Status.State;
-                    yield return this.ConvertToAgentResponseUpdate(statusUpdate);
+                    update = this.ConvertToAgentResponseUpdate(statusUpdate);
                     break;
 
                 case StreamResponseCase.ArtifactUpdate:
                     var artifactUpdate = streamResponse.ArtifactUpdate!;
                     contextId = artifactUpdate.ContextId;
                     taskId = artifactUpdate.TaskId;
-                    yield return this.ConvertToAgentResponseUpdate(artifactUpdate);
+                    update = this.ConvertToAgentResponseUpdate(artifactUpdate);
                     break;
 
                 default:
                     throw new NotSupportedException($"Only message, task, task update events are supported from A2A agents. Received: {streamResponse.PayloadCase}");
             }
-        }
 
-        UpdateSession(typedSession, contextId, taskId, taskState);
+            // The session is validated and updated before the update is surfaced so that a response
+            // belonging to a different context is rejected before any of its content reaches the caller,
+            // and so that a stream abandoned part way through still leaves the session bound to the
+            // context and task it observed, allowing the caller to resume it later.
+            UpdateSession(typedSession, contextId, taskId, taskState);
+
+            yield return update;
+        }
     }
 
     /// <inheritdoc/>

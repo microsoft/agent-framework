@@ -430,13 +430,93 @@ public sealed class A2AAgentTests : IDisposable
             }
         };
 
+        var updates = new List<AgentResponseUpdate>();
+
         // Act
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
         {
             await foreach (var update in this._agent.RunStreamingAsync(inputMessages, session))
             {
+                updates.Add(update);
             }
         });
+
+        // Assert - no content for the mismatched context reached the caller.
+        Assert.Empty(updates);
+        Assert.Equal("existing-context-id", a2aSession.ContextId);
+    }
+
+    [Fact]
+    public async Task RunStreamingAsync_WithLaterEventForDifferentContext_ThrowsBeforeYieldingItsContentAsync()
+    {
+        // Arrange
+        var session = await this._agent.CreateSessionAsync();
+
+        this._handler.StreamingResponsesToReturn.Add(new StreamResponse
+        {
+            Message = new Message
+            {
+                MessageId = "stream-1",
+                Role = Role.Agent,
+                Parts = [new Part { Text = "Expected content" }],
+                ContextId = "context-1"
+            }
+        });
+        this._handler.StreamingResponsesToReturn.Add(new StreamResponse
+        {
+            Message = new Message
+            {
+                MessageId = "stream-2",
+                Role = Role.Agent,
+                Parts = [new Part { Text = "Content from another context" }],
+                ContextId = "context-2"
+            }
+        });
+
+        var updates = new List<AgentResponseUpdate>();
+
+        // Act
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            await foreach (var update in this._agent.RunStreamingAsync("Test streaming", session))
+            {
+                updates.Add(update);
+            }
+        });
+
+        // Assert - the first event is surfaced, but the one belonging to another context is not.
+        var update = Assert.Single(updates);
+        Assert.Equal("Expected content", update.Text);
+        Assert.Equal("context-1", ((A2AAgentSession)session).ContextId);
+    }
+
+    [Fact]
+    public async Task RunStreamingAsync_WhenStreamIsAbandonedEarly_BindsSessionToObservedContextAsync()
+    {
+        // Arrange
+        this._handler.StreamingResponseToReturn = new StreamResponse
+        {
+            Task = new AgentTask
+            {
+                Id = "task-456",
+                ContextId = "context-789",
+                Status = new() { State = TaskState.Submitted }
+            }
+        };
+
+        var session = await this._agent.CreateSessionAsync();
+
+        // Act - imitate a stream interruption by abandoning the enumeration after the first update.
+        await foreach (var _ in this._agent.RunStreamingAsync("Start a task", session))
+        {
+            break;
+        }
+
+        // Assert - the session retains the context and task, so the stream can be resumed later.
+        var a2aSession = (A2AAgentSession)session;
+        Assert.Equal("context-789", a2aSession.ContextId);
+        Assert.Equal("task-456", a2aSession.TaskId);
+        Assert.Equal(TaskState.Submitted, a2aSession.TaskState);
     }
 
     [Fact]
@@ -1966,6 +2046,12 @@ public sealed class A2AAgentTests : IDisposable
         public StreamResponse? StreamingResponseToReturn { get; set; }
 
         /// <summary>
+        /// When populated, streaming requests emit these events in order, allowing tests to
+        /// exercise multi-event streams. Takes precedence over <see cref="StreamingResponseToReturn"/>.
+        /// </summary>
+        public List<StreamResponse> StreamingResponsesToReturn { get; } = [];
+
+        /// <summary>
         /// When set, streaming requests for SubscribeToTask will return a JSON-RPC error
         /// with this error code. Used to simulate UnsupportedOperation errors.
         /// </summary>
@@ -2090,18 +2176,25 @@ public sealed class A2AAgentTests : IDisposable
                 };
             }
             // Return the pre-configured streaming response
-            else if (this.StreamingResponseToReturn is not null)
+            else if (this.StreamingResponseToReturn is not null || this.StreamingResponsesToReturn.Count > 0)
             {
-                var jsonRpcResponse = new JsonRpcResponse
-                {
-                    Id = "response-id",
-                    Result = JsonSerializer.SerializeToNode(this.StreamingResponseToReturn, A2AJsonUtilities.DefaultOptions)
-                };
+                var streamResponses = this.StreamingResponsesToReturn.Count > 0
+                    ? this.StreamingResponsesToReturn
+                    : [this.StreamingResponseToReturn!];
 
                 var stream = new MemoryStream();
                 using (var writer = new StreamWriter(stream, Encoding.UTF8, leaveOpen: true))
                 {
-                    await writer.WriteAsync($"data: {JsonSerializer.Serialize(jsonRpcResponse, A2AJsonUtilities.DefaultOptions)}\n\n");
+                    foreach (var streamResponse in streamResponses)
+                    {
+                        var jsonRpcResponse = new JsonRpcResponse
+                        {
+                            Id = "response-id",
+                            Result = JsonSerializer.SerializeToNode(streamResponse, A2AJsonUtilities.DefaultOptions)
+                        };
+
+                        await writer.WriteAsync($"data: {JsonSerializer.Serialize(jsonRpcResponse, A2AJsonUtilities.DefaultOptions)}\n\n");
+                    }
 #pragma warning disable CA2016 // Forward the 'CancellationToken' parameter to methods; overload doesn't exist downlevel
                     await writer.FlushAsync();
 #pragma warning restore CA2016
