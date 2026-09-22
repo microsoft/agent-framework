@@ -88,6 +88,11 @@ internal sealed class RequestInfoExecutor : Executor
         Debug.Assert(this._allowWrapped);
         Throw.IfNull(message);
 
+        if (!message.PortInfo.RequestType.IsMatch(this.Port.Request))
+        {
+            throw new InvalidOperationException($"Request type {this.Port.Request} is not valid for original request, whose request type is {message.PortInfo.RequestType}");
+        }
+
         if (!message.Data.IsType(this.Port.Request, out var requestData))
         {
             throw new InvalidOperationException($"Message type {message.Data.TypeId} could not be interpreted as a value of Request Type {this.Port.Request}");
