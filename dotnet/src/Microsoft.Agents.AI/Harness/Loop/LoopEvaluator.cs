@@ -19,8 +19,8 @@ namespace Microsoft.Agents.AI;
 /// <see cref="LoopAgent"/> that consumes it.
 /// </para>
 /// <para>
-/// Out-of-the-box implementations include <see cref="AIJudgeLoopEvaluator"/>, <see cref="DelegateLoopEvaluator"/>,
-/// <see cref="CompletionMarkerLoopEvaluator"/>, and <see cref="TodoCompletionLoopEvaluator"/>. Implementations should be stateless and safe to share across
+/// Out-of-the-box implementations include <see cref="AIJudgeLoopEvaluator"/>, <see cref="DecisionLoopEvaluator"/>,
+/// <see cref="DelegateLoopEvaluator"/>, <see cref="CompletionMarkerLoopEvaluator"/>, and <see cref="TodoCompletionLoopEvaluator"/>. Implementations should be stateless and safe to share across
 /// concurrent loop runs; any per-run state must be stored on the supplied <see cref="LoopContext"/>.
 /// </para>
 /// </remarks>

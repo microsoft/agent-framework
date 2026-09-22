@@ -123,6 +123,7 @@
     <Project Path="samples/02-agents/Harness/Harness_Step03_DataProcessing/Harness_Step03_DataProcessing.csproj" />
     <Project Path="samples/02-agents/Harness/Harness_Step04_CodeExecution/Harness_Step04_CodeExecution.csproj" />
     <Project Path="samples/02-agents/Harness/Harness_Step05_Loop/Harness_Step05_Loop.csproj" />
+    <Project Path="samples/02-agents/Harness/Harness_Step06_DecisionLoop/Harness_Step06_DecisionLoop.csproj" />
   </Folder>
   <Folder Name="/Samples/02-agents/AGUI/Step05_StateManagement/">
     <Project Path="samples/02-agents/AGUI/Step05_StateManagement/Client/Client.csproj" />
@@ -632,6 +633,7 @@
     <Project Path="src/Microsoft.Agents.AI.OpenAI/Microsoft.Agents.AI.OpenAI.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Purview/Microsoft.Agents.AI.Purview.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Tools.Shell/Microsoft.Agents.AI.Tools.Shell.csproj" />
+    <Project Path="src/Microsoft.Agents.AI.TypeSafe/Microsoft.Agents.AI.TypeSafe.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Valkey/Microsoft.Agents.AI.Valkey.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Workflows.Declarative.Foundry/Microsoft.Agents.AI.Workflows.Declarative.Foundry.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Workflows.Declarative.Mcp/Microsoft.Agents.AI.Workflows.Declarative.Mcp.csproj" />
@@ -664,6 +666,7 @@
   <Folder Name="/Tests/UnitTests/">
     <Project Path="tests/Aspire.Hosting.AgentFramework.DevUI.UnitTests/Aspire.Hosting.AgentFramework.DevUI.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.A2A.UnitTests/Microsoft.Agents.AI.A2A.UnitTests.csproj" />
+    <Project Path="tests/Microsoft.Agents.AI.TypeSafe.UnitTests/Microsoft.Agents.AI.TypeSafe.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Abstractions.UnitTests/Microsoft.Agents.AI.Abstractions.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.AgentHooks.UnitTests/Microsoft.Agents.AI.AgentHooks.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Anthropic.UnitTests/Microsoft.Agents.AI.Anthropic.UnitTests.csproj" />

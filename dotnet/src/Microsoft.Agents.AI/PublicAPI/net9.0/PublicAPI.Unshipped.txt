@@ -22,3 +22,34 @@ Microsoft.Agents.AI.AgentModeProviderOptions.DisableModeSetTool.set -> void
 [MAAI001]static Microsoft.Agents.AI.OpenTelemetryAgent.DefaultSourceName.get -> string!
 [MAAI001]virtual Microsoft.Agents.AI.AgentFileStore.FindMatchingFilesAsync(string! directory, string! regexPattern, string? globPattern = null, bool recursive = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<string!>!>!
 [MAAI001]virtual Microsoft.Agents.AI.AgentFileStore.SearchAsync(string! directory, string! regexPattern, string? globPattern = null, bool recursive = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<Microsoft.Agents.AI.FileSearchResult!>!>!
+[MAAI001]Microsoft.Agents.AI.DecisionLoopEvaluator
+[MAAI001]Microsoft.Agents.AI.DecisionLoopEvaluator.DecisionLoopEvaluator(Microsoft.Agents.AI.IDecisionClient! decisionClient, Microsoft.Agents.AI.DecisionLoopEvaluatorOptions? options = null, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null) -> void
+[MAAI001]Microsoft.Agents.AI.DecisionLoopEvaluatorOptions
+[MAAI001]Microsoft.Agents.AI.DecisionLoopEvaluatorOptions.CompletedDescription.get -> string?
+[MAAI001]Microsoft.Agents.AI.DecisionLoopEvaluatorOptions.CompletedDescription.set -> void
+[MAAI001]Microsoft.Agents.AI.DecisionLoopEvaluatorOptions.CompletionQuestion.get -> string?
+[MAAI001]Microsoft.Agents.AI.DecisionLoopEvaluatorOptions.CompletionQuestion.set -> void
+[MAAI001]Microsoft.Agents.AI.DecisionLoopEvaluatorOptions.CompletionThreshold.get -> double
+[MAAI001]Microsoft.Agents.AI.DecisionLoopEvaluatorOptions.CompletionThreshold.set -> void
+[MAAI001]Microsoft.Agents.AI.DecisionLoopEvaluatorOptions.ContinueFeedbackMessage.get -> string?
+[MAAI001]Microsoft.Agents.AI.DecisionLoopEvaluatorOptions.ContinueFeedbackMessage.set -> void
+[MAAI001]Microsoft.Agents.AI.DecisionLoopEvaluatorOptions.DecisionLoopEvaluatorOptions() -> void
+[MAAI001]Microsoft.Agents.AI.DecisionLoopEvaluatorOptions.FailureBehavior.get -> Microsoft.Agents.AI.DecisionLoopFailureBehavior
+[MAAI001]Microsoft.Agents.AI.DecisionLoopEvaluatorOptions.FailureBehavior.set -> void
+[MAAI001]Microsoft.Agents.AI.DecisionLoopEvaluatorOptions.IncompleteDescription.get -> string?
+[MAAI001]Microsoft.Agents.AI.DecisionLoopEvaluatorOptions.IncompleteDescription.set -> void
+[MAAI001]Microsoft.Agents.AI.DecisionLoopEvaluatorOptions.StateFactory.get -> System.Func<Microsoft.Agents.AI.LoopContext!, System.Text.Json.JsonElement>?
+[MAAI001]Microsoft.Agents.AI.DecisionLoopEvaluatorOptions.StateFactory.set -> void
+[MAAI001]Microsoft.Agents.AI.DecisionLoopEvaluatorOptions.TransientFailureBehavior.get -> Microsoft.Agents.AI.DecisionLoopFailureBehavior?
+[MAAI001]Microsoft.Agents.AI.DecisionLoopEvaluatorOptions.TransientFailureBehavior.set -> void
+[MAAI001]Microsoft.Agents.AI.DecisionLoopFailureBehavior
+[MAAI001]Microsoft.Agents.AI.DecisionLoopFailureBehavior.Continue = 1 -> Microsoft.Agents.AI.DecisionLoopFailureBehavior
+[MAAI001]Microsoft.Agents.AI.DecisionLoopFailureBehavior.DeferToNextEvaluator = 2 -> Microsoft.Agents.AI.DecisionLoopFailureBehavior
+[MAAI001]Microsoft.Agents.AI.DecisionLoopFailureBehavior.Throw = 0 -> Microsoft.Agents.AI.DecisionLoopFailureBehavior
+[MAAI001]const Microsoft.Agents.AI.DecisionLoopEvaluator.CompletionQuestionId = "task_completed" -> string!
+[MAAI001]const Microsoft.Agents.AI.DecisionLoopEvaluator.DefaultCompletedDescription = "The original request has been fully addressed and no material requested work remains." -> string!
+[MAAI001]const Microsoft.Agents.AI.DecisionLoopEvaluator.DefaultCompletionQuestion = "Has the agent fully addressed the user's original request?" -> string!
+[MAAI001]const Microsoft.Agents.AI.DecisionLoopEvaluator.DefaultCompletionThreshold = 0.9 -> double
+[MAAI001]const Microsoft.Agents.AI.DecisionLoopEvaluator.DefaultContinueFeedbackMessage = "The original request is not yet fully addressed. Continue working on it." -> string!
+[MAAI001]const Microsoft.Agents.AI.DecisionLoopEvaluator.DefaultIncompleteDescription = "Material requested work remains incomplete or missing." -> string!
+[MAAI001]override Microsoft.Agents.AI.DecisionLoopEvaluator.EvaluateAsync(Microsoft.Agents.AI.LoopContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.LoopEvaluation!>

@@ -58,6 +58,7 @@ public sealed class FeatureRegistryTests
             ["foundry.agent"] = "Microsoft.Agents.AI.Foundry",
             ["foundry.memory"] = "Microsoft.Agents.AI.Foundry",
             ["foundry.evals"] = "Microsoft.Agents.AI.Foundry",
+            ["typesafe"] = "Microsoft.Agents.AI.TypeSafe",
             ["foundry.toolbox"] = "Microsoft.Agents.AI.Foundry",
             ["foundry_hosting"] = "Microsoft.Agents.AI.Foundry.Hosting",
             ["openai"] = "Microsoft.Agents.AI.OpenAI",

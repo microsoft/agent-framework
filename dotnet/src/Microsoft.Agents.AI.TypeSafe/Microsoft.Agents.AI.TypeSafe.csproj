@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>$(TargetFrameworksCore)</TargetFrameworks>
+    <VersionSuffix>preview</VersionSuffix>
+    <NoWarn>$(NoWarn);MEAI001;MAAI001</NoWarn>
+  </PropertyGroup>
+
+  <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
+
+  <PropertyGroup>
+    <InjectSharedThrow>true</InjectSharedThrow>
+    <InjectSharedDiagnosticIds>true</InjectSharedDiagnosticIds>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!-- NuGet Package Settings -->
+    <Title>Microsoft Agent Framework TypeSafe</Title>
+    <Description>Provides an IDecisionClient implementation for TypeSafe AI's System One decision models (Jev) for the Microsoft Agent Framework.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Microsoft.Agents.AI.Abstractions\Microsoft.Agents.AI.Abstractions.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Microsoft.Agents.AI.TypeSafe.UnitTests" />
+  </ItemGroup>
+
+</Project>

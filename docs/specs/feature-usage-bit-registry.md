@@ -248,7 +248,8 @@ only to approved first-party endpoints.
 | 72 | `local_codeact` | Local Python CodeAct provider | `Microsoft.Agents.AI.LocalCodeAct.LocalCodeActProvider` |
 | 73 | `hosting.a2a` | A2A hosting endpoints | `Microsoft.AspNetCore.Builder.A2AEndpointRouteBuilderExtensions.MapA2AJsonRpc` |
 | 74 | `hosting.openai` | OpenAI-compatible hosting endpoints | `Microsoft.AspNetCore.Builder.MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExtensions.MapOpenAIResponses` |
-| 75–127 | _reserved_ | future packages | — |
+| 75 | `typesafe` | TypeSafe System One decision client | `Microsoft.Agents.AI.TypeSafe.TypeSafeDecisionClient` |
+| 76–127 | _reserved_ | future packages | — |
 
 ## Opt-out
 

@@ -25,7 +25,7 @@ namespace Microsoft.Agents.AI;
 /// After each run of the wrapped agent, the configured evaluators are asked whether to re-invoke the agent and what
 /// feedback to carry forward. This enables patterns such as iterative refinement, working through a task list, or
 /// judging whether the original request was answered. Out-of-the-box evaluators include
-/// <see cref="AIJudgeLoopEvaluator"/>, <see cref="CompletionMarkerLoopEvaluator"/>, and
+/// <see cref="AIJudgeLoopEvaluator"/>, <see cref="DecisionLoopEvaluator"/>, <see cref="CompletionMarkerLoopEvaluator"/>, and
 /// <see cref="DelegateLoopEvaluator"/>.
 /// </para>
 /// <para>
@@ -33,7 +33,9 @@ namespace Microsoft.Agents.AI;
 /// asks to re-invoke wins: its feedback drives the next iteration and the remaining evaluators are not evaluated. The
 /// loop stops only when every evaluator asks to stop. Consequently, evaluator order is priority order and
 /// <see cref="LoopEvaluation.Stop"/> means "this evaluator does not request continuation" rather than a veto that
-/// terminates the loop; place stop-only guards accordingly.
+/// terminates the loop; place stop-only guards accordingly. This ordering also enables a cheap-then-strong cascade: a
+/// <see cref="DecisionLoopEvaluator"/> placed before an <see cref="AIJudgeLoopEvaluator"/> skips the expensive judge
+/// whenever the cheap decision requests continuation, and lets the judge verify whenever it does not.
 /// </para>
 /// <para>
 /// The caller's initial messages are sent to the wrapped agent exactly once. By default (when

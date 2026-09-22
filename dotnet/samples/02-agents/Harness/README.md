@@ -10,6 +10,7 @@ Samples demonstrating the [Harness AIContextProviders](../../../src/Microsoft.Ag
 | [Harness_Step02_Research_WithBackgroundAgents](./Harness_Step02_Research_WithBackgroundAgents/README.md) | Using BackgroundAgentsProvider to delegate stock price lookups to a web-search background agent concurrently |
 | [Harness_Step03_DataProcessing](./Harness_Step03_DataProcessing/README.md) | Using FileAccessProvider to give an agent access to CSV data files for reading, analysis, and output generation |
 | [Harness_Step05_Loop](./Harness_Step05_Loop/README.md) | Wrapping a HarnessAgent with the LoopAgent decorator to re-invoke it until a configured LoopEvaluator (completion marker, predicate, AI judge, or approval-aware loop) decides to stop |
+| [Harness_Step06_DecisionLoop](./Harness_Step06_DecisionLoop/README.md) | Using DecisionLoopEvaluator with an IDecisionClient (TypeSafe Jev via the Microsoft.Agents.AI.TypeSafe package) to judge loop completion from a model-reported probability, alone and as a cheap-then-strong cascade in front of AIJudgeLoopEvaluator, plus a direct mixed batch of binary, choice, and score decisions |
 
 ## Build your own claw blog series
 
@@ -31,6 +32,8 @@ corresponding types) before enabling them in production:
   [Harness_Step02_Research_WithBackgroundAgents](./Harness_Step02_Research_WithBackgroundAgents/README.md)).
 - **`AIJudgeLoopEvaluator`** (used by `LoopAgent`) — sends conversation content to a second, external
   judge chat client (see [Harness_Step05_Loop](./Harness_Step05_Loop/README.md)).
+- **`DecisionLoopEvaluator`** (used by `LoopAgent`) — sends the projected request and latest response to an
+  external `IDecisionClient` on every iteration (see [Harness_Step06_DecisionLoop](./Harness_Step06_DecisionLoop/README.md)).
 - **`AgentSkillsProvider`** with external skill sources (e.g. `UseMcpSkills`) — loads skill content,
   and potentially scripts, from a remote source (see
   [AgentSkills samples](../AgentSkills/Agent_Step06_McpBasedSkills/README.md)).
