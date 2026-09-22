@@ -2383,7 +2383,12 @@ class FileHistoryProvider(HistoryProvider):
         state: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
-        """Append messages to the session's history file."""
+        """Append messages to the session's history file.
+
+        Raises:
+            ValueError: If a serialized MessagePack record exceeds 64 MiB. All new
+                records are validated before any are appended.
+        """
         mark_feature_used(FeatureIndex.CORE_FILE_HISTORY_PROVIDER)
         del state, kwargs
         if not messages:
@@ -2421,9 +2426,17 @@ class FileHistoryProvider(HistoryProvider):
                 new_messages = filter_new_messages(existing_messages, messages)
                 if not new_messages:
                     return
+                serialized_records: list[bytes] = []
+                for message in new_messages:
+                    serialized = _DEFAULT_MSGPACK_ENCODER.encode(message.to_dict())
+                    if len(serialized) > self._MAX_MSGPACK_RECORD_BYTES:
+                        raise ValueError(
+                            "MessagePack history record exceeds the maximum size of "
+                            f"{self._MAX_MSGPACK_RECORD_BYTES} bytes."
+                        )
+                    serialized_records.append(serialized)
                 with file_path.open("ab") as file_handle:
-                    for message in new_messages:
-                        serialized = _DEFAULT_MSGPACK_ENCODER.encode(message.to_dict())
+                    for serialized in serialized_records:
                         file_handle.write(len(serialized).to_bytes(self._MSGPACK_RECORD_HEADER_BYTES, "big"))
                         file_handle.write(serialized)
 

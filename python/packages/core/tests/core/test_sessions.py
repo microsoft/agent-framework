@@ -1636,6 +1636,50 @@ class TestFileHistoryProvider:
         assert first_record_length > 0
         assert raw[4 : 4 + first_record_length] == msgspec.msgpack.encode(messages[0].to_dict())
 
+    @pytest.mark.parametrize("existing_history", [False, True])
+    @pytest.mark.parametrize("include_valid_message", [False, True])
+    async def test_msgpack_rejects_oversized_record_without_corrupting_history(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        existing_history: bool,
+        include_valid_message: bool,
+    ) -> None:
+        provider = FileHistoryProvider(tmp_path, serialization_format="msgpack")
+        monkeypatch.setattr(FileHistoryProvider, "_MAX_MSGPACK_RECORD_BYTES", 256)
+        expected_texts = ["hello"] if existing_history else []
+        if existing_history:
+            await provider.save_messages("binary-history", [Message(role="user", contents=["hello"])])
+        session_file = provider._session_file_path("binary-history")
+        original_bytes = session_file.read_bytes() if existing_history else None
+        messages = [Message(role="assistant", contents=["x" * 256])]
+        if include_valid_message:
+            messages.insert(0, Message(role="user", contents=["valid"]))
+
+        with pytest.raises(ValueError, match="MessagePack history record.*256"):
+            await provider.save_messages("binary-history", messages)
+
+        if original_bytes is None:
+            assert not session_file.exists()
+        else:
+            assert session_file.read_bytes() == original_bytes
+        assert [message.text for message in await provider.get_messages("binary-history")] == expected_texts
+        await provider.save_messages("binary-history", [Message(role="assistant", contents=["hi there"])])
+        assert [message.text for message in await provider.get_messages("binary-history")] == [
+            *expected_texts,
+            "hi there",
+        ]
+
+    async def test_msgpack_accepts_record_at_size_limit(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        provider = FileHistoryProvider(tmp_path, serialization_format="msgpack")
+        message = Message(role="user", contents=["hello"])
+        record_size = len(msgspec.msgpack.encode(message.to_dict()))
+        monkeypatch.setattr(FileHistoryProvider, "_MAX_MSGPACK_RECORD_BYTES", record_size)
+
+        await provider.save_messages("binary-history", [message])
+
+        assert [stored.text for stored in await provider.get_messages("binary-history")] == ["hello"]
+
     @pytest.mark.parametrize("serialization_format", ["json", "msgpack"])
     async def test_save_messages_deduplicates_replayed_transcript(
         self, tmp_path: Path, serialization_format: Literal["json", "msgpack"]
