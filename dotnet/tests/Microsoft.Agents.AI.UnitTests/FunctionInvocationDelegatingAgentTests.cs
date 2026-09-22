@@ -2495,7 +2495,7 @@ public sealed class FunctionInvocationDelegatingAgentTests
         // Arrange
         var originalFunction = AIFunctionFactory.Create(() => "Original result", "TestFunction", "A test function");
         var replacementFunction = AIFunctionFactory.Create(() => "Replacement result", "ReplacementFunction", "A replacement function");
-        var callbackReturned = new TaskCompletionSource();
+        var callbackReturned = new TaskCompletionSource<bool>();
         Task<Exception?>? escapedWork = null;
 
         var (mockChatClient, _) = CreateMockChatClientForFunctionCall("TestFunction");
@@ -2518,7 +2518,7 @@ public sealed class FunctionInvocationDelegatingAgentTests
         // Act
         var options = new ChatClientAgentRunOptions(new ChatOptions { Tools = [originalFunction] });
         await middleware.RunAsync([new(ChatRole.User, "Test message")], null, options, CancellationToken.None);
-        callbackReturned.SetResult();
+        callbackReturned.SetResult(true);
 
         // Assert
         Assert.NotNull(escapedWork);
