@@ -1,10 +1,10 @@
 [project]
 name = "agent-framework-postgres"
-description = "PostgreSQL and pgvector integration for Microsoft Agent Framework."
+description = "PostgreSQL vector storage, durable memory, and workflow checkpoints for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com" }]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0a260910"
+version = "1.0.0a260914"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -44,7 +44,10 @@ addopts = "-ra -q -r fEX"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 timeout = 120
-markers = ["integration: requires an explicitly designated PostgreSQL test database with pgvector"]
+markers = [
+    "flaky: depends on an external service and can be retried",
+    "integration: requires an explicitly designated PostgreSQL test database with pgvector",
+]
 
 [tool.coverage.run]
 omit = ["**/__init__.py"]

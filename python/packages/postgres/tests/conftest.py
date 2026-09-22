@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
+from collections.abc import Callable
 from uuid import uuid4
 
 import pytest
 from agent_framework import VectorStoreCollectionDefinition, VectorStoreField
 from psycopg import AsyncConnection, sql
+
+
+def pytest_asyncio_loop_factories() -> dict[str, Callable[[], asyncio.AbstractEventLoop]]:
+    return {"selector": asyncio.SelectorEventLoop}
 
 
 @pytest.fixture

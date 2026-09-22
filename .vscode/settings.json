@@ -1,3 +1,6 @@
 {
-	"dotnet.defaultSolution": "dotnet/agent-framework-src-and-tests.slnf"
+    "chat.tools.terminal.autoApprove": {
+        "uv": true
+    },
+    "dotnet.defaultSolution": "dotnet/agent-framework-src-and-tests.slnf"
 }

@@ -49,6 +49,12 @@ Once completed, please proceed to the other samples listed below.
 |--------|----------|
 | [Shared States](./SharedStates) | Demonstrates shared states between executors for data sharing and coordination |
 
+### Checkpoint Recovery
+
+| Sample | Concepts |
+|--------|----------|
+| [PostgreSQL Checkpointing](./Checkpoint/PostgresCheckpointing) | Persist an approval workflow and resume it in a second process using PostgreSQL |
+
 ### Conditional Edges
 
 | Sample | Concepts |
