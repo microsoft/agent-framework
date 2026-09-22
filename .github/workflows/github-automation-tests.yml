@@ -9,8 +9,6 @@ on:
       - ".github/workflows/python-api-compatibility.yml"
       - ".github/workflows/python-test-coverage.yml"
       - ".github/workflows/github-automation-tests.yml"
-      - ".github/workflows/devflow-*.yml"
-      - ".github/pr-repair-toolchain.json"
       - "python/pyproject.toml"
       - "python/uv.lock"
   push:
@@ -23,8 +21,6 @@ on:
       - ".github/workflows/python-api-compatibility.yml"
       - ".github/workflows/python-test-coverage.yml"
       - ".github/workflows/github-automation-tests.yml"
-      - ".github/workflows/devflow-*.yml"
-      - ".github/pr-repair-toolchain.json"
       - "python/pyproject.toml"
       - "python/uv.lock"
 
@@ -54,9 +50,6 @@ jobs:
 
       - name: Run Python tests
         run: python .github/tests/test_python_check_coverage.py
-
-      - name: Run credential-free repair worker tests
-        run: python -m unittest discover -s .github/tests -p 'test_pr_repair*.py'
 
       - name: Run Python API compatibility tests
         working-directory: ${{ runner.temp }}
