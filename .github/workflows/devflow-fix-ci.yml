@@ -7,6 +7,11 @@ on:
 permissions:
   contents: read
 
+env:
+  DEVFLOW_REPOSITORY: ${{ vars.DF_REPO }}
+  TARGET_REPO_PATH: ${{ github.workspace }}
+  DEVFLOW_PATH: ${{ github.workspace }}/devflow
+
 jobs:
   snapshot:
     if: >-
@@ -15,12 +20,9 @@ jobs:
       contains(github.event.comment.body, '/fix')
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    concurrency:
-      group: devflow-repair-gateway-${{ github.repository }}-${{ github.event.issue.number }}
-      cancel-in-progress: false
     outputs:
-      snapshot: ${{ steps.freeze.outputs.snapshot }}
-      sha256: ${{ steps.freeze.outputs.sha256 }}
+      gateway: ${{ steps.freeze.outputs.gateway }}
+      gateway_sha256: ${{ steps.freeze.outputs.gateway_sha256 }}
     steps:
       - name: Freeze public PR revision and command before authorization
         id: freeze
@@ -49,20 +51,29 @@ jobs:
             };
             const json = JSON.stringify(snapshot);
             if (Buffer.byteLength(json) > 24000) throw new Error('Gateway snapshot exceeds size limit');
-            core.setOutput('snapshot', Buffer.from(json).toString('base64'));
-            core.setOutput('sha256', require('node:crypto').createHash('sha256').update(json).digest('hex'));
+            core.setOutput('gateway', Buffer.from(json).toString('base64'));
+            core.setOutput('gateway_sha256', require('node:crypto').createHash('sha256').update(json).digest('hex'));
 
-  authorize_and_dispatch:
+  authorize:
     needs: snapshot
-    if: ${{ needs.snapshot.outputs.sha256 != '' }}
+    if: ${{ needs.snapshot.outputs.gateway_sha256 != '' }}
     runs-on: ubuntu-latest
     environment: github-app-auth
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       contents: read
+      actions: read
       id-token: write
+    outputs:
+      snapshot: ${{ steps.intake.outputs.snapshot }}
+      snapshot_sha256: ${{ steps.intake.outputs.snapshot_sha256 }}
+      controller_sha: ${{ steps.intake.outputs.controller_sha }}
+      automation_sha: ${{ steps.intake.outputs.automation_sha }}
+      target_repo: ${{ steps.intake.outputs.target_repo }}
+      pr_number: ${{ steps.intake.outputs.pr_number }}
+      command: ${{ steps.intake.outputs.command }}
     steps:
-      - name: Checkout existing trusted authorization helpers
+      - name: Checkout trusted public authorization helpers
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
@@ -70,7 +81,8 @@ jobs:
             .github/actions/github-app-token
             .github/scripts/check_team_membership.js
           persist-credentials: false
-      - name: Get team membership token
+
+      - name: Get source-repository App token
         id: auth
         uses: ./.github/actions/github-app-token
         with:
@@ -83,19 +95,24 @@ jobs:
           github-app-client-id: ${{ secrets.GH_APP_CLIENT_ID }}
           github-app-installation-id: ${{ secrets.GH_APP_INSTALLATION_ID }}
           repository: ${{ github.repository }}
+          contents-permission: read
+          actions-permission: read
+          issues-permission: write
+          pull-requests-permission: read
+
       - name: Authorize the frozen command requester
         id: team
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          SNAPSHOT: ${{ needs.snapshot.outputs.snapshot }}
-          SNAPSHOT_SHA256: ${{ needs.snapshot.outputs.sha256 }}
+          GATEWAY: ${{ needs.snapshot.outputs.gateway }}
+          GATEWAY_SHA256: ${{ needs.snapshot.outputs.gateway_sha256 }}
           TEAM_NAME: ${{ secrets.DEVELOPER_TEAM }}
         with:
           github-token: ${{ steps.auth.outputs.token }}
           script: |
-            const json = Buffer.from(process.env.SNAPSHOT, 'base64').toString('utf8');
+            const json = Buffer.from(process.env.GATEWAY, 'base64').toString('utf8');
             const digest = require('node:crypto').createHash('sha256').update(json).digest('hex');
-            if (digest !== process.env.SNAPSHOT_SHA256) throw new Error('Gateway snapshot digest mismatch');
+            if (digest !== process.env.GATEWAY_SHA256) throw new Error('Gateway snapshot digest mismatch');
             const snapshot = JSON.parse(json);
             if (snapshot.repo !== `${context.repo.owner}/${context.repo.repo}` ||
                 snapshot.comment_id !== context.payload.comment.id || snapshot.requester !== context.payload.comment.user.login ||
@@ -107,22 +124,373 @@ jobs:
             const result = await checkTeamMembership({ github, context, core,
               teamSlug: process.env.TEAM_NAME, issueNumber: snapshot.pr_number, username: snapshot.requester });
             core.setOutput('permitted', result.isTeamMember && result.author === snapshot.requester ? 'true' : 'false');
-      - name: Dispatch frozen authorized request to DevFlow
+
+      - name: Checkout authorized DevFlow controller
         if: ${{ steps.team.outputs.permitted == 'true' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.DEVFLOW_REPOSITORY }}
+          ref: main
+          token: ${{ secrets.DEVFLOW_TOKEN }}
+          fetch-depth: 1
+          persist-credentials: false
+          path: devflow
+
+      - name: Pin the checked-out controller
+        if: ${{ steps.team.outputs.permitted == 'true' }}
+        id: controller
+        shell: bash
+        run: echo "sha=$(git -C "$DEVFLOW_PATH" rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - if: ${{ steps.team.outputs.permitted == 'true' }}
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+      - if: ${{ steps.team.outputs.permitted == 'true' }}
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: '0.11.x'
+          enable-cache: false
+      - name: Install trusted controller dependencies
+        if: ${{ steps.team.outputs.permitted == 'true' }}
+        run: uv sync --frozen --directory "$DEVFLOW_PATH"
+
+      - name: Validate and bind the authorized request
+        if: ${{ steps.team.outputs.permitted == 'true' }}
+        id: intake
+        env:
+          GATEWAY: ${{ needs.snapshot.outputs.gateway }}
+          GATEWAY_SHA256: ${{ needs.snapshot.outputs.gateway_sha256 }}
+          DEVFLOW_SHA: ${{ steps.controller.outputs.sha }}
+          GH_TOKEN: ${{ steps.auth.outputs.token }}
+          DEVFLOW_PUBLISH_AUTH_SOURCE: ${{ steps.auth.outputs.source }}
+          DEVFLOW_PUBLISH_AUTHORIZATION: ${{ steps.auth.outputs.authorization }}
+          PR_REPAIR_TARGET_REPOSITORY: ${{ github.repository }}
+          DEVELOPER_TEAM: ${{ secrets.DEVELOPER_TEAM }}
+        shell: bash
+        run: |
+          python3 - <<'PYTHON'
+          import base64, hashlib, os, pathlib
+          raw = base64.b64decode(os.environ['GATEWAY'], validate=True)
+          if len(raw) > 98304 or hashlib.sha256(raw).hexdigest() != os.environ['GATEWAY_SHA256']:
+              raise SystemExit('Gateway integrity mismatch')
+          (pathlib.Path(os.environ['RUNNER_TEMP']) / 'repair-gateway.json').write_bytes(raw)
+          PYTHON
+          uv run --directory "$DEVFLOW_PATH" python scripts/dispatch_pr_repair.py \
+            --phase intake --gateway "$RUNNER_TEMP/repair-gateway.json" \
+            --gateway-sha256 "$GATEWAY_SHA256" --out-dir "$RUNNER_TEMP/repair-intake"
+
+      - name: Acknowledge accepted repair command
+        if: ${{ steps.intake.outputs.mode == 'repair' }}
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          github-token: ${{ steps.auth.outputs.token }}
+          script: |
+            await github.rest.reactions.createForIssueComment({
+              ...context.repo,
+              comment_id: context.payload.comment.id,
+              content: 'eyes',
+            });
+
+  repair:
+    needs: authorize
+    if: ${{ needs.authorize.outputs.snapshot_sha256 != '' }}
+    runs-on: ubuntu-latest
+    environment: github-app-auth
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+      id-token: write
+      copilot-requests: write
+    outputs:
+      status: ${{ steps.run.outputs.status }}
+      candidate_sha256: ${{ steps.run.outputs.candidate_sha256 }}
+      patch_sha256: ${{ steps.run.outputs.patch_sha256 }}
+      notice_sha256: ${{ steps.run.outputs.notice_sha256 }}
+      artifact_id: ${{ steps.artifact.outputs.artifact-id }}
+    steps:
+      - name: Checkout frozen public automation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.authorize.outputs.automation_sha }}
+          persist-credentials: false
+      - name: Checkout pinned DevFlow controller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.DEVFLOW_REPOSITORY }}
+          ref: ${{ needs.authorize.outputs.controller_sha }}
+          token: ${{ secrets.DEVFLOW_TOKEN }}
+          fetch-depth: 1
+          persist-credentials: false
+          path: devflow
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: '0.11.x'
+          enable-cache: false
+      - name: Install trusted controller dependencies
+        run: uv sync --frozen --directory "$DEVFLOW_PATH"
+      - name: Materialize the immutable authorized snapshot
+        env:
+          SNAPSHOT: ${{ needs.authorize.outputs.snapshot }}
+          SNAPSHOT_SHA256: ${{ needs.authorize.outputs.snapshot_sha256 }}
+        shell: bash
+        run: |
+          python3 - <<'PYTHON'
+          import base64, hashlib, os, pathlib
+          raw = base64.b64decode(os.environ['SNAPSHOT'], validate=True)
+          if len(raw) > 98304 or hashlib.sha256(raw).hexdigest() != os.environ['SNAPSHOT_SHA256']:
+              raise SystemExit('Snapshot integrity mismatch')
+          (pathlib.Path(os.environ['RUNNER_TEMP']) / 'repair-snapshot.json').write_bytes(raw)
+          PYTHON
+      - name: Get read-only source-repository App token
+        id: read-auth
+        uses: ./.github/actions/github-app-token
+        with:
+          mode: app
+          azure-client-id: ${{ secrets.GH_APP_AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.GH_APP_AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.GH_APP_AZURE_SUBSCRIPTION_ID }}
+          key-vault-name: ${{ secrets.GH_APP_KEY_VAULT_NAME }}
+          key-name: ${{ secrets.GH_APP_KEY_NAME }}
+          github-app-client-id: ${{ secrets.GH_APP_CLIENT_ID }}
+          github-app-installation-id: ${{ secrets.GH_APP_INSTALLATION_ID }}
+          repository: ${{ github.repository }}
+          contents-permission: read
+          actions-permission: read
+          issues-permission: read
+          pull-requests-permission: read
+      - name: Generate and verify the bounded repair
+        id: run
+        env:
+          SNAPSHOT_SHA256: ${{ needs.authorize.outputs.snapshot_sha256 }}
+          DEVFLOW_SHA: ${{ needs.authorize.outputs.controller_sha }}
+          PR_REPAIR_TARGET_REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ steps.read-auth.outputs.token }}
+          DEVFLOW_MODEL_TOKEN: ${{ github.token }}
+          DEVFLOW_PUBLISH_AUTH_SOURCE: ${{ steps.read-auth.outputs.source }}
+          DEVFLOW_PUBLISH_AUTHORIZATION: ${{ steps.read-auth.outputs.authorization }}
+        run: >-
+          uv run --directory "$DEVFLOW_PATH" python scripts/trigger_fix_ci.py --phase run
+          --snapshot "$RUNNER_TEMP/repair-snapshot.json"
+          --snapshot-sha256 "$SNAPSHOT_SHA256"
+          --out-dir "$RUNNER_TEMP/repair-output"
+      - name: Retain bounded candidate and notice artifacts
+        if: ${{ steps.run.outcome == 'success' }}
+        id: artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: repair-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/repair-output/candidate.json
+            ${{ runner.temp }}/repair-output/candidate.diff
+            ${{ runner.temp }}/repair-output/notice.json
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Get issue-reporting token
+        if: ${{ always() }}
+        id: report-auth
+        uses: ./.github/actions/github-app-token
+        with:
+          mode: app
+          azure-client-id: ${{ secrets.GH_APP_AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.GH_APP_AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.GH_APP_AZURE_SUBSCRIPTION_ID }}
+          key-vault-name: ${{ secrets.GH_APP_KEY_VAULT_NAME }}
+          key-name: ${{ secrets.GH_APP_KEY_NAME }}
+          github-app-client-id: ${{ secrets.GH_APP_CLIENT_ID }}
+          github-app-installation-id: ${{ secrets.GH_APP_INSTALLATION_ID }}
+          repository: ${{ github.repository }}
+          contents-permission: read
+          issues-permission: write
+          pull-requests-permission: read
+      - name: Report exact candidate and approval instructions
+        if: ${{ steps.run.outputs.status == 'ready' }}
+        env:
+          GH_TOKEN: ${{ steps.report-auth.outputs.token }}
+          DEVFLOW_PUBLISH_AUTH_SOURCE: ${{ steps.report-auth.outputs.source }}
+          CANDIDATE_SHA256: ${{ steps.run.outputs.candidate_sha256 }}
+          ARTIFACT_ID: ${{ steps.artifact.outputs.artifact-id }}
+          PR_REPAIR_TARGET_REPOSITORY: ${{ github.repository }}
+        run: >-
+          uv run --directory "$DEVFLOW_PATH" python scripts/report_pr_repair.py
+          --candidate "$RUNNER_TEMP/repair-output/candidate.json"
+          --candidate-sha256 "$CANDIDATE_SHA256"
+          --artifact-id "$ARTIFACT_ID"
+          --out-dir "$RUNNER_TEMP/report-output"
+      - name: Report terminal no-change result
+        if: ${{ steps.run.outputs.status == 'done' }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          DEVFLOW_REPOSITORY: ${{ vars.DF_REPO }}
-          SNAPSHOT: ${{ needs.snapshot.outputs.snapshot }}
-          SNAPSHOT_SHA256: ${{ needs.snapshot.outputs.sha256 }}
+          NOTICE_SHA256: ${{ steps.run.outputs.notice_sha256 }}
+          PR_NUMBER: ${{ needs.authorize.outputs.pr_number }}
         with:
-          github-token: ${{ secrets.DEVFLOW_TOKEN }}
+          github-token: ${{ steps.report-auth.outputs.token }}
           script: |
-            if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(process.env.DEVFLOW_REPOSITORY || '')) throw new Error('Invalid DevFlow repository');
-            try {
-              const [owner, repo] = process.env.DEVFLOW_REPOSITORY.split('/');
-              const { data: commit } = await github.rest.repos.getCommit({ owner, repo, ref: 'main' });
-              await github.rest.repos.createDispatchEvent({ owner, repo, event_type: 'devflow-pr-repair',
-                client_payload: { snapshot: process.env.SNAPSHOT, snapshot_sha256: process.env.SNAPSHOT_SHA256, controller_sha: commit.sha } });
-            } catch {
-              throw new Error('Unable to dispatch the repair request. Contact the automation maintainer.');
+            const fs = require('node:fs');
+            const crypto = require('node:crypto');
+            const raw = fs.readFileSync(`${process.env.RUNNER_TEMP}/repair-output/notice.json`);
+            if (raw.length > 16000 || crypto.createHash('sha256').update(raw).digest('hex') !== process.env.NOTICE_SHA256) {
+              throw new Error('Notice integrity mismatch');
             }
+            const notice = JSON.parse(raw);
+            if (typeof notice.message !== 'string' || !notice.message || notice.message.length > 4000) throw new Error('Invalid notice');
+            await github.rest.issues.createComment({ ...context.repo, issue_number: Number(process.env.PR_NUMBER), body: notice.message });
+      - name: Report bounded generation failure
+        if: ${{ failure() && steps.report-auth.outputs.token != '' }}
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          PR_NUMBER: ${{ needs.authorize.outputs.pr_number }}
+        with:
+          github-token: ${{ steps.report-auth.outputs.token }}
+          script: |
+            const run = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            await github.rest.issues.createComment({ ...context.repo, issue_number: Number(process.env.PR_NUMBER),
+              body: `The repair could not complete. Please inspect [the repair run](${run}) before retrying.` });
+
+  approve:
+    needs: [authorize, repair]
+    if: ${{ needs.repair.outputs.status == 'ready' && needs.authorize.outputs.command == '/fix' }}
+    runs-on: ubuntu-latest
+    environment: devflow-pr-repair-publish
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Bind approval to the exact candidate digest
+        env:
+          PATCH_SHA256: ${{ needs.repair.outputs.patch_sha256 }}
+        run: |
+          [[ "$PATCH_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          echo "Approved patch-sha256:$PATCH_SHA256"
+
+  publish:
+    needs: [authorize, repair, approve]
+    if: >-
+      always() && !cancelled() && needs.repair.outputs.status == 'ready' &&
+      (needs.authorize.outputs.command == '/fix-ci' || needs.approve.result == 'success')
+    runs-on: ubuntu-latest
+    environment: github-app-auth
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+      id-token: write
+    env:
+      SNAPSHOT_SHA256: ${{ needs.authorize.outputs.snapshot_sha256 }}
+      CANDIDATE_SHA256: ${{ needs.repair.outputs.candidate_sha256 }}
+      PR_REPAIR_TARGET_REPOSITORY: ${{ github.repository }}
+      PR_REPAIR_APPROVAL_ENVIRONMENT: ${{ needs.authorize.outputs.command == '/fix' && 'devflow-pr-repair-publish' || 'github-app-auth' }}
+      DEVELOPER_TEAM: ${{ secrets.DEVELOPER_TEAM }}
+    steps:
+      - name: Checkout frozen public automation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.authorize.outputs.automation_sha }}
+          persist-credentials: false
+      - name: Checkout pinned DevFlow controller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.DEVFLOW_REPOSITORY }}
+          ref: ${{ needs.authorize.outputs.controller_sha }}
+          token: ${{ secrets.DEVFLOW_TOKEN }}
+          fetch-depth: 1
+          persist-credentials: false
+          path: devflow
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: '0.11.x'
+          enable-cache: false
+      - name: Install trusted controller dependencies
+        run: uv sync --frozen --directory "$DEVFLOW_PATH"
+      - name: Download immutable candidate from this run
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.repair.outputs.artifact_id }}
+          path: ${{ runner.temp }}/publication-input
+          merge-multiple: true
+      - name: Materialize the original authorized snapshot
+        env:
+          SNAPSHOT: ${{ needs.authorize.outputs.snapshot }}
+        run: |
+          python3 - <<'PYTHON'
+          import base64, hashlib, os, pathlib
+          raw = base64.b64decode(os.environ['SNAPSHOT'], validate=True)
+          if len(raw) > 98304 or hashlib.sha256(raw).hexdigest() != os.environ['SNAPSHOT_SHA256']:
+              raise SystemExit('Snapshot integrity mismatch')
+          (pathlib.Path(os.environ['RUNNER_TEMP']) / 'publication-input/snapshot.json').write_bytes(raw)
+          PYTHON
+      - name: Get read-only source-repository App token
+        id: read-auth
+        uses: ./.github/actions/github-app-token
+        with:
+          mode: app
+          azure-client-id: ${{ secrets.GH_APP_AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.GH_APP_AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.GH_APP_AZURE_SUBSCRIPTION_ID }}
+          key-vault-name: ${{ secrets.GH_APP_KEY_VAULT_NAME }}
+          key-name: ${{ secrets.GH_APP_KEY_NAME }}
+          github-app-client-id: ${{ secrets.GH_APP_CLIENT_ID }}
+          github-app-installation-id: ${{ secrets.GH_APP_INSTALLATION_ID }}
+          repository: ${{ github.repository }}
+          contents-permission: read
+          actions-permission: read
+          issues-permission: read
+          pull-requests-permission: read
+      - name: Revalidate exact candidate and approval before write authority
+        env:
+          GH_TOKEN: ${{ steps.read-auth.outputs.token }}
+          DEVFLOW_PUBLISH_AUTH_SOURCE: ${{ steps.read-auth.outputs.source }}
+          DEVFLOW_PUBLISH_AUTHORIZATION: ${{ steps.read-auth.outputs.authorization }}
+        run: >-
+          uv run --directory "$DEVFLOW_PATH" python scripts/trigger_fix_ci.py --phase validate-publication
+          --candidate "$RUNNER_TEMP/publication-input/candidate.json"
+          --candidate-sha256 "$CANDIDATE_SHA256"
+          --snapshot "$RUNNER_TEMP/publication-input/snapshot.json"
+          --snapshot-sha256 "$SNAPSHOT_SHA256"
+      - name: Get source-repository write token
+        id: write-auth
+        uses: ./.github/actions/github-app-token
+        with:
+          mode: app
+          azure-client-id: ${{ secrets.GH_APP_AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.GH_APP_AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.GH_APP_AZURE_SUBSCRIPTION_ID }}
+          key-vault-name: ${{ secrets.GH_APP_KEY_VAULT_NAME }}
+          key-name: ${{ secrets.GH_APP_KEY_NAME }}
+          github-app-client-id: ${{ secrets.GH_APP_CLIENT_ID }}
+          github-app-installation-id: ${{ secrets.GH_APP_INSTALLATION_ID }}
+          repository: ${{ github.repository }}
+          contents-permission: write
+          actions-permission: read
+          issues-permission: write
+          pull-requests-permission: read
+      - name: Publish only the revalidated candidate
+        env:
+          GH_TOKEN: ${{ steps.write-auth.outputs.token }}
+          DEVFLOW_PUBLISH_AUTH_SOURCE: ${{ steps.write-auth.outputs.source }}
+          DEVFLOW_PUBLISH_AUTHORIZATION: ${{ steps.write-auth.outputs.authorization }}
+        run: >-
+          uv run --directory "$DEVFLOW_PATH" python scripts/trigger_fix_ci.py --phase publish
+          --candidate "$RUNNER_TEMP/publication-input/candidate.json"
+          --candidate-sha256 "$CANDIDATE_SHA256"
+          --snapshot "$RUNNER_TEMP/publication-input/snapshot.json"
+          --snapshot-sha256 "$SNAPSHOT_SHA256"
+      - name: Report uncertain publication
+        if: ${{ failure() && steps.write-auth.outputs.token != '' }}
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          PR_NUMBER: ${{ needs.authorize.outputs.pr_number }}
+        with:
+          github-token: ${{ steps.write-auth.outputs.token }}
+          script: |
+            const run = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            await github.rest.issues.createComment({ ...context.repo, issue_number: Number(process.env.PR_NUMBER),
+              body: `I could not confirm completion of this repair publication. Please inspect [the repair run](${run}) and the PR branch before retrying.` });
