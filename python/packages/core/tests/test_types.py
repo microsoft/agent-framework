@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+
 class TestPrependInstructionsEmpty:
     def test_empty_string_instructions_add_no_message(self) -> None:
         """An unset "" instruction must not inject a contentless system message."""

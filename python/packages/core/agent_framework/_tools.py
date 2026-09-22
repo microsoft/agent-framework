@@ -862,6 +862,11 @@ class FunctionTool(SerializationMixin):
                 redacted_message=f"Invalid arguments for '{self.name}'.",
             ) from exc
 
+        if self.input_model is not None and not self._schema_supplied:
+            # Pydantic already validated and converted the values (e.g. str -> datetime, list -> set),
+            # so a JSON schema type check would reject them (#8661).
+            return parsed_arguments
+
         try:
             return _validate_arguments_against_schema(
                 arguments=parsed_arguments,

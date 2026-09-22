@@ -4,6 +4,7 @@ import copy
 import logging
 import threading
 from contextvars import ContextVar
+from datetime import datetime
 from typing import Annotated, Any, Literal, get_args, get_origin
 from unittest.mock import Mock
 
@@ -455,6 +456,26 @@ async def test_invoke_omitted_optional_uses_function_default():
 
     result = await get_weather.invoke(arguments={"location": "Seattle"})
     assert result[0].text == "Seattle:C"
+
+
+async def test_invoke_converts_json_values_to_annotated_python_types():
+    """Pydantic-converted values (datetime, set, tuple) must not fail the JSON schema type check (#8661)."""
+
+    @tool
+    def when(moment: datetime) -> str:
+        return f"{type(moment).__name__}:{moment.isoformat()}"
+
+    @tool
+    def pick(items: set[str]) -> str:
+        return f"{type(items).__name__}:{','.join(sorted(items))}"
+
+    @tool
+    def pair(point: tuple[int, int]) -> str:
+        return f"{type(point).__name__}:{point[0]}x{point[1]}"
+
+    assert (await when.invoke(arguments={"moment": "2026-01-02T03:04:05"}))[0].text == "datetime:2026-01-02T03:04:05"
+    assert (await pick.invoke(arguments={"items": ["b", "a"]}))[0].text == "set:a,b"
+    assert (await pair.invoke(arguments={"point": [1, 2]}))[0].text == "tuple:1x2"
 
 
 async def test_auto_invoke_preserves_explicit_null_argument():
