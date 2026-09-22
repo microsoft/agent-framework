@@ -531,6 +531,39 @@ async def test_hamming_scores_and_thresholds_use_mismatch_proportions() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    ("vector_type", "coordinate"),
+    [("int64", 2**53), ("int64", -(2**53) - 1), ("uint64", 2**64 - 2)],
+)
+@pytest.mark.parametrize("threshold", [None, 0.0])
+async def test_hamming_preserves_large_integer_coordinates(
+    vector_type: str, coordinate: int, threshold: float | None
+) -> None:
+    definition = VectorStoreCollectionDefinition(
+        [
+            VectorStoreField("key", name="id"),
+            VectorStoreField("vector", name="vector", type_=vector_type, dimensions=2, distance_function="hamming"),
+        ],
+        collection_name="integer-hamming",
+    )
+    collection: InMemoryCollection[str, dict[str, Any]] = InMemoryCollection(dict, definition=definition)
+    await collection.ensure_collection_exists()
+    await collection.upsert(
+        [
+            {"id": "different", "vector": [coordinate + 1, 0]},
+            {"id": "same", "vector": [coordinate, 0]},
+        ],
+        generate_vectors=False,
+    )
+
+    results = await collection.search(vector=[coordinate, 0], score_threshold=threshold)
+
+    expected = [("same", 0.0)]
+    if threshold is None:
+        expected.append(("different", 0.5))
+    assert [(result["record"]["id"], result["score"]) async for result in results] == expected
+
+
 @pytest.mark.parametrize("contents", ["empty", "missing_vector", "filtered_out"])
 @pytest.mark.parametrize("score_threshold", [None, 0.5])
 async def test_unsupported_distance_is_rejected_independently_of_records(
