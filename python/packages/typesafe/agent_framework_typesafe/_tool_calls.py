@@ -22,6 +22,23 @@ MAX_INTERNAL_QUESTIONS = 128
 MAX_TOOL_PROPERTIES = 64
 MAX_ENUM_VALUES = 64
 NOUL_TRUE_THRESHOLD = 0.5
+_SUPPORTED_ROOT_SCHEMA_KEYS = frozenset({
+    "$comment",
+    "$defs",
+    "$id",
+    "$schema",
+    "additionalProperties",
+    "default",
+    "deprecated",
+    "description",
+    "examples",
+    "properties",
+    "readOnly",
+    "required",
+    "title",
+    "type",
+    "writeOnly",
+})
 
 
 class _UnsupportedToolSchema(ValueError):
@@ -219,6 +236,11 @@ def _compile_tool(
     schema: dict[str, Any] = tool.parameters()
     if not schema:
         schema = cast(dict[str, Any], {"type": "object", "properties": {}})
+    unsupported_root_constraints = sorted(schema.keys() - _SUPPORTED_ROOT_SCHEMA_KEYS)
+    if unsupported_root_constraints:
+        raise _UnsupportedToolSchema(
+            f"unsupported root-level schema constraints: {', '.join(unsupported_root_constraints)}"
+        )
     if schema.get("type") not in (None, "object"):
         raise _UnsupportedToolSchema("the top-level input schema must be an object")
     properties_raw: Any = schema.get("properties", {})

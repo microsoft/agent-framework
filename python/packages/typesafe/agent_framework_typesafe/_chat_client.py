@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Awaitable, Mapping, Sequence
 from types import TracebackType
-from typing import Any, ClassVar, NoReturn, cast
+from typing import Any, ClassVar, Literal, NoReturn, cast, overload
 from uuid import uuid4
 
 from agent_framework import (
@@ -525,6 +525,68 @@ class TypeSafeChatClient(
     This is the recommended client for most uses. Use RawTypeSafeChatClient
     when composing a custom layer stack or opting out of telemetry.
     """
+
+    @overload
+    def get_response(
+        self,
+        messages: Sequence[Message],
+        *,
+        stream: Literal[False] = ...,
+        options: TypeSafeChatOptions | ChatOptions[Any] | None = None,
+        middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
+    ) -> Awaitable[ChatResponse[Any]]: ...
+
+    @overload
+    def get_response(
+        self,
+        messages: Sequence[Message],
+        *,
+        stream: Literal[True],
+        options: TypeSafeChatOptions | ChatOptions[Any] | None = None,
+        middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
+    ) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]: ...
+
+    @override
+    def get_response(
+        self,
+        messages: Sequence[Message],
+        *,
+        stream: bool = False,
+        options: TypeSafeChatOptions | ChatOptions[Any] | None = None,
+        middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
+    ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
+        """Reject streaming before the function-invocation layer can execute tools."""
+        if stream:
+
+            async def _reject_streaming() -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:  # ruff: ignore[unused-async]
+                raise ChatClientInvalidRequestException("TypeSafe System One does not support streaming responses.")
+
+            return ResponseStream.from_awaitable(  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+                _reject_streaming()
+            )
+
+        return super().get_response(
+            messages,
+            stream=False,
+            options=options,
+            middleware=middleware,
+            compaction_strategy=compaction_strategy,
+            tokenizer=tokenizer,
+            function_invocation_kwargs=function_invocation_kwargs,
+            client_kwargs=client_kwargs,
+        )
 
     def __init__(
         self,

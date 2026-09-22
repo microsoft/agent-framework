@@ -263,6 +263,33 @@ async def test_streaming_is_rejected_on_consumption() -> None:
         _ = [update async for update in stream]
 
 
+async def test_streaming_approval_resume_is_rejected_before_execution() -> None:
+    executions: list[bool] = []
+
+    def guarded() -> str:
+        executions.append(True)
+        return "done"
+
+    function = FunctionTool(name="guarded", func=guarded, input_model={})
+    function_call = Content.from_function_call(call_id="call-1", name="guarded", arguments={})
+    approval_response = Content.from_function_approval_response(
+        approved=True,
+        id="approval-1",
+        function_call=function_call,
+    )
+    client = make_client()
+
+    stream = client.get_response(
+        [Message("user", [approval_response])],
+        stream=True,
+        options=cast(Any, {"response_format": questions(), "tools": [function]}),
+    )
+    with pytest.raises(ChatClientInvalidRequestException, match="streaming"):
+        _ = [update async for update in stream]
+
+    assert executions == []
+
+
 @pytest.mark.parametrize(
     ("options", "message"),
     [

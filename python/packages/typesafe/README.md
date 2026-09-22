@@ -107,10 +107,12 @@ Supported input-schema shapes:
   to omit the argument so the function's default can apply.
 
 Required free-form strings, numbers, nested objects, general arrays, and required
-nullable arguments are not supported. A tool is excluded when any declared
-argument is unsupported, including optional arguments, so invocation never falls
-back to an unintended default. In automatic tool mode, unsupported tools are
-excluded with a warning. Required unsupported tools fail the request.
+nullable arguments are not supported. Root-level schema constraints that the
+connector cannot preserve, such as `allOf`, also exclude the entire tool. A tool
+is excluded when any declared argument is unsupported, including optional
+arguments, so invocation never falls back to an unintended default. In automatic
+tool mode, unsupported tools are excluded with a warning. Required unsupported
+tools fail the request.
 
 Local tools can use inferred schemas or Pydantic input models:
 

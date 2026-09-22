@@ -20,8 +20,8 @@ Integration with TypeSafe AI System One models, including Jev.
   preserve tool defaults.
 - Agent-provided MCP tools work when their discovered function schemas fit the supported subset. Direct raw/client
   calls must receive expanded `FunctionTool` instances.
-- A tool is excluded if any declared argument is unsupported. Schema property/enum counts are bounded before
-  question materialization, and constrained arrays are rejected.
+- A tool is excluded if any declared argument or root object-schema constraint is unsupported. Schema property/enum
+  counts are bounded before question materialization, and constrained arrays are rejected.
 - The connector forwards `response_format` as the TypeSafe SDK `questions` argument and internally uses
   `SystemOneResponse` as the response model.
 - An injected `AsyncTypeSafeClient` is caller-owned. A client created by `TypeSafeChatClient` is closed by

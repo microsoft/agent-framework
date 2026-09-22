@@ -139,6 +139,26 @@ def test_required_name_missing_from_properties_is_rejected() -> None:
         )
 
 
+def test_root_schema_constraints_exclude_entire_tool() -> None:
+    constrained = function(
+        "delete_records",
+        {
+            "type": "object",
+            "properties": {"scope": {"type": "string", "enum": ["one", "all"]}},
+            "required": ["scope"],
+            "allOf": [{"properties": {"scope": {"const": "one"}}}],
+        },
+    )
+
+    assert compile_tool_call_plan([constrained], tool_mode=None, user_question_ids=set()) is None
+    with pytest.raises(ChatClientInvalidRequestException, match="root-level.*allOf"):
+        compile_tool_call_plan(
+            [constrained],
+            tool_mode={"mode": "required"},
+            user_question_ids=set(),
+        )
+
+
 def test_unsupported_optional_argument_excludes_entire_tool() -> None:
     broad_default = function(
         "delete_records",
