@@ -27,6 +27,22 @@ Per-invocation sessions intentionally add connection overhead and lose server
 session continuity between invocations;
 shared session ownership requires an explicitly scoped custom `MCPToolHandler`.
 
+## MCP Approval Context
+
+`InvokeMcpToolActionExecutor` binds evaluated headers to each request with a
+workflow-local HMAC key held separately in trusted host checkpoint state.
+Only the opaque binding and header names enter the approval payload; raw headers
+are not checkpointed. Changed or unverifiable headers produce a replacement
+request for the same pinned operation, with a fresh request ID and no dispatch.
+Fresh executors verify unchanged approvals using the checkpointed key; legacy
+requests or missing verification state require reapproval for non-empty headers.
+Custom handlers remain responsible for identity changes
+in credentials they resolve outside the action's headers.
+
+`InvokeAzureAgent` uses Core's executor-ready kwargs conversion for both modern
+and legacy state, without copying workflow/client kwargs into additional tool
+arguments. Explicit caller tool arguments in options are preserved.
+
 ## External Input Handling
 
 - **`ExternalInputRequest`** / **`ExternalInputResponse`** - Human-in-the-loop support
