@@ -43,8 +43,8 @@ internal static class ChatMessageExtensions
             return input;
         }
 
-        List<AIContent> inputNonTextContents = [.. input.Contents.Where(content => content is not TextContent)];
-        List<AIContent> canonicalNonTextContents = [.. inputMessage.Contents.Where(content => content is not TextContent)];
+        List<AIContent> inputNonTextContents = [.. input.Contents.Where(static content => content is not TextContent)];
+        List<AIContent> canonicalNonTextContents = [.. inputMessage.Contents.Where(static content => content is not TextContent)];
         AIContent[] replacements = [.. inputNonTextContents];
         bool[] inputContentMatched = new bool[inputNonTextContents.Count];
         bool[] canonicalContentUsed = new bool[canonicalNonTextContents.Count];
