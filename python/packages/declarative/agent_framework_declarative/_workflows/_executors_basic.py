@@ -224,6 +224,13 @@ class SendActivityExecutor(DeclarativeActionExecutor):
     """Executor for the SendActivity action.
 
     Sends a text message or activity as workflow output.
+    Authored text starting with ``=`` is evaluated and its result is emitted as data.
+    Other authored text supports ``{Variable.Path}`` template interpolation.
+
+    Expression results are not interpolated again. To migrate text that relied on
+    a second pass, author the template directly (``Hello, {Local.name}!``) or build
+    the final text in the expression (``="Hello, " & Local.name & "!"``).
+    Both forms work as a string activity or as a mapping's ``text`` field.
     """
 
     @handler
@@ -244,11 +251,7 @@ class SendActivityExecutor(DeclarativeActionExecutor):
             text = activity
 
         if isinstance(text, str):
-            # First evaluate any =expression syntax
-            text = state.eval_if_expression(text)
-            # Then interpolate any {Variable.Path} template syntax
-            if isinstance(text, str):
-                text = state.interpolate_string(text)
+            text = state.eval_if_expression(text) if text.startswith("=") else state.interpolate_string(text)
 
         # Yield the text as workflow output
         if text:

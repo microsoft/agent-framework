@@ -8,7 +8,16 @@ from typing import Any
 
 import pytest
 from ag_ui.core import RunErrorEvent, ToolCallResultEvent
-from agent_framework import Agent, ChatOptions, ChatResponseUpdate, Content, Message
+from agent_framework import (
+    Agent,
+    ChatOptions,
+    ChatResponseUpdate,
+    Content,
+    ContextProvider,
+    FunctionInvocationContext,
+    Message,
+    tool,
+)
 from pydantic import BaseModel
 
 from agent_framework_ag_ui._approval_lifecycle import ApprovalExecutionOwner
@@ -21,6 +30,82 @@ def _approval_request_id(events: list[Any]) -> str:
         if getattr(event, "type", None) == "CUSTOM" and getattr(event, "name", None) == "function_approval_request"
     )
     return str(event.value["id"])
+
+
+async def test_approval_resume_with_context_provider_preserves_function_invocation_kwargs(
+    streaming_chat_client_stub: Any,
+) -> None:
+    """Context-provider preparation and runtime tool kwargs survive an AG-UI resume."""
+    from agent_framework.ag_ui import AgentFrameworkAgent
+
+    observed_kwargs: list[dict[str, Any]] = []
+    phase = "pause"
+
+    class NoOpContextProvider(ContextProvider):
+        pass
+
+    @tool(name="sensitive_action", approval_mode="always_require")
+    def sensitive_action(context: FunctionInvocationContext) -> str:
+        observed_kwargs.append(dict(context.kwargs))
+        return "executed"
+
+    async def stream_fn(
+        messages: MutableSequence[Message],
+        options: ChatOptions,
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del messages, options, kwargs
+        if phase == "pause":
+            yield ChatResponseUpdate(
+                contents=[
+                    Content.from_function_call(
+                        name="sensitive_action",
+                        call_id="call-sensitive",
+                        arguments="{}",
+                    )
+                ]
+            )
+            return
+        yield ChatResponseUpdate(contents=[Content.from_text(text="Done")])
+
+    wrapper = AgentFrameworkAgent(
+        agent=Agent(
+            client=streaming_chat_client_stub(stream_fn),
+            name="test_agent",
+            instructions="Test",
+            tools=[sensitive_action],
+            context_providers=[NoOpContextProvider("context")],
+        )
+    )
+    runtime_kwargs = {"user_id": "user-123"}
+    thread_id = "context-provider-runtime-kwargs"
+    pause_events = [
+        event
+        async for event in wrapper.run(
+            {"thread_id": thread_id, "messages": [{"role": "user", "content": "do it"}]},
+            function_invocation_kwargs=runtime_kwargs,
+        )
+    ]
+    approval_id = _approval_request_id(pause_events)
+
+    phase = "resume"
+    resume_events = [
+        event
+        async for event in wrapper.run(
+            {
+                "thread_id": thread_id,
+                "messages": [],
+                "resume": [{"interruptId": approval_id, "status": "resolved", "payload": {"accepted": True}}],
+            },
+            function_invocation_kwargs=runtime_kwargs,
+        )
+    ]
+
+    assert observed_kwargs[0]["user_id"] == runtime_kwargs["user_id"]
+    assert set(observed_kwargs[0]) == {"session", "user_id"}
+    assert [
+        (event.tool_call_id, event.content) for event in resume_events if isinstance(event, ToolCallResultEvent)
+    ] == [("call-sensitive", "executed")]
 
 
 async def test_agent_initialization_basic(streaming_chat_client_stub):

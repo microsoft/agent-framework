@@ -4,6 +4,16 @@ You can contribute to Agent Framework with issues and pull requests (PRs). Simpl
 filing issues for problems you encounter is a great way to contribute. Contributing
 code is greatly appreciated.
 
+This repository is dedicated to the canonical .NET and Python implementations of
+Microsoft Agent Framework. Microsoft contributors outside the product team should
+engage with the maintainers before submitting pull requests that add new language
+implementations or before starting a new Microsoft-owned repository for another
+language.
+
+Contributors outside Microsoft are welcome to start their own repositories to
+implement Microsoft Agent Framework in other languages, as long as they make it
+clear that the effort is not owned or maintained directly by Microsoft.
+
 ## Reporting Issues
 
 We always welcome bug reports, API proposals and overall feedback. Here are a few

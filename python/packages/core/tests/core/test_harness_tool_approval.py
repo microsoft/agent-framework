@@ -24,6 +24,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    ContextProvider,
     FileHistoryProvider,
     FunctionInvocationContext,
     FunctionMiddleware,
@@ -31,6 +32,8 @@ from agent_framework import (
     InMemoryHistoryProvider,
     Message,
     ResponseStream,
+    SessionContext,
+    SupportsAgentRun,
     ToolApprovalMiddleware,
     ToolApprovalState,
     create_always_approve_tool_response,
@@ -132,6 +135,136 @@ async def test_manual_fides_no_session_preserves_standard_tool_approval(
         ("tool", ["function_result", "function_result"]),
         ("assistant", ["text"]),
     ]
+
+
+async def test_sessionless_approval_resume_with_context_provider_uses_message_authority(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    """A framework-created context-provider session must not become approval authority."""
+    calls: list[str] = []
+
+    class NoOpContextProvider(ContextProvider):
+        pass
+
+    @tool(name="approved_tool", approval_mode="always_require")
+    def approved_tool() -> str:
+        calls.append("approved")
+        return "approved"
+
+    agent = Agent(
+        client=chat_client_base,
+        tools=[approved_tool],
+        context_providers=[NoOpContextProvider("context")],
+    )
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="approved-call",
+                        name="approved_tool",
+                        arguments="{}",
+                        id="approved-occurrence",
+                    )
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+
+    first = await agent.run("request approval")
+    approval_request = first.user_input_requests[0]
+    resumed = await agent.run([
+        Message(role="user", contents=["request approval"]),
+        *first.messages,
+        Message(role="user", contents=[approval_request.to_function_approval_response(True)]),
+    ])
+
+    assert calls == ["approved"]
+    assert [(message.role, [content.type for content in message.contents]) for message in resumed.messages] == [
+        ("tool", ["function_result"]),
+        ("assistant", ["text"]),
+    ]
+
+
+async def test_framework_created_session_becomes_authoritative_when_reused_by_caller(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    """A retained framework session must fail closed when later supplied explicitly."""
+    calls: list[int] = []
+    retained_sessions: list[AgentSession] = []
+
+    class RetainingContextProvider(ContextProvider):
+        async def before_run(
+            self,
+            *,
+            agent: SupportsAgentRun,
+            session: AgentSession,
+            context: SessionContext,
+            state: dict[str, Any],
+        ) -> None:
+            del agent, context, state
+            retained_sessions.append(session)
+
+    @tool(name="approved_tool", approval_mode="always_require")
+    def approved_tool(value: int) -> str:
+        calls.append(value)
+        return "approved"
+
+    agent = Agent(
+        client=chat_client_base,
+        tools=[approved_tool],
+        context_providers=[RetainingContextProvider("context")],
+    )
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="approved-call",
+                        name="approved_tool",
+                        arguments={"value": 1},
+                        id="approved-occurrence",
+                    )
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+
+    first = await agent.run("request approval")
+    assert calls == []
+    assert "tool_approval" not in retained_sessions[0].state
+    approval_request = first.user_input_requests[0]
+    original_call = _function_call(approval_request)
+    assert original_call.call_id is not None
+    assert original_call.name is not None
+    assert approval_request.id is not None
+    tampered_call = Content.from_function_call(
+        call_id=original_call.call_id,
+        name=original_call.name,
+        arguments={"value": 999},
+        id=original_call.id,
+    )
+    tampered_response = Content.from_function_approval_response(
+        approved=True,
+        id=approval_request.id,
+        function_call=tampered_call,
+    )
+
+    await agent.run(
+        [
+            Message(role="user", contents=["request approval"]),
+            *first.messages,
+            Message(role="user", contents=[tampered_response]),
+        ],
+        session=retained_sessions[0],
+    )
+
+    assert calls == []
+    assert retained_sessions[1] is retained_sessions[0]
 
 
 class _StringApprovalValue(str, Enum):
@@ -1369,20 +1502,24 @@ async def test_mixed_batch_hides_already_approved_request_until_approval_replay(
     """Mixed batches should only show real approval requests when a session can store hidden requests."""
     no_approval_calls = 0
     approval_calls = 0
+    execution_order: list[str] = []
 
     @tool(name="lookup_work_items", approval_mode="never_require")
     def lookup_work_items(query: str) -> str:
         nonlocal no_approval_calls
         no_approval_calls += 1
+        execution_order.append("lookup_work_items")
         return f"found {query}"
 
     @tool(name="add_comment", approval_mode="always_require")
     def add_comment(comment: str) -> str:
         nonlocal approval_calls
         approval_calls += 1
+        execution_order.append("add_comment")
         return f"added {comment}"
 
     agent = Agent(client=chat_client_base, tools=[lookup_work_items, add_comment])
+    chat_client_base.function_invocation_configuration["allow_concurrent_invocation"] = False
     session = AgentSession(session_id="approval-session")
     chat_client_base.run_responses = [
         ChatResponse(
@@ -1417,6 +1554,241 @@ async def test_mixed_batch_hides_already_approved_request_until_approval_replay(
     assert second_response.text == "complete"
     assert no_approval_calls == 1
     assert approval_calls == 1
+    assert execution_order == ["lookup_work_items", "add_comment"]
+
+
+async def test_sequential_approval_replay_preserves_model_order_when_responses_are_reversed(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    """Sequential approval replay should follow model order rather than caller response order."""
+    execution_order: list[str] = []
+
+    @tool(name="first_write", approval_mode="always_require")
+    def first_write() -> str:
+        execution_order.append("first_write")
+        return "first"
+
+    @tool(name="second_write", approval_mode="always_require")
+    def second_write() -> str:
+        execution_order.append("second_write")
+        return "second"
+
+    agent = Agent(client=chat_client_base, tools=[first_write, second_write])
+    chat_client_base.function_invocation_configuration["allow_concurrent_invocation"] = False
+    session = AgentSession(session_id="reversed-approval-order")
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="call_first", name="first_write", arguments="{}"),
+                    Content.from_function_call(call_id="call_second", name="second_write", arguments="{}"),
+                ],
+            )
+        )
+    ]
+
+    first_response = await agent.run("write in order", session=session)
+    requests = _approval_requests(first_response.messages)
+    assert [_function_call(request).name for request in requests] == ["first_write", "second_write"]
+
+    chat_client_base.run_responses = [ChatResponse(messages=Message(role="assistant", contents=["complete"]))]
+    final_response = await agent.run(
+        Message(
+            role="user",
+            contents=[
+                requests[1].to_function_approval_response(approved=True),
+                requests[0].to_function_approval_response(approved=True),
+            ],
+        ),
+        session=session,
+    )
+
+    assert final_response.text == "complete"
+    assert execution_order == ["first_write", "second_write"]
+
+
+@pytest.mark.parametrize(
+    ("first_approved", "expected_execution_order"),
+    [
+        (True, ["first_write", "second_read"]),
+        (False, ["second_read"]),
+    ],
+)
+async def test_sequential_approval_replay_waits_for_the_complete_batch(
+    chat_client_base: MockBaseChatClient,
+    first_approved: bool,
+    expected_execution_order: list[str],
+) -> None:
+    """A partial approval batch must not execute tools or advance the model."""
+    execution_order: list[str] = []
+
+    @tool(name="first_write", approval_mode="always_require")
+    def first_write() -> str:
+        execution_order.append("first_write")
+        return "first"
+
+    @tool(name="second_read", approval_mode="always_require")
+    def second_read() -> str:
+        execution_order.append("second_read")
+        return "second"
+
+    agent = Agent(client=chat_client_base, tools=[first_write, second_read])
+    chat_client_base.function_invocation_configuration["allow_concurrent_invocation"] = False
+    session = AgentSession(session_id=f"partial-approval-order-{first_approved}")
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="call_first", name="first_write", arguments="{}"),
+                    Content.from_function_call(call_id="call_second", name="second_read", arguments="{}"),
+                ],
+            )
+        )
+    ]
+
+    first_response = await agent.run("write then read", session=session)
+    requests = _approval_requests(first_response.messages)
+    assert [_function_call(request).name for request in requests] == ["first_write", "second_read"]
+
+    partial_response = await agent.run(
+        requests[1].to_function_approval_response(approved=True),
+        session=session,
+    )
+
+    assert execution_order == []
+    assert [_function_call(request).name for request in _approval_requests(partial_response.messages)] == [
+        "first_write"
+    ]
+
+    repeated_partial_response = await agent.run(
+        requests[1].to_function_approval_response(approved=True),
+        session=session,
+    )
+
+    assert execution_order == []
+    assert [_function_call(request).name for request in _approval_requests(repeated_partial_response.messages)] == [
+        "first_write"
+    ]
+
+    chat_client_base.run_responses = [ChatResponse(messages=Message(role="assistant", contents=["complete"]))]
+    final_response = await agent.run(
+        requests[0].to_function_approval_response(approved=first_approved),
+        session=session,
+    )
+
+    assert final_response.text == "complete"
+    assert execution_order == expected_execution_order
+
+
+async def test_approval_batch_uses_the_first_decision_for_duplicate_responses(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    """A conflicting duplicate must not replace the first decision for an approval."""
+    execution_order: list[str] = []
+
+    @tool(name="first_write", approval_mode="always_require")
+    def first_write() -> str:
+        execution_order.append("first_write")
+        return "first"
+
+    @tool(name="second_write", approval_mode="always_require")
+    def second_write() -> str:
+        execution_order.append("second_write")
+        return "second"
+
+    agent = Agent(client=chat_client_base, tools=[first_write, second_write])
+    session = AgentSession(session_id="duplicate-approval-decisions")
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="call_first", name="first_write", arguments="{}"),
+                    Content.from_function_call(call_id="call_second", name="second_write", arguments="{}"),
+                ],
+            )
+        )
+    ]
+
+    first_response = await agent.run("write twice", session=session)
+    requests = _approval_requests(first_response.messages)
+    assert [_function_call(request).name for request in requests] == ["first_write", "second_write"]
+
+    chat_client_base.run_responses = [ChatResponse(messages=Message(role="assistant", contents=["complete"]))]
+    final_response = await agent.run(
+        Message(
+            role="user",
+            contents=[
+                requests[0].to_function_approval_response(approved=False),
+                requests[0].to_function_approval_response(approved=True),
+                requests[1].to_function_approval_response(approved=True),
+            ],
+        ),
+        session=session,
+    )
+
+    assert final_response.text == "complete"
+    assert execution_order == ["second_write"]
+
+
+async def test_approval_batch_preserves_first_decision_across_partial_retries(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    """A later retry must not replace a decision staged by an earlier partial response."""
+    execution_order: list[str] = []
+
+    @tool(name="first_write", approval_mode="always_require")
+    def first_write() -> str:
+        execution_order.append("first_write")
+        return "first"
+
+    @tool(name="second_write", approval_mode="always_require")
+    def second_write() -> str:
+        execution_order.append("second_write")
+        return "second"
+
+    agent = Agent(client=chat_client_base, tools=[first_write, second_write])
+    session = AgentSession(session_id="partial-retry-conflicting-decision")
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="call_first", name="first_write", arguments="{}"),
+                    Content.from_function_call(call_id="call_second", name="second_write", arguments="{}"),
+                ],
+            )
+        )
+    ]
+
+    first_response = await agent.run("write twice", session=session)
+    requests = _approval_requests(first_response.messages)
+    partial_response = await agent.run(
+        requests[1].to_function_approval_response(approved=False),
+        session=session,
+    )
+
+    assert execution_order == []
+    assert [_function_call(request).name for request in _approval_requests(partial_response.messages)] == [
+        "first_write"
+    ]
+
+    chat_client_base.run_responses = [ChatResponse(messages=Message(role="assistant", contents=["complete"]))]
+    final_response = await agent.run(
+        Message(
+            role="user",
+            contents=[
+                requests[0].to_function_approval_response(approved=True),
+                requests[1].to_function_approval_response(approved=True),
+            ],
+        ),
+        session=session,
+    )
+
+    assert final_response.text == "complete"
+    assert execution_order == ["first_write"]
 
 
 async def test_mixed_batch_accepts_restored_tool_approval_state(
@@ -2114,6 +2486,53 @@ async def test_tool_approval_middleware_keeps_manual_approvals_together_with_hos
     state = session.state[DEFAULT_TOOL_APPROVAL_SOURCE_ID]
     assert isinstance(state, dict)
     assert state["queued_approval_requests"] == []
+
+
+@pytest.mark.parametrize("approval_first", [True, False], ids=["approval-first", "host-first"])
+async def test_tool_approval_middleware_preserves_split_streamed_mixed_batch_order(
+    chat_client_base: MockBaseChatClient,
+    approval_first: bool,
+) -> None:
+    """Separately streamed approval and Host pauses remain one ordered batch."""
+    from agent_framework import FunctionTool
+    from agent_framework._middleware import AgentContext
+
+    @tool(name="guarded", approval_mode="always_require")
+    def guarded() -> str:
+        return "guarded"
+
+    host_tool = FunctionTool(name="host_read", func=None, description="Handled by the caller")
+    agent = Agent(client=chat_client_base, tools=[guarded, host_tool])
+    approval_call = Content.from_function_call(call_id="guarded", name="guarded", arguments={})
+    approval_request = Content.from_function_approval_request(id="guarded", function_call=approval_call)
+    host_request = Content.from_function_call(call_id="host", name="host_read", arguments={})
+    host_request.user_input_request = True
+    ordered_requests = [approval_request, host_request] if approval_first else [host_request, approval_request]
+    context = AgentContext(
+        agent=agent,
+        messages=[],
+        session=AgentSession(),
+        stream=True,
+    )
+    middleware = ToolApprovalMiddleware()
+    state = ToolApprovalState()
+
+    async def inner_stream():
+        for request in ordered_requests:
+            yield AgentResponseUpdate(role="assistant", contents=[request])
+
+    async def call_next() -> None:
+        context.result = ResponseStream(inner_stream(), finalizer=AgentResponse.from_updates)
+
+    response_stream = middleware._process_stream(  # pyright: ignore[reportPrivateUsage]
+        context,
+        call_next,
+        state,
+    )
+    updates = [update async for update in response_stream]
+
+    assert [content for update in updates for content in update.user_input_requests] == ordered_requests
+    assert state.queued_approval_requests == []
 
 
 @pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])

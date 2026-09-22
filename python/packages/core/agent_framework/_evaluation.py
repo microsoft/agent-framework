@@ -1221,7 +1221,7 @@ def tool_call_args_match(item: EvalItem) -> CheckResult:
         for _, actual_args in matching:
             if actual_args is None:
                 continue
-            if all(actual_args.get(k) == v for k, v in exp.arguments.items()):
+            if all(k in actual_args and actual_args[k] == v for k, v in exp.arguments.items()):
                 found = True
                 break
 

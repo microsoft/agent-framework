@@ -8,7 +8,7 @@ import inspect
 import json
 import logging
 import uuid
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from functools import partial
 from types import UnionType
 from typing import Any, Union, cast, get_args, get_origin, get_type_hints
@@ -60,6 +60,8 @@ from ._run_common import (
 from ._utils import canonical_function_arguments, generate_event_id, make_json_safe
 
 logger = logging.getLogger(__name__)
+
+_BASELINE_OMITTED = object()
 
 
 _PUBLIC_WORKFLOW_ERROR_MESSAGE = "Workflow execution failed."
@@ -130,7 +132,10 @@ def _workflow_interrupt_value(request_data: Any) -> Any:
     return {"data": safe_request_data}
 
 
-def _workflow_interrupt_metadata(request_payload: dict[str, Any], value: Any) -> dict[str, Any]:
+def _workflow_interrupt_metadata(
+    request_payload: dict[str, Any],
+    value: Any,
+) -> dict[str, Any]:
     """Build Agent Framework metadata for workflow request_info interrupts."""
     agent_framework_metadata = {
         key: make_json_safe(value)
@@ -146,6 +151,99 @@ def _workflow_interrupt_metadata(request_payload: dict[str, Any], value: Any) ->
         if value is not None
     }
     return {"agent_framework": agent_framework_metadata}
+
+
+def _attach_checkpoint_id_to_interrupts(
+    interrupts: list[dict[str, Any]],
+    checkpoint_id: str | None,
+) -> list[dict[str, Any]]:
+    """Attach ``checkpoint_id`` to each interrupt's ``metadata.agent_framework``.
+
+    Multi-worker hosts need the pause checkpoint on the wire so the next resume can pass
+    ``forwardedProps.checkpoint_id`` without a side-channel lookup. No-op when checkpointing
+    is inactive or the id is already present.
+    """
+    if not checkpoint_id or not interrupts:
+        return interrupts
+
+    attached: list[dict[str, Any]] = []
+    for interrupt in interrupts:
+        entry = dict(interrupt)
+        metadata = entry.get("metadata")
+        if isinstance(metadata, dict):
+            metadata = dict(metadata)
+        else:
+            metadata = {}
+        agent_framework = metadata.get("agent_framework")
+        if isinstance(agent_framework, dict):
+            agent_framework = dict(agent_framework)
+        else:
+            agent_framework = {}
+        agent_framework.setdefault("checkpoint_id", checkpoint_id)
+        metadata["agent_framework"] = agent_framework
+        entry["metadata"] = metadata
+        attached.append(entry)
+    return attached
+
+
+def _interrupt_request_ids(interrupts: list[dict[str, Any]]) -> set[str]:
+    return {str(item["id"]) for item in interrupts if item.get("id") is not None}
+
+
+async def _pause_checkpoint_id_for_interrupts(
+    *,
+    workflow: Workflow,
+    checkpoint_storage: CheckpointStorage | None,
+    interrupts: list[dict[str, Any]],
+    known_checkpoint_id: str | None = None,
+    baseline_checkpoint_id: Any = _BASELINE_OMITTED,
+) -> str | None:
+    """Resolve the pause checkpoint for *this* run's interrupts via core.
+
+    When ``baseline_checkpoint_id`` is omitted, core uses the baseline captured at
+    ``workflow.run()`` start. Pass ``None`` explicitly for short-circuit paths that
+    did not call ``run()`` and should advertise the current runner id when present.
+    """
+    if not interrupts:
+        return None
+
+    resolve = getattr(workflow, "resolve_pause_checkpoint_id", None)
+    if not callable(resolve):
+        return None
+
+    # getattr returns a plain object to the type checker; cast to an awaitable callable.
+    resolve_fn = cast(
+        Callable[..., Awaitable[str | None]],
+        resolve,
+    )
+    kwargs: dict[str, Any] = {
+        "checkpoint_storage": checkpoint_storage,
+        "known_checkpoint_id": known_checkpoint_id,
+    }
+    if baseline_checkpoint_id is not _BASELINE_OMITTED:
+        kwargs["baseline_checkpoint_id"] = baseline_checkpoint_id
+    return await resolve_fn(_interrupt_request_ids(interrupts), **kwargs)
+
+
+async def _interrupts_with_pause_checkpoint(
+    *,
+    interrupts: list[dict[str, Any]],
+    workflow: Workflow,
+    checkpoint_storage: CheckpointStorage | None,
+    known_checkpoint_id: str | None = None,
+    baseline_checkpoint_id: Any = _BASELINE_OMITTED,
+) -> list[dict[str, Any]]:
+    """Attach a run-scoped pause checkpoint id to interrupts when available."""
+    if not interrupts:
+        return interrupts
+    pause_checkpoint_id = await _pause_checkpoint_id_for_interrupts(
+        workflow=workflow,
+        checkpoint_storage=checkpoint_storage,
+        interrupts=interrupts,
+        known_checkpoint_id=known_checkpoint_id,
+        baseline_checkpoint_id=baseline_checkpoint_id,
+    )
+    return _attach_checkpoint_id_to_interrupts(interrupts, pause_checkpoint_id)
 
 
 async def _pending_request_events(workflow: Workflow) -> dict[str, Any]:
@@ -171,7 +269,9 @@ async def _pending_request_events(workflow: Workflow) -> dict[str, Any]:
 
 async def _pending_request_events_from_checkpoint(
     checkpoint_id: str,
-    checkpoint_storage: CheckpointStorage,
+    checkpoint_storage: CheckpointStorage | None = None,
+    *,
+    workflow: Any | None = None,
 ) -> dict[str, Any]:
     """Read pending request_info events from a persisted checkpoint without restoring it.
 
@@ -182,16 +282,34 @@ async def _pending_request_events_from_checkpoint(
     exposes them without running any executor ``on_checkpoint_restore`` hook; the single
     ``workflow.run(checkpoint_id=...)`` then performs the one real restore, so the
     restore -- and every custom restore hook -- runs exactly once per resume.
+
+    ``checkpoint_storage`` is preferred when provided. Otherwise the workflow's
+    effective builder/runtime storage is used when ``has_checkpointing()`` is true,
+    so AG-UI can round-trip pause IDs emitted from ``WorkflowBuilder(checkpoint_storage=...)``
+    without requiring a duplicate AG-UI storage argument.
     """
     try:
-        checkpoint = await checkpoint_storage.load(checkpoint_id)
+        if checkpoint_storage is not None:
+            checkpoint = await checkpoint_storage.load(checkpoint_id)
+        else:
+            context = getattr(getattr(workflow, "_runner", None), "context", None)
+            if context is None or not context.has_checkpointing():
+                raise ValueError(
+                    "Resuming a checkpoint with an AG-UI resume payload requires checkpoint_storage "
+                    "(or WorkflowBuilder checkpoint storage on the workflow instance)."
+                )
+            checkpoint = await context.load_checkpoint(checkpoint_id)
+    except ValueError:
+        raise
     except Exception:
         logger.warning(
             "Could not load checkpoint for resume-response coercion; the core run will surface any error.",
             exc_info=True,
         )
         return {}
-    return dict(checkpoint.pending_request_info_events)
+    if checkpoint is None:
+        return {}
+    return dict(checkpoint.pending_request_info_events or {})
 
 
 def _interrupt_entry_for_request_event(request_event: Any) -> dict[str, Any] | None:
@@ -1062,9 +1180,15 @@ async def run_workflow_stream(
     # pure checkpoint restore still surfaces its pending interrupts instead of tripping
     # the "resume required" contract.
     if checkpoint_id is not None and resume_payload is not None:
-        if checkpoint_storage is None:
+        # Prefer the explicit AG-UI storage argument; otherwise allow the workflow's
+        # builder/runtime storage so builder-emitted pause IDs remain round-trippable.
+        if checkpoint_storage is None and not workflow._runner.context.has_checkpointing():  # pyright: ignore[reportPrivateUsage]
             raise ValueError("Resuming a checkpoint with an AG-UI resume payload requires checkpoint_storage.")
-        pending_before_run = await _pending_request_events_from_checkpoint(checkpoint_id, checkpoint_storage)
+        pending_before_run = await _pending_request_events_from_checkpoint(
+            checkpoint_id,
+            checkpoint_storage,
+            workflow=workflow,
+        )
     else:
         pending_before_run = await _pending_request_events(workflow)
     pending_interrupt_ids = _pending_workflow_interrupt_ids(pending_before_run)
@@ -1140,12 +1264,30 @@ async def run_workflow_stream(
             interrupt_event_value = _workflow_interrupt_event_value(request_payload)
             if interrupt_event_value is not None:
                 yield CustomEvent(name=_INTERRUPT_CARD_EVENT_NAME, value=interrupt_event_value)
-        yield _build_run_finished_event(run_id=run_id, thread_id=thread_id, interrupts=pending_interrupts)
+        yield _build_run_finished_event(
+            run_id=run_id,
+            thread_id=thread_id,
+            interrupts=await _interrupts_with_pause_checkpoint(
+                interrupts=pending_interrupts,
+                workflow=workflow,
+                checkpoint_storage=checkpoint_storage,
+                baseline_checkpoint_id=None,
+            ),
+        )
         return
 
     if checkpoint_id is None and not responses and not messages:
         yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
-        yield _build_run_finished_event(run_id=run_id, thread_id=thread_id, interrupts=pending_interrupts)
+        yield _build_run_finished_event(
+            run_id=run_id,
+            thread_id=thread_id,
+            interrupts=await _interrupts_with_pause_checkpoint(
+                interrupts=pending_interrupts,
+                workflow=workflow,
+                checkpoint_storage=checkpoint_storage,
+                baseline_checkpoint_id=None,
+            ),
+        )
         return
 
     def _drain_open_message() -> list[TextMessageEndEvent]:
@@ -1281,7 +1423,15 @@ async def run_workflow_stream(
                         yield end_event
                     if not interrupts:
                         interrupts.extend(_interrupts_from_pending_requests(await _pending_request_events(workflow)))
-                    yield _build_run_finished_event(run_id=run_id, thread_id=thread_id, interrupts=interrupts)
+                    yield _build_run_finished_event(
+                        run_id=run_id,
+                        thread_id=thread_id,
+                        interrupts=await _interrupts_with_pause_checkpoint(
+                            interrupts=interrupts,
+                            workflow=workflow,
+                            checkpoint_storage=checkpoint_storage,
+                        ),
+                    )
                     terminal_emitted = True
                 elif state_value not in _TERMINAL_STATES:
                     yield CustomEvent(name="status", value={"state": state_value})
@@ -1447,4 +1597,12 @@ async def run_workflow_stream(
     if not terminal_emitted and not run_error_emitted:
         if not interrupts:
             interrupts.extend(_interrupts_from_pending_requests(await _pending_request_events(workflow)))
-        yield _build_run_finished_event(run_id=run_id, thread_id=thread_id, interrupts=interrupts)
+        yield _build_run_finished_event(
+            run_id=run_id,
+            thread_id=thread_id,
+            interrupts=await _interrupts_with_pause_checkpoint(
+                interrupts=interrupts,
+                workflow=workflow,
+                checkpoint_storage=checkpoint_storage,
+            ),
+        )

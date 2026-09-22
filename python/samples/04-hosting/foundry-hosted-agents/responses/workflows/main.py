@@ -2,7 +2,7 @@
 
 import os
 
-from agent_framework import Agent, AgentExecutor, WorkflowBuilder
+from agent_framework import Agent, AgentExecutor, WorkflowAgent, WorkflowBuilder
 from agent_framework.foundry import FoundryChatClient, ResponsesHostServer
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
@@ -11,7 +11,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-def main():
+def create_workflow_agent() -> WorkflowAgent:
+    """Create a fresh workflow agent for one hosted request."""
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
         model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
@@ -48,8 +49,9 @@ def main():
     legal_executor = AgentExecutor(legal_agent, context_mode="last_agent")
     format_executor = AgentExecutor(format_agent, context_mode="last_agent")
 
-    workflow_agent = (
+    return (
         WorkflowBuilder(
+            name="slogan-workflow",
             start_executor=writer_executor,
             # Select only the formatted result as Workflow Output.
             # Unselected executor payloads are hidden unless selected as Intermediate Output.
@@ -61,7 +63,9 @@ def main():
         .as_agent()
     )
 
-    server = ResponsesHostServer(workflow_agent)
+
+def main() -> None:
+    server = ResponsesHostServer(agent=create_workflow_agent)
     server.run()
 
 

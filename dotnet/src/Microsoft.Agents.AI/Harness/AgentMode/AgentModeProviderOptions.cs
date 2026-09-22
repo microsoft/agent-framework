@@ -43,6 +43,24 @@ public sealed class AgentModeProviderOptions
     public string? DefaultMode { get; set; }
 
     /// <summary>
+    /// Gets or sets a value indicating whether the built-in <c>mode_set</c> tool is disabled.
+    /// </summary>
+    /// <value>
+    /// When <see langword="false"/> (the default), the provider exposes the <c>mode_set</c> tool.
+    /// When <see langword="true"/>, the tool is not exposed, while mode state and instructions remain enabled.
+    /// </value>
+    public bool DisableModeSetTool { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether the built-in <c>mode_get</c> tool is disabled.
+    /// </summary>
+    /// <value>
+    /// When <see langword="false"/> (the default), the provider exposes the <c>mode_get</c> tool.
+    /// When <see langword="true"/>, the tool is not exposed, while mode state and instructions remain enabled.
+    /// </value>
+    public bool DisableModeGetTool { get; set; }
+
+    /// <summary>
     /// Represents an agent operating mode with a name and instructions.
     /// </summary>
     public sealed class AgentMode

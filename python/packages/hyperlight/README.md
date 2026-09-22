@@ -9,9 +9,10 @@ pip install agent-framework-hyperlight --pre
 ```
 
 This package depends on `hyperlight-sandbox`, the packaged Python guest, and the
-Wasm backend package on supported platforms. If the backend is not published for
-your current platform yet, `execute_code` will fail at runtime when it tries to
-create the sandbox.
+Wasm backend package on supported platforms. The backend is currently installed
+for Python 3.10 through 3.14. If a compatible backend is not published for your
+current platform and Python version, `execute_code` will fail at runtime when it
+tries to create the sandbox.
 
 ## Quick start
 
@@ -117,6 +118,44 @@ codeact = HyperlightCodeActProvider(
     ],
 )
 ```
+
+### Sandbox tool parameter descriptions
+
+Both `HyperlightExecuteCodeTool` and `HyperlightCodeActProvider` accept the
+keyword-only `tool_description_format` option. The default, `"compact"`, includes
+each parameter's scalar type, required/optional status, description, enum values,
+and default when present. Use `"json"` to include the complete JSON Schema:
+
+```python
+execute_code = HyperlightExecuteCodeTool(
+    tools=[compute],
+    tool_description_format="json",
+)
+
+codeact = HyperlightCodeActProvider(
+    tools=[compute],
+    tool_description_format={"compute": "json", "send_email": "compact"},
+)
+```
+
+A string applies to every registered tool. A mapping selects formats by exact,
+case-sensitive tool name; missing names use `"compact"`. Mappings are copied at
+construction and when creating run-scoped tools, and entries for unregistered
+tools are retained for later registration.
+
+Compact mode automatically falls back to full JSON Schema, with an explanatory
+note, when a schema cannot be represented faithfully (for example, nested objects,
+arrays, references, or additional constraints). No schema details are discarded.
+Only `"compact"` and `"json"` are accepted; `None` is not supported.
+
+Tool parameter schemas are model-visible metadata, just as they are for direct
+function calling. Do not put credentials, tenant identifiers, or other secrets in
+parameter descriptions, enum values, defaults, or custom schema fields.
+
+This option affects `HyperlightExecuteCodeTool.description`, or the injected
+run tool's `.description` when using `HyperlightCodeActProvider`. It does not
+change the short CodeAct instructions, the `execute_code` input schema, sandbox
+execution, or runtime caching.
 
 ### Output attachment limits
 

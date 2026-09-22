@@ -41,6 +41,10 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
   `Agent.run` path, including Agent middleware, provider `before_run` preparation, and function middleware.
   `_approval_execution.py` tracks execution through existing function/chat middleware interfaces; it does not
   prepare providers or invoke the tools itself. `MiddlewareFailure` remains fatal.
+- Programmatic `AgentFrameworkAgent.run(...)` and `run_agent_stream(...)` calls accept
+  `function_invocation_kwargs` and preserve that tool-runtime context across approval resume. Adapter-local execution
+  merges only that mapping, the wrapped agent's default `additional_function_arguments`, and the current run options
+  (in increasing precedence), not unrelated AG-UI run kwargs.
 - Queued approvals follow the wrapped Agent's scheduling. With `ToolApprovalMiddleware`, collected decisions
   remain pending until that middleware releases the batch; AG-UI does not execute a tool ahead of it.
   Collected server-side grants do not require the client to submit the same approval again.

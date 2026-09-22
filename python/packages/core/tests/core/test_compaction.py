@@ -435,7 +435,106 @@ def test_annotate_message_groups_with_tokenizer_adds_token_counts() -> None:
     assert isinstance(_token_count(messages[1]), int)
 
 
+def test_annotate_message_groups_token_counts_ignore_protected_data() -> None:
+    encrypted_blob = "A" * 4096
+    with_payload = Message(
+        role="assistant",
+        contents=[
+            Content.from_text_reasoning(id="rs_1", text="", protected_data=encrypted_blob),
+            Content.from_text("final answer"),
+        ],
+    )
+    without_payload = Message(
+        role="assistant",
+        contents=[
+            Content.from_text_reasoning(id="rs_1", text=""),
+            Content.from_text("final answer"),
+        ],
+    )
+
+    annotate_message_groups([with_payload], tokenizer=CharacterEstimatorTokenizer())
+    annotate_message_groups([without_payload], tokenizer=CharacterEstimatorTokenizer())
+
+    assert _token_count(with_payload) == _token_count(without_payload)
+
+
+def test_annotate_message_groups_token_counts_ignore_encrypted_content_in_additional_properties() -> None:
+    encrypted_blob = "A" * 4096
+    with_blob = Content.from_text_reasoning(id="rs_1", text="")
+    with_blob.additional_properties["encrypted_content"] = encrypted_blob
+    without_blob = Content.from_text_reasoning(id="rs_1", text="")
+
+    with_message = Message(role="assistant", contents=[with_blob, Content.from_text("final answer")])
+    without_message = Message(role="assistant", contents=[without_blob, Content.from_text("final answer")])
+
+    annotate_message_groups([with_message], tokenizer=CharacterEstimatorTokenizer())
+    annotate_message_groups([without_message], tokenizer=CharacterEstimatorTokenizer())
+
+    assert _token_count(with_message) == _token_count(without_message)
+
+
+def test_annotate_message_groups_token_counts_keep_clear_text_reasoning_details() -> None:
+    import json
+
+    clear_text = "visible reasoning " * 128
+    with_details = Content.from_text_reasoning(
+        id="rs_1",
+        text="",
+        protected_data=json.dumps([{"type": "reasoning.text", "text": clear_text, "encrypted_content": "A" * 4096}]),
+    )
+    summary_only = Content.from_text_reasoning(
+        id="rs_1",
+        text="",
+        protected_data=json.dumps([{"type": "reasoning.text", "text": clear_text}]),
+    )
+    without_details = Content.from_text_reasoning(id="rs_1", text="")
+    final_answer = Content.from_text("final answer")
+
+    with_message = Message(role="assistant", contents=[with_details, final_answer])
+    summary_only_message = Message(role="assistant", contents=[summary_only, final_answer])
+    bare_message = Message(role="assistant", contents=[without_details, final_answer])
+
+    annotate_message_groups([with_message], tokenizer=CharacterEstimatorTokenizer())
+    annotate_message_groups([summary_only_message], tokenizer=CharacterEstimatorTokenizer())
+    annotate_message_groups([bare_message], tokenizer=CharacterEstimatorTokenizer())
+
+    # The opaque encrypted member is excluded while the clear-text reasoning
+    # the provider replays stays counted.
+    with_count = _token_count(with_message)
+    summary_count = _token_count(summary_only_message)
+    bare_count = _token_count(bare_message)
+    assert with_count is not None
+    assert summary_count is not None
+    assert bare_count is not None
+    assert with_count == summary_count
+    assert with_count > bare_count
+
+
+def test_annotate_token_counts_recomputes_counts_from_stale_serialization_basis() -> None:
+
+    from agent_framework._compaction import TOKEN_COUNT_BASIS_VERSION, _write_group_annotation, annotate_token_counts
+
+    message = Message(role="assistant", contents=[Content.from_text("final answer " * 64)])
+    _write_group_annotation(message, group_id="g0", kind="assistant_text", index=0, has_reasoning=False)
+    annotation = message.additional_properties[GROUP_ANNOTATION_KEY]
+    assert isinstance(annotation, dict)
+    # Simulate a count cached by a pre-fix serialization basis: value present,
+    # no basis stamp (annotations survive to_dict/from_dict round-trips).
+    annotation[GROUP_TOKEN_COUNT_KEY] = 1
+    annotation.pop("token_count_basis", None)
+    assert _token_count(message) == 1
+
+    annotate_token_counts([message], tokenizer=CharacterEstimatorTokenizer())
+
+    annotation = message.additional_properties[GROUP_ANNOTATION_KEY]
+    assert isinstance(annotation, dict)
+    assert annotation[GROUP_TOKEN_COUNT_KEY] != 1
+    assert annotation["token_count_basis"] == TOKEN_COUNT_BASIS_VERSION
+
+
 def test_extend_compaction_messages_preserves_existing_annotations_and_tokens() -> None:
+    from agent_framework._compaction import TOKEN_COUNT_BASIS_VERSION
+
     tokenizer = CharacterEstimatorTokenizer()
     messages = [_assistant_function_call("c3")]
     annotate_message_groups(messages)
@@ -445,6 +544,10 @@ def test_extend_compaction_messages_preserves_existing_annotations_and_tokens() 
     annotation = messages[0].additional_properties.get(GROUP_ANNOTATION_KEY)
     if isinstance(annotation, dict):
         annotation[GROUP_TOKEN_COUNT_KEY] = old_token_count
+        # Counts cached under the current serialization basis are preserved
+        # across extensions; counts without the current basis stamp are stale
+        # and get recomputed (see test_annotate_token_counts_recomputes_...).
+        annotation["token_count_basis"] = TOKEN_COUNT_BASIS_VERSION
 
     extend_compaction_messages(messages, [_tool_result("c3", "ok")], tokenizer=tokenizer)
 

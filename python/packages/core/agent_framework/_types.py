@@ -125,7 +125,9 @@ def detect_media_type_from_base64(
     if data_bytes is not None:
         data = data_bytes
     if data_uri is not None:
-        if data is not None:
+        # The conflict check has to run before the URI payload is rebound into data_str,
+        # otherwise a caller-supplied data_str disappears instead of being rejected.
+        if data is not None or data_str is not None:
             raise ValueError("Provide exactly one of data_bytes, data_str, or data_uri.")
         # Remove data URI prefix if present
         if not data_uri.startswith("data:") or "," not in data_uri:
@@ -2009,6 +2011,13 @@ def prepend_instructions_to_messages(
     if isinstance(instructions, str):
         instructions = [instructions]
 
+    # An empty instruction list (or all-empty strings) adds nothing; without
+    # this a caller that passes an unset options default of "" gets a
+    # contentless system message injected ahead of the real conversation.
+    instructions = [part for part in instructions if part.strip()]
+    if not instructions:
+        return messages
+
     # Skip instructions that are already present as the leading messages with the
     # same role and text.  This prevents duplicate system messages when
     # instructions are injected by multiple layers (e.g. Agent + chat client).
@@ -2103,6 +2112,8 @@ def _process_update(response: ChatResponse | AgentResponse, update: ChatResponse
             response.finish_reason = update.finish_reason
         if update.model is not None:
             response.model = update.model
+    if isinstance(response, AgentResponse) and isinstance(update, AgentResponseUpdate) and update.agent_id is not None:
+        response.agent_id = update.agent_id
     if (
         isinstance(response, AgentResponse)
         and isinstance(update, AgentResponseUpdate)
@@ -3519,6 +3530,24 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
                 if isawaitable(update):
                     update = await update
             return await self._record_update(update)
+
+    async def close(self) -> None:
+        """Close the active iterator and run cleanup hooks.
+
+        This method is idempotent and also closes nested ``ResponseStream`` wrappers.
+        """
+        try:
+            iterator: AsyncIterator[UpdateT] | None = self._iterator
+            if iterator is not None:
+                if isinstance(iterator, ResponseStream):
+                    await cast(ResponseStream[UpdateT, Any], iterator).close()
+                else:
+                    close = getattr(iterator, "aclose", None)
+                    if close is not None:
+                        await close()
+        finally:
+            self._consumed = True
+            await self._run_cleanup_hooks()
 
     async def _resolve_stream_with_pull_contexts(self) -> AsyncIterable[UpdateT]:
         """Resolve the underlying stream while activating any registered pull context managers.
