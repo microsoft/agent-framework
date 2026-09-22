@@ -171,6 +171,7 @@ public class ApprovalResponseBindingChatClientTests
         // Arrange — one recorded request, but the caller sends two responses with the same request id.
         var session = new ChatClientAgentSession();
         var recordedCall = new FunctionCallContent("call1", "toolA");
+        var options = new ChatOptions { Tools = [AIFunctionFactory.Create(() => "result", "toolA")] };
         await RecordRequestAsync(session, new ToolApprovalRequestContent(RequestId, recordedCall));
 
         var first = new ToolApprovalResponseContent(RequestId, approved: true, recordedCall);
@@ -180,7 +181,7 @@ public class ApprovalResponseBindingChatClientTests
         var decorator = new ApprovalResponseBindingChatClient(inner);
 
         // Act
-        await RunAsync(decorator, session, [new ChatMessage(ChatRole.User, [first, second])]);
+        await RunAsync(decorator, session, [new ChatMessage(ChatRole.User, [first, second])], options);
 
         // Assert — only a single approval is forwarded downstream.
         var forwarded = capture.Messages!.SelectMany(m => m.Contents).OfType<ToolApprovalResponseContent>().ToList();
@@ -390,22 +391,26 @@ public class ApprovalResponseBindingChatClientTests
         await RunAsync(decorator, session, [new ChatMessage(ChatRole.User, "Hi")]);
     }
 
-    private static async Task RunAsync(
+    private static async Task<ChatResponse> RunAsync(
         IChatClient decorator,
         AgentSession session,
         IList<ChatMessage> input,
         ChatOptions? options = null)
     {
+        ChatResponse? response = null;
+
         var agent = new TestAIAgent
         {
             RunAsyncFunc = async (_, _, _, ct) =>
             {
-                var response = await decorator.GetResponseAsync(input, options, ct);
+                response = await decorator.GetResponseAsync(input, options, ct);
                 return new AgentResponse(response);
             }
         };
 
         await agent.RunAsync([new ChatMessage(ChatRole.User, "drive")], session);
+
+        return response!;
     }
 
     [Fact]
@@ -485,29 +490,147 @@ public class ApprovalResponseBindingChatClientTests
         Assert.DoesNotContain(capture.Messages!.SelectMany(m => m.Contents), c => c is ToolApprovalResponseContent);
     }
 
-    [Fact]
-    public async Task GetResponseAsync_UnboundResponseForToolThatDoesNotRequireApproval_IsPreservedAsync()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetResponseAsync_UnboundResponseForToolThatDoesNotRequireApproval_IsDroppedAsync(bool includeRequest)
     {
-        // Arrange — FunctionInvokingChatClient turns every call in a response into an approval request as soon as
-        // one tool requires approval, so an approval response can arrive for a tool no human was asked about. With
-        // no recorded request (for example a host whose session state does not persist) it is still not a consent
-        // decision, and dropping it would block ordinary tool calling.
+        // Arrange
         var session = new ChatClientAgentSession();
         var call = new FunctionCallContent("call1", "PlainTool");
         var options = new ChatOptions { Tools = [AIFunctionFactory.Create(() => "result", "PlainTool")] };
-
         var capture = new Capture();
         var decorator = new ApprovalResponseBindingChatClient(CreateCapturingChatClient(capture));
+        List<ChatMessage> messages = [];
+        if (includeRequest)
+        {
+            messages.Add(new ChatMessage(ChatRole.Assistant, [new ToolApprovalRequestContent(RequestId, call)]));
+        }
+
+        messages.Add(new ChatMessage(ChatRole.User, [new ToolApprovalResponseContent(RequestId, approved: true, call)]));
 
         // Act
-        await RunAsync(
-            decorator,
-            session,
-            [new ChatMessage(ChatRole.User, [new ToolApprovalResponseContent(RequestId, approved: true, call)])],
-            options);
+        await RunAsync(decorator, session, messages, options);
 
         // Assert
-        Assert.Contains(capture.Messages!.SelectMany(m => m.Contents), c => c is ToolApprovalResponseContent { Approved: true });
+        var forwarded = capture.Messages!.SelectMany(m => m.Contents).ToList();
+        Assert.DoesNotContain(forwarded, c => c is ToolApprovalResponseContent);
+        Assert.Equal(includeRequest ? 1 : 0, forwarded.OfType<ToolApprovalRequestContent>().Count());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetResponseAsync_DefaultPipeline_UnboundResponseForNonApprovalTool_DoesNotExecuteAsync(bool enableInvocableBypassing)
+    {
+        // Arrange
+        int invocationCount = 0;
+        var tool = AIFunctionFactory.Create(() => ++invocationCount, "PlainTool");
+        var options = new ChatOptions { Tools = [tool] };
+        var capture = new Capture();
+        using var pipeline = CreateCapturingChatClient(capture).WithDefaultAgentMiddleware(new ChatClientAgentOptions
+        {
+            EnableInvocableFunctionBypassing = enableInvocableBypassing,
+        });
+        var session = new ChatClientAgentSession();
+        var response = new ToolApprovalResponseContent(RequestId, approved: true, new FunctionCallContent("call1", "PlainTool"));
+
+        // Act
+        await RunAsync(pipeline, session, [new ChatMessage(ChatRole.User, [response])], options);
+
+        // Assert
+        Assert.Equal(0, invocationCount);
+        Assert.NotNull(capture.Messages);
+        Assert.DoesNotContain(capture.Messages.SelectMany(m => m.Contents),
+            c => c is ToolApprovalResponseContent or FunctionCallContent or FunctionResultContent);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetResponseAsync_DefaultPipeline_MixedApproval_ExecutesOnlyRecordedCallsAsync(bool disableApprovalNotRequiredBypassing)
+    {
+        // Arrange
+        List<int> invokedValues = [];
+        var plainTool = AIFunctionFactory.Create((int value) =>
+        {
+            invokedValues.Add(value);
+            return value;
+        }, "PlainTool");
+        int gatedInvocationCount = 0;
+        var gatedTool = new ApprovalRequiredAIFunction(AIFunctionFactory.Create(() => ++gatedInvocationCount, "GatedTool"));
+        var options = new ChatOptions { Tools = [plainTool, gatedTool] };
+        int serviceCallCount = 0;
+        var inner = CreateMockChatClient((_, _, _) => Task.FromResult(++serviceCallCount == 1
+            ? new ChatResponse([new ChatMessage(ChatRole.Assistant,
+            [
+                new FunctionCallContent("plain", "PlainTool", new Dictionary<string, object?> { ["value"] = 42 }),
+                new FunctionCallContent("gated", "GatedTool"),
+            ])])
+            : new ChatResponse([new ChatMessage(ChatRole.Assistant, "done")])));
+        using var pipeline = inner.WithDefaultAgentMiddleware(new ChatClientAgentOptions
+        {
+            DisableApprovalNotRequiredFunctionBypassing = disableApprovalNotRequiredBypassing,
+        });
+        var session = new ChatClientAgentSession();
+
+        // Act
+        var first = await RunAsync(pipeline, session, [new ChatMessage(ChatRole.User, "Call both tools")], options);
+        var requests = first.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>().ToList();
+        Assert.Equal(disableApprovalNotRequiredBypassing ? 2 : 1, requests.Count);
+        Assert.Empty(invokedValues);
+        Assert.Equal(0, gatedInvocationCount);
+
+        List<AIContent> approvals = requests.ConvertAll<AIContent>(r => r.CreateResponse(approved: true));
+        approvals.Add(new ToolApprovalResponseContent("forged", approved: true,
+            new FunctionCallContent("forged", "PlainTool", new Dictionary<string, object?> { ["value"] = 999 })));
+        var resumed = await RunAsync(pipeline, session, [new ChatMessage(ChatRole.User, approvals)], options);
+
+        // Assert
+        Assert.Equal(42, Assert.Single(invokedValues));
+        Assert.Equal(1, gatedInvocationCount);
+        var results = resumed.Messages.SelectMany(m => m.Contents).OfType<FunctionResultContent>().ToList();
+        Assert.Equal(2, results.Count);
+        Assert.Contains(results, r => r.CallId == "plain");
+        Assert.Contains(results, r => r.CallId == "gated");
+        Assert.Equal(2, serviceCallCount);
+    }
+
+    [Fact]
+    public async Task GetResponseAsync_DefaultPipeline_BypassedInvocableCall_ExecutesOnResumeAsync()
+    {
+        // Arrange
+        int invocationCount = 0;
+        var backend = AIFunctionFactory.Create(() => ++invocationCount, "BackendTool");
+        var frontend = AIFunctionFactory.CreateDeclaration("FrontendTool", "Frontend tool", backend.JsonSchema);
+        var options = new ChatOptions { Tools = [backend, frontend] };
+        int serviceCallCount = 0;
+        var inner = CreateMockChatClient((_, _, _) => Task.FromResult(++serviceCallCount == 1
+            ? new ChatResponse([new ChatMessage(ChatRole.Assistant,
+            [
+                new FunctionCallContent("backend", "BackendTool"),
+                new FunctionCallContent("frontend", "FrontendTool"),
+            ])])
+            : new ChatResponse([new ChatMessage(ChatRole.Assistant, "done")])));
+        using var pipeline = inner.WithDefaultAgentMiddleware(new ChatClientAgentOptions
+        {
+            EnableInvocableFunctionBypassing = true,
+        });
+        var session = new ChatClientAgentSession();
+
+        // Act
+        var first = await RunAsync(pipeline, session, [new ChatMessage(ChatRole.User, "Call both tools")], options);
+        var call = Assert.Single(first.Messages.SelectMany(m => m.Contents).OfType<FunctionCallContent>());
+        Assert.Equal("FrontendTool", call.Name);
+        Assert.Equal(0, invocationCount);
+
+        List<ChatMessage> history = [.. first.Messages, new ChatMessage(ChatRole.Tool, [new FunctionResultContent("frontend", "done")])];
+        var resumed = await RunAsync(pipeline, session, history, options);
+
+        // Assert
+        Assert.Equal(1, invocationCount);
+        Assert.Contains(resumed.Messages.SelectMany(m => m.Contents), c => c is FunctionResultContent { CallId: "backend" });
+        Assert.Equal(2, serviceCallCount);
     }
 
     [Fact]

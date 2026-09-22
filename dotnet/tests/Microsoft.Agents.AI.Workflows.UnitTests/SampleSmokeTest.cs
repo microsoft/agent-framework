@@ -117,7 +117,7 @@ public class SampleSmokeTest
     {
         using StringWriter writer = new();
 
-        string guessResult = await Step5EntryPoint.RunAsync(writer, userGuessCallback: RespondToGuessPrompt, environment.ToWorkflowExecutionEnvironment());
+        string guessResult = await Step5EntryPoint.RunAsync(writer, userGuessCallback: GetGuessResponse, environment.ToWorkflowExecutionEnvironment());
         Assert.Equal("You guessed correctly! You Win!", guessResult);
     }
 
@@ -129,7 +129,7 @@ public class SampleSmokeTest
     {
         using StringWriter writer = new();
 
-        string guessResult = await Step5EntryPoint.RunAsync(writer, userGuessCallback: RespondToGuessPrompt, environment.ToWorkflowExecutionEnvironment(), rehydrateToRestore: true);
+        string guessResult = await Step5EntryPoint.RunAsync(writer, userGuessCallback: GetGuessResponse, environment.ToWorkflowExecutionEnvironment(), rehydrateToRestore: true);
         Assert.Equal("You guessed correctly! You Win!", guessResult);
     }
 
@@ -145,7 +145,7 @@ public class SampleSmokeTest
         options.MakeReadOnly();
 
         CheckpointManager memoryJsonManager = CheckpointManager.CreateJson(new InMemoryJsonStore(), options);
-        string guessResult = await Step5EntryPoint.RunAsync(writer, userGuessCallback: RespondToGuessPrompt, environment.ToWorkflowExecutionEnvironment(), rehydrateToRestore: true, checkpointManager: memoryJsonManager);
+        string guessResult = await Step5EntryPoint.RunAsync(writer, userGuessCallback: GetGuessResponse, environment.ToWorkflowExecutionEnvironment(), rehydrateToRestore: true, checkpointManager: memoryJsonManager);
         Assert.Equal("You guessed correctly! You Win!", guessResult);
     }
 
@@ -526,13 +526,13 @@ public class SampleSmokeTest
         Assert.IsType<InvalidOperationException>(actualError);
     }
 
-    private static int RespondToGuessPrompt(string prompt) =>
+    private static int GetGuessResponse(string prompt) =>
         prompt switch
         {
             "Guess the number." => 50,
             "Your guess was too high. Try again." => 23,
             "Your guess was too low. Try again." => 42,
-            _ => throw new InvalidOperationException($"Unexpected prompt: {prompt}")
+            _ => throw new InvalidOperationException($"Unexpected guess prompt: {prompt}")
         };
 }
 
