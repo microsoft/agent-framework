@@ -76,6 +76,37 @@ public sealed class PostgresMemoryClientTests
         this._store.Verify(store => store.EnsureSchemaAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    [Theory]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    [InlineData(double.NegativeInfinity)]
+    public void Constructor_RejectsNonFiniteDedupeSimilarityThreshold(double threshold)
+    {
+        // Arrange
+        var options = new PostgresMemoryClientOptions
+        {
+            AutoProcess = false,
+            DedupeSimilarityThreshold = threshold,
+        };
+
+        // Act and assert
+        _ = Assert.Throws<ArgumentOutOfRangeException>(() => this.CreateClient(options));
+    }
+
+    [Theory]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    [InlineData(double.NegativeInfinity)]
+    public async Task GetMemoriesAsync_RejectsNonFiniteMinConfidenceAsync(double minConfidence)
+    {
+        // Arrange
+        var client = this.CreateClient();
+
+        // Act and assert
+        _ = await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
+            client.GetMemoriesAsync(CreateScope(), minConfidence: minConfidence));
+    }
+
     [Fact]
     public async Task SearchAsync_EmbedsQueryAndPassesRetrievalFiltersAsync()
     {

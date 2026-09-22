@@ -226,19 +226,44 @@ internal sealed partial class PostgresMemoryStore : IPostgresMemoryStore
             RETURNING id;
             """;
 
-        var command = this._dataSource.CreateCommand(sql);
-        await using (command.ConfigureAwait(false))
+        var connection = await this._dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+        await using (connection.ConfigureAwait(false))
         {
-            AddScopeParameters(command, scope, includeThread: true);
-            command.Parameters.AddWithValue("role", role);
-            command.Parameters.AddWithValue("content", content);
-            if (embedding.HasValue)
+            var transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+            await using (transaction.ConfigureAwait(false))
             {
-                command.Parameters.AddWithValue("embedding", new Vector(embedding.Value));
-            }
+                var lockCommand = connection.CreateCommand();
+                await using (lockCommand.ConfigureAwait(false))
+                {
+                    lockCommand.Transaction = transaction;
+                    lockCommand.CommandText =
+                        "SELECT pg_advisory_xact_lock(hashtextextended(@lock_scope, 0));";
+                    lockCommand.Parameters.AddWithValue(
+                        "lock_scope",
+                        ComputeTurnInsertionLockScope(scope));
+                    await lockCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+                }
 
-            var id = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-            return Convert.ToInt64(id, System.Globalization.CultureInfo.InvariantCulture);
+                var command = connection.CreateCommand();
+                await using (command.ConfigureAwait(false))
+                {
+                    command.Transaction = transaction;
+#pragma warning disable CA2100 // Schema and table identifiers were validated; all record values are parameters.
+                    command.CommandText = sql;
+#pragma warning restore CA2100
+                    AddScopeParameters(command, scope, includeThread: true);
+                    command.Parameters.AddWithValue("role", role);
+                    command.Parameters.AddWithValue("content", content);
+                    if (embedding.HasValue)
+                    {
+                        command.Parameters.AddWithValue("embedding", new Vector(embedding.Value));
+                    }
+
+                    var id = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+                    await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+                    return Convert.ToInt64(id, System.Globalization.CultureInfo.InvariantCulture);
+                }
+            }
         }
     }
 
@@ -556,7 +581,7 @@ internal sealed partial class PostgresMemoryStore : IPostgresMemoryStore
         }
 
         const string Sql = """
-            SELECT document_id, rank, relevance_score
+            SELECT id, rank, score
             FROM azure_ai.rank(
                 query => @query_text,
                 document_contents => @document_contents,
@@ -855,6 +880,9 @@ internal sealed partial class PostgresMemoryStore : IPostgresMemoryStore
         AppendScopeComponent(input, includeThread ? scope.ThreadId : null);
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(input.ToString())));
     }
+
+    internal static string ComputeTurnInsertionLockScope(PostgresMemoryScope scope) =>
+        $"turns:{ComputeScopeKey(scope, includeThread: false)}";
 
     private static void AppendScopeComponent(StringBuilder builder, string? value)
     {

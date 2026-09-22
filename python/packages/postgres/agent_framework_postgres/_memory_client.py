@@ -19,8 +19,8 @@ from agent_framework import (
     SupportsGetEmbeddings,
 )
 from agent_framework._telemetry import mark_feature_used
-from agent_framework.exceptions import IntegrationInvalidResponseException
-from psycopg import AsyncConnection, Error
+from agent_framework.exceptions import IntegrationException, IntegrationInvalidResponseException
+from psycopg import AsyncConnection
 
 from ._feature_usage import FeatureIndex
 from ._memory_store import _PostgresMemoryStore  # pyright: ignore[reportPrivateUsage]
@@ -207,7 +207,7 @@ class PostgresMemoryClient:
                 candidates,
                 self.options.azure_ai_reranker_model,
             )
-        except Error:
+        except IntegrationException:
             logger.warning("Azure AI memory reranking failed; returning hybrid retrieval order.", exc_info=True)
             return candidates[:top_k]
 

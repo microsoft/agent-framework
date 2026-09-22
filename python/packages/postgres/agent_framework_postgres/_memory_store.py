@@ -502,7 +502,7 @@ class _PostgresMemoryStore:  # pyright: ignore[reportUnusedClass]
             return []
         statement = sql.SQL(
             """
-            SELECT document_id, rank, relevance_score
+            SELECT id, rank, score
             FROM azure_ai.rank(
                 query => %s,
                 document_contents => %s::text[],

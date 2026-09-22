@@ -1014,9 +1014,10 @@ public sealed class PostgresMemoryClient : IPostgresMemoryClient, IAsyncDisposab
             throw new ArgumentOutOfRangeException(nameof(options), "ReconciliationPoolSize must be between 2 and 500.");
         }
 
-        if (options.DedupeSimilarityThreshold is < 0 or > 1)
+        if (!double.IsFinite(options.DedupeSimilarityThreshold)
+            || options.DedupeSimilarityThreshold is < 0 or > 1)
         {
-            throw new ArgumentOutOfRangeException(nameof(options), "DedupeSimilarityThreshold must be between 0 and 1.");
+            throw new ArgumentOutOfRangeException(nameof(options), "DedupeSimilarityThreshold must be finite and between 0 and 1.");
         }
     }
 
@@ -1037,7 +1038,7 @@ public sealed class PostgresMemoryClient : IPostgresMemoryClient, IAsyncDisposab
             throw new ArgumentOutOfRangeException(nameof(limit));
         }
 
-        if (minConfidence is < 0 or > 1)
+        if (!double.IsFinite(minConfidence) || minConfidence is < 0 or > 1)
         {
             throw new ArgumentOutOfRangeException(nameof(minConfidence));
         }

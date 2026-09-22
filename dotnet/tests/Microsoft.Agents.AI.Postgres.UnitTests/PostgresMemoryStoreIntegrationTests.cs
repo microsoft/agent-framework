@@ -94,6 +94,71 @@ public sealed class PostgresMemoryStoreIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Store_SerializesTurnIdAllocationThroughCommitAcrossInstancesAsync()
+    {
+        _ = this.GetStoreOrSkip();
+        var scope = new PostgresMemoryScope
+        {
+            UserId = "concurrent-user",
+            ThreadId = "thread-1",
+        };
+        var secondStore = new PostgresMemoryStore(
+            this._dataSource!,
+            new PostgresMemoryClientOptions
+            {
+                Schema = this._schema,
+                TableName = "memory",
+                EmbeddingDimensions = 3,
+                AutoProcess = false,
+            });
+
+        var firstConnection = await this._dataSource!.OpenConnectionAsync();
+        await using (firstConnection.ConfigureAwait(false))
+        {
+            var firstTransaction = await firstConnection.BeginTransactionAsync();
+            await using (firstTransaction.ConfigureAwait(false))
+            {
+                var firstCommand = firstConnection.CreateCommand();
+                await using (firstCommand.ConfigureAwait(false))
+                {
+                    firstCommand.Transaction = firstTransaction;
+#pragma warning disable CA2100 // The schema is internally generated and quoted; all record values are parameters.
+                    firstCommand.CommandText = $"""
+                        SELECT pg_advisory_xact_lock(hashtextextended(@lock_scope, 0));
+                        INSERT INTO "{this._schema}"."memory_turns"
+                            (user_id, thread_id, role, content)
+                        VALUES (@user_id, @thread_id, 'user', 'First turn')
+                        RETURNING id;
+                        """;
+#pragma warning restore CA2100
+                    firstCommand.Parameters.AddWithValue(
+                        "lock_scope",
+                        PostgresMemoryStore.ComputeTurnInsertionLockScope(scope));
+                    firstCommand.Parameters.AddWithValue("user_id", scope.UserId!);
+                    firstCommand.Parameters.AddWithValue("thread_id", scope.ThreadId!);
+                    var firstId = Convert.ToInt64(
+                        await firstCommand.ExecuteScalarAsync(),
+                        System.Globalization.CultureInfo.InvariantCulture);
+
+                    var secondInsert = secondStore.InsertTurnAsync(
+                        scope,
+                        "user",
+                        "Second turn",
+                        embedding: null,
+                        CancellationToken.None);
+
+                    var completedTask = await Task.WhenAny(secondInsert, Task.Delay(TimeSpan.FromMilliseconds(250)));
+                    Assert.NotSame(secondInsert, completedTask);
+
+                    await firstTransaction.CommitAsync();
+                    var secondId = await secondInsert;
+                    Assert.True(secondId > firstId);
+                }
+            }
+        }
+    }
+
+    [Fact]
     public async Task Store_RoundTripsTurnsMemoriesAndHybridSearchAsync()
     {
         var store = this.GetStoreOrSkip();

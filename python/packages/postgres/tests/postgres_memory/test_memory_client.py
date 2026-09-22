@@ -246,6 +246,8 @@ async def test_store_rerank_batches_candidates_in_one_database_call() -> None:
         (2, 1, 0.98),
         (1, 2, 0.63),
     ]
+    statement = cursor.execute.await_args.args[0]
+    assert "SELECT id, rank, score" in statement.as_string()
     params = cursor.execute.await_args.args[1]
     assert params == ["preferred database", ["First", "Second"], ["1", "2"], "Cohere-rerank-v4.0-fast"]
     cursor.execute.assert_awaited_once()
