@@ -249,24 +249,23 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
         protected override async ValueTask<object?> InvokeCoreAsync(AIFunctionArguments arguments, CancellationToken cancellationToken)
         {
             var previous = s_invocationScope.Value;
-            var context = FunctionInvokingChatClient.CurrentContext;
-            bool contextIsSynthetic = context is null;
-            if (contextIsSynthetic)
-            {
-                // Direct function calls have no context from FunctionInvokingChatClient, so create the values the
-                // callback expects. Wrappers entered while such a call runs share the context created for it, so
-                // that a callback redirecting the call to another wrapped function cannot re-enter itself endlessly.
-                context = FindRunningSyntheticContext(previous)
-                    ?? new FunctionInvocationContext()
-                    {
-                        Arguments = arguments,
-                        Function = this.InnerFunction,
-                        CallContent = new(string.Empty, this.InnerFunction.Name, new Dictionary<string, object?>(arguments)),
-                    };
-            }
+
+            // Direct function calls have no context from FunctionInvokingChatClient, so create the values the
+            // callback expects. Wrappers entered while such a call runs share the context created for it, so
+            // that a callback redirecting the call to another wrapped function cannot re-enter itself endlessly.
+            var ambientContext = FunctionInvokingChatClient.CurrentContext;
+            bool isDirectCall = ambientContext is null;
+            var context = ambientContext
+                ?? FindDirectCallContext(previous)
+                ?? new FunctionInvocationContext()
+                {
+                    Arguments = arguments,
+                    Function = this.InnerFunction,
+                    CallContent = new(string.Empty, this.InnerFunction.Name, new Dictionary<string, object?>(arguments)),
+                };
 
             // The callback can redirect the call by assigning a different function to the context.
-            var targetBeforeCallback = context!.Function;
+            var targetBeforeCallback = context.Function;
             InvocationScope? scope = null;
 
             // A custom function wrapper can lead back to this callback during the same call. Run it only once.
@@ -283,7 +282,7 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
             var middlewareChain = (context.Options?.Tools as MiddlewareEnabledTools)?.MiddlewareChain ?? this._middlewareChain;
 
             // Record the callback while it runs, including through wrappers that do not expose their inner function.
-            scope = new InvocationScope(context, this._middleware, middlewareChain, contextIsSynthetic, previous);
+            scope = new InvocationScope(context, this._middleware, middlewareChain, isDirectCall, previous);
             s_invocationScope.Value = scope;
 
             try
@@ -341,13 +340,13 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
         }
 
         /// <summary>Gets the context created for a direct function call that is still running, if there is one.</summary>
-        private static FunctionInvocationContext? FindRunningSyntheticContext(InvocationScope? scope)
+        private static FunctionInvocationContext? FindDirectCallContext(InvocationScope? scope)
         {
             for (; scope is not null; scope = scope.Parent)
             {
                 if (scope.IsRunning)
                 {
-                    return scope.ContextIsSynthetic ? scope.Context : null;
+                    return scope.IsDirectCall ? scope.Context : null;
                 }
             }
 
@@ -358,15 +357,18 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
             FunctionInvocationContext context,
             FunctionInvocationDelegatingAgent middleware,
             FunctionInvocationDelegatingAgent[] middlewareChain,
-            bool contextIsSynthetic,
+            bool isDirectCall,
             InvocationScope? parent)
         {
             internal FunctionInvocationContext Context { get; } = context;
             internal FunctionInvocationDelegatingAgent Middleware { get; } = middleware;
             internal FunctionInvocationDelegatingAgent[] MiddlewareChain { get; } = middlewareChain;
 
-            /// <summary>Gets a value indicating whether the context was created for a call without a current context.</summary>
-            internal bool ContextIsSynthetic { get; } = contextIsSynthetic;
+            /// <summary>
+            /// Gets a value indicating whether the context of this scope was created for a function that was
+            /// invoked without a context from <see cref="FunctionInvokingChatClient"/>.
+            /// </summary>
+            internal bool IsDirectCall { get; } = isDirectCall;
 
             /// <summary>
             /// Gets or sets a value indicating whether the callback of this scope is still running.
