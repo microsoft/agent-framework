@@ -104,7 +104,7 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, ResponseA
                 {
                     using JsonDocument jsonDocument = JsonDocument.Parse(lastMessageText);
                     responseObjectValue = jsonDocument.ParseJsonValue(lastMessageText).ToFormula();
-responseObjectWasBlanked = responseObjectValue is BlankValue;
+                    responseObjectWasBlanked = responseObjectValue is BlankValue;
                 }
                 catch (JsonException)
                 {
