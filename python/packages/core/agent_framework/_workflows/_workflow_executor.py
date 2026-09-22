@@ -65,11 +65,14 @@ def _scope_invocation_kwargs_to_subworkflow(
         and GLOBAL_KWARGS_KEY not in parent_routed_keys
         and isinstance(parent_global_kwargs, Mapping)
     ):
+        executor_kwargs = {key: value for key, value in scoped.items() if key != GLOBAL_KWARGS_KEY}
+        if any(not isinstance(value, Mapping) for value in executor_kwargs.values()):
+            return scoped
         return WorkflowInvocationKwargs(
             global_kwargs=cast(Mapping[str, Any], parent_global_kwargs),
             executor_kwargs=cast(
                 Mapping[str, Mapping[str, Any]],
-                {key: value for key, value in scoped.items() if key != GLOBAL_KWARGS_KEY},
+                executor_kwargs,
             ),
         )
     return scoped or None

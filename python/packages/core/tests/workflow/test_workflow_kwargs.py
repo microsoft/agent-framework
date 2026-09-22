@@ -1324,7 +1324,12 @@ async def test_non_mapping_parent_executor_kwargs_do_not_become_child_globals(
 
 
 @pytest.mark.parametrize("kwargs_channel", ["function_invocation_kwargs", "client_kwargs"])
-async def test_legacy_mixed_global_survives_parent_key_filtering(kwargs_channel: str) -> None:
+@pytest.mark.parametrize("child_kwargs", [{"child_only": True}, None, "invalid"])
+async def test_legacy_mixed_global_survives_parent_key_filtering(
+    kwargs_channel: str,
+    child_kwargs: Mapping[str, Any] | str | None,
+    caplog: "LogCaptureFixture",
+) -> None:
     """A legacy global slot retains its meaning after parent-targeted entries are removed."""
     from agent_framework import AgentExecutor, Executor, WorkflowBuilder, WorkflowContext, handler
     from agent_framework._workflows._workflow_executor import WorkflowExecutor
@@ -1348,6 +1353,7 @@ async def test_legacy_mixed_global_survives_parent_key_filtering(kwargs_channel:
     invocation_kwargs = {
         "__global__": {"shared": "global"},
         "parent": {"parent_only": True},
+        "child": child_kwargs,
     }
 
     if kwargs_channel == "function_invocation_kwargs":
@@ -1359,7 +1365,16 @@ async def test_legacy_mixed_global_survives_parent_key_filtering(kwargs_channel:
         "shared": "global",
         "parent_only": True,
     }
-    assert child_agent.captured_kwargs[0].get(kwargs_channel) == {"shared": "global"}
+    if isinstance(child_kwargs, Mapping):
+        assert child_agent.captured_kwargs[0].get(kwargs_channel) == {
+            "shared": "global",
+            "child_only": True,
+        }
+    elif child_kwargs is None:
+        assert child_agent.captured_kwargs[0].get(kwargs_channel) == {"shared": "global"}
+    else:
+        assert child_agent.captured_kwargs[0].get(kwargs_channel) is None
+        assert any("expected a dict for its kwargs" in record.message for record in caplog.records)
 
 
 @pytest.mark.parametrize("kwargs_channel", ["function_invocation_kwargs", "client_kwargs"])
