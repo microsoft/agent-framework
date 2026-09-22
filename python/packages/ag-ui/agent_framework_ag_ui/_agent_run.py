@@ -315,9 +315,7 @@ def _local_approval_content_ids_to_remove(
 
             if content.call_id is None:
                 continue
-            is_terminal_result = content.type == "function_result" and not (
-                isinstance(content.result, str) and "[APPROVAL_PENDING]" in content.result
-            )
+            is_terminal_result = content.type == "function_result"
             is_follow_up_request = content.user_input_request and content.type not in {
                 "function_approval_request",
                 "function_approval_response",

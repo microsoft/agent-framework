@@ -2011,6 +2011,13 @@ def prepend_instructions_to_messages(
     if isinstance(instructions, str):
         instructions = [instructions]
 
+    # An empty instruction list (or all-empty strings) adds nothing; without
+    # this a caller that passes an unset options default of "" gets a
+    # contentless system message injected ahead of the real conversation.
+    instructions = [part for part in instructions if part.strip()]
+    if not instructions:
+        return messages
+
     # Skip instructions that are already present as the leading messages with the
     # same role and text.  This prevents duplicate system messages when
     # instructions are injected by multiple layers (e.g. Agent + chat client).
