@@ -15,24 +15,53 @@ internal sealed class StateManager
     private readonly Dictionary<ScopeId, StateScope> _scopes = [];
     private readonly Dictionary<UpdateKey, StateUpdate> _queuedUpdates = [];
 
+    // InProcessRunner.RunSuperstepAsync delivers a superstep's messages to every receiving executor
+    // concurrently (one DeliverMessagesAsync task per receiver, awaited with Task.WhenAll), and each
+    // of those executors reaches this instance through its bound IWorkflowContext. Two executors
+    // queueing a state update in the same superstep therefore write _queuedUpdates from two threads,
+    // and Dictionary<,> is not safe for that: it throws
+    // "Operations that change non-concurrent collections must have exclusive access" or, worse,
+    // silently corrupts. Every access to the two dictionaries takes this lock; the scope contents
+    // themselves are only written by PublishUpdatesAsync and ImportStateAsync, which run between
+    // supersteps, so the await-ing reads of a StateScope stay outside the lock.
+    private readonly object _syncRoot = new();
+
     private StateScope GetOrCreateScope(ScopeId scopeId)
     {
         Throw.IfNull(scopeId);
 
-        if (!this._scopes.TryGetValue(scopeId, out StateScope? scope))
+        lock (this._syncRoot)
         {
-            scope = new StateScope(scopeId);
-            this._scopes[scopeId] = scope;
-        }
+            if (!this._scopes.TryGetValue(scopeId, out StateScope? scope))
+            {
+                scope = new StateScope(scopeId);
+                this._scopes[scopeId] = scope;
+            }
 
-        return scope;
+            return scope;
+        }
     }
 
-    private IEnumerable<UpdateKey> GetUpdatesForScopeStrict(ScopeId scopeId)
+    private bool TryGetScope(ScopeId scopeId, out StateScope? scope)
+    {
+        lock (this._syncRoot)
+        {
+            return this._scopes.TryGetValue(scopeId, out scope);
+        }
+    }
+
+    /// <summary>
+    /// Snapshot of the queued updates for a scope. Materialized under the lock so the caller can
+    /// enumerate it while other executors keep queueing.
+    /// </summary>
+    private List<KeyValuePair<UpdateKey, StateUpdate>> GetUpdatesForScopeStrict(ScopeId scopeId)
     {
         Throw.IfNull(scopeId);
 
-        return this._queuedUpdates.Keys.Where(key => key.IsMatchingScope(scopeId, strict: true));
+        lock (this._syncRoot)
+        {
+            return this._queuedUpdates.Where(kvp => kvp.Key.IsMatchingScope(scopeId, strict: true)).ToList();
+        }
     }
 
     public ValueTask ClearStateAsync(string executorId, string? scopeName)
@@ -42,25 +71,28 @@ internal sealed class StateManager
     {
         Throw.IfNull(scopeId);
 
-        if (this._scopes.TryGetValue(scopeId, out StateScope? scope))
+        if (this.TryGetScope(scopeId, out StateScope? scope))
         {
-            HashSet<string> keysToDelete = await scope.ReadKeysAsync().ConfigureAwait(false);
+            HashSet<string> keysToDelete = await scope!.ReadKeysAsync().ConfigureAwait(false);
 
-            foreach (UpdateKey updateKey in this.GetUpdatesForScopeStrict(scopeId))
+            lock (this._syncRoot)
             {
-                StateUpdate update = this._queuedUpdates[updateKey];
-                if (!update.IsDelete)
+                foreach (KeyValuePair<UpdateKey, StateUpdate> queued in this._queuedUpdates.Where(kvp => kvp.Key.IsMatchingScope(scopeId, strict: true)).ToList())
                 {
-                    this._queuedUpdates[updateKey] = StateUpdate.Delete(update.Key);
+                    StateUpdate update = queued.Value;
+                    if (!update.IsDelete)
+                    {
+                        this._queuedUpdates[queued.Key] = StateUpdate.Delete(update.Key);
+                    }
+
+                    keysToDelete.Remove(update.Key);
                 }
 
-                keysToDelete.Remove(update.Key);
-            }
-
-            foreach (string key in keysToDelete)
-            {
-                UpdateKey updateKey = new(scopeId, key);
-                this._queuedUpdates[updateKey] = StateUpdate.Delete(key);
+                foreach (string key in keysToDelete)
+                {
+                    UpdateKey updateKey = new(scopeId, key);
+                    this._queuedUpdates[updateKey] = StateUpdate.Delete(key);
+                }
             }
         }
     }
@@ -68,9 +100,9 @@ internal sealed class StateManager
     private HashSet<string> ApplyUnpublishedUpdates(ScopeId scopeId, HashSet<string> keys)
     {
         // Apply any queued updates for this scope
-        foreach (UpdateKey key in this.GetUpdatesForScopeStrict(scopeId))
+        foreach (KeyValuePair<UpdateKey, StateUpdate> queued in this.GetUpdatesForScopeStrict(scopeId))
         {
-            StateUpdate update = this._queuedUpdates[key];
+            StateUpdate update = queued.Value;
             if (update.IsDelete)
             {
                 keys.Remove(update.Key);
@@ -117,7 +149,13 @@ internal sealed class StateManager
         bool needsInit = false;
 
         // If there is executor-local state (from a queued update), read it first
-        if (this._queuedUpdates.TryGetValue(stateKey, out StateUpdate? update))
+        StateUpdate? update;
+        lock (this._syncRoot)
+        {
+            this._queuedUpdates.TryGetValue(stateKey, out update);
+        }
+
+        if (update is not null)
         {
             // What's the right thing to do when we have a state object, but it is the wrong type?
             if (update.IsDelete || update.Value is null)
@@ -182,7 +220,10 @@ internal sealed class StateManager
         Throw.IfNullOrEmpty(key);
 
         UpdateKey stateKey = new(scopeId, key);
-        this._queuedUpdates[stateKey] = StateUpdate.Update(key, value);
+        lock (this._syncRoot)
+        {
+            this._queuedUpdates[stateKey] = StateUpdate.Update(key, value);
+        }
 
         return default;
     }
@@ -194,17 +235,31 @@ internal sealed class StateManager
     {
         Throw.IfNullOrEmpty(key);
         UpdateKey stateKey = new(scopeId, key);
-        this._queuedUpdates[stateKey] = StateUpdate.Delete(key);
+        lock (this._syncRoot)
+        {
+            this._queuedUpdates[stateKey] = StateUpdate.Delete(key);
+        }
+
         return default;
     }
 
     public async ValueTask PublishUpdatesAsync(IStepTracer? tracer)
     {
+        // Take the queued updates out under the lock, then publish the snapshot without holding it:
+        // StateScope.WriteStateAsync awaits, and a lock cannot span an await.
+        List<KeyValuePair<UpdateKey, StateUpdate>> queued;
+        lock (this._syncRoot)
+        {
+            queued = this._queuedUpdates.ToList();
+            this._queuedUpdates.Clear();
+        }
+
         Dictionary<ScopeId, Dictionary<string, List<StateUpdate>>> updatesByScope = [];
 
         // Aggregate the updates for each scope
-        foreach (UpdateKey key in this._queuedUpdates.Keys)
+        foreach (KeyValuePair<UpdateKey, StateUpdate> entry in queued)
         {
+            UpdateKey key = entry.Key;
             if (!updatesByScope.TryGetValue(key.ScopeId, out Dictionary<string, List<StateUpdate>>? scopeUpdates))
             {
                 updatesByScope[key.ScopeId] = scopeUpdates = [];
@@ -215,7 +270,7 @@ internal sealed class StateManager
                 scopeUpdates[key.Key] = stateUpdates = [];
             }
 
-            stateUpdates.Add(this._queuedUpdates[key]);
+            stateUpdates.Add(entry.Value);
         }
 
         if (tracer is not null && (updatesByScope.Count > 0))
@@ -228,8 +283,6 @@ internal sealed class StateManager
             StateScope stateScope = this.GetOrCreateScope(scope);
             await stateScope.WriteStateAsync(updatesByScope[scope]).ConfigureAwait(false);
         }
-
-        this._queuedUpdates.Clear();
     }
 
     private static IEnumerable<KeyValuePair<ScopeKey, PortableValue>> ExportScope(StateScope scope)
@@ -240,33 +293,44 @@ internal sealed class StateManager
         }
     }
 
-    internal async ValueTask<Dictionary<ScopeKey, PortableValue>> ExportStateAsync()
+    internal ValueTask<Dictionary<ScopeKey, PortableValue>> ExportStateAsync()
     {
-        if (this._queuedUpdates.Count != 0)
+        lock (this._syncRoot)
         {
-            throw new InvalidOperationException("Cannot export state while there are queued updates. Call PublishUpdatesAsync() first.");
-        }
+            if (this._queuedUpdates.Count != 0)
+            {
+                throw new InvalidOperationException("Cannot export state while there are queued updates. Call PublishUpdatesAsync() first.");
+            }
 
-        return this._scopes.Values.SelectMany(ExportScope).ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+            return new(this._scopes.Values.SelectMany(ExportScope).ToDictionary(kvp => kvp.Key, kvp => kvp.Value));
+        }
     }
 
     internal ValueTask ImportStateAsync(Checkpoint checkpoint)
     {
-        // TODO: Should this be a warning instead?
-        if (this._queuedUpdates.Count != 0)
+        lock (this._syncRoot)
         {
-            throw new InvalidOperationException("Cannot import state while there are queued updates. Call PublishUpdatesAsync() first.");
-        }
+            // TODO: Should this be a warning instead?
+            if (this._queuedUpdates.Count != 0)
+            {
+                throw new InvalidOperationException("Cannot import state while there are queued updates. Call PublishUpdatesAsync() first.");
+            }
 
-        this._queuedUpdates.Clear();
-        this._scopes.Clear();
+            this._queuedUpdates.Clear();
+            this._scopes.Clear();
 
-        Dictionary<ScopeKey, PortableValue> importedState = checkpoint.StateData;
+            Dictionary<ScopeKey, PortableValue> importedState = checkpoint.StateData;
 
-        foreach (ScopeKey scopeKey in importedState.Keys)
-        {
-            StateScope scope = this.GetOrCreateScope(scopeKey.ScopeId);
-            scope.ImportState(scopeKey.Key, importedState[scopeKey]);
+            foreach (ScopeKey scopeKey in importedState.Keys)
+            {
+                if (!this._scopes.TryGetValue(scopeKey.ScopeId, out StateScope? scope))
+                {
+                    scope = new StateScope(scopeKey.ScopeId);
+                    this._scopes[scopeKey.ScopeId] = scope;
+                }
+
+                scope.ImportState(scopeKey.Key, importedState[scopeKey]);
+            }
         }
 
         return default;

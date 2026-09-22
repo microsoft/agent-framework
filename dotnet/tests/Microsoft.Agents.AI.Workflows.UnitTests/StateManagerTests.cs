@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Execution;
@@ -549,5 +550,51 @@ public class StateManagerTests
 
         // Check that we don't double-wrap stored PortableValues on the out path
         VerifyIsNot<PortableValue>(pvAsPV);
+    }
+
+    [Theory]
+    [InlineData("step_results")]
+    [InlineData(null)]
+    public async Task Test_ConcurrentExecutors_QueueAndReadState_WithoutCorruptionAsync(string? scopeName)
+    {
+        // InProcessRunner.RunSuperstepAsync delivers a superstep's messages to every receiving executor
+        // concurrently (one task per receiver, awaited together), and each executor reaches the same
+        // StateManager through its bound IWorkflowContext. Before the manager synchronized access to its
+        // queued-update dictionary, executors that finished in the same superstep raced on it and the
+        // run failed with "Operations that change non-concurrent collections must have exclusive access"
+        // — observed in a production host when four executors completed within 14 ms of each other.
+        const int Executors = 64;
+        const int WritesPerExecutor = 200;
+
+        StateManager manager = new();
+
+        await Task.WhenAll(Enumerable.Range(0, Executors).Select(e => Task.Run(async () =>
+        {
+            ScopeId scope = new($"executor{e}", scopeName);
+            for (int i = 0; i < WritesPerExecutor; i++)
+            {
+                string key = $"e{e}_key{i}";
+                await manager.WriteStateAsync(scope, key, $"value{e}:{i}");
+                Assert.Equal($"value{e}:{i}", await manager.ReadStateAsync<string>(scope, key));
+                _ = await manager.ReadKeysAsync(scope);
+            }
+        })));
+
+        await manager.PublishUpdatesAsync(tracer: null);
+
+        bool isSharedScope = scopeName is not null;
+        for (int e = 0; e < Executors; e++)
+        {
+            ScopeId scope = new($"executor{e}", scopeName);
+            HashSet<string> keys = await manager.ReadKeysAsync(scope);
+
+            // A shared scope is one bag every executor writes into; a private scope holds only its owner's keys.
+            Assert.Equal(isSharedScope ? Executors * WritesPerExecutor : WritesPerExecutor, keys.Count);
+            Assert.Equal($"value{e}:{WritesPerExecutor - 1}", await manager.ReadStateAsync<string>(scope, $"e{e}_key{WritesPerExecutor - 1}"));
+        }
+
+        // Nothing may be left queued after a publish, whichever thread queued it.
+        Dictionary<ScopeKey, PortableValue> exported = await manager.ExportStateAsync();
+        Assert.Equal(Executors * WritesPerExecutor, exported.Count);
     }
 }
