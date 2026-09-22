@@ -199,7 +199,7 @@ async def test_search_reranks_expanded_candidate_pool() -> None:
     assert [result.reranker_score for result in results] == [0.98, 0.63]
     assert [result.score for result in results] == [0.02, 0.03]
     assert store.search.await_args.args[4] == 25
-    store.rerank.assert_awaited_once_with("preferred database", candidates, "cohere-rerank-v3.5")
+    store.rerank.assert_awaited_once_with("preferred database", candidates, "Cohere-rerank-v4.0-fast")
 
 
 async def test_search_returns_hybrid_order_when_reranking_fails() -> None:
@@ -240,14 +240,14 @@ async def test_store_rerank_batches_candidates_in_one_database_call() -> None:
     )
     candidates = [_memory(1, "First"), _memory(2, "Second")]
 
-    results = await store.rerank("preferred database", candidates, "cohere-rerank-v3.5")
+    results = await store.rerank("preferred database", candidates, "Cohere-rerank-v4.0-fast")
 
     assert [(result.id, result.rank, result.relevance_score) for result in results] == [
         (2, 1, 0.98),
         (1, 2, 0.63),
     ]
     params = cursor.execute.await_args.args[1]
-    assert params == ["preferred database", ["First", "Second"], ["1", "2"], "cohere-rerank-v3.5"]
+    assert params == ["preferred database", ["First", "Second"], ["1", "2"], "Cohere-rerank-v4.0-fast"]
     cursor.execute.assert_awaited_once()
 
 

@@ -128,7 +128,7 @@ public sealed class PostgresMemoryClientTests
             .Setup(store => store.RerankAsync(
                 "preferred database",
                 It.IsAny<IReadOnlyList<PostgresMemoryRecord>>(),
-                "cohere-rerank-v3.5",
+                "Cohere-rerank-v4.0-fast",
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(
             [

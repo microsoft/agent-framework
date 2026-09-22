@@ -1,6 +1,6 @@
-# Agent Framework PostgreSQL
+# Agent Framework PostgreSQL / pgvector
 
-Store vector records, durable agent memory, and workflow checkpoints in PostgreSQL with this alpha integration for
+Store and search vector records, durable agent memory, and workflow checkpoints in PostgreSQL with this alpha integration for
 [Microsoft Agent Framework](https://learn.microsoft.com/agent-framework/).
 The package uses Psycopg 3 and the official pgvector Python adapter.
 
@@ -197,10 +197,15 @@ options = PostgresMemoryClientOptions(
     embedding_dimensions=1536,
     vector_index_kind=PostgresMemoryVectorIndexKind.DISK_ANN,
     enable_azure_ai_reranking=True,
-    azure_ai_reranker_model="cohere-rerank-v3.5",
+    azure_ai_reranker_model="Cohere-rerank-v4.0-fast",
     reranking_candidate_count=25,
 )
 ```
+
+The default model name is `Cohere-rerank-v4.0-fast`. Override `azure_ai_reranker_model`
+or the sample's `FOUNDRY_RERANKER_MODEL` if your deployment has a different name. The model
+must already be deployed and the database's reranker endpoint and authentication configured;
+changing this option does not provision them.
 
 The database administrator must allowlist and enable `vector`, `pg_diskann`, and
 `azure_ai`; this connector does not install extensions. When reranking is enabled,

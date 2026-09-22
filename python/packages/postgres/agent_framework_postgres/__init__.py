@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Async PostgreSQL vector storage and durable agent memory."""
+"""Async PostgreSQL/pgvector vector storage and durable agent memory."""
 
 from __future__ import annotations
 

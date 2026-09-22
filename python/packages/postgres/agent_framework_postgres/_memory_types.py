@@ -153,7 +153,7 @@ class PostgresMemoryClientOptions:
     vector_index_kind: PostgresMemoryVectorIndexKind = PostgresMemoryVectorIndexKind.HNSW
     reciprocal_rank_fusion_k: int = 60
     enable_azure_ai_reranking: bool = False
-    azure_ai_reranker_model: str = "cohere-rerank-v3.5"
+    azure_ai_reranker_model: str = "Cohere-rerank-v4.0-fast"
     reranking_candidate_count: int = 25
     enable_turn_embeddings: bool = False
     auto_process: bool = True

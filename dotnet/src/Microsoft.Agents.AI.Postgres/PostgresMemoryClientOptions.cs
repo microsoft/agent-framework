@@ -65,7 +65,7 @@ public sealed class PostgresMemoryClientOptions
     /// <summary>
     /// Gets or sets the Foundry model deployment used by <c>azure_ai.rank()</c>.
     /// </summary>
-    public string AzureAiRerankerModel { get; set; } = "cohere-rerank-v3.5";
+    public string AzureAiRerankerModel { get; set; } = "Cohere-rerank-v4.0-fast";
 
     /// <summary>
     /// Gets or sets the maximum number of hybrid search candidates sent to the reranker.

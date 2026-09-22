@@ -35,7 +35,7 @@ Set the following environment variables:
 | `FOUNDRY_MODEL` | Chat model deployment name | `gpt-5.4-mini` |
 | `FOUNDRY_EMBEDDING_MODEL` | Embedding model deployment name | `text-embedding-3-small` |
 | `FOUNDRY_EMBEDDING_DIMENSIONS` | Number of dimensions produced by the embedding deployment | `1536` |
-| `FOUNDRY_RERANKER_MODEL` | Foundry reranker deployment name used by the Azure demo | `cohere-rerank-v3.5` |
+| `FOUNDRY_RERANKER_MODEL` | Foundry reranker deployment name used by the Azure demo | `Cohere-rerank-v4.0-fast` |
 
 ### Embedding Model Dimensions
 
@@ -81,13 +81,16 @@ The sample prints the stored turns, active typed memories, summaries, and reconc
 
 This mode requires Azure Database for PostgreSQL flexible server. Allowlist `vector`, `pg_diskann`,
 and `azure_ai` in the server's `azure.extensions` parameter. Deploy the configured reranker model in
-Microsoft Foundry by using the Serverless API option.
+Microsoft Foundry using a deployment type and region supported by
+[Cohere Rerank v4](https://learn.microsoft.com/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure#cohere-models-sold-by-azure).
 
 Before running the Azure demo, choose one of the following authentication options.
 
 #### Option 1: Cohere with an endpoint key
 
-This is the default because `FOUNDRY_RERANKER_MODEL` defaults to `cohere-rerank-v3.5`.
+`FOUNDRY_RERANKER_MODEL` defaults to `Cohere-rerank-v4.0-fast`. Set it to your actual
+deployment name if different. Changing this value does not deploy the model or update
+the database's configured reranker endpoint.
 
 1. Open the reranker deployment in Foundry and copy its endpoint key and **Reranker API** route.
 2. Connect to the sample database as a user that can manage `azure_ai` settings, and run:

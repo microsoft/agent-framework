@@ -67,7 +67,7 @@ async def main() -> None:
                 else PostgresMemoryVectorIndexKind.HNSW
             ),
             enable_azure_ai_reranking=use_azure_retrieval,
-            azure_ai_reranker_model=os.getenv("FOUNDRY_RERANKER_MODEL", "cohere-rerank-v3.5"),
+            azure_ai_reranker_model=os.getenv("FOUNDRY_RERANKER_MODEL", "Cohere-rerank-v4.0-fast"),
         ),
     )
     agent = Agent(

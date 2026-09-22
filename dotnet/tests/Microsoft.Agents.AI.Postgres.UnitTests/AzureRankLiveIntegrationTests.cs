@@ -184,7 +184,7 @@ public sealed class AzureRankLiveIntegrationTests : IAsyncLifetime
             EmbeddingDimensions = 3,
             AutoProcess = false,
             EnableAzureAiReranking = model is not null,
-            AzureAiRerankerModel = model ?? "cohere-rerank-v3.5",
+            AzureAiRerankerModel = model ?? "Cohere-rerank-v4.0-fast",
             RerankingCandidateCount = 3,
         };
 

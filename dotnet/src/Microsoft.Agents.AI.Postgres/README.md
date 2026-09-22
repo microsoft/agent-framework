@@ -154,10 +154,14 @@ Enable reranking in the client options:
 clientOptions: new PostgresMemoryClientOptions
 {
     EnableAzureAiReranking = true,
-    AzureAiRerankerModel = "cohere-rerank-v3.5",
+    AzureAiRerankerModel = "Cohere-rerank-v4.0-fast",
     RerankingCandidateCount = 25,
 }
 ```
+
+The default model name is `Cohere-rerank-v4.0-fast`. Override `AzureAiRerankerModel` if your
+deployment has a different name. The model must already be deployed and the database's
+reranker endpoint and authentication configured; changing this option does not provision them.
 
 The client retrieves candidates with vector and full-text search, combines them with reciprocal
 rank fusion, and sends at most `RerankingCandidateCount` records to `azure_ai.rank()`. It returns

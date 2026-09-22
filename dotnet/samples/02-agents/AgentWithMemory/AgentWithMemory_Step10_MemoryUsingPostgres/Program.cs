@@ -15,7 +15,7 @@ var deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt
 // The model and dimensions must match: text-embedding-3-small produces 1,536 dimensions by default,
 // while text-embedding-3-large produces 3,072. PostgresMemoryClient currently supports up to 2,000.
 var embeddingDeploymentName = Environment.GetEnvironmentVariable("FOUNDRY_EMBEDDING_MODEL") ?? "text-embedding-3-small";
-var rerankerDeploymentName = Environment.GetEnvironmentVariable("FOUNDRY_RERANKER_MODEL") ?? "cohere-rerank-v3.5";
+var rerankerDeploymentName = Environment.GetEnvironmentVariable("FOUNDRY_RERANKER_MODEL") ?? "Cohere-rerank-v4.0-fast";
 var postgresConnectionString = Environment.GetEnvironmentVariable("POSTGRES_MEMORY_CONNECTION_STRING") ?? throw new InvalidOperationException("POSTGRES_MEMORY_CONNECTION_STRING is not set.");
 var embeddingDimensions = 1536;
 if (Environment.GetEnvironmentVariable("FOUNDRY_EMBEDDING_DIMENSIONS") is string embeddingDimensionsValue &&

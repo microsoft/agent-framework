@@ -1,6 +1,6 @@
 [project]
 name = "agent-framework-postgres"
-description = "PostgreSQL vector storage, durable memory, and workflow checkpoints for Microsoft Agent Framework."
+description = "PostgreSQL and pgvector integrated storage, durable memory, and workflow checkpoints for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com" }]
 readme = "README.md"
 requires-python = ">=3.10"
