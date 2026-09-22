@@ -91,7 +91,7 @@ internal sealed class RequestInfoExecutor : Executor
         Debug.Assert(this._allowWrapped);
         Throw.IfNull(message);
 
-        Type? originalRequestType = ResolveType(message.PortInfo.RequestType);
+        Type? originalRequestType = ResolveType(message.PortInfo.RequestType, this.Port.Request);
         if (originalRequestType is null || !this.Port.Request.IsAssignableFrom(originalRequestType))
         {
             throw new InvalidOperationException($"Request type {this.Port.Request} is not valid for original request, whose request type is {message.PortInfo.RequestType}");
@@ -117,13 +117,16 @@ internal sealed class RequestInfoExecutor : Executor
     }
 
     [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Request types are preserved by their workflow port and serialization registrations.")]
-    private static Type? ResolveType(TypeId typeId)
+    internal static Type? ResolveType(TypeId typeId, Type assignableToType)
     {
+        Throw.IfNull(typeId);
+        Throw.IfNull(assignableToType);
+
         foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies()
             .Where(assembly => string.Equals(assembly.GetName().Name, typeId.SimpleAssemblyName, StringComparison.Ordinal)))
         {
             Type? resolvedType = assembly.GetType(typeId.NormalizedTypeName, throwOnError: false);
-            if (resolvedType is not null)
+            if (resolvedType is not null && assignableToType.IsAssignableFrom(resolvedType))
             {
                 return resolvedType;
             }

@@ -1,6 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Reflection;
+using System.Reflection.Emit;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Specialized;
@@ -14,6 +16,10 @@ internal sealed record RequestPortTargetRequest(string Value);
 internal record RequestPortBaseRequest(string Value);
 
 internal sealed record RequestPortDerivedRequest(string Value) : RequestPortBaseRequest(Value);
+
+public abstract class RequestPortDuplicateRequestBase
+{
+}
 
 public class RequestInfoExecutorTests
 {
@@ -91,5 +97,37 @@ public class RequestInfoExecutorTests
         Assert.Equal(originalRequest.RequestId, forwardedRequest.RequestId);
         Assert.Equal(new RequestPortSourceRequest("value"), forwardedRequest.Data.As<RequestPortSourceRequest>());
         Assert.Same(forwardedRequest, Assert.Single(runContext.ExternalRequests));
+    }
+
+    [Fact]
+    public void ResolveType_SkipsIncompatibleSameNameTypeLoadedBeforeCompatibleType()
+    {
+        // Arrange
+        const string AssemblyName = "RequestPortDuplicateTypes";
+        const string TypeName = "Duplicate.Request";
+        Type incompatibleType = DefineDuplicateRequestType(AssemblyName, TypeName);
+        Type compatibleType = DefineDuplicateRequestType(AssemblyName, TypeName, typeof(RequestPortDuplicateRequestBase));
+        TypeId typeId = new($"{AssemblyName}, Version=1.0.0.0", TypeName);
+
+        // Act
+        Type? resolvedType = RequestInfoExecutor.ResolveType(typeId, typeof(RequestPortDuplicateRequestBase));
+
+        // Assert
+        Assert.NotNull(resolvedType);
+        Assert.Same(compatibleType, resolvedType);
+        Assert.False(typeof(RequestPortDuplicateRequestBase).IsAssignableFrom(incompatibleType));
+    }
+
+    private static Type DefineDuplicateRequestType(string assemblyName, string typeName, Type? baseType = null)
+    {
+        AssemblyBuilder assemblyBuilder =
+            AssemblyBuilder.DefineDynamicAssembly(new AssemblyName(assemblyName), AssemblyBuilderAccess.Run);
+        ModuleBuilder moduleBuilder = assemblyBuilder.DefineDynamicModule(assemblyName);
+        TypeBuilder typeBuilder =
+            moduleBuilder.DefineType(typeName, TypeAttributes.Public | TypeAttributes.Class, baseType);
+
+        TypeInfo? typeInfo = typeBuilder.CreateTypeInfo();
+        Assert.NotNull(typeInfo);
+        return typeInfo.AsType();
     }
 }
