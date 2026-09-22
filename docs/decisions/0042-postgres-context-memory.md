@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: proposed
 contact: jaredmeade
 date: 2026-09-14
 deciders: jaredmeade
