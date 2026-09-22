@@ -1,4 +1,4 @@
-﻿#nullable enable
+#nullable enable
 Microsoft.Agents.AI.Workflows.Declarative.ConversationUpdateEvent
 Microsoft.Agents.AI.Workflows.Declarative.ConversationUpdateEvent.ConversationId.get -> string!
 Microsoft.Agents.AI.Workflows.Declarative.ConversationUpdateEvent.ConversationUpdateEvent(string! conversationId) -> void
@@ -59,6 +59,7 @@ Microsoft.Agents.AI.Workflows.Declarative.Events.ExternalInputResponse
 Microsoft.Agents.AI.Workflows.Declarative.Events.ExternalInputResponse.ExternalInputResponse(Microsoft.Extensions.AI.ChatMessage! message) -> void
 Microsoft.Agents.AI.Workflows.Declarative.Events.ExternalInputResponse.ExternalInputResponse(System.Collections.Generic.IList<Microsoft.Extensions.AI.ChatMessage!>! messages) -> void
 Microsoft.Agents.AI.Workflows.Declarative.Events.ExternalInputResponse.Messages.get -> System.Collections.Generic.IList<Microsoft.Extensions.AI.ChatMessage!>!
+Microsoft.Agents.AI.Workflows.Declarative.Events.ExternalInputResponse.RequestId.get -> string?
 Microsoft.Agents.AI.Workflows.Declarative.HttpRequestInfo
 Microsoft.Agents.AI.Workflows.Declarative.HttpRequestInfo.Body.get -> string?
 Microsoft.Agents.AI.Workflows.Declarative.HttpRequestInfo.Body.init -> void
