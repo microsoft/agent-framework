@@ -29,12 +29,14 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.Mcp;
 /// Provider-backed invocations create and dispose a separate MCP session for every call, including
 /// <c>tools/list</c>, because provider authentication is not represented in the session cache key.
 /// Without a provider, workflow invocations are cached by workflow session, server URL, label,
-/// connection name, and explicit headers.
+/// connection name, and explicit headers in a bounded least-recently-used cache. Evicted sessions
+/// are disposed after their active invocations finish.
 /// Non-cancellation cleanup failures are reported through <see cref="Trace"/> warnings without replacing
 /// the invocation result or error.
 /// </remarks>
 public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyncDisposable
 {
+    private const int DefaultClientCacheMaxSize = 32;
     private const string FilenameAdditionalPropertyName = "filename";
 
     /// <summary>
@@ -47,9 +49,12 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
 
     private readonly Func<string, CancellationToken, Task<HttpClient?>>? _httpClientProvider;
     private readonly Func<HttpMessageHandler> _httpMessageHandlerFactory;
-    private readonly Dictionary<(string WorkflowSession, string Url, string Label, string Connection, string HeadersHash), ClientConnection> _clients = [];
+    private readonly Dictionary<(string WorkflowSession, string Url, string Label, string Connection, string HeadersHash), CachedClient> _clients = [];
+    private readonly LinkedList<(string WorkflowSession, string Url, string Label, string Connection, string HeadersHash)> _clientLru = [];
+    private readonly HashSet<CachedClient> _retiredClients = [];
     private readonly Dictionary<string, HttpClient> _ownedHttpClients = [];
     private readonly SemaphoreSlim _clientLock = new(1, 1);
+    private readonly int _clientCacheMaxSize;
     private readonly AsyncLocal<ProviderInvocationContext?> _providerInvocationContext = new();
     private TaskCompletionSource<bool>? _providerInvocationsDrained;
     private int _activeProviderInvocations;
@@ -84,10 +89,17 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
 
     internal DefaultMcpToolHandler(
         Func<string, CancellationToken, Task<HttpClient?>>? httpClientProvider,
-        Func<HttpMessageHandler> httpMessageHandlerFactory)
+        Func<HttpMessageHandler> httpMessageHandlerFactory,
+        int clientCacheMaxSize = DefaultClientCacheMaxSize)
     {
+        if (clientCacheMaxSize <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(clientCacheMaxSize), "The MCP client cache size must be positive.");
+        }
+
         this._httpClientProvider = httpClientProvider;
         this._httpMessageHandlerFactory = Throw.IfNull(httpMessageHandlerFactory);
+        this._clientCacheMaxSize = clientCacheMaxSize;
     }
 
     /// <inheritdoc/>
@@ -172,9 +184,16 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
             }
         }
 
-        McpClient client = await this.GetOrCreateClientAsync(
+        CachedClient cachedClient = await this.AcquireClientAsync(
             serverUrl, serverLabel, headers, connectionName, workflowSessionId, cancellationToken).ConfigureAwait(false);
-        return await InvokeClientAsync(client, toolName, arguments, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await InvokeClientAsync(cachedClient.Connection.Client, toolName, arguments, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            await this.ReleaseClientAsync(cachedClient).ConfigureAwait(false);
+        }
     }
 
     private static async Task<McpServerToolResultContent> InvokeClientAsync(
@@ -257,15 +276,41 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
             await providerInvocations.ConfigureAwait(false);
         }
 
+        List<CachedClient> cachedClients;
+        List<CachedClient> clientsToDispose = [];
         await this._clientLock.WaitAsync().ConfigureAwait(false);
         try
         {
-            foreach (ClientConnection client in this._clients.Values)
+            cachedClients = [.. this._clients.Values, .. this._retiredClients];
+            foreach (CachedClient client in cachedClients)
             {
-                await client.DisposeAsync().ConfigureAwait(false);
+                client.Evicted = true;
+                this._retiredClients.Add(client);
+                if (client.ActiveInvocations == 0 && !client.DisposalClaimed)
+                {
+                    client.DisposalClaimed = true;
+                    clientsToDispose.Add(client);
+                }
             }
 
             this._clients.Clear();
+            this._clientLru.Clear();
+        }
+        finally
+        {
+            this._clientLock.Release();
+        }
+
+        foreach (CachedClient client in clientsToDispose)
+        {
+            await this.DisposeCachedClientAsync(client).ConfigureAwait(false);
+        }
+
+        await Task.WhenAll(cachedClients.Select(client => client.Disposed.Task)).ConfigureAwait(false);
+
+        await this._clientLock.WaitAsync().ConfigureAwait(false);
+        try
+        {
 
             // Dispose only HttpClients that the handler created (not user-provided ones)
             foreach (HttpClient httpClient in this._ownedHttpClients.Values)
@@ -293,7 +338,7 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
         }
     }
 
-    private async Task<McpClient> GetOrCreateClientAsync(
+    private async Task<CachedClient> AcquireClientAsync(
         string serverUrl,
         string? serverLabel,
         IDictionary<string, string>? headers,
@@ -303,23 +348,104 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
     {
         string trimmedUrl = serverUrl.Trim();
         var clientCacheKey = BuildCacheKey(workflowSessionId, trimmedUrl, serverLabel, connectionName, headers);
+        CachedClient? clientToDispose = null;
+        CachedClient result;
 
         await this._clientLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             this.ThrowIfDisposing();
-            if (this._clients.TryGetValue(clientCacheKey, out ClientConnection? existingClient))
+            if (this._clients.TryGetValue(clientCacheKey, out CachedClient? existingClient))
             {
-                return existingClient.Client;
+                existingClient.ActiveInvocations++;
+                this._clientLru.Remove(existingClient.LruNode);
+                this._clientLru.AddLast(existingClient.LruNode);
+                result = existingClient;
             }
+            else
+            {
+                ClientConnection connection = await this.CreateClientAsync(
+                    trimmedUrl, serverLabel, headers, trimmedUrl, cancellationToken).ConfigureAwait(false);
+                LinkedListNode<(string WorkflowSession, string Url, string Label, string Connection, string HeadersHash)> node =
+                    this._clientLru.AddLast(clientCacheKey);
+                CachedClient newClient = new(connection, node) { ActiveInvocations = 1 };
+                this._clients[clientCacheKey] = newClient;
 
-            ClientConnection newClient = await this.CreateClientAsync(trimmedUrl, serverLabel, headers, trimmedUrl, cancellationToken).ConfigureAwait(false);
-            this._clients[clientCacheKey] = newClient;
-            return newClient.Client;
+                if (this._clients.Count > this._clientCacheMaxSize)
+                {
+                    LinkedListNode<(string WorkflowSession, string Url, string Label, string Connection, string HeadersHash)> evictedNode =
+                        this._clientLru.First!;
+                    this._clientLru.RemoveFirst();
+                    CachedClient evictedClient = this._clients[evictedNode.Value];
+                    this._clients.Remove(evictedNode.Value);
+                    evictedClient.Evicted = true;
+                    this._retiredClients.Add(evictedClient);
+                    if (evictedClient.ActiveInvocations == 0)
+                    {
+                        evictedClient.DisposalClaimed = true;
+                        clientToDispose = evictedClient;
+                    }
+                }
+
+                result = newClient;
+            }
         }
         finally
         {
             this._clientLock.Release();
+        }
+
+        if (clientToDispose is not null)
+        {
+            await this.DisposeCachedClientAsync(clientToDispose).ConfigureAwait(false);
+        }
+
+        return result;
+    }
+
+    private async ValueTask ReleaseClientAsync(CachedClient client)
+    {
+        bool dispose = false;
+        await this._clientLock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+        try
+        {
+            client.ActiveInvocations--;
+            if (client.ActiveInvocations == 0 && client.Evicted && !client.DisposalClaimed)
+            {
+                client.DisposalClaimed = true;
+                dispose = true;
+            }
+        }
+        finally
+        {
+            this._clientLock.Release();
+        }
+
+        if (dispose)
+        {
+            await this.DisposeCachedClientAsync(client).ConfigureAwait(false);
+        }
+    }
+
+    private async Task DisposeCachedClientAsync(CachedClient client)
+    {
+        try
+        {
+            await client.Connection.DisposeAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            await this._clientLock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+            try
+            {
+                this._retiredClients.Remove(client);
+            }
+            finally
+            {
+                this._clientLock.Release();
+            }
+
+            client.Disposed.TrySetResult(true);
         }
     }
 
@@ -416,6 +542,23 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
         public Task Completion { get; } = completion;
 
         public ProviderInvocationContext? Parent { get; } = parent;
+    }
+
+    private sealed class CachedClient(
+        ClientConnection connection,
+        LinkedListNode<(string WorkflowSession, string Url, string Label, string Connection, string HeadersHash)> lruNode)
+    {
+        public ClientConnection Connection { get; } = connection;
+
+        public LinkedListNode<(string WorkflowSession, string Url, string Label, string Connection, string HeadersHash)> LruNode { get; } = lruNode;
+
+        public TaskCompletionSource<bool> Disposed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public int ActiveInvocations { get; set; }
+
+        public bool Evicted { get; set; }
+
+        public bool DisposalClaimed { get; set; }
     }
 
     internal sealed class ClientConnection(McpClient client, IAsyncDisposable transport) : IAsyncDisposable

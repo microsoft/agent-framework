@@ -152,7 +152,7 @@ public abstract class GroupChatManager
     internal async ValueTask CheckpointAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         await context.QueueStateUpdateAsync(BaseStateKey, new GroupChatManagerState(this.IterationCount), cancellationToken: cancellationToken).ConfigureAwait(false);
-        await this.OnCheckpointingAsync(new PrefixingWorkflowContext(context, SubclassStateKeyPrefix), cancellationToken).ConfigureAwait(false);
+        await this.OnCheckpointingAsync(PrefixingWorkflowContext.Create(context, SubclassStateKeyPrefix), cancellationToken).ConfigureAwait(false);
     }
 
     // Root restore entry point invoked by the hosting GroupChatHost. Symmetric to CheckpointAsync.
@@ -160,7 +160,7 @@ public abstract class GroupChatManager
     {
         GroupChatManagerState? state = await context.ReadStateAsync<GroupChatManagerState>(BaseStateKey, cancellationToken: cancellationToken).ConfigureAwait(false);
         this.IterationCount = state?.IterationCount ?? 0;
-        await this.OnCheckpointRestoredAsync(new PrefixingWorkflowContext(context, SubclassStateKeyPrefix), cancellationToken).ConfigureAwait(false);
+        await this.OnCheckpointRestoredAsync(PrefixingWorkflowContext.Create(context, SubclassStateKeyPrefix), cancellationToken).ConfigureAwait(false);
     }
 }
 
@@ -169,16 +169,19 @@ internal sealed record GroupChatManagerState(int IterationCount);
 // IWorkflowContext decorator that prepends a fixed prefix to every state key passed through it.
 // All non-state members (events, message sending, output yielding, halt requests, trace context,
 // and runtime characteristics) delegate directly to the wrapped context.
-internal sealed class PrefixingWorkflowContext(IWorkflowContext inner, string prefix) : IWorkflowContext, IWorkflowSessionContext
+internal class PrefixingWorkflowContext(IWorkflowContext inner, string prefix) : IWorkflowContext
 {
     private readonly IWorkflowContext _inner = Throw.IfNull(inner);
     private readonly string _prefix = Throw.IfNullOrEmpty(prefix);
 
+    public static IWorkflowContext Create(IWorkflowContext inner, string prefix) =>
+        inner is IWorkflowSessionContext sessionContext
+            ? new PrefixingWorkflowSessionContext(inner, prefix, sessionContext)
+            : new PrefixingWorkflowContext(inner, prefix);
+
     public IReadOnlyDictionary<string, string>? TraceContext => this._inner.TraceContext;
 
     public bool ConcurrentRunsEnabled => this._inner.ConcurrentRunsEnabled;
-
-    public string SessionId => ((IWorkflowSessionContext)this._inner).SessionId;
 
     public ValueTask AddEventAsync(WorkflowEvent workflowEvent, CancellationToken cancellationToken = default)
         => this._inner.AddEventAsync(workflowEvent, cancellationToken);
@@ -223,4 +226,12 @@ internal sealed class PrefixingWorkflowContext(IWorkflowContext inner, string pr
     }
 
     private string Wrap(string key) => this._prefix + Throw.IfNullOrEmpty(key);
+}
+
+internal sealed class PrefixingWorkflowSessionContext(
+    IWorkflowContext inner,
+    string prefix,
+    IWorkflowSessionContext sessionContext) : PrefixingWorkflowContext(inner, prefix), IWorkflowSessionContext
+{
+    public string SessionId => sessionContext.SessionId;
 }

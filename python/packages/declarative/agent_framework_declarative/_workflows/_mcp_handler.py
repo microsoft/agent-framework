@@ -170,6 +170,10 @@ class _CacheEntry:
 
     tool: Any  # MCPStreamableHTTPTool — typed Any to avoid import at module load
     owned_httpx_client: httpx.AsyncClient | None
+    active_users: int = 0
+    evicted: bool = False
+    disposal_claimed: bool = False
+    closed: asyncio.Event = field(default_factory=asyncio.Event)
 
 
 class DefaultMCPToolHandler:
@@ -183,7 +187,9 @@ class DefaultMCPToolHandler:
     different header sets (auth tokens) cannot share a session — matches the
     .NET design intent while bounding cardinality. ``server_label`` and
     ``connection_name`` also participate in the key to distinguish logical
-    connections.
+    connections. Active invocations lease their cache entry, so eviction waits
+    for the final user before closing it. Concurrent entry creation is also
+    capped at ``cache_max_size``.
     Header *names* are lower-cased inside the hash payload only — the
     headers passed on the wire keep the caller's original casing — so two
     YAML actions that spell ``Authorization`` differently still share a
@@ -217,8 +223,9 @@ class DefaultMCPToolHandler:
         client_provider: Optional per-invocation ``httpx.AsyncClient`` provider.
         cache_max_size: Maximum number of cached MCP clients in no-provider mode.
             When exceeded, the least-recently-used entry is evicted and its
-            owned client closed. Defaults to ``32``. Does not enable session
-            caching when a provider is configured.
+            owned client closed after any active invocation finishes. This also
+            limits simultaneous connection attempts. Defaults to ``32``. Does
+            not enable session caching when a provider is configured.
     """
 
     LIST_TOOLS_TOOL_NAME: ClassVar[str] = "tools/list"
@@ -247,9 +254,11 @@ class DefaultMCPToolHandler:
         self._client_provider = client_provider
         self._cache_max_size = cache_max_size
         self._cache: OrderedDict[tuple[str, str, str, str, str], _CacheEntry] = OrderedDict()
+        self._retired: dict[int, _CacheEntry] = {}
         # Outer lock guards the cache + in-flight-future map only — never
         # held across network I/O.
         self._cache_lock = asyncio.Lock()
+        self._creation_semaphore = asyncio.Semaphore(cache_max_size)
         # Per-key in-flight futures: while one task is connecting, other
         # tasks awaiting the same key will await the same future and share
         # the resulting cache entry.
@@ -321,7 +330,9 @@ class DefaultMCPToolHandler:
 
             return await self._invoke_entry(entry, invocation)
         finally:
-            if completion is not None:
+            if self._client_provider is None and entry is not None:
+                await self._release_entry(entry)
+            elif completion is not None:
                 try:
                     if entry is not None:
                         await self._close_invocation_entry(entry)
@@ -466,7 +477,16 @@ class DefaultMCPToolHandler:
                 return
             self._closed = True
             entries = list(self._cache.values())
+            entry_ids = {id(entry) for entry in entries}
+            entries.extend(entry for entry in self._retired.values() if id(entry) not in entry_ids)
             self._cache.clear()
+            entries_to_close: list[_CacheEntry] = []
+            for entry in entries:
+                entry.evicted = True
+                self._retired[id(entry)] = entry
+                if entry.active_users == 0 and not entry.disposal_claimed:
+                    entry.disposal_claimed = True
+                    entries_to_close.append(entry)
             inflight_futures = list(self._inflight.values())
             active_invocations = list(self._active_invocations)
 
@@ -485,8 +505,10 @@ class DefaultMCPToolHandler:
                 logger.debug("DefaultMCPToolHandler: in-flight future raised during aclose", exc_info=True)
                 continue
 
+        for entry in entries_to_close:
+            await self._close_claimed_entry(entry)
         for entry in entries:
-            await self._close_entry(entry)
+            await entry.closed.wait()
 
     async def __aenter__(self) -> DefaultMCPToolHandler:
         return self
@@ -517,6 +539,7 @@ class DefaultMCPToolHandler:
             existing = self._cache.get(key)
             if existing is not None:
                 self._cache.move_to_end(key)
+                existing.active_users += 1
                 return existing
             inflight = self._inflight.get(key)
             if inflight is None:
@@ -525,11 +548,16 @@ class DefaultMCPToolHandler:
                 creating = True
 
         if not creating:
-            return await inflight
+            await inflight
+            return await self._get_or_create_entry(invocation)
 
         # Phase 2: we own creation. Build the entry outside the lock.
         try:
-            entry = await self._create_entry(invocation)
+            async with self._creation_semaphore:
+                async with self._cache_lock:
+                    if self._closed:
+                        raise RuntimeError("DefaultMCPToolHandler is closed")
+                entry = await self._create_entry(invocation)
         except BaseException as exc:
             async with self._cache_lock:
                 self._inflight.pop(key, None)
@@ -561,11 +589,17 @@ class DefaultMCPToolHandler:
                     self._cache.move_to_end(key)
                     duplicate = entry
                     entry = existing
+                    entry.active_users += 1
                 else:
+                    entry.active_users = 1
                     self._cache[key] = entry
                     self._cache.move_to_end(key)
                     if len(self._cache) > self._cache_max_size:
                         _evicted_key, evicted = self._cache.popitem(last=False)
+                        evicted.evicted = True
+                        self._retired[id(evicted)] = evicted
+                        if evicted.active_users == 0:
+                            evicted.disposal_claimed = True
                 if not inflight.done():
                     inflight.set_result(entry)
 
@@ -582,9 +616,28 @@ class DefaultMCPToolHandler:
             raise err
         if duplicate is not None:
             await self._close_entry(duplicate)
-        if evicted is not None:
-            await self._close_entry(evicted)
+        if evicted is not None and evicted.disposal_claimed:
+            await self._close_claimed_entry(evicted)
         return entry
+
+    async def _release_entry(self, entry: _CacheEntry) -> None:
+        close_entry = False
+        async with self._cache_lock:
+            entry.active_users -= 1
+            if entry.active_users == 0 and entry.evicted and not entry.disposal_claimed:
+                entry.disposal_claimed = True
+                close_entry = True
+
+        if close_entry:
+            await self._close_claimed_entry(entry)
+
+    async def _close_claimed_entry(self, entry: _CacheEntry) -> None:
+        try:
+            await self._close_invocation_entry(entry)
+        finally:
+            async with self._cache_lock:
+                self._retired.pop(id(entry), None)
+                entry.closed.set()
 
     async def _create_entry(self, invocation: MCPToolInvocation) -> _CacheEntry:
         """Construct (and connect) a fresh MCP client for ``invocation``."""

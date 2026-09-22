@@ -37,8 +37,6 @@ internal sealed class WorkflowFormulaState
 
     public WorkflowExpressionEngine Evaluator { get; }
 
-    public string FallbackWorkflowSessionId { get; } = System.Guid.NewGuid().ToString("N");
-
     public WorkflowFormulaState(RecalcEngine engine)
     {
         this._scopes = VariableScopeNames.AllScopes.ToDictionary(scopeName => GetScopeName(scopeName), _ => new WorkflowScope());

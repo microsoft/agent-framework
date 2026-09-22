@@ -1,8 +1,14 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.ObjectModel;
 using Microsoft.PowerFx.Types;
+using Moq;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.PowerFx;
 
@@ -80,5 +86,53 @@ public class WorkflowFormulaStateTests
         // Assert
         FormulaValue result = this.State.Get("key1");
         Assert.Equal(newValue, result);
+    }
+
+    [Fact]
+    public async Task DeclarativeContextFallbackSessionId_IsScopedToPersistedRunStateAsync()
+    {
+        // Arrange
+        Dictionary<string, string> firstRunState = [];
+        Dictionary<string, string> secondRunState = [];
+        IWorkflowContext firstContext = CreateContext(firstRunState);
+        IWorkflowContext restoredContext = CreateContext(firstRunState);
+        IWorkflowContext secondContext = CreateContext(secondRunState);
+
+        // Act
+        DeclarativeWorkflowContext first =
+            await DeclarativeWorkflowContext.CreateAsync(firstContext, this.State);
+        DeclarativeWorkflowContext continued =
+            await DeclarativeWorkflowContext.CreateAsync(firstContext, this.State);
+        DeclarativeWorkflowContext restored =
+            await DeclarativeWorkflowContext.CreateAsync(restoredContext, this.State);
+        DeclarativeWorkflowContext second =
+            await DeclarativeWorkflowContext.CreateAsync(secondContext, this.State);
+
+        // Assert
+        Assert.Equal(first.SessionId, continued.SessionId);
+        Assert.Equal(first.SessionId, restored.SessionId);
+        Assert.NotEqual(first.SessionId, second.SessionId);
+    }
+
+    private static IWorkflowContext CreateContext(Dictionary<string, string> state)
+    {
+        Mock<IWorkflowContext> context = new();
+        context
+            .Setup(current => current.ReadOrInitStateAsync(
+                It.IsAny<string>(),
+                It.IsAny<Func<string>>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .Returns((string key, Func<string> factory, string? scopeName, CancellationToken cancellationToken) =>
+            {
+                if (!state.TryGetValue(key, out string? value))
+                {
+                    value = factory();
+                    state[key] = value;
+                }
+
+                return new ValueTask<string>(value);
+            });
+        return context.Object;
     }
 }

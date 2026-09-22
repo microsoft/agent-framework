@@ -123,6 +123,58 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
     }
 
     [Fact]
+    public async Task NoProvider_CacheEviction_DisposesLeastRecentlyUsedSessionAsync()
+    {
+        // Arrange
+        ProtocolStub stub = new();
+        await using DefaultMcpToolHandler handler = new(null, stub.CreateMessageHandler, clientCacheMaxSize: 2);
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+
+        // Act
+        await InvokeScopedAsync(handler, "workflow-a", "ping", timeout.Token);
+        await InvokeScopedAsync(handler, "workflow-b", "ping", timeout.Token);
+        await InvokeScopedAsync(handler, "workflow-c", "ping", timeout.Token);
+
+        // Assert
+        Assert.Equal(3, stub.Initializations);
+        Assert.Equal(1, stub.Terminations);
+    }
+
+    [Fact]
+    public async Task NoProvider_CacheEviction_DefersDisposalUntilActiveInvocationCompletesAsync()
+    {
+        // Arrange
+        ProtocolStub stub = new();
+        using SemaphoreSlim firstStarted = new(0);
+        using SemaphoreSlim releaseFirst = new(0);
+        int operations = 0;
+        stub.BeforeOperationAsync = async token =>
+        {
+            if (Interlocked.Increment(ref operations) == 1)
+            {
+                firstStarted.Release();
+                await releaseFirst.WaitAsync(token);
+            }
+        };
+        DefaultMcpToolHandler handler = new(null, stub.CreateMessageHandler, clientCacheMaxSize: 1);
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+
+        // Act
+        Task<McpServerToolResultContent> first = InvokeScopedAsync(handler, "workflow-a", "ping", timeout.Token);
+        await firstStarted.WaitAsync(timeout.Token);
+        await InvokeScopedAsync(handler, "workflow-b", "ping", timeout.Token);
+
+        // Assert
+        Assert.Equal(0, stub.Terminations);
+        Task disposal = handler.DisposeAsync().AsTask();
+        Assert.False(disposal.IsCompleted);
+        releaseFirst.Release();
+        await first;
+        await disposal;
+        Assert.Equal(2, stub.Terminations);
+    }
+
+    [Fact]
     public async Task NoProvider_DifferentConnectionNames_UseSeparateCachedSessionsAsync()
     {
         // Arrange

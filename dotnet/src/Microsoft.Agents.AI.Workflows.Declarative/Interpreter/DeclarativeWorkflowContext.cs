@@ -17,6 +17,8 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 
 internal sealed class DeclarativeWorkflowContext : IWorkflowContext, IWorkflowSessionContext
 {
+    private const string WorkflowSessionIdStateKey = "__declarative_mcp_workflow_session_id";
+
     public static readonly FrozenSet<string> ManagedScopes =
         [
             VariableScopeNames.Local,
@@ -24,13 +26,27 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext, IWorkflowSe
             VariableScopeNames.Global,
         ];
 
-    public DeclarativeWorkflowContext(IWorkflowContext source, WorkflowFormulaState state)
+    private DeclarativeWorkflowContext(IWorkflowContext source, WorkflowFormulaState state, string sessionId)
     {
         this.Source = source;
         this.State = state;
-        this.SessionId = source is IWorkflowSessionContext sessionContext
+        this.SessionId = sessionId;
+    }
+
+    public static async ValueTask<DeclarativeWorkflowContext> CreateAsync(
+        IWorkflowContext source,
+        WorkflowFormulaState state,
+        CancellationToken cancellationToken = default)
+    {
+        string sessionId = source is IWorkflowSessionContext sessionContext
             ? sessionContext.SessionId
-            : state.FallbackWorkflowSessionId;
+            : await source.ReadOrInitStateAsync(
+                WorkflowSessionIdStateKey,
+                static () => Guid.NewGuid().ToString("N"),
+                scopeName: null,
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+
+        return new(source, state, sessionId);
     }
 
     private IWorkflowContext Source { get; }

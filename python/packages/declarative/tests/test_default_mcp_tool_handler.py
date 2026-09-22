@@ -944,6 +944,77 @@ class TestCache:
         assert FakeTool.instances[2].close_count == 0
 
     @pytest.mark.asyncio
+    async def test_lru_eviction_defers_close_until_active_invocation_finishes(self) -> None:
+        handler = DefaultMCPToolHandler(cache_max_size=1)
+        first_started = asyncio.Event()
+        release_first = asyncio.Event()
+
+        async def gated_call(tool: FakeTool, tool_name: str, **arguments: Any) -> Any:
+            if tool.kwargs["url"] == "https://a/":
+                first_started.set()
+                await release_first.wait()
+            return [Content.from_text("ok")]
+
+        with _patch_tool(), patch.object(FakeTool, "call_tool", gated_call):
+            first = asyncio.create_task(handler.invoke_tool(_invocation(server_url="https://a/")))
+            await first_started.wait()
+            second = await handler.invoke_tool(_invocation(server_url="https://b/"))
+
+            assert not second.is_error
+            assert FakeTool.instances[0].close_count == 0
+            close_task = asyncio.create_task(handler.aclose())
+            await asyncio.sleep(0)
+            assert not close_task.done()
+
+            release_first.set()
+            first_result = await first
+            await close_task
+
+        assert not first_result.is_error
+        assert FakeTool.instances[0].close_count == 1
+        assert FakeTool.instances[1].close_count == 1
+
+    @pytest.mark.asyncio
+    async def test_entry_creation_is_bounded_and_cancelled_waiter_is_cleaned_up(self) -> None:
+        handler = DefaultMCPToolHandler(cache_max_size=2)
+        connecting = 0
+        max_connecting = 0
+        capacity_reached = asyncio.Event()
+        release = asyncio.Event()
+        original_connect = FakeTool.connect
+
+        async def gated_connect(tool: FakeTool) -> None:
+            nonlocal connecting, max_connecting
+            connecting += 1
+            max_connecting = max(max_connecting, connecting)
+            if connecting == 2:
+                capacity_reached.set()
+            try:
+                await release.wait()
+                await original_connect(tool)
+            finally:
+                connecting -= 1
+
+        with _patch_tool(), patch.object(FakeTool, "connect", gated_connect):
+            first = asyncio.create_task(handler.invoke_tool(_invocation(workflow_session_id="workflow-a")))
+            second = asyncio.create_task(handler.invoke_tool(_invocation(workflow_session_id="workflow-b")))
+            await capacity_reached.wait()
+            cancelled = asyncio.create_task(handler.invoke_tool(_invocation(workflow_session_id="workflow-c")))
+            await asyncio.sleep(0)
+
+            assert len(FakeTool.instances) == 2
+            cancelled.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await cancelled
+
+            release.set()
+            results = await asyncio.gather(first, second)
+
+        assert all(not result.is_error for result in results)
+        assert max_connecting == 2
+        assert not handler._inflight
+
+    @pytest.mark.asyncio
     async def test_repeated_use_keeps_lru_alive(self) -> None:
         handler = DefaultMCPToolHandler(cache_max_size=2)
         with _patch_tool():
