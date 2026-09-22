@@ -12,7 +12,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
-from ag_ui.core import EventType, RunFinishedEvent, RunStartedEvent, StateSnapshotEvent
+from ag_ui.core import ActivitySnapshotEvent, EventType, RunFinishedEvent, RunStartedEvent, StateSnapshotEvent
 from agent_framework import (
     Agent,
     AgentContext,
@@ -3079,7 +3079,7 @@ async def test_executor_activity_ids_are_scoped_to_run(terminal_type: str) -> No
                 cast(Any, ActivityWorkflow()),
             )
         ]
-        activities = [event for event in events if event.type == EventType.ACTIVITY_SNAPSHOT]
+        activities = [event for event in events if isinstance(event, ActivitySnapshotEvent)]
         assert len(activities) == 4
         assert activities[0].message_id == activities[1].message_id
         assert activities[2].message_id == activities[3].message_id
@@ -3119,7 +3119,7 @@ async def test_executor_activity_ids_do_not_collide_with_delimiters() -> None:
                 cast(Any, ActivityWorkflow(executor_id)),
             )
         ]
-        activities = [event for event in events if event.type == EventType.ACTIVITY_SNAPSHOT]
+        activities = [event for event in events if isinstance(event, ActivitySnapshotEvent)]
         assert len(activities) == 1
         message_ids.append(activities[0].message_id)
 
