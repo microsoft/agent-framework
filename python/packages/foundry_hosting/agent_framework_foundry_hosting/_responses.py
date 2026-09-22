@@ -569,8 +569,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             6. Conversation branching (passing both `conversation` and `previous_response_id` on a request)
                is supported for non-workflow agents: the session loads from the branch point response's own
                snapshot and each new response keeps its own snapshot, so the conversation's mainline state
-               is never overwritten by a branch. Workflow agents do not support branching and still raise
-               `RuntimeError` when `previous_response_id` is combined with `conversation`.
+               is never overwritten by a branch. Branching is rejected when the restored session resumes a
+               service-managed downstream conversation (`history_source="agent"` with a storing client),
+               because a service-side thread cannot be forked. Workflow agents do not support branching and
+               still raise `RuntimeError` when `previous_response_id` is combined with `conversation`.
 
         Raises:
             ValueError: If `history_source` is not supported.
@@ -774,6 +776,19 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                                 f"previous_response_id={previous_response_id}."
                             )
                         session = agent.create_session()
+                    if branching and not configuration.agent_server_history and session.service_session_id is not None:
+                        # A service-managed downstream conversation cannot be forked. Even though the
+                        # agent run is not started (consent failure exits early), the restored session
+                        # still carries the service thread ID, so the same isolation argument applies:
+                        # resuming that thread from a stale branch point would replay duplicate context
+                        # and pollute the mainline's downstream history.
+                        raise RuntimeError(
+                            "Cannot branch from previous_response_id="
+                            f"{previous_response_id}: the session resumes service-managed conversation "
+                            f"{session.service_session_id!r}, which cannot be forked into an isolated "
+                            "branch. Use history_source='agent_server' so hosting owns the transcript, "
+                            "or a downstream client that does not store history server-side."
+                        )
                     consent_save_id = (
                         context.response_id if branching else context.conversation_id or context.response_id
                     )
@@ -981,6 +996,19 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         f"Cannot find an existing agent session for previous_response_id={previous_response_id}."
                     )
                 session = agent.create_session()
+            if branching and not configuration.agent_server_history and session.service_session_id is not None:
+                # A service-managed downstream conversation cannot be forked: the thread the
+                # agent's chat client resumes (and appends to) has already advanced past the
+                # branch point with mainline turns, so a branch run would replay stale context
+                # and pollute the mainline's downstream history. Hosting can only own fork
+                # semantics when it owns the transcript itself.
+                raise RuntimeError(
+                    "Cannot branch from previous_response_id="
+                    f"{previous_response_id}: the session resumes service-managed conversation "
+                    f"{session.service_session_id!r}, which cannot be forked into an isolated "
+                    "branch. Use history_source='agent_server' so hosting owns the transcript, "
+                    "or a downstream client that does not store history server-side."
+                )
             session_save_id = context.response_id if branching else context.conversation_id or context.response_id
         except BaseException as ex:
             # Session preparation failed (or the request was cancelled / the stream closed —
