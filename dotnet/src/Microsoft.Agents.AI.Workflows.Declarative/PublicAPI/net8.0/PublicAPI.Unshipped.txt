@@ -1,2 +1,4 @@
 ﻿#nullable enable
 Microsoft.Agents.AI.Workflows.Declarative.Events.ExternalInputResponse.RequestId.get -> string?
+Microsoft.Agents.AI.Workflows.Declarative.IWorkflowScopedMcpToolHandler
+Microsoft.Agents.AI.Workflows.Declarative.IWorkflowScopedMcpToolHandler.InvokeToolInWorkflowSessionAsync(string! serverUrl, string? serverLabel, string! toolName, System.Collections.Generic.IDictionary<string!, object?>? arguments, System.Collections.Generic.IDictionary<string!, string!>? headers, string? connectionName, string! workflowSessionId, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<Microsoft.Extensions.AI.McpServerToolResultContent!>!

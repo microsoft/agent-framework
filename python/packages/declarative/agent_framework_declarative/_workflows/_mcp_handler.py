@@ -30,6 +30,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import uuid
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar, Token
@@ -40,6 +41,7 @@ import httpx
 
 if TYPE_CHECKING:
     from agent_framework import Content
+    from agent_framework._workflows._state import State
 
 __all__ = [
     "ClientProvider",
@@ -52,6 +54,17 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 _DEFAULT_CACHE_MAX_SIZE = 32
+_WORKFLOW_SESSION_ID_KEY = "_declarative_mcp_workflow_session_id"
+
+
+def _get_or_create_workflow_session_id(state: State) -> str:
+    workflow_session_id = state.get(_WORKFLOW_SESSION_ID_KEY)
+    if workflow_session_id is None:
+        workflow_session_id = uuid.uuid4().hex
+        state.set(_WORKFLOW_SESSION_ID_KEY, workflow_session_id)
+    if not isinstance(workflow_session_id, str) or not workflow_session_id:
+        raise ValueError("Invalid MCP workflow session state.")
+    return workflow_session_id
 
 
 @dataclass
@@ -73,6 +86,9 @@ class MCPToolInvocation:
     - ``connection_name``: Optional Foundry connection name forwarded for
       handlers that resolve auth/credentials by connection. The default
       handler does not consume this field.
+    - ``workflow_session_id``: Framework-owned identifier for the current
+      workflow session. The default handler uses it to prevent separate
+      workflows from sharing one stateful MCP protocol session.
     """
 
     server_url: str
@@ -81,6 +97,7 @@ class MCPToolInvocation:
     arguments: dict[str, Any] = field(default_factory=dict)  # type: ignore[reportUnknownVariableType]
     headers: dict[str, str] = field(default_factory=dict)  # type: ignore[reportUnknownVariableType]
     connection_name: str | None = None
+    workflow_session_id: str | None = None
 
 
 def _empty_outputs() -> list[Any]:
@@ -160,12 +177,13 @@ class DefaultMCPToolHandler:
 
     Without a ``client_provider``, caches one
     :class:`agent_framework.MCPStreamableHTTPTool` instance per
-    ``(server_url, server_label, connection_name, headers_hash)`` in a bounded
-    LRU. The cache prevents re-establishing an MCP session for every
-    invocation while ensuring different header sets (auth tokens) cannot
-    share a session — matches the .NET design intent while bounding
-    cardinality. ``server_label`` and ``connection_name`` also participate
-    in the key to distinguish logical connections.
+    ``(workflow_session_id, server_url, server_label, connection_name,
+    headers_hash)`` in a bounded LRU. The cache prevents re-establishing an MCP
+    session for every invocation while ensuring separate workflow sessions and
+    different header sets (auth tokens) cannot share a session — matches the
+    .NET design intent while bounding cardinality. ``server_label`` and
+    ``connection_name`` also participate in the key to distinguish logical
+    connections.
     Header *names* are lower-cased inside the hash payload only — the
     headers passed on the wire keep the caller's original casing — so two
     YAML actions that spell ``Authorization`` differently still share a
@@ -228,14 +246,14 @@ class DefaultMCPToolHandler:
             raise ValueError(f"cache_max_size must be positive, got {cache_max_size}")
         self._client_provider = client_provider
         self._cache_max_size = cache_max_size
-        self._cache: OrderedDict[tuple[str, str, str, str], _CacheEntry] = OrderedDict()
+        self._cache: OrderedDict[tuple[str, str, str, str, str], _CacheEntry] = OrderedDict()
         # Outer lock guards the cache + in-flight-future map only — never
         # held across network I/O.
         self._cache_lock = asyncio.Lock()
         # Per-key in-flight futures: while one task is connecting, other
         # tasks awaiting the same key will await the same future and share
         # the resulting cache entry.
-        self._inflight: dict[tuple[str, str, str, str], asyncio.Future[_CacheEntry]] = {}
+        self._inflight: dict[tuple[str, str, str, str, str], asyncio.Future[_CacheEntry]] = {}
         # Completion signals only: provider-backed calls never share entries.
         self._active_invocations: set[asyncio.Future[None]] = set()
         # Keep ancestry so a completed nested call cannot hide an active parent
@@ -483,6 +501,7 @@ class DefaultMCPToolHandler:
     async def _get_or_create_entry(self, invocation: MCPToolInvocation) -> _CacheEntry:
         """Look up (or create) the cached MCP client for this invocation."""
         key = self._cache_key(
+            invocation.workflow_session_id,
             invocation.server_url,
             invocation.server_label,
             invocation.connection_name,
@@ -648,16 +667,18 @@ class DefaultMCPToolHandler:
 
     @staticmethod
     def _cache_key(
+        workflow_session_id: str | None,
         server_url: str,
         server_label: str | None,
         connection_name: str | None,
         headers: dict[str, str] | None,
-    ) -> tuple[str, str, str, str]:
+    ) -> tuple[str, str, str, str, str]:
         """Build an order-independent cache key for the invocation identity.
 
         Used only without a ``client_provider``. The key includes
-        ``server_label`` and ``connection_name`` to distinguish logical
-        connections.
+        ``workflow_session_id`` to isolate stateful MCP protocol sessions
+        between workflows, plus ``server_label`` and ``connection_name`` to
+        distinguish logical connections.
 
         Header *names* are lower-cased inside the hash payload only so
         that ``Authorization`` and ``authorization`` map to the same
@@ -669,4 +690,10 @@ class DefaultMCPToolHandler:
             normalized = sorted((k.lower(), v) for k, v in headers.items())
             payload = json.dumps(normalized, ensure_ascii=False)
             headers_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
-        return (server_url, server_label or "", connection_name or "", headers_hash)
+        return (
+            workflow_session_id or "",
+            server_url,
+            server_label or "",
+            connection_name or "",
+            headers_hash,
+        )

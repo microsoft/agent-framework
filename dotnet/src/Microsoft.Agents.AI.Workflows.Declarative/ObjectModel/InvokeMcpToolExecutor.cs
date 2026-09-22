@@ -31,6 +31,7 @@ internal sealed class InvokeMcpToolExecutor(
 {
     private const string ApprovalSnapshotStateKey = nameof(_approvalSnapshots);
     private const string LegacyApprovalSnapshotStateKey = "_approvalSnapshot";
+    private readonly string _fallbackWorkflowSessionId = Guid.NewGuid().ToString("N");
 
     /// <summary>
     /// Snapshots of evaluated parameters captured at approval-request time, keyed by
@@ -115,7 +116,8 @@ internal sealed class InvokeMcpToolExecutor(
         }
 
         // No approval required - invoke the tool directly
-        McpServerToolResultContent resultContent = await mcpToolHandler.InvokeToolAsync(
+        McpServerToolResultContent resultContent = await this.InvokeToolAsync(
+            context,
             serverUrl,
             serverLabel,
             toolName,
@@ -172,7 +174,8 @@ internal sealed class InvokeMcpToolExecutor(
 
         Dictionary<string, string>? headers = this.GetHeaders();
 
-        McpServerToolResultContent resultContent = await mcpToolHandler.InvokeToolAsync(
+        McpServerToolResultContent resultContent = await this.InvokeToolAsync(
+            context,
             snapshot.ServerUrl,
             snapshot.ServerLabel,
             snapshot.ToolName,
@@ -182,6 +185,42 @@ internal sealed class InvokeMcpToolExecutor(
             cancellationToken).ConfigureAwait(false);
 
         await this.ProcessResultAsync(context, resultContent, cancellationToken).ConfigureAwait(false);
+    }
+
+    private Task<McpServerToolResultContent> InvokeToolAsync(
+        IWorkflowContext context,
+        string serverUrl,
+        string? serverLabel,
+        string toolName,
+        IDictionary<string, object?>? arguments,
+        IDictionary<string, string>? headers,
+        string? connectionName,
+        CancellationToken cancellationToken)
+    {
+        if (mcpToolHandler is IWorkflowScopedMcpToolHandler scopedHandler)
+        {
+            string workflowSessionId = context is IWorkflowSessionContext sessionContext
+                ? sessionContext.SessionId
+                : this._fallbackWorkflowSessionId;
+            return scopedHandler.InvokeToolInWorkflowSessionAsync(
+                serverUrl,
+                serverLabel,
+                toolName,
+                arguments,
+                headers,
+                connectionName,
+                workflowSessionId,
+                cancellationToken);
+        }
+
+        return mcpToolHandler.InvokeToolAsync(
+            serverUrl,
+            serverLabel,
+            toolName,
+            arguments,
+            headers,
+            connectionName,
+            cancellationToken);
     }
 
     /// <summary>

@@ -105,6 +105,24 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
     }
 
     [Fact]
+    public async Task NoProvider_SeparateWorkflowSessions_UseSeparateCachedSessionsAsync()
+    {
+        // Arrange
+        ProtocolStub stub = new();
+        await using DefaultMcpToolHandler handler = new(null, stub.CreateMessageHandler);
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+
+        // Act
+        await InvokeScopedAsync(handler, "workflow-a", "ping", timeout.Token);
+        await InvokeScopedAsync(handler, "workflow-b", "ping", timeout.Token);
+        await InvokeScopedAsync(handler, "workflow-a", "ping", timeout.Token);
+
+        // Assert
+        Assert.Equal(2, stub.Initializations);
+        Assert.Equal(0, stub.Terminations);
+    }
+
+    [Fact]
     public async Task NoProvider_DifferentConnectionNames_UseSeparateCachedSessionsAsync()
     {
         // Arrange
@@ -183,6 +201,23 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
         Assert.Equal(2, providerCalls);
         Assert.Equal(2, stub.Initializations);
         Assert.Equal(2, stub.Terminations);
+    }
+
+    [Fact]
+    public async Task NoProvider_ConcurrentSameWorkflowInvocations_CoalesceSessionCreationAsync()
+    {
+        // Arrange
+        ProtocolStub stub = new();
+        await using DefaultMcpToolHandler handler = new(null, stub.CreateMessageHandler);
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+
+        // Act
+        await Task.WhenAll(
+            InvokeScopedAsync(handler, "workflow-a", "ping", timeout.Token),
+            InvokeScopedAsync(handler, "workflow-a", "ping", timeout.Token));
+
+        // Assert
+        Assert.Equal(1, stub.Initializations);
     }
 
     [Fact]
@@ -559,6 +594,11 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
     private static Task<McpServerToolResultContent> InvokeAsync(
         DefaultMcpToolHandler handler, string toolName, CancellationToken cancellationToken) =>
         handler.InvokeToolAsync("https://mcp.example/api", null, toolName, null, null, null, cancellationToken);
+
+    private static Task<McpServerToolResultContent> InvokeScopedAsync(
+        DefaultMcpToolHandler handler, string workflowSessionId, string toolName, CancellationToken cancellationToken) =>
+        handler.InvokeToolInWorkflowSessionAsync(
+            "https://mcp.example/api", null, toolName, null, null, null, workflowSessionId, cancellationToken);
 
     private sealed class ProtocolStub
     {

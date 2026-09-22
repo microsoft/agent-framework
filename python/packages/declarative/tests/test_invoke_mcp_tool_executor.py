@@ -164,6 +164,35 @@ class TestFieldForwarding:
         assert inv.headers == {}
         assert inv.arguments == {}
         assert inv.connection_name is None
+        assert inv.workflow_session_id
+
+    @pytest.mark.asyncio
+    async def test_separate_workflows_receive_separate_session_ids(self) -> None:
+        handler = StubMcpHandler(_ok())
+        factory = WorkflowFactory(mcp_tool_handler=handler)
+        first = factory.create_workflow_from_definition(_yaml(_action()))
+        second = factory.create_workflow_from_definition(_yaml(_action()))
+
+        await first.run({})
+        await second.run({})
+
+        assert len(handler.invocations) == 2
+        assert handler.invocations[0].workflow_session_id
+        assert handler.invocations[1].workflow_session_id
+        assert handler.invocations[0].workflow_session_id != handler.invocations[1].workflow_session_id
+
+    @pytest.mark.asyncio
+    async def test_same_workflow_continuation_reuses_session_id(self) -> None:
+        handler = StubMcpHandler(_ok())
+        factory = WorkflowFactory(mcp_tool_handler=handler)
+        workflow = factory.create_workflow_from_definition(_yaml(_action()))
+
+        await workflow.run({})
+        await workflow.run({})
+
+        assert len(handler.invocations) == 2
+        assert handler.invocations[0].workflow_session_id
+        assert handler.invocations[0].workflow_session_id == handler.invocations[1].workflow_session_id
 
     @pytest.mark.asyncio
     async def test_arguments_evaluated_and_preserves_none(self) -> None:

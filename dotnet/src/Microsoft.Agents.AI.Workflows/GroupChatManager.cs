@@ -169,7 +169,7 @@ internal sealed record GroupChatManagerState(int IterationCount);
 // IWorkflowContext decorator that prepends a fixed prefix to every state key passed through it.
 // All non-state members (events, message sending, output yielding, halt requests, trace context,
 // and runtime characteristics) delegate directly to the wrapped context.
-internal sealed class PrefixingWorkflowContext(IWorkflowContext inner, string prefix) : IWorkflowContext
+internal sealed class PrefixingWorkflowContext(IWorkflowContext inner, string prefix) : IWorkflowContext, IWorkflowSessionContext
 {
     private readonly IWorkflowContext _inner = Throw.IfNull(inner);
     private readonly string _prefix = Throw.IfNullOrEmpty(prefix);
@@ -177,6 +177,8 @@ internal sealed class PrefixingWorkflowContext(IWorkflowContext inner, string pr
     public IReadOnlyDictionary<string, string>? TraceContext => this._inner.TraceContext;
 
     public bool ConcurrentRunsEnabled => this._inner.ConcurrentRunsEnabled;
+
+    public string SessionId => ((IWorkflowSessionContext)this._inner).SessionId;
 
     public ValueTask AddEventAsync(WorkflowEvent workflowEvent, CancellationToken cancellationToken = default)
         => this._inner.AddEventAsync(workflowEvent, cancellationToken);

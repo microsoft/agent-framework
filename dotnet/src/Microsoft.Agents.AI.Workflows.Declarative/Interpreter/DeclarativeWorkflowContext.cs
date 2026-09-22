@@ -15,7 +15,7 @@ using Microsoft.PowerFx.Types;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 
-internal sealed class DeclarativeWorkflowContext : IWorkflowContext
+internal sealed class DeclarativeWorkflowContext : IWorkflowContext, IWorkflowSessionContext
 {
     public static readonly FrozenSet<string> ManagedScopes =
         [
@@ -28,11 +28,16 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
     {
         this.Source = source;
         this.State = state;
+        this.SessionId = source is IWorkflowSessionContext sessionContext
+            ? sessionContext.SessionId
+            : state.FallbackWorkflowSessionId;
     }
 
     private IWorkflowContext Source { get; }
     public WorkflowFormulaState State { get; }
     public IReadOnlyDictionary<string, string>? TraceContext => this.Source.TraceContext;
+
+    public string SessionId { get; }
 
     /// <inheritdoc/>
     public bool ConcurrentRunsEnabled => this.Source.ConcurrentRunsEnabled;

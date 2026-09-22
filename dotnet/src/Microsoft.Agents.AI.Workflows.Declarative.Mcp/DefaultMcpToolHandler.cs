@@ -28,11 +28,12 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.Mcp;
 /// a pre-configured <see cref="HttpClient"/> for each server.
 /// Provider-backed invocations create and dispose a separate MCP session for every call, including
 /// <c>tools/list</c>, because provider authentication is not represented in the session cache key.
-/// Without a provider, sessions are cached by server URL, label, connection name, and explicit headers.
+/// Without a provider, workflow invocations are cached by workflow session, server URL, label,
+/// connection name, and explicit headers.
 /// Non-cancellation cleanup failures are reported through <see cref="Trace"/> warnings without replacing
 /// the invocation result or error.
 /// </remarks>
-public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
+public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyncDisposable
 {
     private const string FilenameAdditionalPropertyName = "filename";
 
@@ -46,7 +47,7 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
 
     private readonly Func<string, CancellationToken, Task<HttpClient?>>? _httpClientProvider;
     private readonly Func<HttpMessageHandler> _httpMessageHandlerFactory;
-    private readonly Dictionary<(string Url, string Label, string Connection, string HeadersHash), ClientConnection> _clients = [];
+    private readonly Dictionary<(string WorkflowSession, string Url, string Label, string Connection, string HeadersHash), ClientConnection> _clients = [];
     private readonly Dictionary<string, HttpClient> _ownedHttpClients = [];
     private readonly SemaphoreSlim _clientLock = new(1, 1);
     private readonly AsyncLocal<ProviderInvocationContext?> _providerInvocationContext = new();
@@ -97,6 +98,26 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
         IDictionary<string, object?>? arguments,
         IDictionary<string, string>? headers,
         string? connectionName,
+        CancellationToken cancellationToken = default)
+        => await this.InvokeToolInWorkflowSessionAsync(
+            serverUrl,
+            serverLabel,
+            toolName,
+            arguments,
+            headers,
+            connectionName,
+            workflowSessionId: string.Empty,
+            cancellationToken).ConfigureAwait(false);
+
+    /// <inheritdoc/>
+    public async Task<McpServerToolResultContent> InvokeToolInWorkflowSessionAsync(
+        string serverUrl,
+        string? serverLabel,
+        string toolName,
+        IDictionary<string, object?>? arguments,
+        IDictionary<string, string>? headers,
+        string? connectionName,
+        string workflowSessionId,
         CancellationToken cancellationToken = default)
     {
         if (IsListToolsToolName(toolName))
@@ -151,7 +172,8 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
             }
         }
 
-        McpClient client = await this.GetOrCreateClientAsync(serverUrl, serverLabel, headers, connectionName, cancellationToken).ConfigureAwait(false);
+        McpClient client = await this.GetOrCreateClientAsync(
+            serverUrl, serverLabel, headers, connectionName, workflowSessionId, cancellationToken).ConfigureAwait(false);
         return await InvokeClientAsync(client, toolName, arguments, cancellationToken).ConfigureAwait(false);
     }
 
@@ -276,10 +298,11 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
         string? serverLabel,
         IDictionary<string, string>? headers,
         string? connectionName,
+        string workflowSessionId,
         CancellationToken cancellationToken)
     {
         string trimmedUrl = serverUrl.Trim();
-        var clientCacheKey = BuildCacheKey(trimmedUrl, serverLabel, connectionName, headers);
+        var clientCacheKey = BuildCacheKey(workflowSessionId, trimmedUrl, serverLabel, connectionName, headers);
 
         await this._clientLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -301,17 +324,19 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
     }
 
     /// <summary>
-    /// Builds the per-client cache key as a 4-tuple of
-    /// (trimmed serverUrl, serverLabel, connectionName, headers hash). All four components
-    /// participate so that callers using different labels/connections/headers receive
-    /// distinct <see cref="McpClient"/> instances even when targeting the same URL.
+    /// Builds the per-client cache key as a 5-tuple of
+    /// (workflowSessionId, trimmed serverUrl, serverLabel, connectionName, headers hash).
+    /// All five components participate so that separate workflow sessions and callers using
+    /// different labels/connections/headers receive distinct <see cref="McpClient"/> instances
+    /// even when targeting the same URL.
     /// </summary>
-    internal static (string Url, string Label, string Connection, string HeadersHash) BuildCacheKey(
+    internal static (string WorkflowSession, string Url, string Label, string Connection, string HeadersHash) BuildCacheKey(
+        string workflowSessionId,
         string trimmedUrl,
         string? serverLabel,
         string? connectionName,
         IDictionary<string, string>? headers) =>
-        (trimmedUrl, serverLabel ?? string.Empty, connectionName ?? string.Empty, ComputeHeadersHash(headers));
+        (workflowSessionId, trimmedUrl, serverLabel ?? string.Empty, connectionName ?? string.Empty, ComputeHeadersHash(headers));
 
     private async Task<ClientConnection> CreateClientAsync(
         string serverUrl,

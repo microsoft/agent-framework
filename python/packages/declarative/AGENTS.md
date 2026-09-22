@@ -15,6 +15,9 @@ YAML/JSON-based declarative agent and workflow definitions.
 ## MCP Handler Lifetimes
 
 `DefaultMCPToolHandler` caches/coalesces sessions only without a `client_provider`.
+Cache identity includes a framework-owned workflow session ID in addition to
+endpoint, label, connection, and headers, so separate workflow instances do not
+share a stateful MCP protocol session while continuations of one workflow do.
 With a provider, every invocation (including `tools/list`) gets a fresh tool/session,
 even if the provider returns `None` or a shared HTTP client. Invocation cleanup closes
 the session and any internally owned fallback client, never caller-owned HTTP clients.

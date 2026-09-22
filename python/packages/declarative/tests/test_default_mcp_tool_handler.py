@@ -23,11 +23,13 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 from agent_framework import Content
+from agent_framework._workflows._state import State
 from agent_framework.exceptions import ToolExecutionException
 
 from agent_framework_declarative._workflows._mcp_handler import (
     DefaultMCPToolHandler,
     MCPToolInvocation,
+    _get_or_create_workflow_session_id,
 )
 
 pytestmark = pytest.mark.skipif(
@@ -827,6 +829,22 @@ class TestConstruction:
             DefaultMCPToolHandler(cache_max_size=-3)
 
 
+class TestWorkflowSessionId:
+    def test_separate_workflow_states_get_separate_ids(self) -> None:
+        first = _get_or_create_workflow_session_id(State())
+        second = _get_or_create_workflow_session_id(State())
+
+        assert first != second
+
+    def test_same_workflow_state_reuses_id(self) -> None:
+        state = State()
+
+        first = _get_or_create_workflow_session_id(state)
+        second = _get_or_create_workflow_session_id(state)
+
+        assert first == second
+
+
 # ---------- Tool kwargs ----------------------------------------------------
 
 
@@ -879,11 +897,19 @@ class TestCache:
     async def test_same_url_and_headers_hit_cache(self) -> None:
         handler = DefaultMCPToolHandler()
         with _patch_tool():
-            await handler.invoke_tool(_invocation(headers={"X": "1"}))
-            await handler.invoke_tool(_invocation(headers={"X": "1"}))
+            await handler.invoke_tool(_invocation(headers={"X": "1"}, workflow_session_id="workflow-a"))
+            await handler.invoke_tool(_invocation(headers={"X": "1"}, workflow_session_id="workflow-a"))
         # One tool created, connect called once.
         assert len(FakeTool.instances) == 1
         assert FakeTool.instances[0].connect_count == 1
+
+    @pytest.mark.asyncio
+    async def test_separate_workflow_sessions_use_separate_entries(self) -> None:
+        handler = DefaultMCPToolHandler()
+        with _patch_tool():
+            await handler.invoke_tool(_invocation(workflow_session_id="workflow-a"))
+            await handler.invoke_tool(_invocation(workflow_session_id="workflow-b"))
+        assert len(FakeTool.instances) == 2
 
     @pytest.mark.asyncio
     async def test_different_headers_create_separate_entries(self) -> None:
@@ -950,10 +976,10 @@ class TestCache:
 
         with _patch_tool(), patch.object(FakeTool, "connect", slow_connect):
             results = await asyncio.gather(
-                handler.invoke_tool(_invocation(headers={"X": "1"})),
-                handler.invoke_tool(_invocation(headers={"X": "1"})),
-                handler.invoke_tool(_invocation(headers={"X": "1"})),
-                handler.invoke_tool(_invocation(headers={"X": "1"})),
+                handler.invoke_tool(_invocation(headers={"X": "1"}, workflow_session_id="workflow-a")),
+                handler.invoke_tool(_invocation(headers={"X": "1"}, workflow_session_id="workflow-a")),
+                handler.invoke_tool(_invocation(headers={"X": "1"}, workflow_session_id="workflow-a")),
+                handler.invoke_tool(_invocation(headers={"X": "1"}, workflow_session_id="workflow-a")),
             )
         assert all(not r.is_error for r in results)
         # Only one tool was created and connected, despite 4 concurrent calls.
@@ -1235,38 +1261,43 @@ class TestErrorMapping:
 
 class TestCacheKey:
     def test_key_order_independent(self) -> None:
-        k1 = DefaultMCPToolHandler._cache_key("https://x/", None, None, {"A": "1", "B": "2"})
-        k2 = DefaultMCPToolHandler._cache_key("https://x/", None, None, {"B": "2", "A": "1"})
+        k1 = DefaultMCPToolHandler._cache_key("workflow", "https://x/", None, None, {"A": "1", "B": "2"})
+        k2 = DefaultMCPToolHandler._cache_key("workflow", "https://x/", None, None, {"B": "2", "A": "1"})
         assert k1 == k2
 
     def test_key_distinguishes_values(self) -> None:
-        k1 = DefaultMCPToolHandler._cache_key("https://x/", None, None, {"A": "1"})
-        k2 = DefaultMCPToolHandler._cache_key("https://x/", None, None, {"A": "2"})
+        k1 = DefaultMCPToolHandler._cache_key("workflow", "https://x/", None, None, {"A": "1"})
+        k2 = DefaultMCPToolHandler._cache_key("workflow", "https://x/", None, None, {"A": "2"})
         assert k1 != k2
 
     def test_empty_headers_use_fixed_hash(self) -> None:
-        k1 = DefaultMCPToolHandler._cache_key("https://x/", None, None, None)
-        k2 = DefaultMCPToolHandler._cache_key("https://x/", None, None, {})
+        k1 = DefaultMCPToolHandler._cache_key("workflow", "https://x/", None, None, None)
+        k2 = DefaultMCPToolHandler._cache_key("workflow", "https://x/", None, None, {})
         assert k1 == k2
 
+    def test_key_distinguishes_workflow_session(self) -> None:
+        k1 = DefaultMCPToolHandler._cache_key("workflow-a", "https://x/", None, None, None)
+        k2 = DefaultMCPToolHandler._cache_key("workflow-b", "https://x/", None, None, None)
+        assert k1 != k2
+
     def test_key_distinguishes_connection_name(self) -> None:
-        k1 = DefaultMCPToolHandler._cache_key("https://x/", None, "conn-A", None)
-        k2 = DefaultMCPToolHandler._cache_key("https://x/", None, "conn-B", None)
+        k1 = DefaultMCPToolHandler._cache_key("workflow", "https://x/", None, "conn-A", None)
+        k2 = DefaultMCPToolHandler._cache_key("workflow", "https://x/", None, "conn-B", None)
         assert k1 != k2
 
     def test_key_distinguishes_server_label(self) -> None:
-        k1 = DefaultMCPToolHandler._cache_key("https://x/", "Lbl-A", None, None)
-        k2 = DefaultMCPToolHandler._cache_key("https://x/", "Lbl-B", None, None)
+        k1 = DefaultMCPToolHandler._cache_key("workflow", "https://x/", "Lbl-A", None, None)
+        k2 = DefaultMCPToolHandler._cache_key("workflow", "https://x/", "Lbl-B", None, None)
         assert k1 != k2
 
     def test_key_collapses_header_name_case(self) -> None:
-        k1 = DefaultMCPToolHandler._cache_key("https://x/", None, None, {"Authorization": "tk"})
-        k2 = DefaultMCPToolHandler._cache_key("https://x/", None, None, {"authorization": "tk"})
+        k1 = DefaultMCPToolHandler._cache_key("workflow", "https://x/", None, None, {"Authorization": "tk"})
+        k2 = DefaultMCPToolHandler._cache_key("workflow", "https://x/", None, None, {"authorization": "tk"})
         assert k1 == k2
 
     def test_key_keeps_header_value_case(self) -> None:
-        k1 = DefaultMCPToolHandler._cache_key("https://x/", None, None, {"X": "Bearer-A"})
-        k2 = DefaultMCPToolHandler._cache_key("https://x/", None, None, {"X": "bearer-a"})
+        k1 = DefaultMCPToolHandler._cache_key("workflow", "https://x/", None, None, {"X": "Bearer-A"})
+        k2 = DefaultMCPToolHandler._cache_key("workflow", "https://x/", None, None, {"X": "bearer-a"})
         assert k1 != k2
 
 
