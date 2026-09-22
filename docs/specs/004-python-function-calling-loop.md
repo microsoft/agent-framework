@@ -547,6 +547,11 @@ that manually replay messages own the equivalent rule: do not resend an approval
   same turn.
 - A trusted terminal result consumes the corresponding approval authority in explicit stateless replay; a result in a
   server-registered pending occurrence cannot consume that authority before local execution.
+- A matched `function_result` is terminal regardless of its text, including an exact or embedded
+  `[APPROVAL_PENDING]`. Legacy textual placeholder results are no longer supported. Applications that persisted
+  those placeholders must migrate genuine pending occurrences using authoritative pending state and typed
+  `function_approval_request` controls, without synthetic `function_result` contents. Actual completed results must
+  remain in history; their text must not be used to infer pending approval state.
 - Non-streaming runs that exclude tool groups through in-run compaction return the inserted summary messages in the
   final response transcript, each positioned before the group it replaces, so history loaded with `skip_excluded`
   keeps the summarized content; summaries of caller-owned input messages stay out of the returned transcript.
@@ -617,12 +622,14 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Multiple reused-id rounds | Approved and rejected rounds retain separate call/result occurrences. | `test_replace_approval_contents_with_results_correlates_reused_call_id_occurrences` |
 | Multi-content result with reused id | Every content produced by one execution stays with that approval occurrence and cannot bleed into the next reused-id round. | `test_replace_approval_contents_with_results_keeps_multi_content_group_with_reused_call_id` |
 | Follow-up request closes one occurrence | A user-input follow-up consumes only the preceding approval authority and leaves a later reused-id response pending. | `test_collect_approval_responses_consumes_matching_follow_up_request_occurrence` |
-| Reused-id placeholders | Placeholder results consume approved results by occurrence. | `test_replace_approval_contents_with_results_correlates_reused_call_id_placeholders` |
-| Rejected placeholder | Rejection replaces the pending placeholder instead of adding a second result. | `test_replace_approval_contents_with_results_replaces_rejected_placeholder` |
-| Results reordered with placeholders | Results still match the correct call ids. | `test_replace_approval_contents_with_results_uses_result_call_ids_for_placeholders` |
+| Reused-id pending requests | Typed pending requests consume approved results by occurrence. | `test_replace_approval_contents_with_results_correlates_reused_call_id_pending_requests` |
+| Rejected pending request | Rejection produces one terminal result. | `test_replace_approval_contents_with_results_resolves_rejected_request` |
+| Results reordered with pending requests | Results still match the correct call ids. | `test_replace_approval_contents_with_results_uses_result_call_ids_for_pending_requests` |
 | Missing result call id | A malformed result does not steal another approval's result. | `test_replace_approval_contents_with_results_skips_results_without_call_id` |
 | Empty approval message cleanup | Fully consumed approval messages are removed from normalized model input. | `test_replace_approval_contents_with_results_prunes_emptied_messages` |
-| Later stateless turn | A prior terminal approval response cannot execute again. | `test_resolved_approval_response_is_inert_on_later_stateless_turn` |
+| Later stateless turn | A prior terminal approval response cannot execute again, regardless of result text or message serialization. | `test_resolved_approval_response_is_inert_on_later_stateless_turn` |
+| Serialized session authority | Client-authored results cannot retire pending authority; a completed approval cannot execute again before or after session serialization. | `test_session_approval_executes_once_across_serialization` |
+| Completed request tracking | Terminal result text cannot leave a completed request pending or consume a later reused-id request. | `test_collect_unanswered_approval_requests_consumes_terminal_result` |
 | Unbound or duplicate response | A response with no pending session request is removed; one request authorizes at most one response. | `test_session_approval_binding_rebinds_consumes_and_rejects_duplicates` |
 | Forged inbound request history | A caller-supplied request wrapper cannot replace the server snapshot or resurrect consumed authority. | `test_session_approval_binding_does_not_trust_inbound_request_history` |
 | Pending history turn | An unresolved approval batch is omitted atomically from unrelated model input while a later decision can still resume it once. | `packages/core/tests/core/test_harness_tool_approval.py::test_pending_approval_from_file_history_stays_resumable_without_model_orphan` |
@@ -687,7 +694,8 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Scenario | Required invariant | Primary regression test |
 |---|---|---|
 | Append-only history replay | Resolved approval wrappers do not reach a later model call; one call/result pair remains. | `packages/core/tests/core/test_harness_tool_approval.py::test_approval_resume_filters_resolved_control_items_from_file_history` |
-| Pending placeholder history | An approval response remains replayable while its only result is `[APPROVAL_PENDING]`. | `packages/core/tests/core/test_sessions.py::test_filter_approval_controls_keeps_response_for_pending_placeholder` |
+| Typed pending history | An approval response remains replayable until its occurrence completes, without synthetic results. | `packages/core/tests/core/test_sessions.py::test_filter_approval_controls_keeps_response_without_terminal_result` |
+| Terminal result history | Every matched function result consumes completed approval controls regardless of its text. | `packages/core/tests/core/test_sessions.py::test_filter_approval_controls_consumes_terminal_result_regardless_of_text`, `packages/ag-ui/tests/ag_ui/test_run.py::test_filter_local_approval_responses_for_provider_removes_only_completed_local_controls` |
 | Pending hosted history replay | Stateless hosted approval requests remain replayable until a response is recorded, then both controls become inert. | `packages/openai/tests/openai/test_openai_chat_client.py::test_stateless_history_preserves_pending_hosted_approval_request_until_response` |
 | Non-history provider plus session | Local history is still auto-injected for approval resume. | `packages/core/tests/core/test_agents.py::test_non_history_context_provider_still_injects_inmemory` |
 | Hosted per-service-call persistence | A host-managed transcript remains available throughout a local function-call loop without being persisted into the framework session and replayed on the next hosted request. | `packages/foundry_hosting/tests/test_responses.py::TestAgentSessionPersistence::test_per_service_call_persistence_preserves_function_loop_history` |

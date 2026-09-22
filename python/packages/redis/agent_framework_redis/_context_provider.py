@@ -46,7 +46,11 @@ class RedisContextProvider(ContextProvider):
     """Redis context provider using the new ContextProvider hooks pattern.
 
     Stores context in Redis and retrieves scoped context via full-text or
-    optional hybrid vector search.
+    optional hybrid vector search. Retrieval spans sessions and is filtered by
+    every non-empty ``application_id``, ``agent_id``, and ``user_id``. At least
+    one identifier must be non-empty. Omitted identifiers do not constrain
+    retrieval, so applications should provide each stable, trusted identifier
+    that represents an intended isolation boundary.
     """
 
     DEFAULT_CONTEXT_PROMPT = "## Memories\nConsider the following memories when answering user questions:"
@@ -81,9 +85,12 @@ class RedisContextProvider(ContextProvider):
             vector_field_name: The name of the vector field in Redis.
             vector_algorithm: The algorithm to use for vector search.
             vector_distance_metric: The distance metric to use for vector search.
-            application_id: The application ID to scope the context.
-            agent_id: The agent ID to scope the context.
-            user_id: The user ID to scope the context.
+            application_id: Optional application-level retrieval scope. When
+                omitted, retrieval is not filtered by application.
+            agent_id: Optional agent-level retrieval scope. When omitted,
+                retrieval is not filtered by agent.
+            user_id: Optional user-level retrieval scope. When omitted,
+                retrieval is not filtered by user.
             context_prompt: The context prompt to use for the provider.
             redis_index: The Redis index to use for the provider.
             overwrite_index: Whether to overwrite the existing Redis index.

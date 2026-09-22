@@ -145,6 +145,7 @@ _BUILTIN_ALLOWED_TYPE_KEYS: frozenset[str] = frozenset({
     "collections:OrderedDict",
     "collections:defaultdict",
     "collections:deque",
+    "collections:Counter",
 })
 
 _GETATTR_GLOBAL_KEYS: frozenset[str] = frozenset({
@@ -310,8 +311,11 @@ def _encode(value: Any) -> Any:
     if isinstance(value, _JSON_NATIVE_TYPES):
         return value
 
-    # Recursively encode dict values (keys become strings)
-    if isinstance(value, dict):
+    # Recursively encode dict values (keys become strings). Only plain dicts
+    # take the JSON path: subclasses such as ``defaultdict``, ``Counter``, and
+    # ``OrderedDict`` carry behavior/type that a plain JSON object cannot
+    # represent, so they are pickled to preserve object fidelity.
+    if type(value) is dict:
         typed_dict = cast(dict[Any, Any], value)
         # Stringify each key once so reserved-key checks, collision detection, and
         # the encoded mapping all observe the same strings (stateful ``__str__``).
@@ -325,8 +329,10 @@ def _encode(value: Any) -> Any:
         encoded_dict: dict[str, Any] = {key: _encode(v) for key, v in stringified_items}
         return encoded_dict
 
-    # Recursively encode list items (lists are JSON-native collections)
-    if isinstance(value, list):
+    # Recursively encode list items (lists are JSON-native collections).
+    # As with dicts, only plain lists take the JSON path so list subclasses
+    # keep their type through a round trip.
+    if type(value) is list:
         return [_encode(item) for item in value]  # type: ignore
 
     # Everything else (tuples, sets, dataclasses, custom objects, etc.): pickle and base64 encode
