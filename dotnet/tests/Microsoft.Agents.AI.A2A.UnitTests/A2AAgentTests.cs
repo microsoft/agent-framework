@@ -662,6 +662,51 @@ public sealed class A2AAgentTests : IDisposable
         }
     }
 
+    [Theory]
+    [InlineData(false, null)]
+    [InlineData(false, "")]
+    [InlineData(false, "   ")]
+    [InlineData(false, "\t")]
+    [InlineData(false, "\r\n")]
+    [InlineData(true, null)]
+    [InlineData(true, "")]
+    [InlineData(true, "   ")]
+    [InlineData(true, "\t")]
+    [InlineData(true, "\r\n")]
+    public async Task RunAsync_WithContinuationTokenAndRestoredUnboundSession_ThrowsBeforeRequestAsync(bool streaming, string? contextId)
+    {
+        // Arrange
+        var originalSession = (A2AAgentSession)await this._agent.CreateSessionAsync();
+        originalSession.ContextId = contextId;
+        originalSession.TaskId = "task-123";
+        originalSession.TaskState = TaskState.Working;
+        var session = (A2AAgentSession)await this._agent.DeserializeSessionAsync(await this._agent.SerializeSessionAsync(originalSession));
+        var options = new AgentRunOptions { ContinuationToken = new A2AContinuationToken("task-123") };
+
+        // Act
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            if (streaming)
+            {
+                await foreach (var _ in this._agent.RunStreamingAsync([], session, options))
+                {
+                    Assert.Fail("An unbound continuation must not yield content.");
+                }
+            }
+            else
+            {
+                await this._agent.RunAsync([], session, options);
+            }
+        });
+
+        // Assert
+        Assert.Contains("existing context Id", exception.Message);
+        Assert.Empty(this._handler.CapturedJsonRpcRequests);
+        Assert.Equal(contextId, session.ContextId);
+        Assert.Equal("task-123", session.TaskId);
+        Assert.Equal(TaskState.Working, session.TaskState);
+    }
+
     [Fact]
     public async Task RunAsync_WithContinuationTokenForDifferentContext_DoesNotChangeSessionAsync()
     {

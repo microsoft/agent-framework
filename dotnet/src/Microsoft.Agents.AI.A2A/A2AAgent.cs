@@ -412,7 +412,7 @@ public sealed class A2AAgent : AIAgent
                 throw new InvalidOperationException("Messages are not allowed when continuing a background response using a continuation token.");
             }
 
-            if (string.IsNullOrEmpty(session.ContextId))
+            if (string.IsNullOrWhiteSpace(session.ContextId))
             {
                 throw new InvalidOperationException("A session with an existing context Id must be provided when using a continuation token.");
             }
