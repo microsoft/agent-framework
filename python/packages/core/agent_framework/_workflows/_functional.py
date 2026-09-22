@@ -50,6 +50,8 @@ from contextvars import ContextVar
 from copy import deepcopy
 from typing import Any, Generic, Literal, TypeVar, overload
 
+from opentelemetry import trace
+
 from .._agents import BaseAgent
 from .._feature_stage import ExperimentalFeature, experimental
 from .._serialization import make_json_safe
@@ -1048,8 +1050,10 @@ class FunctionalWorkflow:
         # awaiting checkpoint storage.  The run body's ``finally`` is only reached once
         # that preamble has finished, so a cancelled restore used to escape with the
         # guard still held and every later run was rejected as already running.
+        # ``span`` is bound before the ``try`` because the ``finally`` is reachable from
+        # the entry of the block, where a binding made inside it would not exist yet.
+        span: trace.Span | None = None
         try:
-            span = None  # bound so the ``finally`` below is safe if the preamble fails early
             storage = checkpoint_storage or self._checkpoint_storage
 
             # Build context
@@ -1234,19 +1238,17 @@ class FunctionalWorkflow:
                 capture_exception(span, exception=exc)
                 raise
             finally:
-                # ResponseStream cleanup_hooks do not run when the generator is
-                # closed by GC. Release the run lock here so a follow-up run
-                # after an abandoned stream is not rejected as concurrent.
-                # Retire the per-step callback under the lineage lock first: a save that
-                # already passed the run_closed check may still be inside storage.save(),
-                # and releasing the guard would let a restored run chain new checkpoints
-                # onto the same parent before that save lands, forking the lineage.
+                # Retire the per-step callback under the lineage lock: a save that already
+                # passed the run_closed check may still be inside storage.save(), and
+                # letting it land would fork the lineage of a later run.  The run guard and
+                # the span are both handled by the outer ``finally``, which also covers a
+                # preamble that failed before this block was entered.
                 async with ckpt_chain_lock:
                     run_closed = True
-                self._release_run_guard()
-            span.end()
         finally:
-            # Also covers a preamble that failed before the run body was entered.
+            # ResponseStream cleanup_hooks do not run when the generator is closed by GC, so
+            # release the run lock here; this also covers a preamble that failed before the
+            # run body was entered.
             self._release_run_guard()
             if span is not None:
                 span.end()
