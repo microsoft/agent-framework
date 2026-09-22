@@ -1565,6 +1565,43 @@ def test_parse_annotation_with_annotated_and_literal():
     assert get_args(literal_type) == ("A", "B", "C")
 
 
+def test_parse_annotation_with_description_preserves_extra_metadata():
+    """Test that metadata after a string description is kept as separate Annotated metadata."""
+    from pydantic import Field
+
+    constraints = Field(ge=1, le=10)
+    result = _parse_annotation(Annotated[int, "How many items", constraints])
+
+    assert get_origin(result) is Annotated
+    args = get_args(result)
+    assert args[0] is int
+    assert args[1].description == "How many items"
+    assert args[2] is constraints
+
+
+async def test_tool_annotated_description_keeps_field_constraints():
+    """Test that Field constraints after a string description reach the schema and validation."""
+    from pydantic import Field
+
+    @tool
+    def pick(count: Annotated[int, "How many items", Field(ge=1, le=10)]) -> str:
+        return str(count)
+
+    assert pick.parameters()["properties"]["count"] == {
+        "description": "How many items",
+        "maximum": 10,
+        "minimum": 1,
+        "title": "Count",
+        "type": "integer",
+    }
+
+    result = await pick.invoke(arguments={"count": 5})
+    assert result[0].text == "5"
+
+    with pytest.raises(TypeError, match="less than or equal to 10"):
+        await pick.invoke(arguments={"count": 999})
+
+
 # endregion
 
 

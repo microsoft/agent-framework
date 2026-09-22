@@ -1471,7 +1471,7 @@ def _parse_annotation(annotation: Any) -> Any:
             args_list = list(args)
             if len(args_list) == 2:
                 return Annotated[args_list[0], Field(description=args_list[1])]
-            return Annotated[args_list[0], Field(description=args_list[1]), tuple(args_list[2:])]
+            return Annotated[(args_list[0], Field(description=args_list[1]), *args_list[2:])]
     return annotation
 
 
