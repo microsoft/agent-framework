@@ -9,6 +9,7 @@ on:
       - ".github/workflows/python-api-compatibility.yml"
       - ".github/workflows/python-test-coverage.yml"
       - ".github/workflows/github-automation-tests.yml"
+      - ".github/workflows/devflow-fix-ci.yml"
       - "python/pyproject.toml"
       - "python/uv.lock"
   push:
@@ -21,6 +22,7 @@ on:
       - ".github/workflows/python-api-compatibility.yml"
       - ".github/workflows/python-test-coverage.yml"
       - ".github/workflows/github-automation-tests.yml"
+      - ".github/workflows/devflow-fix-ci.yml"
       - "python/pyproject.toml"
       - "python/uv.lock"
 
