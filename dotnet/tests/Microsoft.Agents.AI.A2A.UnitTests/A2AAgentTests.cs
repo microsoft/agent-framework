@@ -509,8 +509,12 @@ public sealed class A2AAgentTests : IDisposable
         await Assert.ThrowsAsync<InvalidOperationException>(() => this._agent.RunAsync(inputMessages, null, options));
     }
 
-    [Fact]
-    public async Task RunAsync_WithContinuationToken_CallsGetTaskAsyncAsync()
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task RunAsync_WithContinuationToken_CallsGetTaskAsyncAsync(bool includeTaskId, bool restoreSession)
     {
         // Arrange
         this._handler.AgentTaskToReturn = new AgentTask
@@ -521,13 +525,83 @@ public sealed class A2AAgentTests : IDisposable
         };
 
         var options = new AgentRunOptions { ContinuationToken = new A2AContinuationToken("task-123") };
+        var session = includeTaskId
+            ? await this._agent.CreateSessionAsync("context-123", "task-123")
+            : await this._agent.CreateSessionAsync("context-123");
+        if (restoreSession)
+        {
+            session = await this._agent.DeserializeSessionAsync(await this._agent.SerializeSessionAsync(session));
+        }
 
         // Act
-        await this._agent.RunAsync([], options: options);
+        await this._agent.RunAsync([], session, options);
 
         // Assert
         Assert.Equal("GetTask", this._handler.CapturedJsonRpcRequest?.Method);
         Assert.Equal("task-123", this._handler.CapturedGetTaskRequest?.Id);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task RunAsync_WithContinuationTokenAndUnboundSession_ThrowsBeforeRequestAsync(bool streaming, bool omitSession)
+    {
+        // Arrange
+        var session = omitSession ? null : (A2AAgentSession)await this._agent.CreateSessionAsync();
+        var options = new AgentRunOptions
+        {
+            ContinuationToken = ResponseContinuationToken.FromBytes(Encoding.UTF8.GetBytes("""{"taskId":"unrelated-task"}"""))
+        };
+
+        // Act
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            if (streaming)
+            {
+                await foreach (var _ in this._agent.RunStreamingAsync([], session, options))
+                {
+                    Assert.Fail("An unbound continuation must not yield content.");
+                }
+            }
+            else
+            {
+                await this._agent.RunAsync([], session, options);
+            }
+        });
+
+        // Assert
+        Assert.Contains("existing context Id", exception.Message);
+        Assert.Empty(this._handler.CapturedJsonRpcRequests);
+        if (session is not null)
+        {
+            Assert.Null(session.ContextId);
+            Assert.Null(session.TaskId);
+            Assert.Null(session.TaskState);
+        }
+    }
+
+    [Fact]
+    public async Task RunAsync_WithContinuationTokenForDifferentContext_DoesNotChangeSessionAsync()
+    {
+        // Arrange
+        var session = (A2AAgentSession)await this._agent.CreateSessionAsync("original-context", "original-task");
+        this._handler.AgentTaskToReturn = new AgentTask
+        {
+            Id = "unrelated-task",
+            ContextId = "unrelated-context",
+            Status = new() { State = TaskState.InputRequired }
+        };
+        var options = new AgentRunOptions { ContinuationToken = new A2AContinuationToken("unrelated-task") };
+
+        // Act
+        await Assert.ThrowsAsync<InvalidOperationException>(() => this._agent.RunAsync([], session, options));
+
+        // Assert
+        Assert.Equal("original-context", session.ContextId);
+        Assert.Equal("original-task", session.TaskId);
+        Assert.Null(session.TaskState);
     }
 
     [Fact]
@@ -735,15 +809,17 @@ public sealed class A2AAgentTests : IDisposable
             Message = new Message
             {
                 MessageId = "response-123",
+                ContextId = "context-123",
                 Role = Role.Agent,
                 Parts = [new Part { Text = "Continuation response" }]
             }
         };
 
         var options = new AgentRunOptions { ContinuationToken = new A2AContinuationToken("task-456") };
+        var session = await this._agent.CreateSessionAsync("context-123");
 
         // Act
-        await foreach (var _ in this._agent.RunStreamingAsync([], null, options))
+        await foreach (var _ in this._agent.RunStreamingAsync([], session, options))
         {
             // Just iterate through to trigger the logic
         }
@@ -762,6 +838,7 @@ public sealed class A2AAgentTests : IDisposable
             Message = new Message
             {
                 MessageId = "response-123",
+                ContextId = "context-123",
                 Role = Role.Agent,
                 Parts = [new Part { Text = "Continuation response" }]
             }
@@ -769,9 +846,10 @@ public sealed class A2AAgentTests : IDisposable
 
         const string ExpectedTaskId = "my-task-789";
         var options = new AgentRunOptions { ContinuationToken = new A2AContinuationToken(ExpectedTaskId) };
+        var session = await this._agent.CreateSessionAsync("context-123", ExpectedTaskId);
 
         // Act
-        await foreach (var _ in this._agent.RunStreamingAsync([], null, options))
+        await foreach (var _ in this._agent.RunStreamingAsync([], session, options))
         {
             // Just iterate through to trigger the logic
         }
@@ -804,10 +882,11 @@ public sealed class A2AAgentTests : IDisposable
         };
 
         var options = new AgentRunOptions { ContinuationToken = new A2AContinuationToken(TaskId) };
+        var session = await this._agent.CreateSessionAsync(ContextId);
 
         // Act
         var updates = new List<AgentResponseUpdate>();
-        await foreach (var update in this._agent.RunStreamingAsync([], null, options))
+        await foreach (var update in this._agent.RunStreamingAsync([], session, options))
         {
             updates.Add(update);
         }
@@ -841,7 +920,7 @@ public sealed class A2AAgentTests : IDisposable
             Status = new() { State = TaskState.Completed }
         };
 
-        var session = await this._agent.CreateSessionAsync();
+        var session = await this._agent.CreateSessionAsync(ContextId);
         var options = new AgentRunOptions { ContinuationToken = new A2AContinuationToken(TaskId) };
 
         // Act
@@ -865,11 +944,12 @@ public sealed class A2AAgentTests : IDisposable
         this._handler.StreamingErrorCodeToReturn = A2AErrorCode.TaskNotFound;
 
         var options = new AgentRunOptions { ContinuationToken = new A2AContinuationToken(TaskId) };
+        var session = await this._agent.CreateSessionAsync("context-123");
 
         // Act & Assert - the A2AException should propagate directly without fallback to GetTask
         var exception = await Assert.ThrowsAsync<A2AException>(async () =>
         {
-            await foreach (var _ in this._agent.RunStreamingAsync([], null, options))
+            await foreach (var _ in this._agent.RunStreamingAsync([], session, options))
             {
             }
         });
@@ -891,11 +971,12 @@ public sealed class A2AAgentTests : IDisposable
         this._handler.GetTaskErrorCodeToReturn = A2AErrorCode.TaskNotFound;
 
         var options = new AgentRunOptions { ContinuationToken = new A2AContinuationToken(TaskId) };
+        var session = await this._agent.CreateSessionAsync("context-123");
 
         // Act & Assert - the A2AException from GetTaskAsync should propagate to the caller
         var exception = await Assert.ThrowsAsync<A2AException>(async () =>
         {
-            await foreach (var _ in this._agent.RunStreamingAsync([], null, options))
+            await foreach (var _ in this._agent.RunStreamingAsync([], session, options))
             {
             }
         });

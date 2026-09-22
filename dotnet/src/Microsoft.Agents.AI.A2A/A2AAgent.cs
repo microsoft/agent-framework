@@ -19,9 +19,18 @@ namespace Microsoft.Agents.AI.A2A;
 /// Represents an <see cref="AIAgent"/> that can interact with remote agents that are exposed via the A2A protocol
 /// </summary>
 /// <remarks>
-/// This agent supports only messages as a response from A2A agents.
-/// Support for tasks will be added later as part of the long-running
-/// executions work.
+/// <para>
+/// A remote A2A agent can return an immediate message or a task representing work that may continue
+/// in the background. While a task is queued or running, this agent returns a continuation token
+/// that can be used to poll for results or reconnect to the task's response stream.
+/// </para>
+/// <para>
+/// Using a continuation token requires a session already bound to the task's conversation by its
+/// context ID. Reuse the original session, restore it from serialized state, or explicitly bind one using
+/// <see cref="CreateSessionAsync(string)"/> or <see cref="CreateSessionAsync(string, string)"/>.
+/// A new session without a context ID is rejected because it has no expected conversation against which
+/// to validate the returned task, and could otherwise adopt an unrelated task's conversation.
+/// </para>
 /// </remarks>
 public sealed class A2AAgent : AIAgent
 {
@@ -118,7 +127,7 @@ public sealed class A2AAgent : AIAgent
 
         this._logger.LogA2AAgentInvokingAgent(nameof(RunAsync), this.Id, this.Name);
 
-        if (GetContinuationToken(inputMessages, options) is { } token)
+        if (GetContinuationToken(inputMessages, typedSession, options) is { } token)
         {
             AgentTask agentTask = await this._a2aClient.GetTaskAsync(new GetTaskRequest { Id = token.TaskId }, cancellationToken).ConfigureAwait(false);
 
@@ -173,7 +182,7 @@ public sealed class A2AAgent : AIAgent
 
         ConfiguredCancelableAsyncEnumerable<StreamResponse> streamEvents;
 
-        if (GetContinuationToken(inputMessages, options) is { } token)
+        if (GetContinuationToken(inputMessages, typedSession, options) is { } token)
         {
             streamEvents = this.SubscribeToTaskWithFallbackAsync(token.TaskId, cancellationToken).ConfigureAwait(false);
         }
@@ -386,13 +395,18 @@ public sealed class A2AAgent : AIAgent
         return a2aMessage;
     }
 
-    private static A2AContinuationToken? GetContinuationToken(IEnumerable<ChatMessage> messages, AgentRunOptions? options = null)
+    private static A2AContinuationToken? GetContinuationToken(IEnumerable<ChatMessage> messages, A2AAgentSession session, AgentRunOptions? options = null)
     {
         if (options?.ContinuationToken is ResponseContinuationToken token)
         {
             if (messages.Any())
             {
                 throw new InvalidOperationException("Messages are not allowed when continuing a background response using a continuation token.");
+            }
+
+            if (string.IsNullOrEmpty(session.ContextId))
+            {
+                throw new InvalidOperationException("A session with an existing context Id must be provided when using a continuation token.");
             }
 
             return A2AContinuationToken.FromToken(token);
