@@ -1,0 +1,128 @@
+name: DevFlow PR Repair
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    if: >-
+      github.run_attempt == 1 && github.event.issue.pull_request &&
+      (github.event.comment.author_association == 'MEMBER' || github.event.comment.author_association == 'OWNER') &&
+      contains(github.event.comment.body, '/fix')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: devflow-repair-gateway-${{ github.repository }}-${{ github.event.issue.number }}
+      cancel-in-progress: false
+    outputs:
+      snapshot: ${{ steps.freeze.outputs.snapshot }}
+      sha256: ${{ steps.freeze.outputs.sha256 }}
+    steps:
+      - name: Freeze public PR revision and command before authorization
+        id: freeze
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const body = context.payload.comment.body;
+            const text = typeof body === 'string' ? body.trim() : '';
+            const command = text === '/fix-ci' ? '/fix-ci' :
+              /^\/fix\s+\S/.test(text) ? '/fix' : null;
+            if (!command || Buffer.byteLength(body) > 16000) return;
+            const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: context.payload.issue.number });
+            const repo = `${context.repo.owner}/${context.repo.repo}`;
+            if (pr.state !== 'open' || !pr.head.repo || pr.base.repo.full_name !== repo || pr.base.repo.id !== context.payload.repository.id) {
+              throw new Error('PR is closed or repository identity changed');
+            }
+            const snapshot = {
+              schema_version: 1, repo, repo_id: context.payload.repository.id,
+              pr_number: context.payload.issue.number,
+              head_repo: pr.head.repo.full_name, head_repo_id: pr.head.repo.id,
+              head_ref: pr.head.ref, head_sha: pr.head.sha,
+              base_ref: pr.base.ref, base_sha: pr.base.sha, merge_sha: pr.merge_commit_sha ?? null,
+              requester: context.payload.comment.user.login, comment_id: context.payload.comment.id,
+              command, comment_body: body, comment_created_at: context.payload.comment.created_at,
+              automation_sha: context.sha, source_run_id: Number(context.runId),
+            };
+            const json = JSON.stringify(snapshot);
+            if (Buffer.byteLength(json) > 24000) throw new Error('Gateway snapshot exceeds size limit');
+            core.setOutput('snapshot', Buffer.from(json).toString('base64'));
+            core.setOutput('sha256', require('node:crypto').createHash('sha256').update(json).digest('hex'));
+
+  authorize_and_dispatch:
+    needs: snapshot
+    if: ${{ needs.snapshot.outputs.sha256 != '' }}
+    runs-on: ubuntu-latest
+    environment: github-app-auth
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout existing trusted authorization helpers
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: |
+            .github/actions/github-app-token
+            .github/scripts/check_team_membership.js
+          persist-credentials: false
+      - name: Get team membership token
+        id: auth
+        uses: ./.github/actions/github-app-token
+        with:
+          mode: app
+          azure-client-id: ${{ secrets.GH_APP_AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.GH_APP_AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.GH_APP_AZURE_SUBSCRIPTION_ID }}
+          key-vault-name: ${{ secrets.GH_APP_KEY_VAULT_NAME }}
+          key-name: ${{ secrets.GH_APP_KEY_NAME }}
+          github-app-client-id: ${{ secrets.GH_APP_CLIENT_ID }}
+          github-app-installation-id: ${{ secrets.GH_APP_INSTALLATION_ID }}
+          repository: ${{ github.repository }}
+      - name: Authorize the frozen command requester
+        id: team
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          SNAPSHOT: ${{ needs.snapshot.outputs.snapshot }}
+          SNAPSHOT_SHA256: ${{ needs.snapshot.outputs.sha256 }}
+          TEAM_NAME: ${{ secrets.DEVELOPER_TEAM }}
+        with:
+          github-token: ${{ steps.auth.outputs.token }}
+          script: |
+            const json = Buffer.from(process.env.SNAPSHOT, 'base64').toString('utf8');
+            const digest = require('node:crypto').createHash('sha256').update(json).digest('hex');
+            if (digest !== process.env.SNAPSHOT_SHA256) throw new Error('Gateway snapshot digest mismatch');
+            const snapshot = JSON.parse(json);
+            if (snapshot.repo !== `${context.repo.owner}/${context.repo.repo}` ||
+                snapshot.comment_id !== context.payload.comment.id || snapshot.requester !== context.payload.comment.user.login ||
+                snapshot.comment_body !== context.payload.comment.body || snapshot.pr_number !== context.payload.issue.number ||
+                snapshot.automation_sha !== context.sha || snapshot.source_run_id !== Number(context.runId)) {
+              throw new Error('Gateway event identity mismatch');
+            }
+            const checkTeamMembership = require('./.github/scripts/check_team_membership.js');
+            const result = await checkTeamMembership({ github, context, core,
+              teamSlug: process.env.TEAM_NAME, issueNumber: snapshot.pr_number, username: snapshot.requester });
+            core.setOutput('permitted', result.isTeamMember && result.author === snapshot.requester ? 'true' : 'false');
+      - name: Dispatch frozen authorized request to DevFlow
+        if: ${{ steps.team.outputs.permitted == 'true' }}
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          DEVFLOW_REPOSITORY: ${{ vars.DF_REPO }}
+          SNAPSHOT: ${{ needs.snapshot.outputs.snapshot }}
+          SNAPSHOT_SHA256: ${{ needs.snapshot.outputs.sha256 }}
+        with:
+          github-token: ${{ secrets.DEVFLOW_TOKEN }}
+          script: |
+            if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(process.env.DEVFLOW_REPOSITORY || '')) throw new Error('Invalid DevFlow repository');
+            try {
+              const [owner, repo] = process.env.DEVFLOW_REPOSITORY.split('/');
+              const { data: commit } = await github.rest.repos.getCommit({ owner, repo, ref: 'main' });
+              await github.rest.repos.createDispatchEvent({ owner, repo, event_type: 'devflow-pr-repair',
+                client_payload: { snapshot: process.env.SNAPSHOT, snapshot_sha256: process.env.SNAPSHOT_SHA256, controller_sha: commit.sha } });
+            } catch {
+              throw new Error('Unable to dispatch the repair request. Contact the automation maintainer.');
+            }
