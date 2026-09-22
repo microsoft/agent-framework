@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from typing import Annotated, Any, cast
 
 import numpy as np
-import pandas as pd  # pyright: ignore[reportMissingImports]
+import pandas as pd  # pyright: ignore[reportMissingImports]  # pyrefly: ignore[missing-import]  # ty: ignore[unresolved-import]
 from agent_framework import (
     VectorStoreCollectionDefinition,
     VectorStoreField,
