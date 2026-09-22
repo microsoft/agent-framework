@@ -19,17 +19,9 @@ namespace Microsoft.Agents.AI.A2A;
 /// Represents an <see cref="AIAgent"/> that can interact with remote agents that are exposed via the A2A protocol
 /// </summary>
 /// <remarks>
-/// <para>
-/// A remote A2A agent can return an immediate message or a task representing work that may continue
-/// in the background. While a task is queued or running, this agent returns a continuation token
-/// that can be used to poll for results or reconnect to the task's response stream.
-/// </para>
-/// <para>
-/// A continuation token identifies the task to resume; a context ID is not required.
-/// Reusing or restoring the original session preserves any known conversation and task state.
-/// When both the session and a response provide a non-empty context ID, they must match.
-/// Streaming responses update the session as they arrive, so its state is retained if enumeration stops early.
-/// </para>
+/// This agent supports only messages as a response from A2A agents.
+/// Support for tasks will be added later as part of the long-running
+/// executions work.
 /// </remarks>
 public sealed class A2AAgent : AIAgent
 {
@@ -198,41 +190,44 @@ public sealed class A2AAgent : AIAgent
 
         this._logger.LogAgentChatClientInvokedAgent(nameof(RunStreamingAsync), this.Id, this.Name);
 
+        string? contextId = null;
         string? taskId = null;
         TaskState? taskState = null;
 
         await foreach (var streamResponse in streamEvents)
         {
-            // Validate and persist each event's session state before converting or yielding it.
             switch (streamResponse.PayloadCase)
             {
                 case StreamResponseCase.Message:
                     var message = streamResponse.Message!;
-                    UpdateSession(typedSession, message.ContextId, taskId, taskState);
+                    contextId = message.ContextId;
+                    ValidateContext(typedSession, contextId);
                     yield return this.ConvertToAgentResponseUpdate(message);
                     break;
 
                 case StreamResponseCase.Task:
                     var task = streamResponse.Task!;
+                    contextId = task.ContextId;
                     taskId = task.Id;
                     taskState = task.Status.State;
-                    UpdateSession(typedSession, task.ContextId, taskId, taskState);
+                    ValidateContext(typedSession, contextId);
                     yield return this.ConvertToAgentResponseUpdate(task);
                     break;
 
                 case StreamResponseCase.StatusUpdate:
                     var statusUpdate = streamResponse.StatusUpdate!;
+                    contextId = statusUpdate.ContextId;
                     taskId = statusUpdate.TaskId;
                     taskState = statusUpdate.Status.State;
-                    UpdateSession(typedSession, statusUpdate.ContextId, taskId, taskState);
+                    ValidateContext(typedSession, contextId);
                     yield return this.ConvertToAgentResponseUpdate(statusUpdate);
                     break;
 
                 case StreamResponseCase.ArtifactUpdate:
                     var artifactUpdate = streamResponse.ArtifactUpdate!;
+                    contextId = artifactUpdate.ContextId;
                     taskId = artifactUpdate.TaskId;
-                    taskState = typedSession.TaskId == taskId ? typedSession.TaskState : null;
-                    UpdateSession(typedSession, artifactUpdate.ContextId, taskId, taskState);
+                    ValidateContext(typedSession, contextId);
                     yield return this.ConvertToAgentResponseUpdate(artifactUpdate);
                     break;
 
@@ -240,6 +235,8 @@ public sealed class A2AAgent : AIAgent
                     throw new NotSupportedException($"Only message, task, task update events are supported from A2A agents. Received: {streamResponse.PayloadCase}");
             }
         }
+
+        UpdateSession(typedSession, contextId, taskId, taskState);
     }
 
     /// <inheritdoc/>
@@ -354,22 +351,23 @@ public sealed class A2AAgent : AIAgent
             return;
         }
 
+        ValidateContext(session, contextId);
+
+        // Assign a server-generated context Id to the session if it's not already set.
+        session.ContextId ??= contextId;
+        session.TaskId = taskId;
+        session.TaskState = taskState;
+    }
+
+    private static void ValidateContext(A2AAgentSession session, string? contextId)
+    {
         // Surface cases where the A2A agent responds with a response that
         // has a different context Id than the session's conversation Id.
-        if (!string.IsNullOrEmpty(session.ContextId) && !string.IsNullOrEmpty(contextId) && session.ContextId != contextId)
+        if (session.ContextId is not null && contextId is not null && session.ContextId != contextId)
         {
             throw new InvalidOperationException(
                 $"The {nameof(contextId)} returned from the A2A agent is different from the conversation Id of the provided {nameof(AgentSession)}.");
         }
-
-        // An omitted or empty optional context Id does not replace an established conversation.
-        if (!string.IsNullOrEmpty(contextId))
-        {
-            session.ContextId = contextId;
-        }
-
-        session.TaskId = taskId;
-        session.TaskState = taskState;
     }
 
     private static Message CreateA2AMessage(A2AAgentSession typedSession, IReadOnlyCollection<ChatMessage> messages)

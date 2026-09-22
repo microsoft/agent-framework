@@ -12,7 +12,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using A2A;
 using Microsoft.Extensions.AI;
-using Moq;
 
 namespace Microsoft.Agents.AI.A2A.UnitTests;
 
@@ -407,8 +406,12 @@ public sealed class A2AAgentTests : IDisposable
         Assert.Equal("existing-context-id", message.ContextId);
     }
 
-    [Fact]
-    public async Task RunStreamingAsync_WithSessionHavingDifferentContextId_ThrowsInvalidOperationExceptionAsync()
+    [Theory]
+    [InlineData(StreamResponseCase.Message)]
+    [InlineData(StreamResponseCase.Task)]
+    [InlineData(StreamResponseCase.StatusUpdate)]
+    [InlineData(StreamResponseCase.ArtifactUpdate)]
+    public async Task RunStreamingAsync_WithSessionHavingDifferentContextId_ThrowsInvalidOperationExceptionAsync(StreamResponseCase responseCase)
     {
         // Arrange
         var session = await this._agent.CreateSessionAsync();
@@ -420,182 +423,46 @@ public sealed class A2AAgentTests : IDisposable
             new(ChatRole.User, "Test streaming")
         };
 
-        this._handler.StreamingResponseToReturn = new StreamResponse
+        this._handler.StreamingResponseToReturn = responseCase switch
         {
-            Message = new Message
+            StreamResponseCase.Message => new()
             {
-                MessageId = "stream-1",
-                Role = Role.Agent,
-                Parts = [new Part { Text = "Response" }],
-                ContextId = "different-context"
-            }
+                Message = new Message
+                {
+                    MessageId = "stream-1",
+                    Role = Role.Agent,
+                    Parts = [new Part { Text = "Response" }],
+                    ContextId = "different-context"
+                }
+            },
+            StreamResponseCase.Task => new()
+            {
+                Task = new AgentTask { Id = "task-1", ContextId = "different-context", Status = new() { State = TaskState.Working } }
+            },
+            StreamResponseCase.StatusUpdate => new()
+            {
+                StatusUpdate = new TaskStatusUpdateEvent { TaskId = "task-1", ContextId = "different-context", Status = new() { State = TaskState.Working } }
+            },
+            StreamResponseCase.ArtifactUpdate => new()
+            {
+                ArtifactUpdate = new TaskArtifactUpdateEvent
+                {
+                    TaskId = "task-1",
+                    ContextId = "different-context",
+                    Artifact = new Artifact { ArtifactId = "artifact-1", Parts = [new Part { Text = "Response" }] }
+                }
+            },
+            _ => throw new ArgumentOutOfRangeException(nameof(responseCase))
         };
-
-        var updates = new List<AgentResponseUpdate>();
 
         // Act
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
         {
             await foreach (var update in this._agent.RunStreamingAsync(inputMessages, session))
             {
-                updates.Add(update);
+                Assert.Fail("A mismatched context must not yield an update.");
             }
         });
-
-        // Assert - no content for the mismatched context reached the caller.
-        Assert.Empty(updates);
-        Assert.Equal("existing-context-id", a2aSession.ContextId);
-    }
-
-    [Fact]
-    public async Task RunStreamingAsync_WithLaterEventForDifferentContext_ThrowsBeforeYieldingItsContentAsync()
-    {
-        // Arrange
-        var session = await this._agent.CreateSessionAsync();
-
-        this._handler.StreamingResponsesToReturn.Add(new StreamResponse
-        {
-            Message = new Message
-            {
-                MessageId = "stream-1",
-                Role = Role.Agent,
-                Parts = [new Part { Text = "Expected content" }],
-                ContextId = "context-1"
-            }
-        });
-        this._handler.StreamingResponsesToReturn.Add(new StreamResponse
-        {
-            Message = new Message
-            {
-                MessageId = "stream-2",
-                Role = Role.Agent,
-                Parts = [new Part { Text = "Content from another context" }],
-                ContextId = "context-2"
-            }
-        });
-
-        var updates = new List<AgentResponseUpdate>();
-
-        // Act
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-        {
-            await foreach (var update in this._agent.RunStreamingAsync("Test streaming", session))
-            {
-                updates.Add(update);
-            }
-        });
-
-        // Assert - the first event is surfaced, but the one belonging to another context is not.
-        var update = Assert.Single(updates);
-        Assert.Equal("Expected content", update.Text);
-        Assert.Equal("context-1", ((A2AAgentSession)session).ContextId);
-    }
-
-    [Fact]
-    public async Task RunStreamingAsync_WhenStreamIsAbandonedEarly_RetainsSessionForReconnectionAsync()
-    {
-        // Arrange
-        this._handler.StreamingResponseToReturn = new StreamResponse
-        {
-            Task = new AgentTask
-            {
-                Id = "task-456",
-                ContextId = "context-789",
-                Status = new() { State = TaskState.Submitted }
-            }
-        };
-
-        var session = await this._agent.CreateSessionAsync();
-        ResponseContinuationToken? continuationToken = null;
-
-        // Act - imitate a stream interruption by abandoning the enumeration after the first update.
-        await foreach (var update in this._agent.RunStreamingAsync("Start a task", session))
-        {
-            continuationToken = update.ContinuationToken;
-            break;
-        }
-
-        // Assert - the session retains the context and task, so the stream can be resumed later.
-        var a2aSession = (A2AAgentSession)session;
-        Assert.Equal("context-789", a2aSession.ContextId);
-        Assert.Equal("task-456", a2aSession.TaskId);
-        Assert.Equal(TaskState.Submitted, a2aSession.TaskState);
-        Assert.NotNull(continuationToken);
-
-        this._handler.StreamingResponseToReturn = new StreamResponse
-        {
-            Task = new AgentTask
-            {
-                Id = "task-456",
-                ContextId = "context-789",
-                Status = new() { State = TaskState.Completed }
-            }
-        };
-
-        await foreach (var update in this._agent.RunStreamingAsync([], session, new() { ContinuationToken = continuationToken }))
-        {
-            Assert.Equal(TaskState.Completed, a2aSession.TaskState);
-            Assert.Equal("task-456", update.ResponseId);
-        }
-
-        Assert.Equal("SubscribeToTask", this._handler.CapturedJsonRpcRequests[^1].Method);
-        Assert.Equal(TaskState.Completed, a2aSession.TaskState);
-    }
-
-    [Theory]
-    [InlineData(TaskState.InputRequired, true)]
-    [InlineData(TaskState.InputRequired, false)]
-    [InlineData(TaskState.Working, true)]
-    [InlineData(TaskState.Working, false)]
-    public async Task RunStreamingAsync_WithArtifactUpdate_PreservesStateOnlyForSameTaskAsync(TaskState taskState, bool sameTask)
-    {
-        // Arrange
-        var originalSession = (A2AAgentSession)await this._agent.CreateSessionAsync("context-123", "original-task");
-        originalSession.TaskState = taskState;
-        var session = (A2AAgentSession)await this._agent.DeserializeSessionAsync(await this._agent.SerializeSessionAsync(originalSession));
-        string taskId = sameTask ? "original-task" : "new-task";
-        this._handler.StreamingResponseToReturn = new StreamResponse
-        {
-            ArtifactUpdate = new TaskArtifactUpdateEvent
-            {
-                TaskId = taskId,
-                ContextId = "context-123",
-                Artifact = new Artifact { ArtifactId = "artifact", Parts = [Part.FromText("Partial result")] }
-            }
-        };
-        var options = new AgentRunOptions { ContinuationToken = new A2AContinuationToken(taskId) };
-        TaskState? expectedState = sameTask ? taskState : null;
-
-        // Act
-        await foreach (var _ in this._agent.RunStreamingAsync([], session, options))
-        {
-            Assert.Equal(expectedState, session.TaskState);
-            break;
-        }
-
-        // Assert
-        Assert.Equal("context-123", session.ContextId);
-        Assert.Equal(taskId, session.TaskId);
-        Assert.Equal(expectedState, session.TaskState);
-
-        this._handler.ResponseToReturn = new SendMessageResponse
-        {
-            Message = new Message { MessageId = "response", ContextId = "context-123" }
-        };
-        await this._agent.RunAsync("Next input", session);
-
-        var message = this._handler.CapturedSendMessageRequest?.Message;
-        Assert.NotNull(message);
-        if (expectedState == TaskState.InputRequired)
-        {
-            Assert.Equal(taskId, message.TaskId);
-            Assert.Null(message.ReferenceTaskIds);
-        }
-        else
-        {
-            Assert.Null(message.TaskId);
-            Assert.Equal(taskId, Assert.Single(message.ReferenceTaskIds!));
-        }
     }
 
     [Fact]
@@ -668,12 +535,8 @@ public sealed class A2AAgentTests : IDisposable
         await Assert.ThrowsAsync<InvalidOperationException>(() => this._agent.RunAsync(inputMessages, null, options));
     }
 
-    [Theory]
-    [InlineData(false, false)]
-    [InlineData(false, true)]
-    [InlineData(true, false)]
-    [InlineData(true, true)]
-    public async Task RunAsync_WithContinuationToken_CallsGetTaskAsyncAsync(bool includeTaskId, bool restoreSession)
+    [Fact]
+    public async Task RunAsync_WithContinuationToken_CallsGetTaskAsyncAsync()
     {
         // Arrange
         this._handler.AgentTaskToReturn = new AgentTask
@@ -684,310 +547,13 @@ public sealed class A2AAgentTests : IDisposable
         };
 
         var options = new AgentRunOptions { ContinuationToken = new A2AContinuationToken("task-123") };
-        var session = includeTaskId
-            ? await this._agent.CreateSessionAsync("context-123", "task-123")
-            : await this._agent.CreateSessionAsync("context-123");
-        if (restoreSession)
-        {
-            session = await this._agent.DeserializeSessionAsync(await this._agent.SerializeSessionAsync(session));
-        }
 
         // Act
-        await this._agent.RunAsync([], session, options);
+        await this._agent.RunAsync([], options: options);
 
         // Assert
         Assert.Equal("GetTask", this._handler.CapturedJsonRpcRequest?.Method);
         Assert.Equal("task-123", this._handler.CapturedGetTaskRequest?.Id);
-    }
-
-    [Theory]
-    [InlineData(false, false)]
-    [InlineData(false, true)]
-    [InlineData(true, false)]
-    [InlineData(true, true)]
-    public async Task RunAsync_WithContinuationTokenAndNoContext_UsesTaskIdAsync(bool streaming, bool omitSession)
-    {
-        // Arrange
-        var task = new AgentTask
-        {
-            Id = "task-123",
-            ContextId = "",
-            Status = new() { State = TaskState.Working }
-        };
-        this._handler.AgentTaskToReturn = task;
-        this._handler.StreamingResponseToReturn = new StreamResponse { Task = task };
-        var session = omitSession ? null : (A2AAgentSession)await this._agent.CreateSessionAsync();
-        var options = new AgentRunOptions
-        {
-            ContinuationToken = ResponseContinuationToken.FromBytes(Encoding.UTF8.GetBytes("""{"taskId":"task-123"}"""))
-        };
-
-        // Act
-        if (streaming)
-        {
-            var updates = new List<AgentResponseUpdate>();
-            await foreach (var update in this._agent.RunStreamingAsync([], session, options))
-            {
-                updates.Add(update);
-            }
-
-            Assert.Equal("task-123", Assert.Single(updates).ResponseId);
-        }
-        else
-        {
-            Assert.Equal("task-123", (await this._agent.RunAsync([], session, options)).ResponseId);
-        }
-
-        // Assert
-        var request = Assert.Single(this._handler.CapturedJsonRpcRequests);
-        Assert.Equal(streaming ? "SubscribeToTask" : "GetTask", request.Method);
-        Assert.Equal("task-123", request.Params?.GetProperty("id").GetString());
-        if (session is not null)
-        {
-            Assert.Null(session.ContextId);
-            Assert.Equal("task-123", session.TaskId);
-            Assert.Equal(TaskState.Working, session.TaskState);
-        }
-    }
-
-    [Theory]
-    [InlineData(false, null)]
-    [InlineData(false, "")]
-    [InlineData(true, null)]
-    [InlineData(true, "")]
-    public async Task RunAsync_WithContextlessTask_ResumesWithRestoredSessionAsync(bool streaming, string? contextId)
-    {
-        // Arrange
-        // Return tasks directly because the pinned SDK requires contextId in JSON.
-        Mock<IA2AClient> client = new();
-        client.Setup(c => c.SendMessageAsync(It.IsAny<SendMessageRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new SendMessageResponse
-            {
-                Task = new AgentTask { Id = "task-123", ContextId = contextId!, Status = new() { State = TaskState.Working } }
-            });
-        var completedTask = new AgentTask { Id = "task-123", ContextId = contextId!, Status = new() { State = TaskState.Completed } };
-        client.Setup(c => c.GetTaskAsync(It.Is<GetTaskRequest>(r => r.Id == "task-123"), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(completedTask);
-        client.Setup(c => c.SubscribeToTaskAsync(It.Is<SubscribeToTaskRequest>(r => r.Id == "task-123"), It.IsAny<CancellationToken>()))
-            .Returns(new[] { new StreamResponse { Task = completedTask } }.ToAsyncEnumerable());
-        var agent = new A2AAgent(client.Object);
-        var originalSession = await agent.CreateSessionAsync();
-
-        // Act
-        var initialResponse = await agent.RunAsync("Start a task", originalSession, new() { AllowBackgroundResponses = true });
-        Assert.NotNull(initialResponse.ContinuationToken);
-        var session = (A2AAgentSession)await agent.DeserializeSessionAsync(await agent.SerializeSessionAsync(originalSession));
-        var options = new AgentRunOptions { ContinuationToken = initialResponse.ContinuationToken };
-        if (streaming)
-        {
-            var updates = new List<AgentResponseUpdate>();
-            await foreach (var update in agent.RunStreamingAsync([], session, options))
-            {
-                updates.Add(update);
-            }
-
-            Assert.Equal("task-123", Assert.Single(updates).ResponseId);
-        }
-        else
-        {
-            Assert.Equal("task-123", (await agent.RunAsync([], session, options)).ResponseId);
-        }
-
-        // Assert
-        Assert.Null(session.ContextId);
-        Assert.Equal("task-123", session.TaskId);
-        Assert.Equal(TaskState.Completed, session.TaskState);
-    }
-
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task RunAsync_WithContinuationTokenForDifferentContext_DoesNotChangeSessionAsync(bool streaming)
-    {
-        // Arrange
-        this._handler.AgentTaskToReturn = new AgentTask
-        {
-            Id = "resumed-task",
-            ContextId = "unrelated-context",
-            Status = new() { State = TaskState.InputRequired }
-        };
-        this._handler.StreamingErrorCodeToReturn = A2AErrorCode.UnsupportedOperation;
-        var session = (A2AAgentSession)await this._agent.CreateSessionAsync("original-context", "original-task");
-        session.TaskState = TaskState.Working;
-        var options = new AgentRunOptions { ContinuationToken = new A2AContinuationToken("resumed-task") };
-
-        // Act
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-        {
-            if (streaming)
-            {
-                await foreach (var _ in this._agent.RunStreamingAsync([], session, options))
-                {
-                    Assert.Fail("An invalid continuation response must not yield content.");
-                }
-            }
-            else
-            {
-                await this._agent.RunAsync([], session, options);
-            }
-        });
-
-        // Assert
-        Assert.Equal("original-context", session.ContextId);
-        Assert.Equal("original-task", session.TaskId);
-        Assert.Equal(TaskState.Working, session.TaskState);
-        Assert.Equal(streaming ? 2 : 1, this._handler.CapturedJsonRpcRequests.Count);
-        Assert.Equal("GetTask", this._handler.CapturedJsonRpcRequests[^1].Method);
-    }
-
-    [Theory]
-    [InlineData(false, null)]
-    [InlineData(false, "")]
-    [InlineData(true, null)]
-    [InlineData(true, "")]
-    public async Task RunAsync_WithContinuationTokenAndMissingTaskContext_PreservesKnownContextAsync(bool streaming, string? contextId)
-    {
-        // Arrange
-        Mock<IA2AClient> client = new();
-        client.Setup(c => c.GetTaskAsync(It.IsAny<GetTaskRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new AgentTask
-            {
-                Id = "resumed-task",
-                ContextId = contextId!,
-                Status = new() { State = TaskState.Completed }
-            });
-        this._handler.StreamingErrorCodeToReturn = A2AErrorCode.UnsupportedOperation;
-        client.Setup(c => c.SubscribeToTaskAsync(It.IsAny<SubscribeToTaskRequest>(), It.IsAny<CancellationToken>()))
-            .Returns((SubscribeToTaskRequest request, CancellationToken cancellationToken) => this._a2aClient.SubscribeToTaskAsync(request, cancellationToken));
-        var agent = new A2AAgent(client.Object);
-        var session = (A2AAgentSession)await agent.CreateSessionAsync("original-context", "original-task");
-        session.TaskState = TaskState.Working;
-        var options = new AgentRunOptions { ContinuationToken = new A2AContinuationToken("resumed-task") };
-
-        // Act
-        if (streaming)
-        {
-            var updates = new List<AgentResponseUpdate>();
-            await foreach (var update in agent.RunStreamingAsync([], session, options))
-            {
-                updates.Add(update);
-            }
-
-            Assert.Equal("resumed-task", Assert.Single(updates).ResponseId);
-        }
-        else
-        {
-            Assert.Equal("resumed-task", (await agent.RunAsync([], session, options)).ResponseId);
-        }
-
-        // Assert
-        Assert.Equal("original-context", session.ContextId);
-        Assert.Equal("resumed-task", session.TaskId);
-        Assert.Equal(TaskState.Completed, session.TaskState);
-        client.Verify(c => c.GetTaskAsync(It.IsAny<GetTaskRequest>(), It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Theory]
-    [InlineData(StreamResponseCase.Message, false)]
-    [InlineData(StreamResponseCase.Message, true)]
-    [InlineData(StreamResponseCase.Task, false)]
-    [InlineData(StreamResponseCase.Task, true)]
-    [InlineData(StreamResponseCase.StatusUpdate, false)]
-    [InlineData(StreamResponseCase.StatusUpdate, true)]
-    [InlineData(StreamResponseCase.ArtifactUpdate, false)]
-    [InlineData(StreamResponseCase.ArtifactUpdate, true)]
-    public async Task RunStreamingAsync_WithContinuationTokenAndDifferentEventContext_ThrowsBeforeYieldingAsync(
-        StreamResponseCase responseCase, bool includeInitialTask)
-    {
-        // Arrange
-        const string ContextId = "unrelated-context";
-        StreamResponse response = responseCase switch
-        {
-            StreamResponseCase.Message => new()
-            {
-                Message = new Message { MessageId = "response", ContextId = ContextId, Parts = [Part.FromText("Response")] }
-            },
-            StreamResponseCase.Task => new()
-            {
-                Task = new AgentTask { Id = "original-task", ContextId = ContextId, Status = new() { State = TaskState.InputRequired } }
-            },
-            StreamResponseCase.StatusUpdate => new()
-            {
-                StatusUpdate = new TaskStatusUpdateEvent { TaskId = "original-task", ContextId = ContextId, Status = new() { State = TaskState.InputRequired } }
-            },
-            StreamResponseCase.ArtifactUpdate => new()
-            {
-                ArtifactUpdate = new TaskArtifactUpdateEvent
-                {
-                    TaskId = "original-task",
-                    ContextId = ContextId,
-                    Artifact = new Artifact { ArtifactId = "artifact", Parts = [Part.FromText("Response")] }
-                }
-            },
-            _ => throw new ArgumentOutOfRangeException(nameof(responseCase))
-        };
-        if (includeInitialTask)
-        {
-            this._handler.StreamingResponsesToReturn.Add(new StreamResponse
-            {
-                Task = new AgentTask { Id = "original-task", ContextId = "original-context", Status = new() { State = TaskState.Working } }
-            });
-        }
-
-        this._handler.StreamingResponsesToReturn.Add(response);
-        var session = (A2AAgentSession)await this._agent.CreateSessionAsync("original-context", "original-task");
-        session.TaskState = TaskState.Working;
-        var options = new AgentRunOptions { ContinuationToken = new A2AContinuationToken("original-task") };
-        var updates = new List<AgentResponseUpdate>();
-
-        // Act
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-        {
-            await foreach (var update in this._agent.RunStreamingAsync([], session, options))
-            {
-                updates.Add(update);
-            }
-        });
-
-        // Assert
-        if (includeInitialTask)
-        {
-            Assert.Equal("original-task", Assert.Single(updates).ResponseId);
-        }
-        else
-        {
-            Assert.Empty(updates);
-        }
-
-        Assert.Equal("original-context", session.ContextId);
-        Assert.Equal("original-task", session.TaskId);
-        Assert.Equal(TaskState.Working, session.TaskState);
-    }
-
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task RunStreamingAsync_WithMessageWithoutContext_PreservesKnownContextAsync(bool continuation)
-    {
-        // Arrange
-        this._handler.StreamingResponseToReturn = new StreamResponse
-        {
-            Message = new Message { MessageId = "response", Parts = [Part.FromText("Response")] }
-        };
-        var session = await this._agent.CreateSessionAsync("original-context");
-        var updates = new List<AgentResponseUpdate>();
-        IEnumerable<ChatMessage> messages = continuation ? [] : [new(ChatRole.User, "Hello")];
-        var options = continuation ? new AgentRunOptions { ContinuationToken = new A2AContinuationToken("original-task") } : null;
-
-        // Act
-        await foreach (var update in this._agent.RunStreamingAsync(messages, session, options))
-        {
-            updates.Add(update);
-        }
-
-        // Assert
-        Assert.Equal("Response", Assert.Single(updates).Text);
-        Assert.Equal("original-context", ((A2AAgentSession)session).ContextId);
     }
 
     [Fact]
@@ -1195,17 +761,15 @@ public sealed class A2AAgentTests : IDisposable
             Message = new Message
             {
                 MessageId = "response-123",
-                ContextId = "context-123",
                 Role = Role.Agent,
                 Parts = [new Part { Text = "Continuation response" }]
             }
         };
 
         var options = new AgentRunOptions { ContinuationToken = new A2AContinuationToken("task-456") };
-        var session = await this._agent.CreateSessionAsync("context-123");
 
         // Act
-        await foreach (var _ in this._agent.RunStreamingAsync([], session, options))
+        await foreach (var _ in this._agent.RunStreamingAsync([], null, options))
         {
             // Just iterate through to trigger the logic
         }
@@ -1224,7 +788,6 @@ public sealed class A2AAgentTests : IDisposable
             Message = new Message
             {
                 MessageId = "response-123",
-                ContextId = "context-123",
                 Role = Role.Agent,
                 Parts = [new Part { Text = "Continuation response" }]
             }
@@ -1232,10 +795,9 @@ public sealed class A2AAgentTests : IDisposable
 
         const string ExpectedTaskId = "my-task-789";
         var options = new AgentRunOptions { ContinuationToken = new A2AContinuationToken(ExpectedTaskId) };
-        var session = await this._agent.CreateSessionAsync("context-123", ExpectedTaskId);
 
         // Act
-        await foreach (var _ in this._agent.RunStreamingAsync([], session, options))
+        await foreach (var _ in this._agent.RunStreamingAsync([], null, options))
         {
             // Just iterate through to trigger the logic
         }
@@ -1268,11 +830,10 @@ public sealed class A2AAgentTests : IDisposable
         };
 
         var options = new AgentRunOptions { ContinuationToken = new A2AContinuationToken(TaskId) };
-        var session = await this._agent.CreateSessionAsync(ContextId);
 
         // Act
         var updates = new List<AgentResponseUpdate>();
-        await foreach (var update in this._agent.RunStreamingAsync([], session, options))
+        await foreach (var update in this._agent.RunStreamingAsync([], null, options))
         {
             updates.Add(update);
         }
@@ -1306,7 +867,7 @@ public sealed class A2AAgentTests : IDisposable
             Status = new() { State = TaskState.Completed }
         };
 
-        var session = await this._agent.CreateSessionAsync(ContextId);
+        var session = await this._agent.CreateSessionAsync();
         var options = new AgentRunOptions { ContinuationToken = new A2AContinuationToken(TaskId) };
 
         // Act
@@ -1330,12 +891,11 @@ public sealed class A2AAgentTests : IDisposable
         this._handler.StreamingErrorCodeToReturn = A2AErrorCode.TaskNotFound;
 
         var options = new AgentRunOptions { ContinuationToken = new A2AContinuationToken(TaskId) };
-        var session = await this._agent.CreateSessionAsync("context-123");
 
         // Act & Assert - the A2AException should propagate directly without fallback to GetTask
         var exception = await Assert.ThrowsAsync<A2AException>(async () =>
         {
-            await foreach (var _ in this._agent.RunStreamingAsync([], session, options))
+            await foreach (var _ in this._agent.RunStreamingAsync([], null, options))
             {
             }
         });
@@ -1357,12 +917,11 @@ public sealed class A2AAgentTests : IDisposable
         this._handler.GetTaskErrorCodeToReturn = A2AErrorCode.TaskNotFound;
 
         var options = new AgentRunOptions { ContinuationToken = new A2AContinuationToken(TaskId) };
-        var session = await this._agent.CreateSessionAsync("context-123");
 
         // Act & Assert - the A2AException from GetTaskAsync should propagate to the caller
         var exception = await Assert.ThrowsAsync<A2AException>(async () =>
         {
-            await foreach (var _ in this._agent.RunStreamingAsync([], session, options))
+            await foreach (var _ in this._agent.RunStreamingAsync([], null, options))
             {
             }
         });
@@ -2352,12 +1911,6 @@ public sealed class A2AAgentTests : IDisposable
         public StreamResponse? StreamingResponseToReturn { get; set; }
 
         /// <summary>
-        /// When populated, streaming requests emit these events in order, allowing tests to
-        /// exercise multi-event streams. Takes precedence over <see cref="StreamingResponseToReturn"/>.
-        /// </summary>
-        public List<StreamResponse> StreamingResponsesToReturn { get; } = [];
-
-        /// <summary>
         /// When set, streaming requests for SubscribeToTask will return a JSON-RPC error
         /// with this error code. Used to simulate UnsupportedOperation errors.
         /// </summary>
@@ -2482,25 +2035,18 @@ public sealed class A2AAgentTests : IDisposable
                 };
             }
             // Return the pre-configured streaming response
-            else if (this.StreamingResponseToReturn is not null || this.StreamingResponsesToReturn.Count > 0)
+            else if (this.StreamingResponseToReturn is not null)
             {
-                var streamResponses = this.StreamingResponsesToReturn.Count > 0
-                    ? this.StreamingResponsesToReturn
-                    : [this.StreamingResponseToReturn!];
+                var jsonRpcResponse = new JsonRpcResponse
+                {
+                    Id = "response-id",
+                    Result = JsonSerializer.SerializeToNode(this.StreamingResponseToReturn, A2AJsonUtilities.DefaultOptions)
+                };
 
                 var stream = new MemoryStream();
                 using (var writer = new StreamWriter(stream, Encoding.UTF8, leaveOpen: true))
                 {
-                    foreach (var streamResponse in streamResponses)
-                    {
-                        var jsonRpcResponse = new JsonRpcResponse
-                        {
-                            Id = "response-id",
-                            Result = JsonSerializer.SerializeToNode(streamResponse, A2AJsonUtilities.DefaultOptions)
-                        };
-
-                        await writer.WriteAsync($"data: {JsonSerializer.Serialize(jsonRpcResponse, A2AJsonUtilities.DefaultOptions)}\n\n");
-                    }
+                    await writer.WriteAsync($"data: {JsonSerializer.Serialize(jsonRpcResponse, A2AJsonUtilities.DefaultOptions)}\n\n");
 #pragma warning disable CA2016 // Forward the 'CancellationToken' parameter to methods; overload doesn't exist downlevel
                     await writer.FlushAsync();
 #pragma warning restore CA2016
