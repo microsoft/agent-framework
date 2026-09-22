@@ -144,6 +144,43 @@ trigger:
     assert all("Cookie" not in request.headers for request in requests)
 
 
+async def test_http_request_yaml_provider_receives_canonical_input_url() -> None:
+    provider_urls: list[str] = []
+    request_urls: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        request_urls.append(str(request.url))
+        return httpx.Response(200, text="ok")
+
+    definition = """
+kind: Workflow
+trigger:
+  kind: OnConversationStart
+  id: canonical_url_test
+  actions:
+    - kind: HttpRequestAction
+      id: request
+      method: GET
+      url: '=Concatenate("https://api.example.test/", inputs.path)'
+      queryParameters:
+        term: =inputs.term
+      response: Local.Response
+"""
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+
+        async def provider(info: HttpRequestInfo) -> httpx.AsyncClient:
+            provider_urls.append(info.url)
+            return client
+
+        async with DefaultHttpRequestHandler(client_provider=provider) as handler:
+            workflow = WorkflowFactory(http_request_handler=handler).create_workflow_from_yaml(definition)
+            await workflow.run({"path": "items/../settings?keep=a%20b", "term": "c d"})
+
+    expected_url = "https://api.example.test/settings?keep=a%20b&term=c%20d"
+    assert provider_urls == [expected_url]
+    assert request_urls == [expected_url]
+
+
 @pytest.mark.asyncio
 async def test_http_request_yaml_missing_handler_fails_at_build_time() -> None:
     """Without an http_request_handler, building the workflow must raise."""

@@ -2440,19 +2440,24 @@ async def test_persisted_approval_messages_replay_correctly(chat_client_base: Su
     assert exec_counter == 1
 
 
+@pytest.mark.parametrize("result", ["approved result", "before [APPROVAL_PENDING] after", "[APPROVAL_PENDING]"])
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("later_turns", [2, 8])
 async def test_resolved_approval_response_is_inert_on_later_stateless_turn(
     chat_client_base: SupportsChatGetResponse,
+    result: str,
+    streaming: bool,
+    later_turns: int,
 ) -> None:
     """A terminal result must consume approval authority in an explicitly replayed transcript."""
-    exec_counter = 0
+    executed_arguments: list[str] = []
 
     @tool(name="guarded_stateless_tool", approval_mode="always_require")
-    def guarded_stateless_tool() -> str:
-        nonlocal exec_counter
-        exec_counter += 1
-        return "approved result"
+    def guarded_stateless_tool(value: str) -> str:
+        executed_arguments.append(value)
+        return result
 
-    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    responses = [
         ChatResponse(
             messages=Message(
                 role="assistant",
@@ -2460,19 +2465,33 @@ async def test_resolved_approval_response_is_inert_on_later_stateless_turn(
                     Content.from_function_call(
                         call_id="call_guarded_stateless",
                         name="guarded_stateless_tool",
-                        arguments="{}",
+                        arguments='{"value":"original"}',
                     )
                 ],
             )
         ),
         ChatResponse(messages=Message(role="assistant", contents=["done"])),
-        ChatResponse(messages=Message(role="assistant", contents=["later"])),
+        *[ChatResponse(messages=Message(role="assistant", contents=["later"])) for _ in range(later_turns)],
     ]
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [ChatResponseUpdate(role="assistant", contents=message.contents) for message in response.messages]
+            for response in responses
+        ]
+    else:
+        chat_client_base.run_responses = responses  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
-    first_response = await chat_client_base.get_response(
-        [Message(role="user", contents=["run guarded"])],
-        options={"tools": [guarded_stateless_tool]},
-    )
+    async def run(messages: list[Message]) -> ChatResponse:
+        # Exercise the SDK's message/content serialization, not just object identity.
+        messages = [Message.from_dict(json.loads(message.to_json())) for message in messages]
+        if streaming:
+            return await chat_client_base.get_response(
+                messages, stream=True, options={"tools": [guarded_stateless_tool]}
+            ).get_final_response()
+        return await chat_client_base.get_response(messages, options={"tools": [guarded_stateless_tool]})
+
+    history = [Message(role="user", contents=["run guarded"])]
+    first_response = await run(history)
     approval_request = next(
         content
         for message in first_response.messages
@@ -2483,25 +2502,168 @@ async def test_resolved_approval_response_is_inert_on_later_stateless_turn(
         role="user",
         contents=[approval_request.to_function_approval_response(approved=True)],
     )
-    second_response = await chat_client_base.get_response(
-        [Message(role="user", contents=["run guarded"]), *first_response.messages, approval_message],
-        options={"tools": [guarded_stateless_tool]},
+    history.extend([*first_response.messages, approval_message])
+    second_response = await run(history)
+    assert executed_arguments == ["original"]
+    assert any(
+        content.type == "function_result" and content.result == result
+        for message in second_response.messages
+        for content in message.contents
     )
-    assert exec_counter == 1
+    history.extend(second_response.messages)
 
-    later_response = await chat_client_base.get_response(
-        [
-            Message(role="user", contents=["run guarded"]),
-            *first_response.messages,
-            approval_message,
-            *second_response.messages,
-            Message(role="user", contents=["unrelated later turn"]),
-        ],
-        options={"tools": [guarded_stateless_tool]},
+    for _ in range(later_turns):
+        history.append(Message(role="user", contents=["unrelated later turn"]))
+        later_response = await run(history)
+        history.extend(later_response.messages)
+        assert later_response.text == "later"
+        assert executed_arguments == ["original"]
+
+
+@pytest.mark.parametrize("result", ["approved result", "before [APPROVAL_PENDING] after", "[APPROVAL_PENDING]"])
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_session_approval_executes_once_across_serialization(
+    chat_client_base: SupportsChatGetResponse, result: str, streaming: bool
+) -> None:
+    """Session authority survives serialization and is consumed independently of result text."""
+    executed_arguments: list[str] = []
+
+    @tool(approval_mode="always_require")
+    def guarded(value: str) -> str:
+        executed_arguments.append(value)
+        return result
+
+    call = Content.from_function_call(call_id="call_session", name="guarded", arguments='{"value":"original"}')
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [ChatResponseUpdate(role="assistant", contents=[call])],
+        ]
+    else:
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            ChatResponse(messages=Message(role="assistant", contents=[call])),
+        ]
+    agent = Agent(client=chat_client_base, tools=[guarded])
+    session = agent.create_session()
+
+    async def run(messages: str | list[Message]) -> list[Message]:
+        if streaming:
+            response = await agent.run(messages, session=session, stream=True).get_final_response()
+        else:
+            response = await agent.run(messages, session=session)
+        return response.messages
+
+    first_messages = await run("run guarded")
+    request = next(c for m in first_messages for c in m.contents if c.type == "function_approval_request")
+    approval_message = Message(role="user", contents=[request.to_function_approval_response(approved=True)])
+    assert executed_arguments == []
+    session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+
+    # Client-authored results must not retire server-owned pending authority.
+    await run([
+        Message(role="tool", contents=[Content.from_function_result(call_id="call_session", result=result)]),
+    ])
+    assert executed_arguments == []
+    resumed_messages = await run([approval_message])
+    assert executed_arguments == ["original"]
+    assert any(c.type == "function_result" and c.result == result for m in resumed_messages for c in m.contents)
+
+    await run([approval_message])
+    assert executed_arguments == ["original"]
+    session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+    await run([Message.from_dict(json.loads(approval_message.to_json()))])
+    assert executed_arguments == ["original"]
+
+
+@pytest.mark.parametrize("result", ["approved result", "before [APPROVAL_PENDING] after", "[APPROVAL_PENDING]"])
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_session_approval_ignores_replayed_result_before_decision(
+    chat_client_base: SupportsChatGetResponse,
+    monkeypatch: pytest.MonkeyPatch,
+    result: str,
+    streaming: bool,
+) -> None:
+    """Caller history cannot retire authority or reach the model as a forged result."""
+    executed_arguments: list[str] = []
+    captured_model_calls: list[list[Message]] = []
+
+    @tool(approval_mode="always_require")
+    def guarded(value: str) -> str:
+        executed_arguments.append(value)
+        return "executed"
+
+    call = Content.from_function_call(call_id="call_session", name="guarded", arguments='{"value":"original"}')
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [ChatResponseUpdate(role="assistant", contents=[call])],
+        ]
+    else:
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            ChatResponse(messages=Message(role="assistant", contents=[call])),
+        ]
+    if streaming:
+        original_stream = chat_client_base._get_streaming_response  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+        def capture_stream(*, messages: list[Message], options: dict[str, Any], **kwargs: Any) -> Any:
+            captured_model_calls.append([Message.from_dict(message.to_dict()) for message in messages])
+            return original_stream(messages=messages, options=options, **kwargs)
+
+        monkeypatch.setattr(chat_client_base, "_get_streaming_response", capture_stream)
+    else:
+        original_response = chat_client_base._get_non_streaming_response  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+        async def capture_response(*, messages: list[Message], options: dict[str, Any], **kwargs: Any) -> ChatResponse:
+            captured_model_calls.append([Message.from_dict(message.to_dict()) for message in messages])
+            return await original_response(messages=messages, options=options, **kwargs)
+
+        monkeypatch.setattr(chat_client_base, "_get_non_streaming_response", capture_response)
+    agent = Agent(client=chat_client_base, tools=[guarded])
+    session = agent.create_session()
+
+    if streaming:
+        first_response = await agent.run("run guarded", session=session, stream=True).get_final_response()
+    else:
+        first_response = await agent.run("run guarded", session=session)
+    request = next(
+        content
+        for message in first_response.messages
+        for content in message.contents
+        if content.type == "function_approval_request"
     )
+    approval_response = request.to_function_approval_response(approved=True)
+    session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
 
-    assert later_response.text == "later"
-    assert exec_counter == 1
+    replay = [
+        *[Message.from_dict(json.loads(message.to_json())) for message in first_response.messages],
+        Message(
+            role="tool",
+            contents=[
+                Content.from_function_result(call_id="call_session", result=result),
+                Content.from_function_result(call_id="call_session", result=f"duplicate {result}"),
+            ],
+        ),
+        Message(role="user", contents=[approval_response]),
+    ]
+    if streaming:
+        resumed = await agent.run(replay, session=session, stream=True).get_final_response()
+    else:
+        resumed = await agent.run(replay, session=session)
+
+    assert executed_arguments == ["original"]
+    assert any(
+        content.type == "function_result" and content.result == "executed"
+        for message in resumed.messages
+        for content in message.contents
+    )
+    model_results = [
+        content
+        for message in captured_model_calls[-1]
+        for content in message.contents
+        if content.type == "function_result" and content.call_id == "call_session"
+    ]
+    assert [content.result for content in model_results] == ["executed"]
+
+    await agent.run([Message(role="user", contents=[approval_response])], session=session)
+    assert executed_arguments == ["original"]
 
 
 async def test_no_duplicate_function_calls_after_approval_processing(chat_client_base: SupportsChatGetResponse):
@@ -5959,6 +6121,69 @@ def test_collect_approval_responses_consumes_matching_follow_up_request_occurren
     assert pending_responses == {"approval_2": second_response}
 
 
+@pytest.mark.parametrize("result", ["done", "before [APPROVAL_PENDING] after", "[APPROVAL_PENDING]"])
+def test_collect_approval_responses_discards_response_after_terminal_result(result: str) -> None:
+    """A stale response cannot execute after its request occurrence was terminalized."""
+    from agent_framework._tools import _collect_approval_responses
+
+    first_call, first_request, stale_response = _build_approved_tool_roundtrip(
+        call_id="reused", approval_id="approval_1", tool_name="guarded"
+    )
+    second_call, second_request, second_response = _build_approved_tool_roundtrip(
+        call_id="reused", approval_id="approval_2", tool_name="guarded"
+    )
+    messages = [
+        Message(role="assistant", contents=[first_call, first_request]),
+        Message(role="tool", contents=[Content.from_function_result(call_id="reused", result=result)]),
+        Message(role="user", contents=[stale_response]),
+        Message(role="assistant", contents=[second_call, second_request]),
+        Message(role="user", contents=[second_response]),
+    ]
+
+    assert _collect_approval_responses(messages) == {"approval_2": second_response}
+
+
+@pytest.mark.parametrize("result", ["done", "before [APPROVAL_PENDING] after", "[APPROVAL_PENDING]"])
+def test_collect_unanswered_approval_requests_consumes_terminal_result(result: str) -> None:
+    """Result text cannot keep a completed request pending or consume its reused-id sibling."""
+    from agent_framework._tools import _collect_unanswered_approval_requests
+
+    first_call, first_request, _ = _build_approved_tool_roundtrip(
+        call_id="reused", approval_id="first", tool_name="guarded"
+    )
+    second_call, second_request, _ = _build_approved_tool_roundtrip(
+        call_id="reused", approval_id="second", tool_name="guarded"
+    )
+    messages = [
+        Message(role="assistant", contents=[first_call, first_request]),
+        Message(role="tool", contents=[Content.from_function_result(call_id="reused", result=result)]),
+        Message(role="assistant", contents=[second_call, second_request]),
+    ]
+    assert _collect_unanswered_approval_requests(messages) == [second_request]
+
+
+@pytest.mark.parametrize("result", ["done", "before [APPROVAL_PENDING] after", "[APPROVAL_PENDING]"])
+def test_collect_unanswered_approval_requests_discards_response_after_terminal_result(result: str) -> None:
+    """A stale response cannot consume the result for a later reused-call-id request."""
+    from agent_framework._tools import _collect_unanswered_approval_requests
+
+    first_call, first_request, stale_response = _build_approved_tool_roundtrip(
+        call_id="reused", approval_id="approval_1", tool_name="guarded"
+    )
+    second_call, second_request, _ = _build_approved_tool_roundtrip(
+        call_id="reused", approval_id="approval_2", tool_name="guarded"
+    )
+    messages = [
+        Message(role="assistant", contents=[first_call, first_request]),
+        Message(role="tool", contents=[Content.from_function_result(call_id="reused", result=result)]),
+        Message(role="user", contents=[stale_response]),
+        Message(role="assistant", contents=[second_call, second_request]),
+        Message(role="tool", contents=[Content.from_function_result(call_id="reused", result="second result")]),
+    ]
+
+    assert _collect_unanswered_approval_requests(messages) == []
+
+
 def test_pending_approval_batch_filter_keeps_resolved_sibling_pair() -> None:
     from agent_framework._tools import _remove_unanswered_approval_batches_from_model_input
 
@@ -6105,7 +6330,8 @@ def test_replace_approval_contents_with_results_deduplicates_replayed_approval_r
     assert [(content.call_id, content.result) for content in results] == [("call_1", "done")]
 
 
-def test_replace_approval_contents_with_results_ignores_already_resolved_response() -> None:
+@pytest.mark.parametrize("result", ["old result", "before [APPROVAL_PENDING] after", "[APPROVAL_PENDING]"])
+def test_replace_approval_contents_with_results_ignores_already_resolved_response(result: str) -> None:
     """Historical approval responses with terminal results must not become rejection results."""
     from agent_framework._tools import _collect_approval_responses, _replace_approval_contents_with_results
 
@@ -6122,7 +6348,7 @@ def test_replace_approval_contents_with_results_ignores_already_resolved_respons
     messages = [
         Message(role="assistant", contents=[old_call, old_request]),
         Message(role="user", contents=[old_response]),
-        Message(role="tool", contents=[Content.from_function_result(call_id="call_reused", result="old result")]),
+        Message(role="tool", contents=[Content.from_function_result(call_id="call_reused", result=result)]),
         Message(role="assistant", contents=[new_call, new_request]),
         Message(role="user", contents=[new_response]),
     ]
@@ -6141,7 +6367,7 @@ def test_replace_approval_contents_with_results_ignores_already_resolved_respons
     ]
     results = [content for message in messages for content in message.contents if content.type == "function_result"]
     assert [(content.call_id, content.result) for content in results] == [
-        ("call_reused", "old result"),
+        ("call_reused", result),
         ("call_reused", "new result"),
     ]
 
@@ -6231,8 +6457,8 @@ def test_replace_approval_contents_with_results_keeps_multi_content_group_with_r
     assert resolved_contents == [*first_user_requests, second_result]
 
 
-def test_replace_approval_contents_with_results_correlates_reused_call_id_placeholders() -> None:
-    """Placeholder replacement must consume approved results by approval occurrence, not call id."""
+def test_replace_approval_contents_with_results_correlates_reused_call_id_pending_requests() -> None:
+    """Typed pending requests consume approved results by approval occurrence, not call id."""
     from agent_framework._tools import _collect_approval_responses, _replace_approval_contents_with_results
 
     completed_call = Content.from_function_call(call_id="call_reused", name="run_skill_script", arguments="{}")
@@ -6248,16 +6474,8 @@ def test_replace_approval_contents_with_results_correlates_reused_call_id_placeh
         Message(role="assistant", contents=[completed_call]),
         Message(role="tool", contents=[completed_result]),
         Message(role="assistant", contents=[second_call, second_request]),
-        Message(
-            role="tool",
-            contents=[Content.from_function_result(call_id="call_reused", result="[APPROVAL_PENDING] second")],
-        ),
         Message(role="user", contents=[second_response]),
         Message(role="assistant", contents=[third_call, third_request]),
-        Message(
-            role="tool",
-            contents=[Content.from_function_result(call_id="call_reused", result="[APPROVAL_PENDING] third")],
-        ),
         Message(role="user", contents=[third_response]),
     ]
 
@@ -6280,8 +6498,8 @@ def test_replace_approval_contents_with_results_correlates_reused_call_id_placeh
     ]
 
 
-def test_replace_approval_contents_with_results_replaces_rejected_placeholder() -> None:
-    """A rejected call should replace its pending placeholder instead of adding a second result."""
+def test_replace_approval_contents_with_results_resolves_rejected_request() -> None:
+    """A rejected pending call produces one terminal result."""
     from agent_framework._tools import _collect_approval_responses, _replace_approval_contents_with_results
 
     function_call, request, _ = _build_approved_tool_roundtrip(
@@ -6292,15 +6510,6 @@ def test_replace_approval_contents_with_results_replaces_rejected_placeholder() 
     rejection = request.to_function_approval_response(approved=False)
     messages = [
         Message(role="assistant", contents=[function_call, request]),
-        Message(
-            role="tool",
-            contents=[
-                Content.from_function_result(
-                    call_id="call_rejected",
-                    result="[APPROVAL_PENDING] guarded_tool",
-                )
-            ],
-        ),
         Message(role="user", contents=[rejection]),
     ]
 
@@ -6316,7 +6525,7 @@ def test_replace_approval_contents_with_results_replaces_rejected_placeholder() 
     assert resolved_contents == results
 
 
-def test_replace_approval_contents_with_results_uses_result_call_ids_for_placeholders() -> None:
+def test_replace_approval_contents_with_results_uses_result_call_ids_for_pending_requests() -> None:
     from agent_framework._tools import _collect_approval_responses, _replace_approval_contents_with_results
 
     call_one, request_one, response_one = _build_approved_tool_roundtrip(
@@ -6328,13 +6537,6 @@ def test_replace_approval_contents_with_results_uses_result_call_ids_for_placeho
 
     messages = [
         Message(role="assistant", contents=[call_one, request_one, call_two, request_two]),
-        Message(
-            role="tool",
-            contents=[
-                Content.from_function_result(call_id="call_1", result="[APPROVAL_PENDING] first placeholder"),
-                Content.from_function_result(call_id="call_2", result="[APPROVAL_PENDING] second placeholder"),
-            ],
-        ),
         Message(role="user", contents=[response_one, response_two]),
     ]
 
@@ -6364,10 +6566,6 @@ def test_replace_approval_contents_with_results_skips_results_without_call_id() 
 
     messages = [
         Message(role="assistant", contents=[call_one, request_one]),
-        Message(
-            role="tool",
-            contents=[Content.from_function_result(call_id="call_1", result="[APPROVAL_PENDING] placeholder")],
-        ),
         Message(role="user", contents=[response_one]),
     ]
 
@@ -6390,8 +6588,8 @@ def test_replace_approval_contents_with_results_skips_results_without_call_id() 
 def test_replace_approval_contents_with_results_prunes_emptied_messages() -> None:
     """Messages whose contents are fully consumed during the first pass should be removed.
 
-    When approval responses are paired with placeholder results, the responses are marked
-    for removal in the first pass. If a message contained only such responses, it ends up
+    When approval requests are paired with calls, the requests are marked
+    for removal in the first pass. If a message contained only such requests, it ends up
     with an empty `contents` list and the second pass should drop it from `messages`.
     """
     from agent_framework._tools import _collect_approval_responses, _replace_approval_contents_with_results
@@ -6404,17 +6602,8 @@ def test_replace_approval_contents_with_results_prunes_emptied_messages() -> Non
     )
 
     messages = [
-        Message(role="assistant", contents=[call_one, request_one, call_two, request_two]),
-        Message(
-            role="tool",
-            contents=[
-                Content.from_function_result(call_id="call_1", result="[APPROVAL_PENDING] first placeholder"),
-                Content.from_function_result(call_id="call_2", result="[APPROVAL_PENDING] second placeholder"),
-            ],
-        ),
-        # This user message holds only approval_responses whose placeholders are replaced
-        # in the tool message above, so every content here is marked for removal and the
-        # message itself becomes empty -> it must be pruned by the second pass.
+        Message(role="assistant", contents=[call_one, call_two]),
+        Message(role="assistant", contents=[request_one, request_two]),
         Message(role="user", contents=[response_one, response_two]),
     ]
 
@@ -6427,7 +6616,7 @@ def test_replace_approval_contents_with_results_prunes_emptied_messages() -> Non
         ],
     )
 
-    # The now-empty user message should have been pruned, leaving just the assistant
+    # The now-empty request message should have been pruned, leaving just the assistant
     # message and the tool message with the resolved results.
     assert len(messages) == 2
     assert messages[0].role == "assistant"

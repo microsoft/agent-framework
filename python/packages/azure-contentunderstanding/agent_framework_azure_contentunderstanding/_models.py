@@ -63,8 +63,10 @@ class FileSearchConfig:
     token-efficient RAG retrieval on follow-up turns for large documents.
 
     The caller is responsible for creating and managing the vector store and
-    the ``file_search`` tool. Use :meth:`from_openai` or :meth:`from_foundry`
-    factory methods for convenience.
+    the ``file_search`` tool, including scoping them to the intended users or
+    sharing group. Agent sessions do not isolate retrieval from a shared vector
+    store. Use :meth:`from_openai` or :meth:`from_foundry` factory methods for
+    convenience.
 
     Args:
         backend: A ``FileSearchBackend`` that handles file upload/delete

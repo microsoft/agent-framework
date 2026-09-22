@@ -3,17 +3,18 @@
 import inspect
 import logging
 import sys
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 
-from typing_extensions import Never
+from typing_extensions import Never, TypedDict
 
 from agent_framework import Content
 
 from .._agents import SupportsAgentRun
-from .._sessions import AgentSession
+from .._sessions import AgentSession, AgentSessionDict
 from .._types import AgentResponse, AgentResponseUpdate, Message, ResponseStream
+from ..exceptions import WorkflowCheckpointException
 from ._agent_utils import prepare_agent_run_args, resolve_agent_id, resolve_executor_kwargs
 from ._const import INTERNAL_SOURCE_ID, RESOLVED_WORKFLOW_RUN_KWARGS_KEY, WORKFLOW_RUN_KWARGS_KEY
 from ._executor import Executor, handler
@@ -28,6 +29,128 @@ else:
     from typing_extensions import override  # pragma: no cover
 
 logger = logging.getLogger(__name__)
+
+
+class AgentExecutorCheckpointState(TypedDict, total=False):
+    """Public schema for state saved and restored by :class:`AgentExecutor`.
+
+    Stored under ``WorkflowCheckpoint.state["_executor_state"][executor_id]``.
+
+    ``on_checkpoint_save`` always writes every key below. Restore accepts partial
+    mappings for backward compatibility: missing keys reset to empty defaults.
+    Unknown keys are ignored so newer writers remain readable by older runtimes.
+
+    Compatibility:
+        - Add fields as ``total=False`` / ``NotRequired`` and treat absence as default.
+        - Do not rename or change the meaning of existing keys without a migration path.
+        - Custom executors should define their own TypedDict (or equivalent) and validate
+          types in ``on_checkpoint_restore``; prefer
+          :class:`~agent_framework.exceptions.WorkflowCheckpointException` for malformed data.
+
+    Keys:
+        cache: Messages buffered between runs before the next agent invocation.
+        full_conversation: Prior inputs plus assistant/tool outputs after the last run.
+        agent_session: Serialized session payload (:class:`~agent_framework._sessions.AgentSessionDict`).
+        pending_agent_requests: In-flight agent-owned user-input requests by request id.
+        pending_responses_to_agent: Queued content responses waiting to be sent to the agent.
+    """
+
+    cache: list[Message]
+    full_conversation: list[Message]
+    agent_session: AgentSessionDict
+    pending_agent_requests: dict[str, Content]
+    pending_responses_to_agent: list[Content]
+
+
+def _validate_agent_executor_checkpoint_state(state: Mapping[str, Any]) -> None:
+    """Raise :class:`WorkflowCheckpointException` when checkpoint payload types are wrong."""
+    if not isinstance(state, Mapping):
+        raise WorkflowCheckpointException(
+            f"AgentExecutor checkpoint state must be a mapping, got {type(state).__name__}."
+        )
+
+    message_list_keys = ("cache", "full_conversation")
+    for key in message_list_keys:
+        if key not in state or state[key] is None:
+            continue
+        value = state[key]
+        if not isinstance(value, list):
+            raise WorkflowCheckpointException(
+                f"AgentExecutor checkpoint field '{key}' must be a list, got {type(value).__name__}."
+            )
+        messages = cast(list[Any], value)
+        for index, item in enumerate(messages):
+            if not isinstance(item, Message):
+                raise WorkflowCheckpointException(
+                    f"AgentExecutor checkpoint field '{key}'[{index}] must be Message, "
+                    f"got {type(item).__name__}."
+                )
+
+    if (responses_raw := state.get("pending_responses_to_agent")) is not None:
+        if not isinstance(responses_raw, list):
+            raise WorkflowCheckpointException(
+                "AgentExecutor checkpoint field 'pending_responses_to_agent' must be a list, "
+                f"got {type(responses_raw).__name__}."
+            )
+        responses = cast(list[Any], responses_raw)
+        for index, item in enumerate(responses):
+            if not isinstance(item, Content):
+                raise WorkflowCheckpointException(
+                    "AgentExecutor checkpoint field "
+                    f"'pending_responses_to_agent'[{index}] must be Content, "
+                    f"got {type(item).__name__}."
+                )
+
+    if (pending_raw := state.get("pending_agent_requests")) is not None:
+        if not isinstance(pending_raw, dict):
+            raise WorkflowCheckpointException(
+                "AgentExecutor checkpoint field 'pending_agent_requests' must be a dict, "
+                f"got {type(pending_raw).__name__}."
+            )
+        pending = cast(dict[Any, Any], pending_raw)
+        for request_id, content in pending.items():
+            if not isinstance(request_id, str):
+                raise WorkflowCheckpointException(
+                    "AgentExecutor checkpoint field 'pending_agent_requests' keys must be str, "
+                    f"got {type(request_id).__name__}."
+                )
+            if not isinstance(content, Content):
+                raise WorkflowCheckpointException(
+                    "AgentExecutor checkpoint field "
+                    f"'pending_agent_requests[{request_id!r}]' must be Content, "
+                    f"got {type(content).__name__}."
+                )
+
+    if (session_raw := state.get("agent_session")) is not None:
+        if not isinstance(session_raw, dict):
+            raise WorkflowCheckpointException(
+                "AgentExecutor checkpoint field 'agent_session' must be a dict, "
+                f"got {type(session_raw).__name__}."
+            )
+        session = cast(dict[str, Any], session_raw)
+        session_id = session.get("session_id")
+        if not isinstance(session_id, str):
+            raise WorkflowCheckpointException(
+                "AgentExecutor checkpoint field 'agent_session.session_id' must be a str, "
+                f"got {type(session_id).__name__}."
+            )
+        if "state" in session and session["state"] is not None and not isinstance(session["state"], dict):
+            raise WorkflowCheckpointException(
+                "AgentExecutor checkpoint field 'agent_session.state' must be a dict, "
+                f"got {type(session['state']).__name__}."
+            )
+        if "service_session_id" in session and session["service_session_id"] is not None:
+            service_session_id = session["service_session_id"]
+            if not isinstance(service_session_id, (str, Mapping)):
+                raise WorkflowCheckpointException(
+                    "AgentExecutor checkpoint field 'agent_session.service_session_id' must be "
+                    f"str, mapping, or None, got {type(service_session_id).__name__}."
+                )
+        if "type" in session and session["type"] is not None and not isinstance(session["type"], str):
+            raise WorkflowCheckpointException(
+                "AgentExecutor checkpoint field 'agent_session.type' must be a str, "
+                f"got {type(session['type']).__name__}."
+            )
 
 
 def _accepts_runtime_tools(agent: SupportsAgentRun) -> bool:
@@ -368,14 +491,15 @@ class AgentExecutor(Executor):
         may not be serialized locally.
 
         Returns:
-            Dict containing serialized cache and session state
+            A JSON-serializable ``dict`` matching :class:`AgentExecutorCheckpointState`
+            (cache, conversation, session, and pending request/response fields).
+            The return type remains ``dict[str, Any]`` so subclasses may extend the
+            payload and so the override stays compatible with :class:`Executor`.
         """
-        serialized_session = self._session.to_dict()
-
         return {
             "cache": self._cache,
             "full_conversation": self._full_conversation,
-            "agent_session": serialized_session,
+            "agent_session": self._session.to_dict(),
             "pending_agent_requests": self._pending_agent_requests,
             "pending_responses_to_agent": self._pending_responses_to_agent,
         }
@@ -385,8 +509,15 @@ class AgentExecutor(Executor):
         """Restore executor state from checkpoint.
 
         Args:
-            state: Checkpoint data dict
+            state: Checkpoint payload matching :class:`AgentExecutorCheckpointState`.
+                Missing known keys use empty defaults; unknown keys are ignored.
+
+        Raises:
+            WorkflowCheckpointException: If ``state`` is not a mapping or a known
+                field has an incompatible type.
         """
+        _validate_agent_executor_checkpoint_state(state)
+
         cache_payload = state.get("cache")
         self._cache = cache_payload or []
 
@@ -398,8 +529,10 @@ class AgentExecutor(Executor):
             try:
                 self._session = AgentSession.from_dict(session_payload)
             except Exception as exc:
-                logger.warning("Failed to restore agent session: %s", exc)
-                self._session = self._agent.create_session()
+                raise WorkflowCheckpointException(
+                    "AgentExecutor checkpoint field 'agent_session' could not be restored: "
+                    f"{exc}"
+                ) from exc
         else:
             self._session = self._agent.create_session()
 

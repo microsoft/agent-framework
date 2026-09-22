@@ -6,6 +6,7 @@ import json
 import os
 from collections.abc import AsyncGenerator, Iterator, Sequence
 from datetime import datetime, timezone
+from importlib import import_module
 from pathlib import Path
 from typing import Annotated, Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -41,7 +42,7 @@ from agent_framework.exceptions import (
     ChatClientInvalidRequestException,
     SettingNotFoundError,
 )
-from openai import AsyncOpenAI, BadRequestError
+from openai import AsyncOpenAI, BadRequestError, DefaultAsyncHttpxClient
 from openai.types.responses import ResponseFunctionShellToolCall, ResponseFunctionShellToolCallOutput
 from openai.types.responses.response_reasoning_item import Summary
 from openai.types.responses.response_reasoning_summary_text_delta_event import (
@@ -63,6 +64,8 @@ from pytest import param
 from agent_framework_openai import OpenAIChatClient, OpenAIChatOptions, RawOpenAIChatClient
 from agent_framework_openai._chat_client import OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY
 from agent_framework_openai._exceptions import OpenAIContentFilterException
+
+_OPENAI_HTTPX = cast(Any, import_module(DefaultAsyncHttpxClient.__mro__[1].__module__.partition(".")[0]))
 
 skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("OPENAI_API_KEY", "") in ("", "test-dummy-key"),
@@ -5574,6 +5577,54 @@ def test_prepare_tools_for_openai_with_mcp() -> None:
     assert set(mcp["allowed_tools"]) == {"tool_a", "tool_b"}
     # approval mapping created from approval_mode dict
     assert "require_approval" in mcp
+
+
+@pytest.mark.parametrize("allowed_tools", [None, [], ["read_only"]], ids=["omitted", "empty", "nonempty"])
+async def test_get_mcp_tool_preserves_allowed_tools_in_request(allowed_tools: list[str] | None) -> None:
+    tool_config = OpenAIChatClient.get_mcp_tool(
+        name="Docs MCP",
+        url="https://mcp.example",
+        allowed_tools=allowed_tools,
+        headers={"Authorization": "Bearer test-token"},
+        approval_mode="never_require",
+    )
+    expected: dict[str, Any] = {
+        "type": "mcp",
+        "server_label": "Docs_MCP",
+        "server_url": "https://mcp.example",
+        "headers": {"Authorization": "Bearer test-token"},
+        "require_approval": "never",
+    }
+    if allowed_tools is not None:
+        expected["allowed_tools"] = allowed_tools
+    assert tool_config == expected
+
+    requests: list[dict[str, Any]] = []
+
+    def handle_request(request: Any) -> Any:
+        requests.append(json.loads(request.content))
+        return _OPENAI_HTTPX.Response(
+            200,
+            json={
+                "id": "resp_test",
+                "object": "response",
+                "created_at": 0,
+                "model": "test-model",
+                "status": "completed",
+                "output": [],
+            },
+        )
+
+    async with AsyncOpenAI(
+        api_key="test-key",
+        base_url="https://example.test/v1",
+        http_client=DefaultAsyncHttpxClient(transport=_OPENAI_HTTPX.MockTransport(handle_request)),
+    ) as async_client:
+        client = OpenAIChatClient(model="test-model", async_client=async_client)
+        await client.get_response([Message(role="user", contents=["Hello"])], options={"tools": [tool_config]})
+
+    assert len(requests) == 1
+    assert requests[0]["tools"] == [expected]
 
 
 def test_prepare_tools_for_openai_single_function_tool() -> None:

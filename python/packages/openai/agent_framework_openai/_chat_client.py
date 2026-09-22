@@ -1471,6 +1471,7 @@ class RawOpenAIChatClient(
                 or provide a dict with "always_require_approval" and/or "never_require_approval"
                 keys mapping to lists of tool names.
             allowed_tools: List of tool names that are allowed to be used from this MCP server.
+                None omits the filter; an empty list is sent unchanged.
             headers: HTTP headers to include in requests to the MCP server.
 
         Returns:
@@ -1520,7 +1521,7 @@ class RawOpenAIChatClient(
         if headers:
             mcp["headers"] = headers
 
-        if allowed_tools:
+        if allowed_tools is not None:
             mcp["allowed_tools"] = allowed_tools
 
         if approval_mode:
