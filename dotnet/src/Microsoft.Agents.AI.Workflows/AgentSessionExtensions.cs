@@ -44,8 +44,7 @@ public static class AgentSessionExtensions
     /// If messages are set, but a different <see cref="WorkflowChatHistoryProvider"/> is used, or if chat history is stored in the underlying AI service, the messages will be ignored.
     /// </remarks>
     /// <param name="session">The agent session whose workflow chat history will be updated.</param>
-    /// <param name="messages">The list of chat messages to store in memory for the session. Replaces any existing messages for the specified
-    /// state key.</param>
+    /// <param name="messages">The chat messages to append to the workflow history for the session.</param>
     public static void AddMessagesToWorkflowChatHistory(this AgentSession session, IEnumerable<ChatMessage> messages)
     {
         _ = Throw.IfNull(session);
