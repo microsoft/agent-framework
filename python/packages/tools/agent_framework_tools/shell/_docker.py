@@ -92,12 +92,47 @@ _BLOCKED_EXTRA_RUN_FLAGS: tuple[str, ...] = (
     "--ipc",
     "--userns",
     "--user",
+    "-u",
     "--cgroupns",
     "--add-host",
     "--gpus",
     "--read-only",
     "--tmpfs",
 )
+
+# ``docker run`` short options, split by whether they consume a value. Docker's
+# flag parser lets boolean shorthands be clustered ("-it") and lets a
+# value-taking shorthand carry its value attached to it, so "-v/:/host:rw" is
+# "-v /:/host:rw" and "-u0:0" is "--user 0:0". Resolving which shorthands a
+# single-dash token actually sets therefore needs both sets: scanning stops at
+# the first value-taking shorthand because the rest of the token is its value.
+_BOOLEAN_SHORT_FLAGS = frozenset("diPqt")
+_VALUE_SHORT_FLAGS = frozenset("acehlmpuvw")
+
+
+def _short_flags_in_token(token: str) -> list[str]:
+    """Expand a single-dash token into the short flags it sets."""
+    flags: list[str] = []
+    for char in token[1:]:
+        if char in _BOOLEAN_SHORT_FLAGS:
+            flags.append(f"-{char}")
+            continue
+        if char in _VALUE_SHORT_FLAGS:
+            flags.append(f"-{char}")
+            # Everything after a value-taking shorthand is its value.
+            break
+        # Unknown shorthand: stop rather than misread a value as more flags.
+        break
+    return flags
+
+
+def _blocked_flags_in_token(raw: str) -> list[str]:
+    """Return the blocked flags a single ``docker run`` token resolves to."""
+    # Split off any "=value" tail so "--network=host" matches "--network".
+    flag = raw.split("=", 1)[0]
+    if flag.startswith("--"):
+        return [flag] if flag in _BLOCKED_EXTRA_RUN_FLAGS else []
+    return [short for short in _short_flags_in_token(flag) if short in _BLOCKED_EXTRA_RUN_FLAGS]
 
 
 def _validate_extra_run_args(args: Sequence[str]) -> None:
@@ -113,9 +148,7 @@ def _validate_extra_run_args(args: Sequence[str]) -> None:
     for raw in args:
         if not raw.startswith("-"):
             continue
-        # Split off any "=value" tail so "--network=host" matches "--network".
-        flag = raw.split("=", 1)[0]
-        if flag in _BLOCKED_EXTRA_RUN_FLAGS:
+        if _blocked_flags_in_token(raw):
             bad.append(raw)
     if bad:
         raise ValueError(
@@ -297,10 +330,13 @@ class DockerShellTool:
                (``--privileged``, ``--cap-add``, ``--security-opt``,
                ``--network``/``--net``, ``-v``/``--volume``,
                ``--mount``, ``--device``, ``--pid``, ``--ipc``,
-               ``--userns``, ``--user``, ``--read-only``,
+               ``--userns``, ``-u``/``--user``, ``--read-only``,
                ``--tmpfs``, ``--add-host``, ``--gpus``, ``--cgroupns``,
                ``--device-cgroup-rule``) are rejected at construction
-               time. Override the corresponding dedicated argument
+               time, including when a short flag carries its value
+               attached to it (``-v/:/host:rw``) or is clustered with
+               other short flags (``-itv/:/host:rw``). Override the
+               corresponding dedicated argument
                (``network``, ``host_workdir``, ``mount_readonly``,
                ``read_only_root``, ``user``, etc.) instead. If you
                genuinely need to relax the sandbox further, subclass
