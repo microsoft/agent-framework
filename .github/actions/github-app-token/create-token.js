@@ -125,7 +125,8 @@ async function createInstallationToken(config, dependencies = {}) {
   const authorization = authorizationMetadata(result);
   if ((config.contentsPermission === 'write' || config.actionsPermission === 'read' ||
        config.issuesPermission === 'read' || config.pullRequestsPermission === 'read') &&
-      (!authorization.repositories?.some((repo) => repo.full_name === config.targetRepository) ||
+      (authorization.repositories?.length !== 1 ||
+       authorization.repositories[0].full_name !== config.targetRepository ||
        authorization.permissions?.contents !== permissions.contents ||
        (permissions.actions && authorization.permissions?.actions !== permissions.actions) ||
        authorization.permissions?.issues !== permissions.issues ||

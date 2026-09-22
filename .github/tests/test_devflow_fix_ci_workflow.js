@@ -8,6 +8,11 @@ const { resolve } = require('node:path');
 const workflow = readFileSync(resolve(__dirname, '../workflows/devflow-fix-ci.yml'), 'utf8');
 
 describe('DevFlow PR repair entrypoint', () => {
+  it('does not let unrelated comments evict an accepted repair run', () => {
+    const workflowHeader = workflow.slice(0, workflow.indexOf('\njobs:'));
+    assert.doesNotMatch(workflowHeader, /^concurrency:/m);
+  });
+
   it('keeps authorization and private checkout in the source repository workflow', () => {
     const team = workflow.indexOf('Authorize the frozen command requester');
     const checkout = workflow.indexOf('Checkout authorized DevFlow controller');

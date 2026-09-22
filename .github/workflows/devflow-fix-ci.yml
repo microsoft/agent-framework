@@ -7,10 +7,6 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: devflow-pr-repair-${{ github.repository }}-${{ github.event.issue.number }}
-  cancel-in-progress: false
-
 env:
   DEVFLOW_REPOSITORY: ${{ vars.DF_REPO }}
   TARGET_REPO_PATH: ${{ github.workspace }}

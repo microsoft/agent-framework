@@ -160,7 +160,8 @@ describe('opt-in publishing permissions', () => {
 
   it('fails publishing token creation when GitHub does not confirm actual grants', async () => {
     for (const grants of [{}, { ...authorization, permissions: { contents: 'read', actions: 'read' } },
-      { ...authorization, repositories: [{ id: 456, full_name: 'other/repo' }] }]) {
+      { ...authorization, repositories: [{ id: 456, full_name: 'other/repo' }] },
+      { ...authorization, repositories: [...authorization.repositories, { id: 456, full_name: 'other/repo' }] }]) {
       await assert.rejects(createInstallationToken({ ...CONFIG, contentsPermission: 'write', actionsPermission: 'read' }, {
         execute: () => '+/8=\n',
         fetch: async () => ({ ok: true, json: async () => ({ token: 'secret', ...grants }) }),
