@@ -818,6 +818,71 @@ def test_get_mcp_tool_with_project_connection_id() -> None:
     assert "server_url" not in tool_config
 
 
+@pytest.mark.parametrize("allowed_tools", [None, [], ["read_only"]], ids=["omitted", "empty", "nonempty"])
+@pytest.mark.parametrize(
+    ("url", "project_connection_id"),
+    [
+        param("https://mcp.example", None, id="url"),
+        param(None, "conn-123", id="connection"),
+        param("https://mcp.example", "conn-123", id="url-and-connection"),
+    ],
+)
+async def test_get_mcp_tool_preserves_allowed_tools_in_request(
+    allowed_tools: list[str] | None, url: str | None, project_connection_id: str | None
+) -> None:
+    tool_config = FoundryChatClient.get_mcp_tool(
+        name="Docs MCP",
+        url=url,
+        project_connection_id=project_connection_id,
+        allowed_tools=allowed_tools,
+        headers={"Authorization": "Bearer test-token"},
+        approval_mode="never_require",
+    )
+    expected: dict[str, Any] = {
+        "type": "mcp",
+        "server_label": "Docs_MCP",
+        "require_approval": "never",
+    }
+    if url is not None:
+        expected["server_url"] = url
+    if project_connection_id is not None:
+        expected["project_connection_id"] = project_connection_id
+    else:
+        expected["headers"] = {"Authorization": "Bearer test-token"}
+    if allowed_tools is not None:
+        expected["allowed_tools"] = allowed_tools
+    assert dict(tool_config) == expected
+
+    requests: list[dict[str, Any]] = []
+
+    def handle_request(request: Any) -> Any:
+        requests.append(json.loads(request.content))
+        return _OPENAI_HTTPX.Response(
+            200,
+            json={
+                "id": "resp_test",
+                "object": "response",
+                "created_at": 0,
+                "model": "test-model",
+                "status": "completed",
+                "output": [],
+            },
+        )
+
+    async with AsyncOpenAI(
+        api_key="test-key",
+        base_url="https://example.test/v1",
+        http_client=DefaultAsyncHttpxClient(transport=_OPENAI_HTTPX.MockTransport(handle_request)),
+    ) as async_client:
+        project_client = MagicMock()
+        project_client.get_openai_client.return_value = async_client
+        client = FoundryChatClient(project_client=project_client, model="test-model")
+        await client.get_response([Message(role="user", contents=["Hello"])], options={"tools": [tool_config]})
+
+    assert len(requests) == 1
+    assert requests[0]["tools"] == [expected]
+
+
 def test_get_mcp_tool_requires_url_or_project_connection_id() -> None:
     """Missing both ``url`` and ``project_connection_id`` is always invalid."""
     with pytest.raises(ValueError, match="url.*project_connection_id"):
