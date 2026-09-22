@@ -7,10 +7,13 @@ version: 2
 updates:
   # Maintain dependencies for nuget
   - package-ecosystem: "nuget"
-    # Use the Dependabot-only solution in this folder so NuGet discovery does
-    # not expand the full developer solution, which includes samples and times
-    # out before creating update PRs.
-    directory: "dotnet/dependabot/"
+    directory: "dotnet/"
+    # The samples tree contains most of the .NET package manifests and causes
+    # the NuGet updater to exceed Dependabot's fixed execution timeout. Keep the
+    # production source, tests, and central package versions in scope so updates
+    # can be opened again.
+    exclude-paths:
+      - "samples/**"
     schedule:
       interval: "cron"
       cronjob: "0 8 * * 4,0" # Every Thursday(4) and Sunday(0) at 8:00 UTC
