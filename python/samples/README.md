@@ -100,6 +100,7 @@ variable.
 | `agent-framework-anthropic` | `AnthropicClient` | `ANTHROPIC_CHAT_MODEL` | `claude-sonnet-4-5-20250929` |
 | `agent-framework-foundry` | `FoundryEmbeddingClient` | `FOUNDRY_MODELS_ENDPOINT` | `https://my-endpoint.inference.ai.azure.com` |
 | `agent-framework-foundry` | `FoundryEmbeddingClient` | `FOUNDRY_MODELS_API_KEY` | `env-key` |
+| `agent-framework-foundry` | `FoundryEmbeddingClient` | `FOUNDRY_PROJECT_ENDPOINT` | `https://my-project.services.ai.azure.com/api/projects/my-project` |
 | `agent-framework-foundry` | `FoundryEmbeddingClient` | `FOUNDRY_EMBEDDING_MODEL` | `text-embedding-3-small` |
 | `agent-framework-foundry` | `FoundryEmbeddingClient` | `FOUNDRY_IMAGE_EMBEDDING_MODEL` | `Cohere-embed-v3-english` |
 | `agent-framework-azure-ai-search` | `AzureAISearchContextProvider` | `AZURE_SEARCH_ENDPOINT` | `https://my-search.search.windows.net` |

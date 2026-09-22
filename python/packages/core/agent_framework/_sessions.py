@@ -831,17 +831,14 @@ class ContextProvider:
         """
 
 
-def _is_approval_placeholder_result(content: Content) -> bool:
-    result = getattr(content, "result", None)
-    return isinstance(result, str) and "[APPROVAL_PENDING]" in result
-
-
 def _approval_controls_to_keep(messages: Sequence[Message]) -> set[int]:
     unresolved_requests_by_id: dict[str, Content] = {}
     local_request_ids_by_call_id: dict[str, deque[str]] = {}
     local_request_ids_by_occurrence: dict[str, str] = {}
+    local_requests_by_id: dict[str, Content] = {}
+    closed_request_occurrences: set[int] = set()
     unresolved_local_responses_by_id: dict[str, Content] = {}
-    local_responses_by_call_id: dict[str, deque[tuple[str, str | None]]] = {}
+    local_responses_by_call_id: dict[str, deque[tuple[str, Content | None]]] = {}
 
     for message in messages:
         for content in message.contents:
@@ -850,6 +847,7 @@ def _approval_controls_to_keep(messages: Sequence[Message]) -> set[int]:
                 if content.id is not None and function_call is not None and function_call.call_id is not None:
                     if content.id not in unresolved_requests_by_id:
                         unresolved_requests_by_id[content.id] = content
+                        local_requests_by_id[content.id] = content
                         local_request_ids_by_call_id.setdefault(function_call.call_id, deque()).append(content.id)
                         if function_call.id is not None:
                             local_request_ids_by_occurrence[function_call.id] = content.id
@@ -864,8 +862,14 @@ def _approval_controls_to_keep(messages: Sequence[Message]) -> set[int]:
                 continue
             if content.type == "function_approval_response":
                 function_call = content.function_call
-                if content.id is not None:
-                    unresolved_requests_by_id.pop(local_request_ids_by_occurrence.get(content.id, content.id), None)
+                request_id = (
+                    local_request_ids_by_occurrence.get(content.id, content.id) if content.id is not None else None
+                )
+                request = local_requests_by_id.get(request_id) if request_id is not None else None
+                if request_id is not None:
+                    unresolved_requests_by_id.pop(request_id, None)
+                if request is not None and id(request) in closed_request_occurrences:
+                    continue
                 if (
                     content.id is not None
                     and function_call is not None
@@ -874,15 +878,14 @@ def _approval_controls_to_keep(messages: Sequence[Message]) -> set[int]:
                     and content.id not in unresolved_local_responses_by_id
                 ):
                     unresolved_local_responses_by_id[content.id] = content
-                    request_id = local_request_ids_by_occurrence.get(content.id)
                     local_responses_by_call_id.setdefault(function_call.call_id, deque()).append((
                         content.id,
-                        request_id,
+                        request,
                     ))
                 continue
             if content.call_id is None:
                 continue
-            is_terminal_result = content.type == "function_result" and not _is_approval_placeholder_result(content)
+            is_terminal_result = content.type == "function_result"
             is_follow_up_request = content.user_input_request and content.type not in {
                 "function_approval_request",
                 "function_approval_response",
@@ -894,16 +897,20 @@ def _approval_controls_to_keep(messages: Sequence[Message]) -> set[int]:
                 while responses and responses[0][0] not in unresolved_local_responses_by_id:
                     responses.popleft()
                 if responses:
-                    response_id, request_id = responses.popleft()
+                    response_id, request = responses.popleft()
                     unresolved_local_responses_by_id.pop(response_id, None)
-                    if request_id is not None:
-                        unresolved_requests_by_id.pop(request_id, None)
+                    if request is not None:
+                        closed_request_occurrences.add(id(request))
+                        if request.id is not None:
+                            unresolved_requests_by_id.pop(request.id, None)
                     resolved_response = True
             if not resolved_response and (request_ids := local_request_ids_by_call_id.get(content.call_id)):
                 while request_ids and request_ids[0] not in unresolved_requests_by_id:
                     request_ids.popleft()
                 if request_ids:
-                    unresolved_requests_by_id.pop(request_ids.popleft(), None)
+                    request = unresolved_requests_by_id.pop(request_ids.popleft(), None)
+                    if request is not None:
+                        closed_request_occurrences.add(id(request))
 
     return {
         id(content) for content in (*unresolved_requests_by_id.values(), *unresolved_local_responses_by_id.values())
