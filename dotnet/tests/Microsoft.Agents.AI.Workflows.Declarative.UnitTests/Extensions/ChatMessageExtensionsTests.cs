@@ -871,26 +871,23 @@ public sealed class ChatMessageExtensionsTests
     }
 
     [Fact]
-    public void MergeForLastMessagePreservesOriginalMediaWhenCanonicalOrderIsAmbiguous()
+    public void MergeForLastMessageMapsCanonicalizedMediaByProviderOrder()
     {
         // Arrange
         DataContent firstInput = new("data:image/jpeg;base64,QUE=", "image/jpeg");
         DataContent secondInput = new("data:image/jpeg;base64,QkI=", "image/jpeg");
+        HostedFileContent firstCanonical = new("file-a");
+        HostedFileContent secondCanonical = new("file-b");
         ChatMessage input = new(ChatRole.User, [firstInput, secondInput]);
-        ChatMessage roundTripped = new(
-            ChatRole.User,
-            [new HostedFileContent("file-b"), new HostedFileContent("file-a")])
-        {
-            MessageId = "id"
-        };
+        ChatMessage roundTripped = new(ChatRole.User, [firstCanonical, secondCanonical]) { MessageId = "id" };
 
         // Act
         ChatMessage result = input.MergeForLastMessage(roundTripped);
 
         // Assert
         Assert.Collection(result.Contents,
-            content => Assert.Same(firstInput, content),
-            content => Assert.Same(secondInput, content));
+            content => Assert.Same(firstCanonical, content),
+            content => Assert.Same(secondCanonical, content));
     }
 
     [Fact]

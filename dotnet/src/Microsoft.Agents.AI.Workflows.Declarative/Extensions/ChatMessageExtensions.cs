@@ -32,8 +32,8 @@ internal static class ChatMessageExtensions
     /// <see cref="ChatMessage.MessageId"/> and any provider-augmented metadata, and is forward-
     /// compatible with new properties added on <see cref="ChatMessage"/> in the abstractions
     /// layer. Only the <see cref="ChatMessage.Contents"/> list is mutated to preserve the
-    /// caller's ordering while substituting server-side references when their correspondence
-    /// to the original non-text content is unambiguous.
+    /// caller's ordering while substituting server-side references using stable identity first,
+    /// then the provider-preserved order when all remaining media items correspond one-to-one.
     /// </para>
     /// </remarks>
     public static ChatMessage MergeForLastMessage(this ChatMessage input, ChatMessage? inputMessage)
@@ -46,6 +46,7 @@ internal static class ChatMessageExtensions
         List<AIContent> inputNonTextContents = [.. input.Contents.Where(content => content is not TextContent)];
         List<AIContent> canonicalNonTextContents = [.. inputMessage.Contents.Where(content => content is not TextContent)];
         AIContent[] replacements = [.. inputNonTextContents];
+        bool[] inputContentMatched = new bool[inputNonTextContents.Count];
         bool[] canonicalContentUsed = new bool[canonicalNonTextContents.Count];
 
         for (int inputIndex = 0; inputIndex < inputNonTextContents.Count; inputIndex++)
@@ -56,19 +57,24 @@ internal static class ChatMessageExtensions
                     HasSameStableIdentity(inputNonTextContents[inputIndex], canonicalNonTextContents[canonicalIndex]))
                 {
                     replacements[inputIndex] = canonicalNonTextContents[canonicalIndex];
+                    inputContentMatched[inputIndex] = true;
                     canonicalContentUsed[canonicalIndex] = true;
                     break;
                 }
             }
         }
 
-        if (inputNonTextContents.Count == 1 &&
-            canonicalNonTextContents.Count == 1 &&
-            !canonicalContentUsed[0] &&
-            IsMediaContent(inputNonTextContents[0]) &&
-            IsMediaContent(canonicalNonTextContents[0]))
+        List<int> unmatchedInputIndexes = [.. Enumerable.Range(0, inputNonTextContents.Count).Where(index => !inputContentMatched[index])];
+        List<int> unmatchedCanonicalIndexes = [.. Enumerable.Range(0, canonicalNonTextContents.Count).Where(index => !canonicalContentUsed[index])];
+
+        if (unmatchedInputIndexes.Count == unmatchedCanonicalIndexes.Count &&
+            unmatchedInputIndexes.All(index => IsMediaContent(inputNonTextContents[index])) &&
+            unmatchedCanonicalIndexes.All(index => IsMediaContent(canonicalNonTextContents[index])))
         {
-            replacements[0] = canonicalNonTextContents[0];
+            for (int index = 0; index < unmatchedInputIndexes.Count; index++)
+            {
+                replacements[unmatchedInputIndexes[index]] = canonicalNonTextContents[unmatchedCanonicalIndexes[index]];
+            }
         }
 
         List<AIContent> mergedContents = [];
