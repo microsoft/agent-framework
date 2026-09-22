@@ -98,7 +98,35 @@ _BLOCKED_EXTRA_RUN_FLAGS: tuple[str, ...] = (
     "--gpus",
     "--read-only",
     "--tmpfs",
+    "--memory",
+    "-m",
+    "--memory-swap",
+    "--pids-limit",
 )
+
+# ``docker run`` long options that take no value. Everything else is assumed to
+# consume the following token when its value is not attached with "=", so a
+# detached value that happens to start with a dash ("--env-file -vars.env") is
+# not mistaken for an option. Booleans are the smaller and more stable half of
+# the flag table, and assuming an unknown flag takes a value keeps the
+# validator from rejecting configurations that docker accepts.
+_VALUELESS_LONG_FLAGS: frozenset[str] = frozenset({
+    "--detach",
+    "--disable-content-trust",
+    "--help",
+    "--init",
+    "--interactive",
+    "--no-healthcheck",
+    "--oom-kill-disable",
+    "--privileged",
+    "--publish-all",
+    "--quiet",
+    "--read-only",
+    "--rm",
+    "--sig-proxy",
+    "--tty",
+    "--use-api-socket",
+})
 
 # ``docker run`` short options, split by whether they consume a value. Docker's
 # flag parser lets boolean shorthands be clustered ("-it") and lets a
@@ -135,6 +163,29 @@ def _blocked_flags_in_token(raw: str) -> list[str]:
     return [short for short in _short_flags_in_token(flag) if short in _BLOCKED_EXTRA_RUN_FLAGS]
 
 
+def _consumes_next_token(raw: str) -> bool:
+    """Return whether this token takes the following token as its value.
+
+    Needed so a detached value is not decoded as an option: docker accepts
+    ``--env-file -vars.env``, where ``-vars.env`` is a filename rather than
+    ``-v``.
+    """
+    name, sep, _ = raw.partition("=")
+    if sep:
+        # Value is attached, e.g. "--network=host".
+        return False
+    if name.startswith("--"):
+        # pflag booleans only accept "--flag=false", never "--flag false".
+        return name not in _VALUELESS_LONG_FLAGS
+    shorts = _short_flags_in_token(name)
+    if not shorts:
+        return False
+    if len(name) - 1 > len(shorts):
+        # Trailing text is the value, e.g. "-v/:/host:rw" or "-m0".
+        return False
+    return shorts[-1][1] in _VALUE_SHORT_FLAGS
+
+
 def _validate_extra_run_args(args: Sequence[str]) -> None:
     """Reject extra ``docker run`` args that would break the isolation contract.
 
@@ -145,11 +196,19 @@ def _validate_extra_run_args(args: Sequence[str]) -> None:
     build their own argv rather than slip past the check.
     """
     bad: list[str] = []
-    for raw in args:
-        if not raw.startswith("-"):
+    index = 0
+    while index < len(args):
+        raw = args[index]
+        index += 1
+        # "-" is a conventional positional, and "--" only ends option parsing;
+        # neither takes a value, and args after "--" are still worth checking
+        # so a blocked flag cannot hide behind the marker.
+        if raw in ("-", "--") or not raw.startswith("-"):
             continue
         if _blocked_flags_in_token(raw):
             bad.append(raw)
+        if _consumes_next_token(raw):
+            index += 1
     if bad:
         raise ValueError(
             "extra_run_args contains flags that would dismantle DockerShellTool's "
@@ -332,11 +391,12 @@ class DockerShellTool:
                ``--mount``, ``--device``, ``--pid``, ``--ipc``,
                ``--userns``, ``-u``/``--user``, ``--read-only``,
                ``--tmpfs``, ``--add-host``, ``--gpus``, ``--cgroupns``,
-               ``--device-cgroup-rule``) are rejected at construction
-               time, including when a short flag carries its value
-               attached to it (``-v/:/host:rw``) or is clustered with
-               other short flags (``-itv/:/host:rw``). Override the
-               corresponding dedicated argument
+               ``--device-cgroup-rule``, ``-m``/``--memory``,
+               ``--memory-swap``, ``--pids-limit``) are rejected at
+               construction time, including when a short flag carries
+               its value attached to it (``-v/:/host:rw``) or is
+               clustered with other short flags (``-itv/:/host:rw``).
+               Override the corresponding dedicated argument
                (``network``, ``host_workdir``, ``mount_readonly``,
                ``read_only_root``, ``user``, etc.) instead. If you
                genuinely need to relax the sandbox further, subclass

@@ -32,6 +32,8 @@ from agent_framework_tools.shell._docker import (
     _BLOCKED_EXTRA_RUN_FLAGS,
     _BOOLEAN_SHORT_FLAGS,
     _VALUE_SHORT_FLAGS,
+    _VALUELESS_LONG_FLAGS,
+    _consumes_next_token,
     build_exec_argv,
     build_run_argv,
 )
@@ -247,6 +249,20 @@ def test_build_exec_argv_interactive():
         # Blocked short flag clustered behind boolean short flags.
         ("-itv/:/host:rw",),
         ("-itu0:0",),
+        # Resource caps the tool sets as isolation defaults: overriding these
+        # silently removes the memory/pids limits.
+        ("-m0",),
+        ("-m", "0"),
+        ("--memory=0",),
+        ("--memory", "0"),
+        ("--memory-swap=-1",),
+        ("--pids-limit=-1",),
+        ("--pids-limit", "-1"),
+        ("-m0", "--pids-limit=-1"),
+        # A blocked flag after a token that consumes nothing is still caught.
+        ("--", "-u0:0"),
+        ("-it", "-u0:0"),
+        ("--privileged", "-v/:/host:rw"),
     ],
 )
 def test_dockershell_rejects_isolation_breaking_extra_run_args(extra):
@@ -282,6 +298,16 @@ def test_dockershell_accepts_benign_extra_run_args():
         # End-of-options marker and a bare dash.
         ("--",),
         ("-",),
+        # Detached values that start with a dash belong to the preceding
+        # option and must not be decoded as options themselves.
+        ("--env-file", "-variables.env"),
+        ("--name", "-upper"),
+        ("--label", "-v/:/host:rw"),
+        ("--entrypoint", "-v"),
+        ("-e", "-value"),
+        ("--hostname", "-unusual"),
+        # Attached values on non-blocked options are likewise not options.
+        ("--env-file=-variables.env",),
     ],
 )
 def test_dockershell_accepts_extra_run_args_that_are_not_blocked(extra):
@@ -336,6 +362,59 @@ def test_short_flag_tables_match_docker_run_options():
     assert modelled == docker_shorts
     # A shorthand cannot be both boolean and value-taking.
     assert not (_BOOLEAN_SHORT_FLAGS & _VALUE_SHORT_FLAGS)
+
+
+# ``docker run --help`` long options that take no value, transcribed for the
+# same reason as the short aliases above.
+_DOCKER_RUN_BOOLEAN_FLAGS = frozenset({
+    "--detach",
+    "--help",
+    "--init",
+    "--interactive",
+    "--no-healthcheck",
+    "--oom-kill-disable",
+    "--privileged",
+    "--publish-all",
+    "--quiet",
+    "--read-only",
+    "--rm",
+    "--sig-proxy",
+    "--tty",
+    "--use-api-socket",
+})
+
+
+def test_valueless_long_flags_covers_every_docker_boolean():
+    """A boolean flag missing from the table would swallow the next token.
+
+    That would let ``("--some-bool", "-u0:0")`` hide a blocked flag, so the
+    table must list every valueless long option.
+    """
+    missing = _DOCKER_RUN_BOOLEAN_FLAGS - _VALUELESS_LONG_FLAGS
+    assert not missing, f"boolean flags missing from _VALUELESS_LONG_FLAGS: {sorted(missing)}"
+
+
+@pytest.mark.parametrize(
+    ("token", "consumes"),
+    [
+        # Long options: "=" attaches the value, otherwise arity decides.
+        ("--env-file", True),
+        ("--env-file=vars.env", False),
+        ("--privileged", False),
+        ("--read-only", False),
+        ("--network", True),
+        # Short options: an attached value means the next token is unrelated.
+        ("-v", True),
+        ("-v/:/host:rw", False),
+        ("-m", True),
+        ("-m0", False),
+        ("-it", False),
+        ("-itv", True),
+        ("-e", True),
+    ],
+)
+def test_consumes_next_token(token, consumes):
+    assert _consumes_next_token(token) is consumes
 
 
 def test_build_exec_argv_non_interactive_appends_dash_c():
