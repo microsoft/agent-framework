@@ -1,0 +1,4 @@
+{
+  "python_image": "ghcr.io/astral-sh/uv@sha256:5d2a332da2ed61662ec7cdb1cb819be5d4b4d893007f580cf9fae415825f7e42",
+  "dotnet_image": "mcr.microsoft.com/dotnet/sdk@sha256:35d40304542c8689331f8cab17c65926cdf48fe711e289321d71924b230a7d29"
+}

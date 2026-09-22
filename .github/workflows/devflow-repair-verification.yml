@@ -1,0 +1,81 @@
+name: DevFlow isolated verification
+on:
+  workflow_call:
+    inputs:
+      automation_sha:
+        type: string
+        required: true
+      artifact_id:
+        type: string
+        required: true
+      request_sha256:
+        type: string
+        required: true
+      stage:
+        type: string
+        required: true
+    outputs:
+      artifact_id:
+        value: ${{ jobs.verify.outputs.artifact_id }}
+      result_sha256:
+        value: ${{ jobs.verify.outputs.result_sha256 }}
+# No repository, cloud, model or private-repository credentials enter this job.
+permissions: {}
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    permissions: {}
+    outputs:
+      artifact_id: ${{ steps.artifact.outputs.artifact-id }}
+      result_sha256: ${{ steps.result.outputs.result_sha256 }}
+    steps:
+      - name: Fetch public trusted automation without credentials
+        env:
+          AUTOMATION_SHA: ${{ inputs.automation_sha }}
+          PUBLIC_REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$AUTOMATION_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$PUBLIC_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]
+          git init --quiet trusted-automation
+          git -C trusted-automation -c credential.helper= fetch --depth=1 "https://github.com/$PUBLIC_REPOSITORY.git" "$AUTOMATION_SHA"
+          git -C trusted-automation checkout --quiet --detach FETCH_HEAD
+      - name: Download only the designated controller artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ inputs.artifact_id }}
+          path: ${{ runner.temp }}/controller-input
+          merge-multiple: true
+      - name: Verify frozen public source on this credential-free runner
+        env:
+          REQUEST_SHA256: ${{ inputs.request_sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/verification-output"
+          python3 trusted-automation/.github/scripts/verify_pr_repair.py \
+            --request "$RUNNER_TEMP/controller-input/verification-request.json" \
+            --request-sha256 "$REQUEST_SHA256" \
+            --output "$RUNNER_TEMP/verification-output/result.json"
+      - name: Digest bounded verification result
+        id: result
+        shell: bash
+        run: |
+          python3 - <<'PYTHON'
+          import hashlib, os, pathlib
+          data = (pathlib.Path(os.environ['RUNNER_TEMP']) / 'verification-output/result.json').read_bytes()
+          if len(data) > 8_000_000:
+              raise SystemExit('Verification result exceeds limit')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('result_sha256=' + hashlib.sha256(data).hexdigest() + '\n')
+          PYTHON
+      - name: Upload verification evidence only
+        id: artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: repair-verification-${{ github.run_id }}-${{ inputs.stage }}
+          path: ${{ runner.temp }}/verification-output/result.json
+          if-no-files-found: error
+          retention-days: 7

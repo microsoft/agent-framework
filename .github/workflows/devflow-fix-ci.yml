@@ -1,0 +1,152 @@
+name: DevFlow PR Repair
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+
+jobs:
+  public_snapshot:
+    if: >-
+      github.run_attempt == 1 && github.event.issue.pull_request &&
+      (github.event.comment.author_association == 'MEMBER' || github.event.comment.author_association == 'OWNER') &&
+      contains(github.event.comment.body, '/fix')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: devflow-repair-preauth-${{ github.repository }}-${{ github.event.issue.number }}
+      cancel-in-progress: false
+    outputs:
+      snapshot: ${{ steps.freeze.outputs.snapshot }}
+      sha256: ${{ steps.freeze.outputs.sha256 }}
+    steps:
+      - name: Checkout trusted automation only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Freeze public command and PR revision
+        id: freeze
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const { capture, parseCommand } = require('./.github/scripts/fix_ci_snapshot.js');
+            if (!parseCommand(context.payload.comment.body)) return;
+            const frozen = await capture({ github, context });
+            core.setOutput('snapshot', frozen.base64);
+            core.setOutput('sha256', frozen.sha256);
+
+  team_check:
+    needs: public_snapshot
+    if: ${{ needs.public_snapshot.outputs.sha256 != '' }}
+    runs-on: ubuntu-latest
+    environment: github-app-auth
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      permitted: ${{ steps.authorize.outputs.permitted }}
+      authorized_sha256: ${{ steps.authorize.outputs.authorized_sha256 }}
+    steps:
+      - name: Checkout trusted automation only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Get repository-scoped App token
+        id: auth
+        uses: ./.github/actions/github-app-token
+        with:
+          mode: app
+          azure-client-id: ${{ secrets.GH_APP_AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.GH_APP_AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.GH_APP_AZURE_SUBSCRIPTION_ID }}
+          key-vault-name: ${{ secrets.GH_APP_KEY_VAULT_NAME }}
+          key-name: ${{ secrets.GH_APP_KEY_NAME }}
+          github-app-client-id: ${{ secrets.GH_APP_CLIENT_ID }}
+          github-app-installation-id: ${{ secrets.GH_APP_INSTALLATION_ID }}
+          repository: ${{ github.repository }}
+          contents-permission: read
+          actions-permission: read
+          issues-permission: read
+          pull-requests-permission: read
+      - name: Authorize the frozen public request
+        id: authorize
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          SNAPSHOT: ${{ needs.public_snapshot.outputs.snapshot }}
+          SNAPSHOT_SHA256: ${{ needs.public_snapshot.outputs.sha256 }}
+          TEAM_NAME: ${{ secrets.DEVELOPER_TEAM }}
+        with:
+          github-token: ${{ steps.auth.outputs.token }}
+          script: |
+            const { authorize } = require('./.github/scripts/fix_ci_snapshot.js');
+            const permitted = await authorize({
+              base64: process.env.SNAPSHOT, sha256: process.env.SNAPSHOT_SHA256,
+              context, github, core, teamSlug: process.env.TEAM_NAME,
+              checkTeamMembership: require('./.github/scripts/check_team_membership.js'),
+            });
+            core.setOutput('permitted', permitted ? 'true' : 'false');
+            if (permitted) core.setOutput('authorized_sha256', process.env.SNAPSHOT_SHA256);
+
+  authorized_controller:
+    needs: [public_snapshot, team_check]
+    if: ${{ needs.team_check.outputs.permitted == 'true' && needs.team_check.outputs.authorized_sha256 == needs.public_snapshot.outputs.sha256 }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      snapshot: ${{ steps.bind.outputs.snapshot }}
+      sha256: ${{ steps.bind.outputs.sha256 }}
+      devflow_sha: ${{ steps.bind.outputs.devflow_sha }}
+      command: ${{ steps.bind.outputs.command }}
+    steps:
+      - name: Checkout trusted automation only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Bind private controller only after team authorization
+        id: bind
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          PUBLIC_SNAPSHOT: ${{ needs.public_snapshot.outputs.snapshot }}
+          PUBLIC_SHA256: ${{ needs.team_check.outputs.authorized_sha256 }}
+          DEVFLOW_REPOSITORY: ${{ vars.DF_REPO }}
+        with:
+          github-token: ${{ secrets.DEVFLOW_TOKEN }}
+          script: |
+            const { bindController } = require('./.github/scripts/fix_ci_snapshot.js');
+            const [owner, repo] = process.env.DEVFLOW_REPOSITORY.split('/');
+            const { data: commit } = await github.rest.repos.getCommit({ owner, repo, ref: 'main' });
+            const bound = bindController({ base64: process.env.PUBLIC_SNAPSHOT,
+              sha256: process.env.PUBLIC_SHA256, context, devflowSha: commit.sha });
+            core.setOutput('snapshot', bound.base64);
+            core.setOutput('sha256', bound.sha256);
+            core.setOutput('devflow_sha', bound.snapshot.devflow_sha);
+            core.setOutput('command', bound.snapshot.command);
+
+  repair:
+    needs: [public_snapshot, team_check, authorized_controller]
+    if: ${{ needs.team_check.outputs.permitted == 'true' }}
+    concurrency:
+      group: devflow-pr-repair-${{ github.repository }}-${{ github.event.issue.number }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+      id-token: write
+      copilot-requests: write
+    uses: ./.github/workflows/devflow-repair-pipeline.yml
+    with:
+      snapshot: ${{ needs.authorized_controller.outputs.snapshot }}
+      snapshot_sha256: ${{ needs.authorized_controller.outputs.sha256 }}
+      public_snapshot: ${{ needs.public_snapshot.outputs.snapshot }}
+      public_sha256: ${{ needs.team_check.outputs.authorized_sha256 }}
+      devflow_sha: ${{ needs.authorized_controller.outputs.devflow_sha }}
+      automation_sha: ${{ github.sha }}
+      command: ${{ needs.authorized_controller.outputs.command }}
+    secrets: inherit
