@@ -280,6 +280,27 @@ public sealed class InvokeAzureAgentExecutorTest(ITestOutputHelper output) : Wor
     }
 
     [Fact]
+    public async Task InvalidResponseObjectOutputDoesNotSuppressIndependentExternalLoopFailureAsync()
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        this.State.Set(
+            "Result",
+            FormulaValue.NewRecordFromFields(new NamedValue("IsResolved", FormulaValue.New(false))));
+        CapturingAgentProvider provider = new("not json");
+        InvokeAzureAgent model =
+            this.CreateModel(
+                displayName: nameof(InvalidResponseObjectOutputDoesNotSuppressIndependentExternalLoopFailureAsync),
+                agentName: "BrainInvalidResponseWithInvalidLoop",
+                responseObjectVariable: "Result",
+                externalLoopWhen: "UnknownFunction()");
+
+        // Act & Assert
+        await Assert.ThrowsAsync<DeclarativeActionException>(
+            () => this.ExecuteAsync(new InvokeAzureAgentExecutor(model, provider, this.State), isDiscrete: false));
+    }
+
+    [Fact]
     public async Task InvalidResponseObjectOutputStillEvaluatesIndependentExternalLoopAsync()
     {
         // Arrange

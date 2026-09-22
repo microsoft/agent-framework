@@ -122,19 +122,12 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, ResponseA
 
         if (this.Model.Input?.ExternalLoop?.When is not null)
         {
-            bool requestInput;
-            try
-            {
-                requestInput = this.Evaluator.GetValue(this.Model.Input.ExternalLoop.When).Value;
-            }
-            catch (InvalidOperationException) when (responseObjectWasBlanked)
-            {
-                requestInput = false;
-            }
-            catch (AggregateException) when (responseObjectWasBlanked)
-            {
-                requestInput = false;
-            }
+            bool requestInput =
+                !responseObjectWasBlanked ||
+                responseObjectPath is null ||
+                !ReferencesPath(this.Model.Input.ExternalLoop.When, responseObjectPath)
+                    ? this.Evaluator.GetValue(this.Model.Input.ExternalLoop.When).Value
+                    : false;
 
             if (requestInput)
             {
@@ -145,6 +138,16 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, ResponseA
         }
 
         await context.SendResultMessageAsync(this.Id, result: null, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static bool ReferencesPath(BoolExpression expression, PropertyPath path)
+    {
+        string? expressionText =
+            expression.IsVariableReference ?
+            expression.VariableReference?.ToString() :
+            expression.ExpressionText;
+
+        return expressionText?.Contains(path.ToString(), StringComparison.OrdinalIgnoreCase) is true;
     }
 
     private Dictionary<string, object?>? GetStructuredInputs()
