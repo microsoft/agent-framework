@@ -1,7 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -10,6 +12,7 @@ namespace Microsoft.Agents.AI;
 /// Provides extension methods for the <see cref="FunctionInvocationContext"/> instances that are passed to the
 /// function invocation callbacks registered with <see cref="FunctionInvocationDelegatingAgentBuilderExtensions"/>.
 /// </summary>
+[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public static class FunctionInvocationContextExtensions
 {
     /// <summary>
@@ -22,7 +25,10 @@ public static class FunctionInvocationContextExtensions
     /// The wrapped function, or <paramref name="function"/> itself when no other callbacks are pending for this invocation.
     /// </returns>
     /// <exception cref="ArgumentNullException"><paramref name="context"/> or <paramref name="function"/> is <see langword="null"/>.</exception>
-    /// <exception cref="InvalidOperationException">No function invocation callback is running for <paramref name="context"/>.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// No function invocation callback is running for <paramref name="context"/>, or the running callback already
+    /// called its continuation.
+    /// </exception>
     /// <remarks>
     /// <para>
     /// A callback that assigns a different function to <see cref="FunctionInvocationContext.Function"/> replaces the
@@ -31,7 +37,9 @@ public static class FunctionInvocationContextExtensions
     /// that those callbacks run for it as well.
     /// </para>
     /// <para>
-    /// This method must be called while a function invocation callback is running for <paramref name="context"/>.
+    /// This method must be called by a function invocation callback that is running for <paramref name="context"/>,
+    /// and before that callback calls its continuation. Once the continuation ran, the callbacks it went through
+    /// are no longer pending, so the callbacks to wrap can no longer be determined.
     /// </para>
     /// </remarks>
     public static AIFunction WrapWithPendingMiddleware(this FunctionInvocationContext context, AIFunction function)

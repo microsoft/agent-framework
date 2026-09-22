@@ -32,11 +32,13 @@ public static class FunctionInvocationDelegatingAgentBuilderExtensions
     /// <para>
     /// A callback can redirect the invocation by assigning a different <see cref="AIFunction"/> to
     /// <see cref="FunctionInvocationContext.Function"/> before calling the continuation. The continuation then invokes
-    /// that function instead of the one that was requested. The replacement is invoked directly, so callbacks registered
-    /// after the one performing the replacement do not observe that invocation; use
-    /// <see cref="FunctionInvocationContextExtensions.WrapWithPendingMiddleware"/> to have them run for the replacement
-    /// as well. A replacement does not change how the function call was resolved before the callbacks ran, so tool
-    /// approval and telemetry still reflect the originally requested function.
+    /// that function instead of the one that was requested, and restores the previous value before it returns, so a
+    /// callback that calls its continuation more than once goes through the same callbacks each time. The replacement
+    /// is invoked directly, so callbacks registered after the one performing the replacement do not observe that
+    /// invocation; use <see cref="FunctionInvocationContextExtensions.WrapWithPendingMiddleware"/> before calling the
+    /// continuation to have them run for the replacement as well. A replacement does not change how the function call
+    /// was resolved before the callbacks ran, so tool approval and telemetry still reflect the originally requested
+    /// function.
     /// </para>
     /// <para>
     /// The callbacks also apply to functions added to or replaced in the current <see cref="ChatOptions.Tools"/>

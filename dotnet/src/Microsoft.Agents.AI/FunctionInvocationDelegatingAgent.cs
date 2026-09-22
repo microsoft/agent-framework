@@ -216,19 +216,30 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
         {
             for (var active = s_invocationScope.Value; active is not null; active = active.Parent)
             {
-                if (ReferenceEquals(active.Context, context))
+                // Execution contexts that escaped a callback keep a reference to its scope, so a scope is only
+                // usable while its callback runs.
+                if (!active.IsRunning || !ReferenceEquals(active.Context, context))
                 {
-                    // Functions are wrapped from the last callback to the first, so the callbacks that
-                    // still have to run for this invocation are the ones before the running callback.
-                    var chain = active.MiddlewareChain;
-                    var pendingCount = Array.IndexOf(chain, active.Middleware);
-                    for (var i = 0; i < pendingCount; i++)
-                    {
-                        function = Wrap(function, chain[i], chain);
-                    }
-
-                    return function;
+                    continue;
                 }
+
+                if (active.ContinuationInvoked)
+                {
+                    throw new InvalidOperationException(
+                        "The function invocation callbacks that have not run yet cannot be determined after the continuation was called. " +
+                        $"Call {nameof(WrapWithPendingMiddleware)} before calling the continuation.");
+                }
+
+                // Functions are wrapped from the last callback to the first, so the callbacks that
+                // still have to run for this invocation are the ones before the running callback.
+                var chain = active.MiddlewareChain;
+                var pendingCount = Array.IndexOf(chain, active.Middleware);
+                for (var i = 0; i < pendingCount; i++)
+                {
+                    function = Wrap(function, chain[i], chain);
+                }
+
+                return function;
             }
 
             throw new InvalidOperationException(
@@ -237,18 +248,26 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
 
         protected override async ValueTask<object?> InvokeCoreAsync(AIFunctionArguments arguments, CancellationToken cancellationToken)
         {
-            var context = FunctionInvokingChatClient.CurrentContext
-                // Direct function calls have no context from FunctionInvokingChatClient, so create the values the callback expects.
-                ?? new FunctionInvocationContext()
-                {
-                    Arguments = arguments,
-                    Function = this.InnerFunction,
-                    CallContent = new(string.Empty, this.InnerFunction.Name, new Dictionary<string, object?>(arguments)),
-                };
-
             var previous = s_invocationScope.Value;
+            var context = FunctionInvokingChatClient.CurrentContext;
+            bool contextIsSynthetic = context is null;
+            if (contextIsSynthetic)
+            {
+                // Direct function calls have no context from FunctionInvokingChatClient, so create the values the
+                // callback expects. Wrappers entered while such a call runs share the context created for it, so
+                // that a callback redirecting the call to another wrapped function cannot re-enter itself endlessly.
+                context = FindRunningSyntheticContext(previous)
+                    ?? new FunctionInvocationContext()
+                    {
+                        Arguments = arguments,
+                        Function = this.InnerFunction,
+                        CallContent = new(string.Empty, this.InnerFunction.Name, new Dictionary<string, object?>(arguments)),
+                    };
+            }
+
             // The callback can redirect the call by assigning a different function to the context.
-            var targetBeforeCallback = context.Function;
+            var targetBeforeCallback = context!.Function;
+            InvocationScope? scope = null;
 
             // A custom function wrapper can lead back to this callback during the same call. Run it only once.
             for (var active = previous; active is not null; active = active.Parent)
@@ -264,7 +283,8 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
             var middlewareChain = (context.Options?.Tools as MiddlewareEnabledTools)?.MiddlewareChain ?? this._middlewareChain;
 
             // Record the callback while it runs, including through wrappers that do not expose their inner function.
-            s_invocationScope.Value = new(context, this._middleware, middlewareChain, previous);
+            scope = new InvocationScope(context, this._middleware, middlewareChain, contextIsSynthetic, previous);
+            s_invocationScope.Value = scope;
 
             try
             {
@@ -272,6 +292,15 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
             }
             finally
             {
+                // Execution contexts that escaped the callback still reference this scope. Mark it as finished
+                // so that they cannot keep using the callbacks of a callback that already returned.
+                scope.IsRunning = false;
+
+                // Leave the context with the function it had on entry, so that the callbacks around this one and
+                // the function invocation loop, which reads the function for its telemetry once the invocation
+                // completed, keep seeing the function they requested.
+                context.Function = targetBeforeCallback;
+
                 // A function or callback can replace the entire tool list. Wrap the replacement before the next call.
                 if (context.Options is { } options)
                 {
@@ -284,23 +313,73 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
             // FunctionInvokingChatClient resolved from the tool list. base.InvokeCoreAsync instead continues
             // with this wrapper's inner function, which is the next step of the chain. Invoking ctx.Function
             // while it still holds that wrapper would restart the chain from the top and recurse endlessly.
-            ValueTask<object?> CoreLogicAsync(FunctionInvocationContext ctx, CancellationToken cancellationToken)
-                => ReferenceEquals(ctx.Function, targetBeforeCallback)
-                    // The callback kept the target, so continue with the next function wrapper.
-                    ? base.InvokeCoreAsync(ctx.Arguments, cancellationToken)
-                    // The callback replaced the target with a function outside the chain, so invoke that instead.
-                    : ctx.Function.InvokeAsync(ctx.Arguments, cancellationToken);
+            async ValueTask<object?> CoreLogicAsync(FunctionInvocationContext ctx, CancellationToken cancellationToken)
+            {
+                if (scope is not null)
+                {
+                    scope.ContinuationInvoked = true;
+                }
+
+                // The callback can call its continuation more than once, and the callbacks that run during one of
+                // those calls can select their own function. Start every call from the function this callback chose.
+                var target = ctx.Function;
+                try
+                {
+                    return ReferenceEquals(target, targetBeforeCallback)
+                        // The callback kept the target, so continue with the next function wrapper.
+                        ? await base.InvokeCoreAsync(ctx.Arguments, cancellationToken).ConfigureAwait(false)
+                        // The callback replaced the target with a function outside the chain, so invoke that instead.
+                        : await target.InvokeAsync(ctx.Arguments, cancellationToken).ConfigureAwait(false);
+                }
+                finally
+                {
+                    // Undo the selection of the callbacks that ran during this call so that another call to this
+                    // continuation goes through them again instead of invoking the function they selected.
+                    ctx.Function = target;
+                }
+            }
+        }
+
+        /// <summary>Gets the context created for a direct function call that is still running, if there is one.</summary>
+        private static FunctionInvocationContext? FindRunningSyntheticContext(InvocationScope? scope)
+        {
+            for (; scope is not null; scope = scope.Parent)
+            {
+                if (scope.IsRunning)
+                {
+                    return scope.ContextIsSynthetic ? scope.Context : null;
+                }
+            }
+
+            return null;
         }
 
         private sealed class InvocationScope(
             FunctionInvocationContext context,
             FunctionInvocationDelegatingAgent middleware,
             FunctionInvocationDelegatingAgent[] middlewareChain,
+            bool contextIsSynthetic,
             InvocationScope? parent)
         {
             internal FunctionInvocationContext Context { get; } = context;
             internal FunctionInvocationDelegatingAgent Middleware { get; } = middleware;
             internal FunctionInvocationDelegatingAgent[] MiddlewareChain { get; } = middlewareChain;
+
+            /// <summary>Gets a value indicating whether the context was created for a call without a current context.</summary>
+            internal bool ContextIsSynthetic { get; } = contextIsSynthetic;
+
+            /// <summary>
+            /// Gets or sets a value indicating whether the callback of this scope is still running.
+            /// </summary>
+            /// <remarks>
+            /// Execution contexts that escape the callback keep a reference to this scope, so this state
+            /// tells them apart from the scope of a callback that is still running.
+            /// </remarks>
+            internal bool IsRunning { get; set; } = true;
+
+            /// <summary>Gets or sets a value indicating whether the callback of this scope called its continuation.</summary>
+            internal bool ContinuationInvoked { get; set; }
+
             internal InvocationScope? Parent { get; } = parent;
         }
     }
