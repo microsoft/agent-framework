@@ -70,7 +70,8 @@ are rejected.
 `TypeSafeChatClient` is the recommended client and layers function invocation,
 middleware, and telemetry over `RawTypeSafeChatClient`. Use the raw client only
 when composing a custom layer stack or intentionally opting out of those framework
-layers.
+layers. The raw client can inspect compatible tools and emit Agent Framework
+function calls, but it does not execute them itself.
 
 ## Function calling
 
@@ -99,13 +100,17 @@ Supported input-schema shapes:
 - Boolean arguments.
 - Arrays whose items are `enum` or `Literal` values. These are treated as
   set-like selections in schema order; duplicates and caller-defined ordering are
-  not supported.
+  not supported. Arrays with `minItems`, `maxItems`, uniqueness, prefix, or
+  membership constraints are rejected because the connector cannot preserve those
+  semantics.
 - Optional versions of those shapes. A separate TypeSafe question decides whether
   to omit the argument so the function's default can apply.
 
 Required free-form strings, numbers, nested objects, general arrays, and required
-nullable arguments are not supported. In automatic tool mode, unsupported tools
-are excluded with a warning. Required unsupported tools fail the request.
+nullable arguments are not supported. A tool is excluded when any declared
+argument is unsupported, including optional arguments, so invocation never falls
+back to an unintended default. In automatic tool mode, unsupported tools are
+excluded with a warning. Required unsupported tools fail the request.
 
 Local tools can use inferred schemas or Pydantic input models:
 
@@ -149,7 +154,9 @@ agent = Agent(client=TypeSafeChatClient(), tools=[mcp])
 
 Only discovered MCP functions whose JSON schemas fit the supported subset are
 routable. Use `tool_choice.allowed_tools` to narrow large MCP servers; a request
-supports at most 32 routable tools and 128 generated internal questions.
+supports at most 32 routable tools, 64 properties per tool, 64 enum members per
+argument, and 128 generated internal questions. An explicitly empty
+`allowed_tools` list denies every tool.
 
 ## Configuration and lifecycle
 
@@ -162,7 +169,9 @@ The internally created TypeSafe SDK client reads:
 Constructor values take precedence over an explicitly selected `.env` file and
 process environment variables. Credential requirements are evaluated only after
 those sources are resolved. When `async_client` is supplied, the injected client
-is authoritative and no API key is required by the connector.
+is authoritative and no API key, endpoint, or environment-resolved model is
+applied by the connector. An explicitly passed per-request or constructor `model`
+can still override the injected client's default.
 
 For advanced SDK configuration, inject a configured `AsyncTypeSafeClient`:
 

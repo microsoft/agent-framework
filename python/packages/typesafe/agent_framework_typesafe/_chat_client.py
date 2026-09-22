@@ -55,7 +55,8 @@ from typing_extensions import Self, TypedDict, override
 
 from ._tool_calls import compile_tool_call_plan
 
-_TYPESAFE_SERVICE_URL = "https://api.typesafe.ai/v1/systemone"
+_TYPESAFE_DEFAULT_BASE_URL = "https://api.typesafe.ai"
+_TYPESAFE_SYSTEM_ONE_PATH = "/v1/systemone"
 
 
 class TypeSafeSettings(TypedDict, total=False):
@@ -63,6 +64,7 @@ class TypeSafeSettings(TypedDict, total=False):
 
     api_key: SecretString | None
     default_model: str | None
+    base_url: str | None
 
 
 class TypeSafeChatOptions(ChatOptions[SystemOneResponse], total=False):
@@ -83,8 +85,10 @@ class RawTypeSafeChatClient(BaseChatClient[TypeSafeChatOptions]):
 
     The client maps text messages and Agent instructions to TypeSafe structured
     state. The response_format option supplies the TypeSafe Questions mapping,
-    while every response is returned as SystemOneResponse. Free-form generation,
-    streaming, tools, and non-text message content are not supported.
+    while every response is returned as SystemOneResponse. The raw client can
+    emit constrained function calls but does not execute them; TypeSafeChatClient
+    adds the function-invocation layer. Free-form generation, streaming, and
+    non-text message content are not supported.
 
     Use TypeSafeChatClient for the standard middleware and telemetry layers.
     """
@@ -104,6 +108,7 @@ class RawTypeSafeChatClient(BaseChatClient[TypeSafeChatOptions]):
         *,
         api_key: str | SecretString | None = None,
         model: str | None = None,
+        base_url: str | None = None,
         async_client: AsyncTypeSafeClient | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
@@ -116,6 +121,8 @@ class RawTypeSafeChatClient(BaseChatClient[TypeSafeChatOptions]):
         Keyword Args:
             api_key: TypeSafe API key. Defaults to the TYPESAFE_API_KEY environment variable.
             model: Default TypeSafe model. The SDK defaults to jev-latest.
+            base_url: Optional TypeSafe API root. Defaults to TYPESAFE_BASE_URL
+                or https://api.typesafe.ai for connector-owned SDK clients.
             async_client: Optional preconfigured TypeSafe SDK client. It remains caller-owned.
             compaction_strategy: Optional compaction strategy applied before requests.
             tokenizer: Optional tokenizer used by token-aware compaction strategies.
@@ -123,26 +130,32 @@ class RawTypeSafeChatClient(BaseChatClient[TypeSafeChatOptions]):
             env_file_path: Path to a .env file used for settings resolution.
             env_file_encoding: Encoding used to read the .env file.
         """
-        settings = load_settings(
-            TypeSafeSettings,
-            env_prefix="TYPESAFE_",
-            required_fields=[] if async_client is not None else ["api_key"],
-            api_key=api_key,
-            default_model=model,
-            env_file_path=env_file_path,
-            env_file_encoding=env_file_encoding,
-        )
-
-        self.model = settings.get("default_model")
         self._owns_client = async_client is None
 
         if async_client is not None:
             self.client = async_client
+            self.model = model
+            self.base_url = None
+            self._service_url = "Unknown"
         else:
+            settings = load_settings(
+                TypeSafeSettings,
+                env_prefix="TYPESAFE_",
+                required_fields=["api_key"],
+                api_key=api_key,
+                default_model=model,
+                base_url=base_url,
+                env_file_path=env_file_path,
+                env_file_encoding=env_file_encoding,
+            )
+            self.model = settings.get("default_model")
+            self.base_url = settings.get("base_url") or _TYPESAFE_DEFAULT_BASE_URL
+            self._service_url = f"{self.base_url.rstrip('/')}{_TYPESAFE_SYSTEM_ONE_PATH}"
             api_key_secret = cast(SecretString, settings.get("api_key"))
             self.client = AsyncTypeSafeClient(
                 api_key=api_key_secret.get_secret_value(),
                 model=self.model,
+                base_url=self.base_url,
                 headers={"User-Agent": get_user_agent()},
             )
         super().__init__(
@@ -172,7 +185,7 @@ class RawTypeSafeChatClient(BaseChatClient[TypeSafeChatOptions]):
     @override
     def service_url(self) -> str:
         """Return the TypeSafe System One endpoint."""
-        return _TYPESAFE_SERVICE_URL
+        return self._service_url
 
     @override
     def _inner_get_response(
@@ -318,6 +331,10 @@ class RawTypeSafeChatClient(BaseChatClient[TypeSafeChatOptions]):
             raise ChatClientInvalidRequestException(
                 "TypeSafe response_format must be a non-empty typesafe_sdk.Questions mapping."
             )
+        question_ids: list[Any] = list(cast(Mapping[Any, Any], response_format))
+        invalid_question_ids = [question_id for question_id in question_ids if not isinstance(question_id, str)]
+        if invalid_question_ids:
+            raise ChatClientInvalidRequestException("TypeSafe response_format question IDs must be strings.")
         return cast(Questions, response_format)
 
     @staticmethod
@@ -372,11 +389,7 @@ class RawTypeSafeChatClient(BaseChatClient[TypeSafeChatOptions]):
                         "arguments": content.parse_arguments(),
                     })
                 elif content.type == "function_result":
-                    contents.append({
-                        "type": "function_result",
-                        "call_id": content.call_id,
-                        "result": content.result,
-                    })
+                    contents.append(RawTypeSafeChatClient._serialize_function_result(content))
             if contents:
                 state_messages.append({
                     "role": str(message.role),
@@ -390,6 +403,22 @@ class RawTypeSafeChatClient(BaseChatClient[TypeSafeChatOptions]):
         if instructions:
             state["instructions"] = instructions
         return state
+
+    @staticmethod
+    def _serialize_function_result(content: Content) -> dict[str, Any]:
+        items: list[dict[str, str]] = []
+        for item in content.items or ():
+            if item.type != "text":
+                raise ChatClientInvalidRequestException(
+                    f"TypeSafe function results support text items only; received unsupported {item.type!r} content."
+                )
+            items.append({"type": "text", "text": item.text or ""})
+        return {
+            "type": "function_result",
+            "call_id": content.call_id,
+            "result": content.result,
+            **({"items": items} if items else {}),
+        }
 
     @staticmethod
     def _build_usage_details(input_tokens: int | None, output_tokens: int | None) -> UsageDetails:
@@ -502,6 +531,7 @@ class TypeSafeChatClient(
         *,
         api_key: str | SecretString | None = None,
         model: str | None = None,
+        base_url: str | None = None,
         async_client: AsyncTypeSafeClient | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
@@ -516,6 +546,7 @@ class TypeSafeChatClient(
         Keyword Args:
             api_key: TypeSafe API key. Defaults to the TYPESAFE_API_KEY environment variable.
             model: Default TypeSafe model. The SDK defaults to jev-latest.
+            base_url: Optional TypeSafe API root for connector-owned SDK clients.
             async_client: Optional preconfigured TypeSafe SDK client. It remains caller-owned.
             middleware: Chat and function middleware to apply around requests and tool calls.
             function_invocation_configuration: Function invocation settings. TypeSafe limits
@@ -531,6 +562,7 @@ class TypeSafeChatClient(
         super().__init__(
             api_key=api_key,
             model=model,
+            base_url=base_url,
             async_client=async_client,
             middleware=middleware,
             function_invocation_configuration=cast(FunctionInvocationConfiguration, invocation_configuration),

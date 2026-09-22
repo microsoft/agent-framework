@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, Literal, cast
 
 import httpx2
@@ -152,6 +153,7 @@ def test_construction_resolves_environment_settings(monkeypatch: pytest.MonkeyPa
     captured: dict[str, Any] = {}
     monkeypatch.setenv("TYPESAFE_API_KEY", "environment-key")
     monkeypatch.setenv("TYPESAFE_DEFAULT_MODEL", "jev-preview")
+    monkeypatch.setenv("TYPESAFE_BASE_URL", "https://typesafe.example/")
 
     def create_client(**kwargs: Any) -> StubTypeSafeClient:
         captured.update(kwargs)
@@ -166,8 +168,65 @@ def test_construction_resolves_environment_settings(monkeypatch: pytest.MonkeyPa
 
     assert client.client is stub
     assert client.model == "jev-preview"
+    assert client.base_url == "https://typesafe.example/"
+    assert client.service_url() == "https://typesafe.example/v1/systemone"
     assert captured["api_key"] == "environment-key"
     assert captured["model"] == "jev-preview"
+    assert captured["base_url"] == "https://typesafe.example/"
+
+
+def test_construction_resolves_selected_env_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    stub = StubTypeSafeClient()
+    captured: dict[str, Any] = {}
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "TYPESAFE_API_KEY=file-key\nTYPESAFE_DEFAULT_MODEL=file-model\nTYPESAFE_BASE_URL=https://file.example/\n",
+        encoding="utf-8",
+    )
+
+    def create_client(**kwargs: Any) -> StubTypeSafeClient:
+        captured.update(kwargs)
+        return stub
+
+    monkeypatch.setattr(
+        "agent_framework_typesafe._chat_client.AsyncTypeSafeClient",
+        create_client,
+    )
+
+    client = TypeSafeChatClient(env_file_path=str(env_path))
+
+    assert client.model == "file-model"
+    assert client.base_url == "https://file.example/"
+    assert client.service_url() == "https://file.example/v1/systemone"
+    assert captured["api_key"] == "file-key"
+    assert captured["base_url"] == "https://file.example/"
+
+
+def test_injected_client_ignores_ambient_model_and_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    stub = StubTypeSafeClient()
+    monkeypatch.setenv("TYPESAFE_DEFAULT_MODEL", "ambient-model")
+    monkeypatch.setenv("TYPESAFE_BASE_URL", "https://ambient.example")
+
+    client = TypeSafeChatClient(async_client=cast(AsyncTypeSafeClient, stub))
+
+    assert client.model is None
+    assert client.base_url is None
+    assert client.service_url() == "Unknown"
+
+
+def test_injected_client_accepts_explicit_model_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    stub = StubTypeSafeClient()
+    monkeypatch.setenv("TYPESAFE_DEFAULT_MODEL", "ambient-model")
+
+    client = TypeSafeChatClient(
+        async_client=cast(AsyncTypeSafeClient, stub),
+        model="explicit-model",
+    )
+
+    assert client.model == "explicit-model"
 
 
 async def test_close_leaves_injected_client_open() -> None:
@@ -215,6 +274,7 @@ async def test_streaming_is_rejected_on_consumption() -> None:
         ({"response_format": questions(), "tool_choice": "required"}, "no tools"),
         ({"response_format": questions(), "allow_multiple_tool_calls": True}, "one tool call"),
         ({"response_format": SystemOneResponse}, "non-empty typesafe_sdk.Questions"),
+        ({"response_format": {1: Noul(instructions="invalid")}}, "question IDs must be strings"),
     ],
 )
 async def test_invalid_options_are_rejected(options: dict[str, Any], message: str) -> None:
@@ -240,6 +300,45 @@ async def test_empty_text_messages_are_rejected() -> None:
 
     with pytest.raises(ChatClientInvalidRequestException, match="non-empty text message"):
         await client.get_response([Message("user", [""])], options={"response_format": questions()})
+
+
+async def test_rich_function_result_content_is_rejected() -> None:
+    client = make_client()
+    rich_result = Content.from_function_result(
+        call_id="call-1",
+        result=[Content.from_uri("https://example.com/chart.png", media_type="image/png")],
+    )
+
+    with pytest.raises(ChatClientInvalidRequestException, match="text items only"):
+        await client.get_response(
+            [
+                Message("user", ["show a chart"]),
+                Message("tool", [rich_result]),
+            ],
+            options={"response_format": questions()},
+        )
+
+
+def test_text_function_result_items_are_serialized() -> None:
+    result = Content.from_function_result(
+        call_id="call-1",
+        result=[Content.from_text("first"), Content.from_text("second")],
+    )
+
+    state = RawTypeSafeChatClient._build_state(  # pyright: ignore[reportPrivateUsage]
+        [Message("user", ["run"]), Message("tool", [result])],
+        instructions=None,
+    )
+
+    assert state["messages"][1]["contents"][0] == {
+        "type": "function_result",
+        "call_id": "call-1",
+        "result": "first\nsecond",
+        "items": [
+            {"type": "text", "text": "first"},
+            {"type": "text", "text": "second"},
+        ],
+    }
 
 
 def test_simple_mcp_result_wrapper_is_unwrapped() -> None:
@@ -539,6 +638,7 @@ async def test_local_tool_executes_once_then_returns_structured_response() -> No
             "type": "function_result",
             "call_id": cast(str, tool_results[0]["call_id"]),
             "result": "Weather for Seattle; detailed=True",
+            "items": [{"type": "text", "text": "Weather for Seattle; detailed=True"}],
         }
     ]
 

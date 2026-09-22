@@ -5,7 +5,8 @@ Integration with TypeSafe AI System One models, including Jev.
 ## Public API
 
 - **`TypeSafeChatClient`** - Adds function invocation, middleware, and telemetry to the TypeSafe transport.
-- **`RawTypeSafeChatClient`** - Provider transport without middleware or telemetry layers.
+- **`RawTypeSafeChatClient`** - Provider transport that can emit constrained function calls but does not execute
+  them; it has no function-invocation, middleware, or telemetry layers.
 - **`TypeSafeChatOptions`** - Uses `response_format` for the required TypeSafe `Questions` mapping.
 
 ## Behavioral Contract
@@ -19,11 +20,14 @@ Integration with TypeSafe AI System One models, including Jev.
   preserve tool defaults.
 - Agent-provided MCP tools work when their discovered function schemas fit the supported subset. Direct raw/client
   calls must receive expanded `FunctionTool` instances.
+- A tool is excluded if any declared argument is unsupported. Schema property/enum counts are bounded before
+  question materialization, and constrained arrays are rejected.
 - The connector forwards `response_format` as the TypeSafe SDK `questions` argument and internally uses
   `SystemOneResponse` as the response model.
 - An injected `AsyncTypeSafeClient` is caller-owned. A client created by `TypeSafeChatClient` is closed by
   `close()` or the async context manager.
 - Settings use `load_settings`; the API key is required only when the connector creates the SDK client.
+- Injected SDK clients remain authoritative: ambient model and endpoint settings are not applied to them.
 
 ## Import Path
 

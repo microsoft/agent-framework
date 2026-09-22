@@ -19,6 +19,8 @@ TOOL_ROUTE_QUESTION_ID = f"{TOOL_QUESTION_PREFIX}.route"
 TOOL_ROUTE_NONE = "none"
 MAX_ROUTABLE_TOOLS = 32
 MAX_INTERNAL_QUESTIONS = 128
+MAX_TOOL_PROPERTIES = 64
+MAX_ENUM_VALUES = 64
 NOUL_TRUE_THRESHOLD = 0.5
 
 
@@ -131,13 +133,12 @@ def compile_tool_call_plan(
         return None
 
     required_name = tool_mode.get("required_function_name") if tool_mode is not None else None
-    allowed_names: set[str] = (
-        set(cast(list[str], tool_mode.get("allowed_tools", ()))) if tool_mode is not None else set()
-    )
+    allowed_names = set(tool_mode["allowed_tools"]) if tool_mode is not None and "allowed_tools" in tool_mode else None
     selected_tools = [
         tool
         for tool in tools
-        if (not allowed_names or tool.name in allowed_names) and (required_name is None or tool.name == required_name)
+        if (allowed_names is None or tool.name in allowed_names)
+        and (required_name is None or tool.name == required_name)
     ]
 
     if required_name is not None and not selected_tools:
@@ -226,6 +227,10 @@ def _compile_tool(
     if not isinstance(properties_raw, dict):
         raise _UnsupportedToolSchema("the input schema properties must be an object")
     properties = cast(dict[str, Any], properties_raw)
+    if len(properties) > MAX_TOOL_PROPERTIES:
+        raise _UnsupportedToolSchema(
+            f"the input schema defines {len(properties)} properties; the supported maximum is {MAX_TOOL_PROPERTIES}"
+        )
     required_raw: Any = schema.get("required", [])
     if not isinstance(required_raw, (list, tuple)):
         raise _UnsupportedToolSchema("the input schema required field must be a string array")
@@ -233,15 +238,15 @@ def _compile_tool(
     if not all(isinstance(item, str) for item in required_items):
         raise _UnsupportedToolSchema("the input schema required field must be a string array")
     required = {item for item in required_items if isinstance(item, str)}
+    missing_required = sorted(required - properties.keys())
+    if missing_required:
+        raise _UnsupportedToolSchema(f"required arguments are missing from properties: {', '.join(missing_required)}")
 
     questions: dict[str, Any] = {}
     arguments: list[_ArgumentPlan] = []
     for argument_index, (name, raw_property) in enumerate(properties.items()):
         if not isinstance(name, str) or not isinstance(raw_property, dict):
-            if name in required:
-                raise _UnsupportedToolSchema(f"required argument {name!r} has an invalid schema")
-            logger.warning("Omitting optional TypeSafe tool argument %r.%s with an invalid schema.", tool.name, name)
-            continue
+            raise _UnsupportedToolSchema(f"argument {name!r} has an invalid schema")
         try:
             argument, argument_questions = _compile_argument(
                 tool=tool,
@@ -254,10 +259,8 @@ def _compile_tool(
                 previous_values=[call[name] for call in previous_calls if name in call],
             )
         except _UnsupportedToolSchema as exc:
-            if name in required:
-                raise _UnsupportedToolSchema(f"required argument {name!r}: {exc}") from exc
-            logger.warning("Omitting unsupported optional TypeSafe tool argument %r.%s: %s", tool.name, name, exc)
-            continue
+            qualifier = "required" if name in required else "optional"
+            raise _UnsupportedToolSchema(f"{qualifier} argument {name!r}: {exc}") from exc
         arguments.append(argument)
         questions.update(argument_questions)
 
@@ -316,6 +319,10 @@ def _compile_argument(
     enum_values_raw = schema.get("enum")
     if isinstance(enum_values_raw, list) and enum_values_raw:
         enum_values = cast(list[Any], enum_values_raw)
+        if len(enum_values) > MAX_ENUM_VALUES:
+            raise _UnsupportedToolSchema(
+                f"enum defines {len(enum_values)} values; the supported maximum is {MAX_ENUM_VALUES}"
+            )
         if len(enum_values) == 1:
             return (
                 _ArgumentPlan(
@@ -366,6 +373,16 @@ def _compile_argument(
         )
 
     if schema_type == "array":
+        unsupported_constraints = [
+            constraint
+            for constraint in ("minItems", "maxItems", "uniqueItems", "prefixItems", "contains")
+            if constraint in schema
+        ]
+        if unsupported_constraints:
+            raise _UnsupportedToolSchema(
+                "enum arrays with cardinality or membership constraints are not supported: "
+                f"{', '.join(unsupported_constraints)}"
+            )
         items_raw = schema.get("items")
         if not isinstance(items_raw, dict):
             raise _UnsupportedToolSchema("array items must define an enum")
@@ -376,6 +393,10 @@ def _compile_argument(
         if not isinstance(members_raw, list) or not members_raw:
             raise _UnsupportedToolSchema("array items must define a non-empty enum")
         members = cast(list[Any], members_raw)
+        if len(members) > MAX_ENUM_VALUES:
+            raise _UnsupportedToolSchema(
+                f"array enum defines {len(members)} values; the supported maximum is {MAX_ENUM_VALUES}"
+            )
         member_questions: list[tuple[str, Any]] = []
         for member_index, member in enumerate(members):
             question_id = f"{prefix}.m{member_index}"

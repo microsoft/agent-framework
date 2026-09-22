@@ -11,7 +11,9 @@ from pydantic import BaseModel
 from typesafe_sdk import SystemOneResponse
 
 from agent_framework_typesafe._tool_calls import (
+    MAX_ENUM_VALUES,
     MAX_ROUTABLE_TOOLS,
+    MAX_TOOL_PROPERTIES,
     TOOL_QUESTION_PREFIX,
     compile_tool_call_plan,
 )
@@ -87,6 +89,23 @@ def test_required_tool_modes_validate_availability() -> None:
         )
 
 
+def test_empty_allowed_tools_denies_all_tools() -> None:
+    assert (
+        compile_tool_call_plan(
+            [function("available", {})],
+            tool_mode={"mode": "auto", "allowed_tools": []},
+            user_question_ids=set(),
+        )
+        is None
+    )
+    with pytest.raises(ChatClientInvalidRequestException, match="no supported tools remain"):
+        compile_tool_call_plan(
+            [function("available", {})],
+            tool_mode={"mode": "required", "allowed_tools": []},
+            user_question_ids=set(),
+        )
+
+
 def test_auto_mode_omits_unsupported_tool() -> None:
     assert (
         compile_tool_call_plan(
@@ -102,11 +121,103 @@ def test_auto_mode_omits_unsupported_tool() -> None:
     )
 
 
+def test_required_name_missing_from_properties_is_rejected() -> None:
+    missing_property = function(
+        "broken",
+        {
+            "type": "object",
+            "properties": {},
+            "required": ["scope"],
+        },
+    )
+
+    with pytest.raises(ChatClientInvalidRequestException, match="missing from properties"):
+        compile_tool_call_plan(
+            [missing_property],
+            tool_mode={"mode": "required"},
+            user_question_ids=set(),
+        )
+
+
+def test_unsupported_optional_argument_excludes_entire_tool() -> None:
+    broad_default = function(
+        "delete_records",
+        {
+            "type": "object",
+            "properties": {"scope": {"type": "string", "default": "all"}},
+        },
+    )
+
+    assert compile_tool_call_plan([broad_default], tool_mode=None, user_question_ids=set()) is None
+    with pytest.raises(ChatClientInvalidRequestException, match="optional argument 'scope'"):
+        compile_tool_call_plan(
+            [broad_default],
+            tool_mode={"mode": "required"},
+            user_question_ids=set(),
+        )
+
+
 def test_routable_tool_limit_is_enforced() -> None:
     tools = [function(f"tool_{index}", {}) for index in range(MAX_ROUTABLE_TOOLS + 1)]
 
     with pytest.raises(ChatClientInvalidRequestException, match="at most"):
         compile_tool_call_plan(tools, tool_mode=None, user_question_ids=set())
+
+
+def test_tool_property_limit_is_enforced_before_compilation() -> None:
+    properties = {f"field_{index}": {"type": "boolean"} for index in range(MAX_TOOL_PROPERTIES + 1)}
+
+    with pytest.raises(ChatClientInvalidRequestException, match="properties"):
+        compile_tool_call_plan(
+            [function("large", {"type": "object", "properties": properties})],
+            tool_mode={"mode": "required"},
+            user_question_ids=set(),
+        )
+
+
+def test_enum_value_limit_is_enforced_before_materialization() -> None:
+    enum_values = [f"value_{index}" for index in range(MAX_ENUM_VALUES + 1)]
+
+    with pytest.raises(ChatClientInvalidRequestException, match="enum defines"):
+        compile_tool_call_plan(
+            [
+                function(
+                    "large_enum",
+                    {
+                        "type": "object",
+                        "properties": {"value": {"type": "string", "enum": enum_values}},
+                        "required": ["value"],
+                    },
+                )
+            ],
+            tool_mode={"mode": "required"},
+            user_question_ids=set(),
+        )
+
+
+@pytest.mark.parametrize("constraint", ["minItems", "maxItems", "uniqueItems", "prefixItems", "contains"])
+def test_constrained_enum_arrays_are_rejected(constraint: str) -> None:
+    constrained = function(
+        "select",
+        {
+            "type": "object",
+            "properties": {
+                "values": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": ["a", "b"]},
+                    constraint: 1 if constraint != "uniqueItems" else True,
+                }
+            },
+            "required": ["values"],
+        },
+    )
+
+    with pytest.raises(ChatClientInvalidRequestException, match="constraints"):
+        compile_tool_call_plan(
+            [constrained],
+            tool_mode={"mode": "required"},
+            user_question_ids=set(),
+        )
 
 
 def test_optional_nullable_enum_and_const_decode_deterministically() -> None:
