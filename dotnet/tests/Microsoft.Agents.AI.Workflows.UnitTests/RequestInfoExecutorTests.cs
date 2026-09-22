@@ -11,6 +11,10 @@ internal sealed record RequestPortSourceRequest(string Value);
 
 internal sealed record RequestPortTargetRequest(string Value);
 
+internal record RequestPortBaseRequest(string Value);
+
+internal sealed record RequestPortDerivedRequest(string Value) : RequestPortBaseRequest(Value);
+
 public class RequestInfoExecutorTests
 {
     [Fact]
@@ -37,6 +41,32 @@ public class RequestInfoExecutorTests
         Assert.Contains(nameof(RequestPortTargetRequest), exception.Message);
         Assert.Contains(nameof(RequestPortSourceRequest), exception.Message);
         Assert.Empty(runContext.ExternalRequests);
+    }
+
+    [Fact]
+    public async Task HandleAsync_ForwardsDerivedRequestToRequestPortWithBaseRequestTypeAsync()
+    {
+        // Arrange
+        RequestPort sourcePort = RequestPort.Create<RequestPortDerivedRequest, string>("source");
+        RequestPort targetPort = RequestPort.Create<RequestPortBaseRequest, string>("target");
+        ExternalRequest originalRequest = ExternalRequest.Create(sourcePort, new RequestPortDerivedRequest("value"));
+        ExternalRequest serializedRequest = JsonSerializationTests.RunJsonRoundtrip(originalRequest, TestJsonContext.Default.Options);
+        RequestInfoExecutor executor = new(targetPort);
+        TestRunContext runContext = new();
+        runContext.ConfigureExecutor(executor);
+        executor.AttachRequestSink(runContext);
+
+        // Act
+        ExternalRequest forwardedRequest =
+            await executor.HandleAsync(serializedRequest, runContext.BindWorkflowContext(executor.Id));
+
+        // Assert
+        Assert.Equal(targetPort.ToPortInfo(), forwardedRequest.PortInfo);
+        Assert.Equal(originalRequest.RequestId, forwardedRequest.RequestId);
+        RequestPortDerivedRequest? forwardedData = forwardedRequest.Data.As<RequestPortDerivedRequest>();
+        Assert.NotNull(forwardedData);
+        Assert.Equal("value", forwardedData.Value);
+        Assert.Same(forwardedRequest, Assert.Single(runContext.ExternalRequests));
     }
 
     [Fact]

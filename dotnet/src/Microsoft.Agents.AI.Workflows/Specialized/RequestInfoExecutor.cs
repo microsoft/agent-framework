@@ -3,8 +3,10 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Execution;
 using Microsoft.Shared.Diagnostics;
 
@@ -88,12 +90,13 @@ internal sealed class RequestInfoExecutor : Executor
         Debug.Assert(this._allowWrapped);
         Throw.IfNull(message);
 
-        if (!message.PortInfo.RequestType.IsMatch(this.Port.Request))
+        Type? originalRequestType = ResolveType(message.PortInfo.RequestType);
+        if (originalRequestType is null || !this.Port.Request.IsAssignableFrom(originalRequestType))
         {
             throw new InvalidOperationException($"Request type {this.Port.Request} is not valid for original request, whose request type is {message.PortInfo.RequestType}");
         }
 
-        if (!message.Data.IsType(this.Port.Request, out var requestData))
+        if (!message.Data.IsType(originalRequestType, out var requestData))
         {
             throw new InvalidOperationException($"Message type {message.Data.TypeId} could not be interpreted as a value of Request Type {this.Port.Request}");
         }
@@ -110,6 +113,24 @@ internal sealed class RequestInfoExecutor : Executor
         await this.RequestSink!.PostAsync(request).ConfigureAwait(false);
 
         return request;
+    }
+
+    [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Request types are preserved by their workflow port and serialization registrations.")]
+    private static Type? ResolveType(TypeId typeId)
+    {
+        foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            if (string.Equals(assembly.GetName().Name, typeId.SimpleAssemblyName, StringComparison.Ordinal))
+            {
+                Type? resolvedType = assembly.GetType(typeId.NormalizedTypeName, throwOnError: false);
+                if (resolvedType is not null)
+                {
+                    return resolvedType;
+                }
+            }
+        }
+
+        return null;
     }
 
     public async ValueTask<ExternalRequest> HandleAsync(object message, IWorkflowContext context, CancellationToken cancellationToken = default)

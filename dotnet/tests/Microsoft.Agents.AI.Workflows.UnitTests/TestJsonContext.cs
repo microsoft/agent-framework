@@ -10,5 +10,7 @@ namespace Microsoft.Agents.AI.Workflows.UnitTests;
 [JsonSerializable(typeof(TestExternalRequestEnvelope))]
 [JsonSerializable(typeof(RequestPortSourceRequest))]
 [JsonSerializable(typeof(RequestPortTargetRequest))]
+[JsonSerializable(typeof(RequestPortBaseRequest))]
+[JsonSerializable(typeof(RequestPortDerivedRequest))]
 [ExcludeFromCodeCoverage]
 internal sealed partial class TestJsonContext : JsonSerializerContext;
