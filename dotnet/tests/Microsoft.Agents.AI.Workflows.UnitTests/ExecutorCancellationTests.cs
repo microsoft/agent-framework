@@ -16,6 +16,39 @@ public class ExecutorCancellationTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task SynchronousReflectionCancellationDoesNotEmitFailureAsync(bool returnsResult)
+    {
+        // Arrange
+        using CancellationTokenSource source = new();
+        ValueTask CancelAsync(string message, IWorkflowContext context, CancellationToken cancellationToken)
+        {
+            source.Cancel();
+            throw new OperationCanceledException(cancellationToken);
+        }
+
+        ValueTask<string> CancelWithResultAsync(string message, IWorkflowContext context, CancellationToken cancellationToken)
+        {
+            source.Cancel();
+            throw new OperationCanceledException(cancellationToken);
+        }
+
+        Executor executor = returnsResult
+            ? new ReflectingResultHandler(CancelWithResultAsync)
+            : new ReflectingHandler(CancelAsync);
+        TestWorkflowContext context = new(executor.Id);
+
+        // Act
+        OperationCanceledException exception = await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => executor.ExecuteCoreAsync("input", new(typeof(string)), context, source.Token).AsTask());
+
+        // Assert
+        Assert.Equal(source.Token, exception.CancellationToken);
+        Assert.DoesNotContain(context.EmittedEvents, evt => evt is ExecutorFailedEvent or ExecutorCompletedEvent);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task RuntimeCancellationDoesNotEmitFailureAsync(bool useReflection)
     {
         // Arrange
@@ -190,6 +223,13 @@ public class ExecutorCancellationTests
 
         Assert.Contains(context.EmittedEvents, evt => evt is ExecutorFailedEvent);
     }
+    private sealed class ReflectingResultHandler(Func<string, IWorkflowContext, CancellationToken, ValueTask<string>> handler)
+        : ReflectingExecutor<ReflectingResultHandler>("reflecting-result"), IMessageHandler<string, string>
+    {
+        public ValueTask<string> HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default)
+            => handler(message, context, cancellationToken);
+    }
+
     private sealed class ReflectingHandler(Func<string, IWorkflowContext, CancellationToken, ValueTask> handler)
         : ReflectingExecutor<ReflectingHandler>("reflecting"), IMessageHandler<string>
     {

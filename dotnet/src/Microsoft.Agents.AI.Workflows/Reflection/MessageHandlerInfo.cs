@@ -143,7 +143,7 @@ internal readonly struct MessageHandlerInfo
 
         object? InvokeHandler(object message, IWorkflowContext workflowContext, CancellationToken cancellationToken)
         {
-            return handlerMethod.Invoke(executor, [message, workflowContext, cancellationToken]);
+            return handlerMethod.ReflectionInvoke(executor, [message, workflowContext, cancellationToken]);
         }
     }
 }
