@@ -383,24 +383,25 @@ that manually replay messages own the equivalent rule: do not resend an approval
   must treat the exception as an explicit instruction to discard those calls and never execute them. Caller
   cancellation remains cancellation rather than becoming this provider signal.
 - Every actionable local `function_call` produces exactly one terminal `function_result`, unless execution pauses
-  for a new user-input request or the run is aborted by `MiddlewareFailure`.
+  for a new user-input request or the run is aborted by a fail-closed error.
 - An ordinary exception raised by function middleware or a tool body becomes one terminal error `function_result`
-  and the loop continues; `MiddlewareFailure` is the loop's only fail-closed escape: it is never converted into a
+  and the loop continues. `MiddlewareFailure` is the execution-time fail-closed escape: it is never converted into a
   tool result, the in-flight parallel batch is cancelled, no further tool call starts, no further model turn is
-  consumed, and the exception propagates to the caller (for streaming runs, when the stream is consumed). On a
-  service-managed conversation the loop first settles the aborted batch — one error `function_result` per dangling
-  call (approval-response wrappers unwrap to their underlying calls; hosted-tool approvals are left to their own
-  provider protocol), submitted with `tool_choice="none"` in a single extra request — so the hosted thread is not
-  left ending in unresolved function calls that the service would reject on the session's next request; the
-  persisted continuation then advances to the settlement response (for response-ID continuations the settled
-  endpoint is the new handle; for conversation-object ids the advance is a no-op) and the settlement response is
-  otherwise discarded. Settlement covers the approval-resolution phase too: a fatal abort while an approved tool is
-  replayed settles the original, already-persisted calls. Without a service-managed conversation no extra request
-  is made. Batch
-  cancellation is cooperative: an async sibling stops at its next suspension point, while a synchronous tool body
-  already executing in a worker thread cannot be interrupted and may complete its side effects — its result is
-  discarded either way and never reaches the transcript, the model, or history. Middleware must not catch
-  `MiddlewareFailure` — swallowing it converts a fail-closed abort back into a running, possibly unguarded loop.
+  consumed, and the exception propagates to the caller (for streaming runs, when the stream is consumed). A
+  configured fatal unknown call likewise raises `KeyError` and propagates, but complete-batch classification detects
+  it before any call executes. On a service-managed conversation the loop first settles either aborted batch — one
+  error `function_result` per dangling call (approval-response wrappers unwrap to their underlying calls; hosted-tool
+  approvals are left to their own provider protocol), submitted with `tool_choice="none"` in a single extra request —
+  so the hosted thread is not left ending in unresolved function calls that the service would reject on the session's
+  next request; the persisted continuation then advances to the settlement response (for response-ID continuations
+  the settled endpoint is the new handle; for conversation-object ids the advance is a no-op) and the settlement
+  response is otherwise discarded. Settlement covers the approval-resolution phase too: a fatal abort while an
+  approved tool is replayed settles the original, already-persisted calls. Without a service-managed conversation no
+  extra request is made. Batch cancellation is cooperative: an async sibling stops at its next suspension point,
+  while a synchronous tool body already executing in a worker thread cannot be interrupted and may complete its side
+  effects — its result is discarded either way and never reaches the transcript, the model, or history. Middleware
+  must not catch `MiddlewareFailure` — swallowing it converts a fail-closed abort back into a running, possibly
+  unguarded loop.
 - `Content.exception` is host-internal diagnostic state. Default `Content.to_dict()` and nested response serialization replace it with a fixed non-sensitive failure marker,
   while the original field remains directly available to trusted local code. Remote protocol serializers use the
   marker only for status and use the channel-visible `result` or `items` for output text. `include_detailed_errors=False` keeps the channel-visible
@@ -677,7 +678,7 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Approved middleware repair | Approval binds to the normalized middleware-entry representation, so ordinary Pydantic coercion still completes in one approval round. A changed approval-bound call executes zero times under the old grant, returns a persisted occurrence-bound replacement request in both response modes, and executes once only after the replacement is approved. Recursive type-aware, float-bit-exact comparison treats booleans and numbers, and positive and negative zero, as distinct while keeping unchanged NaNs stable. Opaque mutable normalized values fail closed before approval authority is established. The same replacement rule applies when middleware short-circuits instead of calling the tool. Security expansion preserves approval-visible placeholders. | `test_approved_coercing_arguments_execute_without_replacement`, `test_approved_argument_repair_requires_replacement_approval`, `test_approved_argument_repair_short_circuit_requires_replacement_approval`, `test_approval_snapshot_distinguishes_exact_values`, `test_approval_rejects_opaque_mutable_validator_output`, `packages/core/tests/test_security.py::TestVariableArgumentPolicy::test_hidden_argument_resolution_does_not_require_reapproval` |
 | Approved success | Successful approved execution returns one result. | `test_approved_function_call_successful_execution` |
 | Consecutive error cap | Error threshold stops repeated failures, submits collected results, and makes only the required final no-tool model call. | `test_function_invocation_config_max_consecutive_errors`, `test_streaming_function_invocation_config_max_consecutive_errors`, `test_approval_resume_error_limit_forces_final_no_tool_response` |
-| Unknown call handling | Configured false returns an error result; configured true raises. | `test_function_invocation_config_terminate_on_unknown_calls_false`, `test_function_invocation_config_terminate_on_unknown_calls_true`, streaming equivalents |
+| Unknown call handling | Configured false returns an error result; configured true raises before any call executes. A service-managed continuation settles every call in the aborted batch and advances to the settlement response before the `KeyError` propagates; without one, including local per-service-call history persistence, no extra request is made. | `test_function_invocation_config_terminate_on_unknown_calls_false`, `test_function_invocation_config_terminate_on_unknown_calls_true`, streaming equivalents, `test_fatal_unknown_settles_service_conversation`, `test_fatal_unknown_with_local_history_makes_no_settlement_request` |
 | Middleware termination | Normal non-approval loop stops without a second model call. | `test_terminate_loop_single_function_call`, `test_terminate_loop_multiple_function_calls_one_terminates`, `test_terminate_loop_streaming_single_function_call` |
 | Middleware failure (fatal) | `MiddlewareFailure` from function middleware or a tool body propagates to the caller without becoming a tool result; the tool does not execute (pre-invocation) or its result never feeds another model call (post-invocation); the cause chain is preserved; ordinary exceptions still become tool-error results and the loop continues. | `packages/core/tests/core/test_middleware_with_agent.py::TestMiddlewareFailure::test_failure_before_tool_aborts_run`, `test_failure_after_tool_aborts_run_before_next_model_turn`, `test_failure_cause_chain_reaches_caller`, `test_failure_from_tool_escapes_without_middleware`, `test_failure_streaming_reaches_stream_consumer`, `test_ordinary_exception_still_becomes_tool_error` |
 | Middleware failure batch cancellation | A fatal signal fails the whole parallel batch: in-flight sibling tool invocations are cancelled and awaited before the failure propagates. Cancellation is cooperative — an async sibling stops at its next suspension point; a synchronous tool body already executing in a worker thread cannot be interrupted and may complete its side effects, but its result is discarded and never reaches the transcript, the model, or history, and failure propagation is not delayed behind it. | `TestMiddlewareFailure::test_failure_cancels_concurrent_sibling_tool`, `test_failure_with_sync_sibling_discards_late_result` |

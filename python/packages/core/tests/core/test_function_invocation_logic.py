@@ -3525,6 +3525,7 @@ async def test_function_invocation_config_terminate_on_unknown_calls_true(chat_c
         )
 
     assert exec_counter == 0
+    assert chat_client_base.call_count == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
 
 @pytest.mark.parametrize("unknown_first", [True, False], ids=["unknown-first", "unknown-last"])
@@ -3570,6 +3571,133 @@ async def test_mixed_batch_fatal_unknown_precedes_every_pause(
         )
 
     assert approval_calls == safe_calls == 0
+
+
+@pytest.mark.parametrize("stream", [False, True], ids=["non-streaming", "streaming"])
+async def test_fatal_unknown_settles_service_conversation(
+    chat_client_base: SupportsChatGetResponse,
+    stream: bool,
+) -> None:
+    """A fatal unknown call settles every dangling local call before propagating."""
+    requests: list[dict[str, Any]] = []
+    known_calls = 0
+
+    @chat_middleware
+    async def record_requests(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+        requests.append({
+            "conversation_id": (context.options or {}).get("conversation_id"),
+            "messages": list(context.messages),
+            "tool_choice": (context.options or {}).get("tool_choice"),
+        })
+        await call_next()
+
+    @tool(name="known_function", approval_mode="never_require")
+    def known_func() -> str:
+        nonlocal known_calls
+        known_calls += 1
+        return "known"
+
+    function_calls = [
+        Content.from_function_call(call_id="unknown", name="unknown_function", arguments={}),
+        Content.from_function_call(call_id="known", name="known_function", arguments={}),
+    ]
+    settlement_response = ChatResponse(
+        messages=Message(role="assistant", contents=["settled"]),
+        conversation_id="resp_2",
+    )
+    if stream:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [
+                ChatResponseUpdate(
+                    contents=function_calls,
+                    role="assistant",
+                    conversation_id="resp_1",
+                )
+            ]
+        ]
+        chat_client_base.run_responses = [settlement_response]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    else:
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            ChatResponse(
+                messages=Message(role="assistant", contents=function_calls),
+                conversation_id="resp_1",
+            ),
+            settlement_response,
+        ]
+    chat_client_base.chat_middleware = [record_requests]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.function_invocation_configuration["terminate_on_unknown_calls"] = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    session = AgentSession()
+
+    with pytest.raises(KeyError, match='Error: Requested function "unknown_function" not found'):
+        if stream:
+            async for _ in chat_client_base.get_response(  # type: ignore[call-overload]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
+                "hello",  # type: ignore[arg-type]
+                options={"tool_choice": "auto", "tools": [known_func]},
+                stream=True,
+                client_kwargs={"session": session},
+            ):
+                pass
+        else:
+            await chat_client_base.get_response(
+                [Message(role="user", contents=["hello"])],
+                options={"tool_choice": "auto", "tools": [known_func]},
+                client_kwargs={"session": session},
+            )
+
+    assert known_calls == 0
+    assert len(requests) == 2
+    settlement = requests[1]
+    assert settlement["conversation_id"] == "resp_1"
+    assert settlement["tool_choice"] == "none"
+    settlement_results = [
+        content
+        for message in settlement["messages"]
+        for content in message.contents
+        if content.type == "function_result"
+    ]
+    assert [(result.call_id, result.exception) for result in settlement_results] == [
+        ("unknown", "KeyError"),
+        ("known", "KeyError"),
+    ]
+    assert all("unknown_function" in (result.result or "") for result in settlement_results)
+    assert session.service_session_id == "resp_2"
+
+
+@pytest.mark.parametrize("stream", [False, True], ids=["non-streaming", "streaming"])
+async def test_fatal_unknown_with_local_history_makes_no_settlement_request(
+    chat_client_base: SupportsChatGetResponse,
+    stream: bool,
+) -> None:
+    """The local history sentinel must not be treated as a service continuation."""
+    from agent_framework import InMemoryHistoryProvider
+
+    unknown_call = Content.from_function_call(call_id="unknown", name="unknown_function", arguments={})
+    if stream:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [ChatResponseUpdate(contents=[unknown_call], role="assistant")]
+        ]
+    else:
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            ChatResponse(messages=Message(role="assistant", contents=[unknown_call]))
+        ]
+    chat_client_base.function_invocation_configuration["terminate_on_unknown_calls"] = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    agent = Agent(
+        client=chat_client_base,
+        tools=[FunctionTool(name="known_function", func=lambda: "known")],
+        context_providers=[InMemoryHistoryProvider()],
+        require_per_service_call_history_persistence=True,
+    )
+    session = AgentSession()
+
+    with pytest.raises(KeyError, match='Error: Requested function "unknown_function" not found'):
+        if stream:
+            async for _ in agent.run("hello", session=session, stream=True):
+                pass
+        else:
+            await agent.run("hello", session=session)
+
+    assert chat_client_base.call_count == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert session.service_session_id is None
 
 
 @pytest.mark.parametrize("approval_first", [True, False], ids=["approval-first", "host-first"])
@@ -8084,10 +8212,9 @@ async def test_streaming_function_invocation_config_terminate_on_unknown_calls_f
     assert exec_counter == 0  # Known function not executed
 
 
-@pytest.mark.skip(reason="Failsafe behavior needs investigation in unified API")
 async def test_streaming_function_invocation_config_terminate_on_unknown_calls_true(
     chat_client_base: SupportsChatGetResponse,
-):
+) -> None:
     """Test that terminate_on_unknown_calls=True stops execution on unknown functions in streaming mode."""
     exec_counter = 0
 
@@ -8113,12 +8240,15 @@ async def test_streaming_function_invocation_config_terminate_on_unknown_calls_t
 
     # Should raise an exception when encountering an unknown function
     with pytest.raises(KeyError, match='Error: Requested function "unknown_function" not found'):
-        async for _ in chat_client_base.get_response(  # type: ignore[attr-defined]  # pyrefly: ignore[not-iterable]  # ty: ignore[not-iterable]
-            [Message(role="user", contents=["hello"])], options={"tool_choice": "auto", "tools": [known_func]}
+        async for _ in chat_client_base.get_response(  # type: ignore[call-overload]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
+            "hello",  # type: ignore[arg-type]
+            options={"tool_choice": "auto", "tools": [known_func]},
+            stream=True,
         ):
             pass
 
     assert exec_counter == 0
+    assert chat_client_base.call_count == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
 
 async def test_streaming_function_invocation_config_include_detailed_errors_true(
