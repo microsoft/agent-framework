@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -127,41 +126,36 @@ internal sealed partial class AgentMcpSkill : AgentSkill
 
     private static bool IsResourceNameSafe(string name)
     {
+        // Treat backslashes as separators, e.g. "..\x" is checked as "../x".
         string normalized = name.Replace('\\', '/');
-        return !GetDecodedForms(normalized).Any(IsUnsafePath);
+
+        // Validate only the path before a literal "?"/"#", fully decoded; e.g. "a%3f/%2e%2e/x" stays one path, "a/b.md?q=/../x" ignores the query.
+        string path = FullyUnescape(normalized.Split(['?', '#'], 2)[0]);
+
+        // Absolute path, e.g. "/etc/passwd" or "%2fetc/passwd".
+        return !path.StartsWith('/')
+            // Embedded URI, e.g. "http://example.com/other" or "%68ttp%3a%2f%2fexample.com".
+            && !path.Contains("://", StringComparison.Ordinal)
+            // Parent traversal, e.g. "../x", "%2e%2e/x", "%252e%252e/x", "a%3f/../../x", or ".. " (URI parsers can trim trailing spaces).
+            && !path.Split(['/', '?', '#']).Any(segment => segment.TrimEnd(' ') == "..")
+            // Control characters anywhere, e.g. "a/\0/b.md", ".\t./x", or ".%09./x".
+            && !FullyUnescape(normalized).Any(char.IsControl);
     }
 
     /// <summary>
-    /// Yields <paramref name="name"/> and each successive percent-decoded form until decoding is stable.
-    /// Every layer is validated so nested encodings (e.g. <c>%252e</c>) cannot smuggle traversal past
-    /// the check, while the original escaping is still preserved in the resource URI.
+    /// Percent-decodes <paramref name="value"/> until stable, normalizing backslashes to forward slashes.
+    /// Decoding never removes a literal <c>.</c>, <c>/</c>, <c>:</c>, or control character, so checking
+    /// the final form also covers every nested encoding layer (e.g. <c>%252e</c>).
     /// </summary>
-    private static IEnumerable<string> GetDecodedForms(string name)
+    private static string FullyUnescape(string value)
     {
-        string current = name;
-        while (true)
+        string decoded;
+        while ((decoded = Uri.UnescapeDataString(value).Replace('\\', '/')) != value)
         {
-            yield return current;
-
-            string decoded = Uri.UnescapeDataString(current).Replace('\\', '/');
-            if (decoded == current)
-            {
-                yield break;
-            }
-
-            current = decoded;
+            value = decoded;
         }
-    }
 
-    private static bool IsUnsafePath(string form)
-    {
-        // URI parsers can trim trailing spaces before resolving dot segments.
-        form = form.TrimEnd(' ');
-        string path = form.Split(['?', '#'], 2)[0];
-        return form.StartsWith('/')
-            || form.Contains("://", StringComparison.Ordinal)
-            || path.Split('/').Contains("..")
-            || form.Any(char.IsControl);
+        return value;
     }
 
     [LoggerMessage(LogLevel.Debug, "Rejecting MCP skill resource name with unsafe path components.")]

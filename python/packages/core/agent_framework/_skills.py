@@ -56,7 +56,7 @@ import re
 import time
 import zipfile
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import timedelta
 from enum import Enum
@@ -4411,33 +4411,15 @@ class MCPSkillResource(SkillResource):
 _RESOURCE_CONTROL_CHARS: Final = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 
 
-def _decoded_resource_forms(name: str) -> Iterator[str]:
-    """Yield *name* and each successive percent-decoded form until decoding is stable.
+def _fully_unquote(value: str) -> str:
+    """Percent-decode *value* until stable, normalizing backslashes to forward slashes.
 
-    Every layer is validated so that nested encodings (e.g. ``%252e``) cannot
-    smuggle traversal past the check, while the original escaping is still
-    preserved in the resource identifier sent to the MCP server.
+    Decoding never removes a literal ``.``, ``/``, ``:``, or control character, so
+    checking the final form also covers every nested encoding layer (e.g. ``%252e``).
     """
-    current = name
-    while True:
-        yield current
-        decoded = unquote(current).replace("\\", "/")
-        if decoded == current:
-            return
-        current = decoded
-
-
-def _is_unsafe_resource_path(form: str) -> bool:
-    """Return ``True`` if *form* is absolute, has a URI scheme, traverses upward, or has control characters."""
-    # URI parsers can trim trailing spaces before resolving dot segments.
-    form = form.rstrip(" ")
-    path = re.split(r"[?#]", form, maxsplit=1)[0]
-    return (
-        form.startswith("/")
-        or "://" in form
-        or ".." in path.split("/")
-        or _RESOURCE_CONTROL_CHARS.search(form) is not None
-    )
+    while (decoded := unquote(value).replace("\\", "/")) != value:
+        value = decoded
+    return value
 
 
 @experimental(feature_id=ExperimentalFeature.MCP_SKILLS)
@@ -4573,8 +4555,22 @@ class MCPSkill(Skill):
             The normalized name with backslashes replaced by forward slashes,
             or ``None`` if the name is unsafe.
         """
+        # Treat backslashes as separators, e.g. "..\x" is checked as "../x".
         normalized = name.replace("\\", "/")
-        if any(_is_unsafe_resource_path(form) for form in _decoded_resource_forms(normalized)):
+        # Validate only the path before a literal "?"/"#", fully decoded; e.g. "a%3f/%2e%2e/x" stays one path,
+        # "a/b.md?q=/../x" ignores the query.
+        path = _fully_unquote(re.split(r"[?#]", normalized, maxsplit=1)[0])
+        if (
+            # Absolute path, e.g. "/etc/passwd" or "%2fetc/passwd".
+            path.startswith("/")
+            # Embedded URI, e.g. "http://example.com/other" or "%68ttp%3a%2f%2fexample.com".
+            or "://" in path
+            # Parent traversal, e.g. "../x", "%2e%2e/x", "%252e%252e/x", "a%3f/../../x", or ".. "
+            # (URI parsers can trim trailing spaces).
+            or any(segment.rstrip(" ") == ".." for segment in re.split(r"[/?#]", path))
+            # Control characters anywhere, e.g. "a/\0/b.md", ".\t./x", or ".%09./x".
+            or _RESOURCE_CONTROL_CHARS.search(_fully_unquote(normalized))
+        ):
             logger.debug("Rejecting resource name with unsafe path components: %r", name)
             return None
         return normalized

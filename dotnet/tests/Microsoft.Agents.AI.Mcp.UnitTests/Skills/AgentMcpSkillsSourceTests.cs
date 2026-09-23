@@ -145,7 +145,7 @@ public sealed class AgentMcpSkillsSourceTests
     [InlineData("..")]
     [InlineData("..\\escape.md")]
     [InlineData("/etc/passwd")]
-    [InlineData("http://attacker.example.com/payload")]
+    [InlineData("http://example.com/other")]
     [InlineData("%2e%2e/escape.md")]
     [InlineData("%2E./escape.md")]
     [InlineData(".%2e/escape.md")]
@@ -156,11 +156,21 @@ public sealed class AgentMcpSkillsSourceTests
     [InlineData("%25252e%25252e/escape.md")]
     [InlineData("%2fescape.md")]
     [InlineData("%5cescape.md")]
-    [InlineData("%68ttp%3a%2f%2fattacker.example.com/payload")]
+    [InlineData("%68ttp%3a%2f%2fexample.com/other")]
     [InlineData("..?download=1")]
     [InlineData("..#fragment")]
     [InlineData("%2e%2e%3fdownload=1")]
     [InlineData("references%3f/../../escape.md")]
+    [InlineData("references%3f/%2e%2e/%2e%2e/escape.md")]
+    [InlineData("references%23/%2e%2e/%2e%2e/escape.md")]
+    [InlineData("references%3f%2f%2e%2e%2f%2e%2e%2fescape.md")]
+    [InlineData("references%23%5c%2e%2e%5c%2e%2e%5cescape.md")]
+    [InlineData("references%253f%252f%252e%252e%252f%252e%252e%252fescape.md")]
+    [InlineData("references%2523%252f%252e%252e%252f%252e%252e%252fescape.md")]
+    [InlineData("references%3f/%252e%252e/%252e%252e/escape.md")]
+    [InlineData("references%3f/%2e%2e/%2e%2e/escape.md?version=1")]
+    [InlineData("references%23/%2e%2e/%2e%2e/escape.md#section")]
+    [InlineData("references%3f%2f%2e%2e%20")]
     [InlineData(".\t./escape.md")]
     [InlineData(".%09./escape.md")]
     [InlineData("references/\0/guide.md")]
@@ -170,6 +180,7 @@ public sealed class AgentMcpSkillsSourceTests
     [InlineData("..%20")]
     [InlineData("%252e%252e%2520")]
     [InlineData("references/.. ")]
+    [InlineData("references/.. ?version=1")]
     public async Task GetResourceAsync_PathTraversalName_ReturnsNullAsync(string name)
     {
         foreach (string root in new[]
@@ -226,8 +237,13 @@ public sealed class AgentMcpSkillsSourceTests
             "references/v1.2/guide.md",
             "references/%2520.md",
             "references/guide.md?version=1#section",
-            "references/guide.md ",
-            "references/.. ?version=1"
+            "references/guide%3fname.md",
+            "references/guide%23name.md",
+            "references/guide%253fname.md",
+            "references/guide.md?example=/../../other.md",
+            "references/guide.md#example=/../../other.md",
+            "references/guide.md?example=%2e%2e%2f%2e%2e%2fother.md",
+            "references/guide.md "
         })
         {
             reads.Clear();
