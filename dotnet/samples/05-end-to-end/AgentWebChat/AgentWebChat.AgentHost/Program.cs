@@ -41,6 +41,14 @@ builder.AddOpenAIResponses();
 // their own state even without an agent session store. DevUI access controls do not replace these controls.
 // See the shared hosting guide in dotnet/samples/04-hosting/README.md for configuration and client requirements.
 
+// The session stores below enable isolation, which is strict by default and rejects every request when no
+// AgentIsolationKeyProvider is registered. Require an isolation key only when a provider is registered, so this
+// local sample runs as a single shared caller and becomes strict once a provider (see above) is added.
+builder.Services.AddSingleton(sp => new IsolationKeyScopedAgentSessionStoreOptions
+{
+    Strict = sp.GetService<AgentIsolationKeyProvider>() is not null,
+});
+
 // By default, NoopAgentSessionStore is used — sessions are not persisted across requests.
 // To enable multi-turn conversations, register a session store explicitly, e.g.:
 // agentBuilder.WithInMemorySessionStore();
