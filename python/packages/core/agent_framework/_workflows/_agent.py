@@ -113,8 +113,14 @@ class WorkflowAgent(BaseAgent):
             id: Unique identifier for the agent. If None, will be generated.
             name: Optional name for the agent.
             description: Optional description of the agent.
-            context_providers: Optional sequence of context providers for the agent.
-            **kwargs: Additional keyword arguments passed to BaseAgent.
+            context_providers: Optional sequence of context providers. Provider lifecycle hooks
+                run, and provider-contributed messages are passed to the workflow. Provider-
+                contributed instructions, tools, and chat or function middleware are not
+                propagated to executors; configure them on the agents or clients within the
+                workflow instead.
+            **kwargs: Additional keyword arguments passed to BaseAgent. Middleware stored by
+                BaseAgent is not executed by WorkflowAgent; configure middleware on the agents
+                or clients within the workflow instead.
 
         Note:
             Only output events (type='output') and request_info events (type='request_info') from
@@ -685,6 +691,11 @@ class WorkflowAgent(BaseAgent):
                             raw_representation=msg,
                         )
                     )
+                if updates:
+                    updates[-1].agent_id = data.agent_id
+                    updates[-1].finish_reason = data.finish_reason
+                    updates[-1].continuation_token = data.continuation_token
+                    updates[-1].additional_properties = dict(data.additional_properties)
                 return updates
             if isinstance(data, Message):
                 return [

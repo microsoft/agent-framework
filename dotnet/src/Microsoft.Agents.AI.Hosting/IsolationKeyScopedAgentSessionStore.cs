@@ -17,6 +17,7 @@ namespace Microsoft.Agents.AI.Hosting;
 public class IsolationKeyScopedAgentSessionStore : DelegatingAgentSessionStore
 {
     private const string IsolationPartitionName = "isolation";
+    private static readonly AsyncLocal<string?> s_capturedIsolationKey = new();
 
     private readonly AgentIsolationKeyProvider? _keyProvider;
     private readonly bool _strict;
@@ -55,9 +56,16 @@ public class IsolationKeyScopedAgentSessionStore : DelegatingAgentSessionStore
     /// </exception>
     private async ValueTask<string?> GetIsolationKeyAsync(CancellationToken cancellationToken)
     {
-        string? key = this._keyProvider != null
-                    ? await this._keyProvider.GetIsolationKeyAsync(cancellationToken).ConfigureAwait(false)
-                    : null;
+        // Background execution supplies the trusted request-time key through the async call flow.
+        // This takes precedence over ambient providers such as IHttpContextAccessor, whose request
+        // may already have ended by the time a nested isolation decorator is reached.
+        string? key = s_capturedIsolationKey.Value;
+        if (key is null)
+        {
+            key = this._keyProvider != null
+                ? await this._keyProvider.GetIsolationKeyAsync(cancellationToken).ConfigureAwait(false)
+                : null;
+        }
 
         if (string.IsNullOrWhiteSpace(key))
         {
@@ -84,6 +92,12 @@ public class IsolationKeyScopedAgentSessionStore : DelegatingAgentSessionStore
         string? isolationKey = await this.GetIsolationKeyAsync(cancellationToken).ConfigureAwait(false);
         return isolationKey is null ? key : key.WithPartition(IsolationPartitionName, isolationKey);
     }
+
+    /// <summary>
+    /// Overrides ambient isolation lookup for the current asynchronous operation.
+    /// </summary>
+    internal static IDisposable UseCapturedIsolationKey(string isolationKey) =>
+        new CapturedIsolationKeyScope(Throw.IfNullOrWhitespace(isolationKey));
 
     /// <inheritdoc />
     public override async ValueTask<AgentSession?> GetSessionAsync(
@@ -114,5 +128,26 @@ public class IsolationKeyScopedAgentSessionStore : DelegatingAgentSessionStore
     {
         AgentSessionStoreKey scopedKey = await this.GetScopedKeyAsync(key, cancellationToken).ConfigureAwait(false);
         await this.InnerStore.SaveSessionAsync(agent, scopedKey, session, cancellationToken).ConfigureAwait(false);
+    }
+
+    private sealed class CapturedIsolationKeyScope : IDisposable
+    {
+        private readonly string? _previousIsolationKey;
+        private bool _disposed;
+
+        public CapturedIsolationKeyScope(string isolationKey)
+        {
+            this._previousIsolationKey = s_capturedIsolationKey.Value;
+            s_capturedIsolationKey.Value = isolationKey;
+        }
+
+        public void Dispose()
+        {
+            if (!this._disposed)
+            {
+                s_capturedIsolationKey.Value = this._previousIsolationKey;
+                this._disposed = true;
+            }
+        }
     }
 }

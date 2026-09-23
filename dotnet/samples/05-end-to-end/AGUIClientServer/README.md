@@ -131,7 +131,22 @@ IChatClient chatClient = new OpenAIClient(
     .AsIChatClientWithStoredOutputDisabled(model: deploymentName);
 
 builder
-    .AddAIAgent("AGUIAssistant", "You are a helpful assistant.", chatClient)
+    .AddAIAgent("AGUIAssistant", (services, name) => chatClient.AsAIAgent(new ChatClientAgentOptions
+    {
+        Name = name,
+        // Mixed client/server calls otherwise leave both calls unexecuted on the server.
+        // Retain server calls in the session and expose only client calls. The client executes them
+        // and sends results with matching call IDs on the same thread's continuation request.
+        // The server then executes its saved calls and streams their call/result pairs as completed
+        // history, not requests for client execution. WithInMemorySessionStore preserves deferred calls
+        // between HTTP requests so execution does not rely on client-replayed server calls.
+        EnableInvocableFunctionBypassing = true,
+        ChatOptions = new ChatOptions
+        {
+            Instructions = "You are a helpful assistant.",
+            Tools = services.GetKeyedServices<AITool>(name).ToList(),
+        },
+    }, services: services))
     .WithAITool(new HostedWebSearchTool())
     .WithInMemorySessionStore();
 
@@ -143,6 +158,16 @@ This automatically handles:
 - Converting agent responses to AG-UI event streams
 - Server-sent events (SSE) formatting
 - Thread and run management
+
+### Mixed Client and Server Tools
+
+`AGUIServer` enables `ChatClientAgentOptions.EnableInvocableFunctionBypassing` and uses an in-memory session store. When a model response requests both a client tool and a non-approval-required server function, the server retains the pending server call in its session and sends only the client call for execution. After the client returns its result, the server resumes the stored call.
+
+The client result carries the original call ID and returns on a continuation request for the same thread. The server executes its saved call, and the server call and its matching result appear in the continuation stream as completed history; the client does not execute that server tool.
+
+Both bypassing and session persistence are required for this flow. `AGUIDojoServer` configures the same behavior for `PredictiveStateUpdatesAgent`, which combines server-side `write_document` with client-side `confirm_changes`. Session stores must be keyed by the agent's name.
+
+In-memory storage is for demonstration: it loses sessions on restart and has no size limit or eviction. Production hosts should use a persistent store and an `AgentIsolationKeyProvider` to isolate sessions by authenticated user.
 
 ### Client Side
 

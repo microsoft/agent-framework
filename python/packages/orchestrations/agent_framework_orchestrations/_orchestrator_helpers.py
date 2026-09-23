@@ -13,37 +13,53 @@ from agent_framework._types import Message
 logger = logging.getLogger(__name__)
 
 
+# Semantic content types that carry real user input and must survive handoff routing.
+# Everything else (function calls, function results, approval payloads, tool outputs)
+# is runtime-only tool-control state that providers reject when replayed.
+_USER_SEMANTIC_CONTENT_TYPES: frozenset[str] = frozenset({"text", "data", "uri", "hosted_file", "hosted_vector_store"})
+
+
 def clean_conversation_for_handoff(conversation: list[Message]) -> list[Message]:
-    """Keep only plain text chat history for handoff routing.
+    """Clean the conversation history for handoff routing.
 
     Handoff executors must not replay prior tool-control artifacts (function calls,
     tool outputs, approval payloads) into future model turns, or providers may reject
-    the next request due to unmatched tool-call state.
+    the next request due to unmatched tool-call state. At the same time, genuine user
+    input such as images or files must be preserved so the receiving agent keeps the
+    full context of the request.
 
-    This helper builds a text-only copy of the conversation:
-    - Drops all non-text content from every message.
-    - Drops messages with no remaining text content.
-    - Preserves original roles and author names for retained text messages.
+    This helper builds a cleaned copy of the conversation:
+    - Keeps text content on every message.
+    - Additionally keeps semantic multimodal content (data, uri, hosted_file,
+      hosted_vector_store) on user messages.
+    - Keeps assistant and other non-user messages text-only, because providers treat
+      multimodal parts as input-only and reject them when replayed on assistant turns.
+    - Drops tool-control payloads (function_call, function_result, approval payloads, etc.).
+    - Drops messages with no remaining content.
+    - Preserves original roles and author names for retained messages.
 
     Args:
         conversation: Full conversation history, including tool-control content
     Returns:
-        Cleaned conversation history with only text content, suitable for handoff routing
+        Cleaned conversation history suitable for handoff routing, with semantic
+        multimodal content preserved on user messages.
     """
     cleaned: list[Message] = []
     for msg in conversation:
-        # Keep only plain text history for handoff routing. Tool-control content
-        # (function_call/function_result/approval payloads) is runtime-only and
-        # must not be replayed in future model turns.
-        text_parts = [content.text for content in msg.contents if content.type == "text" and content.text]
-        # TODO(@taochen): This is a simplified check that considers any non-text content as a tool call.
-        # We need to enhance this logic to specifically identify tool related contents.
-        if not text_parts:
+        # Tool-control content (function_call/function_result/approval payloads) is
+        # runtime-only and must not be replayed in future model turns.
+        allowed_types = _USER_SEMANTIC_CONTENT_TYPES if str(msg.role).lower() == "user" else frozenset({"text"})
+        retained = [
+            content
+            for content in msg.contents
+            if content.type in allowed_types and (content.type != "text" or content.text)
+        ]
+        if not retained:
             continue
 
         msg_copy = Message(
             role=msg.role,
-            contents=[" ".join(text_parts)],
+            contents=retained,
             author_name=msg.author_name,
             additional_properties=dict(msg.additional_properties) if msg.additional_properties else None,
         )

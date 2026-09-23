@@ -568,9 +568,7 @@ class DeclarationOnlyMockChatClient(FunctionInvocationLayer[Any], BaseChatClient
     def _create_response(self) -> ChatResponse:
         if self._iteration == 0:
             if self._mixed_request:
-                response = ChatResponse(
-                    messages=Message("assistant", self._mixed_request_contents())
-                )
+                response = ChatResponse(messages=Message("assistant", self._mixed_request_contents()))
             elif self._parallel_request:
                 response = ChatResponse(
                     messages=Message(

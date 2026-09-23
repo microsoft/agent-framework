@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
@@ -67,9 +68,10 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, ResponseA
     {
         string? conversationId = this.GetConversationId();
         string agentName = this.GetAgentName();
+        string? agentVersion = this.GetAgentVersion();
         bool autoSend = this.GetAutoSendValue();
         Dictionary<string, object?>? inputParameters = this.GetStructuredInputs();
-        AgentResponse agentResponse = await agentProvider.InvokeAgentAsync(this.Id, context, agentName, conversationId, autoSend, messages, inputParameters, cancellationToken).ConfigureAwait(false);
+        AgentResponse agentResponse = await agentProvider.InvokeAgentAsync(this.Id, context, agentName, agentVersion, conversationId, autoSend, messages, inputParameters, cancellationToken).ConfigureAwait(false);
 
         ChatMessage[] actionableMessages = FilterActionableContent(agentResponse).ToArray();
         if (actionableMessages.Length > 0)
@@ -154,6 +156,11 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, ResponseA
         if (this.AgentInput?.Messages is not null)
         {
             EvaluationResult<DataValue> expressionResult = this.Evaluator.GetValue(this.AgentInput.Messages);
+            if (expressionResult.Sensitivity == SensitivityLevel.Sensitive)
+            {
+                throw new DeclarativeActionException($"Cannot send sensitive agent input messages: {this.Id}.");
+            }
+
             userInput = expressionResult.Value;
         }
 
@@ -201,6 +208,11 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, ResponseA
             Throw.IfNull(
                 this.AgentUsage.Name,
                 $"{nameof(this.Model)}.{nameof(this.Model.Agent)}.{nameof(this.Model.Agent.Name)}")).Value;
+
+    private string? GetAgentVersion() =>
+        this.AgentUsage.Version is null
+            ? null
+            : this.Evaluator.GetValue(this.AgentUsage.Version).Value.ToString(CultureInfo.InvariantCulture);
 
     private bool GetAutoSendValue()
     {
