@@ -14,11 +14,25 @@ from agent_framework_sql_server import SqlServerStore
 """
 Search native VECTOR columns in SQL Server 2025 or Azure SQL.
 
-Set SQL_SERVER_CONNECTION_STRING to a Microsoft mssql-python connection string
-for an explicitly designated development database (Server=...;Database=...).
-No separately installed ODBC driver is needed. The example creates a unique
-table in the existing dbo schema and drops only that table. No embedding service
-is needed.
+For passwordless Microsoft Entra authentication to an Azure SQL development
+database, sign in with Azure CLI and set the connection string before running:
+
+    az login
+    export SQL_SERVER_CONNECTION_STRING='Server=<host>;Database=<db>;Authentication=ActiveDirectoryDefault;Encrypt=yes;'
+
+Replace <host> with the Azure SQL server hostname (for example,
+my-server.database.windows.net) and <db> with an existing vector-enabled
+database. The signed-in identity needs permission to create a table and index
+in the dbo schema and read/write its records. For an Azure-hosted app, use
+Authentication=ActiveDirectoryMSI instead (and UID=<client-id> for a
+user-assigned managed identity). The connector reads SQL_SERVER_CONNECTION_STRING
+through Agent Framework settings; it does not discover a .env file implicitly.
+See https://learn.microsoft.com/sql/connect/python/mssql-python/entra-authentication
+for other supported Entra modes and database-user setup.
+
+No separately installed ODBC driver is needed. This example creates a unique
+table in the existing dbo schema and drops only that table. No embedding
+service is needed.
 
 Run: uv run --package agent-framework-sql-server python packages/sql-server/samples/sql_server_vectors.py
 """

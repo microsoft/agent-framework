@@ -37,8 +37,27 @@ settings. `ensure_collection_deleted()` drops only that table.
 
 ## Connection settings and ownership
 
-Set `SQL_SERVER_CONNECTION_STRING` to a driver connection string such as
-`Server=tcp:<host>,1433;Database=<name>;Authentication=ActiveDirectoryDefault;Encrypt=yes`.
+For local Azure SQL development with passwordless Microsoft Entra authentication,
+sign in with Azure CLI, then set the environment variable used by the
+[sample](samples/sql_server_vectors.py):
+
+```bash
+az login
+export SQL_SERVER_CONNECTION_STRING='Server=<host>;Database=<db>;Authentication=ActiveDirectoryDefault;Encrypt=yes;'
+```
+
+Replace `<host>` with the Azure SQL server hostname (for example,
+`my-server.database.windows.net`) and `<db>` with your existing database.
+`ActiveDirectoryDefault` uses the driver's credential chain, which can use
+your Azure CLI sign-in. The identity must be granted access to the database
+and permission to create a table and index in the configured schema and
+read/write its records. On an Azure-hosted app, use
+`Authentication=ActiveDirectoryMSI` for managed identity; add
+`UID=<client-id>` for a user-assigned identity. See
+[Microsoft's Entra authentication guide](https://learn.microsoft.com/sql/connect/python/mssql-python/entra-authentication)
+for setup, permissions, and other supported modes. This connector accepts
+connection strings, not the driver's `token_provider=` credential argument.
+
 Do not commit connection strings containing credentials. Alternatively, pass
 `connection_string` as a string or Agent Framework `SecretString` to
 `SqlServerStore` or `SqlServerCollection`. Settings precedence is **explicit
