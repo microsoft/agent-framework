@@ -4,6 +4,7 @@ import json
 from collections import Counter, OrderedDict, defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from enum import IntEnum
 from typing import Any, cast
 
 from agent_framework._workflows._checkpoint_encoding import (
@@ -12,6 +13,19 @@ from agent_framework._workflows._checkpoint_encoding import (
     decode_checkpoint_value,
     encode_checkpoint_value,
 )
+
+
+class StatusEnum(IntEnum):
+    PENDING = 1
+    ACTIVE = 2
+
+
+class CustomInt(int):
+    pass
+
+
+class CustomStr(str):
+    pass
 
 
 @dataclass
@@ -85,6 +99,33 @@ def test_encode_boolean_false() -> None:
 def test_encode_none() -> None:
     """Test encoding a None value."""
     assert encode_checkpoint_value(None) is None
+
+
+def test_encode_scalar_subclasses_preserves_type_fidelity() -> None:
+    """Test that scalar subclasses like IntEnum are pickled rather than flattened to raw primitives."""
+    status = StatusEnum.ACTIVE
+    encoded = encode_checkpoint_value(status)
+    assert isinstance(encoded, dict)
+    assert _PICKLE_MARKER in encoded
+    decoded = decode_checkpoint_value(encoded)
+    assert decoded == StatusEnum.ACTIVE
+    assert type(decoded) is StatusEnum
+
+    custom_int = CustomInt(42)
+    encoded_int = encode_checkpoint_value(custom_int)
+    assert isinstance(encoded_int, dict)
+    assert _PICKLE_MARKER in encoded_int
+    decoded_int = decode_checkpoint_value(encoded_int)
+    assert decoded_int == 42
+    assert type(decoded_int) is CustomInt
+
+    custom_str = CustomStr("custom")
+    encoded_str = encode_checkpoint_value(custom_str)
+    assert isinstance(encoded_str, dict)
+    assert _PICKLE_MARKER in encoded_str
+    decoded_str = decode_checkpoint_value(encoded_str)
+    assert decoded_str == "custom"
+    assert type(decoded_str) is CustomStr
 
 
 # --- Tests for collection encoding ---

@@ -307,8 +307,9 @@ def decode_checkpoint_value(value: Any, *, allowed_types: frozenset[str] | None 
 
 def _encode(value: Any) -> Any:
     """Recursively encode a value for JSON storage."""
-    # JSON-native types pass through
-    if isinstance(value, _JSON_NATIVE_TYPES):
+    # JSON-native types pass through only for exact types so scalar subclasses
+    # (such as IntEnum, StrEnum, or custom scalar subclasses) preserve their type.
+    if type(value) in _JSON_NATIVE_TYPES:
         return value
 
     # Recursively encode dict values (keys become strings). Only plain dicts
