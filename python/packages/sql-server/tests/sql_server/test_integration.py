@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from typing import Annotated, Any
 from uuid import uuid4
 
-import aioodbc
 import pytest
 from agent_framework import (
     Filter,
@@ -174,7 +173,7 @@ async def test_portable_scalar_filters_match_in_memory(connection_string: str) -
             await collection.ensure_collection_deleted()
 
 
-async def test_borrowed_outer_transaction_preserves_prior_write_on_failed_batch(connection_string: str) -> None:
+async def test_failed_batch_rolls_back_without_losing_prior_committed_write(connection_string: str) -> None:
     definition = VectorStoreCollectionDefinition(
         [
             VectorStoreField("key", name="id", type_="str"),
@@ -183,21 +182,15 @@ async def test_borrowed_outer_transaction_preserves_prior_write_on_failed_batch(
         ],
         collection_name=f"af_sql_tx_{uuid4().hex}",
     )
-    connection = await aioodbc.connect(dsn=connection_string, autocommit=False)
-    try:
-        collection = SqlServerCollection(dict, client=connection, definition=definition)
+    async with SqlServerCollection(dict, connection_string=connection_string, definition=definition) as collection:
         await collection.ensure_collection_exists()
         try:
             constraint = f"af_check_{uuid4().hex}"
-            cursor = await connection.cursor()
-            try:
-                await cursor.execute(
-                    f"ALTER TABLE {collection._table} ADD CONSTRAINT [{constraint}] CHECK ([count] >= 0)"
-                )
-            finally:
-                await cursor.close()
-            await connection.commit()
 
+            def add_constraint(cursor):
+                cursor.execute(f"ALTER TABLE {collection._table} ADD CONSTRAINT [{constraint}] CHECK ([count] >= 0)")
+
+            await collection._client.run(add_constraint)
             await collection.upsert([{"id": "prior", "count": 1, "embedding": [1, 0, 0]}], generate_vectors=False)
             with pytest.raises(IntegrationException):
                 await collection.upsert(
@@ -208,11 +201,5 @@ async def test_borrowed_outer_transaction_preserves_prior_write_on_failed_batch(
                     generate_vectors=False,
                 )
             assert [row["id"] for row in await collection.get()] == ["prior"]
-            await connection.commit()
-            assert [row["id"] for row in await collection.get()] == ["prior"]
         finally:
-            await connection.rollback()
             await collection.ensure_collection_deleted()
-            await connection.commit()
-    finally:
-        await connection.close()

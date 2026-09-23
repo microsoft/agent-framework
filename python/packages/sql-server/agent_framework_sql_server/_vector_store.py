@@ -7,14 +7,12 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import math
-from collections.abc import AsyncGenerator, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import asynccontextmanager
 from dataclasses import replace
-from typing import Any, ClassVar, Generic, Protocol, TypeAlias, cast
+from typing import Any, ClassVar, Generic, cast
 
-import aioodbc
-import pyodbc
+import mssql_python
 from agent_framework import (
     BaseVectorCollection,
     BaseVectorSearch,
@@ -42,29 +40,8 @@ from ._sql import (
 
 KeyT = TypeVar("KeyT", default=Any)
 ModelT = TypeVar("ModelT", default=Any)
+ResultT = TypeVar("ResultT")
 _KEY_BATCH_SIZE = 1000
-_SAVEPOINT = "af_vector_operation"
-SqlServerClient: TypeAlias = aioodbc.Connection | aioodbc.Pool
-
-
-class _Cursor(Protocol):
-    async def execute(self, sql: str, *parameters: Any) -> Any: ...
-
-    async def fetchone(self) -> Sequence[Any] | None: ...
-
-    async def fetchall(self) -> Sequence[Sequence[Any]]: ...
-
-    async def close(self) -> None: ...
-
-
-@asynccontextmanager
-async def _cursor(connection: aioodbc.Connection) -> AsyncGenerator[_Cursor]:
-    # aioodbc's cursor context manager commits its connection on exit, including borrowed transactions.
-    cursor = cast(_Cursor, await connection.cursor())  # pyright: ignore[reportUnknownMemberType]
-    try:
-        yield cursor
-    finally:
-        await cursor.close()
 
 
 class SqlServerSettings(TypedDict, total=False):
@@ -79,15 +56,15 @@ def _validate_options(options: Mapping[str, Any] | None) -> None:
         raise NotImplementedError(f"Unsupported SQL Server operation option(s): {', '.join(sorted(options))}.")
 
 
-async def _execute(cursor: _Cursor, statement: str, parameters: Sequence[Any] = ()) -> None:
+def _execute(cursor: mssql_python.Cursor, statement: str, parameters: Sequence[Any] = ()) -> None:
     if parameters:
-        await cursor.execute(statement, tuple(parameters))
+        cursor.execute(statement, tuple(parameters))  # pyright: ignore[reportUnknownMemberType]
     else:
-        await cursor.execute(statement)
+        cursor.execute(statement)  # pyright: ignore[reportUnknownMemberType]
 
 
-async def _rows(cursor: _Cursor, count: int) -> list[Sequence[Any]]:
-    result = list(await cursor.fetchall())
+def _rows(cursor: mssql_python.Cursor, count: int) -> list[Sequence[Any]]:
+    result: list[Sequence[Any]] = [tuple(row) for row in cursor.fetchall()]
     for row in result:
         if len(row) != count:
             raise IntegrationInvalidResponseException("SQL Server returned a row with an unexpected column count.")
@@ -100,142 +77,76 @@ def _check_parameter_count(parameters: Sequence[Any]) -> None:
 
 
 class _Client:
-    """Own a lazy pool and its dedicated ODBC worker, or borrow an async connection/pool."""
+    """Own one worker; every operation creates and releases a connection on that worker."""
 
-    def __init__(self, connection_string: SecretString | None, client: SqlServerClient | None) -> None:
-        if (connection_string is None) == (client is None):
-            raise ValueError("Supply exactly one of connection_string or client.")
-        if connection_string is not None and not connection_string.get_secret_value().strip():
+    def __init__(self, connection_string: SecretString | None, *, query_timeout: int | None = None) -> None:
+        if connection_string is None:
+            raise ValueError("SQL_SERVER_CONNECTION_STRING or an explicit connection_string is required.")
+        if not connection_string.get_secret_value().strip():
             raise ValueError("connection_string must not be empty.")
-        if client is not None and not isinstance(client, (aioodbc.Connection, aioodbc.Pool)):
-            raise TypeError("client must be an aioodbc Connection or Pool.")
+        if query_timeout is not None and (type(query_timeout) is not int or query_timeout < 0):
+            raise ValueError("query_timeout must be a non-negative integer number of seconds.")
         self.connection_string = connection_string
-        self.client = client
+        self.query_timeout = query_timeout
         self.closed = False
-        self._pool: aioodbc.Pool | None = None
         self._executor: ThreadPoolExecutor | None = None
-        self._init_lock = asyncio.Lock()
-        self._borrowed_lock = asyncio.Lock()
+        self._close_lock = asyncio.Lock()
 
     def ensure_open(self) -> None:
         if self.closed:
             raise RuntimeError("The SQL Server client is closed.")
 
-    async def _owned_pool(self) -> aioodbc.Pool:
-        async with self._init_lock:
-            self.ensure_open()
-            if self._pool is not None:
-                return self._pool
-            if self.connection_string is None:
-                raise RuntimeError("No SQL Server connection string is configured.")
-            executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="af-sql-server")
-            try:
-                self._pool = await aioodbc.create_pool(
-                    dsn=self.connection_string.get_secret_value(),
-                    minsize=1,
-                    maxsize=1,
-                    autocommit=False,
-                    executor=executor,
-                )
-            except BaseException:
-                await asyncio.to_thread(executor.shutdown, wait=True)
-                raise
-            self._executor = executor
-            return self._pool
-
-    @asynccontextmanager
-    async def _operation(self, connection: aioodbc.Connection, *, managed: bool, write: bool) -> AsyncGenerator[None]:
-        if managed:
-            try:
-                yield
-                await connection.commit()
-            except BaseException:
-                await connection.rollback()
-                raise
-            return
-        if not write:
-            yield
-            return
-        async with _cursor(connection) as cursor:
-            await _execute(cursor, "SELECT @@TRANCOUNT")
-            count = await cursor.fetchone()
-            if count is None or type(count[0]) is not int:
-                raise IntegrationInvalidResponseException("SQL Server did not return a transaction count.")
-            started = count[0] == 0
-            await _execute(cursor, "BEGIN TRANSACTION" if started else f"SAVE TRANSACTION {_SAVEPOINT}")
+    def _run_sync(self, operation: Callable[[mssql_python.Cursor], ResultT]) -> ResultT:
         try:
-            yield
-            if started:
-                async with _cursor(connection) as cursor:
-                    await _execute(cursor, "COMMIT TRANSACTION")
-        except BaseException as exc:
-            async with _cursor(connection) as cursor:
-                if started:
-                    await _execute(cursor, "ROLLBACK TRANSACTION")
-                else:
-                    await _execute(cursor, "SELECT XACT_STATE()")
-                    state = await cursor.fetchone()
-                    if state is None or state[0] != 1:
-                        raise IntegrationException(
-                            "The caller's SQL Server transaction cannot be rolled back to its savepoint; "
-                            "the caller must roll back the transaction."
-                        ) from exc
-                    await _execute(cursor, f"ROLLBACK TRANSACTION {_SAVEPOINT}")
-            raise
-
-    @asynccontextmanager
-    async def connection(self, *, write: bool = False) -> AsyncGenerator[aioodbc.Connection]:
-        """Acquire one connection, keeping borrowed transactions under the caller's control."""
-        self.ensure_open()
-        try:
-            if self.client is None:
-                pool = await self._owned_pool()
-                async with pool.acquire() as connection, self._operation(connection, managed=True, write=write):
-                    yield connection
-            elif isinstance(self.client, aioodbc.Pool):
-                async with self.client.acquire() as connection:
-                    self.ensure_open()
-                    if cast(bool, connection.autocommit):  # pyright: ignore[reportUnknownMemberType]
-                        raise ValueError("Borrowed aioodbc pools must use autocommit=False for atomic operations.")
-                    async with self._operation(connection, managed=True, write=write):
-                        yield connection
-            else:
-                async with self._borrowed_lock, self._operation(self.client, managed=False, write=write):
-                    self.ensure_open()
-                    yield self.client
-        except pyodbc.Error as exc:
+            connection = mssql_python.connect(self.connection_string.get_secret_value(), autocommit=False)
+            try:
+                if self.query_timeout is not None:
+                    connection.timeout = self.query_timeout
+                cursor = connection.cursor()
+                try:
+                    try:
+                        result = operation(cursor)
+                    finally:
+                        cursor.close()
+                    connection.commit()
+                    return result
+                except BaseException:
+                    connection.rollback()
+                    raise
+            finally:
+                connection.close()
+        except mssql_python.Error as exc:
             raise IntegrationException("SQL Server operation failed; inspect the chained driver exception.") from exc
 
+    async def run(self, operation: Callable[[mssql_python.Cursor], ResultT]) -> ResultT:
+        """Offload a whole transaction and wait for worker cleanup on cancellation."""
+        self.ensure_open()
+        if self._executor is None:
+            self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="af-sql-server")
+        future = asyncio.get_running_loop().run_in_executor(self._executor, self._run_sync, operation)
+        try:
+            return await asyncio.shield(future)
+        except asyncio.CancelledError:
+            await asyncio.shield(future)
+            raise
+
     async def close(self) -> None:
-        """Close the owned pool and worker, never an injected client or pool."""
-        async with self._init_lock:
+        """Wait for queued operations and shut down the owned worker."""
+        async with self._close_lock:
             if self.closed:
                 return
-            if isinstance(self.client, aioodbc.Connection):
-                async with self._borrowed_lock:
-                    self.closed = True
-                return
             self.closed = True
-            try:
-                if self._pool is not None:
-                    self._pool.close()
-                    await self._pool.wait_closed()
-            finally:
-                if self._executor is not None:
-                    await asyncio.to_thread(self._executor.shutdown, wait=True)
+            if self._executor is not None:
+                await asyncio.to_thread(self._executor.shutdown, wait=True)
 
 
 def _create_client(
     connection_string: str | SecretString | None,
     *,
-    client: SqlServerClient | None,
+    query_timeout: int | None,
     env_file_path: str | None,
     env_file_encoding: str | None,
 ) -> _Client:
-    if client is not None:
-        if connection_string is not None or env_file_path is not None or env_file_encoding is not None:
-            raise ValueError("client cannot be combined with connection_string, env_file_path, or env_file_encoding.")
-        return _Client(None, client)
     settings = load_settings(
         SqlServerSettings,
         env_prefix="SQL_SERVER_",
@@ -246,7 +157,7 @@ def _create_client(
     resolved = settings.get("connection_string")
     if resolved is not None and not isinstance(resolved, SecretString):
         raise TypeError("connection_string must be a string or SecretString.")
-    return _Client(resolved, None)
+    return _Client(resolved, query_timeout=query_timeout)
 
 
 class SqlServerCollection(
@@ -256,8 +167,8 @@ class SqlServerCollection(
 ):
     """Store typed rows and perform exact searches on SQL Server native VECTOR columns.
 
-    Tables are created in an existing schema and are never migrated. The owned
-    single-connection pool is lazy; injected connections and pools remain caller-owned.
+    Tables are created in an existing schema and are never migrated. Connections
+    are owned by the collection, or by its store when created from a store.
     """
 
     supported_key_types: ClassVar[set[str] | None] = {"str", "int", "UUID"}
@@ -269,7 +180,7 @@ class SqlServerCollection(
         record_type: type[ModelT],
         *,
         connection_string: str | SecretString | None = None,
-        client: SqlServerClient | None = None,
+        query_timeout: int | None = None,
         schema: str = "dbo",
         definition: VectorStoreCollectionDefinition | None = None,
         collection_name: str | None = None,
@@ -282,13 +193,13 @@ class SqlServerCollection(
 
         Args:
             record_type: Decorated/registered model type, or ``dict``.
-            connection_string: Driver connection string for owned connections, or ``SQL_SERVER_CONNECTION_STRING``.
-            client: An open caller-owned aioodbc connection or pool instead of a connection string.
+            connection_string: Driver connection string, or ``SQL_SERVER_CONNECTION_STRING``.
+            query_timeout: Optional per-statement timeout in seconds; ``0`` disables the timeout.
             schema: Existing database schema containing the table.
             definition: Explicit field definition for dictionary records.
             collection_name: Table name overriding the model definition.
             embedding_generator: Default local embedding generator.
-            env_file_path: Optional .env file; cannot be combined with an injected client.
+            env_file_path: Optional .env file.
             env_file_encoding: Encoding of the selected .env file.
             _shared_client: Internal shared client owned by a ``SqlServerStore``.
         """
@@ -297,7 +208,7 @@ class SqlServerCollection(
             definition=definition,
             collection_name=collection_name,
             embedding_generator=embedding_generator,
-            managed_client=client is None and _shared_client is None,
+            managed_client=_shared_client is None,
         )
         self.schema = schema
         self._table = f"{_quote_identifier(schema)}.{_quote_identifier(self.collection_name)}"
@@ -319,8 +230,8 @@ class SqlServerCollection(
                 raise NotImplementedError(f"SQL Server cannot index data fields of type '{field.type_}'.")
         if _shared_client is not None:
             if (
-                client is not None
-                or connection_string is not None
+                connection_string is not None
+                or query_timeout is not None
                 or env_file_path is not None
                 or env_file_encoding is not None
             ):
@@ -328,7 +239,10 @@ class SqlServerCollection(
             self._client = _shared_client
         else:
             self._client = _create_client(
-                connection_string, client=client, env_file_path=env_file_path, env_file_encoding=env_file_encoding
+                connection_string,
+                query_timeout=query_timeout,
+                env_file_path=env_file_path,
+                env_file_encoding=env_file_encoding,
             )
         self._shared_client = _shared_client is not None
 
@@ -341,7 +255,7 @@ class SqlServerCollection(
         await self.close()
 
     async def close(self) -> None:
-        """Close only this collection's client, never a store's or the caller's connection."""
+        """Close a collection-owned worker, never its store's worker."""
         if not self._shared_client:
             await self._client.close()
 
@@ -386,8 +300,8 @@ class SqlServerCollection(
             f"BEGIN CREATE TABLE {self._table} ({self._column_definitions()}) END"
         )
 
-        async with self._client.connection(write=True) as connection, _cursor(connection) as cursor:
-            await _execute(cursor, statement, [self.schema, self.collection_name])
+        def create(cursor: mssql_python.Cursor) -> None:
+            _execute(cursor, statement, [self.schema, self.collection_name])
             for field in self._fields:
                 if field.field_type != "data" or not field.is_indexed:
                     continue
@@ -400,26 +314,29 @@ class SqlServerCollection(
                     "WHERE s.name = ? AND t.name = ? AND i.name = ?) "
                     f"CREATE INDEX {_quote_identifier(index_name)} ON {self._table} ({_quote_identifier(name)})"
                 )
-                await _execute(cursor, index_statement, [self.schema, self.collection_name, index_name])
+                _execute(cursor, index_statement, [self.schema, self.collection_name, index_name])
+
+        await self._client.run(create)
 
     async def collection_exists(self, *, operation_options: Mapping[str, Any] | None = None) -> bool:
         """Return whether a base table exists in the configured schema."""
         _validate_options(operation_options)
 
-        async with self._client.connection() as connection, _cursor(connection) as cursor:
-            await _execute(
+        def exists(cursor: mssql_python.Cursor) -> bool:
+            _execute(
                 cursor,
                 "SELECT 1 FROM sys.tables AS t JOIN sys.schemas AS s ON s.schema_id = t.schema_id "
                 "WHERE s.name = ? AND t.name = ?",
                 [self.schema, self.collection_name],
             )
-            return await cursor.fetchone() is not None
+            return cursor.fetchone() is not None
+
+        return await self._client.run(exists)
 
     async def ensure_collection_deleted(self, *, operation_options: Mapping[str, Any] | None = None) -> None:
         """Drop only the table in this schema; never drop the schema or other tables."""
         _validate_options(operation_options)
-        async with self._client.connection(write=True) as connection, _cursor(connection) as cursor:
-            await _execute(cursor, f"DROP TABLE IF EXISTS {self._table}")
+        await self._client.run(lambda cursor: _execute(cursor, f"DROP TABLE IF EXISTS {self._table}"))
 
     def _deserialize_store_models_to_dicts(
         self, records: Sequence[Any], *, context: Mapping[str, Any] | None = None
@@ -463,30 +380,30 @@ class SqlServerCollection(
         key_name = self.definition.key_field_storage_name
         key_column = _quote_identifier(key_name)
 
-        async def upsert(cursor: _Cursor) -> list[KeyT]:
+        def upsert(cursor: mssql_python.Cursor) -> list[KeyT]:
             keys: list[KeyT] = []
             for row in prepared:
                 names = tuple(row)
                 if key_name in row:
-                    await _execute(
+                    _execute(
                         cursor,
                         f"SELECT {key_column} FROM {self._table} WITH (UPDLOCK, HOLDLOCK) WHERE {key_column} = ?",  # nosec B608
                         [row[key_name]],
                     )
-                    if await cursor.fetchone() is not None:
+                    if cursor.fetchone() is not None:
                         updates = [name for name in names if name != key_name]
                         assignments = ", ".join(f"{_quote_identifier(name)} = ?" for name in updates)
                         if not assignments:
                             assignments = f"{key_column} = {key_column}"
                         parameters = [*(row[name] for name in updates), row[key_name]]
                         _check_parameter_count(parameters)
-                        await _execute(
+                        _execute(
                             cursor,
                             f"UPDATE {self._table} SET {assignments} OUTPUT INSERTED.{key_column} "  # nosec B608
                             f"WHERE {key_column} = ?",
                             parameters,
                         )
-                        result = await cursor.fetchone()
+                        result = cursor.fetchone()
                         if result is None:
                             raise IntegrationInvalidResponseException("SQL Server did not return an updated key.")
                         keys.append(cast(KeyT, self._parsed_key(result[0])))
@@ -501,17 +418,16 @@ class SqlServerCollection(
                     statement = f"INSERT INTO {self._table} ({columns}) OUTPUT INSERTED.{key_column} VALUES ({markers})"  # nosec B608
                     parameters = [row[name] for name in names]
                     _check_parameter_count(parameters)
-                    await _execute(cursor, statement, parameters)
+                    _execute(cursor, statement, parameters)
                 else:
-                    await _execute(cursor, f"INSERT INTO {self._table} OUTPUT INSERTED.{key_column} DEFAULT VALUES")
-                result = await cursor.fetchone()
+                    _execute(cursor, f"INSERT INTO {self._table} OUTPUT INSERTED.{key_column} DEFAULT VALUES")
+                result = cursor.fetchone()
                 if result is None:
                     raise IntegrationInvalidResponseException("SQL Server did not return an inserted key.")
                 keys.append(cast(KeyT, self._parsed_key(result[0])))
             return keys
 
-        async with self._client.connection(write=True) as connection, _cursor(connection) as cursor:
-            return await upsert(cursor)
+        return await self._client.run(upsert)
 
     def _order_by(self, order_by: Mapping[str, bool] | None) -> str:
         parts: list[str] = []
@@ -550,28 +466,29 @@ class SqlServerCollection(
             if not prepared_keys:
                 return []
 
-            async def get_keys(cursor: _Cursor) -> list[dict[str, Any]]:
+            def get_keys(cursor: mssql_python.Cursor) -> list[dict[str, Any]]:
                 found: dict[Any, dict[str, Any]] = {}
                 key_column = _quote_identifier(self.definition.key_field_storage_name)
                 for offset in range(0, len(prepared_keys), _KEY_BATCH_SIZE):
                     batch = prepared_keys[offset : offset + _KEY_BATCH_SIZE]
                     markers = ", ".join("?" for _ in batch)
-                    await _execute(cursor, f"{select} WHERE {key_column} IN ({markers})", batch)
-                    for row in await _rows(cursor, len(columns)):
+                    _execute(cursor, f"{select} WHERE {key_column} IN ({markers})", batch)
+                    for row in _rows(cursor, len(columns)):
                         record = dict(zip(columns, row, strict=True))
                         found[self._parsed_key(record[self.definition.key_field_storage_name])] = record
                 return [found[key] for raw in prepared_keys if (key := self._parsed_key(raw)) in found]
 
-            async with self._client.connection() as connection, _cursor(connection) as cursor:
-                return await get_keys(cursor)
+            return await self._client.run(get_keys)
         where, parameters = ("1 = 1", []) if filter is None else _FilterCompiler(self.definition).compile(filter)
         parameters.extend((skip, top))
         _check_parameter_count(parameters)
         statement = f"{select} WHERE {where} ORDER BY {self._order_by(order_by)} OFFSET ? ROWS FETCH NEXT ? ROWS ONLY"
 
-        async with self._client.connection() as connection, _cursor(connection) as cursor:
-            await _execute(cursor, statement, parameters)
-            return [dict(zip(columns, row, strict=True)) for row in await _rows(cursor, len(columns))]
+        def get_page(cursor: mssql_python.Cursor) -> list[dict[str, Any]]:
+            _execute(cursor, statement, parameters)
+            return [dict(zip(columns, row, strict=True)) for row in _rows(cursor, len(columns))]
+
+        return await self._client.run(get_page)
 
     async def _inner_delete(self, keys: Sequence[KeyT], *, operation_options: Mapping[str, Any] | None = None) -> None:
         _validate_options(operation_options)
@@ -581,11 +498,13 @@ class SqlServerCollection(
             return
         key_column = _quote_identifier(self.definition.key_field_storage_name)
 
-        async with self._client.connection(write=True) as connection, _cursor(connection) as cursor:
+        def delete(cursor: mssql_python.Cursor) -> None:
             for offset in range(0, len(prepared), _KEY_BATCH_SIZE):
                 batch = prepared[offset : offset + _KEY_BATCH_SIZE]
                 markers = ", ".join("?" for _ in batch)
-                await _execute(cursor, f"DELETE FROM {self._table} WHERE {key_column} IN ({markers})", batch)  # nosec B608
+                _execute(cursor, f"DELETE FROM {self._table} WHERE {key_column} IN ({markers})", batch)  # nosec B608
+
+        await self._client.run(delete)
 
     async def _inner_search(
         self,
@@ -648,10 +567,10 @@ class SqlServerCollection(
         parameters.extend((skip, top))
         _check_parameter_count(parameters)
 
-        async def search(cursor: _Cursor) -> list[dict[str, Any]]:
-            await _execute(cursor, statement, parameters)
+        def search(cursor: mssql_python.Cursor) -> list[dict[str, Any]]:
+            _execute(cursor, statement, parameters)
             results: list[dict[str, Any]] = []
-            for row in await _rows(cursor, len(column_names) + 1):
+            for row in _rows(cursor, len(column_names) + 1):
                 distance = row[-1]
                 if type(distance) not in (float, int) or not math.isfinite(distance):
                     raise IntegrationInvalidResponseException("SQL Server returned a non-finite vector distance.")
@@ -665,8 +584,7 @@ class SqlServerCollection(
                 results.append({"record": dict(zip(column_names, row[:-1], strict=True)), "score": float(score)})
             return results
 
-        async with self._client.connection() as connection, _cursor(connection) as cursor:
-            rows = await search(cursor)
+        rows = await self._client.run(search)
         return SearchResults(
             rows,
             metadata={"distance_function": field.distance_function or "DEFAULT", "approximate": False},
@@ -680,13 +598,13 @@ class SqlServerCollection(
 
 
 class SqlServerStore(BaseVectorStore):
-    """Create SQL Server collections sharing resolved settings or a caller-owned connection."""
+    """Create SQL Server collections sharing one store-owned worker."""
 
     def __init__(
         self,
         *,
         connection_string: str | SecretString | None = None,
-        client: SqlServerClient | None = None,
+        query_timeout: int | None = None,
         schema: str = "dbo",
         embedding_generator: EmbeddingClient | None = None,
         env_file_path: str | None = None,
@@ -696,17 +614,20 @@ class SqlServerStore(BaseVectorStore):
 
         Args:
             connection_string: Driver connection string, or ``SQL_SERVER_CONNECTION_STRING``.
-            client: An open caller-owned aioodbc connection or pool.
+            query_timeout: Optional per-statement timeout in seconds; ``0`` disables the timeout.
             schema: Existing database schema used by all collections.
             embedding_generator: Default local embedding generator.
-            env_file_path: Optional .env file, incompatible with an injected client.
+            env_file_path: Optional .env file.
             env_file_encoding: Encoding of the selected .env file.
         """
-        super().__init__(embedding_generator=embedding_generator, managed_client=client is None)
+        super().__init__(embedding_generator=embedding_generator, managed_client=True)
         _quote_identifier(schema)
         self.schema = schema
         self._client = _create_client(
-            connection_string, client=client, env_file_path=env_file_path, env_file_encoding=env_file_encoding
+            connection_string,
+            query_timeout=query_timeout,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
         )
 
     def get_collection(
@@ -717,7 +638,7 @@ class SqlServerStore(BaseVectorStore):
         collection_name: str | None = None,
         embedding_generator: EmbeddingClient | None = None,
     ) -> SqlServerCollection[Any, ModelT]:
-        """Create a collection borrowing this store's client and lifecycle."""
+        """Create a collection sharing this store's owned worker and lifecycle."""
         return SqlServerCollection(
             record_type,
             schema=self.schema,
@@ -731,30 +652,31 @@ class SqlServerStore(BaseVectorStore):
         """List base tables in the configured schema."""
         _validate_options(operation_options)
 
-        async with self._client.connection() as connection, _cursor(connection) as cursor:
-            await _execute(
+        def list_names(cursor: mssql_python.Cursor) -> list[str]:
+            _execute(
                 cursor,
                 "SELECT t.name FROM sys.tables AS t JOIN sys.schemas AS s ON s.schema_id = t.schema_id "
                 "WHERE s.name = ? ORDER BY t.name",
                 [self.schema],
             )
-            names = await _rows(cursor, 1)
+            names = _rows(cursor, 1)
             if any(not isinstance(row[0], str) for row in names):
                 raise IntegrationInvalidResponseException("SQL Server returned a non-string table name.")
             return [cast(str, row[0]) for row in names]
+
+        return await self._client.run(list_names)
 
     async def _inner_ensure_collection_deleted(
         self, collection_name: str, *, operation_options: Mapping[str, Any] | None = None
     ) -> None:
         _validate_options(operation_options)
         table = f"{_quote_identifier(self.schema)}.{_quote_identifier(collection_name)}"
-        async with self._client.connection(write=True) as connection, _cursor(connection) as cursor:
-            await _execute(cursor, f"DROP TABLE IF EXISTS {table}")
+        await self._client.run(lambda cursor: _execute(cursor, f"DROP TABLE IF EXISTS {table}"))
 
     async def __aexit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None:
         """Release store-owned resources."""
         await self.close()
 
     async def close(self) -> None:
-        """Close the store wrapper without closing caller-owned connections."""
+        """Wait for in-flight operations and shut down the store-owned worker."""
         await self._client.close()

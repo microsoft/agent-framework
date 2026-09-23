@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+import asyncio
+import inspect
+import threading
 from dataclasses import dataclass
 from functools import partial
 from typing import Annotated
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import aioodbc
-import pyodbc
+import mssql_python
 import pytest
 from agent_framework import (
     Embedding,
@@ -46,7 +47,7 @@ def definition() -> VectorStoreCollectionDefinition:
 
 @pytest.fixture
 def collection(definition):
-    return SqlServerCollection(dict, definition=definition, connection_string="Driver={ODBC Driver 18 for SQL Server};")
+    return SqlServerCollection(dict, definition=definition, connection_string="Server=unused;Database=test")
 
 
 def make_record(key="one", *, text="literal %_[abc]!", count=1, tags=None, embedding=None):
@@ -60,21 +61,11 @@ def make_record(key="one", *, text="literal %_[abc]!", count=1, tags=None, embed
 
 
 def fake_connection():
-    connection = MagicMock(spec=aioodbc.Connection)
-    connection.autocommit = False
-    connection.commit = AsyncMock()
-    connection.rollback = AsyncMock()
-    connection.close = AsyncMock()
-    cursor = MagicMock(spec=aioodbc.Cursor)
-    cursor.execute = AsyncMock()
-    cursor.fetchone = AsyncMock(return_value=None)
-    cursor.fetchall = AsyncMock(return_value=[])
-    cursor.close = AsyncMock()
-
-    async def open_cursor():
-        return cursor
-
-    connection.cursor.side_effect = open_cursor
+    connection = MagicMock(spec=mssql_python.Connection)
+    cursor = MagicMock(spec=mssql_python.Cursor)
+    cursor.fetchone.return_value = None
+    cursor.fetchall.return_value = []
+    connection.cursor.return_value = cursor
     return connection, cursor
 
 
@@ -82,11 +73,7 @@ def fake_connection():
 def mock_io(collection):
     connection, cursor = fake_connection()
 
-    @asynccontextmanager
-    async def acquire(*, write=False):
-        yield connection
-
-    with patch.object(collection._client, "connection", side_effect=acquire) as request:
+    with patch.object(collection._client, "run", side_effect=lambda operation: operation(cursor)) as request:
         yield connection, cursor, request
 
 
@@ -137,11 +124,7 @@ async def test_create_check_drop_use_scoped_quoted_identifiers_and_bound_catalog
     )
     connection, cursor = fake_connection()
 
-    @asynccontextmanager
-    async def acquire(*, write=False):
-        yield connection
-
-    with patch.object(collection._client, "connection", side_effect=acquire):
+    with patch.object(collection._client, "run", side_effect=lambda operation: operation(cursor)):
         await collection.ensure_collection_exists()
         create, index = cursor.execute.call_args_list
         query, params = create.args
@@ -164,7 +147,7 @@ async def test_batch_upsert_preserves_duplicate_key_order_and_binds_json(collect
     cursor.fetchone.side_effect = [None, ("one",), ("one",), ("one",)]
     keys = await collection.upsert([make_record("one"), make_record("one", text="updated")], generate_vectors=False)
     assert keys == ["one", "one"]
-    assert acquire.call_args.kwargs == {"write": True}
+    acquire.assert_awaited_once()
     calls = cursor.execute.call_args_list
     assert len(calls) == 4
     assert "WITH (UPDLOCK, HOLDLOCK)" in calls[0].args[0]
@@ -188,11 +171,7 @@ async def test_generated_key_inserts_without_key_or_prior_lookup():
     connection, cursor = fake_connection()
     cursor.fetchone.return_value = (123,)
 
-    @asynccontextmanager
-    async def acquire(*, write=False):
-        yield connection
-
-    with patch.object(collection._client, "connection", side_effect=acquire):
+    with patch.object(collection._client, "run", side_effect=lambda operation: operation(cursor)):
         assert await collection.upsert([{"text": "a", "v": [1, 0, 0]}], generate_vectors=False) == [123]
         assert cursor.execute.call_count == 1
         assert "INSERT INTO" in cursor.execute.call_args.args[0]
@@ -211,12 +190,8 @@ async def test_generated_identity_refuses_explicit_new_key():
     collection = SqlServerCollection(dict, definition=definition, connection_string="x")
     connection, cursor = fake_connection()
 
-    @asynccontextmanager
-    async def acquire(*, write=False):
-        yield connection
-
     with (
-        patch.object(collection._client, "connection", side_effect=acquire),
+        patch.object(collection._client, "run", side_effect=lambda operation: operation(cursor)),
         pytest.raises(NotImplementedError, match="IDENTITY"),
     ):
         await collection.upsert([{"id": 42, "v": [1, 0, 0]}], generate_vectors=False)
@@ -305,11 +280,7 @@ async def test_multiple_vector_columns_select_requested_dimensions_and_decode_va
     connection, cursor = fake_connection()
     cursor.fetchall.return_value = [("first", 0.0)]
 
-    @asynccontextmanager
-    async def acquire(*, write=False):
-        yield connection
-
-    with patch.object(collection._client, "connection", side_effect=acquire):
+    with patch.object(collection._client, "run", side_effect=lambda operation: operation(cursor)):
         results = [item async for item in await collection.search(vector=[0, 1], vector_property_name="secondary")]
         assert results[0]["record"] == {"id": "first"}
         assert "CAST(? AS VECTOR(2)), t.[other]]vector]" in cursor.execute.call_args.args[0]
@@ -340,11 +311,7 @@ async def test_metric_score_direction_and_threshold(metric, raw_distance, cutoff
     connection, cursor = fake_connection()
     cursor.fetchall.return_value = [("first", raw_distance)]
 
-    @asynccontextmanager
-    async def acquire(*, write=False):
-        yield connection
-
-    with patch.object(collection._client, "connection", side_effect=acquire):
+    with patch.object(collection._client, "run", side_effect=lambda operation: operation(cursor)):
         results = [item async for item in await collection.search(vector=[1, 0, 0], score_threshold=expected)]
     assert results[0]["score"] == pytest.approx(expected)
     sql, params = cursor.execute.call_args.args
@@ -427,7 +394,7 @@ def test_settings_priority_and_secret_masking(constructor, monkeypatch, tmp_path
 def test_settings_require_explicit_file_or_environment(constructor, monkeypatch, tmp_path):
     (tmp_path / ".env").write_text("SQL_SERVER_CONNECTION_STRING=implicit\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
-    with pytest.raises(ValueError, match="exactly one"):
+    with pytest.raises(ValueError, match="required"):
         constructor()
     with pytest.raises(ValueError, match="must not be empty"):
         constructor(connection_string="")
@@ -435,193 +402,200 @@ def test_settings_require_explicit_file_or_environment(constructor, monkeypatch,
         constructor(env_file_path=str(tmp_path / "missing.env"), connection_string="explicit")
 
 
-def test_borrowed_client_rejects_settings_and_raw_sync_connections(constructor):
-    borrowed, _ = fake_connection()
-    with pytest.raises(ValueError, match="cannot be combined"):
-        constructor(client=borrowed, connection_string="unused")
-    with pytest.raises(ValueError, match="cannot be combined"):
-        constructor(client=borrowed, env_file_path="unused.env")
-    with pytest.raises(TypeError, match="aioodbc"):
-        constructor(client=MagicMock(spec=pyodbc.Connection))
+def test_public_api_has_no_borrowed_connection_or_factory(constructor):
+    connection, _ = fake_connection()
+    for api in (SqlServerStore, SqlServerCollection):
+        parameters = inspect.signature(api).parameters
+        assert "client" not in parameters
+        assert "client_factory" not in parameters
+    assert "SqlServerClient" not in module.__dict__
+    with pytest.raises(TypeError, match="client"):
+        constructor(connection_string="Server=unused", client=connection)
+
+
+@pytest.mark.parametrize("timeout", [-1, True, 1.5, "30"])
+def test_query_timeout_requires_non_negative_integer(constructor, timeout):
+    with pytest.raises(ValueError, match="query_timeout"):
+        constructor(connection_string="Server=unused", query_timeout=timeout)
 
 
 async def test_store_deletion_quotes_supplied_table_name(definition):
     store = SqlServerStore(connection_string="x")
     connection, cursor = fake_connection()
 
-    @asynccontextmanager
-    async def acquire(*, write=False):
-        yield connection
-
-    with patch.object(store._client, "connection", side_effect=acquire):
+    with patch.object(store._client, "run", side_effect=lambda operation: operation(cursor)):
         cursor.fetchall.return_value = [("table]'; --",)]
         await store.ensure_collection_deleted("table]'; --")
     assert cursor.execute.call_args.args[0] == "DROP TABLE IF EXISTS [dbo].[table]]'; --]"
     assert "CASCADE" not in cursor.execute.call_args.args[0]
 
 
-async def test_borrowed_connection_savepoint_rollback_preserves_caller_transaction():
+async def test_connection_and_all_operations_stay_on_one_worker():
     connection, cursor = fake_connection()
-    cursor.fetchone.side_effect = [(1,), (1,)]
-    client = _Client(None, connection)
-    with pytest.raises(ValueError, match="failed"):
-        async with client.connection(write=True) as borrowed:
-            assert borrowed is connection
-            async with module._cursor(borrowed) as operation_cursor:
-                await operation_cursor.execute("SELECT 1")
-                raise ValueError("failed")
-    commands = [call.args[0] for call in cursor.execute.call_args_list]
-    assert commands == [
-        "SELECT @@TRANCOUNT",
-        "SAVE TRANSACTION af_vector_operation",
-        "SELECT 1",
-        "SELECT XACT_STATE()",
-        "ROLLBACK TRANSACTION af_vector_operation",
-    ]
-    connection.commit.assert_not_awaited()
-    connection.rollback.assert_not_awaited()
-    assert cursor.close.await_count == 3
-    await client.close()
-    await client.close()
-    connection.close.assert_not_awaited()
-    with pytest.raises(RuntimeError, match="closed"):
-        async with client.connection():
-            pytest.fail("Closed client must not borrow the connection")
+    client = _Client(SecretString("Server=unused;Database=test"), query_timeout=30)
+    caller_thread = threading.get_ident()
+    worker_threads: list[int] = []
 
+    def record_thread(*args, **kwargs):
+        worker_threads.append(threading.get_ident())
 
-async def test_borrowed_connection_commits_only_its_own_transaction():
-    connection, cursor = fake_connection()
-    cursor.fetchone.return_value = (0,)
-    client = _Client(None, connection)
-    async with client.connection(write=True) as borrowed, module._cursor(borrowed) as operation_cursor:
-        await operation_cursor.execute("SELECT 1")
-    assert [call.args[0] for call in cursor.execute.call_args_list] == [
-        "SELECT @@TRANCOUNT",
-        "BEGIN TRANSACTION",
-        "SELECT 1",
-        "COMMIT TRANSACTION",
-    ]
-    connection.commit.assert_not_awaited()
-    assert cursor.close.await_count == 3
-    connection.close.assert_not_awaited()
-    await client.close()
+    def open_connection(*args, **kwargs):
+        record_thread()
+        return connection
 
+    def open_cursor():
+        record_thread()
+        return cursor
 
-async def test_borrowed_outer_transaction_success_closes_cursor_without_committing():
-    connection, cursor = fake_connection()
-    cursor.fetchone.return_value = (1,)
-    client = _Client(None, connection)
-    async with client.connection(write=True) as borrowed, module._cursor(borrowed) as operation_cursor:
-        await operation_cursor.execute("SELECT 1")
-    assert [call.args[0] for call in cursor.execute.call_args_list] == [
-        "SELECT @@TRANCOUNT",
-        "SAVE TRANSACTION af_vector_operation",
-        "SELECT 1",
-    ]
-    assert cursor.close.await_count == 2
-    connection.commit.assert_not_awaited()
-    connection.rollback.assert_not_awaited()
-    await client.close()
+    def fetchone():
+        record_thread()
+        return ("found",)
 
+    connection.cursor.side_effect = open_cursor
+    connection.commit.side_effect = record_thread
+    connection.close.side_effect = record_thread
+    cursor.execute.side_effect = record_thread
+    cursor.fetchone.side_effect = fetchone
+    cursor.close.side_effect = record_thread
+    with patch.object(module.mssql_python, "connect", side_effect=open_connection) as connect:
+        assert client._executor is None
+        try:
 
-async def test_doomed_caller_transaction_is_not_silently_rolled_back():
-    connection, cursor = fake_connection()
-    cursor.fetchone.side_effect = [(1,), (-1,)]
-    client = _Client(None, connection)
-    with pytest.raises(IntegrationException, match="caller must roll back"):
-        async with client.connection(write=True):
-            raise ValueError("failed")
-    assert "ROLLBACK TRANSACTION af_vector_operation" not in [call.args[0] for call in cursor.execute.call_args_list]
-    connection.rollback.assert_not_awaited()
-    await client.close()
+            def operation(raw):
+                module._execute(raw, "SELECT ?", ["O'Brien"])
+                return raw.fetchone()
 
-
-async def test_owned_pool_uses_one_worker_and_releases_it_with_store():
-    pool = MagicMock(spec=aioodbc.Pool)
-    pool.close = MagicMock()
-    pool.wait_closed = AsyncMock()
-    connection, _ = fake_connection()
-    pool.acquire.return_value.__aenter__.return_value = connection
-    client = _Client(SecretString("Driver={ODBC Driver 18 for SQL Server};"), None)
-    with patch.object(module.aioodbc, "create_pool", new_callable=AsyncMock, return_value=pool) as create_pool:
-        async with client.connection(write=True) as acquired:
-            assert acquired is connection
-        executor = create_pool.call_args.kwargs["executor"]
-        assert executor._max_workers == 1
-        assert create_pool.call_args.kwargs["autocommit"] is False
-        connection.commit.assert_awaited_once()
-        await client.close()
-        await client.close()
-    pool.close.assert_called_once()
-    pool.wait_closed.assert_awaited_once()
+            assert await client.run(operation) == ("found",)
+            assert await client.run(operation) == ("found",)
+            executor = client._executor
+            assert executor is not None and executor._max_workers == 1
+            assert cursor.execute.call_args.args == ("SELECT ?", ("O'Brien",))
+            assert connect.call_count == 2
+            assert connect.call_args.args == ("Server=unused;Database=test",)
+            assert connect.call_args.kwargs == {"autocommit": False}
+            assert connection.timeout == 30
+            assert len(set(worker_threads)) == 1 and worker_threads[0] != caller_thread
+            assert connection.commit.call_count == connection.close.call_count == cursor.close.call_count == 2
+            connection.rollback.assert_not_called()
+        finally:
+            await client.close()
+            await client.close()
     assert executor._shutdown
-    connection.close.assert_not_awaited()
+    with pytest.raises(RuntimeError, match="closed"):
+        await client.run(operation)
 
 
-async def test_owned_commit_failure_rolls_back_before_releasing_pool_connection():
-    pool = MagicMock(spec=aioodbc.Pool)
-    pool.close = MagicMock()
-    pool.wait_closed = AsyncMock()
-    connection, _ = fake_connection()
-    connection.commit.side_effect = pyodbc.OperationalError("commit failed")
-    pool.acquire.return_value.__aenter__.return_value = connection
-    client = _Client(SecretString("Driver={ODBC Driver 18 for SQL Server};"), None)
-    with patch.object(module.aioodbc, "create_pool", new_callable=AsyncMock, return_value=pool):
-        with pytest.raises(IntegrationException):
-            async with client.connection(write=True):
-                pass
-        connection.rollback.assert_awaited_once()
-        await client.close()
-
-
-async def test_borrowed_pool_remains_open_after_store_closes(definition):
-    pool = MagicMock(spec=aioodbc.Pool)
-    pool.close = MagicMock()
-    pool.wait_closed = AsyncMock()
+async def test_store_children_share_ownership_without_closing_worker(definition):
     connection, cursor = fake_connection()
-    pool.acquire.return_value.__aenter__.return_value = connection
     cursor.fetchall.return_value = [("existing",)]
-    async with SqlServerStore(client=pool) as store:
-        collection = store.get_collection(dict, definition=definition)
-        assert not collection.managed_client
-        assert await store.list_collection_names() == ["existing"]
-        await collection.close()
-    pool.close.assert_not_called()
-    pool.wait_closed.assert_not_awaited()
-    connection.commit.assert_awaited_once()
-    connection.close.assert_not_awaited()
+    with patch.object(module.mssql_python, "connect", return_value=connection):
+        async with SqlServerStore(connection_string="Server=unused;Database=test", query_timeout=5) as store:
+            collection = store.get_collection(dict, definition=definition)
+            assert collection._client is store._client
+            assert collection._client.query_timeout == 5
+            assert not collection.managed_client
+            assert store.managed_client
+            assert await store.list_collection_names() == ["existing"]
+            executor = store._client._executor
+            assert executor is not None
+            await collection.close()
+            assert not executor._shutdown
+        assert executor._shutdown
+    connection.commit.assert_called_once()
+    connection.close.assert_called_once()
 
 
-async def test_borrowed_autocommit_pool_rejected_before_database_operations():
-    pool = MagicMock(spec=aioodbc.Pool)
+async def test_cancelled_operation_and_close_wait_for_worker_cleanup():
     connection, cursor = fake_connection()
-    connection.autocommit = True
-    pool.acquire.return_value.__aenter__.return_value = connection
-    client = _Client(None, pool)
-    with pytest.raises(ValueError, match="autocommit=False"):
-        async with client.connection(write=True):
-            pytest.fail("Autocommit pool must be rejected before the operation starts")
-    cursor.execute.assert_not_awaited()
-    connection.commit.assert_not_awaited()
-    await client.close()
-    pool.close.assert_not_called()
+    started, release = threading.Event(), threading.Event()
+
+    def slow_execute(*args):
+        started.set()
+        assert release.wait(timeout=10)
+
+    cursor.execute.side_effect = slow_execute
+    client = _Client(SecretString("Server=unused;Database=test"))
+    with patch.object(module.mssql_python, "connect", return_value=connection):
+        try:
+            operation = asyncio.create_task(client.run(lambda raw: module._execute(raw, "SELECT 1")))
+            assert await asyncio.to_thread(started.wait, 5)
+            operation.cancel()
+            closing = asyncio.create_task(client.close())
+            await asyncio.sleep(0)
+            assert not operation.done() and not closing.done()
+        finally:
+            release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await operation
+        await closing
+    connection.commit.assert_called_once()
+    cursor.close.assert_called_once()
+    connection.close.assert_called_once()
+    assert client._executor is not None and client._executor._shutdown
 
 
 async def test_driver_error_is_chained_and_owned_connection_rolled_back():
-    pool = MagicMock(spec=aioodbc.Pool)
-    pool.close = MagicMock()
-    pool.wait_closed = AsyncMock()
     connection, cursor = fake_connection()
-    cursor.execute.side_effect = pyodbc.OperationalError("unavailable")
-    pool.acquire.return_value.__aenter__.return_value = connection
-    client = _Client(SecretString("Driver={ODBC Driver 18 for SQL Server};"), None)
-    with patch.object(module.aioodbc, "create_pool", new_callable=AsyncMock, return_value=pool):
-        with pytest.raises(IntegrationException) as error:
-            async with client.connection(write=True) as acquired, module._cursor(acquired) as cursor:
-                await cursor.execute("SELECT 1")
+    cursor.execute.side_effect = [
+        None,
+        mssql_python.OperationalError("constraint violation", "bad record"),
+    ]
+    client = _Client(SecretString("Server=unused;Database=test"))
+
+    def batch(raw):
+        module._execute(raw, "INSERT INTO [notes] ([id]) VALUES (?)", ["first"])
+        module._execute(raw, "INSERT INTO [notes] ([id]) VALUES (?)", ["invalid"])
+
+    try:
+        with (
+            patch.object(module.mssql_python, "connect", return_value=connection),
+            pytest.raises(IntegrationException) as error,
+        ):
+            await client.run(batch)
+    finally:
         await client.close()
-    assert isinstance(error.value.__cause__, pyodbc.OperationalError)
-    connection.rollback.assert_awaited_once()
+    assert isinstance(error.value.__cause__, mssql_python.OperationalError)
+    assert cursor.execute.call_count == 2
+    connection.commit.assert_not_called()
+    connection.rollback.assert_called_once()
+    cursor.close.assert_called_once()
+    connection.close.assert_called_once()
+
+
+async def test_commit_failure_rolls_back_and_closes_connection():
+    connection, cursor = fake_connection()
+    connection.commit.side_effect = mssql_python.OperationalError("commit failed", "database unavailable")
+    client = _Client(SecretString("Server=unused;Database=test"))
+    try:
+        with (
+            patch.object(module.mssql_python, "connect", return_value=connection),
+            pytest.raises(IntegrationException) as error,
+        ):
+            await client.run(lambda raw: module._execute(raw, "SELECT 1"))
+    finally:
+        await client.close()
+    assert isinstance(error.value.__cause__, mssql_python.OperationalError)
+    connection.rollback.assert_called_once()
+    cursor.close.assert_called_once()
+    connection.close.assert_called_once()
+
+
+async def test_connection_failure_is_chained_and_worker_shuts_down():
+    client = _Client(SecretString("Server=unused;Database=test"))
+    try:
+        with (
+            patch.object(
+                module.mssql_python,
+                "connect",
+                side_effect=mssql_python.OperationalError("connect failed", "server unavailable"),
+            ),
+            pytest.raises(IntegrationException) as error,
+        ):
+            await client.run(lambda raw: module._execute(raw, "SELECT 1"))
+    finally:
+        await client.close()
+    assert isinstance(error.value.__cause__, mssql_python.OperationalError)
+    assert client._executor is not None and client._executor._shutdown
 
 
 @vectorstoremodel(collection_name="typed_sql_notes")
@@ -637,9 +611,5 @@ async def test_decorated_records_round_trip_without_vectors_by_default():
     connection, cursor = fake_connection()
     cursor.fetchall.return_value = [("one", "title")]
 
-    @asynccontextmanager
-    async def acquire(*, write=False):
-        yield connection
-
-    with patch.object(collection._client, "connection", side_effect=acquire):
+    with patch.object(collection._client, "run", side_effect=lambda operation: operation(cursor)):
         assert await collection.get(["one"]) == [TypedNote("one", "title", None)]

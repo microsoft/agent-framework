@@ -14,9 +14,11 @@ from agent_framework_sql_server import SqlServerStore
 """
 Search native VECTOR columns in SQL Server 2025 or Azure SQL.
 
-Set SQL_SERVER_CONNECTION_STRING to a connection string for an explicitly
-designated development database. The example creates a unique table in the
-existing dbo schema and drops only that table. No embedding service is needed.
+Set SQL_SERVER_CONNECTION_STRING to a Microsoft mssql-python connection string
+for an explicitly designated development database (Server=...;Database=...).
+No separately installed ODBC driver is needed. The example creates a unique
+table in the existing dbo schema and drops only that table. No embedding service
+is needed.
 
 Run: uv run --package agent-framework-sql-server python packages/sql-server/samples/sql_server_vectors.py
 """
@@ -32,8 +34,8 @@ class Note:
 
 
 async def main() -> None:
-    # 1. Resolve SQL_SERVER_CONNECTION_STRING using Agent Framework settings.
-    async with SqlServerStore() as store:
+    # 1. Resolve SQL_SERVER_CONNECTION_STRING and bound query timeout.
+    async with SqlServerStore(query_timeout=30) as store:
         collection = store.get_collection(Note, collection_name=f"af_sql_demo_{uuid4().hex}")
         await collection.ensure_collection_exists()
         try:

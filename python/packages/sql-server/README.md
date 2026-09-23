@@ -2,8 +2,8 @@
 
 Store typed Agent Framework records in SQL Server and Azure SQL native `VECTOR`
 columns, with exact, database-side similarity search. This alpha package exports
-`SqlServerCollection`, `SqlServerStore`, `SqlServerSettings`, and the
-`SqlServerClient` type from `agent_framework_sql_server`.
+`SqlServerCollection`, `SqlServerStore`, and `SqlServerSettings` directly from
+`agent_framework_sql_server`.
 
 ## Install and provision
 
@@ -11,22 +11,24 @@ columns, with exact, database-side similarity search. This alpha package exports
 pip install agent-framework-sql-server --pre
 ```
 
-Requires Python 3.10+, a registered **Microsoft ODBC Driver 18 for SQL Server**
-(18.6.1.1 or later recommended), and a vector-enabled database: SQL Server
-2025 (17.x), Azure SQL Database, Azure SQL Managed Instance on the SQL Server
-2025 or Always-up-to-date update policy, or SQL database in Microsoft Fabric.
+Requires Python 3.10–3.14 and a vector-enabled database: SQL Server 2025
+(17.x), Azure SQL Database, Azure SQL Managed Instance on the SQL Server 2025
+or Always-up-to-date update policy, or SQL database in Microsoft Fabric.
 Older SQL Server releases do not support `VECTOR`/`VECTOR_DISTANCE`.
 
-Install the ODBC driver **separately** on the machine running Python:
-[macOS (Intel/Apple Silicon)](https://learn.microsoft.com/sql/connect/odbc/linux-mac/install-microsoft-odbc-driver-sql-server-macos),
-[Linux](https://learn.microsoft.com/sql/connect/odbc/linux-mac/install-microsoft-odbc-driver-sql-server-linux),
-or [Windows](https://learn.microsoft.com/sql/connect/odbc/download-odbc-driver-for-sql-server).
-On macOS the Microsoft Homebrew formula installs unixODBC as a dependency.
-The Python dependencies `aioodbc` and `pyodbc` do **not** install the Microsoft
-ODBC driver. Configure its `vectorTypeSupport=off` setting (the default):
-the server stores native vectors while ODBC reads/writes their JSON-array
-representation. `vectorTypeSupport=v1/v2` exposes a C-specific representation
-that this Python package does not decode.
+The package uses Microsoft's [`mssql-python` 1.15+ driver](https://pypi.org/project/mssql-python/).
+It installs its `mssql-python-odbc` binary companion automatically; no external
+ODBC Driver 18 or driver manager is required. Published wheels cover CPython
+3.10–3.14 on Windows x64, Linux x64/ARM64, and **macOS 15+**
+Intel/Apple Silicon; Windows ARM64 wheels start at Python 3.11. macOS 14 is
+listed in the driver's support documentation, but the published macOS wheels
+are tagged `macosx_15_0_universal2` and there is no source distribution.
+Python 3.15 has no published wheel yet: this package caps `requires-python`
+below 3.15, and the repository's non-blocking 3.15 CI lane excludes it.
+The workspace lockfile likewise limits Python below 3.15 while this package
+remains a member; the experimental 3.15 lane excludes it before resolving.
+Follow the [driver's installation instructions](https://learn.microsoft.com/sql/connect/python/mssql-python/installation)
+for system libraries on Linux and OpenSSL on macOS.
 
 The database administrator must provide an existing schema (default `dbo`).
 `ensure_collection_exists()` creates the requested table and scalar indexes
@@ -35,38 +37,32 @@ settings. `ensure_collection_deleted()` drops only that table.
 
 ## Connection settings and ownership
 
-Set `SQL_SERVER_CONNECTION_STRING` to an ODBC connection string for the selected
-database with a registered `Driver={ODBC Driver 18 for SQL Server}` and your
-chosen server, encryption, and authentication settings. Do not commit
-connection strings containing credentials. Alternatively, pass
+Set `SQL_SERVER_CONNECTION_STRING` to a driver connection string such as
+`Server=tcp:<host>,1433;Database=<name>;Authentication=ActiveDirectoryDefault;Encrypt=yes`.
+Do not commit connection strings containing credentials. Alternatively, pass
 `connection_string` as a string or Agent Framework `SecretString` to
 `SqlServerStore` or `SqlServerCollection`. Settings precedence is **explicit
 argument > selected `.env` file > process environment**. Choose a file with
 `env_file_path` and optional `env_file_encoding`; no `.env` file is discovered
 implicitly, and missing/empty strings are rejected.
 
-An owned store creates a lazy one-connection `aioodbc` pool with a dedicated
-single-worker executor; `close()` or an async context manager releases both.
-Collections created by the store share that pool: keep the store open while
-using them. To borrow an existing `aioodbc.Connection` or `aioodbc.Pool`, pass
-`client=` instead of connection settings. The connector never closes an
-injected client. Raw `pyodbc.Connection` objects are **not** accepted; use the
-async aioodbc type. Avoid using the same borrowed connection concurrently
-outside the connector; for a caller-created pool, configure its executor
-appropriately for your workload.
+The connector owns all connections. Each whole operation opens, uses, commits
+or rolls back, and closes a `mssql-python` connection on a dedicated worker
+thread, keeping Agent Framework's async calls nonblocking. The driver's
+built-in pooling can reuse the underlying physical connection. A store and
+its collections share one worker; a standalone collection owns its own.
+Call `close()` or use an async context manager to release the worker. There is
+no `client=` or connection-factory constructor argument: arbitrary caller-owned
+`mssql-python` connections cannot safely cross threads (`threadsafety=1`).
+This is intentionally narrower than connectors that support borrowed async
+clients.
 
-Batch writes on owned connections commit or roll back together. On borrowed
-**connections** the connector starts/commits its own transaction if none is
-active; otherwise it uses a SQL Server savepoint and leaves the caller's
-transaction open. On a borrowed **pool**, each acquired connection's operation
-is committed or rolled back before release; the pool must use
-`autocommit=False` (aioodbc's default), and callers must return clean
-connections to it. If a caller's transaction becomes uncommittable, the caller
-must roll it back. SQL Server savepoints are not available in distributed
-transactions.
-`aioodbc` uses worker threads internally: cancelling a coroutine cannot
-interrupt an already-running ODBC query, so a write may still finish. Set
-appropriate database query timeouts, and prefer stable application-provided
+Batch writes commit or roll back together on one connection. Cancelling an
+async operation waits for its worker to finish cleanup; it cannot interrupt an
+already-running synchronous SQL statement, and the transaction may already
+have committed. Set `query_timeout=30` (seconds, for example) on the store or
+collection when bounding database calls; leaving it unset uses the driver's
+default, and `0` disables the timeout. Prefer stable application-provided
 keys when retrying writes.
 
 ## Example
@@ -119,13 +115,10 @@ indexes/search, preview-only float16 vectors, keyword-hybrid search, sparse or
 binary vectors, server-side embedding generation, and schema migration are
 not supported.
 
-`mssql-python` 1.15.0 was evaluated. It supports Python 3.10 and bound JSON
-vectors, but has no released native async API, reports `threadsafety=1` (so
-moving a caller-created raw connection between AF worker threads is unsafe),
-and publishes only macOS 15+ wheels with no source distribution. This
-connector instead uses `aioodbc`/`pyodbc` to retain an async, borrowed-client
-interface and broader macOS compatibility at the cost of a separately
-installed ODBC driver.
+The server stores native `VECTOR` columns, but `mssql-python` 1.15 does not
+expose a native Python vector type. The connector binds JSON-encoded vectors
+as parameters and parses JSON on retrieval; SQL Server converts to/from the
+native type. It does not enable native driver vector bindings.
 
 ## Service tests
 
@@ -147,5 +140,6 @@ designated server lacks vector support.
 
 - [SQL Server vector type and database availability](https://learn.microsoft.com/sql/t-sql/data-types/vector-data-type)
 - [Exact vector distance metrics](https://learn.microsoft.com/sql/t-sql/functions/vector-distance-transact-sql)
-- [ODBC vector JSON compatibility mode](https://learn.microsoft.com/sql/connect/odbc/vector-data-type)
+- [Microsoft's Python vector JSON example](https://learn.microsoft.com/sql/t-sql/data-types/vector-data-type#python)
+- [mssql-python asynchronous integration patterns](https://learn.microsoft.com/sql/connect/python/mssql-python/asynchronous-patterns)
 - [Microsoft Agent Framework](https://learn.microsoft.com/agent-framework/)
