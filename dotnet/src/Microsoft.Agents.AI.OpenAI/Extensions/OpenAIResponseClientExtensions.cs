@@ -101,6 +101,77 @@ public static class OpenAIResponseClientExtensions
     }
 
     /// <summary>
+    /// Creates an AI agent from an <see cref="ResponsesClient"/> using the OpenAI Response API.
+    /// </summary>
+    /// <param name="client">The <see cref="ResponsesClient" /> to use for the agent.</param>
+    /// <param name="options">OpenAI Specific Options for the agent</param>
+    /// <returns></returns>
+#pragma warning disable RS0016
+    public static ChatClientAgent AsAIAgent(
+        this ResponsesClient client,
+        OpenAIAgentOptions options)
+    {
+        bool anyOptionsSet = false;
+        ChatOptions chatOptions = new();
+
+        if (options.Tools != null)
+        {
+            anyOptionsSet = true;
+            chatOptions.Tools = options.Tools;
+        }
+
+        if (options.MaxOutputTokens.HasValue)
+        {
+            anyOptionsSet = true;
+            chatOptions.MaxOutputTokens = options.MaxOutputTokens.Value;
+        }
+
+        string? instructions = options.Instructions;
+        if (!string.IsNullOrWhiteSpace(instructions))
+        {
+            anyOptionsSet = true;
+            chatOptions.Instructions = instructions;
+        }
+
+        bool? storedOutputEnabled = options.StoredOutputEnabled;
+
+        if (storedOutputEnabled.HasValue || options.ReasoningEffort != null || options.ServiceTier != null)
+        {
+            anyOptionsSet = true;
+            chatOptions.RawRepresentationFactory = _ => new CreateResponseOptions
+            {
+                StoredOutputEnabled = storedOutputEnabled,
+                ReasoningOptions = options.ReasoningEffort != null
+                    ? new ResponseReasoningOptions
+                    {
+                        ReasoningEffortLevel = options.ReasoningEffort,
+                        ReasoningSummaryVerbosity = options.ReasoningSummaryVerbosity
+                    }
+                    : null,
+                ServiceTier = options.ServiceTier
+            };
+        }
+
+        ChatClientAgentOptions chatClientAgentOptions = new()
+        {
+            Name = options.Name,
+            Description = options.Description,
+            Id = options.Id,
+            AIContextProviders = options.AIContextProviders,
+            ChatHistoryProvider = options.ChatHistoryProvider,
+        };
+
+        if (anyOptionsSet)
+        {
+            chatClientAgentOptions.ChatOptions = chatOptions;
+        }
+
+        options.AdditionalChatClientAgentOptions?.Invoke(chatClientAgentOptions);
+
+        return client.AsAIAgent(chatClientAgentOptions, options.Model, options.ClientFactory, options.LoggerFactory, options.Services);
+    }
+
+    /// <summary>
     /// Gets an <see cref="IChatClient"/> for use with this <see cref="ResponsesClient"/> that does not store responses for later retrieval.
     /// </summary>
     /// <remarks>
@@ -145,4 +216,102 @@ public static class OpenAIResponseClientExtensions
             })
             .Build();
     }
+}
+
+#pragma warning disable RS0016
+/// <summary>
+/// Options for an OpenAI Specific Client
+/// </summary>
+public class OpenAIAgentOptions
+{
+    /// <summary>
+    /// Model to use
+    /// </summary>
+    public required string Model { get; set; }
+
+    /// <summary>
+    /// ID of the Agent
+    /// </summary>
+    public string? Id { get; set; }
+
+    /// <summary>
+    /// The Name of the Agent (Optional in most cases, but some scenarios to require one)
+    /// </summary>
+    public string? Name { get; set; }
+
+    /// <summary>
+    /// The Description of the Agent (Information only and not used by the LLM)
+    /// </summary>
+    public string? Description { get; set; }
+
+    /// <summary>
+    /// Instruction for the Agent to be fed to the LLM as System/Developer Message
+    /// </summary>
+    public string? Instructions { get; set; }
+
+    /// <summary>
+    /// A set of Tools that the Agent are allowed to call
+    /// </summary>
+    public IList<AITool>? Tools { get; set; }
+
+    /// <summary>
+    /// The maximum number of tokens in the generated chat response.
+    /// </summary>
+    public int? MaxOutputTokens { get; set; }
+
+    /// <summary>
+    /// An Action that allow you to inject additional ChatClientAgentOptions settings beyond what these options can do
+    /// </summary>
+    public Action<ChatClientAgentOptions>? AdditionalChatClientAgentOptions { get; set; }
+
+    /// <summary>
+    /// An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.
+    /// </summary>
+    public IServiceProvider? Services { get; set; }
+
+    /// <summary>
+    /// Optional logger factory for enabling logging within the agent.
+    /// </summary>
+    public ILoggerFactory? LoggerFactory { get; set; }
+
+    /// <summary>
+    /// Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.
+    /// </summary>
+    public Func<IChatClient, IChatClient>? ClientFactory { get; set; }
+
+    /// <summary>
+    /// Define the reasoning Effort
+    /// </summary>
+#pragma warning disable OPENAI001
+    public ResponseReasoningEffortLevel? ReasoningEffort { get; set; }
+#pragma warning restore OPENAI001
+
+    /// <summary>
+    /// Define the reasoning summary verbosity
+    /// </summary>
+#pragma warning disable OPENAI001
+    public ResponseReasoningSummaryVerbosity? ReasoningSummaryVerbosity { get; set; }
+#pragma warning restore OPENAI001
+
+    /// <summary>
+    /// Gets or sets the <see cref="ChatHistoryProvider"/> instance to use for providing chat history for this agent.
+    /// </summary>
+    public ChatHistoryProvider? ChatHistoryProvider { get; set; }
+
+    /// <summary>
+    /// Gets or sets the list of <see cref="AIContextProvider"/> instances to use for providing additional context for each agent run.
+    /// </summary>
+    public IEnumerable<AIContextProvider>? AIContextProviders { get; set; }
+
+    /// <summary>
+    /// What service Tier to use
+    /// </summary>
+#pragma warning disable OPENAI001
+    public ResponseServiceTier? ServiceTier { get; set; }
+#pragma warning restore OPENAI001
+
+    /// <summary>
+    /// sets whether the response should be stored for later retrieval. This corresponds to the "store" property in the JSON representation.
+    /// </summary>
+    public bool? StoredOutputEnabled { get; set; }
 }
