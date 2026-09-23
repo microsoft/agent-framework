@@ -1731,8 +1731,11 @@ class RawOpenAIChatClient(
         """
         reasoning_items: dict[str, dict[str, Any]] = {}
         if not request_uses_service_side_storage:
-            self._validate_reasoning_groups_for_stateless_replay(chat_messages)
             reasoning_items = self._prepare_reasoning_items_for_openai(chat_messages)
+            self._validate_reasoning_groups_for_stateless_replay(
+                chat_messages,
+                replayable_reasoning_ids=set(reasoning_items),
+            )
         serialized_reasoning_ids: set[str] = set()
 
         list_of_list = [
@@ -1750,7 +1753,12 @@ class RawOpenAIChatClient(
         # items (drop unmatched). See `_AF_MCP_PENDING_OUTPUT_KEY`.
         return self._coalesce_pending_mcp_results(flat)
 
-    def _validate_reasoning_groups_for_stateless_replay(self, chat_messages: Sequence[Message]) -> None:
+    def _validate_reasoning_groups_for_stateless_replay(
+        self,
+        chat_messages: Sequence[Message],
+        *,
+        replayable_reasoning_ids: set[str],
+    ) -> None:
         """Reject reasoning-bound tool groups that cannot be reconstructed."""
         group_reasoning_contents: dict[str, list[Content]] = {}
         group_call_ids: dict[str, list[str]] = {}
@@ -1807,11 +1815,6 @@ class RawOpenAIChatClient(
             if not call_ids:
                 continue
             reasoning_contents = group_reasoning_contents.get(group_id, [])
-            replayable_reasoning_ids = {
-                content.id
-                for content in reasoning_contents
-                if content.id and (content.protected_data or content.additional_properties.get("encrypted_content"))
-            }
             missing_reasoning_ids = list(
                 dict.fromkeys(
                     content.id or "<missing provider reasoning id>"
@@ -1989,6 +1992,8 @@ class RawOpenAIChatClient(
                 None,
             )
             if not encrypted_content:
+                if provider_item := self._prepare_provider_reasoning_item_for_openai(reasoning_id, contents):
+                    reasoning_items[reasoning_id] = provider_item
                 continue
 
             item: dict[str, Any] = {
@@ -2012,6 +2017,14 @@ class RawOpenAIChatClient(
                 item["content"] = reasoning_texts
             reasoning_items[reasoning_id] = item
         return reasoning_items
+
+    def _prepare_provider_reasoning_item_for_openai(
+        self,
+        reasoning_id: str,
+        contents: Sequence[Content],
+    ) -> dict[str, Any] | None:
+        """Return a provider-native reasoning item for stateless replay, when supported."""
+        return None
 
     def _prepare_content_for_openai(
         self,
