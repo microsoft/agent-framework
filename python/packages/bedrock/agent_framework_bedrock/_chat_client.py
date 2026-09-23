@@ -136,9 +136,10 @@ class BedrockChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], t
         user: Not supported.
         store: Not supported.
         logit_bias: Not supported.
-        metadata: Not supported (use additional_properties for additionalModelRequestFields).
+        metadata: Not supported (use requestMetadata).
 
         # Bedrock-specific options:
+        additionalModelRequestFields: Model-specific request fields not covered by the Converse API.
         guardrailConfig: Guardrails configuration for content filtering.
         performanceConfig: Performance optimization settings.
         requestMetadata: Key-value metadata for the request.
@@ -146,6 +147,10 @@ class BedrockChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], t
     """
 
     # Bedrock-specific options
+    additionalModelRequestFields: dict[str, Any]
+    """Model-specific request fields passed through as ``additionalModelRequestFields``
+    (e.g. ``{"reasoning": {"effort": "low"}}``)."""
+
     guardrailConfig: BedrockGuardrailConfig
     """Guardrails configuration for content filtering and safety."""
 
@@ -460,6 +465,16 @@ class BedrockChatClient(
 
         if output_config := self._prepare_output_config(options.get("response_format")):
             run_options["outputConfig"] = output_config
+
+        for key in (
+            "additionalModelRequestFields",
+            "guardrailConfig",
+            "performanceConfig",
+            "requestMetadata",
+            "promptVariables",
+        ):
+            if (value := options.get(key)) is not None:
+                run_options[key] = value
 
         return run_options
 

@@ -14,7 +14,7 @@ from agent_framework._settings import SecretString
 from boto3.session import Session as Boto3Session
 from botocore.client import BaseClient
 
-from agent_framework_bedrock import BedrockChatClient, BedrockEmbeddingClient
+from agent_framework_bedrock import BedrockChatClient, BedrockChatOptions, BedrockEmbeddingClient
 from agent_framework_bedrock._chat_client import BedrockSettings
 from agent_framework_bedrock._feature_usage import FeatureIndex
 
@@ -385,6 +385,30 @@ def test_prepare_options_adds_instructions_and_sampling_settings() -> None:
         "topP": 0.9,
         "stopSequences": ["DONE"],
     }
+
+
+async def test_get_response_forwards_bedrock_specific_options() -> None:
+    """Bedrock-specific options should reach the Converse request as top-level fields."""
+    stub = _StubBedrockRuntime()
+    client = BedrockChatClient(
+        model="us.openai.gpt-6-sol",
+        region="us-east-1",
+        client=stub,  # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type] # pyright: ignore[reportArgumentType]
+    )
+    bedrock_options: BedrockChatOptions = {
+        "additionalModelRequestFields": {"reasoning": {"effort": "low"}},
+        "guardrailConfig": {"guardrailIdentifier": "gr-123", "guardrailVersion": "1"},
+        "performanceConfig": {"latency": "optimized"},
+        "requestMetadata": {"tenant": "contoso"},
+        "promptVariables": {"topic": {"text": "hash maps"}},
+    }
+
+    await client.get_response(
+        [Message(role="user", contents=[Content.from_text(text="hello")])], options=bedrock_options
+    )
+
+    payload = stub.calls[0]
+    assert {key: payload.get(key) for key in bedrock_options} == bedrock_options
 
 
 def test_prepare_options_unsupported_tool_mode_raises(monkeypatch: pytest.MonkeyPatch) -> None:
