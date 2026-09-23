@@ -175,7 +175,7 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
     }
 
     [Fact]
-    public async Task NoProvider_ConcurrentWorkflowSessionCreations_DoNotSerializeHandshakeAsync()
+    public async Task NoProvider_ConcurrentWorkflowSessionCreations_AreBoundedByCacheSizeAsync()
     {
         // Arrange
         ProtocolStub stub = new();
@@ -195,12 +195,18 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
         await initializationsStarted.WaitAsync(timeout.Token);
         Task<McpServerToolResultContent> second = InvokeScopedAsync(handler, "workflow-b", "ping", timeout.Token);
         await initializationsStarted.WaitAsync(concurrencyTimeout.Token);
+        Task<McpServerToolResultContent> third = InvokeScopedAsync(handler, "workflow-c", "ping", timeout.Token);
+        using CancellationTokenSource gateTimeout = new(TimeSpan.FromMilliseconds(250));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => initializationsStarted.WaitAsync(gateTimeout.Token));
         releaseInitializations.Release(2);
         await Task.WhenAll(first, second);
+        await initializationsStarted.WaitAsync(timeout.Token);
+        releaseInitializations.Release();
+        await third;
 
         // Assert
-        Assert.Equal(2, stub.Initializations);
-        Assert.Equal(0, stub.Terminations);
+        Assert.Equal(3, stub.Initializations);
+        Assert.Equal(1, stub.Terminations);
     }
 
     [Fact]
@@ -298,6 +304,38 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
             InvokeScopedAsync(handler, "workflow-a", "ping", timeout.Token));
 
         // Assert
+        Assert.Equal(1, stub.Initializations);
+    }
+
+    [Fact]
+    public async Task NoProvider_CancelledWaiter_DoesNotWaitForSharedCreationAsync()
+    {
+        // Arrange
+        ProtocolStub stub = new();
+        using SemaphoreSlim initializationStarted = new(0);
+        using SemaphoreSlim releaseInitialization = new(0);
+        stub.BeforeInitializationAsync = async token =>
+        {
+            initializationStarted.Release();
+            await releaseInitialization.WaitAsync(token);
+        };
+        await using DefaultMcpToolHandler handler = new(null, stub.CreateMessageHandler);
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+        using CancellationTokenSource waiterCancellation = new();
+
+        // Act
+        Task<McpServerToolResultContent> creator = InvokeScopedAsync(handler, "workflow-a", "ping", timeout.Token);
+        await initializationStarted.WaitAsync(timeout.Token);
+        Task<McpServerToolResultContent> waiter = InvokeScopedAsync(handler, "workflow-a", "ping", waiterCancellation.Token);
+        await Task.Yield();
+        waiterCancellation.Cancel();
+        Task completed = await Task.WhenAny(waiter, Task.Delay(TimeSpan.FromSeconds(1), timeout.Token));
+        releaseInitialization.Release();
+        await creator;
+
+        // Assert
+        Assert.Same(waiter, completed);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => waiter);
         Assert.Equal(1, stub.Initializations);
     }
 

@@ -976,6 +976,27 @@ class TestCache:
         assert FakeTool.instances[1].close_count == 1
 
     @pytest.mark.asyncio
+    async def test_lru_eviction_cleanup_cancellation_releases_new_entry(self) -> None:
+        handler = DefaultMCPToolHandler(cache_max_size=1)
+        cancel_first_close = True
+        original_close = FakeTool.close
+
+        async def close(tool: FakeTool) -> None:
+            if cancel_first_close and tool.kwargs["url"] == "https://a/":
+                tool.close_count += 1
+                raise asyncio.CancelledError
+            await original_close(tool)
+
+        with _patch_tool(), patch.object(FakeTool, "close", close):
+            await handler.invoke_tool(_invocation(server_url="https://a/"))
+            with pytest.raises(asyncio.CancelledError):
+                await handler.invoke_tool(_invocation(server_url="https://b/"))
+
+            assert all(entry.active_users == 0 for entry in handler._cache.values())
+            cancel_first_close = False
+            await asyncio.wait_for(handler.aclose(), timeout=1)
+
+    @pytest.mark.asyncio
     async def test_entry_creation_is_bounded_and_cancelled_waiter_is_cleaned_up(self) -> None:
         handler = DefaultMCPToolHandler(cache_max_size=2)
         connecting = 0

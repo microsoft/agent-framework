@@ -614,10 +614,14 @@ class DefaultMCPToolHandler:
                 inflight.set_exception(err)
             inflight.exception()
             raise err
-        if duplicate is not None:
-            await self._close_entry(duplicate)
-        if evicted is not None and evicted.disposal_claimed:
-            await self._close_claimed_entry(evicted)
+        try:
+            if duplicate is not None:
+                await self._close_entry(duplicate)
+            if evicted is not None and evicted.disposal_claimed:
+                await self._close_claimed_entry(evicted)
+        except BaseException:
+            await self._release_entry(entry)
+            raise
         return entry
 
     async def _release_entry(self, entry: _CacheEntry) -> None:

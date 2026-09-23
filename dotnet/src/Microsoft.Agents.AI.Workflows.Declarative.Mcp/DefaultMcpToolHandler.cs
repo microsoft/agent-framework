@@ -55,6 +55,7 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
     private readonly HashSet<CachedClient> _retiredClients = [];
     private readonly Dictionary<string, HttpClient> _ownedHttpClients = [];
     private readonly SemaphoreSlim _clientLock = new(1, 1);
+    private readonly SemaphoreSlim _clientCreationSemaphore;
     private readonly int _clientCacheMaxSize;
     private readonly AsyncLocal<ProviderInvocationContext?> _providerInvocationContext = new();
     private TaskCompletionSource<bool>? _providerInvocationsDrained;
@@ -101,6 +102,7 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
         this._httpClientProvider = httpClientProvider;
         this._httpMessageHandlerFactory = Throw.IfNull(httpMessageHandlerFactory);
         this._clientCacheMaxSize = clientCacheMaxSize;
+        this._clientCreationSemaphore = new(clientCacheMaxSize, clientCacheMaxSize);
     }
 
     /// <inheritdoc/>
@@ -345,6 +347,7 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
         }
 
         this._clientLock.Dispose();
+        this._clientCreationSemaphore.Dispose();
     }
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1513:Use ObjectDisposedException throw helper",
@@ -397,20 +400,45 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
 
         if (!ownsClientCreation)
         {
-            await clientCreation.Task.ConfigureAwait(false);
+            await WaitForClientCreationAsync(clientCreation.Task, cancellationToken).ConfigureAwait(false);
             return await this.AcquireClientAsync(
                 serverUrl, serverLabel, headers, connectionName, workflowSessionId, cancellationToken).ConfigureAwait(false);
         }
 
         ClientConnection? connection = null;
+        bool creationSemaphoreEntered = false;
         try
         {
+            await this._clientCreationSemaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
+            creationSemaphoreEntered = true;
+            await this._clientLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                this.ThrowIfDisposing();
+            }
+            finally
+            {
+                this._clientLock.Release();
+            }
+
             connection = await this.CreateClientAsync(
                 trimmedUrl, serverLabel, headers, trimmedUrl, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception)
         {
-            await this.CompleteClientCreationFailureAsync(clientCacheKey, clientCreation, exception).ConfigureAwait(false);
+            try
+            {
+                await this.CompleteClientCreationFailureAsync(clientCacheKey, clientCreation, exception).ConfigureAwait(false);
+            }
+            finally
+            {
+                if (creationSemaphoreEntered)
+                {
+                    this._clientCreationSemaphore.Release();
+                    creationSemaphoreEntered = false;
+                }
+            }
+
             throw;
         }
 
@@ -423,7 +451,6 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
             if (this._disposing)
             {
                 disposedException = new ObjectDisposedException(nameof(DefaultMcpToolHandler));
-                clientCreation.TrySetException(disposedException);
             }
             else
             {
@@ -458,22 +485,68 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
             this._clientLock.Release();
         }
 
-        if (connection is not null)
+        try
         {
-            await connection.DisposeAsync().ConfigureAwait(false);
-        }
+            if (connection is not null)
+            {
+                await connection.DisposeAsync().ConfigureAwait(false);
+            }
 
-        if (clientToDispose is not null)
-        {
-            await this.DisposeCachedClientAsync(clientToDispose).ConfigureAwait(false);
-        }
+            if (disposedException is not null)
+            {
+                clientCreation.TrySetException(disposedException);
+                throw disposedException;
+            }
 
-        if (disposedException is not null)
+            if (clientToDispose is not null)
+            {
+                await this.DisposeCachedClientAsync(clientToDispose).ConfigureAwait(false);
+            }
+        }
+        catch (Exception exception)
         {
-            throw disposedException;
+            if (disposedException is not null)
+            {
+                clientCreation.TrySetException(exception);
+            }
+
+            if (result is not null)
+            {
+                await this.ReleaseClientAsync(result).ConfigureAwait(false);
+            }
+
+            throw;
+        }
+        finally
+        {
+            if (creationSemaphoreEntered)
+            {
+                this._clientCreationSemaphore.Release();
+            }
         }
 
         return result ?? throw new InvalidOperationException("Failed to acquire MCP client.");
+    }
+
+    private static async Task WaitForClientCreationAsync(Task<CachedClient> clientCreation, CancellationToken cancellationToken)
+    {
+        if (!cancellationToken.CanBeCanceled || clientCreation.IsCompleted)
+        {
+            await clientCreation.ConfigureAwait(false);
+            return;
+        }
+
+        TaskCompletionSource<bool> cancellation = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        using CancellationTokenRegistration registration = cancellationToken.Register(
+            static state => ((TaskCompletionSource<bool>)state!).TrySetResult(true),
+            cancellation);
+
+        if (await Task.WhenAny(clientCreation, cancellation.Task).ConfigureAwait(false) == cancellation.Task)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+
+        await clientCreation.ConfigureAwait(false);
     }
 
     private async Task CompleteClientCreationFailureAsync(

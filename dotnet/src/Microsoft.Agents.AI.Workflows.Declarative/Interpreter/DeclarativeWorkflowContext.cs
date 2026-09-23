@@ -43,7 +43,7 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext, IWorkflowSe
             : await source.ReadOrInitStateAsync(
                 WorkflowSessionIdStateKey,
                 static () => Guid.NewGuid().ToString("N"),
-                scopeName: null,
+                VariableScopeNames.System,
                 cancellationToken: cancellationToken).ConfigureAwait(false);
 
         return new(source, state, sessionId);
