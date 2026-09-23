@@ -27,6 +27,15 @@ describe('DevFlow PR repair entrypoint', () => {
     const intake = workflow.indexOf('Validate and bind the authorized request');
     const reaction = workflow.indexOf('Acknowledge accepted repair command');
     assert.ok(reaction > intake);
+    const authStep = workflow.slice(
+      workflow.indexOf('Get source-repository App token'),
+      workflow.indexOf('Authorize the frozen command requester'),
+    );
+    assert.match(authStep, /pull-requests-permission: write/);
+    assert.doesNotMatch(workflow, /id: reaction-auth/);
+    const reactionStep = workflow.slice(reaction, workflow.indexOf('\n  repair:'));
+    assert.match(reactionStep, /github-token: \$\{\{ steps\.auth\.outputs\.token \}\}/);
+    assert.match(reactionStep, /continue-on-error: true/);
     assert.match(workflow, /steps\.intake\.outputs\.mode == 'repair'/);
     assert.match(workflow, /content: 'eyes'/);
   });
@@ -40,7 +49,7 @@ describe('DevFlow PR repair entrypoint', () => {
     );
     assert.match(authorization, /contents-permission: read/);
     assert.match(authorization, /issues-permission: write/);
-    assert.match(authorization, /pull-requests-permission: read/);
+    assert.match(authorization, /pull-requests-permission: write/);
 
     const repair = workflow.slice(workflow.indexOf('\n  repair:'), workflow.indexOf('\n  approve:'));
     assert.match(repair, /permissions:\n      contents: read\n      actions: read\n      checks: read/);
@@ -52,6 +61,8 @@ describe('DevFlow PR repair entrypoint', () => {
     assert.match(repairRead, /contents-permission: read/);
     assert.match(repairRead, /issues-permission: read/);
     assert.match(repairRead, /pull-requests-permission: read/);
+    const report = repair.slice(repair.indexOf('Get issue-reporting token'));
+    assert.match(report, /pull-requests-permission: write/);
 
     const publish = workflow.slice(workflow.indexOf('\n  publish:'));
     assert.doesNotMatch(publish.slice(0, publish.indexOf('    env:')), /issues: write/);
@@ -64,7 +75,7 @@ describe('DevFlow PR repair entrypoint', () => {
     const publishWrite = publish.slice(publish.indexOf('Get source-repository write token'));
     assert.match(publishWrite, /contents-permission: write/);
     assert.match(publishWrite, /issues-permission: write/);
-    assert.match(publishWrite, /pull-requests-permission: read/);
+    assert.match(publishWrite, /pull-requests-permission: write/);
   });
 
   it('runs private policy code and preserves the exact-diff publication gate', () => {
