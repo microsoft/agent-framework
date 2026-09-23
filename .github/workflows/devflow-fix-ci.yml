@@ -95,6 +95,9 @@ jobs:
           github-app-client-id: ${{ secrets.GH_APP_CLIENT_ID }}
           github-app-installation-id: ${{ secrets.GH_APP_INSTALLATION_ID }}
           repository: ${{ github.repository }}
+          contents-permission: read
+          issues-permission: write
+          pull-requests-permission: read
 
       - name: Authorize the frozen command requester
         id: team
@@ -198,7 +201,7 @@ jobs:
     permissions:
       contents: read
       actions: read
-      issues: write
+      checks: read
       id-token: write
       copilot-requests: write
     outputs:
@@ -257,6 +260,9 @@ jobs:
           github-app-client-id: ${{ secrets.GH_APP_CLIENT_ID }}
           github-app-installation-id: ${{ secrets.GH_APP_INSTALLATION_ID }}
           repository: ${{ github.repository }}
+          contents-permission: read
+          issues-permission: read
+          pull-requests-permission: read
       - name: Generate and verify the bounded repair
         id: run
         env:
@@ -372,7 +378,6 @@ jobs:
     permissions:
       contents: read
       actions: read
-      issues: write
       id-token: write
     env:
       SNAPSHOT_SHA256: ${{ needs.authorize.outputs.snapshot_sha256 }}
@@ -435,6 +440,9 @@ jobs:
           github-app-client-id: ${{ secrets.GH_APP_CLIENT_ID }}
           github-app-installation-id: ${{ secrets.GH_APP_INSTALLATION_ID }}
           repository: ${{ github.repository }}
+          contents-permission: read
+          issues-permission: read
+          pull-requests-permission: read
       - name: Revalidate exact candidate and approval before write authority
         env:
           GH_TOKEN: ${{ steps.read-auth.outputs.token }}
@@ -460,6 +468,8 @@ jobs:
           github-app-installation-id: ${{ secrets.GH_APP_INSTALLATION_ID }}
           repository: ${{ github.repository }}
           contents-permission: write
+          issues-permission: write
+          pull-requests-permission: read
       - name: Publish only the revalidated candidate
         env:
           GH_TOKEN: ${{ steps.write-auth.outputs.token }}

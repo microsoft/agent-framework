@@ -38,7 +38,33 @@ describe('DevFlow PR repair entrypoint', () => {
       workflow.indexOf('Get source-repository App token'),
       workflow.indexOf('Authorize the frozen command requester'),
     );
-    assert.doesNotMatch(authorization, /contents-permission|issues-permission|pull-requests-permission/);
+    assert.match(authorization, /contents-permission: read/);
+    assert.match(authorization, /issues-permission: write/);
+    assert.match(authorization, /pull-requests-permission: read/);
+
+    const repair = workflow.slice(workflow.indexOf('\n  repair:'), workflow.indexOf('\n  approve:'));
+    assert.match(repair, /permissions:\n      contents: read\n      actions: read\n      checks: read/);
+    assert.doesNotMatch(repair.slice(0, repair.indexOf('    outputs:')), /issues: write/);
+    const repairRead = repair.slice(
+      repair.indexOf('Get read-only source-repository App token'),
+      repair.indexOf('Generate and verify the bounded repair'),
+    );
+    assert.match(repairRead, /contents-permission: read/);
+    assert.match(repairRead, /issues-permission: read/);
+    assert.match(repairRead, /pull-requests-permission: read/);
+
+    const publish = workflow.slice(workflow.indexOf('\n  publish:'));
+    assert.doesNotMatch(publish.slice(0, publish.indexOf('    env:')), /issues: write/);
+    const publishRead = publish.slice(
+      publish.indexOf('Get read-only source-repository App token'),
+      publish.indexOf('Revalidate exact candidate and approval before write authority'),
+    );
+    assert.match(publishRead, /issues-permission: read/);
+    assert.match(publishRead, /pull-requests-permission: read/);
+    const publishWrite = publish.slice(publish.indexOf('Get source-repository write token'));
+    assert.match(publishWrite, /contents-permission: write/);
+    assert.match(publishWrite, /issues-permission: write/);
+    assert.match(publishWrite, /pull-requests-permission: read/);
   });
 
   it('runs private policy code and preserves the exact-diff publication gate', () => {
