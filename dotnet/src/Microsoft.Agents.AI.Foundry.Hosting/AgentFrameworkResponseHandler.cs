@@ -36,6 +36,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 public class AgentFrameworkResponseHandler : ResponseHandler
 {
     private const string LatestWorkflowCheckpointIdMetadataKey = "_last_checkpoint_id";
+    private const string UserPartitionName = "user";
 
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<AgentFrameworkResponseHandler> _logger;
@@ -130,8 +131,8 @@ public class AgentFrameworkResponseHandler : ResponseHandler
 
         // When resolvedHostedContext is null here the container is NOT hosted by Foundry (local
         // development: docker run / dotnet run outside the platform, so no x-agent-user-id header).
-        // Per-user isolation simply does not apply in that case: the request proceeds with a null user
-        // id (the session store treats null as "no user partition") and no hosted context is stamped or
+        // Per-user isolation simply does not apply in that case: no user partition is added to the
+        // session key and no hosted context is stamped or
         // validated. This lets contributors run the image locally without registering a fallback
         // provider, while production stays strict because FoundryEnvironment.IsHosted is true there.
         var resolvedUserId = resolvedHostedContext?.UserId;
@@ -140,13 +141,20 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         // Map the request to a stable MAF AgentSession key: conversation_id when present, else the
         // partition embedded in previous_response_id (chains converge), else the minted response id
         // (cold start). Container session id is intentionally not used — it spans many conversations.
-        // The session store partitions persisted state per user via resolvedUserId so one user can
+        // The session key partitions persisted state per user via resolvedUserId so one user can
         // never observe another user's session, even with a forged conversation id. Locally
         // (resolvedUserId is null) there is no user to partition on, so the session is unscoped/shared
         // by design — per-user isolation applies only when a user identity was resolved (hosted).
         var conversationId = request.GetConversationId();
         var agentSessionId = HostedConversationKey.Resolve(
             conversationId, request.PreviousResponseId, context.ResponseId);
+        AgentSessionStoreKey? agentSessionKey = string.IsNullOrWhiteSpace(agentSessionId)
+            ? null
+            : new AgentSessionStoreKey(agentSessionId);
+        if (agentSessionKey is not null && resolvedUserId is not null)
+        {
+            agentSessionKey = agentSessionKey.WithPartition(UserPartitionName, resolvedUserId);
+        }
 
         var agentOptions = agent.GetService<ChatClientAgentOptions>();
         var hostingOptions = this._serviceProvider.GetService<IOptions<FoundryResponsesOptions>>()?.Value;
@@ -157,7 +165,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         // a session to run against.
         AgentSession? session;
         bool sessionRestoredFromStore = false;
-        if (string.IsNullOrWhiteSpace(agentSessionId))
+        if (agentSessionKey is null)
         {
             session = await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
         }
@@ -165,8 +173,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         {
             session = await sessionStore.GetSessionAsync(
                 agent,
-                agentSessionId,
-                resolvedUserId,
+                agentSessionKey,
                 cancellationToken).ConfigureAwait(false);
 
             sessionRestoredFromStore = session is not null;
@@ -212,11 +219,10 @@ public class AgentFrameworkResponseHandler : ResponseHandler
             ? new ResponseEventStream(context, persistedResponse)
             : new ResponseEventStream(context, request);
 
-        WorkflowSessionCheckpointRecovery? workflowCheckpointRecovery =
-            session?.GetService<WorkflowSessionCheckpointRecovery>();
         if (context.IsRecovery
             && sessionRestoredFromStore
-            && workflowCheckpointRecovery is not null)
+            && session?.GetService<WorkflowSessionCheckpointRecovery>()
+                is { } workflowCheckpointRecovery)
         {
             string? checkpointId =
                 stream.InternalMetadata.TryGetValue(LatestWorkflowCheckpointIdMetadataKey, out string? persistedCheckpointId)
@@ -462,59 +468,12 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         bool steeringDetected = false;
         bool deferredForRecovery = false;
 
-        async ValueTask<ResponseStreamEvent?> PersistWorkflowCheckpointAsync(
-            CheckpointInfo checkpoint,
-            CancellationToken checkpointCancellationToken)
-        {
-            if (!isResilientTurn
-                || workflowCheckpointRecovery is null
-                || session is null
-                || string.IsNullOrWhiteSpace(agentSessionId)
-                || (stream.InternalMetadata.TryGetValue(LatestWorkflowCheckpointIdMetadataKey, out string? lastCheckpointId)
-                    && string.Equals(lastCheckpointId, checkpoint.CheckpointId, StringComparison.Ordinal)))
-            {
-                return null;
-            }
-
-            try
-            {
-                await sessionStore.SaveSessionAsync(
-                    agent,
-                    agentSessionId,
-                    session,
-                    resolvedUserId,
-                    checkpointCancellationToken).ConfigureAwait(false);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                if (this._logger.IsEnabled(LogLevel.Debug))
-                {
-                    this._logger.LogDebug(
-                        ex,
-                        "Workflow checkpoint {CheckpointId} was not paired with response {ResponseId} because its AgentSession could not be saved.",
-                        checkpoint.CheckpointId,
-                        context.ResponseId);
-                }
-
-                return null;
-            }
-
-            stream.InternalMetadata[LatestWorkflowCheckpointIdMetadataKey] = checkpoint.CheckpointId;
-            return stream.EmitInProgress();
-        }
-
-        // Check whenever the agent is storing messages when it should not.
-        bool CheckNotAllowedStoreUsage() =>
-            // For IChatClients implementations when the backend is set to not store (store = false) the returned responseMessage.ConversationId comes null.
-            // If for any reason this property is set it means that the storage setting was enabled when it shouldn't.
-            !allowStoredOutputEnabled && session is ChatClientAgentSession { ConversationId: not null };
-
-        var enumerator = OutputConverter.ConvertUpdatesToEventsAsync(
+        var enumerator = OutputConverter.ConvertUpdatesToItemsAsync(
             agent.RunStreamingAsync(messages, session, options: options, cancellationToken: consentCts.Token),
             stream,
             session?.StateBag,
-            persistWorkflowCheckpointHandler: PersistWorkflowCheckpointAsync,
             cancellationToken: cancellationToken).GetAsyncEnumerator(cancellationToken);
+        var pendingEvents = new Queue<ResponseStreamEvent>();
         try
         {
             while (true)
@@ -530,12 +489,41 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                 ResponseStreamEvent? evt = null;
                 try
                 {
-                    if (!await enumerator.MoveNextAsync().ConfigureAwait(false))
+                    if (!pendingEvents.TryDequeue(out evt))
                     {
-                        break;
+                        if (!await enumerator.MoveNextAsync().ConfigureAwait(false))
+                        {
+                            break;
+                        }
+
+                        switch (enumerator.Current)
+                        {
+                            case OutputConverterItem.ResponseEvent responseEvent:
+                                evt = responseEvent.Event;
+                                break;
+
+                            case OutputConverterItem.WorkflowCheckpoint workflowCheckpoint:
+                                ResponseStreamEvent? checkpointStateEvent =
+                                    await PersistWorkflowCheckpointAsync(
+                                        workflowCheckpoint.Checkpoint,
+                                        cancellationToken).ConfigureAwait(false);
+
+                                if (checkpointStateEvent is not null)
+                                {
+                                    // AgentServer persists its orchestrator-owned response snapshot.
+                                    // Apply the updated internal metadata first, then request persistence.
+                                    pendingEvents.Enqueue(checkpointStateEvent);
+                                    pendingEvents.Enqueue(stream.Checkpoint());
+                                }
+
+                                continue;
+
+                            default:
+                                throw new InvalidOperationException(
+                                    "The output converter returned an unsupported item.");
+                        }
                     }
 
-                    evt = enumerator.Current;
                     if (evt is ResponseCompletedEvent)
                     {
                         consentCts.Token.ThrowIfCancellationRequested();
@@ -665,14 +653,14 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                 // remains authoritative for a turn that reaches normal completion.
                 if (isResilientTurn
                     && evt is ResponseOutputItemDoneEvent
-                    && workflowCheckpointRecovery is null
                     && session is not null
-                    && !string.IsNullOrWhiteSpace(agentSessionId)
+                    && session.GetService<WorkflowSessionCheckpointRecovery>() is null
+                    && agentSessionKey is not null
                     && !turnFailed)
                 {
                     try
                     {
-                        await sessionStore.SaveSessionAsync(agent, agentSessionId!, session, resolvedUserId, cancellationToken).ConfigureAwait(false);
+                        await sessionStore.SaveSessionAsync(agent, agentSessionKey, session, cancellationToken).ConfigureAwait(false);
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
@@ -709,9 +697,8 @@ public class AgentFrameworkResponseHandler : ResponseHandler
             {
                 await sessionStore.SaveSessionAsync(
                     agent,
-                    agentSessionId!,
+                    agentSessionKey!,
                     session,
-                    resolvedUserId,
                     steeringDetected ? CancellationToken.None : cancellationToken).ConfigureAwait(false);
             }
         }
@@ -732,6 +719,52 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         {
             yield return completedEvent;
         }
+
+        async ValueTask<ResponseStreamEvent?> PersistWorkflowCheckpointAsync(
+            CheckpointInfo checkpoint,
+            CancellationToken checkpointCancellationToken)
+        {
+            if (!isResilientTurn
+                || session is null
+                || session.GetService<WorkflowSessionCheckpointRecovery>() is null
+                || agentSessionKey is null
+                || (stream.InternalMetadata.TryGetValue(LatestWorkflowCheckpointIdMetadataKey, out string? lastCheckpointId)
+                    && string.Equals(lastCheckpointId, checkpoint.CheckpointId, StringComparison.Ordinal)))
+            {
+                return null;
+            }
+
+            try
+            {
+                await sessionStore.SaveSessionAsync(
+                    agent,
+                    agentSessionKey,
+                    session,
+                    checkpointCancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                if (this._logger.IsEnabled(LogLevel.Debug))
+                {
+                    this._logger.LogDebug(
+                        ex,
+                        "Workflow checkpoint {CheckpointId} was not paired with response {ResponseId} because its AgentSession could not be saved.",
+                        checkpoint.CheckpointId,
+                        context.ResponseId);
+                }
+
+                return null;
+            }
+
+            stream.InternalMetadata[LatestWorkflowCheckpointIdMetadataKey] = checkpoint.CheckpointId;
+            return stream.EmitInProgress();
+        }
+
+        // Check whenever the agent is storing messages when it should not.
+        bool CheckNotAllowedStoreUsage() =>
+            // For IChatClients implementations when the backend is set to not store (store = false) the returned responseMessage.ConversationId comes null.
+            // If for any reason this property is set it means that the storage setting was enabled when it shouldn't.
+            !allowStoredOutputEnabled && session is ChatClientAgentSession { ConversationId: not null };
     }
 
     /// <summary>

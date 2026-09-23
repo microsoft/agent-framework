@@ -64,6 +64,7 @@ class ExperimentalFeature(str, Enum):
     PROGRESSIVE_TOOLS = "PROGRESSIVE_TOOLS"
     SESSION_STORE = "SESSION_STORE"
     TO_PROMPT_AGENT = "TO_PROMPT_AGENT"
+    VECTOR_STORES = "VECTOR_STORES"
 
 
 class ReleaseCandidateFeature(str, Enum):

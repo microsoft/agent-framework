@@ -100,6 +100,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("agent_framework.openai")
 
+_MODEL_OUTPUT_KIND_KEY = "model_output_kind"
+_MODEL_OUTPUT_REFUSAL = "refusal"
+
+
+def _is_refusal_text_content(content: Content) -> bool:
+    return content.type == "text" and content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY) == _MODEL_OUTPUT_REFUSAL
+
+
 # Error message shared with tests — extracted to a constant to keep the
 # implementation and its assertions in sync.
 _AZURE_WEB_SEARCH_UNSUPPORTED_MSG = (
@@ -870,6 +878,8 @@ class RawOpenAIChatCompletionClient(
             contents: list[Content] = []
             if text_content := self._parse_text_from_openai(choice):
                 contents.append(text_content)
+            if refusal_content := self._parse_refusal_from_openai(choice):
+                contents.append(refusal_content)
             if parsed_tool_calls := [tool for tool in self._parse_tool_calls_from_openai(choice)]:
                 contents.extend(parsed_tool_calls)
             if reasoning_details := getattr(choice.message, "reasoning_details", None):
@@ -919,6 +929,8 @@ class RawOpenAIChatCompletionClient(
             choice_contents.extend(self._parse_tool_calls_from_openai(choice))
             if text_content := self._parse_text_from_openai(choice):
                 choice_contents.append(text_content)
+            if refusal_content := self._parse_refusal_from_openai(choice):
+                choice_contents.append(refusal_content)
             if reasoning_details := getattr(choice.delta, "reasoning_details", None):
                 choice_contents.append(Content.from_text_reasoning(protected_data=json.dumps(reasoning_details)))
             if self.response_parser is not None:
@@ -971,8 +983,17 @@ class RawOpenAIChatCompletionClient(
             if not isinstance(message.content, str):
                 return None
             return Content.from_text(text=message.content, raw_representation=choice)
+        return None
+
+    def _parse_refusal_from_openai(self, choice: Choice | ChunkChoice) -> Content | None:
+        """Parse a refusal as text carrying an experimental model-output marker."""
+        message = choice.message if isinstance(choice, Choice) else choice.delta
         if hasattr(message, "refusal") and message.refusal:
-            return Content.from_text(text=message.refusal, raw_representation=choice)
+            return Content.from_text(
+                text=message.refusal,
+                additional_properties={_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
+                raw_representation=choice,
+            )
         return None
 
     def _get_metadata_from_chat_response(self, response: ChatCompletion) -> dict[str, Any]:
@@ -1089,6 +1110,14 @@ class RawOpenAIChatCompletionClient(
 
         all_messages: list[dict[str, Any]] = []
         pending_reasoning: Any = None
+        assistant_refusal_parts: list[str] = []
+        # The most recently emitted assistant dict when it was built from plain text or tool
+        # calls (always ``all_messages[-1]`` while set). Text and tool calls from one assistant
+        # turn belong in a single Chat Completions message: splitting them leaves a provider
+        # reasoning field (``reasoning_details`` or one added by ``message_preparer``) on only
+        # one half, which providers like DeepSeek reject on the tool-result follow-up.
+        # See https://github.com/microsoft/agent-framework/issues/8382
+        mergeable_assistant: dict[str, Any] | None = None
         for content in message.contents:
             # Skip approval content - it's internal framework state, not for the LLM
             if content.type in ("function_approval_request", "function_approval_response"):
@@ -1109,8 +1138,22 @@ class RawOpenAIChatCompletionClient(
                     if all_messages and "tool_calls" in all_messages[-1]:
                         # If the last message already has tool calls, append to it
                         all_messages[-1]["tool_calls"].append(self._prepare_content_for_openai(content))
+                    elif mergeable_assistant is not None:
+                        # Attach to the text message emitted for this same turn
+                        mergeable_assistant["tool_calls"] = [self._prepare_content_for_openai(content)]
                     else:
                         args["tool_calls"] = [self._prepare_content_for_openai(content)]
+                case "text" if (
+                    message.role == "assistant"
+                    and mergeable_assistant is not None
+                    and "content" not in mergeable_assistant
+                    and not _is_refusal_text_content(content)
+                ):
+                    # Text following the tool calls of this same turn (streaming can coalesce
+                    # tool calls first) joins that message instead of starting a new one.
+                    if prepared_text := self._prepare_content_for_openai(content):
+                        mergeable_assistant["content"] = [prepared_text]
+                    continue
                 case "function_result":
                     args["tool_call_id"] = content.call_id
                     if content.items:
@@ -1126,6 +1169,7 @@ class RawOpenAIChatCompletionClient(
                     else:
                         args["content"] = content.result if content.result is not None else ""
                     all_messages.append(args)
+                    mergeable_assistant = None
                     continue
                 case "text_reasoning" if (protected_data := content.protected_data) is not None:
                     # Buffer reasoning to attach to the next message with content/tool_calls
@@ -1134,6 +1178,9 @@ class RawOpenAIChatCompletionClient(
                     if content.text is None:
                         continue
                     args["content"] = [{"type": "text", "text": content.text}]
+                case "text" if message.role == "assistant" and _is_refusal_text_content(content):
+                    assistant_refusal_parts.append(content.text or "")
+                    continue
                 case _:
                     prepared_content = self._prepare_content_for_openai(content)
                     if prepared_content:
@@ -1146,6 +1193,9 @@ class RawOpenAIChatCompletionClient(
                     args["reasoning_details"] = pending_reasoning
                     pending_reasoning = None
                 all_messages.append(args)
+                mergeable_assistant = (
+                    args if message.role == "assistant" and content.type in ("text", "function_call") else None
+                )
 
         # If reasoning was the only content, emit a valid message with empty content
         if pending_reasoning is not None:
@@ -1160,6 +1210,48 @@ class RawOpenAIChatCompletionClient(
                 if message.role != "tool" and (author_name := _sanitize_author_name(message.author_name)):
                     pending_args["name"] = author_name
                 all_messages.append(pending_args)
+
+        if assistant_refusal_parts:
+            merged_assistant: dict[str, Any] | None = None
+            merged_messages: list[dict[str, Any]] = []
+            for prepared_message in all_messages:
+                if prepared_message.get("role") != "assistant" or "tool_call_id" in prepared_message:
+                    merged_messages.append(prepared_message)
+                    continue
+                if merged_assistant is None:
+                    merged_assistant = prepared_message
+                    merged_messages.append(merged_assistant)
+                    continue
+                incoming_content = prepared_message.get("content")
+                existing_content = merged_assistant.get("content")
+                if isinstance(existing_content, list) and isinstance(incoming_content, list):
+                    cast("list[Any]", existing_content).extend(cast("list[Any]", incoming_content))
+                elif isinstance(existing_content, str) and isinstance(incoming_content, str):
+                    merged_assistant["content"] = existing_content + incoming_content
+                elif isinstance(existing_content, list) and isinstance(incoming_content, str):
+                    cast("list[Any]", existing_content).append({"type": "text", "text": incoming_content})
+                elif isinstance(existing_content, str) and isinstance(incoming_content, list):
+                    merged_assistant["content"] = [
+                        {"type": "text", "text": existing_content},
+                        *cast("list[Any]", incoming_content),
+                    ]
+                elif incoming_content is not None:
+                    merged_assistant["content"] = incoming_content
+                if incoming_tool_calls := prepared_message.get("tool_calls"):
+                    merged_assistant.setdefault("tool_calls", []).extend(incoming_tool_calls)
+                for key, value in prepared_message.items():
+                    if key not in {"role", "content", "tool_calls"}:
+                        merged_assistant.setdefault(key, value)
+            if merged_assistant is None:
+                merged_assistant = {
+                    "role": "assistant",
+                    "content": None,
+                }
+                if author_name := _sanitize_author_name(message.author_name):
+                    merged_assistant["name"] = author_name
+                merged_messages.append(merged_assistant)
+            merged_assistant["refusal"] = "".join(assistant_refusal_parts)
+            all_messages = merged_messages
 
         # Flatten text-only content lists to plain strings for broader
         # compatibility with OpenAI-like endpoints (e.g. Foundry Local).
@@ -1295,7 +1387,7 @@ class OpenAIChatCompletionClient(
         self,
         model: str | None = None,
         *,
-        api_key: str | Callable[[], str | Awaitable[str]] | None = None,
+        api_key: str | SecretString | Callable[[], str | Awaitable[str]] | None = None,
         org_id: str | None = None,
         base_url: str | None = None,
         default_headers: Mapping[str, str] | None = None,
@@ -1342,7 +1434,7 @@ class OpenAIChatCompletionClient(
         azure_endpoint: str | None = None,
         credential: AzureCredentialTypes | AzureTokenProvider | None = None,
         api_version: str | None = None,
-        api_key: str | Callable[[], str | Awaitable[str]] | None = None,
+        api_key: str | SecretString | Callable[[], str | Awaitable[str]] | None = None,
         base_url: str | None = None,
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncAzureOpenAI | AsyncOpenAI | None = None,
@@ -1391,7 +1483,7 @@ class OpenAIChatCompletionClient(
         self,
         model: str | None = None,
         *,
-        api_key: str | Callable[[], str | Awaitable[str]] | None = None,
+        api_key: str | SecretString | Callable[[], str | Awaitable[str]] | None = None,
         credential: AzureCredentialTypes | AzureTokenProvider | None = None,
         org_id: str | None = None,
         default_headers: Mapping[str, str] | None = None,

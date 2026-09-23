@@ -49,18 +49,24 @@ from contextvars import ContextVar
 from copy import deepcopy
 from typing import Any, Generic, Literal, TypeVar, overload
 
+from .._agents import BaseAgent
 from .._feature_stage import ExperimentalFeature, experimental
 from .._serialization import make_json_safe
 from .._types import AgentResponse, AgentResponseUpdate, ResponseStream
-from ..observability import OtelAttr, capture_exception, create_workflow_span
+from ..observability import (
+    OtelAttr,
+    _activate_span,
+    capture_exception,
+    start_workflow_span,
+)
 from ._checkpoint import CheckpointStorage, WorkflowCheckpoint
 from ._events import (
     WorkflowErrorDetails,
     WorkflowEvent,
     WorkflowRunState,
-    _framework_event_origin,
+    _framework_event,
 )
-from ._workflow import WorkflowRunResult
+from ._workflow import WorkflowRunResult, _coerce_request_info_response
 
 logger = logging.getLogger(__name__)
 
@@ -239,6 +245,9 @@ class RunContext:
         found, value = self._get_response(rid)
         if found:
             self._pending_requests.pop(rid, None)
+            # Functional workflows intentionally allow None responses; _set_responses logs a warning for them.
+            if value is not None:
+                value = _coerce_request_info_response(value, response_type, rid)
             return value
 
         # No response — emit event and interrupt
@@ -734,6 +743,7 @@ class FunctionalWorkflow:
         self._last_message: Any = None
         self._last_step_cache: dict[tuple[str, int], Any] = {}
         self._last_step_cache_auto_request_info_counts: dict[tuple[str, int], int] = {}
+        self._last_state: dict[str, Any] = {}
         self._last_pending_request_ids: set[str] = set()
 
         # Signature arity is validated once at decoration time.
@@ -746,6 +756,30 @@ class FunctionalWorkflow:
         self.graph_signature_hash = self._compute_signature_hash()
 
         functools.update_wrapper(self, func)  # type: ignore[arg-type]
+
+    def _capture_replay_state(self, ctx: RunContext, message: Any | None = None) -> None:
+        """Capture the state needed to continue a response-only HITL replay."""
+        if message is not None:
+            self._last_message = message
+        self._last_step_cache = dict(ctx._step_cache)
+        self._last_step_cache_auto_request_info_counts = dict(ctx._step_cache_auto_request_info_counts)
+        self._last_state = dict(ctx._state)
+        self._last_pending_request_ids = set(ctx._pending_requests)
+
+    def _restore_replay_state(self, ctx: RunContext) -> Any:
+        """Restore cached execution state and return the message used by the replay."""
+        ctx._step_cache = dict(self._last_step_cache)
+        ctx._step_cache_auto_request_info_counts = dict(self._last_step_cache_auto_request_info_counts)
+        ctx._state = dict(self._last_state)
+        return self._last_message
+
+    def _clear_replay_state(self) -> None:
+        """Clear all state retained for a response-only replay."""
+        self._last_message = None
+        self._last_step_cache = {}
+        self._last_step_cache_auto_request_info_counts = {}
+        self._last_state = {}
+        self._last_pending_request_ids = set()
 
     @staticmethod
     def _classify_signature(func: Callable[..., Any]) -> list[str]:
@@ -1006,10 +1040,9 @@ class FunctionalWorkflow:
 
         # For response-only replay (no checkpoint), restore cached state
         if checkpoint_id is None and responses:
+            replay_message = self._restore_replay_state(ctx)
             if message is None:
-                message = self._last_message
-            ctx._step_cache = dict(self._last_step_cache)
-            ctx._step_cache_auto_request_info_counts = dict(self._last_step_cache_auto_request_info_counts)
+                message = replay_message
 
         # Store message for future replays
         if message is not None:
@@ -1029,111 +1062,107 @@ class FunctionalWorkflow:
 
             ctx._on_step_completed = _on_step_completed
 
-        # Tracing
+        # Tracing: start the run span without attaching it. Attaching with
+        # create_workflow_span() across a yield leaves OpenTelemetry's context
+        # token set when this generator is later closed on GC from a different
+        # Context. Activate the span only around non-yielding work.
         attributes: dict[str, Any] = {OtelAttr.WORKFLOW_NAME: self.name}
         if self.description:
             attributes[OtelAttr.WORKFLOW_DESCRIPTION] = self.description
 
-        with create_workflow_span(OtelAttr.WORKFLOW_RUN_SPAN, attributes) as span:
-            saw_request = False
-            try:
-                span.add_event(OtelAttr.WORKFLOW_STARTED)
+        span = start_workflow_span(OtelAttr.WORKFLOW_RUN_SPAN, attributes)
+        saw_request = False
+        try:
+            span.add_event(OtelAttr.WORKFLOW_STARTED)
 
-                with _framework_event_origin():
-                    yield WorkflowEvent.started()
-                with _framework_event_origin():
-                    yield WorkflowEvent.status(WorkflowRunState.IN_PROGRESS)
+            yield _framework_event(WorkflowEvent.started)
+            yield _framework_event(WorkflowEvent.status, WorkflowRunState.IN_PROGRESS)
 
-                # Execute the user function
+            # Execute the user function with the run span current so nested
+            # executor/processing spans parent correctly.
+            with _activate_span(span):
                 return_value = await self._execute(ctx, message)
 
                 # Emit the return value as the workflow output.
                 if return_value is not None:
-                    with _framework_event_origin():
-                        await ctx.add_event(WorkflowEvent("output", executor_id=self.name, data=return_value))
+                    await ctx.add_event(
+                        _framework_event(WorkflowEvent, "output", executor_id=self.name, data=return_value)
+                    )
 
                 # Persist step cache for response-only replay
-                self._last_step_cache = dict(ctx._step_cache)
-                self._last_step_cache_auto_request_info_counts = dict(ctx._step_cache_auto_request_info_counts)
+                self._capture_replay_state(ctx, message)
 
-                # Yield collected events.
-                # NOTE: Events are buffered during _execute() and yielded after
-                # the user function completes.  This is *not* true streaming —
-                # all events have already been produced by this point.  True
-                # per-token streaming from inner agent calls is a future
-                # enhancement.
-                for event in ctx._get_events():
-                    if event.type == "request_info":
-                        saw_request = True
-                    yield event
-                    if event.type == "request_info":
-                        with _framework_event_origin():
-                            yield WorkflowEvent.status(WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS)
+            # Yield collected events.
+            # NOTE: Events are buffered during _execute() and yielded after
+            # the user function completes.  This is *not* true streaming —
+            # all events have already been produced by this point.  True
+            # per-token streaming from inner agent calls is a future
+            # enhancement.
+            for event in ctx._get_events():
+                if event.type == "request_info":
+                    saw_request = True
+                yield event
+                if event.type == "request_info":
+                    yield _framework_event(WorkflowEvent.status, WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS)
 
-                # Save final checkpoint if storage is available
-                if storage is not None:
-                    await self._save_checkpoint(ctx, storage, ckpt_chain[0])
+            # Save final checkpoint if storage is available
+            if storage is not None:
+                await self._save_checkpoint(ctx, storage, ckpt_chain[0])
 
-                # Final status
-                if saw_request:
-                    self._last_pending_request_ids = set(ctx._pending_requests)
-                    with _framework_event_origin():
-                        yield WorkflowEvent.status(WorkflowRunState.IDLE_WITH_PENDING_REQUESTS)
-                else:
-                    # Clean completion — drop cross-run replay state.
-                    self._last_message = None
-                    self._last_step_cache = {}
-                    self._last_step_cache_auto_request_info_counts = {}
-                    self._last_pending_request_ids = set()
-                    with _framework_event_origin():
-                        yield WorkflowEvent.status(WorkflowRunState.IDLE)
+            # Final status
+            if saw_request:
+                yield _framework_event(WorkflowEvent.status, WorkflowRunState.IDLE_WITH_PENDING_REQUESTS)
+            else:
+                # Clean completion — drop cross-run replay state.
+                self._clear_replay_state()
+                yield _framework_event(WorkflowEvent.status, WorkflowRunState.IDLE)
 
-                span.add_event(OtelAttr.WORKFLOW_COMPLETED)
+            span.add_event(OtelAttr.WORKFLOW_COMPLETED)
 
-            except WorkflowInterrupted:
-                # Persist step cache for response-only replay
-                self._last_step_cache = dict(ctx._step_cache)
-                self._last_step_cache_auto_request_info_counts = dict(ctx._step_cache_auto_request_info_counts)
-                self._last_pending_request_ids = set(ctx._pending_requests)
+        except WorkflowInterrupted:
+            # Persist step cache for response-only replay
+            self._capture_replay_state(ctx, message)
 
-                # HITL interruption — yield events collected so far
-                for event in ctx._get_events():
-                    if event.type == "request_info":
-                        saw_request = True
-                    yield event
-                    if event.type == "request_info":
-                        with _framework_event_origin():
-                            yield WorkflowEvent.status(WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS)
+            # HITL interruption — yield events collected so far
+            for event in ctx._get_events():
+                if event.type == "request_info":
+                    saw_request = True
+                yield event
+                if event.type == "request_info":
+                    yield _framework_event(WorkflowEvent.status, WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS)
 
-                # Save checkpoint
-                if storage is not None:
-                    await self._save_checkpoint(ctx, storage, ckpt_chain[0])
+            # Save checkpoint
+            if storage is not None:
+                await self._save_checkpoint(ctx, storage, ckpt_chain[0])
 
-                with _framework_event_origin():
-                    yield WorkflowEvent.status(WorkflowRunState.IDLE_WITH_PENDING_REQUESTS)
+            yield _framework_event(WorkflowEvent.status, WorkflowRunState.IDLE_WITH_PENDING_REQUESTS)
 
-                span.add_event(OtelAttr.WORKFLOW_COMPLETED)
+            span.add_event(OtelAttr.WORKFLOW_COMPLETED)
 
-            except Exception as exc:
-                # Yield any events collected before the failure
-                for event in ctx._get_events():
-                    yield event
+        except Exception as exc:
+            # Yield any events collected before the failure
+            for event in ctx._get_events():
+                yield event
 
-                details = WorkflowErrorDetails.from_exception(exc)
-                with _framework_event_origin():
-                    yield WorkflowEvent.failed(details)
-                with _framework_event_origin():
-                    yield WorkflowEvent.status(WorkflowRunState.FAILED)
+            details = WorkflowErrorDetails.from_exception(exc)
+            yield _framework_event(WorkflowEvent.failed, details)
+            yield _framework_event(WorkflowEvent.status, WorkflowRunState.FAILED)
 
-                span.add_event(
-                    name=OtelAttr.WORKFLOW_ERROR,
-                    attributes={
-                        "error.message": str(exc),
-                        "error.type": type(exc).__name__,
-                    },
-                )
-                capture_exception(span, exception=exc)
-                raise
+            span.add_event(
+                name=OtelAttr.WORKFLOW_ERROR,
+                attributes={
+                    "error.message": str(exc),
+                    "error.type": type(exc).__name__,
+                },
+            )
+            capture_exception(span, exception=exc)
+            raise
+        finally:
+            # ResponseStream cleanup_hooks do not run when the generator is
+            # closed by GC. Release the run lock here so a follow-up run
+            # after an abandoned stream is not rejected as concurrent.
+            self._release_run_guard()
+            span.end()
 
     async def _execute(self, ctx: RunContext, message: Any) -> Any:
         """Run the user's async function with the active context."""
@@ -1296,8 +1325,11 @@ class FunctionalWorkflow:
             raise RuntimeError("Workflow is already running. Concurrent executions are not allowed.")
         self._is_running = True
 
-    async def _run_cleanup(self) -> None:
+    def _release_run_guard(self) -> None:
         self._is_running = False
+
+    async def _run_cleanup(self) -> None:
+        self._release_run_guard()
 
 
 # ---------------------------------------------------------------------------
@@ -1376,7 +1408,7 @@ def workflow(
 
 
 @experimental(feature_id=ExperimentalFeature.FUNCTIONAL_WORKFLOWS)
-class FunctionalWorkflowAgent:
+class FunctionalWorkflowAgent(BaseAgent):
     """Agent adapter for a :class:`FunctionalWorkflow`.
 
     Provides a ``run()`` method with the same overloaded signature as
@@ -1421,10 +1453,13 @@ class FunctionalWorkflowAgent:
         # but not otherwise consumed.
         del kwargs
         self._workflow = workflow
-        self.name = name or workflow.name
-        self.id = f"FunctionalWorkflowAgent_{self.name}"
-        self.description: str | None = description if description is not None else workflow.description
-        self.context_providers: Sequence[Any] | None = context_providers
+        resolved_name = name or workflow.name
+        super().__init__(
+            id=f"FunctionalWorkflowAgent_{resolved_name}",
+            name=resolved_name,
+            description=description if description is not None else workflow.description,
+            context_providers=context_providers,
+        )
         self._pending_requests: dict[str, WorkflowEvent[Any]] = {}
 
     @property

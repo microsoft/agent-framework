@@ -2,11 +2,13 @@
 
 using System;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.Hosting;
 using Microsoft.Agents.AI.Hosting.OpenAI;
 using Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions;
 using Microsoft.Agents.AI.Hosting.OpenAI.Conversations;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses;
 using Microsoft.AspNetCore.Http.Json;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace Microsoft.Extensions.DependencyInjection;
@@ -36,6 +38,18 @@ public static class MicrosoftAgentAIHostingOpenAIServiceCollectionExtensions
     /// </summary>
     /// <param name="services">The <see cref="IServiceCollection"/> to configure.</param>
     /// <returns>The <see cref="IServiceCollection"/> for method chaining.</returns>
+    /// <remarks>
+    /// Response and conversation identifiers are scoped by the registered
+    /// <see cref="AgentIsolationKeyProvider"/>. Hosts serving multiple callers should register a provider,
+    /// require authentication on the mapped endpoints, and use a stable claim that uniquely identifies the caller.
+    /// Without a provider, all callers share the same in-memory namespace.
+    /// <para>
+    /// Agents that expose <see cref="ApprovalRequiredAIFunction"/> tools must also
+    /// configure an <see cref="AgentSessionStore"/>. The store preserves the server-recorded approval request
+    /// across HTTP requests so an incoming decision can be matched to the exact function call shown to the user.
+    /// A <c>function_approval_response</c> request is rejected when no session store is configured.
+    /// </para>
+    /// </remarks>
     public static IServiceCollection AddOpenAIResponses(this IServiceCollection services)
     {
         ArgumentNullException.ThrowIfNull(services);
@@ -52,7 +66,9 @@ public static class MicrosoftAgentAIHostingOpenAIServiceCollectionExtensions
             var executor = sp.GetRequiredService<IResponseExecutor>();
             var options = sp.GetRequiredService<InMemoryStorageOptions>();
             var conversationStorage = sp.GetService<IConversationStorage>();
-            return new InMemoryResponsesService(executor, options, conversationStorage);
+            var isolationKeyProvider = sp.GetService<AgentIsolationKeyProvider>();
+            var isolationKeyResolver = new IsolationKeyResolver(isolationKeyProvider, strict: isolationKeyProvider is not null);
+            return new InMemoryResponsesService(executor, options, conversationStorage, isolationKeyResolver);
         });
         services.TryAddSingleton<IResponseExecutor, HostedAgentResponseExecutor>();
 

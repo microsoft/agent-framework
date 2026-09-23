@@ -308,6 +308,8 @@ class RawFoundryChatClient(
 
         This method configures Azure Monitor for telemetry collection using the
         connection string from the Foundry project client.
+        Use azure-monitor-opentelemetry>=1.8.10,<2 for HTTPX/HTTPX2
+        auto-instrumentation that connects client and service traces.
 
         Args:
             enable_sensitive_data: Enable sensitive data logging (prompts, responses).
@@ -319,7 +321,7 @@ class RawFoundryChatClient(
                 - resource (Resource): Custom OpenTelemetry resource
 
         Raises:
-            ImportError: If azure-monitor-opentelemetry-exporter is not installed.
+            ImportError: If azure-monitor-opentelemetry is not installed.
         """
         from agent_framework.observability import (
             OBSERVABILITY_SETTINGS,
@@ -352,7 +354,7 @@ class RawFoundryChatClient(
         except ImportError as exc:
             raise ImportError(
                 "azure-monitor-opentelemetry is required for Azure Monitor integration. "
-                "Install it with: pip install azure-monitor-opentelemetry"
+                'Install it with: pip install "azure-monitor-opentelemetry>=1.8.10,<2"'
             ) from exc
 
         if "resource" not in kwargs:
@@ -672,6 +674,7 @@ class RawFoundryChatClient(
             description: A description of what the MCP server provides.
             approval_mode: Tool approval mode ("always_require", "never_require", or dict).
             allowed_tools: List of allowed tool names from this MCP server.
+                None omits the filter; an empty list is sent unchanged.
             headers: HTTP headers to include in requests to the MCP server.
             project_connection_id: Foundry connection ID for managed MCP connections.
             **kwargs: Additional arguments passed to the SDK MCPTool constructor.
@@ -697,7 +700,7 @@ class RawFoundryChatClient(
             mcp["project_connection_id"] = project_connection_id
         elif headers:
             mcp["headers"] = headers
-        if allowed_tools:
+        if allowed_tools is not None:
             mcp["allowed_tools"] = allowed_tools
         if approval_mode:
             if isinstance(approval_mode, str):
@@ -937,6 +940,14 @@ class FoundryChatClient(
 
     Creates an OpenAI-compatible client from a Foundry project
     with middleware, telemetry, and function invocation support.
+
+    Note:
+        One client instance can be shared by concurrent asynchronous calls on the same event loop,
+        including any combination of streaming and non-streaming calls. Each call must use its own
+        ``Agent``, ``AgentSession``, messages, and options. User-supplied mutable extensions, such as
+        middleware, tools, and callbacks, are safe only if their implementations support concurrent use.
+        Sharing a client across OS threads or event loops, or mutating its configuration while calls are
+        active, is not supported.
 
     Environment variables:
         - ``FOUNDRY_PROJECT_ENDPOINT`` to provide the Foundry project endpoint.

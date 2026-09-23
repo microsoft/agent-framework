@@ -167,6 +167,8 @@ internal sealed class InProcessRunnerContext : IRunnerContext
                     $"Response port id '{response.PortInfo.PortId}' does not match the originating port id for request {response.RequestId}.");
             }
 
+            response = pendingRequest.RewrapResponse(response);
+
             // Consume only after validation so a rejected response leaves the legitimate one able to complete.
             if (!this.CompleteRequest(response.RequestId))
             {

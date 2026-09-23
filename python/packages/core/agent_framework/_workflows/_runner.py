@@ -1,21 +1,20 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-import contextlib
 import logging
 import warnings
 from collections import defaultdict
 from collections.abc import AsyncGenerator, Sequence
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from ..exceptions import (
     WorkflowCheckpointException,
     WorkflowConvergenceException,
 )
 from ._checkpoint import CheckpointID, CheckpointStorage, WorkflowCheckpoint
-from ._const import EXECUTOR_STATE_KEY
+from ._const import EDGE_STATE_KEY, EXECUTOR_STATE_KEY
 from ._edge import EdgeGroup
-from ._edge_runner import EdgeRunner, create_edge_runner
+from ._edge_runner import EdgeRunner, create_edge_runner, gather_cancelling_siblings_on_error
 from ._events import WorkflowEvent
 from ._executor import Executor
 from ._runner_context import (
@@ -70,6 +69,9 @@ class RunnerImpl:
         self._executors = executors
         self._edge_runners = [create_edge_runner(group, executors) for group in edge_groups]
         self._edge_runner_map = self._parse_edge_runners(self._edge_runners)
+        # Keyed by topology rather than EdgeGroup.id, which is a random UUID: a checkpoint has to
+        # restore onto a rebuilt instance of the same workflow definition.
+        self._edge_runner_state_keys = [runner.state_key for runner in self._edge_runners]
         self._ctx = ctx
         self._workflow_name = workflow_name
         self._graph_signature_hash = graph_signature_hash
@@ -122,24 +124,24 @@ class RunnerImpl:
             logger.info(f"Starting superstep {self._iteration + 1}")
             yield WorkflowEvent.superstep_started(iteration=self._iteration + 1)
 
-            # Run iteration concurrently with live event streaming: we poll
-            # for new events while the iteration coroutine progresses.
+            # Wake on either a live event or iteration completion, including silent supersteps.
             iteration_task = asyncio.create_task(self._run_iteration())
+            event_task: asyncio.Task[WorkflowEvent] | None = None
             try:
                 while not iteration_task.done():
-                    try:
-                        # Wait briefly for any new event; timeout allows progress checks
-                        event = await asyncio.wait_for(self._ctx.next_event(), timeout=0.05)
-                        yield event
-                    except asyncio.TimeoutError:
-                        # Periodically continue to let iteration advance
-                        continue
-            except asyncio.CancelledError:
-                # Propagate cancellation to the iteration task to avoid orphaned work
-                iteration_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await iteration_task
-                raise
+                    event_task = asyncio.create_task(self._ctx.next_event())
+                    done, _ = await asyncio.wait((iteration_task, event_task), return_when=asyncio.FIRST_COMPLETED)
+                    if event_task in done:
+                        yield event_task.result()
+            finally:
+                # Cancellation and generator closure must not leave an event waiter or executor running.
+                tasks: list[asyncio.Task[Any]] = (
+                    [iteration_task] if event_task is None else [iteration_task, event_task]
+                )
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
 
             # Propagate errors from iteration, but first surface any pending events
             try:
@@ -219,14 +221,14 @@ class RunnerImpl:
                 return
 
             tasks = [_deliver_messages_for_edge_runner(edge_runner) for edge_runner in associated_edge_runners]
-            await asyncio.gather(*tasks)
+            await gather_cancelling_siblings_on_error(*tasks)
 
         message_batches = await self._ctx.drain_messages()
         tasks = [
             _deliver_messages(source_executor_id, source_messages)
             for source_executor_id, source_messages in message_batches.items()
         ]
-        await asyncio.gather(*tasks)
+        await gather_cancelling_siblings_on_error(*tasks)
 
     async def _prepare_checkpoint_state(self) -> None:
         """Persist executor snapshots into committed shared state.
@@ -235,6 +237,7 @@ class RunnerImpl:
         state payload without necessarily writing to a checkpoint storage backend.
         """
         await self._save_executor_states()
+        self._save_edge_runner_states()
         self._state.commit()
 
     async def create_checkpoint_if_enabled(self) -> None:
@@ -325,6 +328,8 @@ class RunnerImpl:
             self._state.import_state(checkpoint.state)
             # Restore executor states using the restored state
             await self._restore_executor_states()
+            # Restore edge runner states, resetting any left over from an interrupted run
+            self._restore_edge_runner_states()
             # Apply the checkpoint to the context
             await self._ctx.apply_checkpoint(checkpoint)
             # Mark the runner as resumed
@@ -382,6 +387,7 @@ class RunnerImpl:
             self._state.clear()
             self._state.import_state(checkpoint.state)
             await self._restore_executor_states()
+            self._restore_edge_runner_states()
             await self._ctx.apply_checkpoint(checkpoint)
             self._mark_resumed(checkpoint)
         except Exception as e:
@@ -394,6 +400,11 @@ class RunnerImpl:
             # Try the updated behavior only if backward compatibility did not yield state
             try:
                 state_dict = await executor.on_checkpoint_save()
+                # Validate at save time so restore cannot fail later on a non-dict payload (#8183).
+                if not isinstance(state_dict, dict) or not all(isinstance(k, str) for k in state_dict):
+                    raise WorkflowCheckpointException(
+                        f"Executor state for {exec_id} is not a dict[str, Any]. Unable to save."
+                    )
                 await self._set_executor_state(exec_id, state_dict)
             except WorkflowCheckpointException:
                 raise
@@ -427,6 +438,40 @@ class RunnerImpl:
                 await executor.on_checkpoint_restore(state)  # pyright: ignore[reportUnknownArgumentType]
             except Exception as ex:  # pragma: no cover - defensive
                 raise WorkflowCheckpointException(f"Executor {executor_id} on_checkpoint_restore failed") from ex
+
+    def _save_edge_runner_states(self) -> None:
+        """Store edge runner delivery state, such as partially filled fan-in buffers, in state.
+
+        A fan-in buffers messages until every source has produced one, and the runner context has
+        already drained those messages, so a checkpoint that omits them loses them on restore.
+        """
+        edge_states: dict[str, dict[str, Any]] = {}
+        for key, runner in zip(self._edge_runner_state_keys, self._edge_runners, strict=True):
+            snapshot = runner.snapshot_state()
+            if snapshot is not None:
+                edge_states[key] = snapshot
+
+        if edge_states:
+            self._state.set(EDGE_STATE_KEY, edge_states)
+        elif self._state.has(EDGE_STATE_KEY):
+            self._state.delete(EDGE_STATE_KEY)
+
+    def _restore_edge_runner_states(self) -> None:
+        """Reset every edge runner and reapply the delivery state held by the restored checkpoint.
+
+        Every runner is reset, including runners the checkpoint has no entry for, so that state
+        left behind by an interrupted run cannot survive into the restored run.
+        """
+        stored: Any = self._state.get(EDGE_STATE_KEY, {})
+        if not isinstance(stored, dict):
+            raise WorkflowCheckpointException("Edge states in shared state is not a dictionary. Unable to restore.")
+        edge_states = cast(dict[Any, Any], stored)
+
+        for key, runner in zip(self._edge_runner_state_keys, self._edge_runners, strict=True):
+            state: Any = edge_states.get(key)
+            if state is not None and not isinstance(state, dict):
+                raise WorkflowCheckpointException(f"Edge state for {key} is not a dictionary. Unable to restore.")
+            runner.restore_state(cast("dict[str, Any] | None", state))
 
     def _parse_edge_runners(self, edge_runners: list[EdgeRunner]) -> dict[str, list[EdgeRunner]]:
         """Parse the edge runners of the workflow into a mapping where each source executor ID maps to its edge runners.

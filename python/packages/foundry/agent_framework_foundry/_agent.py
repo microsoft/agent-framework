@@ -41,6 +41,7 @@ from azure.core.credentials_async import AsyncTokenCredential
 
 from agent_framework_foundry._oauth_helpers import try_parse_oauth_consent_event
 
+from ._constants import FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY
 from ._feature_usage import (
     FeatureIndex,
     create_feature_usage_policy,
@@ -92,9 +93,6 @@ class FoundryAgentSettings(TypedDict, total=False):
     project_endpoint: str | None
     agent_name: str | None
     agent_version: str | None
-
-
-FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY = "foundry_hosted_agent_session_id"
 
 
 class FoundryAgentOptions(OpenAIChatOptions, total=False):
@@ -660,6 +658,14 @@ class RawFoundryAgent(
     """
 
     service_session_state_keys: ClassVar[frozenset[str]] = frozenset({FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY})
+    """Session-state keys this agent owns, which untrusted input must never supply.
+
+    Holds the Foundry hosted-agent session ID. Despite the attribute name, that value is not a conversation or
+    an ``AgentSession.service_session_id``: it identifies the hosted agent's *runtime session*, a VM-isolated
+    sandbox with a persistent filesystem. Hosts such as AG-UI read this to reject client-supplied values, since
+    honouring one would run the server's own credentialed call inside another session's sandbox. Hosts are
+    expected to reserve this key independently as well, because a wrapper agent may not forward this attribute.
+    """
 
     def __init__(
         self,
@@ -850,6 +856,8 @@ class RawFoundryAgent(
 
         This method configures Azure Monitor for telemetry collection using the
         connection string from the Foundry project client (accessed via the internal client).
+        Use azure-monitor-opentelemetry>=1.8.10,<2 for HTTPX/HTTPX2
+        auto-instrumentation that connects client and service traces.
 
         Args:
             enable_sensitive_data: Enable sensitive data logging (prompts, responses).
@@ -857,7 +865,7 @@ class RawFoundryAgent(
             **kwargs: Additional arguments passed to configure_azure_monitor().
 
         Raises:
-            ImportError: If azure-monitor-opentelemetry-exporter is not installed.
+            ImportError: If azure-monitor-opentelemetry is not installed.
         """
         from agent_framework.observability import (
             OBSERVABILITY_SETTINGS,
@@ -894,7 +902,7 @@ class RawFoundryAgent(
         except ImportError as exc:
             raise ImportError(
                 "azure-monitor-opentelemetry is required for Azure Monitor integration. "
-                "Install it with: pip install azure-monitor-opentelemetry"
+                'Install it with: pip install "azure-monitor-opentelemetry>=1.8.10,<2"'
             ) from exc
 
         if "resource" not in kwargs:

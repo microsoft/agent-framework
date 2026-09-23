@@ -685,7 +685,7 @@ public static class FoundryHostingExtensions
     /// <summary>
     /// Registers the hosted-agent <c>User-Agent</c> supplement policy
     /// (<see cref="HostedAgentUserAgentPolicy"/>) on the agent's underlying chat client via the
-    /// MEAI 10.5.1 <see cref="OpenAIRequestPolicies"/> hook so every outgoing OpenAI Responses
+    /// MEAI 10.9.0 <see cref="OpenAIRequestPolicies"/> hook so every outgoing OpenAI Responses
     /// request carries the segment <c>foundry-hosting/agent-framework-dotnet/{version}</c>.
     /// </summary>
     /// <remarks>

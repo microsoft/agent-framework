@@ -143,5 +143,6 @@ Before deploying this pattern:
 - add bounded retries, delivery telemetry, and dead-letter handling;
 - decide how partial streaming edits should recover when a final edit fails.
 
-> This sample is **self-hosted**. The multi-protocol Telegram + Invocations
-> Foundry-hosted sample remains part of the separate Invocations work.
+> This sample is **self-hosted**. For a Foundry direct-code deployment fronted
+> by API Management with durable Cosmos DB history, see the
+> [Telegram Invocations sample](../../foundry-hosted-agents/invocations/telegram/).

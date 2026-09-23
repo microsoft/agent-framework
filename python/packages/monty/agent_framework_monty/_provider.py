@@ -10,7 +10,7 @@ from typing import Any
 
 from agent_framework import AgentSession, ContextProvider, FunctionTool, SessionContext
 from agent_framework._telemetry import mark_feature_used
-from agent_framework._tools import ApprovalMode
+from agent_framework._tools import ApprovalMode, _ToolDescriptionFormat  # pyright: ignore[reportPrivateUsage]
 
 from ._execute_code_tool import MontyExecuteCodeTool
 from ._feature_usage import FeatureIndex
@@ -24,6 +24,13 @@ class MontyCodeActProvider(ContextProvider):
     the subset of capabilities that apply to the Monty interpreter:
     ``tools``, ``approval_mode``, ``workspace_root``, ``file_mounts``, and
     ``resource_limits`` (Monty-only).
+
+    ``tool_description_format`` controls parameter documentation in both
+    injected instructions and the tool description. Pass ``"compact"`` (the
+    default) or ``"json"`` globally, or a mapping of exact, case-sensitive tool
+    names to either format. Missing names use compact; rich schemas fall back
+    to full JSON Schema. Mappings are copied on construction and for each run,
+    retaining entries for tools registered later.
     """
 
     DEFAULT_SOURCE_ID = "monty_codeact"
@@ -37,6 +44,7 @@ class MontyCodeActProvider(ContextProvider):
         workspace_root: str | Path | None = None,
         file_mounts: FileMountInput | Sequence[FileMountInput] | None = None,
         resource_limits: dict[str, Any] | None = None,
+        tool_description_format: _ToolDescriptionFormat = "compact",
     ) -> None:
         super().__init__(source_id)
         self._execute_code_tool = MontyExecuteCodeTool(
@@ -45,6 +53,7 @@ class MontyCodeActProvider(ContextProvider):
             workspace_root=workspace_root,
             file_mounts=file_mounts,
             resource_limits=resource_limits,
+            tool_description_format=tool_description_format,
         )
 
     def add_tools(

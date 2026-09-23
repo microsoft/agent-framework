@@ -9,7 +9,6 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
-using OpenAI;
 using OpenAI.Responses;
 
 #pragma warning disable OPENAI001
@@ -17,7 +16,7 @@ using OpenAI.Responses;
 namespace Microsoft.Agents.AI.Foundry.UnitTests;
 
 /// <summary>
-/// One-shot verification (kept in tree to detect regressions) that MEAI 10.5.1 stamps its own
+/// One-shot verification (kept in tree to detect regressions) that MEAI 10.9.0 stamps its own
 /// <c>MEAI/{version}</c> User-Agent segment automatically when an <see cref="ResponsesClient"/>
 /// is wrapped via <c>AsIChatClient()</c>. If this test starts failing, the FoundryChatClient
 /// implementation must re-register the MEAI policy explicitly via OpenAIRequestPolicies because
@@ -36,7 +35,7 @@ public sealed class MeaiAutoUserAgentVerificationTests
         using var httpClient = new HttpClient(handler);
 #pragma warning restore CA5399
 
-        var options = new OpenAIClientOptions
+        var options = new ResponsesClientOptions
         {
             Transport = new HttpClientPipelineTransport(httpClient),
             Endpoint = new Uri("https://example.test/v1"),

@@ -10,16 +10,19 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import agent_framework._telemetry as telemetry
 import pytest
 from agent_framework import AGENT_FRAMEWORK_USER_AGENT
+from agent_framework._settings import SecretString
 from agent_framework._telemetry import FeatureIndex as CoreFeatureIndex
 from agent_framework._telemetry import mark_feature_used
 from azure.core.credentials import TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
+from openai import AsyncAzureOpenAI
 
 from agent_framework_openai._feature_usage import create_feature_usage_http_client
 from agent_framework_openai._shared import (
     AZURE_OPENAI_TOKEN_SCOPE,
     _ensure_async_token_provider,
     _resolve_azure_credential_to_token_provider,
+    load_openai_service_settings,
 )
 
 
@@ -42,6 +45,35 @@ class _AsyncTokenCredentialStub(AsyncTokenCredential):
 class _TokenCredentialStub(TokenCredential):
     def get_token(self, *scopes: str, **kwargs: object):
         raise NotImplementedError
+
+
+@pytest.mark.usefixtures("openai_unit_test_env")
+@pytest.mark.parametrize("api_key", ["test-secret-key", SecretString("test-secret-key")], ids=["str", "secret"])
+@pytest.mark.parametrize("route", ["openai", "azure"])
+async def test_service_settings_unwrap_api_key_at_sdk_boundary(api_key: str | SecretString, route: str) -> None:
+    settings, sdk_client, use_azure = load_openai_service_settings(
+        model="test-model",
+        api_key=api_key,
+        credential=None,
+        org_id=None,
+        base_url=None,
+        endpoint="https://test.openai.azure.com" if route != "openai" else None,
+        api_version=None,
+        default_azure_api_version="2024-12-01-preview",
+        env_file_path=None,
+        env_file_encoding=None,
+    )
+    try:
+        assert use_azure is (route != "openai")
+        assert isinstance(sdk_client, AsyncAzureOpenAI) is (route == "azure")
+        assert type(sdk_client.api_key) is str
+        assert sdk_client.api_key == "test-secret-key"
+        assert isinstance(settings["api_key"], SecretString)
+        assert settings["api_key"].get_secret_value() == "test-secret-key"
+        assert "test-secret-key" not in str(settings["api_key"])
+        assert "test-secret-key" not in repr(settings)
+    finally:
+        await sdk_client.close()
 
 
 def test_resolve_azure_async_credential_wraps_provider() -> None:

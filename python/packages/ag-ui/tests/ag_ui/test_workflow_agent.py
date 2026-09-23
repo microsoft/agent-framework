@@ -260,7 +260,7 @@ async def test_workflow_run_reads_checkpoint_id_from_camelcase_forwarded_props()
 
 
 async def test_workflow_resume_without_checkpoint_storage_raises() -> None:
-    """Requesting a checkpoint resume without configured storage should fail loudly."""
+    """Requesting a checkpoint resume without any storage should fail loudly."""
     workflow = _build_multi_superstep_workflow()
     agent = AgentFrameworkWorkflow(workflow=workflow)
 
@@ -273,6 +273,39 @@ async def test_workflow_resume_without_checkpoint_storage_raises() -> None:
                 "forwarded_props": {"checkpoint_id": "some-checkpoint"},
             },
         )
+
+
+async def test_workflow_wrapper_resumes_builder_storage_without_agui_storage() -> None:
+    """Builder-owned storage must round-trip through AgentFrameworkWorkflow.run() without wrapper storage."""
+    storage = InMemoryCheckpointStorage()
+    workflow = _build_multi_superstep_workflow(storage)
+    # Host configures storage only on the builder; AG-UI wrapper / endpoint omit it.
+    agent = AgentFrameworkWorkflow(workflow=workflow)
+
+    first_events = await _run(
+        agent,
+        {"thread_id": "thread-builder-cp", "messages": [{"role": "user", "content": "start"}]},
+    )
+    assert "RUN_ERROR" not in [event.type for event in first_events]
+
+    checkpoints = sorted(
+        await storage.list_checkpoints(workflow_name=workflow.name),
+        key=lambda checkpoint: checkpoint.timestamp,
+    )
+    assert checkpoints, "expected the builder-storage run to create at least one checkpoint"
+    resume_checkpoint_id = checkpoints[0].checkpoint_id
+
+    resume_events = await _run(
+        agent,
+        {
+            "thread_id": "thread-builder-cp",
+            "messages": [],
+            "forwarded_props": {"checkpoint_id": resume_checkpoint_id},
+        },
+    )
+    resumed_types = [event.type for event in resume_events]
+    assert "RUN_FINISHED" in resumed_types
+    assert "RUN_ERROR" not in resumed_types
 
 
 async def test_workflow_run_without_checkpointing_is_unchanged() -> None:
@@ -359,3 +392,64 @@ async def test_workflow_checkpoint_only_resume_preserves_thread_snapshot() -> No
     assert "Earlier reply" in contents
     # ...plus the newly produced output from the resumed run.
     assert any(isinstance(content, str) and "done" in content for content in contents)
+
+
+async def test_workflow_snapshot_preserves_streamed_reasoning() -> None:
+    """Reasoning that streamed during a workflow run survives thread hydration.
+
+    Regression test for workflow reasoning rendering live and then vanishing from the
+    stored AG-UI Thread Snapshot, so a hydrated thread lost the intermediate output
+    that the agent path retains.
+    """
+    from agent_framework_ag_ui import InMemoryAGUIThreadSnapshotStore
+    from agent_framework_ag_ui._snapshots import _SNAPSHOT_SCOPE_INPUT_KEY
+
+    @executor(id="thinker")
+    async def thinker(message: Any, ctx: WorkflowContext[str, str]) -> None:
+        await ctx.yield_output("Weighing the options...")
+        await ctx.send_message("go")
+
+    @executor(id="finalizer")
+    async def finalizer(message: str, ctx: WorkflowContext[None, str]) -> None:
+        await ctx.yield_output("Final answer.")
+
+    workflow = (
+        WorkflowBuilder(
+            start_executor=thinker,
+            output_from=[finalizer],
+            intermediate_output_from=[thinker],
+        )
+        .add_edge(thinker, finalizer)
+        .build()
+    )
+
+    store = InMemoryAGUIThreadSnapshotStore()
+    agent = AgentFrameworkWorkflow(workflow=workflow, snapshot_store=store)
+
+    events = await _run(
+        agent,
+        {
+            "thread_id": "thread-reasoning",
+            "run_id": "run-1",
+            "messages": [{"id": "user-1", "role": "user", "content": "Decide"}],
+            _SNAPSHOT_SCOPE_INPUT_KEY: "tenant-a",
+        },
+    )
+    assert "RUN_ERROR" not in [event.type for event in events]
+
+    # The reasoning really did stream ...
+    reasoning_deltas = [
+        event.delta  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        for event in events
+        if event.type == "REASONING_MESSAGE_CONTENT"
+    ]
+    assert "Weighing the options..." in reasoning_deltas
+
+    # ... and it is still there once the thread is hydrated from the snapshot.
+    snapshot = await store.get(scope="tenant-a", thread_id="thread-reasoning")
+    assert snapshot is not None
+    reasoning_messages = [message for message in snapshot.messages if message.get("role") == "reasoning"]
+    assert [message.get("content") for message in reasoning_messages] == ["Weighing the options..."]
+
+    # The final assistant text is still preserved alongside it.
+    assert any(message.get("content") == "Final answer." for message in snapshot.messages)

@@ -29,6 +29,11 @@ from agent_framework_tools.shell import (
     is_docker_available,
 )
 from agent_framework_tools.shell._docker import (
+    _BLOCKED_EXTRA_RUN_FLAGS,
+    _BOOLEAN_SHORT_FLAGS,
+    _VALUE_SHORT_FLAGS,
+    _VALUELESS_LONG_FLAGS,
+    _consumes_next_token,
     build_exec_argv,
     build_run_argv,
 )
@@ -194,6 +199,12 @@ def test_build_run_argv_passes_extra_env_and_args():
     image_idx = argv.index("alpine")
     assert "--label" in argv[:image_idx]
     assert "team=af" in argv[:image_idx]
+    # ...and after every enforced isolation default, so docker's last-flag-wins
+    # never lets an extra arg be overridden by one of the tool's own flags.
+    assert argv.index("--label") > max(
+        argv.index(flag)
+        for flag in ("--user", "--network", "--memory", "--pids-limit", "--cap-drop", "--security-opt", "--read-only")
+    )
 
 
 def test_build_exec_argv_interactive():
@@ -226,6 +237,32 @@ def test_build_exec_argv_interactive():
         ("--gpus", "all"),
         ("--add-host", "evil:1.2.3.4"),
         ("--label", "x=1", "--privileged"),  # mixed safe + unsafe
+        # Short flags carrying an attached value: docker parses these the same
+        # as the space-separated form, so they must be rejected too.
+        ("-v/:/host:rw",),
+        ("-v/var/run/docker.sock:/var/run/docker.sock",),
+        ("-v=/etc:/etc",),
+        ("-u0:0",),
+        # The -u alias of --user, both spellings.
+        ("-u", "0:0"),
+        ("-u=0:0",),
+        # Blocked short flag clustered behind boolean short flags.
+        ("-itv/:/host:rw",),
+        ("-itu0:0",),
+        # Resource caps the tool sets as isolation defaults: overriding these
+        # silently removes the memory/pids limits.
+        ("-m0",),
+        ("-m", "0"),
+        ("--memory=0",),
+        ("--memory", "0"),
+        ("--memory-swap=-1",),
+        ("--pids-limit=-1",),
+        ("--pids-limit", "-1"),
+        ("-m0", "--pids-limit=-1"),
+        # A blocked flag after a token that consumes nothing is still caught.
+        ("--", "-u0:0"),
+        ("-it", "-u0:0"),
+        ("--privileged", "-v/:/host:rw"),
     ],
 )
 def test_dockershell_rejects_isolation_breaking_extra_run_args(extra):
@@ -233,9 +270,151 @@ def test_dockershell_rejects_isolation_breaking_extra_run_args(extra):
         DockerShellTool(extra_run_args=list(extra))
 
 
+def test_dockershell_rejection_message_reports_the_raw_token():
+    with pytest.raises(ValueError, match=r"-v/:/host:rw"):
+        DockerShellTool(extra_run_args=("-v/:/host:rw",))
+
+
 def test_dockershell_accepts_benign_extra_run_args():
     # Should not raise.
     DockerShellTool(extra_run_args=("--label", "team=af", "--name-suffix", "x"))
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        # Long flags that merely share a prefix with a blocked flag.
+        ("--userland-proxy=false",),
+        ("--volumes-from", "other"),
+        ("--network-alias", "svc"),
+        # Value-taking short flags that are not blocked, including attached
+        # values whose text contains a blocked flag's letter.
+        ("-l", "team=af"),
+        ("-lversion=1",),
+        ("-e", "USER=root"),
+        ("-eversion=1",),
+        ("-w/workspace",),
+        ("-it",),
+        # End-of-options marker and a bare dash.
+        ("--",),
+        ("-",),
+        # Detached values that start with a dash belong to the preceding
+        # option and must not be decoded as options themselves.
+        ("--env-file", "-variables.env"),
+        ("--name", "-upper"),
+        ("--label", "-v/:/host:rw"),
+        ("--entrypoint", "-v"),
+        ("-e", "-value"),
+        ("--hostname", "-unusual"),
+        # Attached values on non-blocked options are likewise not options.
+        ("--env-file=-variables.env",),
+    ],
+)
+def test_dockershell_accepts_extra_run_args_that_are_not_blocked(extra):
+    # Should not raise: normalization must not over-reject.
+    DockerShellTool(extra_run_args=list(extra))
+
+
+# ``docker run --help`` short options, transcribed so the blocklist can be
+# audited without a docker daemon. Keep in sync when bumping the supported
+# docker/podman baseline.
+_DOCKER_RUN_SHORT_ALIASES = {
+    "--attach": "-a",
+    "--cpu-shares": "-c",
+    "--detach": "-d",
+    "--env": "-e",
+    "--hostname": "-h",
+    "--interactive": "-i",
+    "--label": "-l",
+    "--memory": "-m",
+    "--publish": "-p",
+    "--publish-all": "-P",
+    "--quiet": "-q",
+    "--tty": "-t",
+    "--user": "-u",
+    "--volume": "-v",
+    "--workdir": "-w",
+}
+
+
+def test_blocked_flags_cover_every_docker_short_alias():
+    """Any blocked long flag with a short alias must block the alias too.
+
+    Guards against a blocked flag being added without its short form, which
+    would let the alias slip past the isolation check.
+    """
+    missing = [
+        long_flag
+        for long_flag, short in _DOCKER_RUN_SHORT_ALIASES.items()
+        if long_flag in _BLOCKED_EXTRA_RUN_FLAGS and short not in _BLOCKED_EXTRA_RUN_FLAGS
+    ]
+    assert not missing, f"blocked flags missing their docker short alias: {missing}"
+
+
+def test_short_flag_tables_match_docker_run_options():
+    """The short-flag tables must classify exactly docker run's shorthands.
+
+    A missing entry would let a blocked shorthand hide inside a cluster; a
+    spurious one would misread an attached value as further flags.
+    """
+    docker_shorts = set(_DOCKER_RUN_SHORT_ALIASES.values())
+    modelled = {f"-{c}" for c in _BOOLEAN_SHORT_FLAGS | _VALUE_SHORT_FLAGS}
+    assert modelled == docker_shorts
+    # A shorthand cannot be both boolean and value-taking.
+    assert not (_BOOLEAN_SHORT_FLAGS & _VALUE_SHORT_FLAGS)
+
+
+# ``docker run --help`` long options that take no value, transcribed for the
+# same reason as the short aliases above.
+_DOCKER_RUN_BOOLEAN_FLAGS = frozenset({
+    "--detach",
+    "--help",
+    "--init",
+    "--interactive",
+    "--no-healthcheck",
+    "--oom-kill-disable",
+    "--privileged",
+    "--publish-all",
+    "--quiet",
+    "--read-only",
+    "--rm",
+    "--sig-proxy",
+    "--tty",
+    "--use-api-socket",
+})
+
+
+def test_valueless_long_flags_covers_every_docker_boolean():
+    """A boolean flag missing from the table would swallow the next token.
+
+    That would let ``("--some-bool", "-u0:0")`` hide a blocked flag, so the
+    table must list every valueless long option.
+    """
+    missing = _DOCKER_RUN_BOOLEAN_FLAGS - _VALUELESS_LONG_FLAGS
+    assert not missing, f"boolean flags missing from _VALUELESS_LONG_FLAGS: {sorted(missing)}"
+
+
+@pytest.mark.parametrize(
+    ("token", "consumes"),
+    [
+        # Long options: "=" attaches the value, otherwise arity decides.
+        ("--env-file", True),
+        ("--env-file=vars.env", False),
+        ("--privileged", False),
+        ("--read-only", False),
+        ("--network", True),
+        # Short options: an attached value means the next token is unrelated.
+        ("-v", True),
+        ("-v/:/host:rw", False),
+        ("-m", True),
+        ("-m0", False),
+        ("-it", False),
+        ("-itv", True),
+        ("-e", True),
+    ],
+)
+def test_consumes_next_token(token, consumes):
+    assert _consumes_next_token(token) is consumes
 
 
 def test_build_exec_argv_non_interactive_appends_dash_c():
@@ -409,6 +588,26 @@ async def test_run_stateless_builds_expected_argv() -> None:
     assert result.stderr == "warning\n"
     assert result.exit_code == 3
     assert result.timed_out is False
+
+
+async def test_run_stateless_places_extra_args_after_isolation_defaults() -> None:
+    tool = DockerShellTool(mode="stateless", image="alpine:3", shell="sh", extra_run_args=("--label", "team=af"))
+    proc = _FakeProcess(returncode=0, communicate_results=[(b"", b"")])
+
+    with patch(
+        "agent_framework_tools.shell._docker.asyncio.create_subprocess_exec",
+        AsyncMock(return_value=proc),
+    ) as create_proc:
+        await tool._run_stateless("echo hi", timeout=5.0)
+
+    assert create_proc.await_args is not None
+    argv = create_proc.await_args.args
+    assert argv[-4:] == ("alpine:3", "sh", "-c", "echo hi")
+    assert argv.index("--label") > max(
+        argv.index(flag)
+        for flag in ("--user", "--network", "--memory", "--pids-limit", "--cap-drop", "--security-opt", "--read-only")
+    )
+    assert argv.index("--label") < argv.index("alpine:3")
 
 
 async def test_run_stateless_timeout_reaps_container_when_kill_fails() -> None:

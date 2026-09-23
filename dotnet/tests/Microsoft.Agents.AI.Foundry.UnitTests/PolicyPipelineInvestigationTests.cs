@@ -20,7 +20,7 @@ using OpenAI.Responses;
 namespace Microsoft.Agents.AI.Foundry.UnitTests;
 
 /// <summary>
-/// Executable probes documenting the System.ClientModel policy behavior Stage 1 can rely on.
+/// Executable probes documenting the System.ClientModel policy behavior used by Foundry clients.
 /// </summary>
 public sealed class PolicyPipelineInvestigationTests
 {

@@ -1,0 +1,58 @@
+[project]
+name = "agent-framework-telegram-foundry-hosted-agent"
+version = "0.1.0"
+description = "Telegram bot hosted in Microsoft Foundry with Agent Framework."
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "agent-framework-azure-cosmos>=1.0.0b260821",
+    "agent-framework-foundry",
+    "agent-framework-foundry-hosting>=1.0.0b260821",
+    "agent-framework-hosting-telegram>=1.0.0a260730",
+    "azure-identity",
+    "azure-keyvault-secrets",
+    "azure-monitor-opentelemetry",
+    "httpx",
+    "python-dotenv",
+]
+
+# Foundry's Oryx remote builder currently reads Poetry metadata from
+# pyproject.toml. Keep this runtime dependency mirror aligned with [project].
+[tool.poetry]
+name = "agent-framework-telegram-foundry-hosted-agent"
+version = "0.1.0"
+description = "Telegram bot hosted in Microsoft Foundry with Agent Framework."
+authors = ["Microsoft"]
+package-mode = false
+
+[tool.poetry.dependencies]
+python = ">=3.13,<3.14"
+agent-framework-azure-cosmos = ">=1.0.0b260821"
+agent-framework-foundry = "*"
+agent-framework-foundry-hosting = ">=1.0.0b260821"
+agent-framework-hosting-telegram = ">=1.0.0a260730"
+azure-identity = "*"
+azure-keyvault-secrets = "*"
+azure-monitor-opentelemetry = "*"
+httpx = "*"
+python-dotenv = "*"
+
+[dependency-groups]
+dev = [
+    "pyright",
+    "pytest",
+    "pytest-asyncio",
+    "pyyaml",
+    "ruff",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.pyright]
+include = ["main.py", "tests"]
+typeCheckingMode = "basic"
+
+[tool.uv]
+package = false
+prerelease = "if-necessary"

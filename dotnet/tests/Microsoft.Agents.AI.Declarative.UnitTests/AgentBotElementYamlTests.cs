@@ -4,6 +4,8 @@ using System.ComponentModel;
 using System.IO;
 using System.Linq;
 using System.Text.Json.Serialization;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Agents.ObjectModel;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
@@ -220,7 +222,7 @@ public sealed class AgentBotElementYamlTests
     }
 
     [Fact]
-    public void FromYaml_WithVariableReferences()
+    public async Task FromYaml_WithVariableReferences()
     {
         // Arrange
         IConfiguration configuration = new ConfigurationBuilder()
@@ -234,7 +236,10 @@ public sealed class AgentBotElementYamlTests
             .Build();
 
         // Act
-        var agent = AgentBotElementYaml.FromYaml(PromptAgents.AgentWithVariableReferences, configuration);
+        var agent = AgentBotElementYaml.FromYaml(
+            PromptAgents.AgentWithVariableReferences,
+            configuration,
+            ["OpenAIEndpoint", "OpenAIApiKey", "Temperature", "TopP"]);
 
         // Assert
         Assert.NotNull(agent);
@@ -242,16 +247,16 @@ public sealed class AgentBotElementYamlTests
         CurrentModels model = (agent.Model as CurrentModels)!;
         Assert.NotNull(model);
         Assert.NotNull(model.Options);
-        Assert.Equal(0.9, Eval(model.Options?.Temperature, configuration));
-        Assert.Equal(0.8, Eval(model.Options?.TopP, configuration));
+        Assert.Equal(0.9, await EvalAsync(model.Options?.Temperature, configuration, TestContext.Current.CancellationToken));
+        Assert.Equal(0.8, await EvalAsync(model.Options?.TopP, configuration, TestContext.Current.CancellationToken));
         Assert.NotNull(model.Connection);
         Assert.IsType<ApiKeyConnection>(model.Connection);
         ApiKeyConnection connection = (model.Connection as ApiKeyConnection)!;
         Assert.NotNull(connection);
         Assert.NotNull(connection.Endpoint);
         Assert.NotNull(connection.Key);
-        Assert.Equal("endpoint", Eval(connection.Endpoint, configuration));
-        Assert.Equal("apiKey", Eval(connection.Key, configuration));
+        Assert.Equal("endpoint", await EvalAsync(connection.Endpoint, configuration, TestContext.Current.CancellationToken));
+        Assert.Equal("apiKey", await EvalAsync(connection.Key, configuration, TestContext.Current.CancellationToken));
     }
 
     /// <summary>
@@ -270,7 +275,7 @@ public sealed class AgentBotElementYamlTests
         public string? Occupation { get; set; }
     }
 
-    private static string? Eval(StringExpression? expression, IConfiguration? configuration = null)
+    private static async Task<string?> EvalAsync(StringExpression? expression, IConfiguration? configuration = null, CancellationToken cancellationToken = default)
     {
         if (expression is null)
         {
@@ -286,10 +291,10 @@ public sealed class AgentBotElementYamlTests
             }
         }
 
-        return expression.Eval(engine);
+        return await expression.EvalAsync(engine, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
-    private static double? Eval(NumberExpression? expression, IConfiguration? configuration = null)
+    private static async Task<double?> EvalAsync(NumberExpression? expression, IConfiguration? configuration = null, CancellationToken cancellationToken = default)
     {
         if (expression is null)
         {
@@ -305,6 +310,6 @@ public sealed class AgentBotElementYamlTests
             }
         }
 
-        return expression.Eval(engine);
+        return await expression.EvalAsync(engine, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 }

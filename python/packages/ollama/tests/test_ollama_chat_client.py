@@ -639,19 +639,19 @@ async def test_cmc_with_invalid_data_content_media_type(
     chat_history: list[Message],
     mock_streaming_chat_completion_response: AsyncStream[OllamaChatResponse],
 ) -> None:
-    with pytest.raises(ChatClientInvalidRequestException):
-        mock_chat.return_value = mock_streaming_chat_completion_response
-        # Remote Uris are not supported by Ollama client
-        chat_history.append(
-            Message(
-                contents=[Content.from_uri(uri="data:audio/mp3;base64,xyz", media_type="audio/mp3")],
-                role="user",
-            )
+    mock_chat.return_value = mock_streaming_chat_completion_response
+    # Remote Uris are not supported by Ollama client
+    chat_history.append(
+        Message(
+            contents=[Content.from_uri(uri="data:audio/mp3;base64,xyz", media_type="audio/mp3")],
+            role="user",
         )
+    )
 
-        ollama_client = OllamaChatClient()
-        ollama_client.client.chat = AsyncMock(return_value=mock_streaming_chat_completion_response)  # type: ignore[method-assign]
+    ollama_client = OllamaChatClient()
+    ollama_client.client.chat = AsyncMock(return_value=mock_streaming_chat_completion_response)  # type: ignore[method-assign]
 
+    with pytest.raises(ChatClientInvalidRequestException):
         await ollama_client.get_response(messages=chat_history)
 
 
@@ -662,18 +662,18 @@ async def test_cmc_with_invalid_content_type(
     chat_history: list[Message],
     mock_chat_completion_response: AsyncStream[OllamaChatResponse],
 ) -> None:
-    with pytest.raises(ChatClientInvalidRequestException):
-        mock_chat.return_value = mock_chat_completion_response
-        # Remote Uris are not supported by Ollama client
-        chat_history.append(
-            Message(
-                contents=[Content.from_uri(uri="http://example.com/image.png", media_type="image/png")],
-                role="user",
-            )
+    mock_chat.return_value = mock_chat_completion_response
+    # Remote Uris are not supported by Ollama client
+    chat_history.append(
+        Message(
+            contents=[Content.from_uri(uri="http://example.com/image.png", media_type="image/png")],
+            role="user",
         )
+    )
 
-        ollama_client = OllamaChatClient()
+    ollama_client = OllamaChatClient()
 
+    with pytest.raises(ChatClientInvalidRequestException):
         await ollama_client.get_response(messages=chat_history)
 
 
@@ -810,3 +810,21 @@ class TestParallelToolCallUniqueness:
         assert formatted[0].tool_name == "search:advanced", (
             f"Expected bare name 'search:advanced', got '{formatted[0].tool_name}'"
         )
+
+    def test_mixed_policy_approval_roles_preserve_tool_result(self) -> None:
+        """Role-separated policy output keeps the safe sibling visible to Ollama."""
+        client = OllamaChatClient(host="http://localhost:12345", model="test-model")
+        function_call = Content.from_function_call(call_id="guarded", name="sink", arguments="{}")
+        approval_request = Content.from_function_approval_request(id="guarded", function_call=function_call)
+        messages = [
+            Message(
+                role="tool",
+                contents=[Content.from_function_result(call_id="safe", result="safe result")],
+            ),
+            Message(role="assistant", contents=[approval_request]),
+        ]
+
+        prepared = client._prepare_messages_for_ollama(messages)
+
+        assert [message.role for message in prepared] == ["tool", "assistant"]
+        assert prepared[0].content == "safe result"

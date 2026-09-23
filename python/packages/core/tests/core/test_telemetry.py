@@ -343,6 +343,47 @@ def test_modifies_original_dict():
     assert "User-Agent" in headers
 
 
+def test_prepend_to_lowercase_user_agent():
+    """Test prepending to an existing lowercase user-agent entry.
+
+    HTTP header names are case-insensitive, so callers may pass
+    ``user-agent`` instead of ``User-Agent``. The framework value must be
+    prepended to the existing entry rather than adding a second
+    User-Agent header alongside it.
+    """
+    headers = {"user-agent": "existing-agent/1.0"}
+    result = prepend_agent_framework_to_user_agent(headers)
+
+    user_agent_values = [value for key, value in result.items() if key.lower() == "user-agent"]
+    assert len(user_agent_values) == 1
+    assert user_agent_values[0].startswith("agent-framework-python/")
+    assert "existing-agent/1.0" in user_agent_values[0]
+
+
+def test_prepend_to_uppercase_user_agent():
+    """Test prepending to an all-caps USER-AGENT entry."""
+    headers = {"USER-AGENT": "existing-agent/2.0"}
+    result = prepend_agent_framework_to_user_agent(headers)
+
+    user_agent_values = [value for key, value in result.items() if key.lower() == "user-agent"]
+    assert len(user_agent_values) == 1
+    assert user_agent_values[0].startswith("agent-framework-python/")
+    assert "existing-agent/2.0" in user_agent_values[0]
+
+
+def test_no_duplicate_user_agent_after_prepend(monkeypatch):
+    """Test httpx sees a single User-Agent header after the prepend."""
+    import httpx
+
+    headers = {"user-agent": "existing-agent/1.0"}
+    result = prepend_agent_framework_to_user_agent(headers)
+    request = httpx.Request("GET", "https://example.com", headers=result)
+    raw_values = [value for name, value in request.headers.raw if name.lower() == b"user-agent"]
+
+    assert len(raw_values) == 1
+    assert raw_values[0].startswith(b"agent-framework-python/")
+
+
 # region Test _add_user_agent_prefix
 
 

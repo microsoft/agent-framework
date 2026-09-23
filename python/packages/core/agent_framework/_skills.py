@@ -46,18 +46,17 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import gzip
+import hashlib
 import inspect
 import io
 import json
 import logging
 import os
 import re
-import tarfile
 import time
 import zipfile
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import timedelta
 from enum import Enum
@@ -65,8 +64,11 @@ from html import escape as xml_escape
 from pathlib import Path, PurePosixPath
 from typing import IO, TYPE_CHECKING, Any, ClassVar, Final, Protocol, TypeAlias, TypeVar, cast, runtime_checkable
 
+import yaml
+from yaml.nodes import MappingNode, Node, ScalarNode
+
 from ._feature_stage import ExperimentalFeature, experimental
-from ._filesystem import is_link_or_reparse_point
+from ._filesystem import _is_link_or_reparse_point  # pyright: ignore[reportPrivateUsage]
 from ._sessions import ContextProvider
 from ._telemetry import FeatureIndex, mark_feature_used
 from ._tools import ApprovalMode, FunctionTool
@@ -77,6 +79,7 @@ if TYPE_CHECKING:
     from pydantic import AnyUrl
 
     from ._agents import SupportsAgentRun
+    from ._middleware import FunctionInvocationContext
     from ._sessions import AgentSession, SessionContext
     from ._types import Content
 
@@ -230,6 +233,45 @@ class InlineSkillResource(SkillResource):
         return result
 
 
+@dataclass(frozen=True)
+class _SkillPathScope:
+    """The path trust boundary of a discovered file-backed skill.
+
+    Pairs the host-configured discovery root with the skill directory found at or
+    beneath it. The root is retained so that a file can be revalidated immediately
+    before use against every directory from the root down to the file, rather than
+    only the segments below the skill directory. Without the root, a skill directory
+    (or a directory between it and the root) that was swapped for a link after
+    discovery would never be inspected.
+
+    The configured root itself is never inspected: the host chose it explicitly, so it
+    defines the trust boundary rather than sitting inside it, and it is allowed to be a link.
+
+    Containment is enforced here rather than at use time so that a mismatched pair fails
+    at construction, and so that every later check can rely on the invariant.
+
+    Attributes:
+        trusted_root: Absolute path of the host-configured discovery root.
+        skill_dir: Absolute path of the skill directory, at or beneath ``trusted_root``.
+
+    Raises:
+        ValueError: If ``skill_dir`` does not reside at or beneath ``trusted_root``.
+    """
+
+    trusted_root: str
+    skill_dir: str
+
+    def __post_init__(self) -> None:
+        within_root = FileSkillsSource._is_path_within_directory(  # pyright: ignore[reportPrivateUsage]
+            os.path.normpath(self.skill_dir),
+            os.path.normpath(self.trusted_root),
+        )
+        if not within_root:
+            raise ValueError(
+                f"skill_dir '{self.skill_dir}' must reside at or beneath trusted_root '{self.trusted_root}'."
+            )
+
+
 class _FileSkillResource(SkillResource):
     """A file-path-backed skill resource that reads content from disk.
 
@@ -248,6 +290,7 @@ class _FileSkillResource(SkillResource):
         name: str,
         full_path: str,
         description: str | None = None,
+        scope: _SkillPathScope | None = None,
     ) -> None:
         """Initialize a _FileSkillResource.
 
@@ -255,6 +298,7 @@ class _FileSkillResource(SkillResource):
             name: Relative path of the resource within the skill directory.
             full_path: Absolute path to the resource file.
             description: Optional human-readable summary.
+            scope: Trusted path scope used to revalidate discovered resources before reading.
 
         Raises:
             ValueError: If ``full_path`` is empty.
@@ -265,6 +309,7 @@ class _FileSkillResource(SkillResource):
             raise ValueError("full_path cannot be empty.")
 
         self.full_path = full_path
+        self._scope = scope
 
     async def read(self, **kwargs: Any) -> Any:
         """Read the resource content from disk.
@@ -278,11 +323,22 @@ class _FileSkillResource(SkillResource):
         Raises:
             ValueError: If the resource file does not exist.
         """
-        if not await asyncio.to_thread(Path(self.full_path).is_file):
+        return await asyncio.to_thread(self._read_validated_resource)
+
+    def _read_validated_resource(self) -> str:
+        validated_path = self.full_path
+        if self._scope is not None:
+            validated_path = FileSkillsSource._validate_file_path_for_use(  # pyright: ignore[reportPrivateUsage]
+                self._scope,
+                self.full_path,
+                self.name,
+                "Resource",
+            )
+        elif not Path(self.full_path).is_file():
             raise ValueError(f"Resource file '{self.name}' not found at '{self.full_path}'.")
 
         logger.info("Reading resource '%s' from '%s'", self.name, self.full_path)
-        return await asyncio.to_thread(Path(self.full_path).read_text, encoding="utf-8")
+        return Path(validated_path).read_text(encoding="utf-8")
 
 
 class SkillScript(ABC):
@@ -478,6 +534,8 @@ class FileSkillScript(SkillScript):
         description: str | None = None,
         full_path: str,
         runner: SkillScriptRunner | None = None,
+        skill_dir: str | None = None,
+        trusted_root: str | None = None,
     ) -> None:
         """Initialize a FileSkillScript.
 
@@ -487,9 +545,15 @@ class FileSkillScript(SkillScript):
             full_path: Absolute path to the script file.
             runner: Strategy for running file-based scripts.  Required for
                 execution; an error is raised from :meth:`run` if not provided.
+            skill_dir: Trusted skill directory used to revalidate the script before execution.
+            trusted_root: Configured discovery root used to include the skill directory and
+                intermediate directories in revalidation. Requires ``skill_dir``. When omitted,
+                revalidation starts at ``skill_dir`` for backward compatibility.
 
         Raises:
-            ValueError: If ``full_path`` is empty or not an absolute path.
+            ValueError: If ``full_path`` is empty or not an absolute path, if
+                ``trusted_root`` is provided without ``skill_dir``, or if ``skill_dir``
+                does not reside at or beneath ``trusted_root``.
         """
         super().__init__(name=name, description=description)
 
@@ -497,9 +561,19 @@ class FileSkillScript(SkillScript):
             raise ValueError("full_path cannot be empty.")
         if not os.path.isabs(full_path):
             raise ValueError(f"full_path must be an absolute path, got: '{full_path}'")
+        if trusted_root is not None and skill_dir is None:
+            raise ValueError("trusted_root requires skill_dir.")
 
         self.full_path = full_path
         self._runner = runner
+        self._scope = (
+            _SkillPathScope(
+                trusted_root=trusted_root if trusted_root is not None else skill_dir,
+                skill_dir=skill_dir,
+            )
+            if skill_dir is not None
+            else None
+        )
 
     @property
     def parameters_schema(self) -> dict[str, Any] | None:
@@ -533,6 +607,14 @@ class FileSkillScript(SkillScript):
             )
         if self._runner is None:
             raise ValueError(f"Script '{self.name}' requires a runner. Provide a script_runner for file-based scripts.")
+        if self._scope is not None:
+            await asyncio.to_thread(
+                FileSkillsSource._validate_file_path_for_use,  # pyright: ignore[reportPrivateUsage]
+                self._scope,
+                self.full_path,
+                self.name,
+                "Script",
+            )
         result = self._runner(skill, self, args)
         if inspect.isawaitable(result):
             return await result
@@ -622,7 +704,9 @@ class SkillFrontmatter:
         compatibility: Optional compatibility information (≤500 characters).
         allowed_tools: Optional space-delimited pre-approved tool names.
         metadata: Optional arbitrary key-value pairs (shallow-copied on
-            construction to avoid caller-owned dict aliasing).
+            construction to avoid caller-owned dict aliasing). Keys are case-sensitive.
+            When parsed from a SKILL.md file, invalid entries are skipped with warnings,
+            and exact duplicate keys retain the first valid value with warnings.
     """
 
     def __init__(
@@ -1670,125 +1754,29 @@ DEFAULT_SEARCH_DEPTH: Final[int] = 2
 # Matches YAML frontmatter delimited by "---" lines.
 # The \uFEFF? prefix allows an optional UTF-8 BOM.
 FRONTMATTER_RE = re.compile(
-    r"\A\uFEFF?---\s*$(.+?)^---\s*$",
+    r"\A\uFEFF?---[ \t]*\r?\n(.*?)^---[ \t]*\r?$",
     re.MULTILINE | re.DOTALL,
 )
 
-# Matches top-level YAML "key: value" lines (unindented). Group 1 = key,
-# Group 2 = quoted value, Group 3 = unquoted value. Only matches keys at
-# column 0 so that indented children (e.g. under "metadata:") are not
-# mistakenly captured as top-level fields.
-YAML_KV_RE = re.compile(
-    r"^([\w-]+)\s*:\s*(?:[\"'](.+?)[\"']|(.+?))\s*$",
-    re.MULTILINE,
-)
+FRONTMATTER_FIELD_NAMES = {
+    "name": "name",
+    "description": "description",
+    "license": "license",
+    "compatibility": "compatibility",
+    "metadata": "metadata",
+    "allowed-tools": "allowed-tools",
+}
 
-# Matches a YAML "metadata:" block followed by indented key-value pairs.
-YAML_METADATA_BLOCK_RE = re.compile(
-    r"^metadata\s*:\s*$\n((?:[ \t]+\S.*\n?)+)",
-    re.MULTILINE,
-)
-
-# Matches indented "key: value" lines within a metadata block.
-YAML_INDENTED_KV_RE = re.compile(
-    r"^\s+([\w-]+)\s*:\s*(?:[\"'](.+?)[\"']|(.+?))\s*$",
-    re.MULTILINE,
-)
+_YAML_TEXT_SCALAR_TAGS = frozenset(f"tag:yaml.org,2002:{kind}" for kind in ("str", "bool", "int", "float", "timestamp"))
 
 # Validates skill names: lowercase letters, numbers, hyphens only;
 # must not start or end with a hyphen, and must not contain consecutive hyphens.
 VALID_NAME_RE = re.compile(r"^[a-z0-9]([a-z0-9]*-[a-z0-9])*[a-z0-9]*$")
 
-# Block scalar indicator characters recognised by the lightweight YAML parser.
-_BLOCK_SCALAR_INDICATORS = ("|", ">")
 
-
-def _parse_yaml_scalar_value(yaml_content: str, kv_match: re.Match[str]) -> str:
-    """Resolve the scalar value for an unquoted YAML key-value match.
-
-    If the captured value starts with a YAML block scalar indicator (``|`` or
-    ``>``), the function reads subsequent indented continuation lines, strips
-    the common leading indentation, and joins them according to the scalar
-    style (literal preserves newlines, folded replaces them with spaces).
-
-    Chomping indicators are respected per YAML 1.2 §8.1.1.2:
-
-    * ``-`` (strip) — final line break and trailing empty lines excluded
-    * ``+`` (keep) — final line break and any trailing empty lines preserved
-    * default (clip) — final line break preserved, trailing empty lines excluded
-
-    For plain (non-block-scalar) values the captured text is returned as-is.
-    Note: explicit indentation indicators (e.g. ``|2``) are not supported;
-    indentation is auto-detected from the common leading whitespace.
-    """
-    value: str = kv_match.group(3)
-
-    if not value or value[0] not in _BLOCK_SCALAR_INDICATORS:
-        return value
-
-    scalar_style = value[0]
-    keep_trailing_newline = len(value) > 1 and value[1] == "+"
-    strip_trailing_newline = len(value) > 1 and value[1] == "-"
-
-    # Find the start of the next line after this key-value match.
-    next_line_start = yaml_content.find("\n", kv_match.end())
-    if next_line_start < 0:
-        return value
-    next_line_start += 1  # skip the newline character itself
-
-    # Collect indented continuation lines (or blank lines within the block).
-    block_lines: list[str] = []
-    pos = next_line_start
-    while pos < len(yaml_content):
-        line_end = yaml_content.find("\n", pos)
-        if line_end < 0:
-            line = yaml_content[pos:]
-            line_end = len(yaml_content)
-        else:
-            line = yaml_content[pos:line_end]
-
-        if not line or line.isspace():
-            # Blank / whitespace-only lines are part of the block.
-            block_lines.append("")
-            pos = line_end + 1 if line_end < len(yaml_content) else line_end
-            continue
-
-        if line[0] not in (" ", "\t"):
-            # Non-indented, non-blank line — end of the block.
-            break
-
-        block_lines.append(line)
-        pos = line_end + 1 if line_end < len(yaml_content) else line_end
-
-    # Strip trailing blank lines collected from the block.
-    while block_lines and block_lines[-1] == "":
-        block_lines.pop()
-
-    if not block_lines:
-        return ""
-
-    # Determine the common leading indentation across non-empty lines.
-    # Only space/tab characters count as indentation (matches YAML semantics).
-    def _indent_width(s: str) -> int:
-        i = 0
-        while i < len(s) and s[i] in (" ", "\t"):
-            i += 1
-        return i
-
-    common_indent = min(_indent_width(line) for line in block_lines if line)
-    normalized = [line[common_indent:] if line else "" for line in block_lines]
-
-    # Literal preserves newlines; folded joins non-empty lines with spaces.
-    parsed = "\n".join(normalized) if scalar_style == "|" else " ".join(line for line in normalized if line)
-
-    if keep_trailing_newline:
-        return parsed + "\n"
-    if strip_trailing_newline:
-        return parsed
-    # Clip (default): literal gets a trailing newline, folded does not.
-    if scalar_style == "|":
-        return parsed + "\n"
-    return parsed
+def _contains_surrogate_code_points(value: str) -> bool:
+    """Detect surrogate escapes that PyYAML accepts but UTF-8 cannot encode."""
+    return any("\ud800" <= char <= "\udfff" for char in value)
 
 
 # Default system prompt template for advertising available skills to the model.
@@ -2472,13 +2460,52 @@ class SkillsProvider(ContextProvider):
         async def _load(skill_name: str) -> str:
             return await self._load_skill(skills, skill_name)
 
-        async def _read_resource(skill_name: str, resource_name: str, **kwargs: Any) -> Any:
-            return await self._read_skill_resource(skills, skill_name, resource_name, **kwargs)
+        # The runtime kwargs these handlers forward come from the host's
+        # ``agent.run(function_invocation_kwargs=...)``, never from the model. Two
+        # things keep the channels apart at this seam, and both are required.
+        #
+        # First, declaring ``ctx`` opts the handler into FunctionInvocationContext
+        # injection; without it the function-invocation layer has nowhere to put the
+        # host values and silently drops them. Second, the handlers take no ``**kwargs``
+        # and the outer schemas below set ``additionalProperties: False``, so an
+        # undeclared top-level argument returned by the model is rejected during
+        # validation instead of binding into the runtime namespace.
+        #
+        # ``ctx`` is injected by name and is absent from the advertised schema, so it is
+        # never something the model can supply or override.
+        #
+        # This guarantee covers ``ctx.kwargs``, not everything a skill callback ends up
+        # seeing. ``args`` stays deliberately free-form because scripts declare their own
+        # parameters, and :meth:`InlineSkillScript.run` expands it alongside these runtime
+        # kwargs, so a script's ``**kwargs`` can also hold model-supplied entries that are
+        # not declared parameters. Resources take no model arguments, so a resource's
+        # ``**kwargs`` is runtime-only. Do not treat a name appearing in a script's
+        # ``**kwargs`` as proof the host supplied it.
+        async def _read_resource(
+            ctx: FunctionInvocationContext,
+            skill_name: str,
+            resource_name: str,
+        ) -> Any:
+            return await self._read_skill_resource(
+                skills,
+                skill_name,
+                resource_name,
+                runtime_kwargs=ctx.kwargs,
+            )
 
         async def _run_script(
-            skill_name: str, script_name: str, args: dict[str, Any] | list[str] | None = None, **kwargs: Any
+            ctx: FunctionInvocationContext,
+            skill_name: str,
+            script_name: str,
+            args: dict[str, Any] | list[str] | None = None,
         ) -> Any:
-            return await self._run_skill_script(skills, skill_name, script_name, args, **kwargs)
+            return await self._run_skill_script(
+                skills,
+                skill_name,
+                script_name,
+                args,
+                runtime_kwargs=ctx.kwargs,
+            )
 
         return [
             FunctionTool(
@@ -2492,6 +2519,7 @@ class SkillsProvider(ContextProvider):
                         "skill_name": {"type": "string", "description": "The name of the skill to load."},
                     },
                     "required": ["skill_name"],
+                    "additionalProperties": False,
                 },
             ),
             FunctionTool(
@@ -2509,6 +2537,7 @@ class SkillsProvider(ContextProvider):
                         },
                     },
                     "required": ["skill_name", "resource_name"],
+                    "additionalProperties": False,
                 },
             ),
             FunctionTool(
@@ -2560,6 +2589,9 @@ class SkillsProvider(ContextProvider):
                         },
                     },
                     "required": ["skill_name", "script_name"],
+                    # Scripts declare their own parameters, so the nested ``args`` object
+                    # above stays free-form; only the outer envelope is closed.
+                    "additionalProperties": False,
                 },
             ),
         ]
@@ -2601,7 +2633,8 @@ class SkillsProvider(ContextProvider):
         skill_name: str,
         script_name: str,
         args: dict[str, Any] | list[str] | None = None,
-        **kwargs: Any,
+        *,
+        runtime_kwargs: Mapping[str, Any] | None = None,
     ) -> Any:
         """Run a named script from a skill.
 
@@ -2614,9 +2647,19 @@ class SkillsProvider(ContextProvider):
             script_name: The script name to look up (case-insensitive).
             args: Optional arguments for the script, provided by the
                 agent/LLM.
-            **kwargs: Runtime keyword arguments forwarded only to script
-                functions that accept ``**kwargs`` (e.g. arguments passed via
-                ``agent.run(user_id="123")``).
+            runtime_kwargs: Runtime keyword arguments forwarded only to script
+                functions that accept ``**kwargs``. This parameter carries host
+                request context supplied via
+                ``agent.run(..., function_invocation_kwargs={"user_id": "123"})``
+                and delivered through :class:`FunctionInvocationContext`; it is
+                never sourced from model-supplied tool arguments. Note that the
+                receiving script's own ``**kwargs`` is not runtime-only: these
+                values are expanded alongside any undeclared entries in *args*,
+                which the model supplies. Taking these as one mapping keeps this
+                helper's own parameter names (``skills``, ``skill_name``,
+                ``script_name``, ``args``) usable as runtime kwarg names; the
+                public :meth:`SkillScript.run` signature still expands them, so
+                ``skill`` and ``args`` remain reserved at that boundary.
 
         Returns:
             The script result. Returns a user-facing error string for
@@ -2642,13 +2685,18 @@ class SkillsProvider(ContextProvider):
             return f"Error: Script '{script_name}' not found in skill '{skill_name}'."
 
         try:
-            return await script.run(skill, args, **kwargs)
+            return await script.run(skill, args, **(runtime_kwargs or {}))
         except Exception:
             logger.exception("Error running script '%s' in skill '%s'", script_name, skill_name)
             raise
 
     async def _read_skill_resource(
-        self, skills: Sequence[Skill], skill_name: str, resource_name: str, **kwargs: Any
+        self,
+        skills: Sequence[Skill],
+        skill_name: str,
+        resource_name: str,
+        *,
+        runtime_kwargs: Mapping[str, Any] | None = None,
     ) -> Any:
         """Read a named resource from a skill.
 
@@ -2660,9 +2708,12 @@ class SkillsProvider(ContextProvider):
             skills: The skills to look up the skill from.
             skill_name: The name of the owning skill.
             resource_name: The resource name to look up (case-insensitive).
-            **kwargs: Runtime keyword arguments forwarded to resource functions
-                that accept ``**kwargs`` (e.g. arguments passed via
-                ``agent.run(user_id="123")``).
+            runtime_kwargs: Runtime keyword arguments forwarded to resource functions
+                that accept ``**kwargs``. These carry host request context
+                supplied via
+                ``agent.run(..., function_invocation_kwargs={"user_id": "123"})``
+                and delivered through :class:`FunctionInvocationContext`; they are
+                never sourced from model-supplied tool arguments.
 
         Returns:
             The resource content (any type). Returns a user-facing error
@@ -2691,7 +2742,7 @@ class SkillsProvider(ContextProvider):
             return f"Error: Resource '{resource_name}' not found in skill '{skill_name}'."
 
         try:
-            return await resource.read(**kwargs)
+            return await resource.read(**(runtime_kwargs or {}))
         except Exception:
             logger.exception("Failed to read resource '%s' from skill '%s'", resource_name, skill_name)
             raise
@@ -2915,7 +2966,8 @@ class FileSkillsSource(SkillsSource):
         discovered = FileSkillsSource._discover_skill_directories(self._skill_paths)
         logger.info("Discovered %d potential skills", len(discovered))
 
-        for skill_path in discovered:
+        for scope in discovered:
+            skill_path = scope.skill_dir
             parsed = FileSkillsSource._read_and_parse_skill_file(skill_path)
             if parsed is None:
                 continue
@@ -2933,14 +2985,22 @@ class FileSkillsSource(SkillsSource):
             # Discover file-based resources
             resources: list[SkillResource] = []
             for rn in self._discover_resource_files(skill_path, frontmatter.name):
-                resource_full_path = FileSkillsSource._get_validated_resource_path(skill_path, rn)
-                resources.append(_FileSkillResource(name=rn, full_path=resource_full_path))
+                resource_full_path = FileSkillsSource._get_validated_resource_path(scope, rn)
+                resources.append(_FileSkillResource(name=rn, full_path=resource_full_path, scope=scope))
 
             # Discover file-based scripts
             scripts: list[SkillScript] = []
             for sn in self._discover_script_files(skill_path, frontmatter.name):
                 script_full_path = os.path.normpath(os.path.join(skill_path, sn))  # ruff:ignore[blocking-path-method-in-async-function]
-                scripts.append(FileSkillScript(name=sn, full_path=script_full_path, runner=self._script_runner))
+                scripts.append(
+                    FileSkillScript(
+                        name=sn,
+                        full_path=script_full_path,
+                        runner=self._script_runner,
+                        skill_dir=scope.skill_dir,
+                        trusted_root=scope.trusted_root,
+                    )
+                )
 
             file_skill = FileSkill(
                 frontmatter=frontmatter,
@@ -3022,7 +3082,7 @@ class FileSkillsSource(SkillsSource):
         for part in relative.parts:
             current = current / part
             try:
-                is_link = is_link_or_reparse_point(current)
+                is_link = _is_link_or_reparse_point(current)
             except OSError:
                 return True
             if is_link:
@@ -3337,46 +3397,68 @@ class FileSkillsSource(SkillsSource):
                 )
 
     @staticmethod
-    def _get_validated_resource_path(skill_dir: str, resource_name: str) -> str:
+    def _get_validated_resource_path(scope: _SkillPathScope, resource_name: str) -> str:
         """Resolve and validate a resource file path within a skill directory.
 
-        Normalizes *resource_name*, resolves it against *skill_dir*, and
-        validates that the result stays within the skill directory and does
+        Normalizes *resource_name*, resolves it against the scope's skill directory,
+        and validates that the result stays within the skill directory and does
         not traverse any symlinks.
 
         Args:
-            skill_dir: Absolute path to the owning skill directory.
+            scope: Trusted path scope of the owning skill.
             resource_name: Relative path of the resource within the skill directory.
 
         Returns:
             The validated absolute path to the resource file.
 
         Raises:
-            ValueError: If *skill_dir* is not an absolute path, the resolved path
+            ValueError: If the scope's paths are not absolute, the resolved path
                 escapes the skill directory, the file does not exist, or a symlink
                 is detected in the path.
         """
-        if not os.path.isabs(skill_dir):
-            raise ValueError(f"skill_dir must be an absolute path, got: '{skill_dir}'")
-
         resource_name = FileSkillsSource._normalize_resource_path(resource_name)
+        resource_full_path = os.path.normpath(Path(scope.skill_dir) / resource_name)
+        return FileSkillsSource._validate_file_path_for_use(
+            scope,
+            resource_full_path,
+            resource_name,
+            "Resource",
+        )
 
-        resource_full_path = os.path.normpath(Path(skill_dir) / resource_name)
-        root_directory_path = os.path.normpath(skill_dir)
+    @staticmethod
+    def _validate_file_path_for_use(scope: _SkillPathScope, full_path: str, file_name: str, file_kind: str) -> str:
+        """Validate a discovered file immediately before it is read or executed."""
+        # Require anchored trust boundaries, e.g. "/skills/weather", not "skills/weather".
+        if not os.path.isabs(scope.skill_dir):
+            raise ValueError(f"skill_dir must be an absolute path, got: '{scope.skill_dir}'")
+        if not os.path.isabs(scope.trusted_root):
+            raise ValueError(f"trusted_root must be an absolute path, got: '{scope.trusted_root}'")
 
-        if not FileSkillsSource._is_path_within_directory(resource_full_path, root_directory_path):
-            raise ValueError(f"Resource file '{resource_name}' references a path outside the skill directory.")
+        # Collapse lexical segments, e.g. "/skills/weather/refs/../guide.md" -> "/skills/weather/guide.md".
+        normalized_full_path = os.path.normpath(full_path)
+        skill_directory_path = os.path.normpath(scope.skill_dir)
+        trusted_root_path = os.path.normpath(scope.trusted_root)
 
-        if not Path(resource_full_path).is_file():
-            raise ValueError(f"Resource file '{resource_name}' not found in skill directory '{skill_dir}'.")
+        # Reject lexical escapes, e.g. "/skills/weather/../secret.md" resolves outside the skill root.
+        if not FileSkillsSource._is_path_within_directory(normalized_full_path, skill_directory_path):
+            raise ValueError(f"{file_kind} file '{file_name}' references a path outside the skill directory.")
 
-        if FileSkillsSource._has_link_or_reparse_point_in_path(resource_full_path, root_directory_path):
+        # The skill directory sitting at or beneath the configured root is a scope invariant,
+        # so the file is transitively within the root and the scan below is well-anchored.
+
+        # Reject files deleted or replaced with non-files after discovery.
+        if not Path(normalized_full_path).is_file():
+            raise ValueError(f"{file_kind} file '{file_name}' not found in skill directory '{scope.skill_dir}'.")
+
+        # Reject links in any segment below the configured root, e.g. the skill directory
+        # "weather" or the child segment "refs" in "/skills/weather/refs/guide.md".
+        if FileSkillsSource._has_link_or_reparse_point_in_path(normalized_full_path, trusted_root_path):
             raise ValueError(
-                f"Resource file '{resource_name}' has a symbolic link or reparse point in its path; "
+                f"{file_kind} file '{file_name}' has a symbolic link or reparse point in its path; "
                 "links and reparse points are not allowed."
             )
 
-        return resource_full_path
+        return normalized_full_path
 
     @staticmethod
     def _validate_skill_metadata(
@@ -3428,6 +3510,58 @@ class FileSkillsSource(SkillsSource):
         return None
 
     @staticmethod
+    def _extract_frontmatter_metadata(node: Node | None, skill_file_path: str) -> dict[str, str] | None:
+        """Read optional metadata without rejecting a skill for invalid entries."""
+        # Missing metadata, an empty declaration, or an explicit YAML null leaves metadata unset.
+        if node is None or (isinstance(node, ScalarNode) and node.tag == "tag:yaml.org,2002:null"):
+            return None
+
+        # Metadata must be a standard YAML mapping; otherwise warn and ignore it without rejecting the skill.
+        if not isinstance(node, MappingNode) or node.tag != "tag:yaml.org,2002:map":
+            logger.warning("SKILL.md at '%s' has invalid metadata; expected a mapping", skill_file_path)
+            return None
+
+        metadata: dict[str, str] = {}
+
+        for key_node, value_node in node.value:
+            # Accept scalar keys as text, but reject collections, nulls, and unsupported YAML types.
+            if (
+                not isinstance(key_node, ScalarNode)
+                or key_node.tag not in _YAML_TEXT_SCALAR_TAGS
+                or _contains_surrogate_code_points(key_node.value)
+            ):
+                logger.warning("SKILL.md at '%s' has an invalid metadata key; skipping entry", skill_file_path)
+                continue
+
+            key = key_node.value
+            # Keep the first valid value for each exact, case-sensitive key; warn about later duplicates.
+            if key in metadata:
+                logger.warning(
+                    "SKILL.md at '%s' contains duplicate metadata key '%s'; keeping the first value",
+                    skill_file_path,
+                    key,
+                )
+                continue
+
+            # The Agent Skills spec requires string-to-string metadata, not arrays or nested mappings.
+            # Keep supported scalars as text; warn and skip invalid values rather than rejecting the skill.
+            if (
+                not isinstance(value_node, ScalarNode)
+                or value_node.tag not in _YAML_TEXT_SCALAR_TAGS
+                or _contains_surrogate_code_points(value_node.value)
+            ):
+                logger.warning(
+                    "SKILL.md at '%s' has an invalid metadata value for '%s'; expected a text scalar; skipping entry",
+                    skill_file_path,
+                    key,
+                )
+                continue
+
+            metadata[key] = value_node.value
+
+        return metadata
+
+    @staticmethod
     def _extract_frontmatter(
         content: str,
         skill_file_path: str,
@@ -3437,7 +3571,13 @@ class FileSkillsSource(SkillsSource):
         Parses the ``---``-delimited frontmatter block for all
         `agentskills.io specification <https://agentskills.io/specification>`_
         fields: ``name``, ``description``, ``license``, ``compatibility``,
-        ``allowed-tools``, and ``metadata``.
+        ``allowed-tools``, and ``metadata``. Recognized top-level fields must
+        use lowercase names and must not be repeated, including equivalent quoted
+        or escaped spellings. YAML scalars are retained as text; null root values
+        remain unset. Within the optional metadata mapping, keys are case-sensitive;
+        exact duplicates retain the first valid value and produce warnings.
+        Invalid metadata entries are skipped with warnings. Invalid YAML syntax
+        or invalid recognized root fields reject the skill.
 
         Args:
             content: Raw text content of the SKILL.md file.
@@ -3452,41 +3592,81 @@ class FileSkillsSource(SkillsSource):
             logger.error("SKILL.md at '%s' does not contain valid YAML frontmatter delimited by '---'", skill_file_path)
             return None
 
-        yaml_content = match.group(1).strip()
-        name: str | None = None
-        description: str | None = None
-        license_value: str | None = None
-        compatibility: str | None = None
-        allowed_tools: str | None = None
+        try:
+            # compose() keeps duplicate keys, unlike safe_load(), which silently keeps only the last value.
+            # The Pyright ignores are needed because PyYAML's type definitions do not fully describe compose().
+            root = yaml.compose(match.group(1), Loader=yaml.SafeLoader)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        except (yaml.YAMLError, RecursionError, ValueError, OverflowError) as exc:
+            # PyYAML raises ValueError or OverflowError for Unicode escapes outside the valid code-point range.
+            logger.error("SKILL.md at '%s' contains invalid YAML frontmatter: %s", skill_file_path, exc)
+            return None
 
-        for kv_match in YAML_KV_RE.finditer(yaml_content):
-            key = kv_match.group(1)
-            value = (
-                kv_match.group(2) if kv_match.group(2) is not None else _parse_yaml_scalar_value(yaml_content, kv_match)
-            )
+        if not isinstance(root, MappingNode) or root.tag != "tag:yaml.org,2002:map":
+            logger.error("SKILL.md at '%s' must contain a YAML frontmatter mapping", skill_file_path)
+            return None
 
-            key_lower = key.lower()
-            if key_lower == "name":
-                name = value
-            elif key_lower == "description":
-                description = value
-            elif key_lower == "license":
-                license_value = value
-            elif key_lower == "compatibility":
-                compatibility = value
-            elif key_lower == "allowed-tools":
-                allowed_tools = value
+        fields: dict[str, str] = {}
+        metadata_node: Node | None = None
+        seen_fields: set[str] = set()
 
-        # Parse metadata block (indented key-value pairs under "metadata:").
-        metadata: dict[str, str] | None = None
-        metadata_match = YAML_METADATA_BLOCK_RE.search(yaml_content)
-        if metadata_match:
-            metadata = {}
-            for kv_match in YAML_INDENTED_KV_RE.finditer(metadata_match.group(1)):
-                mk = kv_match.group(1)
-                mv = kv_match.group(2) if kv_match.group(2) is not None else kv_match.group(3)
-                metadata[mk] = mv
+        for key_node, value_node in root.value:
+            # Accept scalar keys as text, but reject collections, nulls, and unsupported YAML types.
+            if (
+                not isinstance(key_node, ScalarNode)
+                or key_node.tag not in _YAML_TEXT_SCALAR_TAGS
+                or _contains_surrogate_code_points(key_node.value)
+            ):
+                logger.error("SKILL.md at '%s' has an invalid frontmatter property name", skill_file_path)
+                return None
 
+            key = key_node.value
+            canonical_key = FRONTMATTER_FIELD_NAMES.get(key.lower())
+
+            # Unknown fields are intentionally excluded from this validation for forward compatibility.
+            if canonical_key is None:
+                continue
+
+            if key != canonical_key:
+                logger.error(
+                    "SKILL.md at '%s' uses incorrectly cased frontmatter field '%s'; expected '%s'",
+                    skill_file_path,
+                    key,
+                    canonical_key,
+                )
+                return None
+
+            if key in seen_fields:
+                logger.error("SKILL.md at '%s' contains duplicate frontmatter field '%s'", skill_file_path, key)
+                return None
+
+            seen_fields.add(key)
+
+            if key == "metadata":
+                metadata_node = value_node
+                continue
+
+            # Leave empty declarations and explicit YAML nulls unset; required fields are validated below.
+            if isinstance(value_node, ScalarNode) and value_node.tag == "tag:yaml.org,2002:null":
+                continue
+
+            # Reject lists, mappings, and unsupported YAML types because these fields are stored as text.
+            if (
+                not isinstance(value_node, ScalarNode)
+                or value_node.tag not in _YAML_TEXT_SCALAR_TAGS
+                or _contains_surrogate_code_points(value_node.value)
+            ):
+                logger.error(
+                    "SKILL.md at '%s' has an invalid '%s' value; expected a text scalar",
+                    skill_file_path,
+                    key,
+                )
+                return None
+
+            fields[key] = value_node.value
+
+        name = fields.get("name")
+        description = fields.get("description")
+        compatibility = fields.get("compatibility")
         error = FileSkillsSource._validate_skill_metadata(name, description, skill_file_path, compatibility)
         if error:
             logger.error(error)
@@ -3497,10 +3677,10 @@ class FileSkillsSource(SkillsSource):
         return SkillFrontmatter(
             name=cast(str, name),
             description=cast(str, description),
-            license=license_value,
+            license=fields.get("license"),
             compatibility=compatibility,
-            allowed_tools=allowed_tools,
-            metadata=metadata,
+            allowed_tools=fields.get("allowed-tools"),
+            metadata=FileSkillsSource._extract_frontmatter_metadata(metadata_node, skill_file_path),
         )
 
     @staticmethod
@@ -3542,8 +3722,8 @@ class FileSkillsSource(SkillsSource):
         return frontmatter, content
 
     @staticmethod
-    def _discover_skill_directories(skill_paths: Sequence[str]) -> list[str]:
-        """Return absolute paths of all directories that contain a ``SKILL.md`` file.
+    def _discover_skill_directories(skill_paths: Sequence[str]) -> list[_SkillPathScope]:
+        """Return the path scopes of all directories that contain a ``SKILL.md`` file.
 
         Recursively searches each root path up to :data:`MAX_SEARCH_DEPTH`. Once a
         ``SKILL.md`` is found in a directory, that directory is the skill root and the
@@ -3563,17 +3743,18 @@ class FileSkillsSource(SkillsSource):
             skill_paths: Root directory paths to search.
 
         Returns:
-            Absolute paths to directories containing ``SKILL.md``.
+            One :class:`_SkillPathScope` per directory containing ``SKILL.md``, each pairing
+            the configured root it was found under with the skill directory itself.
         """
-        discovered: list[str] = []
+        discovered: list[_SkillPathScope] = []
 
         def _is_unsafe_link(path: Path) -> bool:
             try:
-                return is_link_or_reparse_point(path)
+                return _is_link_or_reparse_point(path)
             except OSError:
                 return True
 
-        def _search(directory: str, current_depth: int) -> None:
+        def _search(directory: str, trusted_root: str, current_depth: int) -> None:
             dir_path = Path(directory)
             skill_file = dir_path / SKILL_FILE_NAME
             if skill_file.is_file():
@@ -3587,7 +3768,7 @@ class FileSkillsSource(SkillsSource):
                         SKILL_FILE_NAME,
                     )
                     return
-                discovered.append(str(dir_path.absolute()))
+                discovered.append(_SkillPathScope(trusted_root=trusted_root, skill_dir=str(dir_path.absolute())))
                 return
 
             if current_depth >= MAX_SEARCH_DEPTH:
@@ -3607,12 +3788,12 @@ class FileSkillsSource(SkillsSource):
                     )
                     continue
                 if entry.is_dir():
-                    _search(str(entry), current_depth + 1)
+                    _search(str(entry), trusted_root, current_depth + 1)
 
         for root_dir in skill_paths:
             if not root_dir or not root_dir.strip() or not Path(root_dir).is_dir():
                 continue
-            _search(root_dir, current_depth=0)
+            _search(root_dir, str(Path(root_dir).absolute()), current_depth=0)
 
         return discovered
 
@@ -4391,12 +4572,10 @@ _ARCHIVE_READ_BUFFER_SIZE: Final[int] = 81920
 
 
 class _ArchiveFormat(Enum):
-    """The archive container formats supported by :func:`_extract_archive`."""
+    """The archive container formats supported during archive skill discovery."""
 
     UNKNOWN = "unknown"
     ZIP = "zip"
-    TAR = "tar"
-    TAR_GZ = "tar_gz"
 
 
 def _detect_archive_format(data: bytes, media_type: str | None, url: str | None) -> _ArchiveFormat:
@@ -4413,8 +4592,9 @@ def _detect_archive_format(data: bytes, media_type: str | None, url: str | None)
     Returns:
         The detected :class:`_ArchiveFormat`, or :attr:`_ArchiveFormat.UNKNOWN`.
     """
+    # Reject gzip by signature before considering potentially incorrect MIME type or URL hints.
     if len(data) >= 2 and data[0] == 0x1F and data[1] == 0x8B:
-        return _ArchiveFormat.TAR_GZ
+        return _ArchiveFormat.UNKNOWN
 
     if len(data) >= 4 and data[0] == 0x50 and data[1] == 0x4B and data[2] in (0x03, 0x05, 0x07):
         return _ArchiveFormat.ZIP
@@ -4422,18 +4602,10 @@ def _detect_archive_format(data: bytes, media_type: str | None, url: str | None)
     media = (media_type or "").strip().lower()
     if media in ("application/zip", "application/x-zip-compressed"):
         return _ArchiveFormat.ZIP
-    if media in ("application/gzip", "application/x-gzip", "application/x-compressed-tar"):
-        return _ArchiveFormat.TAR_GZ
-    if media in ("application/x-tar", "application/tar"):
-        return _ArchiveFormat.TAR
 
     lowered = (url or "").lower()
     if lowered.endswith(".zip"):
         return _ArchiveFormat.ZIP
-    if lowered.endswith(".tar.gz") or lowered.endswith(".tgz"):
-        return _ArchiveFormat.TAR_GZ
-    if lowered.endswith(".tar"):
-        return _ArchiveFormat.TAR
 
     return _ArchiveFormat.UNKNOWN
 
@@ -4512,13 +4684,10 @@ def _extract_archive_to_memory(
 ) -> dict[str, bytes]:
     """Extract an archive's regular files into an in-memory ``{relative-path: bytes}`` mapping.
 
-    Supports ZIP, TAR, and gzip-compressed TAR payloads. Non-regular TAR entries
-    (symbolic links, hard links, device nodes, etc.) are skipped so an archive cannot
-    smuggle in a link, and absolute member names are neutralized to relative. A member
-    that attempts to escape the skill namespace via a ``..`` parent-traversal ("zip-slip")
-    aborts extraction of the whole archive by raising. Extraction is bounded by a maximum
-    file count and total uncompressed size to mitigate decompression-bomb attacks. No
-    filesystem is touched.
+    Supports ZIP payloads. A member that attempts to escape the skill namespace via a
+    ``..`` parent-traversal ("zip-slip") aborts extraction of the whole archive by
+    raising. Extraction is bounded by a maximum file count and total uncompressed size
+    to mitigate decompression-bomb attacks. No filesystem is touched.
 
     Args:
         data: The raw archive bytes.
@@ -4533,20 +4702,12 @@ def _extract_archive_to_memory(
         ValueError: If the format is unknown, a limit is exceeded, or a member attempts
             a path-traversal ("zip-slip") escape.
         OSError: If the payload cannot be read.
-        tarfile.TarError: If a TAR payload is malformed.
         zipfile.BadZipFile: If a ZIP payload is malformed.
-        gzip.BadGzipFile: If a gzip payload is malformed.
     """
     if archive_format is _ArchiveFormat.ZIP:
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
             return _extract_zip_to_memory(archive, max_file_count, max_uncompressed_size_bytes)
-    if archive_format is _ArchiveFormat.TAR:
-        with tarfile.open(fileobj=io.BytesIO(data), mode="r:") as archive:
-            return _extract_tar_to_memory(archive, max_file_count, max_uncompressed_size_bytes)
-    if archive_format is _ArchiveFormat.TAR_GZ:
-        with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as archive:
-            return _extract_tar_to_memory(archive, max_file_count, max_uncompressed_size_bytes)
-    raise ValueError(f"Unsupported skill archive format '{archive_format}'.")
+    raise ValueError(f"Unsupported skill archive format '{archive_format}'. Use ZIP instead.")
 
 
 def _extract_zip_to_memory(
@@ -4578,46 +4739,10 @@ def _extract_zip_to_memory(
     return files
 
 
-def _extract_tar_to_memory(
-    archive: tarfile.TarFile,
-    max_file_count: int,
-    max_uncompressed_size_bytes: int,
-) -> dict[str, bytes]:
-    """Read regular files from a TAR archive into memory. See :func:`_extract_archive_to_memory`."""
-    remaining_bytes = max_uncompressed_size_bytes
-    files: dict[str, bytes] = {}
-    file_count = 0
-
-    for member in archive:
-        # Only regular files are materialized. Skipping links/devices avoids both
-        # unsupported entry types and link-based escapes outside the skill namespace.
-        if not member.isreg():
-            continue
-
-        file_count += 1
-        if file_count > max_file_count:
-            raise ValueError(f"Skill archive exceeds the maximum allowed file count ({max_file_count}).")
-
-        name = _normalize_archive_member_name(member.name)
-        if name is None:
-            continue
-
-        source = archive.extractfile(member)
-        if source is None:
-            continue
-
-        with source:
-            content, remaining_bytes = _read_member_with_limit(source, remaining_bytes)
-        files[name] = content
-
-    return files
-
-
 class _ArchiveEntryLoader:
     """Loads ``archive``-type ``skill://index.json`` entries entirely in memory.
 
-    Each entry's ``url`` points to a single archive resource (ZIP, TAR, or
-    gzip-compressed TAR). The archive is downloaded and unpacked **in memory** into a
+    Each entry's ``url`` points to a ZIP archive resource, which is unpacked **in memory** into a
     :class:`FileSkill` whose ``SKILL.md`` body drives the skill and whose sibling files
     (matching the configured resource extensions, within the configured depth) become
     in-memory :class:`InlineSkillResource` resources. Nothing is written to disk, so
@@ -4627,9 +4752,10 @@ class _ArchiveEntryLoader:
     resource extensions become readable resources; a script file is at most a readable
     resource, never a :class:`SkillScript`.
 
-    Extraction is hardened against path-traversal ("zip-slip") member names, non-regular
-    TAR members (links/devices), oversized downloads, excessive file counts, and
-    decompression bombs.
+    Extraction is hardened against path-traversal ("zip-slip") member names,
+    oversized downloads, excessive file counts, and decompression bombs.
+    Supplied SHA-256 digests are verified before extraction; archives without
+    a digest remain supported.
     """
 
     def __init__(
@@ -4706,7 +4832,8 @@ class _ArchiveEntryLoader:
 
         Returns:
             A ``(data, mime_type)`` tuple, or ``None`` when the resource is not found,
-            contains no binary content, is empty, or exceeds the configured size limit.
+            contains no binary content, is empty, exceeds the configured size limit,
+            or has an invalid or mismatched digest.
 
         Raises:
             Exception: Any error other than a "resource not found" MCP error raised
@@ -4739,7 +4866,27 @@ class _ArchiveEntryLoader:
             )
             return None
 
+        if entry.digest is not None and not self._verify_digest(entry, data):
+            return None
+
         return data, mime_type
+
+    @staticmethod
+    def _verify_digest(entry: _McpSkillIndexEntry, data: bytes) -> bool:
+        """Verify a supplied digest against decoded archive bytes, before extraction."""
+        digest = entry.digest
+        if not isinstance(digest, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None:
+            logger.warning(
+                "Skipping skill '%s': archive digest must be 'sha256:' followed by 64 lowercase hexadecimal characters",
+                entry.name,
+            )
+            return False
+
+        if hashlib.sha256(data).hexdigest() != digest[7:]:
+            logger.warning("Skipping skill '%s': archive digest does not match downloaded content", entry.name)
+            return False
+
+        return True
 
     def _build_skill(self, entry: _McpSkillIndexEntry, data: bytes, mime_type: str | None) -> FileSkill | None:
         """Detect the format of and unpack one archive entry into an in-memory :class:`FileSkill`.
@@ -4760,7 +4907,7 @@ class _ArchiveEntryLoader:
             files = _extract_archive_to_memory(
                 data, archive_format, self._max_file_count, self._max_uncompressed_size_bytes
             )
-        except (OSError, ValueError, EOFError, tarfile.TarError, zipfile.BadZipFile, gzip.BadGzipFile):
+        except (OSError, ValueError, EOFError, zipfile.BadZipFile):
             logger.warning("Failed to extract archive for skill '%s'.", entry.name, exc_info=True)
             return None
 
@@ -4873,8 +5020,8 @@ class MCPSkillsSource(SkillsSource):
       ``name``, ``description``, and ``url`` fields. The referenced ``SKILL.md``
       resource is **not** read during discovery; the host fetches its body on
       demand via ``resources/read`` when the skill content is needed.
-    * ``archive`` — the entry's ``url`` points to a single archive resource
-      (ZIP, TAR, or gzip-compressed TAR) whose content unpacks into the skill's
+    * ``archive`` — the entry's ``url`` points to a ZIP archive resource
+      whose content unpacks into the skill's
       namespace. The archive is downloaded and unpacked **in memory** into a
       skill whose ``SKILL.md`` body drives it and whose sibling files become
       in-memory resources; nothing is written to disk. Scripts bundled inside an
@@ -4892,6 +5039,16 @@ class MCPSkillsSource(SkillsSource):
     already provides refresh/caching for any source, this source does not offer
     a separate refresh interval; wrap it in :class:`CachingSkillsSource` to cache.
 
+    Archive digests:
+        An archive entry's non-null ``digest`` must be ``sha256:`` followed by
+        64 lowercase hexadecimal characters. It is verified against the decoded
+        archive bytes before extraction. Invalid, unsupported, or mismatched
+        digests cause a warning and the archive is skipped; other entries remain
+        available. A cache refresh therefore replaces its list without rejected
+        archives. Omitted or null digests remain allowed. This verification
+        applies only to ``archive`` entries, not lazily fetched ``skill-md``
+        entries or their supporting resources.
+
     Security considerations:
         Discovering skills over MCP means an *external* MCP server controls
         what skill content (including instructions and, for script-capable
@@ -4904,8 +5061,10 @@ class MCPSkillsSource(SkillsSource):
         script-capable skills, executed. Only connect this source to MCP
         servers you have vetted and trust, and treat their responses as
         untrusted input. Archive extraction is hardened against path-traversal
-        ("zip-slip"), link-based escapes, and decompression bombs, but the
-        skill *content* is still untrusted.
+        ("zip-slip") and decompression bombs, but the skill *content* is still
+        untrusted. A matching digest proves consistency with the index, not
+        trustworthiness: a server controlling both the index and archive can
+        replace both, or omit the digest.
 
     Examples:
         .. code-block:: python

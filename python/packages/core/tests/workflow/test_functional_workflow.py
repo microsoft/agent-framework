@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import json
 import logging
 from collections.abc import Awaitable, Callable, Iterator
@@ -17,6 +18,7 @@ import pytest
 from agent_framework import (
     AgentResponseUpdate,
     CheckpointStorage,
+    Content,
     ExperimentalFeature,
     FunctionalWorkflow,
     FunctionalWorkflowAgent,
@@ -24,7 +26,9 @@ from agent_framework import (
     InMemoryCheckpointStorage,
     RunContext,
     StepWrapper,
+    SupportsAgentRun,
     WorkflowEvent,
+    WorkflowEventSource,
     WorkflowRunResult,
     WorkflowRunState,
     get_run_context,
@@ -330,6 +334,44 @@ class TestHITL:
         assert outputs == ["Final: Looks great!"]
         assert result2.get_final_state() == WorkflowRunState.IDLE
 
+    async def test_request_info_resume_rejects_response_type_mismatch(self):
+        @built_workflow
+        async def typed_wf(data: str, ctx: RunContext) -> str:
+            answer = await ctx.request_info("number", response_type=int, request_id="typed")
+            return f"{answer}:{type(answer).__name__}"
+
+        await typed_wf.run("input")
+
+        with pytest.raises(ValueError, match="Response type mismatch for request ID typed"):
+            await typed_wf.run(responses={"typed": "not-an-int"})
+
+    async def test_request_info_resume_coerces_json_like_response(self):
+        @dataclass
+        class Decision:
+            approved: bool
+
+        @built_workflow
+        async def typed_wf(data: str, ctx: RunContext) -> str:
+            decision = await ctx.request_info("decision", response_type=Decision, request_id="decision")
+            return f"{decision.approved}:{type(decision).__name__}"
+
+        await typed_wf.run("input")
+        result = await typed_wf.run(responses={"decision": {"approved": True}})
+
+        assert result.get_outputs() == ["True:Decision"]
+
+    async def test_request_info_resume_converts_text_to_content(self):
+        @built_workflow
+        async def content_wf(data: str, ctx: RunContext) -> str:
+            answer = await ctx.request_info("message", response_type=Content, request_id="content")
+            assert isinstance(answer, Content)
+            return f"{answer.type}:{answer.text}"
+
+        await content_wf.run("input")
+        result = await content_wf.run(responses={"content": "hello"})
+
+        assert result.get_outputs() == ["text:hello"]
+
     async def test_fresh_message_while_pending_requests_warns(self, caplog: pytest.LogCaptureFixture) -> None:
         """A fresh message while request_info events are pending is allowed but logs a warning."""
 
@@ -532,6 +574,95 @@ class TestStreaming:
         streaming_flag = None
         await wf.run(1)
         assert streaming_flag is False
+
+    async def test_abandoned_stream_finalizes_without_event_loop_error(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Breaking out of a streaming run must not leak ContextVar tokens on GC.
+
+        Regression for https://github.com/microsoft/agent-framework/issues/7787:
+        the run span and ``_framework_event_origin()`` used to stay open across
+        event yields, so abandoning the stream and letting it be garbage-collected
+        reset those tokens from a different Context.
+        """
+        loop = asyncio.get_running_loop()
+        loop_errors: list[BaseException] = []
+        original_handler = loop.get_exception_handler()
+
+        def _capture_loop_exception(_loop: asyncio.AbstractEventLoop, context: dict[str, Any]) -> None:
+            exc = context.get("exception")
+            if isinstance(exc, BaseException):
+                loop_errors.append(exc)
+            if original_handler is not None:
+                original_handler(_loop, context)
+
+        loop.set_exception_handler(_capture_loop_exception)
+
+        @built_workflow
+        async def pipeline(x: int) -> int:
+            return await add_one(x)
+
+        try:
+            with caplog.at_level(logging.ERROR, logger="opentelemetry"):
+                stream = pipeline.run(5, stream=True)
+                async for _event in stream:
+                    break
+
+                del stream
+                gc.collect()
+                for _ in range(5):
+                    await asyncio.sleep(0)
+        finally:
+            loop.set_exception_handler(original_handler)
+
+        assert loop_errors == [], f"Abandoned stream leaked loop exceptions: {loop_errors!r}"
+        otel_errors = [
+            rec.getMessage()
+            for rec in caplog.records
+            if "Failed to detach context" in rec.getMessage()
+            or "was created in a different Context" in rec.getMessage()
+        ]
+        assert otel_errors == [], f"Abandoned stream leaked OpenTelemetry errors: {otel_errors!r}"
+
+        follow_up = await pipeline.run(6)
+        assert follow_up.get_outputs() == [7]
+
+    async def test_nested_processing_span_parents_under_workflow_run(self, span_exporter: Any) -> None:
+        """Spans opened during ``_execute`` must parent under the unattached ``workflow.run`` span."""
+        from agent_framework.observability import OtelAttr, create_processing_span
+
+        @step
+        async def traced_add(x: int) -> int:
+            with create_processing_span("traced_add", "StepWrapper", "int", "int"):
+                return x + 1
+
+        @built_workflow
+        async def pipeline(x: int) -> int:
+            return await traced_add(x)
+
+        span_exporter.clear()  # type: ignore[attr-defined]
+        result = await pipeline.run(5)
+        assert result.get_outputs() == [6]
+
+        spans = span_exporter.get_finished_spans()  # type: ignore[attr-defined]
+        run_spans = [s for s in spans if s.name == OtelAttr.WORKFLOW_RUN_SPAN]
+        process_spans = [s for s in spans if s.name == f"{OtelAttr.EXECUTOR_PROCESS_SPAN} traced_add"]
+        assert len(run_spans) == 1
+        assert len(process_spans) == 1
+        process_parent = process_spans[0].parent
+        assert process_parent is not None
+        assert process_parent.span_id == run_spans[0].context.span_id
+
+    async def test_started_event_origin_is_framework_after_origin_manager_closes(self) -> None:
+        """Framework lifecycle events stay tagged FRAMEWORK even when yielded outside the origin CM."""
+
+        @built_workflow
+        async def pipeline(x: int) -> int:
+            return await add_one(x)
+
+        stream = pipeline.run(5, stream=True)
+        started = await anext(aiter(stream))
+        assert started.type == "started"
+        assert started.origin == WorkflowEventSource.FRAMEWORK
+        await stream.get_final_response()
 
 
 # ---------------------------------------------------------------------------
@@ -920,6 +1051,13 @@ class TestAsAgent:
         agent = wf.as_agent(name="my_agent")
         assert agent.id == "FunctionalWorkflowAgent_my_agent"
         assert agent.description == "A test workflow"
+
+    async def test_as_agent_implements_supports_agent_run(self):
+        @built_workflow
+        async def wf(x: int) -> int:
+            return x
+
+        assert isinstance(wf.as_agent(), SupportsAgentRun)
 
 
 # ---------------------------------------------------------------------------
@@ -1378,6 +1516,68 @@ def caplog_context(target_logger: logging.Logger) -> Iterator[list[str]]:
 
 class TestHITLInStepWithCaching:
     """Regression tests: request_info inside @step combined with caching and bypass."""
+
+    def test_replay_state_helpers_restore_and_clear_the_full_bundle(self):
+        """Replay helpers keep message, caches, state, and pending IDs together."""
+
+        @built_workflow
+        async def wf(data: str) -> str:
+            return data
+
+        source_ctx = _RunContext("wf")
+        source_ctx._step_cache = {("seed_state", 0): "seeded"}
+        source_ctx._step_cache_auto_request_info_counts = {("seed_state", 0): 1}
+        source_ctx._state = {"marker": "ok"}
+        source_ctx._pending_requests = {
+            "r1": WorkflowEvent.request_info(
+                request_id="r1",
+                source_executor_id="wf",
+                request_data="question",
+                response_type=str,
+            )
+        }
+
+        wf._capture_replay_state(source_ctx, "input")
+
+        restored_ctx = _RunContext("wf")
+        assert wf._restore_replay_state(restored_ctx) == "input"
+        assert restored_ctx._step_cache == source_ctx._step_cache
+        assert restored_ctx._step_cache_auto_request_info_counts == source_ctx._step_cache_auto_request_info_counts
+        assert restored_ctx._state == source_ctx._state
+        assert wf._last_pending_request_ids == {"r1"}
+
+        wf._clear_replay_state()
+
+        assert wf._last_message is None
+        assert wf._last_step_cache == {}
+        assert wf._last_step_cache_auto_request_info_counts == {}
+        assert wf._last_state == {}
+        assert wf._last_pending_request_ids == set()
+
+    async def test_response_only_resume_restores_state_from_cached_step(self):
+        """Response-only HITL resumes must preserve state written before a cached step."""
+        seed_calls = 0
+
+        @step
+        async def seed_state(ctx: RunContext) -> str:
+            nonlocal seed_calls
+            seed_calls += 1
+            ctx.set_state("marker", "ok")
+            return "seeded"
+
+        @built_workflow
+        async def wf(data: str, ctx: RunContext) -> str:
+            value = await seed_state()
+            answer = await ctx.request_info("question", response_type=str, request_id="r1")
+            return f"{ctx.get_state('marker', 'MISSING')}:{value}:{answer}"
+
+        result1 = await wf.run("input")
+        assert result1.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
+
+        result2 = await wf.run(responses={"r1": "ok"})
+
+        assert seed_calls == 1
+        assert result2.get_outputs() == ["ok:seeded:ok"]
 
     async def test_preceding_step_bypassed_on_hitl_resume(self):
         """When a step after a completed step calls request_info and interrupts,

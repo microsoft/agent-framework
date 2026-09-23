@@ -9,7 +9,6 @@ import logging
 import re
 import sys
 import warnings
-from asyncio import iscoroutine
 from collections.abc import (
     AsyncGenerator,
     AsyncIterable,
@@ -30,7 +29,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, NewTyp
 from typing_extensions import TypedDict
 
 from ._feature_stage import ExperimentalFeature, experimental
-from ._serialization import SerializationMixin
+from ._serialization import SerializationMixin, get_pickle_state, restore_pickle_state
 from .exceptions import AdditionItemMismatch, ContentError
 
 if sys.version_info >= (3, 13):
@@ -39,6 +38,8 @@ else:
     from typing_extensions import TypeVar  # pragma: no cover
 
 logger = logging.getLogger("agent_framework")
+
+_SERIALIZED_EXCEPTION_MARKER: Final[str] = "FunctionInvocationError"
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -112,19 +113,21 @@ def detect_media_type_from_base64(
 
             # Detect from base64 string
             base64_data = "iVBORw0KGgo..."
-            media_type = detect_media_type_from_base64(base64_data)
+            media_type = detect_media_type_from_base64(data_str=base64_data)
             # Returns: "image/png"
 
             # Works with data URIs too
             data_uri = "data:image/png;base64,iVBORw0KGgo..."
-            media_type = detect_media_type_from_base64(data_uri)
+            media_type = detect_media_type_from_base64(data_uri=data_uri)
             # Returns: "image/png"
     """
     data: bytes | None = None
     if data_bytes is not None:
         data = data_bytes
     if data_uri is not None:
-        if data is not None:
+        # The conflict check has to run before the URI payload is rebound into data_str,
+        # otherwise a caller-supplied data_str disappears instead of being rejected.
+        if data is not None or data_str is not None:
             raise ValueError("Provide exactly one of data_bytes, data_str, or data_uri.")
         # Remove data URI prefix if present
         if not data_uri.startswith("data:") or "," not in data_uri:
@@ -272,16 +275,24 @@ def _validate_uri(uri: str, media_type: str | None) -> dict[str, Any]:
     raise ContentError("URI must contain a scheme (e.g., http://, data:, file://)")
 
 
-def _serialize_value(value: Any, exclude_none: bool) -> Any:
+def _serialize_value(value: Any, exclude_none: bool, *, redact_exception: bool = True) -> Any:
     """Recursively serialize a value for to_dict."""
     if value is None:
         return None
     if isinstance(value, Content):
-        return value.to_dict(exclude_none=exclude_none)
+        return value._to_dict(  # pyright: ignore[reportPrivateUsage]
+            exclude_none=exclude_none, redact_exception=redact_exception
+        )
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-        return [_serialize_value(item, exclude_none) for item in cast(Iterable[Any], value)]
+        return [
+            _serialize_value(item, exclude_none, redact_exception=redact_exception)
+            for item in cast(Iterable[Any], value)
+        ]
     if isinstance(value, Mapping):
-        return {k: _serialize_value(v, exclude_none) for k, v in value.items()}  # type: ignore[reportUnknownVariableType]
+        return {
+            k: _serialize_value(v, exclude_none, redact_exception=redact_exception)
+            for k, v in cast(Mapping[Any, Any], value).items()
+        }
     if hasattr(value, "to_dict"):
         return value.to_dict()  # type: ignore[call-arg]
     return value
@@ -400,6 +411,8 @@ class Annotation(TypedDict, total=False):
 
 
 ContentT = TypeVar("ContentT", bound="Content")
+_MODEL_OUTPUT_KIND_KEY = "model_output_kind"
+_MODEL_OUTPUT_REFUSAL = "refusal"
 
 # endregion
 
@@ -451,17 +464,20 @@ def add_usage_details(usage1: UsageDetails | None, usage2: UsageDetails | None) 
             combined = add_usage_details(usage1, usage2)
             # Result: {'input_token_count': 8, 'output_token_count': 16}
     """
-    if usage1 is None:
-        return usage2 or UsageDetails()
-    if usage2 is None:
-        return usage1
+    u1 = usage1 or UsageDetails()
+    u2 = usage2 or UsageDetails()
 
     result = UsageDetails()
     # Combine all keys from both dictionaries
-    all_keys = set(usage1.keys()) | set(usage2.keys())
+    all_keys = set(u1.keys()) | set(u2.keys())
     for key in all_keys:
-        if not isinstance((val1 := usage1.get(key, 0)), (int | None)) or not isinstance(
-            (val2 := usage2.get(key, 0)), (int | None)
+        val1 = u1.get(key, 0)
+        val2 = u2.get(key, 0)
+        if (
+            isinstance(val1, bool)
+            or isinstance(val2, bool)
+            or not isinstance(val1, (int, type(None)))
+            or not isinstance(val2, (int, type(None)))
         ):
             logger.warning("Non `int` value found in usage details, skipping.")
             continue
@@ -478,9 +494,14 @@ class Content:
     This class provides a single unified type that handles all content variants.
     Use the class methods like `Content.from_text()`, `Content.from_data()`,
     `Content.from_uri()`, etc. to create instances.
+
+    The ``exception`` field is host-internal diagnostic state. Its value may originate from a tool, middleware,
+    provider, or caller and must always be treated as potentially sensitive. Dictionary serialization replaces it
+    with a fixed marker that preserves failure state; channel-visible error information belongs in the public result.
     """
 
     _SHALLOW_COPY_FIELDS: ClassVar[set[str]] = {"raw_representation"}
+    _PICKLE_OMIT_FIELDS: ClassVar[set[str]] = {"raw_representation"}
 
     def __init__(
         self,
@@ -608,6 +629,28 @@ class Content:
                 object.__setattr__(result, k, deepcopy(v, memo))
         return result
 
+    def __copy__(self) -> Content:
+        """Create a shallow copy while preserving provider runtime fields."""
+        cls = type(self)
+        result = cls.__new__(cls)
+        for field_name, value in self.__dict__.items():
+            object.__setattr__(result, field_name, value)
+        return result
+
+    def __getstate__(self) -> dict[str, Any]:
+        """Return pickle state without runtime-only shallow-copy fields."""
+        state = get_pickle_state(self, self._PICKLE_OMIT_FIELDS)
+        if self.annotations is not None:
+            state["annotations"] = [
+                {key: value for key, value in annotation.items() if key != "raw_representation"}
+                for annotation in self.annotations
+            ]
+        return state
+
+    def __setstate__(self, state: dict[str, Any] | tuple[dict[str, Any], dict[str, Any]]) -> None:
+        """Restore pickle state and reset runtime-only shallow-copy fields."""
+        restore_pickle_state(self, state, self._PICKLE_OMIT_FIELDS)
+
     @classmethod
     def from_text(
         cls: type[ContentT],
@@ -674,7 +717,7 @@ class Content:
 
                     from agent_framework import detect_media_type_from_base64, Content
 
-                    media_type = detect_media_type_from_base64(base64_string)
+                    media_type = detect_media_type_from_base64(data_str=base64_string)
                     if media_type is None:
                         raise ValueError("Could not detect media type")
                     data_bytes = base64.b64decode(base64_string)
@@ -703,7 +746,7 @@ class Content:
 
                 # If you have a base64 string and need to detect media type
                 base64_string = "iVBORw0KGgo..."
-                media_type = detect_media_type_from_base64(base64_string)
+                media_type = detect_media_type_from_base64(data_str=base64_string)
                 if media_type is None:
                     raise ValueError("Unknown media type")
                 image_bytes = base64.b64decode(base64_string)
@@ -832,8 +875,8 @@ class Content:
         Keyword Args:
             arguments: The arguments for the requested function call. May be a JSON string, a mapping that can be
                 serialized as arguments, or None when no arguments were provided.
-            exception: Error information associated with the function call, if the provider returned the call in an
-                error state.
+            exception: Host-internal diagnostic information when the provider returned the call in an error state.
+                Treat it as potentially sensitive regardless of its source; serialization replaces it with a marker.
             informational_only: Whether the function call is present only for transcript fidelity and should not be
                 executed by Agent Framework function invocation.
             id: Stable Agent Framework identity for this occurrence. When omitted, the function invocation layer
@@ -882,7 +925,9 @@ class Content:
             result: The tool output.  Accepts a ``list[Content]`` (the canonical
                 form produced by :meth:`~FunctionTool.parse_result`), a plain
                 ``str``, or any other value (which is stringified).
-            exception: The exception message if the function call failed.
+            exception: Host-internal diagnostic information when the function call failed. Treat it as potentially
+                sensitive regardless of whether it came from a tool, middleware, provider, or caller. Serialization
+                replaces it with a fixed failure marker; use ``result`` for channel-visible error text.
             annotations: Optional annotations for the content.
             additional_properties: Optional additional properties.
             raw_representation: Optional raw representation from the provider.
@@ -1292,6 +1337,7 @@ class Content:
             and function_call.id is not None
             and id != function_call.id
             and function_call.additional_properties.get("server_label") is None
+            and not (additional_properties or {}).get("_replacement_approval_request", False)
         ):
             warnings.warn(
                 "Creating a local function_approval_request whose id differs from function_call.id uses the legacy "
@@ -1382,7 +1428,21 @@ class Content:
         )
 
     def to_dict(self, *, exclude_none: bool = True, exclude: set[str] | None = None) -> dict[str, Any]:
-        """Serialize the content to a dictionary."""
+        """Serialize content without host-internal exception diagnostics.
+
+        Exception diagnostics are replaced with a fixed marker regardless of their source because they may contain
+        sensitive information. The marker preserves failure status across persistence round-trips.
+        """
+        return self._to_dict(exclude_none=exclude_none, exclude=exclude, redact_exception=True)
+
+    def _to_dict(
+        self,
+        *,
+        exclude_none: bool,
+        exclude: set[str] | None = None,
+        redact_exception: bool,
+    ) -> dict[str, Any]:
+        """Serialize content with explicit control over internal exception redaction."""
         fields_to_capture = (
             "text",
             "protected_data",
@@ -1430,11 +1490,13 @@ class Content:
             value = getattr(self, field, None)
             if field in exclude:
                 continue
+            if field == "exception" and value is not None and redact_exception:
+                value = _SERIALIZED_EXCEPTION_MARKER
             if field == "informational_only" and (self.type != "function_call" or not value):
                 continue
             if exclude_none and value is None:
                 continue
-            result[field] = _serialize_value(value, exclude_none)
+            result[field] = _serialize_value(value, exclude_none, redact_exception=redact_exception)
 
         if "annotations" not in exclude and self.annotations is not None:
             result["annotations"] = [dict(annotation) for annotation in self.annotations]
@@ -1445,7 +1507,10 @@ class Content:
         """Check if two Content instances are equal by comparing their dict representations."""
         if not isinstance(other, Content):
             return False
-        return self.to_dict(exclude_none=False) == other.to_dict(exclude_none=False)
+        return self._to_dict(exclude_none=False, redact_exception=False) == other._to_dict(
+            exclude_none=False,
+            redact_exception=False,
+        )
 
     def __str__(self) -> str:
         """Return a string representation of the Content."""
@@ -1533,7 +1598,11 @@ class Content:
             )
         combined_id = self.id or other.id
 
-        # Concatenate text, handling None values
+        # Concatenate text, handling None values.
+        # Preserve empty string "" as distinct from None. Anthropic can emit a thinking
+        # block with thinking="" followed by a signature_delta; collapsing "" to None
+        # makes a real empty signed thinking block look like an orphan signature and
+        # gets dropped on replay (see microsoft/agent-framework#8168).
         self_text = self.text or ""
         other_text = other.text or ""
         if (
@@ -1542,7 +1611,7 @@ class Content:
             and ("reasoning_text" in self.additional_properties) != ("reasoning_text" in other.additional_properties)
         ):
             raise AdditionItemMismatch("Cannot merge reasoning text with a reasoning summary")
-        combined_text = self_text + other_text if (self_text or other_text) else None
+        combined_text = None if self.text is None and other.text is None else self_text + other_text
 
         # Handle protected_data replacement
         protected_data = other.protected_data if other.protected_data is not None else self.protected_data
@@ -1945,20 +2014,34 @@ def prepend_instructions_to_messages(
     if isinstance(instructions, str):
         instructions = [instructions]
 
-    # Skip instructions that are already present as leading messages with the
-    # same role and text.  This prevents duplicate system messages when
-    # instructions are injected by multiple layers (e.g. Agent + chat client).
-    deduplicated: list[str] = []
-    for idx, instr in enumerate(instructions):
-        if idx < len(messages) and messages[idx].role == role and messages[idx].text == instr:
-            continue
-        deduplicated.append(instr)
-
-    if not deduplicated:
+    # An empty instruction list (or all-empty strings) adds nothing; without
+    # this a caller that passes an unset options default of "" gets a
+    # contentless system message injected ahead of the real conversation.
+    instructions = [part for part in instructions if part.strip()]
+    if not instructions:
         return messages
 
-    instruction_messages = [Message(role, [instr]) for instr in deduplicated]
-    return [*instruction_messages, *messages]
+    # Skip instructions that are already present as the leading messages with the
+    # same role and text.  This prevents duplicate system messages when
+    # instructions are injected by multiple layers (e.g. Agent + chat client).
+    # Only a *prefix* of instructions can be deduplicated: once an instruction
+    # does not match, any remaining instructions must keep their relative order.
+    # Prepending the non-matching remainder in front of the matched messages
+    # would invert the instruction order (e.g. ["First", "Second"] with a
+    # leading "First" message becoming ["Second", "First", ...]), so the
+    # remainder is inserted right after the matched prefix instead.
+    matched_count = 0
+    for idx, instr in enumerate(instructions):
+        if idx < len(messages) and messages[idx].role == role and messages[idx].text == instr:
+            matched_count += 1
+        else:
+            break
+
+    if matched_count == len(instructions):
+        return messages
+
+    instruction_messages = [Message(role, [instr]) for instr in instructions[matched_count:]]
+    return [*messages[:matched_count], *instruction_messages, *messages[matched_count:]]
 
 
 # region ChatResponse
@@ -2002,12 +2085,8 @@ def _process_update(response: ChatResponse | AgentResponse, update: ChatResponse
                 logger.warning(f"Skipping unknown content type or invalid content: {exc}")
                 continue
         match content_type:
-            # mypy doesn't narrow type based on match/case, but we know these are FunctionCallContents
-            case "function_call" if message.contents and message.contents[-1].type == "function_call":
-                try:
-                    message.contents[-1] += content
-                except (AdditionItemMismatch, ContentError):
-                    message.contents.append(content)
+            case "function_call":
+                _merge_function_call_content(message, content)
             case "usage":
                 if response.usage_details is None:
                     response.usage_details = UsageDetails()
@@ -2036,6 +2115,8 @@ def _process_update(response: ChatResponse | AgentResponse, update: ChatResponse
             response.finish_reason = update.finish_reason
         if update.model is not None:
             response.model = update.model
+    if isinstance(response, AgentResponse) and isinstance(update, AgentResponseUpdate) and update.agent_id is not None:
+        response.agent_id = update.agent_id
     if (
         isinstance(response, AgentResponse)
         and isinstance(update, AgentResponseUpdate)
@@ -2043,6 +2124,47 @@ def _process_update(response: ChatResponse | AgentResponse, update: ChatResponse
     ):
         response.finish_reason = update.finish_reason
     response.continuation_token = update.continuation_token
+
+
+def _merge_function_call_content(message: Message, content: Content) -> None:
+    """Merge a streamed function_call chunk into the in-progress call it belongs to.
+
+    Providers can stream multiple tool calls in parallel, so the next function_call
+    chunk is not necessarily a continuation of the most recently appended one; a chunk
+    with a call_id is matched against existing contents by that id first. Chunks with
+    no call_id (continuation deltas some providers only stamp on the first chunk) fall
+    back to merging with the trailing function_call item, preserving prior behavior.
+    """
+    call_id = getattr(content, "call_id", None)
+    content_id = getattr(content, "id", None)
+    if call_id:
+        for index in range(len(message.contents) - 1, -1, -1):
+            existing = message.contents[index]
+            if existing.type != "function_call" or getattr(existing, "call_id", None) != call_id:
+                continue
+            if existing.id is not None and content_id is None:
+                # existing already has a stable occurrence id from its client (e.g. the
+                # Chat Completions client stamps one on every chunk); an untagged chunk
+                # that merely happens to share its call_id isn't proof it's a continuation
+                # of that specific occurrence - a provider could reuse a call_id for a
+                # later, unrelated call. Keep scanning rather than merge on a hunch.
+                continue
+            try:
+                message.contents[index] = existing + content
+            except (AdditionItemMismatch, ContentError):
+                break
+            return
+        # A tagged chunk that matches no in-progress call is a new call, not a
+        # continuation - an untagged trailing item would silently absorb it otherwise.
+        message.contents.append(content)
+        return
+    if message.contents and message.contents[-1].type == "function_call":
+        try:
+            message.contents[-1] += content
+            return
+        except (AdditionItemMismatch, ContentError):
+            pass
+    message.contents.append(content)
 
 
 def _coalesce_text_content(contents: list[Content], type_str: Literal["text", "text_reasoning"]) -> None:
@@ -2054,6 +2176,11 @@ def _coalesce_text_content(contents: list[Content], type_str: Literal["text", "t
     for content in contents:
         if content.type == type_str:
             if first_new_content is None:
+                first_new_content = deepcopy(content)
+            elif type_str == "text" and first_new_content.additional_properties.get(
+                _MODEL_OUTPUT_KIND_KEY
+            ) != content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY):
+                coalesced_contents.append(first_new_content)
                 first_new_content = deepcopy(content)
             else:
                 try:
@@ -2254,7 +2381,18 @@ def _last_non_empty_assistant_message_text(messages: Sequence[Message]) -> str:
     for message in reversed(messages):
         if message.role != "assistant":
             continue
-        text = "".join((content.text or "") for content in message.contents if content.type == "text")
+        if any(
+            content.type == "text"
+            and content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY) == _MODEL_OUTPUT_REFUSAL
+            for content in message.contents
+        ):
+            return ""
+        text = "".join(
+            (content.text or "")
+            for content in message.contents
+            if content.type == "text"
+            and content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY) != _MODEL_OUTPUT_REFUSAL
+        )
         if text.strip():
             return text
     return ""
@@ -3333,8 +3471,8 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
             if hasattr(self._stream_source, "__aiter__"):
                 self._stream = self._stream_source  # type: ignore[assignment]
             else:
-                if not iscoroutine(self._stream_source):
-                    self._stream = self._stream_source  # type: ignore[assignment]
+                if not isawaitable(self._stream_source):
+                    self._stream = self._stream_source
                 else:
                     self._stream = await self._stream_source
             if isinstance(self._stream, ResponseStream) and self._wrap_inner:
@@ -3395,6 +3533,24 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
                 if isawaitable(update):
                     update = await update
             return await self._record_update(update)
+
+    async def close(self) -> None:
+        """Close the active iterator and run cleanup hooks.
+
+        This method is idempotent and also closes nested ``ResponseStream`` wrappers.
+        """
+        try:
+            iterator: AsyncIterator[UpdateT] | None = self._iterator
+            if iterator is not None:
+                if isinstance(iterator, ResponseStream):
+                    await cast(ResponseStream[UpdateT, Any], iterator).close()
+                else:
+                    close = getattr(iterator, "aclose", None)
+                    if close is not None:
+                        await close()
+        finally:
+            self._consumed = True
+            await self._run_cleanup_hooks()
 
     async def _resolve_stream_with_pull_contexts(self) -> AsyncIterable[UpdateT]:
         """Resolve the underlying stream while activating any registered pull context managers.

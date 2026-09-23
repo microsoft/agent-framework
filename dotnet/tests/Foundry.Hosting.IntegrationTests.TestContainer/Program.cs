@@ -3,6 +3,7 @@
 using System.ComponentModel;
 using Azure;
 using Azure.AI.Projects;
+using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Azure.Search.Documents;
 using Azure.Search.Documents.Models;
@@ -43,6 +44,8 @@ AIAgent agent = scenario switch
     "custom-storage" => CreateCustomStorageAgent(projectClient, deployment),
     "memory" => await CreateMemoryAgentAsync(projectClient, deployment).ConfigureAwait(false),
     "azure-search-rag" => CreateAzureSearchRagAgent(projectClient, deployment),
+    "azure-search-tool-annotations" => CreateAzureSearchToolAnnotationsAgent(projectClient, deployment),
+    "web-search-annotations" => CreateWebSearchAnnotationsAgent(projectClient, deployment),
     "session-files" => CreateSessionFilesAgent(projectClient, deployment),
     "agent-skills" => CreateAgentSkillsAgent(projectClient, deployment),
     "user-identity" => CreateUserIdentityAgent(projectClient, deployment),
@@ -77,14 +80,12 @@ builder.Services.AddFoundryResponses(agent, configure: options =>
     options.SteerableConversations = scenario == "steerable-long-running";
 });
 
-// toolbox-oauth-consent scenario: pre-register a Foundry toolbox whose tool source is fronted by a
-// per-user OAuth connection. IT_TOOLBOX_NAME names that toolbox (the fixture sets it). With the
-// startup-deferral fix the container stays routable even though the toolbox cannot enumerate without
-// a consented user, and the first user request surfaces an oauth_consent_request.
-var consentToolboxName = Environment.GetEnvironmentVariable("IT_TOOLBOX_NAME");
-if (!string.IsNullOrEmpty(consentToolboxName))
+// Scenarios that consume a project toolbox set IT_TOOLBOX_NAME through their fixture.
+// The hosting bridge resolves the toolbox through its MCP endpoint and adds its tools to every request.
+var toolboxName = Environment.GetEnvironmentVariable("IT_TOOLBOX_NAME");
+if (!string.IsNullOrEmpty(toolboxName))
 {
-    builder.Services.AddFoundryToolboxes(credential, consentToolboxName);
+    builder.Services.AddFoundryToolboxes(credential, toolboxName);
 }
 
 var app = builder.Build();
@@ -204,6 +205,59 @@ static AIAgent CreateAzureSearchRagAgent(AIProjectClient client, string deployme
                            "Answer questions using the provided context and cite the source document when available.",
         },
         AIContextProviders = [new TextSearchProvider(CreateAzureSearchAdapter(searchClient), options)]
+    });
+}
+
+static AIAgent CreateWebSearchAnnotationsAgent(AIProjectClient client, string deployment) =>
+    client.AsAIAgent(new ChatClientAgentOptions
+    {
+        Name = "web-search-annotations-agent",
+        Description = "Hosted web search annotation test agent.",
+        ChatOptions = new ChatOptions
+        {
+            ModelId = deployment,
+            Instructions = """
+                Answer with current information from the web search results.
+                Include citations for the sources used in the answer.
+                """,
+            Tools = [new HostedWebSearchTool()],
+            ToolMode = ChatToolMode.RequireAny,
+        },
+    });
+
+static AIAgent CreateAzureSearchToolAnnotationsAgent(AIProjectClient client, string deployment)
+{
+    var connectionId = Environment.GetEnvironmentVariable("AZURE_SEARCH_CONNECTION_ID")
+        ?? throw new InvalidOperationException(
+            "AZURE_SEARCH_CONNECTION_ID is not set for IT_SCENARIO=azure-search-tool-annotations.");
+    var indexName = Environment.GetEnvironmentVariable("AZURE_SEARCH_INDEX_NAME")
+        ?? throw new InvalidOperationException(
+            "AZURE_SEARCH_INDEX_NAME is not set for IT_SCENARIO=azure-search-tool-annotations.");
+    var searchTool = FoundryAITool.CreateAzureAISearchTool(new AzureAISearchToolOptions(
+    [
+        new AzureAISearchToolIndex
+        {
+            ProjectConnectionId = connectionId,
+            IndexName = indexName,
+            QueryType = AzureAISearchQueryType.Simple,
+            TopK = 3,
+        }
+    ]));
+
+    return client.AsAIAgent(new ChatClientAgentOptions
+    {
+        Name = "azure-search-tool-annotations-agent",
+        Description = "Azure AI Search hosted tool annotation test agent.",
+        ChatOptions = new ChatOptions
+        {
+            ModelId = deployment,
+            Instructions = """
+                Answer only from the Azure AI Search results.
+                Include citations for the sources used in the answer.
+                """,
+            Tools = [searchTool],
+            ToolMode = ChatToolMode.RequireAny,
+        },
     });
 }
 

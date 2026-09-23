@@ -52,6 +52,42 @@ if (builder.Environment.IsDevelopment())
 app.Run();
 ```
 
+## Function approvals
+
+Function approval requires an agent session store. The approval request and the user's
+decision arrive in separate HTTP requests. The store preserves the server-recorded
+request so the decision can be matched to the exact function call shown in DevUI,
+rather than trusting function details supplied by the caller.
+
+Configure a session store on every agent that exposes an
+`ApprovalRequiredAIFunction`:
+
+```csharp
+builder.AddAIAgent("assistant", "You are a helpful assistant.")
+    .WithInMemorySessionStore();
+```
+
+`WithInMemorySessionStore()` preserves approvals between requests but loses them
+when the application restarts. Use `WithSessionStore(...)` with persistent storage
+when approvals must survive restarts or move between service instances.
+
+If a client sends `function_approval_response` for an agent without a configured
+session store, the Responses endpoint returns HTTP 400:
+
+```text
+Approval-required function calling is not supported because no AgentSessionStore is configured.
+```
+
+The endpoint also returns HTTP 400 when `request_id` is unknown or belongs to a
+different stored session. This prevents an approval issued in one conversation
+from authorizing a function call in another.
+
+For a streaming response, wait for its terminal event before sending the
+`function_approval_response`. The server persists the approval checkpoint before
+publishing `response.completed`. A decision sent while the originating stream is
+still in progress is rejected with HTTP 400 because that approval is not yet
+available for continuation.
+
 ## Security
 
 DevUI exposes `/v1/entities` and `/v1/entities/{id}/info`, which return agent metadata including the system prompt (`ChatClientAgent.Instructions`). To prevent accidental disclosure, the DevUI route group is wrapped in a small endpoint filter that:

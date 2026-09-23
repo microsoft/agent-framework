@@ -43,8 +43,8 @@ public class FileAccessProviderTests
         // Arrange
         var tools = await CreateToolsAsync();
 
-        // Assert — 7 tools: Read, Ls, Grep, Write, Delete, Replace, ReplaceLines
-        Assert.Equal(7, tools.Count());
+        // Assert — 8 tools: Read, ReadLines, Ls, Grep, Write, Delete, Replace, ReplaceLines
+        Assert.Equal(8, tools.Count());
     }
 
     #endregion
@@ -58,7 +58,7 @@ public class FileAccessProviderTests
         var tools = await CreateToolsAsync();
 
         // Assert — every tool is wrapped so that it always requires approval.
-        Assert.Equal(7, tools.Count());
+        Assert.Equal(8, tools.Count());
         Assert.All(tools, tool => Assert.IsType<ApprovalRequiredAIFunction>(tool));
     }
 
@@ -70,6 +70,7 @@ public class FileAccessProviderTests
 
         // Assert — read-only tools are bare functions; store-modifying tools still require approval.
         AssertRequiresApproval(tools, FileAccessProvider.ReadFileToolName, expected: false);
+        AssertRequiresApproval(tools, FileAccessProvider.ReadLinesToolName, expected: false);
         AssertRequiresApproval(tools, FileAccessProvider.LsToolName, expected: false);
         AssertRequiresApproval(tools, FileAccessProvider.GrepToolName, expected: false);
         AssertRequiresApproval(tools, FileAccessProvider.WriteToolName, expected: true);
@@ -86,6 +87,7 @@ public class FileAccessProviderTests
 
         // Assert — store-modifying tools are bare functions; read-only tools still require approval.
         AssertRequiresApproval(tools, FileAccessProvider.ReadFileToolName, expected: true);
+        AssertRequiresApproval(tools, FileAccessProvider.ReadLinesToolName, expected: true);
         AssertRequiresApproval(tools, FileAccessProvider.LsToolName, expected: true);
         AssertRequiresApproval(tools, FileAccessProvider.GrepToolName, expected: true);
         AssertRequiresApproval(tools, FileAccessProvider.WriteToolName, expected: false);
@@ -105,7 +107,7 @@ public class FileAccessProviderTests
         })).ToList();
 
         // Assert — no tool requires approval.
-        Assert.Equal(7, tools.Count);
+        Assert.Equal(8, tools.Count);
         Assert.DoesNotContain(tools, tool => tool is ApprovalRequiredAIFunction);
     }
 
@@ -117,6 +119,7 @@ public class FileAccessProviderTests
 
     [Theory]
     [InlineData(FileAccessProvider.ReadFileToolName, true)]
+    [InlineData(FileAccessProvider.ReadLinesToolName, true)]
     [InlineData(FileAccessProvider.LsToolName, true)]
     [InlineData(FileAccessProvider.GrepToolName, true)]
     [InlineData(FileAccessProvider.WriteToolName, false)]
@@ -138,6 +141,7 @@ public class FileAccessProviderTests
 
     [Theory]
     [InlineData(FileAccessProvider.ReadFileToolName, true)]
+    [InlineData(FileAccessProvider.ReadLinesToolName, true)]
     [InlineData(FileAccessProvider.LsToolName, true)]
     [InlineData(FileAccessProvider.GrepToolName, true)]
     [InlineData(FileAccessProvider.WriteToolName, true)]
@@ -371,6 +375,174 @@ public class FileAccessProviderTests
         // Assert
         var text = Assert.IsType<JsonElement>(result).GetString();
         Assert.Contains("not found", text);
+    }
+
+    #endregion
+
+    #region ReadLines Tests
+
+    [Fact]
+    public async Task ReadLines_ReturnsNumberedInclusiveRangeAsync()
+    {
+        // Arrange
+        var store = new InMemoryAgentFileStore();
+        await store.WriteAsync("notes.md", "one\ntwo\nthree\nfour\n");
+        var tools = await CreateToolsAsync(store);
+        var readLines = GetTool(tools, "file_access_read_lines");
+
+        // Act
+        var result = await InvokeToolAsync(readLines, new AIFunctionArguments
+        {
+            ["fileName"] = "notes.md",
+            ["startLine"] = 2,
+            ["endLine"] = 3,
+        });
+
+        // Assert — each line keeps its terminator, which doubles as the row separator.
+        var text = Assert.IsType<JsonElement>(result).GetString();
+        Assert.Equal("2\ttwo\n3\tthree\n", text);
+    }
+
+    [Fact]
+    public async Task ReadLines_OmittedEndLine_ReadsToEndOfFileAsync()
+    {
+        // Arrange
+        var store = new InMemoryAgentFileStore();
+        await store.WriteAsync("notes.md", "one\ntwo\nthree");
+        var tools = await CreateToolsAsync(store);
+        var readLines = GetTool(tools, "file_access_read_lines");
+
+        // Act
+        var result = await InvokeToolAsync(readLines, new AIFunctionArguments
+        {
+            ["fileName"] = "notes.md",
+            ["startLine"] = 2,
+        });
+
+        // Assert — the last line has no terminator, so the output ends without one.
+        var text = Assert.IsType<JsonElement>(result).GetString();
+        Assert.Equal("2\ttwo\n3\tthree", text);
+    }
+
+    [Fact]
+    public async Task ReadLines_EndLinePastLastLine_IsClampedAsync()
+    {
+        // Arrange
+        var store = new InMemoryAgentFileStore();
+        await store.WriteAsync("notes.md", "one\ntwo\n");
+        var tools = await CreateToolsAsync(store);
+        var readLines = GetTool(tools, "file_access_read_lines");
+
+        // Act
+        var result = await InvokeToolAsync(readLines, new AIFunctionArguments
+        {
+            ["fileName"] = "notes.md",
+            ["startLine"] = 1,
+            ["endLine"] = 99,
+        });
+
+        // Assert — clamping, not an error.
+        var text = Assert.IsType<JsonElement>(result).GetString();
+        Assert.Equal("1\tone\n2\ttwo\n", text);
+    }
+
+    [Fact]
+    public async Task ReadLines_PreservesCrlfTerminatorsAsync()
+    {
+        // Arrange
+        var store = new InMemoryAgentFileStore();
+        await store.WriteAsync("notes.md", "alpha\r\nbeta\r\n");
+        var tools = await CreateToolsAsync(store);
+        var readLines = GetTool(tools, "file_access_read_lines");
+
+        // Act
+        var result = await InvokeToolAsync(readLines, new AIFunctionArguments
+        {
+            ["fileName"] = "notes.md",
+            ["startLine"] = 1,
+            ["endLine"] = 1,
+        });
+
+        // Assert — the line's own terminator is reported, so no detection step is needed.
+        var text = Assert.IsType<JsonElement>(result).GetString();
+        Assert.Equal("1\talpha\r\n", text);
+    }
+
+    [Fact]
+    public async Task ReadLines_NonExistent_ReturnsNotFoundMessageAsync()
+    {
+        // Arrange
+        var tools = await CreateToolsAsync();
+        var readLines = GetTool(tools, "file_access_read_lines");
+
+        // Act
+        var result = await InvokeToolAsync(readLines, new AIFunctionArguments
+        {
+            ["fileName"] = "nonexistent.md",
+            ["startLine"] = 1,
+        });
+
+        // Assert — same shape as file_access_read.
+        var text = Assert.IsType<JsonElement>(result).GetString();
+        Assert.Contains("not found", text);
+    }
+
+    [Fact]
+    public async Task ReadLines_StartLinePastLastLine_ThrowsAsync()
+    {
+        // Arrange
+        var store = new InMemoryAgentFileStore();
+        await store.WriteAsync("notes.md", "one\ntwo\n");
+        var tools = await CreateToolsAsync(store);
+        var readLines = GetTool(tools, "file_access_read_lines");
+
+        // Act & Assert — exception bubbles, as it does for replace_lines.
+        await Assert.ThrowsAsync<ArgumentException>(async () =>
+            await InvokeToolAsync(readLines, new AIFunctionArguments
+            {
+                ["fileName"] = "notes.md",
+                ["startLine"] = 3,
+            }));
+    }
+
+    [Fact]
+    public async Task ReadLines_RoundTripsAGrepMatchIntoReplaceLinesAsync()
+    {
+        // Arrange — a CRLF file with a trailing newline, the case where the terminator used to be lost.
+        var store = new InMemoryAgentFileStore();
+        await store.WriteAsync("notes.md", "alpha\r\nbeta needle\r\ngamma\r\n");
+        var tools = await CreateToolsAsync(store);
+
+        // Act — grep for the line, read that line number back, then feed the result to replace_lines.
+        var grepResult = await InvokeToolAsync(GetTool(tools, "file_access_grep"), new AIFunctionArguments
+        {
+            ["regexPattern"] = "needle",
+        });
+        JsonElement match = Assert.IsType<JsonElement>(grepResult).EnumerateArray().Single()
+            .GetProperty("matchingLines").EnumerateArray().Single();
+        int lineNumber = match.GetProperty("lineNumber").GetInt32();
+
+        var readResult = await InvokeToolAsync(GetTool(tools, "file_access_read_lines"), new AIFunctionArguments
+        {
+            ["fileName"] = "notes.md",
+            ["startLine"] = lineNumber,
+            ["endLine"] = lineNumber,
+        });
+        string shown = Assert.IsType<JsonElement>(readResult).GetString()!;
+
+        // Everything after the number and tab is the line verbatim, so it is already a valid new_line.
+        string line = shown.Substring(shown.IndexOf('\t') + 1);
+        await InvokeToolAsync(GetTool(tools, "file_access_replace_lines"), new AIFunctionArguments
+        {
+            ["fileName"] = "notes.md",
+            ["edits"] = new List<FileLineEdit> { new() { LineNumber = lineNumber, NewLine = line.ToUpperInvariant() } },
+        });
+
+        // Assert — grep, read_lines and replace_lines agree on line 2, and the CRLF survives.
+        Assert.Equal(2, lineNumber);
+        Assert.Equal("beta needle\r\n", match.GetProperty("line").GetString());
+        Assert.Equal("2\tbeta needle\r\n", shown);
+        Assert.Equal("alpha\r\nBETA NEEDLE\r\ngamma\r\n", await store.ReadAsync("notes.md"));
     }
 
     #endregion
@@ -874,8 +1046,9 @@ public class FileAccessProviderTests
         var names = result.Tools!.OfType<AIFunction>().Select(t => t.Name).ToList();
 
         // Assert — only read-only tools are exposed.
-        Assert.Equal(3, names.Count);
+        Assert.Equal(4, names.Count);
         Assert.Contains(FileAccessProvider.ReadFileToolName, names);
+        Assert.Contains(FileAccessProvider.ReadLinesToolName, names);
         Assert.Contains(FileAccessProvider.LsToolName, names);
         Assert.Contains(FileAccessProvider.GrepToolName, names);
         Assert.DoesNotContain(FileAccessProvider.WriteToolName, names);

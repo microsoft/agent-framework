@@ -24,6 +24,8 @@ from .._types import (
     AgentResponseUpdate,
     AgentRunInputs,
     Content,
+    FinishReason,
+    FinishReasonLiteral,
     Message,
     ResponseStream,
     UsageDetails,
@@ -45,7 +47,7 @@ else:
     from typing_extensions import TypedDict  # pragma: no cover
 
 if TYPE_CHECKING:
-    from ._workflow import Workflow
+    from ._workflow import Workflow, WorkflowInvocationKwargs
 
 logger = logging.getLogger(__name__)
 
@@ -111,8 +113,14 @@ class WorkflowAgent(BaseAgent):
             id: Unique identifier for the agent. If None, will be generated.
             name: Optional name for the agent.
             description: Optional description of the agent.
-            context_providers: Optional sequence of context providers for the agent.
-            **kwargs: Additional keyword arguments passed to BaseAgent.
+            context_providers: Optional sequence of context providers. Provider lifecycle hooks
+                run, and provider-contributed messages are passed to the workflow. Provider-
+                contributed instructions, tools, and chat or function middleware are not
+                propagated to executors; configure them on the agents or clients within the
+                workflow instead.
+            **kwargs: Additional keyword arguments passed to BaseAgent. Middleware stored by
+                BaseAgent is not executed by WorkflowAgent; configure middleware on the agents
+                or clients within the workflow instead.
 
         Note:
             Only output events (type='output') and request_info events (type='request_info') from
@@ -157,9 +165,12 @@ class WorkflowAgent(BaseAgent):
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
-        function_invocation_kwargs: Mapping[str, Any] | None = None,
-        client_kwargs: Mapping[str, Any] | None = None,
-    ) -> Awaitable[AgentResponse[Any]]: ...
+        function_invocation_kwargs: WorkflowInvocationKwargs
+        | Mapping[str, Mapping[str, Any]]
+        | Mapping[str, Any]
+        | None = None,
+        client_kwargs: WorkflowInvocationKwargs | Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
+    ) -> Awaitable[AgentResponse]: ...
 
     @overload
     def run(
@@ -171,9 +182,12 @@ class WorkflowAgent(BaseAgent):
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
-        function_invocation_kwargs: Mapping[str, Any] | None = None,
-        client_kwargs: Mapping[str, Any] | None = None,
-    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+        function_invocation_kwargs: WorkflowInvocationKwargs
+        | Mapping[str, Mapping[str, Any]]
+        | Mapping[str, Any]
+        | None = None,
+        client_kwargs: WorkflowInvocationKwargs | Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse]: ...
 
     def run(
         self,
@@ -184,9 +198,12 @@ class WorkflowAgent(BaseAgent):
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
-        function_invocation_kwargs: Mapping[str, Any] | None = None,
-        client_kwargs: Mapping[str, Any] | None = None,
-    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]] | Awaitable[AgentResponse[Any]]:
+        function_invocation_kwargs: WorkflowInvocationKwargs
+        | Mapping[str, Mapping[str, Any]]
+        | Mapping[str, Any]
+        | None = None,
+        client_kwargs: WorkflowInvocationKwargs | Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse] | Awaitable[AgentResponse]:
         """Get a response from the workflow agent.
 
         Args:
@@ -254,8 +271,11 @@ class WorkflowAgent(BaseAgent):
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
-        function_invocation_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
-        client_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
+        function_invocation_kwargs: WorkflowInvocationKwargs
+        | Mapping[str, Mapping[str, Any]]
+        | Mapping[str, Any]
+        | None = None,
+        client_kwargs: WorkflowInvocationKwargs | Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
     ) -> AgentResponse:
         """Internal implementation of non-streaming execution.
 
@@ -337,8 +357,11 @@ class WorkflowAgent(BaseAgent):
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
-        function_invocation_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
-        client_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
+        function_invocation_kwargs: WorkflowInvocationKwargs
+        | Mapping[str, Mapping[str, Any]]
+        | Mapping[str, Any]
+        | None = None,
+        client_kwargs: WorkflowInvocationKwargs | Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
     ) -> AsyncIterable[AgentResponseUpdate]:
         """Internal implementation of streaming execution.
 
@@ -407,8 +430,7 @@ class WorkflowAgent(BaseAgent):
 
         # Build the final response from collected updates so after_run providers
         # (e.g. InMemoryHistoryProvider) can persist the response messages.
-        if all_updates:
-            session_context._response = AgentResponse.from_updates(all_updates)  # type: ignore[assignment]
+        session_context._response = AgentResponse.from_updates(all_updates)  # type: ignore[assignment]
 
         await self._run_after_providers(session=provider_session, context=session_context)
 
@@ -419,8 +441,11 @@ class WorkflowAgent(BaseAgent):
         checkpoint_storage: CheckpointStorage | None,
         streaming: bool,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
-        function_invocation_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
-        client_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
+        function_invocation_kwargs: WorkflowInvocationKwargs
+        | Mapping[str, Mapping[str, Any]]
+        | Mapping[str, Any]
+        | None = None,
+        client_kwargs: WorkflowInvocationKwargs | Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
     ) -> AsyncIterable[WorkflowEvent]:
         """Core implementation that yields workflow events for both streaming and non-streaming modes.
 
@@ -636,9 +661,17 @@ class WorkflowAgent(BaseAgent):
                         contents=list(data.contents),
                         role=data.role,
                         author_name=data.author_name or executor_id,
+                        agent_id=data.agent_id,
                         response_id=data.response_id,
                         message_id=data.message_id,
                         created_at=data.created_at,
+                        # The attribute is typed wider than the constructor accepts (custom
+                        # connectors may set any string); forward the value unchanged.
+                        finish_reason=cast(FinishReasonLiteral | FinishReason | None, data.finish_reason),
+                        continuation_token=data.continuation_token,
+                        additional_properties=dict(data.additional_properties)
+                        if data.additional_properties is not None
+                        else None,
                         raw_representation=data.raw_representation,
                     )
                 ]
@@ -658,6 +691,11 @@ class WorkflowAgent(BaseAgent):
                             raw_representation=msg,
                         )
                     )
+                if updates:
+                    updates[-1].agent_id = data.agent_id
+                    updates[-1].finish_reason = data.finish_reason
+                    updates[-1].continuation_token = data.continuation_token
+                    updates[-1].additional_properties = dict(data.additional_properties)
                 return updates
             if isinstance(data, Message):
                 return [

@@ -322,7 +322,7 @@ public sealed class HostedOutboundUserAgentTests : IAsyncDisposable
 
         var pipeline = ClientPipeline.Create(
             new ClientPipelineOptions { Transport = new HttpClientPipelineTransport(httpClient) },
-            perCallPolicies: [new SetUserAgentPolicy("foundry-hosting/agent-framework-dotnet/0.0.1 MEAI/10.5.1"), HostedAgentUserAgentPolicy.Instance],
+            perCallPolicies: [new SetUserAgentPolicy("foundry-hosting/agent-framework-dotnet/0.0.1 MEAI/10.9.0"), HostedAgentUserAgentPolicy.Instance],
             perTryPolicies: default,
             beforeTransportPolicies: default);
 
@@ -342,7 +342,7 @@ public sealed class HostedOutboundUserAgentTests : IAsyncDisposable
         Assert.True(firstCombined >= 0);
         var secondCombined = handler.LastUserAgent.IndexOf("foundry-hosting/agent-framework-dotnet/", firstCombined + 1, StringComparison.Ordinal);
         Assert.Equal(-1, secondCombined);
-        Assert.Contains(" MEAI/10.5.1", handler.LastUserAgent, StringComparison.Ordinal);
+        Assert.Contains(" MEAI/10.9.0", handler.LastUserAgent, StringComparison.Ordinal);
 
         // And the version that survives must be the runtime supplement value's version, not 0.0.1.
         Assert.DoesNotContain("foundry-hosting/agent-framework-dotnet/0.0.1", handler.LastUserAgent, StringComparison.Ordinal);

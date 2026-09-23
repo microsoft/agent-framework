@@ -17,10 +17,11 @@ jobs:
   python-tests:
     name: Python Tests
     runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.python-version == '3.15' }}
     strategy:
       fail-fast: true
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
         # todo: add macos-latest when problems are resolved
         os: [ubuntu-latest, windows-latest]
     env:
@@ -50,7 +51,7 @@ jobs:
       # Surface failing tests
       - name: Surface failing tests
         if: always()
-        uses: pmeier/pytest-results-action@20b595761ba9bf89e115e875f8bc863f913bc8ad # v0.7.2
+        uses: pmeier/pytest-results-action@fdc7f18d9934e38aca411ca9557e6577bd25ca9c # v0.9.0
         with:
           path: ./python/pytest.xml
           summary: true

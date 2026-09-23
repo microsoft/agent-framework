@@ -21,10 +21,8 @@ from agent_framework import (
     load_settings,
 )
 from agent_framework._telemetry import IS_TELEMETRY_ENABLED, get_user_agent, mark_feature_used
-from azure.ai.projects.aio import AIProjectClient
 from azure.core.credentials import TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
-from openai.types.responses import ResponseInputItemParam
 
 from ._feature_usage import FeatureIndex, create_feature_usage_policy
 
@@ -35,6 +33,8 @@ else:
 
 if TYPE_CHECKING:
     from agent_framework import SupportsAgentRun
+    from azure.ai.projects.aio import AIProjectClient
+    from openai.types.responses import ResponseInputItemParam
 
 
 logger = logging.getLogger(__name__)
@@ -110,6 +110,8 @@ class FoundryMemoryProvider(ContextProvider):
         )
 
         if project_client is None:
+            from azure.ai.projects.aio import AIProjectClient
+
             resolved_endpoint = foundry_settings.get("project_endpoint")
             if not resolved_endpoint:
                 raise ValueError(

@@ -362,6 +362,7 @@ export type StructuredEvent =
   | ResponseErrorEvent
   | ResponseFunctionApprovalRequestedEvent
   | ResponseFunctionApprovalRespondedEvent
+  | ResponseRefusalDeltaEvent
   | TurnSeparatorEvent;
 
 // Extended stream event that includes our structured events
@@ -376,6 +377,16 @@ export interface ResponseTextDeltaEvent extends ResponseStreamEvent {
   content_index: number;
   sequence_number: number;
   logprobs: Record<string, unknown>[];
+  metadata?: Record<string, unknown>;
+}
+
+export interface ResponseRefusalDeltaEvent extends ResponseStreamEvent {
+  type: "response.refusal.delta";
+  delta: string;
+  item_id: string;
+  output_index: number;
+  content_index: number;
+  sequence_number: number;
   metadata?: Record<string, unknown>;
 }
 
@@ -395,7 +406,7 @@ export interface OpenAIResponse {
 export interface ResponseOutputMessage {
   type: "message";
   role: "assistant";
-  content: ResponseOutputText[];
+  content: MessageContent[];
   id: string;
   status: "completed" | "failed" | "in_progress";
   metadata?: Record<string, unknown>;
@@ -405,6 +416,11 @@ export interface ResponseOutputText {
   type: "output_text";
   text: string;
   annotations: Record<string, unknown>[];
+}
+
+export interface ResponseOutputRefusal {
+  type: "refusal";
+  refusal: string;
 }
 
 // Note: ResponseUsage is defined at the top of this file
@@ -494,6 +510,11 @@ export interface MessageOutputTextContent {
   logprobs?: Logprob[];
 }
 
+export interface MessageRefusalContent {
+  type: "refusal";
+  refusal: string;
+}
+
 export interface MessageInputImage {
   type: "input_image";
   image_url: string;
@@ -566,6 +587,7 @@ export type MessageContent =
   | MessageTextContent
   | MessageInputTextContent
   | MessageOutputTextContent
+  | MessageRefusalContent
   | MessageInputImage
   | MessageInputFile
   | MessageOutputImage

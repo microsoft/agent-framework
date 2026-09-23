@@ -2,8 +2,11 @@
 
 """Unit tests for the State class superstep caching behavior."""
 
+from unittest.mock import MagicMock
+
 import pytest
 
+from agent_framework import SecretString
 from agent_framework._workflows._state import State
 
 
@@ -14,6 +17,14 @@ class TestStateBasicOperations:
         state = State()
         state.set("key", "value")
         assert state.get("key") == "value"
+
+    def test_set_and_get_secret_string(self) -> None:
+        state = State()
+        secret = SecretString("my-secret")
+
+        state.set("key", secret)
+
+        assert state.get("key") is secret
 
     def test_set_does_not_alias_caller_value(self) -> None:
         state = State()
@@ -58,6 +69,41 @@ class TestStateBasicOperations:
         state = State()
         assert state.get("missing") is None
         assert state.get("missing", "default") == "default"
+
+    def test_validation_uses_pending_then_committed_values(self) -> None:
+        state = State()
+        state.set("key", {"value": "committed"})
+        state.commit()
+        validator = MagicMock()
+
+        state._validate("key", validator)
+        validator.assert_called_once_with({"value": "committed"})
+        validator.reset_mock()
+        state.set("key", {"value": "pending"})
+        state._validate("key", validator)
+        validator.assert_called_once_with({"value": "pending"})
+
+    def test_validation_skips_missing_and_pending_deleted_values(self) -> None:
+        state = State()
+        state.set("key", "value")
+        state.commit()
+        state.delete("key")
+        validator = MagicMock()
+
+        state._validate("missing", validator)
+        state._validate("key", validator)
+
+        validator.assert_not_called()
+
+    def test_validation_failure_leaves_state_unchanged(self) -> None:
+        state = State()
+        state.set("key", {"value": "original"})
+        validator = MagicMock(side_effect=ValueError("invalid"))
+
+        with pytest.raises(ValueError, match="invalid"):
+            state._validate("key", validator)
+
+        assert state.get("key") == {"value": "original"}
 
     def test_has_returns_true_for_existing_key(self) -> None:
         state = State()
