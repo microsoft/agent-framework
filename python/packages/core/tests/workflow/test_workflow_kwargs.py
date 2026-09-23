@@ -1421,6 +1421,33 @@ async def test_transparent_subworkflow_preserves_only_its_own_parent_key(kwargs_
 
 
 @pytest.mark.parametrize("kwargs_channel", ["function_invocation_kwargs", "client_kwargs"])
+async def test_transparent_subworkflow_preserves_agent_name_alias(kwargs_channel: str) -> None:
+    """A wrapper key routes through a unique child agent-name alias."""
+    from agent_framework import AgentExecutor
+    from agent_framework._workflows._workflow_executor import WorkflowExecutor
+
+    wrapped_agent = _KwargsCapturingAgent(name="wrapped")
+    child = SequentialBuilder(
+        participants=[
+            AgentExecutor(wrapped_agent, id="wrapped_executor"),
+        ]
+    ).build()
+    parent = SequentialBuilder(
+        participants=[
+            WorkflowExecutor(child, id="wrapped"),
+        ]
+    ).build()
+    invocation_kwargs = {"wrapped": {"wrapper_only": True}}
+
+    if kwargs_channel == "function_invocation_kwargs":
+        await parent.run("test", function_invocation_kwargs=invocation_kwargs)
+    else:
+        await parent.run("test", client_kwargs=invocation_kwargs)
+
+    assert wrapped_agent.captured_kwargs[0].get(kwargs_channel) == {"wrapper_only": True}
+
+
+@pytest.mark.parametrize("kwargs_channel", ["function_invocation_kwargs", "client_kwargs"])
 async def test_legacy_mixed_kwargs_route_through_subworkflow(kwargs_channel: str) -> None:
     """A child graph reclassifies preserved legacy mixed input against its executor IDs."""
     from agent_framework._workflows._workflow_executor import WorkflowExecutor

@@ -468,6 +468,15 @@ class WorkflowExecutor(Executor):
         """Return parent-routed keys that must not be reinterpreted by the child workflow."""
         if self.id in self.workflow.executors:
             return routed_keys - {self.id}
+        from ._agent_executor import AgentExecutor
+
+        matching_agent_names = [
+            executor
+            for executor in self.workflow.executors.values()
+            if isinstance(executor, AgentExecutor) and executor.agent.name == self.id
+        ]
+        if len(matching_agent_names) == 1:
+            return routed_keys - {self.id}
         return routed_keys
 
     @handler
