@@ -308,6 +308,55 @@ async def test_in_memory_store_normalizes_paths() -> None:
             await store.write(bad, "boom")
 
 
+async def test_in_memory_store_rejects_file_ancestor_collision() -> None:
+    """Writing a file whose ancestor is already a file must raise NotADirectoryError."""
+    store = InMemoryAgentFileStore()
+    await store.write("Reports", "file content")
+
+    with pytest.raises(NotADirectoryError):
+        await store.write("Reports/q1.txt", "nested content")
+
+    with pytest.raises(NotADirectoryError):
+        await store.write("reports/deep/q2.txt", "deep nested content")
+
+    assert await store.read("Reports") == "file content"
+    children = await store.list_children("")
+    assert len(children) == 1
+    assert children[0].name == "Reports"
+    assert children[0].type == FileStoreEntry.FILE
+
+
+async def test_in_memory_store_rejects_descendant_directory_collision() -> None:
+    """Writing a file whose path is already a directory must raise IsADirectoryError."""
+    store = InMemoryAgentFileStore()
+    await store.write("Reports/q1.txt", "nested content")
+
+    with pytest.raises(IsADirectoryError):
+        await store.write("Reports", "file content")
+
+    with pytest.raises(IsADirectoryError):
+        await store.write("reports", "case insensitive collision")
+
+    assert await store.read("Reports/q1.txt") == "nested content"
+    assert await store.read("Reports") is None
+    children = await store.list_children("")
+    assert len(children) == 1
+    assert children[0].name == "Reports"
+    assert children[0].type == FileStoreEntry.DIRECTORY
+
+
+async def test_in_memory_store_create_directory_rejects_existing_file() -> None:
+    """Creating a directory that collides with an existing file must raise FileExistsError."""
+    store = InMemoryAgentFileStore()
+    await store.write("Reports", "file content")
+
+    with pytest.raises(FileExistsError):
+        await store.create_directory("Reports")
+
+    with pytest.raises(FileExistsError):
+        await store.create_directory("reports/nested")
+
+
 async def test_filesystem_store_round_trips_files(tmp_path: Path) -> None:
     """The filesystem store should round-trip files on disk and create parents on write."""
     store = FileSystemAgentFileStore(tmp_path)

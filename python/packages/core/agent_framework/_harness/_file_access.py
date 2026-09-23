@@ -1079,7 +1079,16 @@ class InMemoryAgentFileStore(AgentFileStore):
         """
         display = _normalize_relative_path(path)
         key = display.lower()
+        dir_prefix = f"{key}/"
         async with self._lock:
+            parts = key.split("/")
+            for i in range(1, len(parts)):
+                ancestor = "/".join(parts[:i])
+                if ancestor in self._files:
+                    raise NotADirectoryError(f"Not a directory: {path!r}")
+            for existing_key in self._files:
+                if existing_key.startswith(dir_prefix):
+                    raise IsADirectoryError(f"Is a directory: {path!r}")
             if not overwrite and key in self._files:
                 raise FileExistsError(f"File already exists: {path!r}")
             self._files[key] = (display, content)
@@ -1191,8 +1200,17 @@ class InMemoryAgentFileStore(AgentFileStore):
         return await _run_search_with_timeout(asyncio.to_thread(scan))
 
     async def create_directory(self, path: str) -> None:
-        """No-op: directories are implicit from file paths in the in-memory store."""
-        del path
+        """Ensure the directory at ``path`` exists."""
+        display = _normalize_relative_path(path, is_directory=True)
+        key = display.lower()
+        if not key:
+            return
+        async with self._lock:
+            parts = key.split("/")
+            for i in range(1, len(parts) + 1):
+                ancestor = "/".join(parts[:i])
+                if ancestor in self._files:
+                    raise FileExistsError(f"File already exists: {ancestor!r}")
 
 
 @experimental(feature_id=ExperimentalFeature.HARNESS)
