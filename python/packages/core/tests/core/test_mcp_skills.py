@@ -11,6 +11,7 @@ import json
 import zipfile
 from datetime import timedelta
 from unittest.mock import AsyncMock, patch
+from urllib.parse import unquote
 
 import pytest
 from mcp.shared.exceptions import McpError
@@ -330,6 +331,9 @@ class TestMCPSkill:
             "%252e%252e%2520",
             "references/.. ",
             "references/.. ?version=1",
+            "references/guide.md?value=%00",
+            "references/guide.md#value=%2509",
+            "references/guide.md?value=%C2%85",
         ],
     )
     @pytest.mark.parametrize(
@@ -366,6 +370,7 @@ class TestMCPSkill:
             "references/guide%20one.md",
             "references/v1.2/guide.md",
             "references/%2520.md",
+            "references/100%.md",
             "references/guide.md?version=1#section",
             "references/guide%3fname.md",
             "references/guide%23name.md",
@@ -373,6 +378,7 @@ class TestMCPSkill:
             "references/guide.md?example=/../../other.md",
             "references/guide.md#example=/../../other.md",
             "references/guide.md?example=%2e%2e%2f%2e%2e%2fother.md",
+            "references/guide.md?src=https://example.com/other",
             "references/guide.md ",
         ],
     )
@@ -400,6 +406,33 @@ class TestMCPSkill:
         assert resource.name == name
         assert await resource.read() == "safe content"
         client.read_resource.assert_awaited_once_with(AnyUrl(root + name.replace("\\", "/")))
+
+    @pytest.mark.parametrize("depth", [1, 31, 32, 33, 4096])
+    @pytest.mark.parametrize(
+        "template",
+        ["references/{}.md", "references/guide.md?value={}", "references/guide.md#value={}", "../{}.md"],
+    )
+    async def test_get_resource_decoding_depth_is_bounded(self, depth: int, template: str) -> None:
+        from agent_framework import SkillFrontmatter
+
+        root = "skill://unit-converter/private/"
+        client = AsyncMock()
+        client.read_resource.return_value = _make_text_result("safe content")
+        fm = SkillFrontmatter(name="unit-converter", description="Convert between common units.")
+        skill = MCPSkill(frontmatter=fm, skill_md_uri=root + "SKILL.md", client=client)
+        name = template.format("%" + "25" * (depth - 1) + "41")
+
+        with patch("agent_framework._skills.unquote", wraps=unquote) as decode:
+            resource = await skill.get_resource(name)
+
+        assert decode.call_count <= 66
+        if depth <= 32 and not name.startswith("../"):
+            assert resource is not None
+            assert resource.name == name
+            client.read_resource.assert_awaited_once_with(AnyUrl(root + name))
+        else:
+            assert resource is None
+            client.read_resource.assert_not_called()
 
     async def test_get_resource_empty_name_returns_none(self) -> None:
         client = _make_client()

@@ -29,6 +29,7 @@ namespace Microsoft.Agents.AI;
 internal sealed partial class AgentMcpSkill : AgentSkill
 {
     private const string SkillMdSuffix = "SKILL.md";
+    private const int MaxResourceNameDecodingDepth = 32;
 
     private readonly McpClient _client;
     private readonly ILogger _logger;
@@ -91,6 +92,7 @@ internal sealed partial class AgentMcpSkill : AgentSkill
     /// <c>resources/read</c> request to the MCP server, and returns an <see cref="AgentMcpSkillResource"/>
     /// with the pre-fetched content. Absolute paths, parent traversal (including percent-encoded forms),
     /// embedded URI schemes, and control characters are rejected before sending a request.
+    /// Resource names requiring more than 32 percent-decoding passes are also rejected.
     /// Returns <see langword="null"/> when the name is empty or unsafe, the server
     /// returns no content, or the resource does not exist on the server.
     /// </remarks>
@@ -129,16 +131,19 @@ internal sealed partial class AgentMcpSkill : AgentSkill
     private static bool IsResourceNameSafe(string normalized)
     {
         // Validate only the path before a literal "?"/"#", fully decoded; e.g. "a%3f/%2e%2e/x" stays one path, "a/b.md?q=/../x" ignores the query.
-        string path = FullyUnescape(normalized.Split(['?', '#'], 2)[0]);
+        string? path = FullyUnescape(normalized.Split(['?', '#'], 2)[0]);
+        string? decodedName = FullyUnescape(normalized);
 
-        // Absolute path, e.g. "/etc/passwd" or "%2fetc/passwd".
-        return !path.StartsWith('/')
+        // Excessive encoding depth, e.g. a name requiring more than 32 decoding passes.
+        return path is not null && decodedName is not null
+            // Absolute path, e.g. "/etc/passwd" or "%2fetc/passwd".
+            && !path.StartsWith('/')
             // Embedded URI, e.g. "http://example.com/other" or "%68ttp%3a%2f%2fexample.com".
             && !path.Contains("://", StringComparison.Ordinal)
             // Parent traversal, e.g. "../x", "%2e%2e/x", "%252e%252e/x", "a%3f/../../x", or ".. " (URI parsers can trim trailing spaces).
             && !path.Split(['/', '?', '#']).Any(segment => segment.TrimEnd(' ') == "..")
             // Control characters anywhere, e.g. "a/\0/b.md", ".\t./x", or ".%09./x".
-            && !FullyUnescape(normalized).Any(char.IsControl);
+            && !decodedName.Any(char.IsControl);
     }
 
     /// <summary>
@@ -146,15 +151,22 @@ internal sealed partial class AgentMcpSkill : AgentSkill
     /// Decoding never removes a literal <c>.</c>, <c>/</c>, <c>:</c>, or control character, so checking
     /// the final form also covers every nested encoding layer (e.g. <c>%252e</c>).
     /// </summary>
-    private static string FullyUnescape(string value)
+    /// <returns>The decoded value, or <see langword="null"/> if the decoding depth exceeds the limit.</returns>
+    private static string? FullyUnescape(string value)
     {
-        string decoded;
-        while ((decoded = Uri.UnescapeDataString(value).Replace('\\', '/')) != value)
+        // The final pass only checks that decoding has stabilized.
+        for (int depth = 0; depth <= MaxResourceNameDecodingDepth; depth++)
         {
+            string decoded = Uri.UnescapeDataString(value).Replace('\\', '/');
+            if (decoded == value)
+            {
+                return value;
+            }
+
             value = decoded;
         }
 
-        return value;
+        return null;
     }
 
     [LoggerMessage(LogLevel.Debug, "Rejecting MCP skill resource name with unsafe path components.")]

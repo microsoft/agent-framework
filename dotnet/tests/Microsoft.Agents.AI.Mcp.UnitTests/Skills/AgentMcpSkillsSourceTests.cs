@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -181,6 +182,9 @@ public sealed class AgentMcpSkillsSourceTests
     [InlineData("%252e%252e%2520")]
     [InlineData("references/.. ")]
     [InlineData("references/.. ?version=1")]
+    [InlineData("references/guide.md?value=%00")]
+    [InlineData("references/guide.md#value=%2509")]
+    [InlineData("references/guide.md?value=%C2%85")]
     public async Task GetResourceAsync_PathTraversalName_ReturnsNullAsync(string name)
     {
         foreach (string root in new[]
@@ -236,6 +240,7 @@ public sealed class AgentMcpSkillsSourceTests
             "references/guide%20one.md",
             "references/v1.2/guide.md",
             "references/%2520.md",
+            "references/100%.md",
             "references/guide.md?version=1#section",
             "references/guide%3fname.md",
             "references/guide%23name.md",
@@ -243,6 +248,7 @@ public sealed class AgentMcpSkillsSourceTests
             "references/guide.md?example=/../../other.md",
             "references/guide.md#example=/../../other.md",
             "references/guide.md?example=%2e%2e%2f%2e%2e%2fother.md",
+            "references/guide.md?src=https://example.com/other",
             "references/guide.md "
         })
         {
@@ -252,6 +258,51 @@ public sealed class AgentMcpSkillsSourceTests
             Assert.Equal(name, resource.Name);
             Assert.Equal("safe content", await resource.ReadAsync());
             Assert.Equal(root + name.Replace('\\', '/'), Assert.Single(reads));
+        }
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(31)]
+    [InlineData(32)]
+    [InlineData(33)]
+    [InlineData(4096)]
+    public async Task GetResourceAsync_DecodingDepthIsBoundedAsync(int depth)
+    {
+        // Arrange
+        const string Root = "skill://unit-converter/private/";
+        List<string> reads = [];
+        await using var server = CreatePermissiveSkillServer(Root + "SKILL.md", reads);
+        await using var client = await server.CreateClientAsync();
+        var source = new AgentMcpSkillsSource(client);
+        var skill = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+        string encoded = "%" + string.Concat(Enumerable.Repeat("25", depth - 1)) + "41";
+
+        foreach (string name in new[]
+        {
+            $"references/{encoded}.md",
+            $"references/guide.md?value={encoded}",
+            $"references/guide.md#value={encoded}",
+            $"../{encoded}.md"
+        })
+        {
+            reads.Clear();
+
+            // Act
+            var resource = await skill.GetResourceAsync(name);
+
+            // Assert
+            if (depth <= 32 && !name.StartsWith("../", System.StringComparison.Ordinal))
+            {
+                Assert.NotNull(resource);
+                Assert.Equal(name, resource.Name);
+                Assert.Equal(Root + name, Assert.Single(reads));
+            }
+            else
+            {
+                Assert.Null(resource);
+                Assert.Empty(reads);
+            }
         }
     }
 
