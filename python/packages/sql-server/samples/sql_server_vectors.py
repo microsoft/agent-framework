@@ -25,8 +25,10 @@ my-server.database.windows.net) and <db> with an existing vector-enabled
 database. The signed-in identity needs permission to create a table and index
 in the dbo schema and read/write its records. For an Azure-hosted app, use
 Authentication=ActiveDirectoryMSI instead (and UID=<client-id> for a
-user-assigned managed identity). The connector reads SQL_SERVER_CONNECTION_STRING
-through Agent Framework settings; it does not discover a .env file implicitly.
+user-assigned managed identity). Here the connector reads the exported
+SQL_SERVER_CONNECTION_STRING through Agent Framework settings. To read it from
+a .env file in the run directory instead, pass env_file_path=".env" to
+SqlServerStore.
 See https://learn.microsoft.com/sql/connect/python/mssql-python/entra-authentication
 for other supported Entra modes and database-user setup.
 

@@ -61,9 +61,10 @@ connection strings, not the driver's `token_provider=` credential argument.
 Do not commit connection strings containing credentials. Alternatively, pass
 `connection_string` as a string or Agent Framework `SecretString` to
 `SqlServerStore` or `SqlServerCollection`. Settings precedence is **explicit
-argument > selected `.env` file > process environment**. Choose a file with
-`env_file_path` and optional `env_file_encoding`; no `.env` file is discovered
-implicitly, and missing/empty strings are rejected.
+argument > selected `.env` file > process environment**. To read a `.env` file
+in the run directory, pass `env_file_path=".env"` to `SqlServerStore` or
+`SqlServerCollection`; `env_file_encoding` is optional. Missing or empty
+connection strings are rejected.
 
 The connector owns all connections. Each whole operation opens, uses, commits
 or rolls back, and closes a `mssql-python` connection on a dedicated worker
