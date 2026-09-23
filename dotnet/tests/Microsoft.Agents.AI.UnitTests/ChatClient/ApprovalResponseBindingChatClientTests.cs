@@ -451,6 +451,49 @@ public class ApprovalResponseBindingChatClientTests
     }
 
     [Fact]
+    public async Task GetStreamingResponseAsync_ConsumerStopsEarly_RetainsPendingEntryAndRecordsEmittedRequestAsync()
+    {
+        // Arrange — a consumer commonly stops enumerating the moment it sees an approval request, because it now
+        // needs the user's decision. Disposing the stream early skips the end-of-run history write just like a
+        // failure does, so the stored state must survive untouched, while the request that was already handed to the
+        // caller must be recorded so the answer to it can bind.
+        var session = new ChatClientAgentSession();
+        var recordedCall = new FunctionCallContent("call1", "toolA");
+        await RecordRequestAsync(session, new ToolApprovalRequestContent(RequestId, recordedCall));
+
+        var response = new ToolApprovalResponseContent(RequestId, approved: true, recordedCall);
+        var newRequest = new ToolApprovalRequestContent("req2", new FunctionCallContent("call2", "toolB"));
+        var inner = CreateMockStreamingChatClient((_, _, _) => UpdatesAsync(
+            new ChatResponseUpdate(ChatRole.Assistant, [newRequest]),
+            new ChatResponseUpdate(ChatRole.Assistant, "trailing")));
+        var decorator = new ApprovalResponseBindingChatClient(inner);
+
+        var agent = new TestAIAgent
+        {
+            RunAsyncFunc = async (_, _, _, ct) =>
+            {
+                await foreach (var update in decorator.GetStreamingResponseAsync(
+                    [new ChatMessage(ChatRole.User, [response])], null, ct))
+                {
+                    if (update.Contents.OfType<ToolApprovalRequestContent>().Any())
+                    {
+                        break;
+                    }
+                }
+
+                return new AgentResponse();
+            }
+        };
+
+        // Act
+        await agent.RunAsync([new ChatMessage(ChatRole.User, "drive")], session);
+
+        // Assert
+        Assert.True(HasPendingRequest(session, RequestId));
+        Assert.True(HasPendingRequest(session, "req2"));
+    }
+
+    [Fact]
     public async Task GetResponseAsync_RetriedAfterFailedRun_IsHonoredOnceAsync()
     {
         // Arrange — the first attempt fails, then the caller sends the very same approval response again.
@@ -848,6 +891,14 @@ public class ApprovalResponseBindingChatClientTests
     }
 
 #pragma warning disable CS1998 // Async method lacks 'await' operators
+    private static async IAsyncEnumerable<ChatResponseUpdate> UpdatesAsync(params ChatResponseUpdate[] updates)
+    {
+        foreach (var update in updates)
+        {
+            yield return update;
+        }
+    }
+
     private static async IAsyncEnumerable<ChatResponseUpdate> ThrowingUpdatesAsync(Exception exception)
     {
         throw exception;

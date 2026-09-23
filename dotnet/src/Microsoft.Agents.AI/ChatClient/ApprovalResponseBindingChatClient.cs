@@ -122,33 +122,16 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
 
         List<ToolApprovalRequestContent>? emitted = null;
 
-        // Enumerated manually so that a failure can be told apart from an ordinary end of stream. The records are
-        // consumed only when no failure occurred, so a failed run leaves them intact and the caller can supply the
-        // same approval response again.
-        var enumerator = base.GetStreamingResponseAsync(messagesToSend, options, cancellationToken).GetAsyncEnumerator(cancellationToken);
-        bool failed = false;
+        // Set only once the stream has run to completion, so that any abnormal end - an exception from the inner
+        // client, a cancellation, or a consumer that stops enumerating early - leaves the records intact and lets the
+        // caller supply the same approval response again. A caught exception is not enough on its own: breaking out of
+        // the enumeration disposes this iterator without throwing, and the run then persists nothing either.
+        bool completedNormally = false;
 
         try
         {
-            while (true)
+            await foreach (var update in base.GetStreamingResponseAsync(messagesToSend, options, cancellationToken).ConfigureAwait(false))
             {
-                ChatResponseUpdate update;
-
-                try
-                {
-                    if (!await enumerator.MoveNextAsync().ConfigureAwait(false))
-                    {
-                        break;
-                    }
-
-                    update = enumerator.Current;
-                }
-                catch
-                {
-                    failed = true;
-                    throw;
-                }
-
                 foreach (var content in update.Contents)
                 {
                     if (content is ToolApprovalRequestContent request)
@@ -159,16 +142,19 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
 
                 yield return update;
             }
+
+            completedNormally = true;
         }
         finally
         {
-            await enumerator.DisposeAsync().ConfigureAwait(false);
-
-            if (!failed && hasPendingRequests)
+            if (completedNormally && hasPendingRequests)
             {
                 session.StateBag.TryRemoveValue(StateBagKey);
             }
 
+            // Recorded regardless of how the stream ended, because each request was already handed to the caller
+            // before the stream stopped and the caller may act on it. Consumers commonly stop enumerating as soon as
+            // they see an approval request, and the record has to be in place for the answer to bind.
             if (emitted is { Count: > 0 })
             {
                 this.MergePendingApprovalRequests(emitted, session);

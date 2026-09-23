@@ -113,51 +113,40 @@ internal sealed partial class ApprovalNotRequiredFunctionBypassingChatClient : D
         var (messagesToSend, injectedAutoApprovals) = InjectPendingAutoApprovals(messages, session);
         List<ToolApprovalRequestContent>? autoApproved = null;
 
-        // Enumerated manually so that a failure can be told apart from an ordinary end of stream. The injected
-        // auto-approvals are retired only when no failure occurred, so a failed run leaves them in the session and
-        // the next run can inject them again instead of leaving the tool calls unanswered.
-        var enumerator = base.GetStreamingResponseAsync(messagesToSend, options, cancellationToken).GetAsyncEnumerator(cancellationToken);
-        bool failed = false;
+        // Set only once the stream has run to completion, so that any abnormal end - an exception from the inner
+        // client, a cancellation, or a consumer that stops enumerating early - leaves the stored state exactly as it
+        // was. A caught exception is not enough on its own: breaking out of the enumeration disposes this iterator
+        // without throwing, and the run then persists nothing either.
+        bool completedNormally = false;
 
         try
         {
-            while (true)
+            await foreach (var update in base.GetStreamingResponseAsync(messagesToSend, options, cancellationToken).ConfigureAwait(false))
             {
-                ChatResponseUpdate update;
-
-                try
-                {
-                    if (!await enumerator.MoveNextAsync().ConfigureAwait(false))
-                    {
-                        break;
-                    }
-
-                    update = enumerator.Current;
-                }
-                catch
-                {
-                    failed = true;
-                    throw;
-                }
-
                 if (FilterUpdateContents(update, autoApprovableNames, ref autoApproved))
                 {
                     yield return update;
                 }
             }
+
+            completedNormally = true;
         }
         finally
         {
-            await enumerator.DisposeAsync().ConfigureAwait(false);
-
-            if (!failed && injectedAutoApprovals)
+            // Both writes are gated, mirroring the non-streaming path: the requests collected here were filtered out
+            // of the stream and so never reached the caller, and storing them on an abnormal end would overwrite the
+            // batch that was injected this run and still needs re-injecting.
+            if (completedNormally)
             {
-                session.StateBag.TryRemoveValue(StateBagKey);
-            }
+                if (injectedAutoApprovals)
+                {
+                    session.StateBag.TryRemoveValue(StateBagKey);
+                }
 
-            if (autoApproved is { Count: > 0 })
-            {
-                session.StateBag.SetValue(StateBagKey, autoApproved, AgentJsonUtilities.DefaultOptions);
+                if (autoApproved is { Count: > 0 })
+                {
+                    session.StateBag.SetValue(StateBagKey, autoApproved, AgentJsonUtilities.DefaultOptions);
+                }
             }
         }
     }
