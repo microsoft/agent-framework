@@ -22,18 +22,6 @@ public static class PromptAgentExtensions
     /// <param name="promptAgent">Instance of <see cref="GptComponentMetadata"/></param>
     /// <param name="engine">Instance of <see cref="RecalcEngine"/></param>
     /// <param name="functions">Instance of <see cref="IList{AIFunction}"/></param>
-    [Obsolete("Use GetChatOptionsAsync instead. This method calls into async methods and might cause deadlocks")]
-    [EditorBrowsable(EditorBrowsableState.Never)]
-    public static ChatOptions? GetChatOptions(this GptComponentMetadata promptAgent, RecalcEngine? engine, IList<AIFunction>? functions)
-#pragma warning disable VSTHRD002 // Avoid problematic synchronous waits
-    => promptAgent.GetChatOptionsAsync(engine, functions).GetAwaiter().GetResult();
-#pragma warning restore VSTHRD002 // Avoid problematic synchronous waits
-    /// <summary>
-    /// Retrieves the 'options' property from a <see cref="GptComponentMetadata"/> as a <see cref="ChatOptions"/> instance.
-    /// </summary>
-    /// <param name="promptAgent">Instance of <see cref="GptComponentMetadata"/></param>
-    /// <param name="engine">Instance of <see cref="RecalcEngine"/></param>
-    /// <param name="functions">Instance of <see cref="IList{AIFunction}"/></param>
     /// <param name="cancellationToken">Cancellation token to observe while retrieving chat options.</param>
     public static async Task<ChatOptions?> GetChatOptionsAsync(this GptComponentMetadata promptAgent, RecalcEngine? engine, IList<AIFunction>? functions, CancellationToken cancellationToken = default)
     {
