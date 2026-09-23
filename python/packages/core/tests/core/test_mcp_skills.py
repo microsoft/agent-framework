@@ -295,9 +295,43 @@ class TestMCPSkill:
             "..\\escape.md",
             "/etc/passwd",
             "http://attacker.example.com/payload",
+            "%2e%2e/escape.md",
+            "%2E./escape.md",
+            ".%2e/escape.md",
+            "references/%2e%2e/escape.md",
+            "references%2f..%2f..%2fescape.md",
+            "%2e%2e%5cescape.md",
+            "%252e%252e%252fescape.md",
+            "%25252e%25252e/escape.md",
+            "%2fescape.md",
+            "%5cescape.md",
+            "%68ttp%3a%2f%2fattacker.example.com/payload",
+            "..?download=1",
+            "..#fragment",
+            "%2e%2e%3fdownload=1",
+            "references%3f/../../escape.md",
+            ".\t./escape.md",
+            ".%09./escape.md",
+            "references/\x00/guide.md",
+            ".. ",
+            ".%2e ",
+            "%2e%2e ",
+            "..%20",
+            "%252e%252e%2520",
+            "references/.. ",
         ],
     )
-    async def test_get_resource_path_traversal_returns_none(self, name: str) -> None:
+    @pytest.mark.parametrize(
+        "skill_md_uri",
+        [
+            "skill://unit-converter/SKILL.md",
+            "skill://unit-converter/private/SKILL.md",
+            "https://example.com/skills/private/SKILL.md",
+            "file:///skills/private/SKILL.md",
+            "custom:skills/private/SKILL.md",
+        ],
+    )
+    async def test_get_resource_path_traversal_returns_none(self, name: str, skill_md_uri: str) -> None:
         # Register a permissive mock that would happily return content for any URI,
         # so the test fails unless the client-side validation rejects the name
         # before issuing the read.
@@ -307,11 +341,49 @@ class TestMCPSkill:
         from agent_framework import SkillFrontmatter
 
         fm = SkillFrontmatter(name="unit-converter", description="Convert between common units.")
-        skill = MCPSkill(frontmatter=fm, skill_md_uri="skill://unit-converter/SKILL.md", client=client)
+        skill = MCPSkill(frontmatter=fm, skill_md_uri=skill_md_uri, client=client)
 
         resource = await skill.get_resource(name)
         assert resource is None
         client.read_resource.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "references/guide.md",
+            "references\\guide.md",
+            "references/guide%20one.md",
+            "references/v1.2/guide.md",
+            "references/%2520.md",
+            "references/guide.md?version=1#section",
+            "references/guide.md ",
+            "references/.. ?version=1",
+        ],
+    )
+    @pytest.mark.parametrize(
+        "root",
+        [
+            "skill://unit-converter/",
+            "skill://unit-converter/private/",
+            "https://example.com/skills/private/",
+            "file:///skills/private/",
+            "custom:skills/private/",
+        ],
+    )
+    async def test_get_resource_preserves_safe_names_and_schemes(self, name: str, root: str) -> None:
+        from agent_framework import SkillFrontmatter
+
+        client = AsyncMock()
+        client.read_resource.return_value = _make_text_result("safe content")
+        fm = SkillFrontmatter(name="unit-converter", description="Convert between common units.")
+        skill = MCPSkill(frontmatter=fm, skill_md_uri=root + "SKILL.md", client=client)
+
+        resource = await skill.get_resource(name)
+
+        assert resource is not None
+        assert resource.name == name
+        assert await resource.read() == "safe content"
+        client.read_resource.assert_awaited_once_with(AnyUrl(root + name.replace("\\", "/")))
 
     async def test_get_resource_empty_name_returns_none(self) -> None:
         client = _make_client()
@@ -389,6 +461,29 @@ class TestMCPSkill:
 
 class TestMCPSkillsSource:
     """Tests for MCPSkillsSource."""
+
+    @pytest.mark.parametrize(
+        "uri",
+        [
+            "https://example.com/skills/SKILL.md",
+            "file:///skills/SKILL.md",
+            "custom:skills/SKILL.md",
+        ],
+    )
+    async def test_index_preserves_mcp_resource_schemes(self, uri: str) -> None:
+        index = json.loads(SAMPLE_SKILL_INDEX)
+        index["skills"][0]["url"] = uri
+        client = _make_client(**{
+            "skill://index.json": _make_text_result(json.dumps(index)),
+            uri: _make_text_result(SAMPLE_SKILL_MD),
+        })
+        source = MCPSkillsSource(client=client)
+
+        skills = await source.get_skills(_SOURCE_CTX)
+
+        assert len(skills) == 1
+        assert await skills[0].get_content() == SAMPLE_SKILL_MD
+        assert str(client.read_resource.call_args.args[0]) == uri
 
     async def test_index_based_discovery_returns_skill(self) -> None:
         client = _make_client(**{

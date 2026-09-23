@@ -56,13 +56,14 @@ import re
 import time
 import zipfile
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import timedelta
 from enum import Enum
 from html import escape as xml_escape
 from pathlib import Path, PurePosixPath
 from typing import IO, TYPE_CHECKING, Any, ClassVar, Final, Protocol, TypeAlias, TypeVar, cast, runtime_checkable
+from urllib.parse import unquote
 
 import yaml
 from yaml.nodes import MappingNode, Node, ScalarNode
@@ -4407,6 +4408,38 @@ class MCPSkillResource(SkillResource):
         return text if text else None
 
 
+_RESOURCE_CONTROL_CHARS: Final = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
+
+def _decoded_resource_forms(name: str) -> Iterator[str]:
+    """Yield *name* and each successive percent-decoded form until decoding is stable.
+
+    Every layer is validated so that nested encodings (e.g. ``%252e``) cannot
+    smuggle traversal past the check, while the original escaping is still
+    preserved in the resource identifier sent to the MCP server.
+    """
+    current = name
+    while True:
+        yield current
+        decoded = unquote(current).replace("\\", "/")
+        if decoded == current:
+            return
+        current = decoded
+
+
+def _is_unsafe_resource_path(form: str) -> bool:
+    """Return ``True`` if *form* is absolute, has a URI scheme, traverses upward, or has control characters."""
+    # URI parsers can trim trailing spaces before resolving dot segments.
+    form = form.rstrip(" ")
+    path = re.split(r"[?#]", form, maxsplit=1)[0]
+    return (
+        form.startswith("/")
+        or "://" in form
+        or ".." in path.split("/")
+        or _RESOURCE_CONTROL_CHARS.search(form) is not None
+    )
+
+
 @experimental(feature_id=ExperimentalFeature.MCP_SKILLS)
 class MCPSkill(Skill):
     """A :class:`Skill` discovered from an MCP server exposing the Agent Skills convention.
@@ -4502,7 +4535,7 @@ class MCPSkill(Skill):
 
         Returns:
             An :class:`MCPSkillResource`, or ``None`` when the name is empty
-            or the resource does not exist on the server.
+            or unsafe, or the resource does not exist on the server.
         """
         if not name or not name.strip():
             return None
@@ -4527,7 +4560,8 @@ class MCPSkill(Skill):
         """Validate a resource name and return the normalized form.
 
         Defense in depth: refuses names that could escape the skill root
-        (absolute paths, embedded URI schemes, parent-traversal segments).
+        (absolute paths, embedded URI schemes, parent-traversal segments,
+        or control characters), including percent-encoded forms.
         The MCP server is the authority on URI resolution, but rejecting
         obviously unsafe shapes client-side avoids leaking escape attempts
         upstream.
@@ -4540,7 +4574,7 @@ class MCPSkill(Skill):
             or ``None`` if the name is unsafe.
         """
         normalized = name.replace("\\", "/")
-        if normalized.startswith("/") or "://" in normalized or any(seg == ".." for seg in normalized.split("/")):
+        if any(_is_unsafe_resource_path(form) for form in _decoded_resource_forms(normalized)):
             logger.debug("Rejecting resource name with unsafe path components: %r", name)
             return None
         return normalized
@@ -5050,6 +5084,12 @@ class MCPSkillsSource(SkillsSource):
         entries or their supporting resources.
 
     Security considerations:
+        Supporting resource names are checked for absolute paths, parent
+        traversal (including percent-encoded forms), and control characters
+        before an MCP request is sent. Index URLs retain their MCP resource
+        schemes: they are sent to the connected server, not opened locally.
+        This client-side guard does not replace server-side authorization.
+
         Discovering skills over MCP means an *external* MCP server controls
         what skill content (including instructions and, for script-capable
         skills, the scripts the agent may run) reaches the agent. This source

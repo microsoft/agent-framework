@@ -1,9 +1,11 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
 using Microsoft.Shared.Diagnostics;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
@@ -25,11 +27,12 @@ namespace Microsoft.Agents.AI;
 /// with pre-fetched content.
 /// </para>
 /// </remarks>
-internal sealed class AgentMcpSkill : AgentSkill
+internal sealed partial class AgentMcpSkill : AgentSkill
 {
     private const string SkillMdSuffix = "SKILL.md";
 
     private readonly McpClient _client;
+    private readonly ILogger _logger;
     private readonly string _skillMdUri;
     private readonly string _skillRootUri;
     private string? _content;
@@ -44,12 +47,14 @@ internal sealed class AgentMcpSkill : AgentSkill
     /// (used to resolve sibling resources) is derived by stripping the trailing <c>SKILL.md</c> segment.
     /// </param>
     /// <param name="client">The MCP client used to fetch resources on demand.</param>
-    public AgentMcpSkill(AgentSkillFrontmatter frontmatter, string skillMdUri, McpClient client)
+    /// <param name="logger">The logger used to report rejected resource names.</param>
+    public AgentMcpSkill(AgentSkillFrontmatter frontmatter, string skillMdUri, McpClient client, ILogger logger)
     {
         this.Frontmatter = Throw.IfNull(frontmatter);
         this._skillMdUri = Throw.IfNullOrWhitespace(skillMdUri);
         this._skillRootUri = ComputeSkillRootUri(skillMdUri);
         this._client = Throw.IfNull(client);
+        this._logger = Throw.IfNull(logger);
     }
 
     /// <inheritdoc/>
@@ -85,13 +90,21 @@ internal sealed class AgentMcpSkill : AgentSkill
     /// <remarks>
     /// Resolves <paramref name="name"/> as a relative path against the skill's root URI, issues a
     /// <c>resources/read</c> request to the MCP server, and returns an <see cref="AgentMcpSkillResource"/>
-    /// with the pre-fetched content. Returns <see langword="null"/> when the name is empty, the server
+    /// with the pre-fetched content. Absolute paths, parent traversal (including percent-encoded forms),
+    /// embedded URI schemes, and control characters are rejected before sending a request.
+    /// Returns <see langword="null"/> when the name is empty or unsafe, the server
     /// returns no content, or the resource does not exist on the server.
     /// </remarks>
     public override async ValueTask<AgentSkillResource?> GetResourceAsync(string name, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(name))
         {
+            return null;
+        }
+
+        if (!IsResourceNameSafe(name))
+        {
+            LogUnsafeResourceName(this._logger);
             return null;
         }
 
@@ -111,6 +124,48 @@ internal sealed class AgentMcpSkill : AgentSkill
 
         return new AgentMcpSkillResource(name: name, result: result);
     }
+
+    private static bool IsResourceNameSafe(string name)
+    {
+        string normalized = name.Replace('\\', '/');
+        return !GetDecodedForms(normalized).Any(IsUnsafePath);
+    }
+
+    /// <summary>
+    /// Yields <paramref name="name"/> and each successive percent-decoded form until decoding is stable.
+    /// Every layer is validated so nested encodings (e.g. <c>%252e</c>) cannot smuggle traversal past
+    /// the check, while the original escaping is still preserved in the resource URI.
+    /// </summary>
+    private static IEnumerable<string> GetDecodedForms(string name)
+    {
+        string current = name;
+        while (true)
+        {
+            yield return current;
+
+            string decoded = Uri.UnescapeDataString(current).Replace('\\', '/');
+            if (decoded == current)
+            {
+                yield break;
+            }
+
+            current = decoded;
+        }
+    }
+
+    private static bool IsUnsafePath(string form)
+    {
+        // URI parsers can trim trailing spaces before resolving dot segments.
+        form = form.TrimEnd(' ');
+        string path = form.Split(['?', '#'], 2)[0];
+        return form.StartsWith('/')
+            || form.Contains("://", StringComparison.Ordinal)
+            || path.Split('/').Contains("..")
+            || form.Any(char.IsControl);
+    }
+
+    [LoggerMessage(LogLevel.Debug, "Rejecting MCP skill resource name with unsafe path components.")]
+    private static partial void LogUnsafeResourceName(ILogger logger);
 
     /// <summary>
     /// Strips the trailing <c>SKILL.md</c> from the URI to produce the skill's root directory URI.
