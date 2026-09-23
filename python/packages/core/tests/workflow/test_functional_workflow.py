@@ -1134,7 +1134,8 @@ class TestCheckpointing:
         # the chain the resumed run built on top of it.
         _assert_single_checkpoint_chain(checkpoints)
 
-    async def test_run_guard_waits_for_in_flight_checkpoint_save(self):
+    @pytest.mark.parametrize("cancel_count", [0, 1, 2])
+    async def test_run_guard_waits_for_in_flight_checkpoint_save(self, cancel_count: int) -> None:
         """A restore must not start while a checkpoint save from the previous run is in flight.
 
         A per-step callback can already be inside ``storage.save()`` when the run fails.
@@ -1182,11 +1183,23 @@ class TestCheckpointing:
             checkpoints = await storage.list_checkpoints(workflow_name="failing_wf")
             with pytest.raises(RuntimeError, match="already running"):
                 failing_wf.run(checkpoint_id=checkpoints[0].checkpoint_id)
+            for _ in range(cancel_count):
+                run.cancel()
+                for _ in range(20):
+                    await asyncio.sleep(0)
+                assert not run.done()
+                with pytest.raises(RuntimeError, match="already running"):
+                    failing_wf.run(checkpoint_id=checkpoints[0].checkpoint_id)
         finally:
             storage.gate.set()
+            # Always retrieve the exception, including when an assertion fails.
+            outcome = (await asyncio.gather(run, return_exceptions=True))[0]
 
-        with pytest.raises(RuntimeError, match="boom"):
-            await run
+        if cancel_count:
+            assert isinstance(outcome, asyncio.CancelledError)
+        else:
+            assert isinstance(outcome, RuntimeError)
+            assert str(outcome) == "boom"
 
         # Resuming from the run's tip extends one chain instead of forking off the parent.
         checkpoints = await storage.list_checkpoints(workflow_name="failing_wf")
@@ -1231,15 +1244,16 @@ class TestCheckpointing:
         checkpoints = await storage.list_checkpoints(workflow_name="review_wf")
         _assert_single_checkpoint_chain(checkpoints)
 
-    async def test_response_only_resume_into_another_storage_starts_new_lineage(self):
-        """Resuming into a different storage must not link to a checkpoint it does not hold.
+    @pytest.mark.parametrize("delete_parent", [False, True])
+    async def test_response_only_resume_without_parent_starts_new_lineage(self, delete_parent: bool) -> None:
+        """Resuming must not link to a checkpoint the target storage no longer holds.
 
         ``checkpoint_storage`` can be overridden per run, so the checkpoint a cycle paused at
         may live in a backend the resumed run does not write to.  Linking across them would
         leave a ``previous_checkpoint_id`` that never resolves in the storage that holds it.
         """
         storage_a = InMemoryCheckpointStorage()
-        storage_b = InMemoryCheckpointStorage()
+        storage_b = storage_a if delete_parent else InMemoryCheckpointStorage()
 
         @step
         async def ask_human(doc: str, ctx: RunContext) -> str:
@@ -1258,15 +1272,19 @@ class TestCheckpointing:
         paused = await review_wf.run("hello")
         assert paused.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
         assert len(await storage_a.list_checkpoints(workflow_name="review_wf")) == 1
+        if delete_parent:
+            checkpoints = await storage_a.list_checkpoints(workflow_name="review_wf")
+            assert await storage_a.delete(checkpoints[0].checkpoint_id)
 
-        # Resume with responses only, into a storage that never saw the paused checkpoint.
+        # The target storage either never held the paused checkpoint or has deleted it.
         resumed = await review_wf.run(responses={"req1": "answer"}, checkpoint_storage=storage_b)
         assert resumed.get_outputs() == ["answer:HELLO"]
 
         # Every parent of every checkpoint in B resolves inside B, so the lineage is sound.
         _assert_single_checkpoint_chain(await storage_b.list_checkpoints(workflow_name="review_wf"))
-        # A is untouched by the resumed run.
-        assert len(await storage_a.list_checkpoints(workflow_name="review_wf")) == 1
+        if not delete_parent:
+            # A is untouched by the resumed run into B.
+            assert len(await storage_a.list_checkpoints(workflow_name="review_wf")) == 1
 
     async def test_response_only_resume_links_across_storage_instances(self, tmp_path: Path) -> None:
         """Two instances of one backend still share a lineage; only the object differs.
@@ -1324,9 +1342,7 @@ class TestCheckpointing:
         paused = await review_wf.run("hello")
         assert paused.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
 
-        # Make the resumed run re-read the paused checkpoint instead of short-circuiting
-        # on object identity, so the lineage validation await is entered.
-        review_wf._last_checkpoint_storage = InMemoryCheckpointStorage()
+        # Validation also re-reads a checkpoint held by the same storage object.
         storage.hold_next_load = True
 
         async def drive_resume() -> None:
