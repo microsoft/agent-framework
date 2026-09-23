@@ -73,6 +73,7 @@ jobs:
               - 'python/packages/hyperlight/**'
               - 'python/packages/mistral/**'
               - 'python/packages/ollama/**'
+              - 'python/packages/sql-server/**'
               - 'python/packages/core/agent_framework/_mcp.py'
               - 'python/packages/core/tests/core/test_mcp.py'
               - 'python/packages/hosting-mcp/**'
@@ -405,6 +406,7 @@ jobs:
       LOCAL_MCP_URL: ${{ vars.LOCAL_MCP__URL }}
       OLLAMA_MODEL: qwen2.5:1.5b
       OLLAMA_EMBEDDING_MODEL: nomic-embed-text
+      SQL_SERVER_TEST_CONNECTION_STRING: ${{ secrets.SQL_SERVER_TEST_CONNECTION_STRING }}
     defaults:
       run:
         working-directory: python
@@ -467,6 +469,7 @@ jobs:
           packages/hyperlight/tests
           packages/mistral/tests
           packages/ollama/tests
+          packages/sql-server/tests/sql_server/test_integration.py
           packages/core/tests/core/test_mcp.py
           packages/hosting-mcp/tests
           -m integration

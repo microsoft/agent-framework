@@ -53,6 +53,7 @@ Status is grouped into these buckets:
 | `agent-framework-purview` | `python/packages/purview` | `beta` |
 | `agent-framework-qdrant` | `python/packages/qdrant` | `alpha` |
 | `agent-framework-redis` | `python/packages/redis` | `beta` |
+| `agent-framework-sql-server` | `python/packages/sql-server` | `alpha` |
 | `agent-framework-tools` | `python/packages/tools` | `beta` |
 
 ## Deprecated / removed packages
