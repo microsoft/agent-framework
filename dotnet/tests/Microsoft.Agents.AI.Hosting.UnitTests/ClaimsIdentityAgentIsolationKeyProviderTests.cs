@@ -309,9 +309,61 @@ public class ClaimsIdentityAgentIsolationKeyProviderTests
         Assert.Null(result);
     }
 
+    /// <summary>
+    /// Verify that the configured claim is not read from an unauthenticated identity attached to an
+    /// authenticated principal whose authenticated identity lacks that claim.
+    /// </summary>
+    [Fact]
+    public async Task GetIsolationKeyAsyncIgnoresClaimOnUnauthenticatedSecondaryIdentityAsync()
+    {
+        // Arrange
+        var authenticatedIdentity = new ClaimsIdentity([new Claim("other-claim", "value")], TestAuthenticationType);
+        var unauthenticatedIdentity = new ClaimsIdentity([new Claim(ClaimTypes.NameIdentifier, "other-user")]);
+        this.SetupHttpContextWithIdentities(authenticatedIdentity, unauthenticatedIdentity);
+        var provider = new ClaimsIdentityAgentIsolationKeyProvider(this._httpContextAccessorMock.Object);
+
+        // Act
+        string? result = await provider.GetIsolationKeyAsync();
+
+        // Assert
+        Assert.Null(result);
+    }
+
+    /// <summary>
+    /// Verify that the authenticated identity's claim is used even when an unauthenticated identity
+    /// carrying a different value for the same claim type precedes it in the principal's claims.
+    /// </summary>
+    [Fact]
+    public async Task GetIsolationKeyAsyncPrefersAuthenticatedIdentityClaimOverUnauthenticatedIdentityAsync()
+    {
+        // Arrange - the primary identity is authenticated; the unauthenticated identity is ordered next,
+        // and a second authenticated identity carries the claim.
+        var primaryIdentity = new ClaimsIdentity([new Claim("other-claim", "value")], TestAuthenticationType);
+        var unauthenticatedIdentity = new ClaimsIdentity([new Claim(ClaimTypes.NameIdentifier, "other-user")]);
+        var secondaryAuthenticatedIdentity = new ClaimsIdentity([new Claim(ClaimTypes.NameIdentifier, TestUserId)], "SecondAuth");
+        this.SetupHttpContextWithIdentities(primaryIdentity, unauthenticatedIdentity, secondaryAuthenticatedIdentity);
+        var provider = new ClaimsIdentityAgentIsolationKeyProvider(this._httpContextAccessorMock.Object);
+
+        // Act
+        string? result = await provider.GetIsolationKeyAsync();
+
+        // Assert
+        Assert.Equal(TestUserId, result);
+    }
+
     #endregion
 
     #region Helper Methods
+
+    private void SetupHttpContextWithIdentities(params ClaimsIdentity[] identities)
+    {
+        var httpContext = new DefaultHttpContext
+        {
+            User = new ClaimsPrincipal(identities)
+        };
+
+        this._httpContextAccessorMock.Setup(x => x.HttpContext).Returns(httpContext);
+    }
 
     private void SetupHttpContextWithClaim(string claimType, string claimValue)
     {

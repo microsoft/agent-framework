@@ -27,8 +27,11 @@ public static class ServiceCollectionExtensions
     /// <para>
     /// This method does not configure authentication or require authorization on endpoints. Hosts must
     /// separately configure an ASP.NET Core authentication scheme and authorization, and protect the
-    /// mapped endpoints, for example with <c>RequireAuthorization()</c>. The provider reads only an
-    /// authenticated caller's claims. An unauthenticated caller or a caller without the configured claim
+    /// mapped endpoints, for example with <c>RequireAuthorization()</c>. The provider reads the configured
+    /// claim only from the caller's authenticated identities and ignores claims on unauthenticated identities
+    /// attached to the same principal. Code that adds claims to an authenticated identity, such as claims
+    /// transformation, must not copy client-supplied values into the configured claim type.
+    /// An unauthenticated caller or a caller without the configured claim
     /// produces no isolation key, which causes strict-mode stores to fail rather than use shared storage.
     /// AG-UI, A2A, and OpenAI hosting consume the registered provider to scope their stored resources.
     /// </para>
