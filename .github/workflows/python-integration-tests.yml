@@ -327,13 +327,14 @@ jobs:
           fallback_url: ${{ env.LOCAL_MCP_URL }}
       - name: Prefer local MCP URL when available
         run: echo "LOCAL_MCP_URL=${{ steps.local-mcp.outputs.effective_url }}" >> "$GITHUB_ENV"
-      - name: Test with pytest (Anthropic, Hyperlight, Mistral, Ollama, MCP integration)
+      - name: Test with pytest (Anthropic, Hyperlight, Mistral, Ollama, Oracle, MCP integration)
         run: >
           uv run pytest --import-mode=importlib
           packages/anthropic/tests
           packages/hyperlight/tests
           packages/mistral/tests
           packages/ollama/tests
+          packages/oracle/tests
           packages/core/tests/core/test_mcp.py
           packages/hosting-mcp/tests
           -m integration

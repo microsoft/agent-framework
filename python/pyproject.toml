@@ -104,6 +104,7 @@ agent-framework-mongodb = { workspace = true }
 agent-framework-monty = { workspace = true }
 agent-framework-ollama = { workspace = true }
 agent-framework-openai = { workspace = true }
+agent-framework-oracle = { workspace = true }
 agent-framework-orchestrations = { workspace = true }
 agent-framework-postgres = { workspace = true }
 agent-framework-purview = { workspace = true }
