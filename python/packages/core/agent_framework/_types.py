@@ -1581,9 +1581,12 @@ class Content:
 
     def _add_text_content(self, other: Content) -> Content:
         """Add two TextContent instances."""
+        self_text = self.text or ""
+        other_text = other.text or ""
+        combined_text = None if self.text is None and other.text is None else self_text + other_text
         return Content(
             "text",
-            text=self.text + other.text,  # type: ignore[attr-defined, operator]
+            text=combined_text,
             annotations=_combine_annotations(self.annotations, other.annotations),
             additional_properties=_combine_additional_props(self.additional_properties, other.additional_properties),
             raw_representation=_combine_raw_representations(self.raw_representation, other.raw_representation),
@@ -1644,7 +1647,7 @@ class Content:
             arguments = self_arguments
         elif isinstance(self_arguments, str) and isinstance(other_arguments, str):
             arguments = self_arguments + other_arguments
-        elif isinstance(self_arguments, dict) and isinstance(other_arguments, dict):
+        elif isinstance(self_arguments, Mapping) and isinstance(other_arguments, Mapping):
             arguments = {**self_arguments, **other_arguments}
         else:
             raise TypeError("Incompatible argument types")

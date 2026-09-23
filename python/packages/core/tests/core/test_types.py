@@ -676,6 +676,14 @@ def test_function_call_content_add_merging_and_errors():
     c = a + b
     assert c.arguments == {"x": 1, "y": 2}
 
+    # mapping merge
+    from types import MappingProxyType
+
+    a = Content.from_function_call(call_id="1", name="f", arguments=MappingProxyType({"x": 1}))
+    b = Content.from_function_call(call_id="1", name="f", arguments={"y": 2})
+    c = a + b
+    assert c.arguments == {"x": 1, "y": 2}
+
     # informational_only is preserved across streamed chunks
     a = Content.from_function_call(call_id="1", name="f", arguments='{"x":', informational_only=True)
     b = Content.from_function_call(call_id="1", name="f", arguments="1}")
@@ -2233,6 +2241,22 @@ def test_text_content_iadd_coverage():
     assert t1.text == "Hello World"
     assert t1.raw_representation == ["raw1", "raw2"]
     assert t1.additional_properties == {"key1": "val1", "key2": "val2"}
+
+
+def test_text_content_add_handles_none_text():
+    """Test TextContent __add__ when one or both text fields are None."""
+    t_none = Content("text", text=None)
+    t_str = Content.from_text("hello")
+
+    res1 = t_none + t_str
+    assert res1.text == "hello"
+
+    res2 = t_str + t_none
+    assert res2.text == "hello"
+
+    t_none2 = Content("text", text=None)
+    res3 = t_none + t_none2
+    assert res3.text is None
 
 
 def test_text_reasoning_content_add_coverage():
