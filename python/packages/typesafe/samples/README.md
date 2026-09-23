@@ -13,7 +13,7 @@ ordinary generated chat text.
 | [`mcp_function_calling.py`](mcp_function_calling.py) | MCP discovery, TypeSafe tool routing, and terminal Noul evaluation. | The MCP weather result and success probability. |
 | [`mcp_weather_server.py`](mcp_weather_server.py) | The local stdio MCP server used by the MCP client sample. | MCP protocol traffic only; the client prints the user-facing result. |
 | [`secure_agent_quarantine.py`](secure_agent_quarantine.py) | Jev as the `SecureAgentConfig` quarantine client for structured risk classification. | Risk label, confidence, safety probability, and propagated security labels. |
-| [`agent_loop_judge.py`](agent_loop_judge.py) | Jev as the `AgentLoopMiddleware.with_judge` evaluator. | Two judge probabilities and the revised final answer. |
+| [`agent_loop_judge.py`](agent_loop_judge.py) | `TypeSafeChatClient` passed directly to `AgentLoopMiddleware.with_judge`, judging a real Foundry answerer. | The final accepted answer. |
 
 ## How `response_format` works
 
@@ -90,12 +90,17 @@ uv run --with "mcp>=1.27.0,<2" --env-file .env --package agent-framework-typesaf
 uv run --env-file .env --package agent-framework-typesafe \
     python packages/typesafe/samples/secure_agent_quarantine.py
 
-uv run --env-file .env --package agent-framework-typesafe \
+uv run --with agent-framework-foundry --with azure-identity \
+    --env-file .env --package agent-framework-typesafe \
     python packages/typesafe/samples/agent_loop_judge.py
 ```
 
 The MCP command explicitly installs the sample-only `mcp` dependency. The MCP
 sample launches and closes the stdio server automatically.
+
+The loop-judge sample also requires `agent-framework-foundry`,
+`FOUNDRY_PROJECT_ENDPOINT`, `FOUNDRY_MODEL`, and an authenticated Azure CLI
+session (`az login`).
 
 Each source file contains a representative output block at the end. Jev
 probabilities, confidence, random sample temperatures, and resulting comparisons
@@ -107,6 +112,7 @@ can vary between runs.
   fixed structured classification. Jev cannot provide the arbitrary generated
   summaries expected from a normal quarantine LLM, so the sample supplies
   explicit risk and safety questions.
-- **AgentLoopMiddleware judge:** works by mapping the required
+- **AgentLoopMiddleware judge:** works out of the box by passing
+  `TypeSafeChatClient()` directly to `with_judge`. The connector maps the required
   `JudgeVerdict.answered` boolean to a Noul. Jev cannot generate the optional
-  reasoning prose, so the sample supplies deterministic probability feedback.
+  reasoning prose, so the connector supplies deterministic probability feedback.

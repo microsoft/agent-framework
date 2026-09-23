@@ -9,7 +9,7 @@ from typing import Any, Literal, cast
 
 import httpx2
 import pytest
-from agent_framework import Agent, Content, FunctionTool, Message
+from agent_framework import Agent, Content, FunctionTool, JudgeVerdict, Message
 from agent_framework._mcp import MCPTool
 from agent_framework.exceptions import (
     ChatClientException,
@@ -318,8 +318,34 @@ async def test_non_text_content_is_rejected() -> None:
     client = make_client()
     message = Message("user", [Content.from_uri("https://example.com/image.png", media_type="image/png")])
 
-    with pytest.raises(ChatClientInvalidRequestException, match="only supports text and function"):
+    with pytest.raises(ChatClientInvalidRequestException, match="only supports text, reasoning summaries"):
         await client.get_response([message], options={"response_format": questions()})
+
+
+def test_reasoning_summary_is_serialized_without_protected_data() -> None:
+    state = RawTypeSafeChatClient._build_state(  # pyright: ignore[reportPrivateUsage]
+        [
+            Message(
+                "assistant",
+                [
+                    Content.from_text_reasoning(
+                        text="Public reasoning summary",
+                        protected_data="opaque-provider-data",
+                    )
+                ],
+            )
+        ],
+        instructions=None,
+    )
+
+    assert state == {
+        "messages": [
+            {
+                "role": "assistant",
+                "contents": [{"type": "text_reasoning", "text": "Public reasoning summary"}],
+            }
+        ]
+    }
 
 
 async def test_empty_text_messages_are_rejected() -> None:
@@ -502,6 +528,26 @@ async def test_questions_response_format_forces_system_one_response_model() -> N
     )
 
     assert stub.calls[0]["questions"] == questions()
+    assert stub.calls[0]["response_model"] is SystemOneResponse
+
+
+async def test_judge_verdict_response_format_is_supported_directly() -> None:
+    stub = StubTypeSafeClient(
+        response=make_response({
+            "__af_judge__.answered": {"type": "noul", "noul": 0.92},
+        })
+    )
+    client = make_client(stub)
+
+    response = await client.get_response(
+        [Message("user", ["Has the request been answered?"])],
+        options={"response_format": JudgeVerdict},
+    )
+
+    assert isinstance(response.value, JudgeVerdict)
+    assert response.value.answered is True
+    assert response.value.reasoning == "Jev P(answered)=0.920"
+    assert set(stub.calls[0]["questions"]) == {"__af_judge__.answered"}
     assert stub.calls[0]["response_model"] is SystemOneResponse
 
 
