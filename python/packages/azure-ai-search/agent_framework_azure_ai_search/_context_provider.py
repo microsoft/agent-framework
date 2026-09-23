@@ -8,11 +8,12 @@ This module provides ``AzureAISearchContextProvider``, built on the new
 
 from __future__ import annotations
 
+import copy
 import importlib.metadata
 import inspect
 import logging
 import sys
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypedDict, overload
 
 from agent_framework import (
@@ -206,6 +207,7 @@ class AzureAISearchContextProvider(ContextProvider):
         retrieval_reasoning_effort: RetrievalReasoningEffortLiteral = "minimal",
         query_source_credential: AzureCredentialTypes | None = None,
         agentic_message_history_count: int = _DEFAULT_AGENTIC_MESSAGE_HISTORY_COUNT,
+        knowledge_source_params: None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
@@ -232,6 +234,7 @@ class AzureAISearchContextProvider(ContextProvider):
             retrieval_reasoning_effort: Unused in semantic mode.
             query_source_credential: Unused in semantic mode.
             agentic_message_history_count: Unused in semantic mode.
+            knowledge_source_params: Must be ``None`` in semantic mode.
             env_file_path: Optional ``.env`` file checked before process environment variables.
             env_file_encoding: Encoding for the ``.env`` file.
         """
@@ -261,6 +264,7 @@ class AzureAISearchContextProvider(ContextProvider):
         retrieval_reasoning_effort: RetrievalReasoningEffortLiteral = "minimal",
         query_source_credential: AzureCredentialTypes | None = None,
         agentic_message_history_count: int = _DEFAULT_AGENTIC_MESSAGE_HISTORY_COUNT,
+        knowledge_source_params: Sequence[KnowledgeSourceParams] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
@@ -288,6 +292,9 @@ class AzureAISearchContextProvider(ContextProvider):
             query_source_credential: Sync or async Azure credential used to authorize each retrieval query.
                 Requires ``azure-search-documents>=12.1.0b1``.
             agentic_message_history_count: Number of recent messages included in retrieval.
+            knowledge_source_params: Per-source retrieval parameters, such as
+                ``SearchIndexKnowledgeSourceParams(filter_add_on=...)``, that replace the
+                defaults for the matching ``knowledge_source_name``.
             env_file_path: Optional ``.env`` file checked before process environment variables.
             env_file_encoding: Encoding for the ``.env`` file.
         """
@@ -317,6 +324,7 @@ class AzureAISearchContextProvider(ContextProvider):
         retrieval_reasoning_effort: RetrievalReasoningEffortLiteral = "minimal",
         query_source_credential: AzureCredentialTypes | None = None,
         agentic_message_history_count: int = _DEFAULT_AGENTIC_MESSAGE_HISTORY_COUNT,
+        knowledge_source_params: Sequence[KnowledgeSourceParams] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
@@ -344,6 +352,9 @@ class AzureAISearchContextProvider(ContextProvider):
             query_source_credential: Sync or async Azure credential used to authorize each retrieval query.
                 Requires ``azure-search-documents>=12.1.0b1``.
             agentic_message_history_count: Number of recent messages included in retrieval.
+            knowledge_source_params: Per-source retrieval parameters, such as
+                ``SearchIndexKnowledgeSourceParams(filter_add_on=...)``, that replace the
+                defaults for the matching ``knowledge_source_name``.
             env_file_path: Optional ``.env`` file checked before process environment variables.
             env_file_encoding: Encoding for the ``.env`` file.
         """
@@ -373,6 +384,7 @@ class AzureAISearchContextProvider(ContextProvider):
         retrieval_reasoning_effort: RetrievalReasoningEffortLiteral = "minimal",
         query_source_credential: AzureCredentialTypes | None = None,
         agentic_message_history_count: int = _DEFAULT_AGENTIC_MESSAGE_HISTORY_COUNT,
+        knowledge_source_params: Sequence[KnowledgeSourceParams] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
@@ -404,6 +416,9 @@ class AzureAISearchContextProvider(ContextProvider):
             query_source_credential: Sync or async Azure credential used to authorize each retrieval query.
                 Requires ``azure-search-documents>=12.1.0b1``.
             agentic_message_history_count: Number of recent messages included in retrieval.
+            knowledge_source_params: Per-source retrieval parameters, such as
+                ``SearchIndexKnowledgeSourceParams(filter_add_on=...)``, that replace the
+                defaults for the matching ``knowledge_source_name``.
             env_file_path: Optional ``.env`` file checked before process environment variables.
             env_file_encoding: Encoding for the ``.env`` file.
         """
@@ -432,6 +447,7 @@ class AzureAISearchContextProvider(ContextProvider):
         retrieval_reasoning_effort: RetrievalReasoningEffortLiteral = "minimal",
         query_source_credential: AzureCredentialTypes | None = None,
         agentic_message_history_count: int = _DEFAULT_AGENTIC_MESSAGE_HISTORY_COUNT,
+        knowledge_source_params: Sequence[KnowledgeSourceParams] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
@@ -462,6 +478,11 @@ class AzureAISearchContextProvider(ContextProvider):
             query_source_credential: Sync or async Azure credential used to authorize each agentic retrieval query.
                 Requires ``azure-search-documents>=12.1.0b1``.
             agentic_message_history_count: Number of recent messages for agentic mode.
+            knowledge_source_params: Per-source retrieval parameters for agentic mode, such as
+                ``SearchIndexKnowledgeSourceParams(filter_add_on=...)``. Each entry replaces the
+                default parameters for the knowledge source with the same ``knowledge_source_name``;
+                entries for other sources are appended. ``include_reference_source_data`` defaults
+                to ``True`` when left unset.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
         """
@@ -541,6 +562,7 @@ class AzureAISearchContextProvider(ContextProvider):
         self.retrieval_reasoning_effort = retrieval_reasoning_effort
         self.query_source_credential = query_source_credential
         self.agentic_message_history_count = agentic_message_history_count
+        self.knowledge_source_params = list(knowledge_source_params or [])
 
         self._use_existing_knowledge_base = False
         if mode == "agentic":
@@ -554,6 +576,12 @@ class AzureAISearchContextProvider(ContextProvider):
 
         if vector_field_name and not embedding_function:
             raise ValueError("embedding_function is required when vector_field_name is specified")
+
+        if knowledge_source_params and mode != "agentic":
+            raise ValueError("knowledge_source_params is only supported in agentic mode.")
+        user_source_names = [param.knowledge_source_name for param in knowledge_source_params or []]
+        if len(user_source_names) != len(set(user_source_names)):
+            raise ValueError("knowledge_source_params must not contain duplicate knowledge_source_name values.")
 
         if mode == "agentic":
             if not _agentic_retrieval_available:
@@ -829,7 +857,7 @@ class AzureAISearchContextProvider(ContextProvider):
                             kind=knowledge_source.kind,
                         )
                     )
-            self._knowledge_source_params = knowledge_source_params
+            self._knowledge_source_params = self._with_knowledge_source_param_overrides(knowledge_source_params)
             self._knowledge_base_initialized = True
             return
 
@@ -843,13 +871,13 @@ class AzureAISearchContextProvider(ContextProvider):
             raise ValueError("index_name is required when creating Knowledge Base from index")
 
         knowledge_source_name = f"{self.index_name}-source"
-        self._knowledge_source_params = [
+        self._knowledge_source_params = self._with_knowledge_source_param_overrides([
             KnowledgeSourceParams(
                 knowledge_source_name=knowledge_source_name,
                 include_reference_source_data=True,
                 kind="searchIndex",
             )
-        ]
+        ])
         try:
             await self._index_client.get_knowledge_source(knowledge_source_name)
         except ResourceNotFoundError:
@@ -904,6 +932,21 @@ class AzureAISearchContextProvider(ContextProvider):
                 credential=self.credential,
                 **self._common_client_kwargs(),
             )
+
+    def _with_knowledge_source_param_overrides(
+        self, defaults: list[KnowledgeSourceParams]
+    ) -> list[KnowledgeSourceParams]:
+        """Replace default per-source parameters with the caller-provided ones, matched by source name."""
+        overrides: dict[str, KnowledgeSourceParams] = {}
+        for param in self.knowledge_source_params:
+            if param.include_reference_source_data is None:
+                # Keep ref.source_data populated unless the caller opts out explicitly (#5095).
+                param = copy.deepcopy(param)
+                param.include_reference_source_data = True
+            overrides[param.knowledge_source_name] = param
+        merged = [overrides.pop(param.knowledge_source_name, param) for param in defaults]
+        merged.extend(overrides.values())
+        return merged
 
     async def _agentic_search(self, messages: list[Message]) -> list[Message]:
         """Perform agentic retrieval with multi-hop reasoning."""

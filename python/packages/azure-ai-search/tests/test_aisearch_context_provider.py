@@ -16,6 +16,7 @@ from agent_framework._settings import SecretString
 from agent_framework.exceptions import SettingNotFoundError
 from azure.core.credentials import AzureKeyCredential
 from azure.core.pipeline.transport import AioHttpTransport
+from azure.search.documents.knowledgebases.models import SearchIndexKnowledgeSourceParams
 
 from agent_framework_azure_ai_search import _context_provider
 from agent_framework_azure_ai_search._context_provider import (
@@ -326,6 +327,32 @@ class TestInitAgenticValidation:
                 index_name="idx",
                 api_key="key",
                 vector_field_name="embedding",
+            )
+
+    def test_knowledge_source_params_in_semantic_mode_raises(self) -> None:
+        with pytest.raises(ValueError, match="only supported in agentic mode"):
+            cast(Any, AzureAISearchContextProvider)(
+                source_id="s",
+                endpoint="https://test.search.windows.net",
+                index_name="idx",
+                api_key="key",
+                knowledge_source_params=[
+                    _context_provider.KnowledgeSourceParams(knowledge_source_name="src", kind="searchIndex")
+                ],
+            )
+
+    def test_duplicate_knowledge_source_params_raises(self) -> None:
+        with pytest.raises(ValueError, match="duplicate knowledge_source_name"):
+            AzureAISearchContextProvider(
+                source_id="s",
+                endpoint="https://test.search.windows.net",
+                knowledge_base_name="kb",
+                api_key="key",
+                mode="agentic",
+                knowledge_source_params=[
+                    _context_provider.KnowledgeSourceParams(knowledge_source_name="src", kind="searchIndex"),
+                    _context_provider.KnowledgeSourceParams(knowledge_source_name="src", kind="searchIndex"),
+                ],
             )
 
     def test_agentic_missing_aoai_url_with_index_raises(self) -> None:
@@ -1673,6 +1700,73 @@ class TestAgenticSearch:
             ("web-source", "web"),
             ("index-source", "searchIndex"),
             ("unknown-source", "futureKind"),
+        ]
+
+    async def test_existing_kb_applies_knowledge_source_param_overrides(self) -> None:
+        index_override = SearchIndexKnowledgeSourceParams(
+            knowledge_source_name="index-source", filter_add_on="category eq 'docs'"
+        )
+        extra_source = SearchIndexKnowledgeSourceParams(
+            knowledge_source_name="extra-source", include_reference_source_data=False
+        )
+        provider = _make_provider(
+            mode="agentic",
+            index_name=None,
+            knowledge_base_name="kb",
+            knowledge_source_params=[index_override, extra_source],
+        )
+        provider.retrieval_reasoning_effort = "minimal"
+
+        provider._index_client = AsyncMock()
+        provider._index_client.get_knowledge_base.return_value = SimpleNamespace(
+            knowledge_sources=[SimpleNamespace(name="web-source"), SimpleNamespace(name="index-source")]
+        )
+        provider._index_client.get_knowledge_source.side_effect = [
+            SimpleNamespace(kind="web"),
+            SimpleNamespace(kind="searchIndex"),
+        ]
+        provider._retrieval_client = AsyncMock()
+        provider._retrieval_client.retrieve.return_value = Mock(response=[], references=None)
+
+        await provider._agentic_search([Message(role="user", contents=["query"])])
+
+        request = provider._retrieval_client.retrieve.call_args.kwargs["retrieval_request"]
+        assert [param.as_dict() for param in request.knowledge_source_params] == [
+            {"knowledgeSourceName": "web-source", "includeReferenceSourceData": True, "kind": "web"},
+            {
+                "knowledgeSourceName": "index-source",
+                "filterAddOn": "category eq 'docs'",
+                "kind": "searchIndex",
+                "includeReferenceSourceData": True,
+            },
+            {"knowledgeSourceName": "extra-source", "includeReferenceSourceData": False, "kind": "searchIndex"},
+        ]
+        # The caller's objects are not mutated when defaults are filled in.
+        assert index_override.include_reference_source_data is None
+
+    async def test_index_backed_kb_applies_knowledge_source_param_overrides(self) -> None:
+        provider = _make_provider(
+            mode="agentic",
+            model="deploy",
+            azure_openai_resource_url="https://aoai.openai.azure.com",
+            knowledge_source_params=[
+                SearchIndexKnowledgeSourceParams(
+                    knowledge_source_name="test-index-source", filter_add_on="category eq 'docs'"
+                )
+            ],
+        )
+        provider._index_client = AsyncMock()
+
+        with patch("agent_framework_azure_ai_search._context_provider.KnowledgeBaseRetrievalClient"):
+            await provider._ensure_knowledge_base()
+
+        assert [param.as_dict() for param in provider._knowledge_source_params] == [
+            {
+                "knowledgeSourceName": "test-index-source",
+                "filterAddOn": "category eq 'docs'",
+                "kind": "searchIndex",
+                "includeReferenceSourceData": True,
+            }
         ]
 
     async def test_concurrent_existing_kb_initialization_publishes_complete_source_params(self) -> None:
