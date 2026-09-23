@@ -1932,7 +1932,9 @@ class Message(SerializationMixin):
         Remarks:
             This property concatenates the text of all TextContent objects in Content.
         """
-        return " ".join(content.text for content in self.contents if content.type == "text")  # type: ignore[misc]
+        return " ".join(
+            content.text for content in self.contents if content.type == "text" and content.text is not None
+        )
 
 
 AgentRunInputs = str | Content | Message | Sequence[str | Content | Message]

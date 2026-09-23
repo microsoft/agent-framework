@@ -2562,6 +2562,23 @@ def test_chat_message_complex_content_serialization():
     assert reconstructed.contents[2].type == "function_result"
 
 
+def test_message_text_handles_none_text_contents() -> None:
+    """Message.text should filter out text content whose text is None without raising TypeError."""
+    msg = Message(
+        role="assistant",
+        contents=[
+            Content("text", text=None),
+            Content.from_text("Hello"),
+            Content("text", text=None),
+            Content.from_text("world"),
+        ],
+    )
+    assert msg.text == "Hello world"
+
+    empty_msg = Message(role="user", contents=[Content("text", text=None)])
+    assert empty_msg.text == ""
+
+
 def test_message_roundtrip_preserves_compaction_annotation_dict() -> None:
     message = Message(
         role="assistant",
