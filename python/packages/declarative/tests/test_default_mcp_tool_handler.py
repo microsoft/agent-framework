@@ -29,7 +29,7 @@ from agent_framework.exceptions import ToolExecutionException
 from agent_framework_declarative._workflows._mcp_handler import (
     DefaultMCPToolHandler,
     MCPToolInvocation,
-    _get_or_create_workflow_session_id,
+    get_or_create_workflow_session_id,
 )
 
 pytestmark = pytest.mark.skipif(
@@ -831,16 +831,16 @@ class TestConstruction:
 
 class TestWorkflowSessionId:
     def test_separate_workflow_states_get_separate_ids(self) -> None:
-        first = _get_or_create_workflow_session_id(State())
-        second = _get_or_create_workflow_session_id(State())
+        first = get_or_create_workflow_session_id(State())
+        second = get_or_create_workflow_session_id(State())
 
         assert first != second
 
     def test_same_workflow_state_reuses_id(self) -> None:
         state = State()
 
-        first = _get_or_create_workflow_session_id(state)
-        second = _get_or_create_workflow_session_id(state)
+        first = get_or_create_workflow_session_id(state)
+        second = get_or_create_workflow_session_id(state)
 
         assert first == second
 

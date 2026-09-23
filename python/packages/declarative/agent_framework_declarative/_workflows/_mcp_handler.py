@@ -57,7 +57,7 @@ _DEFAULT_CACHE_MAX_SIZE = 32
 _WORKFLOW_SESSION_ID_KEY = "_declarative_mcp_workflow_session_id"
 
 
-def _get_or_create_workflow_session_id(state: State) -> str:
+def get_or_create_workflow_session_id(state: State) -> str:
     workflow_session_id = state.get(_WORKFLOW_SESSION_ID_KEY)
     if workflow_session_id is None:
         workflow_session_id = uuid.uuid4().hex
