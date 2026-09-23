@@ -87,6 +87,7 @@ agent-framework-claude = { workspace = true }
 agent-framework-copilotstudio = { workspace = true }
 agent-framework-declarative = { workspace = true }
 agent-framework-devui = { workspace = true }
+agent-framework-duckdb = { workspace = true }
 agent-framework-foundry = { workspace = true }
 agent-framework-foundry-hosting = { workspace = true }
 agent-framework-foundry-local = { workspace = true }
