@@ -79,7 +79,7 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext, IWorkflowSe
                 // Copy keys to array to avoid modifying collection during enumeration.
                 foreach (string key in this.State.Keys(scopeName).ToArray())
                 {
-                    await this.UpdateStateAsync(key, UnassignedValue.Instance, scopeName, allowSystem: false, cancellationToken).ConfigureAwait(false);
+                    await this.UpdateStateAsync(key, UnassignedValue.Instance, scopeName, allowSystem: false, cancellationToken: cancellationToken).ConfigureAwait(false);
                 }
             }
             else
@@ -94,7 +94,18 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext, IWorkflowSe
     /// <inheritdoc/>
     public async ValueTask QueueStateUpdateAsync<T>(string key, T? value, string? scopeName = null, CancellationToken cancellationToken = default)
     {
-        await this.UpdateStateAsync(key, value, scopeName, allowSystem: false, cancellationToken).ConfigureAwait(false);
+        await this.UpdateStateAsync(key, value, scopeName, allowSystem: false, cancellationToken: cancellationToken).ConfigureAwait(false);
+        this.State.Bind();
+    }
+
+    internal async ValueTask QueueStateUpdateAsync<T>(
+        string key,
+        T? value,
+        string? scopeName,
+        SensitivityLevel sensitivity,
+        CancellationToken cancellationToken = default)
+    {
+        await this.UpdateStateAsync(key, value, scopeName, allowSystem: false, sensitivity: sensitivity, cancellationToken: cancellationToken).ConfigureAwait(false);
         this.State.Bind();
     }
 
@@ -158,7 +169,13 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext, IWorkflowSe
     public ValueTask SendMessageAsync(object message, string? targetId = null, CancellationToken cancellationToken = default)
         => this.Source.SendMessageAsync(message, targetId, cancellationToken);
 
-    public ValueTask UpdateStateAsync<T>(string key, T? value, string? scopeName, bool allowSystem, CancellationToken cancellationToken = default)
+    public ValueTask UpdateStateAsync<T>(
+        string key,
+        T? value,
+        string? scopeName,
+        bool allowSystem,
+        SensitivityLevel sensitivity = SensitivityLevel.None,
+        CancellationToken cancellationToken = default)
     {
         bool isManagedScope =
             scopeName is not null && // null scope cannot be managed
@@ -186,47 +203,61 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext, IWorkflowSe
             _ => QueueNativeStateAsync(value),
         };
 
-        ValueTask QueueEmptyStateAsync()
+        async ValueTask QueueEmptyStateAsync()
         {
             if (isManagedScope)
             {
-                this.State.Set(key, FormulaValue.NewBlank(), scopeName);
+                this.State.Set(key, FormulaValue.NewBlank(), scopeName, sensitivity);
             }
-            return this.Source.QueueStateUpdateAsync(key, UnassignedValue.Instance, scopeName, cancellationToken);
+            await this.Source.QueueStateUpdateAsync(key, UnassignedValue.Instance, scopeName, cancellationToken).ConfigureAwait(false);
+            await this.QueueSensitivityUpdateAsync(key, scopeName, sensitivity, cancellationToken).ConfigureAwait(false);
         }
 
-        ValueTask QueueFormulaStateAsync(FormulaValue formulaValue)
+        async ValueTask QueueFormulaStateAsync(FormulaValue formulaValue)
         {
             if (isManagedScope)
             {
-                this.State.Set(key, formulaValue, scopeName);
+                this.State.Set(key, formulaValue, scopeName, sensitivity);
             }
 
-            return this.Source.QueueStateUpdateAsync(key, formulaValue.AsPortable(), scopeName, cancellationToken);
+            await this.Source.QueueStateUpdateAsync(key, formulaValue.AsPortable(), scopeName, cancellationToken).ConfigureAwait(false);
+            await this.QueueSensitivityUpdateAsync(key, scopeName, sensitivity, cancellationToken).ConfigureAwait(false);
         }
 
-        ValueTask QueueDataValueStateAsync(DataValue dataValue)
+        async ValueTask QueueDataValueStateAsync(DataValue dataValue)
         {
             FormulaValue formulaValue = dataValue.ToFormula();
 
             if (isManagedScope)
             {
-                this.State.Set(key, formulaValue, scopeName);
+                this.State.Set(key, formulaValue, scopeName, sensitivity);
             }
 
-            return this.Source.QueueStateUpdateAsync(key, formulaValue.AsPortable(), scopeName, cancellationToken);
+            await this.Source.QueueStateUpdateAsync(key, formulaValue.AsPortable(), scopeName, cancellationToken).ConfigureAwait(false);
+            await this.QueueSensitivityUpdateAsync(key, scopeName, sensitivity, cancellationToken).ConfigureAwait(false);
         }
 
-        ValueTask QueueNativeStateAsync(object rawValue)
+        async ValueTask QueueNativeStateAsync(object rawValue)
         {
             FormulaValue formulaValue = rawValue.ToFormula();
 
             if (isManagedScope)
             {
-                this.State.Set(key, formulaValue, scopeName);
+                this.State.Set(key, formulaValue, scopeName, sensitivity);
             }
 
-            return this.Source.QueueStateUpdateAsync(key, formulaValue.AsPortable(), scopeName, cancellationToken);
+            await this.Source.QueueStateUpdateAsync(key, formulaValue.AsPortable(), scopeName, cancellationToken).ConfigureAwait(false);
+            await this.QueueSensitivityUpdateAsync(key, scopeName, sensitivity, cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    private ValueTask QueueSensitivityUpdateAsync(string key, string? scopeName, SensitivityLevel sensitivity, CancellationToken cancellationToken)
+    {
+        if (scopeName is null || (!ManagedScopes.Contains(scopeName) && scopeName != VariableScopeNames.Environment))
+        {
+            return default;
+        }
+
+        return this.Source.QueueStateUpdateAsync(key, sensitivity, WorkflowFormulaState.GetSensitivityScopeName(scopeName), cancellationToken);
     }
 }

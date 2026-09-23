@@ -114,6 +114,25 @@ public class WorkflowFormulaStateTests
         Assert.NotEqual(first.SessionId, second.SessionId);
     }
 
+    [Fact]
+    public async Task RestoreAsync_RestoresPersistedSensitivityAsync()
+    {
+        // Arrange
+        Mock<IWorkflowContext> context = new(MockBehavior.Strict);
+        context.Setup(c => c.ReadStateKeysAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string? scopeName, CancellationToken _) => scopeName == VariableScopeNames.Local ? new HashSet<string> { "secret" } : []);
+        context.Setup(c => c.ReadStateAsync<PortableValue>("secret", VariableScopeNames.Local, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PortableValue("secret-value"));
+        context.Setup(c => c.ReadStateAsync<SensitivityLevel>("secret", WorkflowFormulaState.GetSensitivityScopeName(VariableScopeNames.Local), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(SensitivityLevel.Sensitive);
+
+        // Act
+        await this.State.RestoreAsync(context.Object, CancellationToken.None);
+
+        // Assert
+        Assert.Equal(SensitivityLevel.Sensitive, this.State.GetSensitivity("secret"));
+    }
+
     private static IWorkflowContext CreateContext(Dictionary<string, string> state)
     {
         Mock<IWorkflowContext> context = new();
