@@ -129,7 +129,6 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, ResponseA
             }
             catch (Exception exception) when (
                 responseObjectWasBlanked &&
-                responseObjectPath is not null &&
                 IsBlankResponseMemberAccessFailure(exception, this.Model.Input.ExternalLoop.When, responseObjectPath))
             {
                 requestInput = false;
