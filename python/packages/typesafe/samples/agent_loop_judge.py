@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import os
+from collections.abc import Awaitable, Callable
 
-from agent_framework import Agent, AgentLoopMiddleware
+from agent_framework import Agent, AgentLoopMiddleware, ChatContext, ChatResponse, chat_middleware
 from agent_framework.foundry import FoundryChatClient
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
@@ -36,45 +37,63 @@ Authentication:
 """
 
 
+@chat_middleware
+async def log_judge_exchange(
+    context: ChatContext,
+    call_next: Callable[[], Awaitable[None]],
+) -> None:
+    """Log the input evaluated by Jev and its structured judge verdict."""
+    print("\nJudge input:")
+    for message in context.messages:
+        print(f"  {message.role}: {message.text or message.contents}")
+
+    await call_next()
+
+    if isinstance(context.result, ChatResponse):
+        print(f"Judge response: {context.result.value}")
+
+
 async def main() -> None:
     """Loop a real Foundry answerer until the Jev judge accepts its response."""
     endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
     model = os.environ["FOUNDRY_MODEL"]
 
-    async with AzureCliCredential() as credential, TypeSafeChatClient() as judge_client:
-        # 1. TypeSafeChatClient is passed directly—no judge-specific wrapper.
-        loop = AgentLoopMiddleware.with_judge(
-            judge_client,
-            criteria=[
-                "Explains why the sky is blue",
-                "Explains why sunsets are red",
-                "Uses clear language suitable for a general audience",
-            ],
-            max_iterations=3,
-        )
-
-        # 2. The primary agent remains a normal generative chat client. Jev only
+    async with (
+        AzureCliCredential() as credential,
+        TypeSafeChatClient(middleware=[log_judge_exchange]) as judge_client,
+    ):
+        # 1. The primary agent is a normal generative chat client. Jev only
         #    evaluates whether its latest answer meets the request and criteria.
-        answer_client = FoundryChatClient(
-            project_endpoint=endpoint,
-            model=model,
-            credential=credential,
-        )
         agent = Agent(
-            client=answer_client,
+            client=FoundryChatClient(
+                project_endpoint=endpoint,
+                model=model,
+                credential=credential,
+            ),
             name="answerer",
             instructions=(
                 "Answer clearly and revise your answer when evaluator feedback says "
                 "the original request is not fully addressed."
             ),
-            middleware=[loop],
+            middleware=[
+                AgentLoopMiddleware.with_judge(
+                    # 2. TypeSafeChatClient is used here as a judge.
+                    judge_client,
+                    criteria=[
+                        "Explains why the sky is blue",
+                        "Explains why sunsets are red",
+                        "Uses clear language suitable for a general audience",
+                    ],
+                    max_iterations=3,
+                )
+            ],
         )
 
-        response = await agent.run("Explain why the sky is blue and sunsets are red.")
+        response = await agent.run("Explain why the sky is blue.")
 
     # 3. Non-streaming loop results include all iterations; the last assistant
     #    message is the accepted final answer.
-    print(f"Final answer: {response.messages[-1].text}")
+    print(f"Final answer: {response.text}")
 
 
 if __name__ == "__main__":
@@ -83,6 +102,16 @@ if __name__ == "__main__":
 
 """
 Sample output (exact answer and iteration count vary by the Foundry model):
+
+Judge input:
+  user: Explain why the sky is blue.
+  assistant: The sky appears blue because ...
+Judge response: answered=False reasoning='Jev P(answered)=0.421'
+
+Judge input:
+  user: Explain why the sky is blue.
+  assistant: The sky appears blue because ...
+Judge response: answered=True reasoning='Jev P(answered)=0.873'
 
 Final answer: The sky appears blue because air molecules scatter shorter blue
 wavelengths more strongly than longer wavelengths. At sunset, sunlight travels

@@ -13,7 +13,7 @@ ordinary generated chat text.
 | [`mcp_function_calling.py`](mcp_function_calling.py) | MCP discovery, TypeSafe tool routing, and terminal Noul evaluation. | The MCP weather result and success probability. |
 | [`mcp_weather_server.py`](mcp_weather_server.py) | The local stdio MCP server used by the MCP client sample. | MCP protocol traffic only; the client prints the user-facing result. |
 | [`secure_agent_quarantine.py`](secure_agent_quarantine.py) | Jev as the `SecureAgentConfig` quarantine client for structured risk classification. | Risk label, confidence, safety probability, and propagated security labels. |
-| [`agent_loop_judge.py`](agent_loop_judge.py) | `TypeSafeChatClient` passed directly to `AgentLoopMiddleware.with_judge`, judging a real Foundry answerer. | The final accepted answer. |
+| [`agent_loop_judge.py`](agent_loop_judge.py) | `TypeSafeChatClient` passed directly to `AgentLoopMiddleware.with_judge`, with client middleware logging each evaluated answer and structured verdict. | Each judge input and `JudgeVerdict`, followed by the final accepted answer. |
 
 ## How `response_format` works
 
@@ -114,6 +114,8 @@ can vary between runs.
   risk and safety questions as `TypeSafeChatClient(default_questions=...)`
   directly to `SecureAgentConfig`.
 - **AgentLoopMiddleware judge:** works out of the box by passing
-  `TypeSafeChatClient()` directly to `with_judge`. The connector maps the required
-  `JudgeVerdict.answered` boolean to a Noul. Jev cannot generate the optional
-  reasoning prose, so the connector supplies deterministic probability feedback.
+  `TypeSafeChatClient()` directly to `with_judge`. The sample registers chat
+  middleware on that client to log the messages Jev evaluates and the returned
+  `JudgeVerdict`. The connector maps the required `JudgeVerdict.answered` boolean
+  to a Noul. Jev cannot generate the optional reasoning prose, so the connector
+  supplies deterministic probability feedback.
