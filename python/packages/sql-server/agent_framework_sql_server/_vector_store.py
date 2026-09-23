@@ -187,7 +187,6 @@ class SqlServerCollection(
         embedding_generator: EmbeddingClient | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
-        _shared_client: _Client | None = None,
     ) -> None:
         """Initialize a collection without connecting to the database.
 
@@ -201,14 +200,13 @@ class SqlServerCollection(
             embedding_generator: Default local embedding generator.
             env_file_path: Optional .env file.
             env_file_encoding: Encoding of the selected .env file.
-            _shared_client: Internal shared client owned by a ``SqlServerStore``.
         """
         super().__init__(
             record_type,
             definition=definition,
             collection_name=collection_name,
             embedding_generator=embedding_generator,
-            managed_client=_shared_client is None,
+            managed_client=True,
         )
         self.schema = schema
         self._table = f"{_quote_identifier(schema)}.{_quote_identifier(self.collection_name)}"
@@ -228,23 +226,12 @@ class SqlServerCollection(
                     raise NotImplementedError("SQL Server approximate vector indexes are not supported.")
             elif field.is_indexed and field.field_type == "data" and field.type_ in ("bytes", "list", "dict"):
                 raise NotImplementedError(f"SQL Server cannot index data fields of type '{field.type_}'.")
-        if _shared_client is not None:
-            if (
-                connection_string is not None
-                or query_timeout is not None
-                or env_file_path is not None
-                or env_file_encoding is not None
-            ):
-                raise ValueError("A store's shared client cannot be combined with other connection settings.")
-            self._client = _shared_client
-        else:
-            self._client = _create_client(
-                connection_string,
-                query_timeout=query_timeout,
-                env_file_path=env_file_path,
-                env_file_encoding=env_file_encoding,
-            )
-        self._shared_client = _shared_client is not None
+        self._client = _create_client(
+            connection_string,
+            query_timeout=query_timeout,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+        )
 
     async def __aenter__(self) -> Self:
         """Enter the collection context."""
@@ -256,7 +243,7 @@ class SqlServerCollection(
 
     async def close(self) -> None:
         """Close a collection-owned worker, never its store's worker."""
-        if not self._shared_client:
+        if self.managed_client:
             await self._client.close()
 
     def _column_names(self, include_vectors: bool) -> list[str]:
@@ -639,14 +626,19 @@ class SqlServerStore(BaseVectorStore):
         embedding_generator: EmbeddingClient | None = None,
     ) -> SqlServerCollection[Any, ModelT]:
         """Create a collection sharing this store's owned worker and lifecycle."""
-        return SqlServerCollection(
+        collection = SqlServerCollection(
             record_type,
+            connection_string=self._client.connection_string,
+            query_timeout=self._client.query_timeout,
             schema=self.schema,
             definition=definition,
             collection_name=collection_name,
             embedding_generator=embedding_generator if embedding_generator is not None else self.embedding_generator,
-            _shared_client=self._client,
         )
+        # Collection construction does no I/O; reuse the store's lazy worker.
+        collection._client = self._client  # pyright: ignore[reportPrivateUsage]
+        collection.managed_client = False
+        return collection
 
     async def list_collection_names(self, *, operation_options: Mapping[str, Any] | None = None) -> Sequence[str]:
         """List base tables in the configured schema."""

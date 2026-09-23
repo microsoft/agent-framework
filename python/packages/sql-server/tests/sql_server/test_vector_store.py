@@ -408,6 +408,7 @@ def test_public_api_has_no_borrowed_connection_or_factory(constructor):
         parameters = inspect.signature(api).parameters
         assert "client" not in parameters
         assert "client_factory" not in parameters
+        assert "_shared_client" not in parameters
     assert "SqlServerClient" not in module.__dict__
     with pytest.raises(TypeError, match="client"):
         constructor(connection_string="Server=unused", client=connection)
