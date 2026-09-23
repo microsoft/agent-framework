@@ -251,7 +251,7 @@ public sealed class AgentMcpSkillsSourceTests
             Assert.NotNull(resource);
             Assert.Equal(name, resource.Name);
             Assert.Equal("safe content", await resource.ReadAsync());
-            Assert.Equal(root + name, Assert.Single(reads));
+            Assert.Equal(root + name.Replace('\\', '/'), Assert.Single(reads));
         }
     }
 

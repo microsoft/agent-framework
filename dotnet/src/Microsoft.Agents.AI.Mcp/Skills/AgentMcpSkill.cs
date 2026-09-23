@@ -101,13 +101,15 @@ internal sealed partial class AgentMcpSkill : AgentSkill
             return null;
         }
 
-        if (!IsResourceNameSafe(name))
+        // Treat backslashes as separators, e.g. "..\x" is checked and requested as "../x".
+        string normalized = name.Replace('\\', '/');
+        if (!IsResourceNameSafe(normalized))
         {
             LogUnsafeResourceName(this._logger);
             return null;
         }
 
-        string uri = this._skillRootUri + name;
+        string uri = this._skillRootUri + normalized;
 
         ReadResourceResult result;
         try
@@ -124,11 +126,8 @@ internal sealed partial class AgentMcpSkill : AgentSkill
         return new AgentMcpSkillResource(name: name, result: result);
     }
 
-    private static bool IsResourceNameSafe(string name)
+    private static bool IsResourceNameSafe(string normalized)
     {
-        // Treat backslashes as separators, e.g. "..\x" is checked as "../x".
-        string normalized = name.Replace('\\', '/');
-
         // Validate only the path before a literal "?"/"#", fully decoded; e.g. "a%3f/%2e%2e/x" stays one path, "a/b.md?q=/../x" ignores the query.
         string path = FullyUnescape(normalized.Split(['?', '#'], 2)[0]);
 
