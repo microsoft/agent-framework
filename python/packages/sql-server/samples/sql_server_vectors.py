@@ -26,9 +26,9 @@ database. The signed-in identity needs permission to create a table and index
 in the dbo schema and read/write its records. For an Azure-hosted app, use
 Authentication=ActiveDirectoryMSI instead (and UID=<client-id> for a
 user-assigned managed identity). Here the connector reads the exported
-SQL_SERVER_CONNECTION_STRING through Agent Framework settings. You can instead
-put that same variable in a .env file in the run directory; SqlServerStore()
-loads that file by default. Pass env_file_path only if the file is elsewhere.
+SQL_SERVER_CONNECTION_STRING through Agent Framework settings. To read it from
+a .env file in the run directory instead, pass env_file_path=".env" to
+SqlServerStore.
 See https://learn.microsoft.com/sql/connect/python/mssql-python/entra-authentication
 for other supported Entra modes and database-user setup.
 

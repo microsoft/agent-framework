@@ -10,7 +10,6 @@ import math
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
-from pathlib import Path
 from typing import Any, ClassVar, Generic, cast
 
 import mssql_python
@@ -148,14 +147,11 @@ def _create_client(
     env_file_path: str | None,
     env_file_encoding: str | None,
 ) -> _Client:
-    selected_env_file = env_file_path
-    if selected_env_file is None and Path(".env").is_file():
-        selected_env_file = ".env"
     settings = load_settings(
         SqlServerSettings,
         env_prefix="SQL_SERVER_",
         connection_string=connection_string,
-        env_file_path=selected_env_file,
+        env_file_path=env_file_path,
         env_file_encoding=env_file_encoding,
     )
     resolved = settings.get("connection_string")
@@ -202,7 +198,7 @@ class SqlServerCollection(
             definition: Explicit field definition for dictionary records.
             collection_name: Table name overriding the model definition.
             embedding_generator: Default local embedding generator.
-            env_file_path: Optional settings file other than the run directory's default ``.env``.
+            env_file_path: Optional .env file.
             env_file_encoding: Encoding of the selected .env file.
         """
         super().__init__(
@@ -608,7 +604,7 @@ class SqlServerStore(BaseVectorStore):
             query_timeout: Optional per-statement timeout in seconds; ``0`` disables the timeout.
             schema: Existing database schema used by all collections.
             embedding_generator: Default local embedding generator.
-            env_file_path: Optional settings file other than the run directory's default ``.env``.
+            env_file_path: Optional .env file.
             env_file_encoding: Encoding of the selected .env file.
         """
         super().__init__(embedding_generator=embedding_generator, managed_client=True)

@@ -380,7 +380,6 @@ def constructor(request, definition, monkeypatch):
 
 
 def test_settings_priority_and_secret_masking(constructor, monkeypatch, tmp_path):
-    monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("SQL_SERVER_CONNECTION_STRING", "environment-secret")
     env_file = tmp_path / "settings.env"
     env_file.write_text("SQL_SERVER_CONNECTION_STRING='file-secret'\n", encoding="utf-8")
@@ -392,33 +391,11 @@ def test_settings_priority_and_secret_masking(constructor, monkeypatch, tmp_path
     assert constructor()._client.connection_string.get_secret_value() == "environment-secret"
 
 
-def test_default_dotenv_in_run_directory_and_explicit_override(constructor, monkeypatch, tmp_path):
-    monkeypatch.chdir(tmp_path)
-    connection_string = (
-        "Server=example.database.windows.net;Database=demo;Authentication=ActiveDirectoryDefault;Encrypt=yes;"
-    )
-    (tmp_path / ".env").write_text(f"SQL_SERVER_CONNECTION_STRING='{connection_string}'\n", encoding="utf-8")
-    monkeypatch.setenv("SQL_SERVER_CONNECTION_STRING", "Server=environment")
-    assert constructor()._client.connection_string.get_secret_value() == connection_string
-    assert constructor(connection_string="Server=explicit")._client.connection_string.get_secret_value() == (
-        "Server=explicit"
-    )
-    alternate_file = tmp_path / "alternate.env"
-    alternate_file.write_text("SQL_SERVER_CONNECTION_STRING=Server=alternate\n", encoding="utf-16")
-    alternate = constructor(env_file_path=str(alternate_file), env_file_encoding="utf-16")
-    assert alternate._client.connection_string.get_secret_value() == "Server=alternate"
-    with pytest.raises(FileNotFoundError):
-        constructor(env_file_path=str(tmp_path / "missing.env"))
-
-
-def test_missing_default_dotenv_falls_back_to_environment(constructor, monkeypatch, tmp_path):
+def test_settings_require_explicit_file_or_environment(constructor, monkeypatch, tmp_path):
+    (tmp_path / ".env").write_text("SQL_SERVER_CONNECTION_STRING=implicit\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     with pytest.raises(ValueError, match="required"):
         constructor()
-    monkeypatch.setenv("SQL_SERVER_CONNECTION_STRING", "Server=environment")
-    assert constructor()._client.connection_string.get_secret_value() == "Server=environment"
-    (tmp_path / ".env").write_text("UNRELATED_SETTING=unused\n", encoding="utf-8")
-    assert constructor()._client.connection_string.get_secret_value() == "Server=environment"
     with pytest.raises(ValueError, match="must not be empty"):
         constructor(connection_string="")
     with pytest.raises(FileNotFoundError):
