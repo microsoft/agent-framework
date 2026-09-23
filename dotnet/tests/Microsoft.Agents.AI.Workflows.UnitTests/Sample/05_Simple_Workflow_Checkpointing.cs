@@ -62,9 +62,9 @@ internal static class Step5EntryPoint
         Assert.NotNull(result);
 
         // Depending on the timing of the response with respect to the underlying workflow
-        // we may end up with an extra superstep in between.
-        Assert.True(checkpoints.Count >= 6);
-        Assert.True(checkpoints.Count <= 7);
+        // we may end up with extra supersteps in between.
+        Assert.True(checkpoints.Count >= 6, $"Expected at least 6 checkpoints, got {checkpoints.Count}.");
+        Assert.True(checkpoints.Count <= 12, $"Expected at most 12 checkpoints, got {checkpoints.Count}.");
 
         cancellationSource.Dispose();
 

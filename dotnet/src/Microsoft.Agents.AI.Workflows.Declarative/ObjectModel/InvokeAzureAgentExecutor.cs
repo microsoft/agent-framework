@@ -156,6 +156,11 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, ResponseA
         if (this.AgentInput?.Messages is not null)
         {
             EvaluationResult<DataValue> expressionResult = this.Evaluator.GetValue(this.AgentInput.Messages);
+            if (expressionResult.Sensitivity == SensitivityLevel.Sensitive)
+            {
+                throw new DeclarativeActionException($"Cannot send sensitive agent input messages: {this.Id}.");
+            }
+
             userInput = expressionResult.Value;
         }
 
