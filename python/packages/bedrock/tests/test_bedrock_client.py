@@ -9,7 +9,7 @@ from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
-from agent_framework import Agent, Content, FunctionTool, Message
+from agent_framework import Agent, Content, FunctionTool, Message, ResponseStream
 from agent_framework._settings import SecretString
 from boto3.session import Session as Boto3Session
 from botocore.client import BaseClient
@@ -38,6 +38,23 @@ class _StubBedrockRuntime:
                 },
             },
         }
+
+
+class _StubEventStream(list[dict[str, Any]]):
+    closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _StubBedrockStreamRuntime(_StubBedrockRuntime):
+    def __init__(self, events: list[dict[str, Any]]) -> None:
+        super().__init__()
+        self.stream = _StubEventStream(events)
+
+    def converse_stream(self, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(kwargs)
+        return {"stream": self.stream}
 
 
 def _make_client() -> BedrockChatClient:
@@ -78,6 +95,55 @@ async def test_get_response_invokes_bedrock_runtime() -> None:
     assert payload["messages"][0]["content"][0]["text"] == "hello"
     assert response.messages[0].contents[0].text == "Bedrock says hi"
     assert response.usage_details and response.usage_details["input_token_count"] == 10
+
+
+async def test_stream_yields_updates_as_converse_stream_events_arrive() -> None:
+    """stream=True should use ConverseStream and yield text, tool call, finish and usage updates per event."""
+    stub = _StubBedrockStreamRuntime([
+        {"messageStart": {"role": "assistant"}},
+        {"contentBlockDelta": {"delta": {"text": "Checking"}, "contentBlockIndex": 0}},
+        {"contentBlockDelta": {"delta": {"text": " the weather."}, "contentBlockIndex": 0}},
+        {"contentBlockStop": {"contentBlockIndex": 0}},
+        {
+            "contentBlockStart": {
+                "start": {"toolUse": {"toolUseId": "call-1", "name": "get_weather"}},
+                "contentBlockIndex": 1,
+            }
+        },
+        {"contentBlockDelta": {"delta": {"toolUse": {"input": '{"city":'}}, "contentBlockIndex": 1}},
+        {"contentBlockDelta": {"delta": {"toolUse": {"input": ' "Rome"}'}}, "contentBlockIndex": 1}},
+        {"contentBlockStop": {"contentBlockIndex": 1}},
+        {"messageStop": {"stopReason": "tool_use"}},
+        {
+            "metadata": {
+                "usage": {"inputTokens": 47, "outputTokens": 18, "totalTokens": 65},
+                "metrics": {"latencyMs": 9},
+            }
+        },
+    ])
+    client = BedrockChatClient(
+        model="us.openai.gpt-6-sol",
+        region="us-east-1",
+        client=stub,  # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type] # pyright: ignore[reportArgumentType]
+    )
+
+    stream = client._inner_get_response(
+        messages=[Message(role="user", contents=[Content.from_text(text="Weather in Rome?")])], options={}, stream=True
+    )
+    assert isinstance(stream, ResponseStream)
+    updates = [update async for update in stream]
+    response = await stream.get_final_response()
+
+    assert [update.text for update in updates if update.text] == ["Checking", " the weather."]
+    assert response.text == "Checking the weather."
+    function_call = next(content for content in response.messages[0].contents if content.type == "function_call")
+    assert function_call.call_id == "call-1"
+    assert function_call.name == "get_weather"
+    assert function_call.parse_arguments() == {"city": "Rome"}
+    assert response.finish_reason == "tool_calls"
+    assert response.usage_details and response.usage_details["output_token_count"] == 18
+    assert response.model == "us.openai.gpt-6-sol"
+    assert stub.stream.closed
 
 
 def test_build_request_requires_non_system_messages() -> None:
