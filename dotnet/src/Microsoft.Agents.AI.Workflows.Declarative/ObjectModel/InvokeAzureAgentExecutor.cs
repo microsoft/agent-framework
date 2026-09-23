@@ -122,12 +122,18 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, ResponseA
 
         if (this.Model.Input?.ExternalLoop?.When is not null)
         {
-            bool requestInput =
-                !responseObjectWasBlanked ||
-                responseObjectPath is null ||
-                !ReferencesPath(this.Model.Input.ExternalLoop.When, responseObjectPath)
-                    ? this.Evaluator.GetValue(this.Model.Input.ExternalLoop.When).Value
-                    : false;
+            bool requestInput;
+            try
+            {
+                requestInput = this.Evaluator.GetValue(this.Model.Input.ExternalLoop.When).Value;
+            }
+            catch (Exception exception) when (
+                responseObjectWasBlanked &&
+                responseObjectPath is not null &&
+                IsBlankResponseMemberAccessFailure(exception, this.Model.Input.ExternalLoop.When, responseObjectPath))
+            {
+                requestInput = false;
+            }
 
             if (requestInput)
             {
@@ -140,14 +146,27 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, ResponseA
         await context.SendResultMessageAsync(this.Id, result: null, cancellationToken).ConfigureAwait(false);
     }
 
-    private static bool ReferencesPath(BoolExpression expression, PropertyPath path)
+    private static bool IsBlankResponseMemberAccessFailure(Exception exception, BoolExpression expression, PropertyPath path)
     {
         string? expressionText =
             expression.IsVariableReference ?
             expression.VariableReference?.ToString() :
             expression.ExpressionText;
 
-        return expressionText?.Contains(path.ToString(), StringComparison.OrdinalIgnoreCase) is true;
+        if (expressionText?.Contains($"{path}.", StringComparison.OrdinalIgnoreCase) is not true)
+        {
+            return false;
+        }
+
+        IEnumerable<Exception> exceptions =
+            exception is AggregateException aggregateException ?
+            aggregateException.Flatten().InnerExceptions :
+            [exception];
+
+        return exceptions.Any(
+            currentException =>
+                currentException is InvalidOperationException &&
+                currentException.Message.Contains("Deprecated use of '.'", StringComparison.Ordinal));
     }
 
     private Dictionary<string, object?>? GetStructuredInputs()

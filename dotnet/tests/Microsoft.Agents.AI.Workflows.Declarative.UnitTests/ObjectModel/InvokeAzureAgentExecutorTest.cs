@@ -239,21 +239,30 @@ public sealed class InvokeAzureAgentExecutorTest(ITestOutputHelper output) : Wor
         this.VerifyUndefined("Result");
     }
 
-    [Fact]
-    public async Task InvalidResponseObjectOutputPreservesPreviousTypeForExternalLoopAsync()
+    [Theory]
+    [InlineData("not json", "IsBlank(Local.Result)", true)]
+    [InlineData("null", "IsBlank(Local.Result)", true)]
+    [InlineData("not json", "IsBlank(Local.Result.IsResolved)", false)]
+    [InlineData("not json", "Local.Result.IsResolved", false)]
+    [InlineData("not json", "Local.ResultBackup", true)]
+    public async Task BlankResponseObjectOutputEvaluatesExternalLoopWhenPossibleAsync(
+        string responseText,
+        string externalLoopWhen,
+        bool expectRequest)
     {
         // Arrange
         this.State.InitializeSystem();
         this.State.Set(
             "Result",
             FormulaValue.NewRecordFromFields(new NamedValue("IsResolved", FormulaValue.New(false))));
-        CapturingAgentProvider provider = new("not json");
+        this.State.Set("ResultBackup", FormulaValue.New(true));
+        CapturingAgentProvider provider = new(responseText);
         InvokeAzureAgent model =
             this.CreateModel(
-                displayName: nameof(InvalidResponseObjectOutputPreservesPreviousTypeForExternalLoopAsync),
+                displayName: nameof(BlankResponseObjectOutputEvaluatesExternalLoopWhenPossibleAsync),
                 agentName: "BrainInvalidResponseWithLoop",
                 responseObjectVariable: "Result",
-                externalLoopWhen: "IsBlank(Local.Result.IsResolved)");
+                externalLoopWhen: externalLoopWhen);
         InvokeAzureAgentExecutor action = new(model, provider, this.State);
         ExternalInputRequest? capturedRequest = null;
 
@@ -270,7 +279,15 @@ public sealed class InvokeAzureAgentExecutorTest(ITestOutputHelper output) : Wor
 
         // Assert
         this.VerifyUndefined("Result");
-        Assert.Null(capturedRequest);
+        if (expectRequest)
+        {
+            ExternalInputRequest request = Assert.IsType<ExternalInputRequest>(capturedRequest);
+            Assert.Equal(responseText, Assert.Single(request.AgentResponse.Messages).Text);
+        }
+        else
+        {
+            Assert.Null(capturedRequest);
+        }
 
         ValueTask CaptureExternalInputRequestAsync(IWorkflowContext context, ExternalInputRequest request, CancellationToken cancellationToken)
         {
