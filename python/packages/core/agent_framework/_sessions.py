@@ -180,6 +180,8 @@ def filter_new_messages(existing: Sequence[Message], incoming: Sequence[Message]
     Handles both 'append-only' and 'full transcript replay' scenarios.
     Prevents superlinear growth and preserves legitimate duplicate turns.
     """
+    if not incoming:
+        return []
     if not existing:
         return list(incoming)
 

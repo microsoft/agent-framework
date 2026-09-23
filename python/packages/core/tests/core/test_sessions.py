@@ -43,6 +43,7 @@ from agent_framework._sessions import (
     _run_identity_scope,
     _RunPersistenceGate,
     _suspend_run_persistence_gate,
+    filter_new_messages,
     is_local_history_conversation_id,
 )
 from agent_framework._telemetry import FeatureIndex
@@ -2250,3 +2251,40 @@ class TestRunPersistenceGate:
         assert executed == ["ran-inline"]
         await outer.flush()
         assert executed == ["ran-inline"]
+
+
+class TestFilterNewMessages:
+    """Tests for filter_new_messages."""
+
+    def test_empty_incoming_returns_empty_list(self) -> None:
+        existing = [Message("user", ["hello"]), Message("assistant", ["hi"])]
+        assert filter_new_messages(existing, []) == []
+
+    def test_both_empty_returns_empty_list(self) -> None:
+        assert filter_new_messages([], []) == []
+
+    def test_empty_existing_returns_copy_of_incoming(self) -> None:
+        incoming = [Message("user", ["hello"])]
+        result = filter_new_messages([], incoming)
+        assert result == incoming
+        assert result is not incoming
+
+    def test_prefix_alignment_returns_suffix(self) -> None:
+        m1 = Message("user", ["hello"])
+        m2 = Message("assistant", ["hi"])
+        m3 = Message("user", ["how are you?"])
+        result = filter_new_messages([m1, m2], [m1, m2, m3])
+        assert result == [m3]
+
+    def test_exact_replay_returns_empty_list(self) -> None:
+        m1 = Message("user", ["hello"])
+        m2 = Message("assistant", ["hi"])
+        result = filter_new_messages([m1, m2], [m1, m2])
+        assert result == []
+
+    def test_set_deduplication_filters_existing(self) -> None:
+        m1 = Message("user", ["hello"])
+        m2 = Message("assistant", ["hi"])
+        m3 = Message("user", ["new question"])
+        result = filter_new_messages([m1], [m1, m2, m3])
+        assert result == [m2, m3]
