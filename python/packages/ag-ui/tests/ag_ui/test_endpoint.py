@@ -8,7 +8,7 @@ import logging
 import subprocess
 import sys
 from collections import Counter
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass
 from inspect import signature
@@ -17,7 +17,7 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from ag_ui.core import MessagesSnapshotEvent, RunStartedEvent, StateSnapshotEvent
+from ag_ui.core import BaseEvent, MessagesSnapshotEvent, RunFinishedEvent, RunStartedEvent, StateSnapshotEvent
 from agent_framework import (
     Agent,
     AgentContext,
@@ -127,6 +127,57 @@ async def _post_until_sse_event_then_disconnect(
         "server": ("testserver", 80),
     }
     await asyncio.wait_for(app(scope, cast(Receive, receive), cast(Send, send)), timeout=5)
+
+
+async def _post_asgi_request(
+    app: FastAPI,
+    path: str,
+    payload: dict[str, Any],
+) -> tuple[int, bytes]:
+    """Run one complete ASGI request and return its status and response body."""
+    request_sent = False
+    response_complete = asyncio.Event()
+    status_code = 0
+    chunks: list[bytes] = []
+    body = json.dumps(payload).encode()
+
+    async def receive() -> ASGIMessage:
+        nonlocal request_sent
+        if not request_sent:
+            request_sent = True
+            return {"type": "http.request", "body": body, "more_body": False}
+        await response_complete.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message: ASGIMessage) -> None:
+        nonlocal status_code
+        if message["type"] == "http.response.start":
+            status_code = int(message["status"])
+            return
+        if message["type"] != "http.response.body":
+            return
+        chunk = message.get("body", b"")
+        if isinstance(chunk, bytes):
+            chunks.append(chunk)
+        if not message.get("more_body", False):
+            response_complete.set()
+
+    scope: Scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode(),
+        "query_string": b"",
+        "root_path": "",
+        "headers": [(b"content-type", b"application/json"), (b"host", b"testserver")],
+        "client": ("testclient", 50000),
+        "server": ("testserver", 80),
+    }
+    await asyncio.wait_for(app(scope, cast(Receive, receive), cast(Send, send)), timeout=5)
+    return status_code, b"".join(chunks)
 
 
 def _run_finished_interrupts(event: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1202,8 +1253,8 @@ async def test_add_endpoint_workflow_checkpointing_over_the_wire():
     assert "TEXT_MESSAGE_CONTENT" in resumed_types
 
 
-async def test_add_endpoint_accepts_keepalive_option_for_supported_runners(build_chat_client):
-    """Keepalive configuration is accepted at the endpoint seam for every supported runner shape."""
+async def test_add_endpoint_accepts_transport_options_for_supported_runners(build_chat_client):
+    """Endpoint transport configuration is accepted for every supported runner shape."""
 
     @executor(id="start")
     async def start(message: Any, ctx: WorkflowContext[Any, Any]) -> None:
@@ -1217,9 +1268,21 @@ async def test_add_endpoint_accepts_keepalive_option_for_supported_runners(build
         name="wrapped",
     )
 
-    add_agent_framework_fastapi_endpoint(app, raw_agent, path="/raw-agent", keepalive_seconds=0.5)
+    add_agent_framework_fastapi_endpoint(
+        app,
+        raw_agent,
+        path="/raw-agent",
+        keepalive_seconds=0.5,
+        detached_runs=True,
+    )
     add_agent_framework_fastapi_endpoint(app, wrapped_agent, path="/wrapped-agent", keepalive_seconds=None)
-    add_agent_framework_fastapi_endpoint(app, workflow, path="/raw-workflow", keepalive_seconds=1.0)
+    add_agent_framework_fastapi_endpoint(
+        app,
+        workflow,
+        path="/raw-workflow",
+        keepalive_seconds=1.0,
+        detached_runs=True,
+    )
     add_agent_framework_fastapi_endpoint(
         app,
         AgentFrameworkWorkflow(workflow=workflow),
@@ -1242,6 +1305,20 @@ def test_add_endpoint_keepalive_default_is_enabled() -> None:
     assert parameter.default == 15
 
 
+def test_add_endpoint_detached_runs_default_is_disabled() -> None:
+    """Detached execution is opt-in so current disconnect cancellation semantics remain the default."""
+    parameter = signature(add_agent_framework_fastapi_endpoint).parameters["detached_runs"]
+
+    assert parameter.default is False
+
+
+def test_add_endpoint_detached_runs_preserves_existing_positional_parameter_order() -> None:
+    """The new option is appended after existing parameters so positional a2ui_config callers do not shift."""
+    parameters = list(signature(add_agent_framework_fastapi_endpoint).parameters)
+
+    assert parameters.index("detached_runs") > parameters.index("a2ui_config")
+
+
 def test_add_endpoint_docstring_describes_keepalive_transport_behavior() -> None:
     """The public endpoint docs describe keepalive as transport comments, not AG-UI events."""
     docstring = add_agent_framework_fastapi_endpoint.__doc__
@@ -1255,10 +1332,28 @@ def test_add_endpoint_docstring_describes_keepalive_transport_behavior() -> None
     assert "do not change AG-UI events" in normalized_docstring
 
 
+def test_add_endpoint_docstring_describes_detached_run_behavior() -> None:
+    """The public endpoint docs distinguish detached completion from resumable replay."""
+    docstring = add_agent_framework_fastapi_endpoint.__doc__
+
+    assert docstring is not None
+    normalized_docstring = " ".join(docstring.split())
+    assert "detached_runs" in normalized_docstring
+    assert "Defaults to False" in normalized_docstring
+    assert "continues after the SSE client disconnects" in normalized_docstring
+    assert "does not provide resumable event replay" in normalized_docstring
+
+
 def test_keepalive_option_is_endpoint_owned() -> None:
     """Keepalive is endpoint transport configuration, not runner configuration."""
     assert "keepalive_seconds" not in signature(AgentFrameworkAgent).parameters
     assert "keepalive_seconds" not in signature(AgentFrameworkWorkflow).parameters
+
+
+def test_detached_runs_option_is_endpoint_owned() -> None:
+    """Detached execution is endpoint transport configuration, not runner configuration."""
+    assert "detached_runs" not in signature(AgentFrameworkAgent).parameters
+    assert "detached_runs" not in signature(AgentFrameworkWorkflow).parameters
 
 
 def test_endpoint_module_import_does_not_import_sse_transport() -> None:
@@ -1340,6 +1435,383 @@ async def test_endpoint_keepalive_disabled_preserves_streaming_response_shape(st
     assert "RUN_STARTED" in event_types
     assert "TEXT_MESSAGE_CONTENT" in event_types
     assert "RUN_FINISHED" in event_types
+
+
+@pytest.mark.parametrize("keepalive_seconds", [None, 0.01])
+async def test_endpoint_detached_run_completes_and_saves_after_client_disconnect(
+    streaming_chat_client_stub: Any,
+    keepalive_seconds: float | None,
+) -> None:
+    """A disconnected reader cannot strand a bounded detached producer or skip final persistence."""
+    release = asyncio.Event()
+    source_completed = asyncio.Event()
+    observed_scopes: list[str] = []
+    request_scope: ContextVar[str] = ContextVar("detached-request-scope")
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del messages, options, kwargs
+        observed_scopes.append(request_scope.get())
+        yield ChatResponseUpdate(contents=[Content.from_text(text="first")], role="assistant")
+        await release.wait()
+        for index in range(32):
+            yield ChatResponseUpdate(
+                contents=[Content.from_text(text=f"-chunk-{index}")],
+                role="assistant",
+                finish_reason="stop" if index == 31 else None,
+            )
+        source_completed.set()
+
+    def resolve_scope(request: AGUIRequest) -> str:
+        scope = str((request.state or {})["scope"])
+        request_scope.set(scope)
+        return scope
+
+    store = InMemoryAGUIThreadSnapshotStore()
+    agent = Agent(
+        name="detached",
+        instructions="Test agent",
+        client=streaming_chat_client_stub(stream_fn),
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/detached",
+        snapshot_store=store,
+        snapshot_scope_resolver=resolve_scope,
+        keepalive_seconds=keepalive_seconds,
+        detached_runs=True,
+    )
+
+    await _post_until_sse_event_then_disconnect(
+        app,
+        "/detached",
+        {
+            "runId": "run-detached",
+            "threadId": "thread-detached",
+            "messages": [{"role": "user", "content": "Start"}],
+            "state": {"scope": "tenant-a"},
+        },
+        event_type="TEXT_MESSAGE_CONTENT",
+    )
+    assert not source_completed.is_set()
+
+    release.set()
+    await asyncio.wait_for(source_completed.wait(), timeout=5)
+
+    snapshot = None
+    for _ in range(100):
+        snapshot = await store.get(scope="tenant-a", thread_id="thread-detached")
+        if snapshot is not None and "chunk-31" in json.dumps(snapshot.messages):
+            break
+        await asyncio.sleep(0.01)
+
+    assert snapshot is not None
+    assert "chunk-31" in json.dumps(snapshot.messages)
+    assert observed_scopes == ["tenant-a"]
+
+
+async def test_endpoint_disconnect_still_cancels_run_by_default(
+    streaming_chat_client_stub: Any,
+) -> None:
+    """Without the opt-in, disconnect retains the existing cancellation behavior."""
+    release = asyncio.Event()
+    source_closed = asyncio.Event()
+    source_completed = False
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        nonlocal source_completed
+        del messages, options, kwargs
+        try:
+            yield ChatResponseUpdate(contents=[Content.from_text(text="first")], role="assistant")
+            await release.wait()
+            source_completed = True
+            yield ChatResponseUpdate(
+                contents=[Content.from_text(text="-finished")],
+                role="assistant",
+                finish_reason="stop",
+            )
+        finally:
+            source_closed.set()
+
+    store = InMemoryAGUIThreadSnapshotStore()
+    agent = Agent(
+        name="cancel-on-disconnect",
+        instructions="Test agent",
+        client=streaming_chat_client_stub(stream_fn),
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/cancel-on-disconnect",
+        snapshot_store=store,
+        snapshot_scope_resolver=lambda _request: "tenant-a",
+        keepalive_seconds=None,
+    )
+
+    await _post_until_sse_event_then_disconnect(
+        app,
+        "/cancel-on-disconnect",
+        {
+            "runId": "run-cancelled",
+            "threadId": "thread-cancelled",
+            "messages": [{"role": "user", "content": "Start"}],
+        },
+        event_type="TEXT_MESSAGE_CONTENT",
+    )
+    await asyncio.wait_for(source_closed.wait(), timeout=5)
+
+    assert not source_completed
+    assert await store.get(scope="tenant-a", thread_id="thread-cancelled") is None
+
+
+async def test_endpoint_detached_workflow_runner_completes_after_disconnect() -> None:
+    """The endpoint-owned producer keeps workflow runners alive as well as agent runners."""
+    release = asyncio.Event()
+    completed = asyncio.Event()
+
+    class BlockingWorkflowRunner(AgentFrameworkWorkflow):
+        def __init__(self) -> None:
+            self.snapshot_store = None
+            self.checkpoint_storage = None
+
+        async def run(self, input_data: dict[str, Any]) -> AsyncGenerator[BaseEvent]:
+            run_id = str(input_data["run_id"])
+            thread_id = str(input_data["thread_id"])
+            yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+            yield StateSnapshotEvent(snapshot={"started": True})
+            await release.wait()
+            completed.set()
+            yield RunFinishedEvent(run_id=run_id, thread_id=thread_id)
+
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        BlockingWorkflowRunner(),
+        path="/detached-workflow",
+        keepalive_seconds=None,
+        detached_runs=True,
+    )
+
+    await _post_until_sse_event_then_disconnect(
+        app,
+        "/detached-workflow",
+        {
+            "runId": "workflow-run",
+            "threadId": "workflow-thread",
+            "messages": [{"role": "user", "content": "Start"}],
+        },
+        event_type="STATE_SNAPSHOT",
+    )
+    assert not completed.is_set()
+
+    release.set()
+    await asyncio.wait_for(completed.wait(), timeout=5)
+
+
+async def test_endpoint_detached_connected_failure_emits_run_error_and_completes(
+    streaming_chat_client_stub: Any,
+) -> None:
+    """Detached producer failures retain the connected stream's RUN_ERROR contract."""
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del messages, options, kwargs
+        if False:  # pragma: no cover
+            yield ChatResponseUpdate()
+        raise RuntimeError("detached failure")
+
+    agent = Agent(
+        name="detached-error",
+        instructions="Test agent",
+        client=streaming_chat_client_stub(stream_fn),
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/detached-error",
+        keepalive_seconds=None,
+        detached_runs=True,
+    )
+
+    status_code, body = await _post_asgi_request(
+        app,
+        "/detached-error",
+        {
+            "runId": "run-error",
+            "threadId": "thread-error",
+            "messages": [{"role": "user", "content": "Start"}],
+        },
+    )
+
+    assert status_code == 200
+    events = [json.loads(line[6:]) for line in body.decode().splitlines() if line.startswith("data: ")]
+    run_errors = [event for event in events if event.get("type") == "RUN_ERROR"]
+    assert len(run_errors) == 1
+    assert run_errors[0]["code"] == "RuntimeError"
+
+
+async def test_endpoint_detached_run_guards_active_scoped_thread_mutations(
+    streaming_chat_client_stub: Any,
+) -> None:
+    """Active detached runs allow hydration but reject same-scope mutations until final persistence."""
+    release = asyncio.Event()
+    completed_scopes: set[str] = set()
+    request_scope: ContextVar[str] = ContextVar("detached-guard-scope")
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del messages, options, kwargs
+        scope = request_scope.get()
+        yield ChatResponseUpdate(contents=[Content.from_text(text=f"started-{scope}")], role="assistant")
+        await release.wait()
+        yield ChatResponseUpdate(
+            contents=[Content.from_text(text=f"-finished-{scope}")],
+            role="assistant",
+            finish_reason="stop",
+        )
+        completed_scopes.add(scope)
+
+    def resolve_scope(request: AGUIRequest) -> str:
+        scope = str((request.state or {})["scope"])
+        request_scope.set(scope)
+        return scope
+
+    store = InMemoryAGUIThreadSnapshotStore()
+    await store.save(
+        scope="tenant-a",
+        thread_id="shared-thread",
+        snapshot=AGUIThreadSnapshot(
+            messages=[{"id": "stored-user", "role": "user", "content": "Stored"}],
+        ),
+    )
+    agent = Agent(
+        name="detached-guard",
+        instructions="Test agent",
+        client=streaming_chat_client_stub(stream_fn),
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/detached-guard",
+        snapshot_store=store,
+        snapshot_scope_resolver=resolve_scope,
+        keepalive_seconds=None,
+        detached_runs=True,
+    )
+
+    await _post_until_sse_event_then_disconnect(
+        app,
+        "/detached-guard",
+        {
+            "runId": "run-tenant-a",
+            "threadId": "shared-thread",
+            "messages": [{"role": "user", "content": "Start tenant A"}],
+            "state": {"scope": "tenant-a"},
+        },
+        event_type="TEXT_MESSAGE_CONTENT",
+    )
+
+    hydration_status, hydration_body = await _post_asgi_request(
+        app,
+        "/detached-guard",
+        {
+            "runId": "hydrate-tenant-a",
+            "threadId": "shared-thread",
+            "messages": [],
+            "state": {"scope": "tenant-a"},
+        },
+    )
+    assert hydration_status == 200
+    assert b'"type":"MESSAGES_SNAPSHOT"' in hydration_body
+
+    mutation_status, mutation_body = await _post_asgi_request(
+        app,
+        "/detached-guard",
+        {
+            "runId": "conflict-tenant-a",
+            "threadId": "shared-thread",
+            "messages": [{"role": "user", "content": "Race tenant A"}],
+            "state": {"scope": "tenant-a"},
+        },
+    )
+    assert mutation_status == 409
+    assert b"already active" in mutation_body
+
+    checkpoint_status, _ = await _post_asgi_request(
+        app,
+        "/detached-guard",
+        {
+            "runId": "checkpoint-tenant-a",
+            "threadId": "shared-thread",
+            "messages": [],
+            "state": {"scope": "tenant-a"},
+            "forwardedProps": {"checkpoint_id": "checkpoint-1"},
+        },
+    )
+    assert checkpoint_status == 409
+
+    await _post_until_sse_event_then_disconnect(
+        app,
+        "/detached-guard",
+        {
+            "runId": "run-tenant-b",
+            "threadId": "shared-thread",
+            "messages": [{"role": "user", "content": "Start tenant B"}],
+            "state": {"scope": "tenant-b"},
+        },
+        event_type="TEXT_MESSAGE_CONTENT",
+    )
+
+    release.set()
+    for _ in range(100):
+        tenant_a_snapshot = await store.get(scope="tenant-a", thread_id="shared-thread")
+        tenant_b_snapshot = await store.get(scope="tenant-b", thread_id="shared-thread")
+        if (
+            tenant_a_snapshot is not None
+            and tenant_b_snapshot is not None
+            and "finished-tenant-a" in json.dumps(tenant_a_snapshot.messages)
+            and "finished-tenant-b" in json.dumps(tenant_b_snapshot.messages)
+        ):
+            break
+        await asyncio.sleep(0.01)
+
+    assert completed_scopes == {"tenant-a", "tenant-b"}
+
+    final_status = 409
+    for _ in range(100):
+        final_status, _ = await _post_asgi_request(
+            app,
+            "/detached-guard",
+            {
+                "runId": "after-completion",
+                "threadId": "shared-thread",
+                "messages": [{"role": "user", "content": "Continue"}],
+                "state": {"scope": "tenant-a"},
+            },
+        )
+        if final_status != 409:
+            break
+        await asyncio.sleep(0.01)
+
+    assert final_status == 200
 
 
 async def test_endpoint_keepalive_disabled_does_not_import_sse_transport(build_chat_client) -> None:

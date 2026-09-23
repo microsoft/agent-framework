@@ -3070,6 +3070,25 @@ async def _run_agent_stream(
     _restore_tool_approval_state(session, approval_state_store, approval_thread_id)
     approval_middleware_pipeline = _approval_observer_middleware_pipeline(agent, session)
 
+    async def save_thread_snapshot(
+        *,
+        persisted_messages: list[dict[str, Any]],
+        state: dict[str, Any] | None,
+        interrupt: list[dict[str, Any]] | None,
+    ) -> None:
+        _save_tool_approval_state(session, approval_state_store, approval_thread_id)
+        await snapshot_session.save(
+            messages=_bound_host_payload_history(_persistable_host_payload_history(persisted_messages)),
+            state=state,
+            interrupt=interrupt,
+            session_state=_safe_serialize_session_continuation_state(
+                session,
+                agent,
+                shared_state_keys=set(flow.current_state).difference(protected_session_state_keys),
+                include_service_session_id=config.use_service_session,
+            ),
+        )
+
     authenticated_cancellations = [
         _approval_observer_response(occurrence, cancelled=True)
         for interrupt_id in cancelled_resume_ids
@@ -3282,18 +3301,11 @@ async def _run_agent_stream(
         persisted_messages = snapshot_messages
         if resume_payload is not None and not seeded_resume_from_snapshot and snapshot_seed_messages is None:
             persisted_messages = snapshot_session.resume_seeded_messages(persisted_messages)
-        await snapshot_session.save(
-            messages=_bound_host_payload_history(_persistable_host_payload_history(persisted_messages)),
+        await save_thread_snapshot(
+            persisted_messages=persisted_messages,
             state=cast(dict[str, Any], make_json_safe(flow.current_state)) if flow.current_state else None,
             interrupt=flow.interrupts or None,
-            session_state=_safe_serialize_session_continuation_state(
-                session,
-                agent,
-                shared_state_keys=set(flow.current_state).difference(protected_session_state_keys),
-                include_service_session_id=config.use_service_session,
-            ),
         )
-        _save_tool_approval_state(session, approval_state_store, approval_thread_id)
         yield _build_run_finished_event(run_id=run_id, thread_id=thread_id, interrupts=flow.interrupts)
         return
 
@@ -3323,18 +3335,11 @@ async def _run_agent_stream(
             # Generic resume requests carry only the synthesized response, so prepend
             # stored history unless this run already seeded raw messages from it.
             persisted_messages = snapshot_session.resume_seeded_messages(persisted_messages)
-        await snapshot_session.save(
-            messages=_bound_host_payload_history(_persistable_host_payload_history(persisted_messages)),
+        await save_thread_snapshot(
+            persisted_messages=persisted_messages,
             state=cast(dict[str, Any], make_json_safe(flow.current_state)) if flow.current_state else None,
             interrupt=None,
-            session_state=_safe_serialize_session_continuation_state(
-                session,
-                agent,
-                shared_state_keys=set(flow.current_state).difference(protected_session_state_keys),
-                include_service_session_id=config.use_service_session,
-            ),
         )
-        _save_tool_approval_state(session, approval_state_store, approval_thread_id)
         yield _build_run_finished_event(run_id=run_id, thread_id=thread_id)
         return
 
@@ -3350,6 +3355,18 @@ async def _run_agent_stream(
     latest_state_snapshot: dict[str, Any] | None = (
         cast(dict[str, Any], make_json_safe(flow.current_state)) if flow.current_state else None
     )
+
+    async def save_flow_snapshot() -> None:
+        safe_point_event = _build_messages_snapshot(flow, snapshot_messages)
+        safe_point_messages = _event_messages_to_snapshot_dicts(list(safe_point_event.messages))
+        if resume_payload is not None and not seeded_resume_from_snapshot and snapshot_seed_messages is None:
+            safe_point_messages = snapshot_session.resume_seeded_messages(safe_point_messages)
+        await save_thread_snapshot(
+            persisted_messages=safe_point_messages,
+            state=latest_state_snapshot,
+            interrupt=flow.interrupts or None,
+        )
+
     # Agent middleware can defer the inner run until streaming begins, so the
     # telemetry override must cover construction, stream resolution, and every pull.
     # Drive the A2UI runner when one is active (see the gate above); the original agent
@@ -3369,6 +3386,8 @@ async def _run_agent_stream(
             stream = await _normalize_response_stream(response_stream)
 
         async for update in _iterate_with_context(stream, telemetry_context):
+            save_safe_point = update.finish_reason is not None
+
             # Collect updates for structured output processing
             if response_format is not None:
                 all_updates.append(update)
@@ -3416,6 +3435,8 @@ async def _run_agent_stream(
             # Emit events for each content item
             for content in update.contents:
                 content_type = getattr(content, "type", None)
+                if content_type in {"function_result", "function_approval_request"}:
+                    save_safe_point = True
                 logger.debug(f"Processing content type={content_type}, message_id={flow.message_id}")
                 forwarded_reapproval_handled = False
                 native_approval_result = False
@@ -3525,6 +3546,14 @@ async def _run_agent_stream(
                 if native_approval_result:
                     native_approval_flow_result_ids.update(id(result) for result in flow.tool_results[result_offset:])
 
+            if (
+                snapshot_session.enabled
+                and save_safe_point
+                and not flow.waiting_for_approval
+                and not config.use_service_session
+            ):
+                await save_flow_snapshot()
+
             # Stop if waiting for approval
             if flow.waiting_for_approval:
                 break
@@ -3557,6 +3586,8 @@ async def _run_agent_stream(
 
     if flow.waiting_for_approval and isinstance(stream, ResponseStream):
         await stream.get_final_response()
+        if snapshot_session.enabled:
+            await save_flow_snapshot()
 
     # If no updates at all, still emit RunStarted
     if not run_started_emitted:
@@ -3758,16 +3789,9 @@ async def _run_agent_stream(
         # Generic resume requests carry only the synthesized response, so prepend
         # stored history unless this run already seeded raw messages from it.
         persisted_messages = snapshot_session.resume_seeded_messages(persisted_messages)
-    await snapshot_session.save(
-        messages=_bound_host_payload_history(_persistable_host_payload_history(persisted_messages)),
+    await save_thread_snapshot(
+        persisted_messages=persisted_messages,
         state=latest_state_snapshot,
         interrupt=flow.interrupts or None,
-        session_state=_safe_serialize_session_continuation_state(
-            session,
-            agent,
-            shared_state_keys=set(flow.current_state).difference(protected_session_state_keys),
-            include_service_session_id=config.use_service_session,
-        ),
     )
-    _save_tool_approval_state(session, approval_state_store, approval_thread_id)
     yield _build_run_finished_event(run_id=run_id, thread_id=thread_id, interrupts=flow.interrupts)
