@@ -9,7 +9,7 @@ from typing import Any, Literal, cast
 
 import httpx2
 import pytest
-from agent_framework import Agent, Content, FunctionTool, JudgeVerdict, Message
+from agent_framework import Agent, Content, FunctionTool, Message
 from agent_framework._mcp import MCPTool
 from agent_framework.exceptions import (
     ChatClientException,
@@ -545,26 +545,6 @@ async def test_default_questions_support_framework_calls_without_response_format
 
     assert isinstance(response.value, SystemOneResponse)
     assert stub.calls[0]["questions"] == questions()
-
-
-async def test_judge_verdict_response_format_is_supported_directly() -> None:
-    stub = StubTypeSafeClient(
-        response=make_response({
-            "__af_judge__.answered": {"type": "noul", "noul": 0.92},
-        })
-    )
-    client = make_client(stub)
-
-    response = await client.get_response(
-        [Message("user", ["Has the request been answered?"])],
-        options={"response_format": JudgeVerdict},
-    )
-
-    assert isinstance(response.value, JudgeVerdict)
-    assert response.value.answered is True
-    assert response.value.reasoning == "Jev P(answered)=0.920"
-    assert set(stub.calls[0]["questions"]) == {"__af_judge__.answered"}
-    assert stub.calls[0]["response_model"] is SystemOneResponse
 
 
 async def test_agent_integration_preserves_structured_value() -> None:

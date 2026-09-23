@@ -113,10 +113,13 @@ can vary between runs.
   summaries expected from a normal quarantine LLM, so the sample passes explicit
   risk and safety questions as `TypeSafeChatClient(default_questions=...)`
   directly to `SecureAgentConfig`.
-- **AgentLoopMiddleware judge:** works out of the box by passing
-  `TypeSafeChatClient()` directly to `with_judge`. The sample registers chat
-  middleware on that client to log the logical criteria, original request, latest
-  response, and returned `JudgeVerdict` without exposing the framework's internal
-  judge-prompt framing. The connector maps the required `JudgeVerdict.answered`
-  boolean to a Noul. Jev cannot generate the optional reasoning prose, so the
-  connector supplies deterministic probability feedback.
+- **AgentLoopMiddleware judge:** passes `TypeSafeChatClient()` directly to
+  `with_judge` while configuring the loop with a Jev Noul `response_format` and a
+  `verdict_parser` that converts `SystemOneResponse` into `JudgeVerdict`. The
+  client itself remains unaware of the framework judge model. Client middleware
+  logs the logical criteria, original request, latest response, and returned
+  verdict without exposing the framework's internal judge-prompt framing. Jev
+  cannot generate the optional reasoning prose, so the parser supplies
+  deterministic probability feedback. The sample also includes a commented
+  opt-in configuration that deliberately withholds one requirement from the first
+  answer, producing a negative verdict before a targeted retry.

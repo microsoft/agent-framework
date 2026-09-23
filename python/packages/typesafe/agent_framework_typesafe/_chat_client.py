@@ -20,7 +20,6 @@ from agent_framework import (
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
     FunctionTool,
-    JudgeVerdict,
     Message,
     ResponseStream,
     TokenizerProtocol,
@@ -39,7 +38,6 @@ from agent_framework.observability import ChatTelemetryLayer
 from typesafe_sdk import (
     AsyncTypeSafeClient,
     ChoiceAnswer,
-    Noul,
     Questions,
     ScoreAnswer,
     SystemOneResponse,
@@ -59,8 +57,6 @@ from ._tool_calls import compile_tool_call_plan
 
 _TYPESAFE_DEFAULT_BASE_URL = "https://api.typesafe.ai"
 _TYPESAFE_SYSTEM_ONE_PATH = "/v1/systemone"
-_JUDGE_QUESTION_ID = "__af_judge__.answered"
-_JUDGE_ANSWERED_THRESHOLD = 0.5
 
 
 class TypeSafeSettings(TypedDict, total=False):
@@ -230,20 +226,7 @@ class RawTypeSafeChatClient(BaseChatClient[TypeSafeChatOptions]):
             if model is not None and not isinstance(model, str):
                 raise ChatClientInvalidRequestException("TypeSafe model must be a string.")
 
-            response_format = normalized_options.get("response_format")
-            is_judge_request = response_format is JudgeVerdict
-            user_questions = (
-                cast(
-                    Questions,
-                    {
-                        _JUDGE_QUESTION_ID: Noul(
-                            instructions=("Has the agent fully addressed the original request and all stated criteria?")
-                        )
-                    },
-                )
-                if is_judge_request
-                else self._get_questions(normalized_options)
-            )
+            user_questions = self._get_questions(normalized_options)
             tools = self._get_function_tools(normalized_options)
             tool_mode = validate_tool_mode(normalized_options.get("tool_choice"))
             tool_plan = compile_tool_call_plan(
@@ -305,9 +288,6 @@ class RawTypeSafeChatClient(BaseChatClient[TypeSafeChatOptions]):
                     finish_reason="tool_calls",
                     usage_details=usage_details or None,
                 )
-
-            if is_judge_request:
-                return self._build_judge_response(response, usage_details)
 
             response = self._filter_internal_answers(response, set(user_questions))
             terminal_text = self._build_terminal_text(messages, response)
@@ -472,26 +452,6 @@ class RawTypeSafeChatClient(BaseChatClient[TypeSafeChatOptions]):
                 if input_tokens is not None and output_tokens is not None
                 else {}
             ),
-        )
-
-    @staticmethod
-    def _build_judge_response(response: SystemOneResponse, usage_details: UsageDetails) -> ChatResponse[JudgeVerdict]:
-        answer = response.nouls.get(_JUDGE_QUESTION_ID)
-        if answer is None:
-            raise ChatClientInvalidResponseException("TypeSafe response is missing the AgentLoop judge verdict.")
-        verdict = JudgeVerdict(
-            answered=answer.noul > _JUDGE_ANSWERED_THRESHOLD,
-            reasoning=f"Jev P(answered)={answer.noul:.3f}",
-        )
-        return ChatResponse(
-            messages=[Message(role="assistant", contents=[verdict.model_dump_json()])],
-            response_id=response.request_id,
-            model=response.model,
-            finish_reason="stop",
-            usage_details=usage_details or None,
-            value=verdict,
-            response_format=JudgeVerdict,
-            raw_representation=response,
         )
 
     @staticmethod

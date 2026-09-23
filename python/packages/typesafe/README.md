@@ -56,11 +56,12 @@ internally uses
 [`SystemOneResponse`](https://docs.typesafe.ai/sdk/python/api/types/responses.md)
 as the actual response model.
 
-`TypeSafeChatClient` also directly supports the framework's `JudgeVerdict`
-response format, allowing it to be passed to
-`AgentLoopMiddleware.with_judge(...)`. The connector maps the verdict's
-`answered` field to a Noul and supplies deterministic probability feedback in
-the optional reasoning field.
+`AgentLoopMiddleware.with_judge(...)` supports provider-specific structured
+judges through its `response_format` and `verdict_parser` arguments. Pass a
+TypeSafe `Questions` mapping as the response format and convert the returned
+`SystemOneResponse` into the framework's `JudgeVerdict` in the loop setup. This
+keeps the connector focused on TypeSafe response primitives instead of making
+it aware of framework-specific judge models.
 
 Framework integrations with a fixed TypeSafe contract can configure
 `default_questions` on the client and omit per-call `response_format`. For

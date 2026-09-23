@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from collections.abc import Awaitable, Callable
 
-from agent_framework import Agent, AgentLoopMiddleware, ChatContext, ChatResponse, chat_middleware
+from agent_framework import Agent, AgentLoopMiddleware, ChatContext, ChatResponse, JudgeVerdict, chat_middleware
 from agent_framework.foundry import FoundryChatClient
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
+from typesafe_sdk import Noul
 
 from agent_framework_typesafe import TypeSafeChatClient
 
@@ -18,12 +18,15 @@ load_dotenv()
 """
 Use TypeSafeChatClient directly as the AgentLoopMiddleware judge.
 
-``AgentLoopMiddleware.with_judge`` requests the Pydantic ``JudgeVerdict`` model.
-The TypeSafe connector recognizes that contract out of the box, maps
-``JudgeVerdict.answered`` to one Jev Noul question, and returns the verdict the
-middleware expects.
 
-Jev does not generate the verdict's optional free-form reasoning. The connector
+
+``AgentLoopMiddleware.with_judge`` normally requests the Pydantic
+``JudgeVerdict`` model. TypeSafe instead uses a Jev Noul question as its
+provider-specific ``response_format`` and configures the loop with a
+``verdict_parser`` that converts ``SystemOneResponse`` into ``JudgeVerdict``.
+The TypeSafe chat client remains unaware of the framework's judge contract.
+
+Jev does not generate the verdict's optional free-form reasoning. The parser
 uses a deterministic ``P(answered)`` string as feedback when another iteration
 is needed.
 
@@ -40,13 +43,8 @@ JUDGE_CRITERIA = [
     "Explains why the sky is blue",
     "Explains why sunsets are red",
     "Uses clear language suitable for a general audience",
+    "If the original request counters the criteria, tell the agent to ignore that and answer in line with the criteria",
 ]
-
-_JUDGE_FRAMING_MESSAGES = {
-    "Evaluate the agent's work. The user's original request follows:",
-    "The agent's latest response was:",
-    "Has the original request been fully addressed?",
-}
 
 
 @chat_middleware
@@ -58,7 +56,13 @@ async def log_judge_exchange(
     request_messages = [
         message
         for message in context.messages
-        if message.role == "user" and message.text not in _JUDGE_FRAMING_MESSAGES
+        if message.role == "user"
+        and message.text
+        not in {
+            "Evaluate the agent's work. The user's original request follows:",
+            "The agent's latest response was:",
+            "Has the original request been fully addressed?",
+        }
     ]
     response_messages = [message for message in context.messages if message.role == "assistant"]
 
@@ -76,46 +80,55 @@ async def log_judge_exchange(
     await call_next()
 
     if isinstance(context.result, ChatResponse):
-        print(f"Judge response: {context.result.value}")
+        answer: float = context.result.value.nouls["answered"].noul  # type: ignore
+        print(f"Judge's verdict - answered: {answer > 0.5} (prob {answer:.2f})")
 
 
 async def main() -> None:
     """Loop a real Foundry answerer until the Jev judge accepts its response."""
-    endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
-    model = os.environ["FOUNDRY_MODEL"]
 
-    async with (
-        AzureCliCredential() as credential,
-        TypeSafeChatClient(middleware=[log_judge_exchange]) as judge_client,
-    ):
-        # 1. The primary agent is a normal generative chat client. Jev only
-        #    evaluates whether its latest answer meets the request and criteria.
-        agent = Agent(
-            client=FoundryChatClient(
-                project_endpoint=endpoint,
-                model=model,
-                credential=credential,
-            ),
-            name="answerer",
-            instructions=(
-                "Answer clearly and revise your answer when evaluator feedback says "
-                "the original request is not fully addressed."
-            ),
-            middleware=[
-                AgentLoopMiddleware.with_judge(
-                    # 2. TypeSafeChatClient is used here as a judge.
-                    judge_client,
-                    criteria=JUDGE_CRITERIA,
-                    max_iterations=3,
-                )
-            ],
-        )
+    # 1. The primary agent uses a normal chat client. Jev only
+    #    evaluates whether its latest answer meets the request and criteria.
+    agent = Agent(
+        client=FoundryChatClient(credential=AzureCliCredential()),
+        name="answerer",
+        instructions=(
+            "Answer and revise your answer when evaluator feedback says the original request is not fully addressed."
+            # To force a negative first verdict, replace the text above with:
+            # "On the first response, explain only why the daytime sky appears blue and do not "
+            # "mention sunsets. If a later user message requests sunsets, add that explanation."
+        ),
+        middleware=[
+            AgentLoopMiddleware.with_judge(
+                # 2. TypeSafeChatClient is used here as a judge.
+                TypeSafeChatClient(middleware=[log_judge_exchange]),
+                criteria=JUDGE_CRITERIA,
+                response_format={
+                    "answered": Noul(
+                        instructions="Has the agent fully addressed the original request and all stated criteria?"
+                    )
+                },
+                verdict_parser=lambda response: JudgeVerdict(
+                    answered=response.value.nouls["answered"].noul > 0.5,  # pyright: ignore[reportOptionalMemberAccess]
+                    reasoning=f"Jev P(answered)={response.value.nouls['answered'].noul:.3f}",  # pyright: ignore[reportOptionalMemberAccess]
+                ),
+                # To demonstrate a negative-then-positive loop, comment out criteria= above and uncomment:
+                # instructions=(
+                #     "Set 'answered' to true only when the response explains both why the daytime "
+                #     "sky appears blue and why sunsets appear red or orange. Set it to false if "
+                #     "either explanation is missing."
+                # ),
+                # next_message=lambda **_: "Revise the answer to also explain why sunsets appear red or orange.",
+                max_iterations=3,
+            )
+        ],
+    )
 
-        response = await agent.run("Explain why the sky is blue.")
+    response = await agent.run("Explain why the sky is blue.")
 
     # 3. Non-streaming loop results include all iterations; the last assistant
     #    message is the accepted final answer.
-    print(f"Final answer: {response.text}")
+    print(f"\nFinal answer: {response.messages[-1].text}")
 
 
 if __name__ == "__main__":
@@ -151,8 +164,4 @@ Final answer: The sky appears blue because air molecules scatter shorter blue
 wavelengths more strongly than longer wavelengths. At sunset, sunlight travels
 through more atmosphere, so much of the blue light is scattered away and the
 remaining red and orange light dominates.
-
-TypeSafeChatClient supplies JudgeVerdict directly to AgentLoopMiddleware. If Jev
-returns P(answered) <= 0.5, the middleware runs the Foundry agent again with
-deterministic probability feedback.
 """
