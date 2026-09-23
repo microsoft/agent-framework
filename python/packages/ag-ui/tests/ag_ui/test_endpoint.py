@@ -55,6 +55,8 @@ from agent_framework.security import SecureAgentConfig
 from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.params import Depends
+from fastapi.responses import StreamingResponse
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from starlette.types import Message as ASGIMessage
 from starlette.types import Receive, Scope, Send
@@ -1312,6 +1314,14 @@ def test_add_endpoint_detached_runs_default_is_disabled() -> None:
     assert parameter.default is False
 
 
+def test_add_endpoint_detached_run_limits_have_bounded_defaults() -> None:
+    """Detached producers have finite admission and post-disconnect lifetime defaults."""
+    parameters = signature(add_agent_framework_fastapi_endpoint).parameters
+
+    assert parameters["max_detached_runs"].default == 32
+    assert parameters["detached_run_timeout_seconds"].default == 3600
+
+
 def test_add_endpoint_detached_runs_preserves_existing_positional_parameter_order() -> None:
     """The new option is appended after existing parameters so positional a2ui_config callers do not shift."""
     parameters = list(signature(add_agent_framework_fastapi_endpoint).parameters)
@@ -1342,6 +1352,8 @@ def test_add_endpoint_docstring_describes_detached_run_behavior() -> None:
     assert "Defaults to False" in normalized_docstring
     assert "continues after the SSE client disconnects" in normalized_docstring
     assert "does not provide resumable event replay" in normalized_docstring
+    assert "Maximum number of detached producers" in normalized_docstring
+    assert "Maximum time a producer may remain active" in normalized_docstring
 
 
 def test_keepalive_option_is_endpoint_owned() -> None:
@@ -1354,6 +1366,10 @@ def test_detached_runs_option_is_endpoint_owned() -> None:
     """Detached execution is endpoint transport configuration, not runner configuration."""
     assert "detached_runs" not in signature(AgentFrameworkAgent).parameters
     assert "detached_runs" not in signature(AgentFrameworkWorkflow).parameters
+    assert "max_detached_runs" not in signature(AgentFrameworkAgent).parameters
+    assert "max_detached_runs" not in signature(AgentFrameworkWorkflow).parameters
+    assert "detached_run_timeout_seconds" not in signature(AgentFrameworkAgent).parameters
+    assert "detached_run_timeout_seconds" not in signature(AgentFrameworkWorkflow).parameters
 
 
 def test_endpoint_module_import_does_not_import_sse_transport() -> None:
@@ -1515,6 +1531,68 @@ async def test_endpoint_detached_run_completes_and_saves_after_client_disconnect
     assert observed_scopes == ["tenant-a"]
 
 
+async def test_endpoint_detached_run_completes_when_response_stream_never_starts(
+    streaming_chat_client_stub: Any,
+) -> None:
+    """An unstarted response iterator cannot strand a producer behind its bounded queue."""
+    source_completed = asyncio.Event()
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del messages, options, kwargs
+        for index in range(32):
+            yield ChatResponseUpdate(
+                contents=[Content.from_text(text=f"chunk-{index}")],
+                role="assistant",
+                finish_reason="stop" if index == 31 else None,
+            )
+        source_completed.set()
+
+    store = InMemoryAGUIThreadSnapshotStore()
+    agent = Agent(
+        name="unstarted-reader",
+        instructions="Test agent",
+        client=streaming_chat_client_stub(stream_fn),
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/unstarted-reader",
+        snapshot_store=store,
+        snapshot_scope_resolver=lambda _request: "tenant-a",
+        keepalive_seconds=None,
+        detached_runs=True,
+    )
+    route = next(route for route in app.routes if getattr(route, "path", None) == "/unstarted-reader")
+    assert isinstance(route, APIRoute)
+
+    response = await route.endpoint(
+        AGUIRequest.model_validate(
+            {
+                "runId": "unstarted-run",
+                "threadId": "unstarted-thread",
+                "messages": [{"role": "user", "content": "Start"}],
+            }
+        )
+    )
+    assert isinstance(response, StreamingResponse)
+
+    await asyncio.wait_for(source_completed.wait(), timeout=5)
+    snapshot = None
+    for _ in range(100):
+        snapshot = await store.get(scope="tenant-a", thread_id="unstarted-thread")
+        if snapshot is not None and "chunk-31" in json.dumps(snapshot.messages):
+            break
+        await asyncio.sleep(0.01)
+
+    assert snapshot is not None
+    assert "chunk-31" in json.dumps(snapshot.messages)
+
+
 async def test_endpoint_disconnect_still_cancels_run_by_default(
     streaming_chat_client_stub: Any,
 ) -> None:
@@ -1664,6 +1742,157 @@ async def test_endpoint_detached_connected_failure_emits_run_error_and_completes
     assert run_errors[0]["code"] == "RuntimeError"
 
 
+async def test_endpoint_detached_run_admission_is_bounded(
+    streaming_chat_client_stub: Any,
+) -> None:
+    """A caller cannot retain more detached producers than the endpoint limit."""
+    release = asyncio.Event()
+    first_started = asyncio.Event()
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del options, kwargs
+        text = messages[-1].text
+        yield ChatResponseUpdate(contents=[Content.from_text(text=f"started-{text}")], role="assistant")
+        if text == "first":
+            first_started.set()
+            await release.wait()
+        yield ChatResponseUpdate(
+            contents=[Content.from_text(text="-done")],
+            role="assistant",
+            finish_reason="stop",
+        )
+
+    agent = Agent(
+        name="detached-capacity",
+        instructions="Test agent",
+        client=streaming_chat_client_stub(stream_fn),
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/detached-capacity",
+        keepalive_seconds=None,
+        detached_runs=True,
+        max_detached_runs=1,
+    )
+
+    await _post_until_sse_event_then_disconnect(
+        app,
+        "/detached-capacity",
+        {
+            "runId": "first-run",
+            "threadId": "first-thread",
+            "messages": [{"role": "user", "content": "first"}],
+        },
+        event_type="TEXT_MESSAGE_CONTENT",
+    )
+    await asyncio.wait_for(first_started.wait(), timeout=5)
+
+    rejected_status, rejected_body = await _post_asgi_request(
+        app,
+        "/detached-capacity",
+        {
+            "runId": "second-run",
+            "threadId": "second-thread",
+            "messages": [{"role": "user", "content": "second"}],
+        },
+    )
+    assert rejected_status == 503
+    assert b"capacity is exhausted" in rejected_body
+
+    release.set()
+    accepted_status = 503
+    for _ in range(100):
+        accepted_status, _ = await _post_asgi_request(
+            app,
+            "/detached-capacity",
+            {
+                "runId": "second-run",
+                "threadId": "second-thread",
+                "messages": [{"role": "user", "content": "second"}],
+            },
+        )
+        if accepted_status != 503:
+            break
+        await asyncio.sleep(0.01)
+
+    assert accepted_status == 200
+
+
+async def test_endpoint_detached_run_expires_after_reader_disconnect(
+    streaming_chat_client_stub: Any,
+) -> None:
+    """A stalled abandoned run is cancelled and releases its scoped-thread slot."""
+    first_closed = asyncio.Event()
+    run_count = 0
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        nonlocal run_count
+        del messages, options, kwargs
+        run_count += 1
+        if run_count == 1:
+            try:
+                yield ChatResponseUpdate(contents=[Content.from_text(text="started")], role="assistant")
+                await asyncio.Event().wait()
+            finally:
+                first_closed.set()
+            return
+        yield ChatResponseUpdate(
+            contents=[Content.from_text(text="retry-complete")],
+            role="assistant",
+            finish_reason="stop",
+        )
+
+    agent = Agent(
+        name="detached-expiry",
+        instructions="Test agent",
+        client=streaming_chat_client_stub(stream_fn),
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/detached-expiry",
+        keepalive_seconds=None,
+        detached_runs=True,
+        detached_run_timeout_seconds=0.05,
+    )
+
+    await _post_until_sse_event_then_disconnect(
+        app,
+        "/detached-expiry",
+        {
+            "runId": "expiring-run",
+            "threadId": "expiring-thread",
+            "messages": [{"role": "user", "content": "first"}],
+        },
+        event_type="TEXT_MESSAGE_CONTENT",
+    )
+    await asyncio.wait_for(first_closed.wait(), timeout=5)
+
+    retry_status, retry_body = await _post_asgi_request(
+        app,
+        "/detached-expiry",
+        {
+            "runId": "retry-run",
+            "threadId": "expiring-thread",
+            "messages": [{"role": "user", "content": "retry"}],
+        },
+    )
+
+    assert retry_status == 200
+    assert b"retry-complete" in retry_body
+
+
 async def test_endpoint_detached_run_guards_active_scoped_thread_mutations(
     streaming_chat_client_stub: Any,
 ) -> None:
@@ -1768,6 +1997,23 @@ async def test_endpoint_detached_run_guards_active_scoped_thread_mutations(
     )
     assert checkpoint_status == 409
 
+    for forwarded_props in (
+        {"resume": [{"interruptId": "approval-1", "status": "resolved", "payload": {"approved": True}}]},
+        {"command": {"resume": [{"interruptId": "approval-1", "status": "resolved", "payload": {"approved": True}}]}},
+    ):
+        forwarded_resume_status, _ = await _post_asgi_request(
+            app,
+            "/detached-guard",
+            {
+                "runId": "forwarded-resume-tenant-a",
+                "threadId": "shared-thread",
+                "messages": [],
+                "state": {"scope": "tenant-a"},
+                "forwardedProps": forwarded_props,
+            },
+        )
+        assert forwarded_resume_status == 409
+
     await _post_until_sse_event_then_disconnect(
         app,
         "/detached-guard",
@@ -1850,6 +2096,28 @@ def test_add_endpoint_rejects_non_positive_keepalive_interval(build_chat_client,
 
     with pytest.raises(ValueError, match="keepalive_seconds must be positive"):
         add_agent_framework_fastapi_endpoint(app, agent, path="/invalid", keepalive_seconds=keepalive_seconds)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"max_detached_runs": 0}, "max_detached_runs must be greater than 0"),
+        ({"max_detached_runs": -1}, "max_detached_runs must be greater than 0"),
+        ({"detached_run_timeout_seconds": 0}, "detached_run_timeout_seconds must be positive"),
+        ({"detached_run_timeout_seconds": -1}, "detached_run_timeout_seconds must be positive"),
+    ],
+)
+def test_add_endpoint_rejects_invalid_detached_run_limits(
+    build_chat_client: Any,
+    kwargs: dict[str, Any],
+    message: str,
+) -> None:
+    """Detached admission and expiry configuration must remain finite and positive."""
+    app = FastAPI()
+    agent = Agent(name="test", instructions="Test agent", client=build_chat_client())
+
+    with pytest.raises(ValueError, match=message):
+        add_agent_framework_fastapi_endpoint(app, agent, path="/invalid-detached", **kwargs)
 
 
 async def test_endpoint_with_state_schema(build_chat_client):

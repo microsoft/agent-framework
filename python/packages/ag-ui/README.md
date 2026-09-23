@@ -389,11 +389,12 @@ add_agent_framework_fastapi_endpoint(
 )
 ```
 
-Configured stateless agent snapshot stores are updated after completed model roundtrips, tool-result batches, and
-approval safe points, then written once more with the terminal run state. This limits progress loss during long agent
-runs without persisting every streaming text delta. Service-session snapshots retain terminal-save cadence so
-replayable messages cannot advance without their matching provider continuation state. Workflow Thread Snapshots also
-keep their terminal-save cadence; workflow checkpointing remains the mechanism for incremental workflow runtime state.
+Configured stateless agent snapshot stores are updated after finalized model roundtrips, function/MCP tool-result
+batches, and approval safe points, then written once more with the terminal run state. This limits progress loss during
+long agent runs without persisting every streaming text delta. Service-session snapshots retain terminal-save cadence
+so replayable messages cannot advance without their matching provider continuation state. Workflow Thread Snapshots
+also keep their terminal-save cadence; workflow checkpointing remains the mechanism for incremental workflow runtime
+state.
 
 A frontend can then hydrate the latest stored snapshot for the scoped thread:
 
@@ -418,12 +419,17 @@ add_agent_framework_fastapi_endpoint(
     snapshot_store=snapshot_store,
     snapshot_scope_resolver=resolve_snapshot_scope,
     detached_runs=True,
+    max_detached_runs=32,
+    detached_run_timeout_seconds=3600,
 )
 ```
 
 Detached execution uses a bounded endpoint-owned producer queue. While a detached mutating request is active, another
 mutating request for the same `(Snapshot Scope, threadId)` returns HTTP 409; an empty snapshot Hydrate Request remains
 allowed and returns the latest committed safe point. Equal Thread ids in different Snapshot Scopes remain independent.
+Each endpoint registration retains at most `max_detached_runs` producers (32 by default); requests beyond that limit
+receive HTTP 503. After a reader disconnects or never starts, `detached_run_timeout_seconds` cancels a stalled producer
+and releases its capacity (one hour by default).
 
 This option does not add resumable event replay. Events emitted while no client is attached are consumed and discarded,
 so a reconnecting client recovers from Thread Snapshots rather than resuming the original SSE position. Applications

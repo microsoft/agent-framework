@@ -3375,6 +3375,7 @@ async def _run_agent_stream(
     telemetry_context = partial(_use_telemetry_conversation_id, telemetry_conversation_id)
     stream_completed = False
     native_approval_flow_result_ids: set[int] = set()
+    pending_model_safe_point = False
     try:
         with telemetry_context():
             for queued_executions in forwarded_executions.values():
@@ -3386,7 +3387,14 @@ async def _run_agent_stream(
             stream = await _normalize_response_stream(response_stream)
 
         async for update in _iterate_with_context(stream, telemetry_context):
-            save_safe_point = update.finish_reason is not None
+            if snapshot_session.enabled and pending_model_safe_point and not config.use_service_session:
+                # Pulling the next update finalizes the preceding model turn and
+                # completes provider/context side effects before this snapshot.
+                await save_flow_snapshot()
+                pending_model_safe_point = False
+
+            model_safe_point = update.finish_reason is not None
+            result_safe_point = False
 
             # Collect updates for structured output processing
             if response_format is not None:
@@ -3435,8 +3443,12 @@ async def _run_agent_stream(
             # Emit events for each content item
             for content in update.contents:
                 content_type = getattr(content, "type", None)
-                if content_type in {"function_result", "function_approval_request"}:
-                    save_safe_point = True
+                if content_type in {
+                    "function_result",
+                    "function_approval_request",
+                    "mcp_server_tool_result",
+                }:
+                    result_safe_point = True
                 logger.debug(f"Processing content type={content_type}, message_id={flow.message_id}")
                 forwarded_reapproval_handled = False
                 native_approval_result = False
@@ -3548,11 +3560,14 @@ async def _run_agent_stream(
 
             if (
                 snapshot_session.enabled
-                and save_safe_point
+                and result_safe_point
+                and not model_safe_point
                 and not flow.waiting_for_approval
                 and not config.use_service_session
             ):
                 await save_flow_snapshot()
+            if model_safe_point and not flow.waiting_for_approval and not config.use_service_session:
+                pending_model_safe_point = True
 
             # Stop if waiting for approval
             if flow.waiting_for_approval:
@@ -3584,9 +3599,10 @@ async def _run_agent_stream(
                         approval_state_store.lifecycle.recover_unfinished(intent)
             forwarded_executions.clear()
 
-    if flow.waiting_for_approval and isinstance(stream, ResponseStream):
-        await stream.get_final_response()
-        if snapshot_session.enabled:
+    if flow.waiting_for_approval:
+        if isinstance(stream, ResponseStream):
+            await stream.get_final_response()
+        if snapshot_session.enabled and not config.use_service_session:
             await save_flow_snapshot()
 
     # If no updates at all, still emit RunStarted

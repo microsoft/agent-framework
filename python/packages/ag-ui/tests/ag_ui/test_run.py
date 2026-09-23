@@ -2901,11 +2901,13 @@ async def test_service_session_rejects_disabled_provider_storage():
 
 
 async def test_snapshot_is_saved_at_model_roundtrip_safe_point_before_run_completion():
-    """A configured snapshot store receives completed model output before the overall run ends."""
+    """Model output is saved only after the stream advances through turn finalization."""
     from agent_framework_ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
 
-    release = asyncio.Event()
+    emit_next_update = asyncio.Event()
     safe_point_saved = asyncio.Event()
+    finish_run = asyncio.Event()
+    turn_finalized = asyncio.Event()
 
     class RecordingStore(InMemoryAGUIThreadSnapshotStore):
         async def save(self, **kwargs: Any) -> None:
@@ -2920,6 +2922,7 @@ async def test_snapshot_is_saved_at_model_roundtrip_safe_point_before_run_comple
     def blocking_run(*args: Any, **kwargs: Any) -> Any:
         if not kwargs.get("stream", False):
             return original_run(*args, **kwargs)
+        session = kwargs["session"]
 
         async def updates():
             yield AgentResponseUpdate(
@@ -2927,12 +2930,14 @@ async def test_snapshot_is_saved_at_model_roundtrip_safe_point_before_run_comple
                 role="assistant",
                 finish_reason="stop",
             )
-            await release.wait()
+            session.state["turn_finalized"] = True
+            turn_finalized.set()
+            await emit_next_update.wait()
             yield AgentResponseUpdate(
                 contents=[Content.from_text(text="-round-two")],
                 role="assistant",
-                finish_reason="stop",
             )
+            await finish_run.wait()
 
         return ResponseStream(updates(), finalizer=AgentResponse.from_updates)
 
@@ -2950,14 +2955,19 @@ async def test_snapshot_is_saved_at_model_roundtrip_safe_point_before_run_comple
         return [event async for event in agent.run(payload)]
 
     run_task = asyncio.create_task(collect_events())
+    await asyncio.wait_for(turn_finalized.wait(), timeout=5)
+    assert await store.get(scope="tenant-a", thread_id="incremental-thread") is None
+
+    emit_next_update.set()
     await asyncio.wait_for(safe_point_saved.wait(), timeout=5)
 
     safe_snapshot = await store.get(scope="tenant-a", thread_id="incremental-thread")
     assert safe_snapshot is not None
     assert "round-one" in str(safe_snapshot.messages)
     assert "round-two" not in str(safe_snapshot.messages)
+    assert safe_snapshot.session_state == {"turn_finalized": True}
 
-    release.set()
+    finish_run.set()
     await asyncio.wait_for(run_task, timeout=5)
 
     final_snapshot = await store.get(scope="tenant-a", thread_id="incremental-thread")
@@ -3033,6 +3043,78 @@ async def test_snapshot_is_saved_after_tool_result_without_finish_reason():
     assert final_snapshot is not None
     assert "tool-output" in str(final_snapshot.messages)
     assert "done" in str(final_snapshot.messages)
+
+
+async def test_snapshot_is_saved_after_mcp_tool_result_without_finish_reason():
+    """An MCP tool-result batch is durable even when its update has no finish reason."""
+    from agent_framework_ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
+
+    release = asyncio.Event()
+    tool_result_saved = asyncio.Event()
+
+    class RecordingStore(InMemoryAGUIThreadSnapshotStore):
+        async def save(self, **kwargs: Any) -> None:
+            await super().save(**kwargs)
+            snapshot = kwargs["snapshot"]
+            if "mcp-output" in str(snapshot.messages):
+                tool_result_saved.set()
+
+    stub = StubAgent()
+    original_run = stub.run
+
+    def blocking_run(*args: Any, **kwargs: Any) -> Any:
+        if not kwargs.get("stream", False):
+            return original_run(*args, **kwargs)
+
+        async def updates():
+            yield AgentResponseUpdate(
+                contents=[
+                    Content.from_mcp_server_tool_call(
+                        call_id="mcp-1",
+                        tool_name="lookup",
+                        server_name="server",
+                        arguments={},
+                    )
+                ],
+                role="assistant",
+                finish_reason="tool_calls",
+            )
+            yield AgentResponseUpdate(
+                contents=[Content.from_mcp_server_tool_result(call_id="mcp-1", output="mcp-output")],
+                role="tool",
+            )
+            await release.wait()
+            yield AgentResponseUpdate(
+                contents=[Content.from_text(text="done")],
+                role="assistant",
+                finish_reason="stop",
+            )
+
+        return ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+    stub.run = blocking_run  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+    store = RecordingStore()
+    agent = AgentFrameworkAgent(agent=stub, snapshot_store=store)
+    payload = {
+        "thread_id": "mcp-safe-point-thread",
+        "run_id": "mcp-safe-point-run",
+        "__ag_ui_snapshot_scope": "tenant-a",
+        "messages": [{"role": "user", "content": "Start"}],
+    }
+
+    async def collect_events() -> list[Any]:
+        return [event async for event in agent.run(payload)]
+
+    run_task = asyncio.create_task(collect_events())
+    await asyncio.wait_for(tool_result_saved.wait(), timeout=5)
+
+    safe_snapshot = await store.get(scope="tenant-a", thread_id="mcp-safe-point-thread")
+    assert safe_snapshot is not None
+    assert "mcp-output" in str(safe_snapshot.messages)
+    assert "done" not in str(safe_snapshot.messages)
+
+    release.set()
+    await asyncio.wait_for(run_task, timeout=5)
 
 
 async def test_service_session_snapshot_waits_for_terminal_continuation_state():
@@ -3173,6 +3255,113 @@ async def test_interrupt_snapshot_is_saved_after_approval_lifecycle_registration
     assert snapshot is not None
     assert snapshot.interrupt is not None
     assert snapshot.interrupt[0]["id"] == "approval-occurrence"
+
+
+async def test_plain_async_iterable_persists_waiting_approval_snapshot():
+    """A non-ResponseStream runner still persists its approval interrupt before finishing."""
+    from agent_framework_ag_ui import InMemoryAGUIThreadSnapshotStore
+
+    approval_saved = asyncio.Event()
+
+    class RecordingStore(InMemoryAGUIThreadSnapshotStore):
+        async def save(self, **kwargs: Any) -> None:
+            await super().save(**kwargs)
+            if kwargs["snapshot"].interrupt:
+                approval_saved.set()
+
+    function_call = Content.from_function_call(
+        call_id="plain-call",
+        name="write_doc",
+        arguments={"content": "draft"},
+        id="plain-approval",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="plain-approval",
+        function_call=function_call,
+    )
+    stub = StubAgent()
+    original_run = stub.run
+
+    def plain_run(*args: Any, **kwargs: Any) -> Any:
+        if not kwargs.get("stream", False):
+            return original_run(*args, **kwargs)
+
+        async def updates():
+            yield AgentResponseUpdate(
+                contents=[approval_request],
+                role="assistant",
+                finish_reason="tool_calls",
+            )
+
+        return updates()
+
+    stub.run = plain_run  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+    store = RecordingStore()
+    config = AgentConfig(snapshot_store=store)
+    payload = {
+        "thread_id": "plain-approval-thread",
+        "run_id": "plain-approval-run",
+        "__ag_ui_snapshot_scope": "tenant-a",
+        "messages": [{"role": "user", "content": "Write"}],
+    }
+
+    _ = [event async for event in run_agent_stream(payload, stub, config)]
+
+    assert approval_saved.is_set()
+
+
+async def test_service_session_approval_snapshot_is_terminal_only():
+    """Approval interruption does not add an intermediate service-session snapshot write."""
+    from agent_framework_ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
+
+    class CountingStore(InMemoryAGUIThreadSnapshotStore):
+        def __init__(self) -> None:
+            super().__init__()
+            self.save_count = 0
+
+        async def save(self, **kwargs: Any) -> None:
+            self.save_count += 1
+            await super().save(**kwargs)
+
+    function_call = Content.from_function_call(
+        call_id="service-call",
+        name="write_doc",
+        arguments={"content": "draft"},
+        id="service-approval",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="service-approval",
+        function_call=function_call,
+    )
+    store = CountingStore()
+    agent = AgentFrameworkAgent(
+        agent=StubAgent(
+            updates=[
+                AgentResponseUpdate(
+                    contents=[approval_request],
+                    role="assistant",
+                    finish_reason="tool_calls",
+                )
+            ]
+        ),
+        use_service_session=True,
+        service_session_id_from_thread_id=True,
+        snapshot_store=store,
+    )
+
+    _ = [
+        event
+        async for event in agent.run(
+            {
+                "thread_id": "service-approval-thread",
+                "run_id": "service-approval-run",
+                "__ag_ui_snapshot_scope": "tenant-a",
+                "messages": [{"role": "user", "content": "Write"}],
+            }
+        )
+    ]
+
+    assert store.save_count == 1
 
 
 async def test_stateless_snapshot_excludes_only_provider_service_session_state():
