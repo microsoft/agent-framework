@@ -38,6 +38,12 @@ builder.Services.AddKeyedSingleton<AgentSessionStore>("PredictiveStateUpdatesAge
 // WARNING: When session persistence is enabled, in a multi-user deployment you must also register an
 // AgentIsolationKeyProvider to scope sessions by principal, e.g.:
 // builder.Services.UseClaimsBasedAgentIsolation(new() { ClaimType = ClaimTypes.NameIdentifier });
+//
+// This sample does not authenticate AG-UI callers. Multi-user hosts must configure authentication
+// and enforce endpoint authorization, for example with MapAGUIServer(...).RequireAuthorization().
+// For claims-based isolation of persisted sessions, call builder.Services.AddHttpContextAccessor()
+// and builder.Services.UseClaimsBasedAgentIsolation(), using a claim that uniquely identifies each caller.
+// See the AG-UI samples README's "Security considerations" for configuration and client requirements.
 
 WebApplication app = builder.Build();
 
