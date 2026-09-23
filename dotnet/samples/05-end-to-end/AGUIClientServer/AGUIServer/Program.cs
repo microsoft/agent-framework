@@ -86,7 +86,10 @@ builder
             name: "get_server_weather_forecast",
             description: "Gets the forecast for a specific location and date",
             AGUIServerSerializerContext.Default.Options))
-    .WithInMemorySessionStore();
+    // This sample is a single-user local demo with no isolation provider, so the builder's default strict
+    // isolation wrapper would reject every request. Skipping it here lets MapAGUIServer add its own isolation
+    // wrapper, which is strict only when an AgentIsolationKeyProvider is registered (see the warning above).
+    .WithInMemorySessionStore(withIsolation: false);
 
 WebApplication app = builder.Build();
 
