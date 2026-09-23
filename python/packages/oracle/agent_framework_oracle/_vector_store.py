@@ -345,30 +345,40 @@ class _FilterCompiler:
         if value is None:
             return f"{column} IS NULL"
         kind = field.type_
-        if kind in ("int", "float") and type(value) in (int, float):
+        if kind in ("int", "float") and (type(value) in (int, float) or isinstance(value, Decimal)):
             if type(value) is float and not math.isfinite(value):
                 raise ValueError("Numeric filter values must be finite.")
+            if isinstance(value, Decimal) and not value.is_finite():
+                raise ValueError("Numeric filter values must be finite.")
             if kind == "int":
-                if type(value) is float:
-                    if not value.is_integer() or not -(2**63) <= value < 2**63:
-                        return "1=0"
-                    value = int(value)
-                elif not -(2**63) <= value < 2**63:
+                if not -(2**63) <= value < 2**63 or value != int(value):
                     return "1=0"
-            elif type(value) is int:
+                adapted = int(value)
+            else:
                 try:
-                    numerator, denominator = float(value).as_integer_ratio()
-                    if numerator != value * denominator:
-                        return "1=0"
+                    adapted = float(value)
                 except OverflowError:
                     return "1=0"
-            adapted = value if kind == "int" else float(value)
+                if not math.isfinite(adapted):
+                    return "1=0"
+                if isinstance(value, Decimal) and Decimal.from_float(adapted) != value:
+                    return "1=0"
+                if type(value) is int:
+                    numerator, denominator = adapted.as_integer_ratio()
+                    if numerator != value * denominator:
+                        return "1=0"
+        elif kind == "UUID":
+            if not isinstance(value, UUID | str):
+                return "1=0"
+            try:
+                adapted = _validate_scalar(field, value)
+            except ValueError:
+                return "1=0"
         elif (
             (kind == "bool" and type(value) is not bool)
             or (kind != "bool" and isinstance(value, bool))
-            or (kind == "UUID" and not isinstance(value, UUID | str))
             or (kind == "str" and not isinstance(value, str))
-            or (kind in ("int", "float") and type(value) not in (int, float))
+            or (kind in ("int", "float") and type(value) not in (int, float, Decimal))
         ):
             return "1=0"
         else:

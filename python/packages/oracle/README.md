@@ -118,8 +118,11 @@ creates and deletes a unique test table.
 - Portable filters support scalar equality (including `NULL` and boolean
   distinctions), `in`/`not_in`, numeric ranges, `is_null`, `is_not_null`,
   `exists`, literal text `contains_text`/`starts_with`/`ends_with`, and
-  AND/OR/NOT. Collection membership and nested filters are rejected.
-  Ordered filters on integer fields reject non-integral float operands.
+  AND/OR/NOT. Finite `Decimal` values are supported for exact numeric equality
+  and membership; malformed UUID filter values compare as unequal.
+  Collection membership and nested filters are rejected.
+  Ordered filters on integer fields reject non-integral float operands;
+  ordered `Decimal` operands are not supported.
   String comparison follows the configured Oracle collation. Input values
   are bound; identifiers are checked and quoted as individual names.
 

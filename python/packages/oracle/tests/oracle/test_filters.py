@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+from uuid import UUID
+
 import pytest
 from agent_framework import Filter, FilterGroup
 
@@ -53,6 +56,66 @@ def test_numeric_equality_does_not_coerce_invalid_values(collection, value):
     assert sql == "1=0" and binds == {}
     sql, binds = collection._prepare_filter(Filter("number", "ne", value))
     assert sql == "(NOT (1=0))" and binds == {}
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "expected_bind"),
+    [
+        ("number", Decimal("2"), 2),
+        ("number", Decimal("2.0"), 2),
+        ("number", Decimal("9223372036854775807"), 2**63 - 1),
+        ("number", Decimal("2.5"), None),
+        ("number", Decimal("9223372036854775808"), None),
+        ("text", Decimal("0.5"), 0.5),
+        ("text", Decimal("0.1"), None),
+        ("text", Decimal("1e1000"), None),
+    ],
+)
+def test_decimal_equality_uses_exact_numeric_comparison(definition_factory, field, value, expected_bind):
+    compiler = _FilterCompiler(definition_factory(data_type="float"))
+    for operator in ("eq", "ne"):
+        sql, binds = compiler.compile(Filter(field, operator, value))
+        if expected_bind is None:
+            assert sql == ("1=0" if operator == "eq" else "(NOT (1=0))")
+            assert binds == {}
+        else:
+            assert f'"{field if field == "number" else "body text"}" = :f0' in sql
+            assert binds == {"f0": expected_bind}
+
+
+def test_decimal_membership_and_nonfinite_values(collection):
+    sql, binds = collection._prepare_filter(Filter("number", "in", [Decimal("2"), Decimal("2.5")]))
+    assert '"number" = :f0' in sql
+    assert binds == {"f0": 2}
+    sql, binds = collection._prepare_filter(Filter("number", "not_in", [Decimal("2.5")]))
+    assert sql == '("number" IS NOT NULL AND (NOT ((1=0))))'
+    assert binds == {}
+    with pytest.raises(ValueError, match="finite"):
+        collection._prepare_filter(Filter("number", "eq", Decimal("NaN")))
+
+
+@pytest.mark.parametrize(
+    ("operator", "value", "expected_sql"),
+    [
+        ("eq", "not-a-uuid", "1=0"),
+        ("ne", "not-a-uuid", "(NOT (1=0))"),
+        ("in", ["not-a-uuid"], '("doc""id" IS NOT NULL AND (1=0))'),
+        ("not_in", ["not-a-uuid"], '("doc""id" IS NOT NULL AND (NOT ((1=0))))'),
+    ],
+)
+def test_malformed_uuid_filter_is_non_equal(definition_factory, operator, value, expected_sql):
+    compiler = _FilterCompiler(definition_factory(key_type="UUID"))
+    sql, binds = compiler.compile(Filter("id", operator, value))
+    assert sql == expected_sql
+    assert binds == {}
+
+
+def test_valid_uuid_filter_values_remain_bound(definition_factory):
+    compiler = _FilterCompiler(definition_factory(key_type="UUID"))
+    valid = UUID(int=2)
+    sql, binds = compiler.compile(Filter("id", "in", ["malformed", valid]))
+    assert '"doc""id" = :f0' in sql
+    assert binds == {"f0": str(valid)}
 
 
 def test_boolean_equality_does_not_coerce_numbers(collection):

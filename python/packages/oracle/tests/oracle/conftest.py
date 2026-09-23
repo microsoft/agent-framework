@@ -101,7 +101,7 @@ def mock_database(collection):
     cursor = FakeCursor()
     connection = MagicMock()
     connection.cursor.return_value = cursor
-    writes = []
+    writes: list[bool] = []
 
     @asynccontextmanager
     async def acquire(*, write=False):

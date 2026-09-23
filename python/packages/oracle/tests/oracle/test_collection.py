@@ -265,6 +265,15 @@ async def test_retrieval_projects_vectors_only_when_requested(collection, mock_d
     assert '"dense vector"' in cursor.execute.call_args.args[0]
 
 
+async def test_get_applies_decimal_equality_after_core_filter_validation(collection, mock_database):
+    _, cursor, _, _ = mock_database
+    cursor.fetchall.return_value = [("one", "text", 2, 1)]
+    assert (await collection.get(filter=Filter("number", "eq", Decimal("2"))))[0]["number"] == 2
+    statement, binds = cursor.execute.call_args.args
+    assert '"number" = :f0' in statement
+    assert binds["f0"] == 2
+
+
 async def test_key_lookup_preserves_order_duplicates_and_chunks(collection, mock_database):
     _, cursor, _, _ = mock_database
     cursor.fetchall.side_effect = [
@@ -327,6 +336,19 @@ async def test_search_filter_threshold_and_paging_execute_in_database(collection
     assert binds["top"] == 1 and binds["skip"] == 2
     assert isinstance(binds["query_vector"], array)
     cursor.setinputsizes.assert_called_once_with(query_vector=oracledb.DB_TYPE_VECTOR)
+
+
+async def test_search_applies_invalid_uuid_as_non_equal_after_core_filter_validation(definition_factory, mock_database):
+    _, cursor, _, acquire = mock_database
+    collection = OracleCollection(
+        dict, definition=definition_factory(key_type="UUID"), dsn="unused", user="user", password="pass"
+    )
+    with patch.object(collection._client, "connection", side_effect=acquire.side_effect):
+        results = await collection.search(vector=[1, 0, 0], filter=Filter("id", "in", ["not-a-uuid"]))
+        assert [item async for item in results] == []
+    statement, binds = cursor.execute.call_args.args
+    assert '"doc""id" IS NOT NULL AND (1=0)' in statement
+    assert set(binds) == {"query_vector", "top", "skip"}
 
 
 @pytest.mark.parametrize(

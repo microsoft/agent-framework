@@ -153,6 +153,16 @@ async def test_owned_pool_is_lazy_and_closed_once():
         await store._client._get_client()
 
 
+async def test_owned_pool_uses_driver_factory_without_connecting():
+    store = OracleStore(dsn="localhost:1521/unused", user="unused", password="unused")
+    try:
+        pool = await store._client._get_client()
+        assert isinstance(pool, oracledb.AsyncConnectionPool)
+        assert await store._client._get_client() is pool
+    finally:
+        await store.close()
+
+
 async def test_pooled_writes_commit_or_rollback_but_borrowed_connection_does_not():
     connection = MagicMock(spec=oracledb.AsyncConnection)
     connection.commit = AsyncMock()
