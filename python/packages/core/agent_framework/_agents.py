@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import keyword
 import logging
 import re
 import sys
@@ -247,6 +248,10 @@ def _sanitize_agent_name(agent_name: str | None) -> str | None:
     # Prefix with underscore if the sanitized name starts with a digit
     if sanitized and sanitized[0].isdigit():
         sanitized = f"_{sanitized}"
+
+    # Suffix with underscore if the sanitized name is a reserved Python keyword
+    if keyword.iskeyword(sanitized):
+        sanitized = f"{sanitized}_"
 
     return sanitized
 

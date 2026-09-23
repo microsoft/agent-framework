@@ -3458,6 +3458,16 @@ def test_sanitize_agent_name_replaces_invalid_chars():
     assert "!" not in result  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
 
 
+def test_sanitize_agent_name_handles_python_keywords():
+    """Test _sanitize_agent_name appends trailing underscore for Python keywords."""
+    assert _sanitize_agent_name("for") == "for_"
+    assert _sanitize_agent_name("def") == "def_"
+    assert _sanitize_agent_name("class") == "class_"
+    assert _sanitize_agent_name("return") == "return_"
+    assert _sanitize_agent_name("import") == "import_"
+    assert _sanitize_agent_name("pass") == "pass_"
+
+
 # endregion
 
 
