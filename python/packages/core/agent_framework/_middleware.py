@@ -575,6 +575,11 @@ class ChatContext:
         stream_result_hooks: Hooks applied to the finalized response (after finalizer).
         stream_cleanup_hooks: Hooks executed after stream consumption (before finalizer).
 
+    Middleware that constructs provider-local replacement messages can call
+    :meth:`record_message_replacement` before downstream middleware runs. The replacement
+    remains call-local, but compaction summaries derived from it can be reconciled back to
+    the caller-owned source messages.
+
     Examples:
         .. code-block:: python
 
@@ -646,6 +651,59 @@ class ChatContext:
         self.stream_transform_hooks = list(stream_transform_hooks or [])
         self.stream_result_hooks = list(stream_result_hooks or [])
         self.stream_cleanup_hooks = list(stream_cleanup_hooks or [])
+        self._message_replacements: list[tuple[Message, tuple[Message, ...]]] = []
+        self._middleware_message_snapshots: list[list[Message]] = []
+
+    def record_message_replacement(
+        self,
+        replacement: Message,
+        sources: Message | Sequence[Message],
+    ) -> Message:
+        """Record replacement provenance for downstream compaction reconciliation.
+
+        This method does not modify :attr:`messages` or persist ``replacement``. It records
+        that the replacement carries content derived from caller-owned source messages, so
+        a downstream compaction summary can durably exclude and summarize those sources.
+
+        Args:
+            replacement: A middleware-created replacement message.
+            sources: One or more messages replaced by ``replacement``.
+
+        Returns:
+            The replacement message, for convenient use while rebuilding a message list.
+
+        Raises:
+            TypeError: If ``replacement`` or any source is not a :class:`Message`.
+            ValueError: If no sources are provided or the replacement is also a source.
+        """
+        if not isinstance(replacement, Message):
+            raise TypeError("replacement must be a Message")
+
+        if isinstance(sources, Message):
+            source_messages = (sources,)
+        elif isinstance(sources, Sequence) and not isinstance(sources, (str, bytes, bytearray)):
+            source_messages = tuple(sources)
+        else:
+            raise TypeError("sources must be a Message or a sequence of Message objects")
+
+        if not source_messages:
+            raise ValueError("sources must contain at least one Message")
+
+        unique_sources: list[Message] = []
+        seen_source_identities: set[int] = set()
+        for source in source_messages:
+            if not isinstance(source, Message):
+                raise TypeError("sources must contain only Message objects")
+            if source is replacement:
+                raise ValueError("replacement cannot also be one of its sources")
+            source_identity = id(source)
+            if source_identity in seen_source_identities:
+                continue
+            seen_source_identities.add(source_identity)
+            unique_sources.append(source)
+
+        self._message_replacements.append((replacement, tuple(unique_sources)))
+        return replacement
 
 
 class AgentMiddleware(ABC):
@@ -1408,7 +1466,12 @@ class ChatMiddlewarePipeline(BaseMiddlewarePipeline):
 
             async def current_handler() -> None:
                 # MiddlewareTermination bubbles up to execute() to skip post-processing
-                await self._middleware[index].process(context, create_next_handler(index + 1))
+                try:
+                    await self._middleware[index].process(context, create_next_handler(index + 1))
+                finally:
+                    context._middleware_message_snapshots.append(  # pyright: ignore[reportPrivateUsage]
+                        list(context.messages)
+                    )
 
             return current_handler
 
@@ -1572,10 +1635,26 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
                 if source_messages is not None:
                     from ._compaction import _reconcile_compaction_summaries  # pyright: ignore[reportPrivateUsage]
 
+                    if downstream_messages is not None:
+                        reconciliation_messages = downstream_messages
+                    else:
+                        fallback_messages: list[Message] = []
+                        seen_message_identities: set[int] = set()
+                        for snapshot in context._middleware_message_snapshots:  # pyright: ignore[reportPrivateUsage]
+                            for message in snapshot:
+                                message_identity = id(message)
+                                if message_identity in seen_message_identities:
+                                    continue
+                                seen_message_identities.add(message_identity)
+                                fallback_messages.append(message)
+                        reconciliation_messages = fallback_messages or middleware_messages
+
                     _reconcile_compaction_summaries(
                         source_messages,
-                        downstream_messages if downstream_messages is not None else middleware_messages,
+                        reconciliation_messages,
                         source_message_identities,
+                        message_replacements=context._message_replacements,  # pyright: ignore[reportPrivateUsage]
+                        warn_on_rejection=True,
                     )
 
         if stream:
