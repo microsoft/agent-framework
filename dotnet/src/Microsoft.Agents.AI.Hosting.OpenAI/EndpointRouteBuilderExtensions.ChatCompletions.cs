@@ -21,6 +21,10 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
     /// </summary>
     /// <param name="endpoints">The <see cref="IEndpointRouteBuilder"/> to add the OpenAI ChatCompletions endpoints to.</param>
     /// <param name="agentBuilder">The builder for <see cref="AIAgent"/> to map the OpenAI ChatCompletions endpoints for.</param>
+    /// <remarks>
+    /// See <see cref="MapOpenAIChatCompletions(IEndpointRouteBuilder, AIAgent, string, OpenAIChatCompletionsMapOptions)"/>
+    /// for endpoint authorization and application-owned state requirements.
+    /// </remarks>
     public static IEndpointConventionBuilder MapOpenAIChatCompletions(this IEndpointRouteBuilder endpoints, IHostedAgentBuilder agentBuilder)
         => MapOpenAIChatCompletions(endpoints, agentBuilder, path: null);
 
@@ -31,6 +35,10 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
     /// <param name="agentBuilder">The builder for <see cref="AIAgent"/> to map the OpenAI ChatCompletions endpoints for.</param>
     /// <param name="path">Custom route path for the chat completions endpoint.</param>
     /// <param name="mapOptions">Optional options controlling how incoming requests are mapped onto the agent run.</param>
+    /// <remarks>
+    /// See <see cref="MapOpenAIChatCompletions(IEndpointRouteBuilder, AIAgent, string, OpenAIChatCompletionsMapOptions)"/>
+    /// for endpoint authorization and application-owned state requirements.
+    /// </remarks>
     public static IEndpointConventionBuilder MapOpenAIChatCompletions(this IEndpointRouteBuilder endpoints, IHostedAgentBuilder agentBuilder, string? path, OpenAIChatCompletionsMapOptions? mapOptions = null)
     {
         var agent = endpoints.ServiceProvider.GetRequiredKeyedService<AIAgent>(agentBuilder.Name);
@@ -42,6 +50,10 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
     /// </summary>
     /// <param name="endpoints">The <see cref="IEndpointRouteBuilder"/> to add the OpenAI ChatCompletions endpoints to.</param>
     /// <param name="agent">The <see cref="AIAgent"/> instance to map the OpenAI ChatCompletions endpoints for.</param>
+    /// <remarks>
+    /// See <see cref="MapOpenAIChatCompletions(IEndpointRouteBuilder, AIAgent, string, OpenAIChatCompletionsMapOptions)"/>
+    /// for endpoint authorization and application-owned state requirements.
+    /// </remarks>
     public static IEndpointConventionBuilder MapOpenAIChatCompletions(this IEndpointRouteBuilder endpoints, AIAgent agent)
         => MapOpenAIChatCompletions(endpoints, agent, path: null);
 
@@ -52,6 +64,14 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
     /// <param name="agent">The <see cref="AIAgent"/> instance to map the OpenAI ChatCompletions endpoints for.</param>
     /// <param name="path">Custom route path for the chat completions endpoint.</param>
     /// <param name="mapOptions">Optional options controlling how incoming requests are mapped onto the agent run.</param>
+    /// <remarks>
+    /// Configure authentication and enforce endpoint authorization, for example with
+    /// <c>RequireAuthorization()</c> on the returned builder. This method does not apply authorization
+    /// automatically. The adapter does not itself persist conversations across requests, but callers
+    /// can still consume model resources and invoke exposed tools. Any additional application-owned
+    /// memory or storage must be isolated separately; registering an <c>AgentIsolationKeyProvider</c>
+    /// does not automatically partition arbitrary agent or tool state.
+    /// </remarks>
     public static IEndpointConventionBuilder MapOpenAIChatCompletions(
         this IEndpointRouteBuilder endpoints,
         AIAgent agent,

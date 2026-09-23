@@ -226,6 +226,8 @@ dotnet run
 
 ## Security considerations
 
+See the [shared hosting guide](../../04-hosting/README.md) for the common authentication, authorization, and isolation model, including differences between AG-UI, A2A, and OpenAI hosting.
+
 ### Endpoint access and session isolation are separate controls
 
 The AG-UI `threadId` identifies a conversation to resume; it does not prove that the caller owns it. `AGUIChatClient` does not expose an `IChatClient` `ConversationId`, so do not rely on that property to authorize AG-UI requests.
