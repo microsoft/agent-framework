@@ -1064,12 +1064,22 @@ def tool_called_check(*tool_names: str, mode: Literal["all", "any"] = "all") -> 
     Returns:
         A check function for use with ``LocalEvaluator``.
 
+    Raises:
+        ValueError: If no tool names are provided, if any tool name is not a non-empty string,
+            or if mode is not 'all' or 'any'.
+
     Example:
 
     .. code-block:: python
 
         check = tool_called_check("get_weather", "get_flight_price")
     """
+    if not tool_names:
+        raise ValueError("At least one tool name must be provided to tool_called_check.")
+    if any(not isinstance(t, str) or not t.strip() for t in tool_names):
+        raise ValueError("Tool names must be non-empty strings.")
+    if mode not in ("all", "any"):
+        raise ValueError(f"Invalid mode: {mode!r}. Must be 'all' or 'any'.")
 
     def _check(item: EvalItem) -> CheckResult:
         expected = set(tool_names)

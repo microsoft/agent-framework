@@ -973,6 +973,25 @@ class TestToolCalledCheckModeAny:
         assert "None of expected tools" in result.reason  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
 
 
+class TestToolCalledCheckValidation:
+    """Tests for tool_called_check argument validation."""
+
+    def test_tool_called_check_requires_at_least_one_tool(self):
+        with pytest.raises(ValueError, match="At least one tool name"):
+            tool_called_check()
+
+    def test_tool_called_check_rejects_empty_tool_name(self):
+        with pytest.raises(ValueError, match="non-empty strings"):
+            tool_called_check("valid_tool", "")
+
+        with pytest.raises(ValueError, match="non-empty strings"):
+            tool_called_check("   ")
+
+    def test_tool_called_check_rejects_invalid_mode(self):
+        with pytest.raises(ValueError, match="Invalid mode"):
+            tool_called_check("tool_a", mode="invalid")  # type: ignore[arg-type]
+
+
 class TestCoerceResultScoreError:
     """Tests for _coerce_result handling non-numeric score."""
 
