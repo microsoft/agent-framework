@@ -62,6 +62,13 @@ response format, allowing it to be passed to
 `answered` field to a Noul and supplies deterministic probability feedback in
 the optional reasoning field.
 
+Framework integrations with a fixed TypeSafe contract can configure
+`default_questions` on the client and omit per-call `response_format`. For
+example, `SecureAgentConfig` can use
+`TypeSafeChatClient(default_questions=quarantine_questions)` directly as its
+quarantine client; the framework's explicit `tool_choice="none"` forwarding is
+honored.
+
 ## Supported options
 
 | Option | Description |

@@ -110,8 +110,9 @@ can vary between runs.
 
 - **SecureAgentConfig quarantine client:** works when the quarantine task is a
   fixed structured classification. Jev cannot provide the arbitrary generated
-  summaries expected from a normal quarantine LLM, so the sample supplies
-  explicit risk and safety questions.
+  summaries expected from a normal quarantine LLM, so the sample passes explicit
+  risk and safety questions as `TypeSafeChatClient(default_questions=...)`
+  directly to `SecureAgentConfig`.
 - **AgentLoopMiddleware judge:** works out of the box by passing
   `TypeSafeChatClient()` directly to `with_judge`. The connector maps the required
   `JudgeVerdict.answered` boolean to a Noul. Jev cannot generate the optional

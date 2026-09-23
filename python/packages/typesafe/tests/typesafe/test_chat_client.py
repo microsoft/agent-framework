@@ -531,6 +531,22 @@ async def test_questions_response_format_forces_system_one_response_model() -> N
     assert stub.calls[0]["response_model"] is SystemOneResponse
 
 
+async def test_default_questions_support_framework_calls_without_response_format() -> None:
+    stub = StubTypeSafeClient()
+    client = TypeSafeChatClient(
+        async_client=cast(AsyncTypeSafeClient, stub),
+        default_questions=questions(),
+    )
+
+    response = await client.get_response(
+        [Message("user", ["Classify this."])],
+        client_kwargs={"tool_choice": "none"},
+    )
+
+    assert isinstance(response.value, SystemOneResponse)
+    assert stub.calls[0]["questions"] == questions()
+
+
 async def test_judge_verdict_response_format_is_supported_directly() -> None:
     stub = StubTypeSafeClient(
         response=make_response({

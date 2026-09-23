@@ -4,16 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Mapping, Sequence
-from typing import Any
 
-from agent_framework import Message
-from agent_framework.exceptions import ChatClientInvalidRequestException
 from agent_framework.security import SecureAgentConfig
 from dotenv import load_dotenv
 from typesafe_sdk import Choice, Noul, Questions, SystemOneResponse
 
-from agent_framework_typesafe import RawTypeSafeChatClient
+from agent_framework_typesafe import TypeSafeChatClient
 
 load_dotenv()
 
@@ -22,8 +18,8 @@ Use Jev as the quarantine chat client in SecureAgentConfig.
 
 The ``quarantined_llm`` security tool normally asks a chat client to analyze or
 summarize isolated untrusted content. Jev cannot generate arbitrary prose, so
-this adapter supplies fixed TypeSafe questions and returns structured quarantine
-decisions as JSON text.
+the stock TypeSafe client is configured with fixed ``default_questions`` and
+returns structured quarantine decisions as JSON text.
 
 This makes Jev useful for quarantine classification and gating. It is not a
 drop-in replacement for generative quarantine summarization.
@@ -47,36 +43,10 @@ QUARANTINE_QUESTIONS: Questions = {
 }
 
 
-class JevQuarantineClient(RawTypeSafeChatClient):
-    """Supply fixed TypeSafe questions for SecureAgentConfig quarantine calls."""
-
-    def _inner_get_response(
-        self,
-        *,
-        messages: Sequence[Message],
-        stream: bool,
-        options: Mapping[str, Any],
-        **kwargs: Any,
-    ) -> Any:
-        """Evaluate quarantined state instead of generating a free-form response."""
-        unexpected = set(kwargs) - {"tool_choice"}
-        if unexpected:
-            raise ChatClientInvalidRequestException(
-                f"Unexpected quarantine client arguments: {', '.join(sorted(unexpected))}."
-            )
-        if kwargs.get("tool_choice") not in (None, "none"):
-            raise ChatClientInvalidRequestException("The Jev quarantine client does not allow tool calls.")
-        return super()._inner_get_response(
-            messages=messages,
-            stream=stream,
-            options={"response_format": QUARANTINE_QUESTIONS, "tool_choice": "none"},
-        )
-
-
 async def main() -> None:
     """Classify isolated untrusted content through SecureAgentConfig."""
-    # 1. Register Jev as the process-wide quarantine client used by quarantined_llm.
-    async with JevQuarantineClient() as quarantine_client:
+    # 1. Register the stock TypeSafe client with fixed quarantine questions.
+    async with TypeSafeChatClient(default_questions=QUARANTINE_QUESTIONS) as quarantine_client:
         security = SecureAgentConfig(
             quarantine_chat_client=quarantine_client,
             auto_hide_untrusted=False,

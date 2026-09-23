@@ -75,8 +75,9 @@ class TypeSafeChatOptions(ChatOptions[SystemOneResponse], total=False):
     """TypeSafe-specific chat options.
 
     Keys:
-        response_format: Required TypeSafe Questions mapping. The connector forwards
-            it as the TypeSafe questions parameter and returns SystemOneResponse.
+        response_format: TypeSafe Questions mapping. The connector forwards it as
+            the TypeSafe questions parameter and returns SystemOneResponse. It may
+            be omitted when the client was created with default_questions.
         model: Optional TypeSafe model override.
         instructions: Optional Agent instructions included in the structured state.
     """
@@ -114,6 +115,7 @@ class RawTypeSafeChatClient(BaseChatClient[TypeSafeChatOptions]):
         model: str | None = None,
         base_url: str | None = None,
         async_client: AsyncTypeSafeClient | None = None,
+        default_questions: Questions | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         additional_properties: dict[str, Any] | None = None,
@@ -128,6 +130,9 @@ class RawTypeSafeChatClient(BaseChatClient[TypeSafeChatOptions]):
             base_url: Optional TypeSafe API root. Defaults to TYPESAFE_BASE_URL
                 or https://api.typesafe.ai for connector-owned SDK clients.
             async_client: Optional preconfigured TypeSafe SDK client. It remains caller-owned.
+            default_questions: Questions used when a request omits response_format.
+                This is useful for framework integrations that invoke a chat client
+                with a fixed task contract, such as SecureAgentConfig quarantine calls.
             compaction_strategy: Optional compaction strategy applied before requests.
             tokenizer: Optional tokenizer used by token-aware compaction strategies.
             additional_properties: Additional properties stored on the client.
@@ -135,6 +140,11 @@ class RawTypeSafeChatClient(BaseChatClient[TypeSafeChatOptions]):
             env_file_encoding: Encoding used to read the .env file.
         """
         self._owns_client = async_client is None
+        self.default_questions = (
+            self._validate_questions_mapping(default_questions, setting_name="default_questions")
+            if default_questions is not None
+            else None
+        )
 
         if async_client is not None:
             self.client = async_client
@@ -203,13 +213,17 @@ class RawTypeSafeChatClient(BaseChatClient[TypeSafeChatOptions]):
         """Evaluate messages with TypeSafe and return structured answers."""
         if stream:
             raise ChatClientInvalidRequestException("TypeSafe System One does not support streaming responses.")
-        if kwargs:
+        unexpected_kwargs = set(kwargs) - {"tool_choice"}
+        if unexpected_kwargs:
             raise ChatClientInvalidRequestException(
-                f"TypeSafe does not support client-specific arguments: {', '.join(sorted(kwargs))}."
+                f"TypeSafe does not support client-specific arguments: {', '.join(sorted(unexpected_kwargs))}."
             )
+        request_options = dict(options)
+        if "tool_choice" in kwargs:
+            request_options.setdefault("tool_choice", kwargs["tool_choice"])
 
         async def _get_response() -> ChatResponse[Any]:
-            normalized_options = await self._validate_options(options)
+            normalized_options = await self._validate_options(request_options)
             self._validate_supported_options(normalized_options)
 
             model = normalized_options.get("model", self.model)
@@ -344,18 +358,23 @@ class RawTypeSafeChatClient(BaseChatClient[TypeSafeChatOptions]):
         if options.get("allow_multiple_tool_calls"):
             raise ChatClientInvalidRequestException("TypeSafe supports one tool call per agent run.")
 
-    @staticmethod
-    def _get_questions(options: Mapping[str, Any]) -> Questions:
+    def _get_questions(self, options: Mapping[str, Any]) -> Questions:
         response_format = options.get("response_format")
-        if not isinstance(response_format, Mapping) or not response_format:
+        if response_format is None and self.default_questions is not None:
+            return self.default_questions
+        return self._validate_questions_mapping(response_format, setting_name="response_format")
+
+    @staticmethod
+    def _validate_questions_mapping(value: Any, *, setting_name: str) -> Questions:
+        if not isinstance(value, Mapping) or not value:
             raise ChatClientInvalidRequestException(
-                "TypeSafe response_format must be a non-empty typesafe_sdk.Questions mapping."
+                f"TypeSafe {setting_name} must be a non-empty typesafe_sdk.Questions mapping."
             )
-        question_ids: list[Any] = list(cast(Mapping[Any, Any], response_format))
+        question_ids: list[Any] = list(cast(Mapping[Any, Any], value))
         invalid_question_ids = [question_id for question_id in question_ids if not isinstance(question_id, str)]
         if invalid_question_ids:
-            raise ChatClientInvalidRequestException("TypeSafe response_format question IDs must be strings.")
-        return cast(Questions, response_format)
+            raise ChatClientInvalidRequestException(f"TypeSafe {setting_name} question IDs must be strings.")
+        return cast(Questions, value)
 
     @staticmethod
     def _get_function_tools(options: Mapping[str, Any]) -> list[FunctionTool]:
@@ -638,6 +657,7 @@ class TypeSafeChatClient(
         model: str | None = None,
         base_url: str | None = None,
         async_client: AsyncTypeSafeClient | None = None,
+        default_questions: Questions | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         compaction_strategy: CompactionStrategy | None = None,
@@ -653,6 +673,7 @@ class TypeSafeChatClient(
             model: Default TypeSafe model. The SDK defaults to jev-latest.
             base_url: Optional TypeSafe API root for connector-owned SDK clients.
             async_client: Optional preconfigured TypeSafe SDK client. It remains caller-owned.
+            default_questions: Questions used when a request omits response_format.
             middleware: Chat and function middleware to apply around requests and tool calls.
             function_invocation_configuration: Function invocation settings. TypeSafe limits
                 each run to one executed tool call.
@@ -669,6 +690,7 @@ class TypeSafeChatClient(
             model=model,
             base_url=base_url,
             async_client=async_client,
+            default_questions=default_questions,
             middleware=middleware,
             function_invocation_configuration=cast(FunctionInvocationConfiguration, invocation_configuration),
             compaction_strategy=compaction_strategy,
