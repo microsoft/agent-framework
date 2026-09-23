@@ -652,7 +652,7 @@ class ChatContext:
         self.stream_result_hooks = list(stream_result_hooks or [])
         self.stream_cleanup_hooks = list(stream_cleanup_hooks or [])
         self._message_replacements: list[tuple[Message, tuple[Message, ...]]] = []
-        self._middleware_message_snapshots: list[list[Message]] = []
+        self._fallback_reconciliation_messages: list[Message] | None = None
 
     def record_message_replacement(
         self,
@@ -664,6 +664,8 @@ class ChatContext:
         This method does not modify :attr:`messages` or persist ``replacement``. It records
         that the replacement carries content derived from caller-owned source messages, so
         a downstream compaction summary can durably exclude and summarize those sources.
+        When one source becomes multiple replacement messages, record every replacement;
+        reconciliation rejects summaries that cover only part of the split.
 
         Args:
             replacement: A middleware-created replacement message.
@@ -1469,9 +1471,10 @@ class ChatMiddlewarePipeline(BaseMiddlewarePipeline):
                 try:
                     await self._middleware[index].process(context, create_next_handler(index + 1))
                 finally:
-                    context._middleware_message_snapshots.append(  # pyright: ignore[reportPrivateUsage]
-                        list(context.messages)
-                    )
+                    if context._fallback_reconciliation_messages is None:  # pyright: ignore[reportPrivateUsage]
+                        context._fallback_reconciliation_messages = (  # pyright: ignore[reportPrivateUsage]
+                            context.messages if isinstance(context.messages, list) else list(context.messages)
+                        )
 
             return current_handler
 
@@ -1638,16 +1641,14 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
                     if downstream_messages is not None:
                         reconciliation_messages = downstream_messages
                     else:
-                        fallback_messages: list[Message] = []
-                        seen_message_identities: set[int] = set()
-                        for snapshot in context._middleware_message_snapshots:  # pyright: ignore[reportPrivateUsage]
-                            for message in snapshot:
-                                message_identity = id(message)
-                                if message_identity in seen_message_identities:
-                                    continue
-                                seen_message_identities.add(message_identity)
-                                fallback_messages.append(message)
-                        reconciliation_messages = fallback_messages or middleware_messages
+                        fallback_reconciliation_messages = (
+                            context._fallback_reconciliation_messages  # pyright: ignore[reportPrivateUsage]
+                        )
+                        reconciliation_messages = (
+                            fallback_reconciliation_messages
+                            if fallback_reconciliation_messages is not None
+                            else middleware_messages
+                        )
 
                     _reconcile_compaction_summaries(
                         source_messages,
