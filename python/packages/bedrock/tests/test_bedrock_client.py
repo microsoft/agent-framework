@@ -416,6 +416,48 @@ def test_prepare_bedrock_messages_skips_unsupported_content_and_unmatched_tool_r
     assert conversation == [{"role": "user", "content": [{"text": "hello"}]}]
 
 
+@pytest.mark.parametrize(("media_type", "image_format"), [("image/png", "png"), ("image/jpeg", "jpeg")])
+async def test_get_response_sends_user_images_as_image_blocks(media_type: str, image_format: str) -> None:
+    """Image data in a user message should be sent as a Converse image block."""
+    stub = _StubBedrockRuntime()
+    client = BedrockChatClient(
+        model="us.openai.gpt-6-sol",
+        region="us-east-1",
+        client=stub,  # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type] # pyright: ignore[reportArgumentType]
+    )
+    image_bytes = b"fake-image-bytes"
+    message = Message(
+        role="user",
+        contents=[
+            Content.from_text(text="What color is this image?"),
+            Content.from_data(data=image_bytes, media_type=media_type),
+        ],
+    )
+
+    await client.get_response([message])
+
+    assert stub.calls[0]["messages"][0]["content"] == [
+        {"text": "What color is this image?"},
+        {"image": {"format": image_format, "source": {"bytes": image_bytes}}},
+    ]
+
+
+def test_prepare_bedrock_messages_skips_images_outside_user_messages() -> None:
+    """Image data in assistant messages should still be skipped."""
+    client = _make_client()
+    messages = [
+        Message(role="user", contents=[Content.from_text(text="Draw a square.")]),
+        Message(
+            role="assistant",
+            contents=[Content.from_text(text="Here it is."), Content.from_data(data=b"x", media_type="image/png")],
+        ),
+    ]
+
+    _, conversation = client._prepare_bedrock_messages(messages)
+
+    assert conversation[1] == {"role": "assistant", "content": [{"text": "Here it is."}]}
+
+
 def test_align_tool_results_handles_pending_edge_cases() -> None:
     """Tool result alignment should preserve valid blocks and drop invalid or extra results."""
     client = _make_client()

@@ -32,6 +32,7 @@ from agent_framework import (
 )
 from agent_framework._settings import SecretString, load_settings
 from agent_framework._telemetry import get_user_agent, mark_feature_used
+from agent_framework._types import _get_data_bytes
 from agent_framework.exceptions import ChatClientInvalidResponseException
 from agent_framework.observability import ChatTelemetryLayer
 from boto3.session import Session as Boto3Session
@@ -540,7 +541,7 @@ class BedrockChatClient(
         blocks: list[dict[str, Any]] = []
         for content in message.contents:
             block = self._convert_content_to_bedrock_block(content)
-            if block is None:
+            if block is None or ("image" in block and message.role != "user"):
                 logger.debug("Skipping unsupported content type for Bedrock: %s", type(content))
                 continue
             blocks.append(block)
@@ -550,6 +551,10 @@ class BedrockChatClient(
         match content.type:
             case "text":
                 return {"text": content.text}
+            case "data" if content.has_top_level_media_type("image"):
+                return {
+                    "image": {"format": content.media_type.split("/")[1], "source": {"bytes": _get_data_bytes(content)}}
+                }
             case "function_call":
                 arguments = content.parse_arguments() or {}
                 return {
