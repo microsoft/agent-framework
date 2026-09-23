@@ -661,10 +661,16 @@ class FunctionTool(SerializationMixin):
             # Defer schema generation to avoid issues with forward references
         self._cached_parameters: dict[str, Any] | None = None
         self.approval_mode = approval_mode or "never_require"
-        if max_invocations is not None and max_invocations < 1:
-            raise ValueError("max_invocations must be at least 1 or None.")
-        if max_invocation_exceptions is not None and max_invocation_exceptions < 1:
-            raise ValueError("max_invocation_exceptions must be at least 1 or None.")
+        if max_invocations is not None and (
+            isinstance(max_invocations, bool) or not isinstance(max_invocations, int) or max_invocations < 1
+        ):
+            raise ValueError("max_invocations must be an integer of at least 1 or None.")
+        if max_invocation_exceptions is not None and (
+            isinstance(max_invocation_exceptions, bool)
+            or not isinstance(max_invocation_exceptions, int)
+            or max_invocation_exceptions < 1
+        ):
+            raise ValueError("max_invocation_exceptions must be an integer of at least 1 or None.")
         self.max_invocations = max_invocations
         self.invocation_count = 0
         self.max_invocation_exceptions = max_invocation_exceptions

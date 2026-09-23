@@ -686,6 +686,39 @@ async def test_sync_awaitable_tool_exception_limit_counts_awaited_failures() -> 
     assert failing_sync_awaitable_tool.invocation_exception_count == 1
 
 
+def test_function_tool_max_invocations_limit() -> None:
+    """Test that max_invocations stops further calls after reaching the configured limit."""
+    from agent_framework.exceptions import ToolException
+
+    @tool(name="counted_tool", max_invocations=2)
+    def counted_tool(x: int) -> int:
+        return x * 2
+
+    assert counted_tool(1) == 2
+    assert counted_tool(2) == 4
+    assert counted_tool.invocation_count == 2
+
+    with pytest.raises(ToolException, match="maximum invocation limit"):
+        counted_tool(3)
+
+
+@pytest.mark.parametrize(
+    "invalid_val",
+    [0, -1, True, False, 1.5, "2"],
+)
+def test_function_tool_invocation_limits_reject_invalid_types(invalid_val: Any) -> None:
+    """Test that FunctionTool rejects non-integer, boolean, or sub-1 values for invocation limits."""
+
+    def dummy() -> None:
+        pass
+
+    with pytest.raises(ValueError, match="max_invocations must be an integer of at least 1 or None"):
+        FunctionTool(name="dummy", func=dummy, max_invocations=invalid_val)  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="max_invocation_exceptions must be an integer of at least 1 or None"):
+        FunctionTool(name="dummy", func=dummy, max_invocation_exceptions=invalid_val)  # type: ignore[arg-type]
+
+
 def test_tool_decorator_in_class():
     """Test the tool decorator."""
 
