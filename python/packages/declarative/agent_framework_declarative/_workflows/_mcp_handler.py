@@ -67,6 +67,10 @@ def get_or_create_workflow_session_id(state: State) -> str:
     return workflow_session_id
 
 
+def reset_workflow_session_id(state: State) -> None:
+    state.set(_WORKFLOW_SESSION_ID_KEY, uuid.uuid4().hex)
+
+
 @dataclass
 class MCPToolInvocation:
     """Description of an MCP tool call to be dispatched by a :class:`MCPToolHandler`.
@@ -577,31 +581,35 @@ class DefaultMCPToolHandler:
         evicted: _CacheEntry | None = None
         duplicate: _CacheEntry | None = None
         handler_closed = False
-        async with self._cache_lock:
-            self._inflight.pop(key, None)
-            if self._closed:
-                handler_closed = True
-            else:
-                existing = self._cache.get(key)
-                if existing is not None:
-                    # Another writer beat us; prefer the existing entry and
-                    # discard ours after the lock is released.
-                    self._cache.move_to_end(key)
-                    duplicate = entry
-                    entry = existing
-                    entry.active_users += 1
+        try:
+            async with self._cache_lock:
+                self._inflight.pop(key, None)
+                if self._closed:
+                    handler_closed = True
                 else:
-                    entry.active_users = 1
-                    self._cache[key] = entry
-                    self._cache.move_to_end(key)
-                    if len(self._cache) > self._cache_max_size:
-                        _evicted_key, evicted = self._cache.popitem(last=False)
-                        evicted.evicted = True
-                        self._retired[id(evicted)] = evicted
-                        if evicted.active_users == 0:
-                            evicted.disposal_claimed = True
-                if not inflight.done():
-                    inflight.set_result(entry)
+                    existing = self._cache.get(key)
+                    if existing is not None:
+                        # Another writer beat us; prefer the existing entry and
+                        # discard ours after the lock is released.
+                        self._cache.move_to_end(key)
+                        duplicate = entry
+                        entry = existing
+                        entry.active_users += 1
+                    else:
+                        entry.active_users = 1
+                        self._cache[key] = entry
+                        self._cache.move_to_end(key)
+                        if len(self._cache) > self._cache_max_size:
+                            _evicted_key, evicted = self._cache.popitem(last=False)
+                            evicted.evicted = True
+                            self._retired[id(evicted)] = evicted
+                            if evicted.active_users == 0:
+                                evicted.disposal_claimed = True
+                    if not inflight.done():
+                        inflight.set_result(entry)
+        except BaseException as exc:
+            await self._abort_entry_creation(key, inflight, entry, exc)
+            raise
 
         if handler_closed:
             # Close our orphaned entry; resolve the future with a clear
@@ -625,6 +633,31 @@ class DefaultMCPToolHandler:
             await self._release_entry(entry)
             raise
         return entry
+
+    async def _abort_entry_creation(
+        self,
+        key: tuple[str, str, str, str, str],
+        inflight: asyncio.Future[_CacheEntry],
+        entry: _CacheEntry,
+        exc: BaseException,
+    ) -> None:
+        async def cleanup() -> None:
+            try:
+                await self._close_entry(entry)
+            finally:
+                async with self._cache_lock:
+                    self._inflight.pop(key, None)
+                if not inflight.done():
+                    inflight.set_exception(exc)
+                inflight.exception()
+
+        cleanup_task = asyncio.create_task(cleanup())
+        while not cleanup_task.done():
+            try:
+                await asyncio.shield(cleanup_task)
+            except asyncio.CancelledError:
+                continue
+        cleanup_task.result()
 
     async def _release_entry(self, entry: _CacheEntry) -> None:
         close_entry = False

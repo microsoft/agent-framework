@@ -364,6 +364,42 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
     }
 
     [Fact]
+    public async Task NoProvider_CancelledCreator_DoesNotCancelSharedWaiterAsync()
+    {
+        // Arrange
+        ProtocolStub stub = new();
+        using SemaphoreSlim initializationStarted = new(0);
+        int initializationAttempts = 0;
+        stub.BeforeInitializationAsync = async token =>
+        {
+            initializationStarted.Release();
+            if (Interlocked.Increment(ref initializationAttempts) == 1)
+            {
+                await Task.Delay(Timeout.Infinite, token);
+            }
+        };
+        await using DefaultMcpToolHandler handler = new(null, stub.CreateMessageHandler);
+        using CancellationTokenSource creatorCancellation = new();
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+
+        // Act
+        Task<McpServerToolResultContent> creator =
+            InvokeScopedAsync(handler, "workflow-a", "ping", creatorCancellation.Token);
+        await initializationStarted.WaitAsync(timeout.Token);
+        Task<McpServerToolResultContent> waiter = InvokeScopedAsync(handler, "workflow-a", "ping", timeout.Token);
+        await Task.Yield();
+        creatorCancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => creator);
+        await initializationStarted.WaitAsync(timeout.Token);
+        McpServerToolResultContent result = await waiter;
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal(2, initializationAttempts);
+        Assert.Equal(1, stub.Initializations);
+    }
+
+    [Fact]
     public async Task Provider_OperationFailure_DisposesSessionAndPreservesCallerClientAsync()
     {
         // Arrange

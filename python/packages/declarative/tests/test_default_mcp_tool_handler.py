@@ -1304,6 +1304,34 @@ class TestAclose:
         assert FakeTool.instances[0].close_count == 1
         assert not handler._inflight
 
+    @pytest.mark.asyncio
+    async def test_cancellation_while_waiting_for_phase_three_lock_cleans_up(self) -> None:
+        handler = DefaultMCPToolHandler()
+        entry_created = asyncio.Event()
+        release_creation = asyncio.Event()
+        original_create_entry = handler._create_entry
+
+        async def gated_create_entry(invocation: MCPToolInvocation) -> Any:
+            entry = await original_create_entry(invocation)
+            entry_created.set()
+            await release_creation.wait()
+            return entry
+
+        with _patch_tool(), patch.object(handler, "_create_entry", gated_create_entry):
+            invocation = asyncio.create_task(handler.invoke_tool(_invocation(headers={"X": "1"})))
+            await entry_created.wait()
+            await handler._cache_lock.acquire()
+            release_creation.set()
+            await asyncio.sleep(0)
+            invocation.cancel()
+            handler._cache_lock.release()
+
+            with pytest.raises(asyncio.CancelledError):
+                await invocation
+
+        assert FakeTool.instances[0].close_count == 1
+        assert not handler._inflight
+
 
 # ---------- Result normalisation ------------------------------------------
 

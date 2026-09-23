@@ -383,7 +383,16 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
 
         if (!ownsClientCreation)
         {
-            await WaitForClientCreationAsync(clientCreation.Task, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await WaitForClientCreationAsync(clientCreation.Task, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                return await this.AcquireClientAsync(
+                    serverUrl, serverLabel, headers, connectionName, workflowSessionId, cancellationToken).ConfigureAwait(false);
+            }
+
             return await this.AcquireClientAsync(
                 serverUrl, serverLabel, headers, connectionName, workflowSessionId, cancellationToken).ConfigureAwait(false);
         }
