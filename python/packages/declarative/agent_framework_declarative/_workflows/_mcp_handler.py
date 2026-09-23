@@ -608,11 +608,13 @@ class DefaultMCPToolHandler:
             # error so the caller (and any other awaiters) surface a
             # consistent "handler is closed" failure rather than receiving
             # an entry we are about to close behind their back.
-            await self._close_entry(entry)
             err = RuntimeError("DefaultMCPToolHandler is closed")
-            if not inflight.done():
-                inflight.set_exception(err)
-            inflight.exception()
+            try:
+                await self._close_invocation_entry(entry)
+            finally:
+                if not inflight.done():
+                    inflight.set_exception(err)
+                inflight.exception()
             raise err
         try:
             if duplicate is not None:

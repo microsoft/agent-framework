@@ -141,6 +141,30 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
     }
 
     [Fact]
+    public async Task NoProvider_CacheEviction_DisposesUnusedOwnedHttpClientAsync()
+    {
+        // Arrange
+        ProtocolStub stub = new();
+        await using DefaultMcpToolHandler handler = new(null, stub.CreateMessageHandler, clientCacheMaxSize: 1);
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+
+        // Act
+        await handler.InvokeToolInWorkflowSessionAsync(
+            "https://first.example/api", null, "ping", null, null, null, "workflow-a", timeout.Token);
+        await handler.InvokeToolInWorkflowSessionAsync(
+            "https://second.example/api", null, "ping", null, null, null, "workflow-b", timeout.Token);
+
+        // Assert
+        Assert.Equal(2, stub.Initializations);
+        Assert.Equal(1, stub.Terminations);
+        Assert.Equal(2, stub.Handlers.Count);
+        stub.Handlers[0].Protected().Verify(
+            "Dispose", Times.AtLeastOnce(), ItExpr.Is<bool>(disposing => disposing));
+        stub.Handlers[1].Protected().Verify(
+            "Dispose", Times.Never(), ItExpr.Is<bool>(disposing => disposing));
+    }
+
+    [Fact]
     public async Task NoProvider_CacheEviction_DefersDisposalUntilActiveInvocationCompletesAsync()
     {
         // Arrange

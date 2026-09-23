@@ -31,8 +31,6 @@ internal sealed class InvokeMcpToolExecutor(
 {
     private const string ApprovalSnapshotStateKey = nameof(_approvalSnapshots);
     private const string LegacyApprovalSnapshotStateKey = "_approvalSnapshot";
-    private readonly string _fallbackWorkflowSessionId = Guid.NewGuid().ToString("N");
-
     /// <summary>
     /// Snapshots of evaluated parameters captured at approval-request time, keyed by
     /// per-invocation request id. Each pending approval lives here until the matching
@@ -187,7 +185,7 @@ internal sealed class InvokeMcpToolExecutor(
         await this.ProcessResultAsync(context, resultContent, cancellationToken).ConfigureAwait(false);
     }
 
-    private Task<McpServerToolResultContent> InvokeToolAsync(
+    private async Task<McpServerToolResultContent> InvokeToolAsync(
         IWorkflowContext context,
         string serverUrl,
         string? serverLabel,
@@ -201,8 +199,12 @@ internal sealed class InvokeMcpToolExecutor(
         {
             string workflowSessionId = context is IWorkflowSessionContext sessionContext
                 ? sessionContext.SessionId
-                : this._fallbackWorkflowSessionId;
-            return scopedHandler.InvokeToolInWorkflowSessionAsync(
+                : await context.ReadOrInitStateAsync(
+                    DeclarativeWorkflowContext.WorkflowSessionIdStateKey,
+                    static () => Guid.NewGuid().ToString("N"),
+                    VariableScopeNames.System,
+                    cancellationToken).ConfigureAwait(false);
+            return await scopedHandler.InvokeToolInWorkflowSessionAsync(
                 serverUrl,
                 serverLabel,
                 toolName,
@@ -210,17 +212,17 @@ internal sealed class InvokeMcpToolExecutor(
                 headers,
                 connectionName,
                 workflowSessionId,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
         }
 
-        return mcpToolHandler.InvokeToolAsync(
+        return await mcpToolHandler.InvokeToolAsync(
             serverUrl,
             serverLabel,
             toolName,
             arguments,
             headers,
             connectionName,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>

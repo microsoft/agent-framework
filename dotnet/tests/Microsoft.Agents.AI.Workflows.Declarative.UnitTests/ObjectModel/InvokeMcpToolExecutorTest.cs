@@ -181,6 +181,34 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
     }
 
     [Fact]
+    public async Task InvokeMcpToolLegacyContextsPersistSeparateSessionScopesAsync()
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        RecordingScopedMcpToolHandler handler = new();
+        InvokeMcpTool model = this.CreateModel(
+            displayName: nameof(InvokeMcpToolLegacyContextsPersistSeparateSessionScopesAsync),
+            serverUrl: TestServerUrl,
+            toolName: TestToolName,
+            requireApproval: false);
+        MockAgentProvider agentProvider = new();
+        InvokeMcpToolExecutor action = new(model, handler, agentProvider.Object, this.State);
+        InvokeMcpToolExecutor reconstructedAction = new(model, handler, agentProvider.Object, this.State);
+        Mock<IWorkflowContext> firstContext = CreateMockWorkflowContextWithSessionState();
+        Mock<IWorkflowContext> secondContext = CreateMockWorkflowContextWithSessionState();
+
+        // Act
+        await action.HandleAsync(new ActionExecutorResult("first"), firstContext.Object, CancellationToken.None);
+        await action.HandleAsync(new ActionExecutorResult("second"), secondContext.Object, CancellationToken.None);
+        await reconstructedAction.HandleAsync(new ActionExecutorResult("continued"), firstContext.Object, CancellationToken.None);
+
+        // Assert
+        Assert.Equal(3, handler.WorkflowSessionIds.Count);
+        Assert.NotEqual(handler.WorkflowSessionIds[0], handler.WorkflowSessionIds[1]);
+        Assert.Equal(handler.WorkflowSessionIds[0], handler.WorkflowSessionIds[2]);
+    }
+
+    [Fact]
     public async Task InvokeMcpToolExecuteWithServerLabelAsync()
     {
         // Arrange
@@ -1601,6 +1629,28 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
             })
             .Returns(default(ValueTask));
         return mockContext;
+    }
+
+    private static Mock<IWorkflowContext> CreateMockWorkflowContextWithSessionState()
+    {
+        Mock<IWorkflowContext> context = CreateMockWorkflowContext();
+        Dictionary<(string? Scope, string Key), string> state = [];
+        context.Setup(current => current.ReadOrInitStateAsync(
+                It.IsAny<string>(),
+                It.IsAny<Func<string>>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .Returns((string key, Func<string> initialStateFactory, string? scopeName, CancellationToken _) =>
+            {
+                if (!state.TryGetValue((scopeName, key), out string? value))
+                {
+                    value = initialStateFactory();
+                    state[(scopeName, key)] = value;
+                }
+
+                return new ValueTask<string>(value);
+            });
+        return context;
     }
 
     /// <summary>

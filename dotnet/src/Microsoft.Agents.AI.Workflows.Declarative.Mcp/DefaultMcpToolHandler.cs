@@ -53,7 +53,7 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
     private readonly Dictionary<(string WorkflowSession, string Url, string Label, string Connection, string HeadersHash), TaskCompletionSource<CachedClient>> _clientCreations = [];
     private readonly LinkedList<(string WorkflowSession, string Url, string Label, string Connection, string HeadersHash)> _clientLru = [];
     private readonly HashSet<CachedClient> _retiredClients = [];
-    private readonly Dictionary<string, HttpClient> _ownedHttpClients = [];
+    private readonly Dictionary<string, OwnedHttpClient> _ownedHttpClients = [];
     private readonly SemaphoreSlim _clientLock = new(1, 1);
     private readonly SemaphoreSlim _clientCreationSemaphore;
     private readonly int _clientCacheMaxSize;
@@ -162,7 +162,7 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
             try
             {
                 ClientConnection invocationClient = await this.CreateClientAsync(
-                    serverUrl.Trim(), serverLabel, headers, httpClientCacheKey: null, cancellationToken).ConfigureAwait(false);
+                    serverUrl.Trim(), serverLabel, headers, cancellationToken).ConfigureAwait(false);
                 await using (invocationClient.ConfigureAwait(false))
                 {
                     return await InvokeClientAsync(invocationClient.Client, toolName, arguments, cancellationToken).ConfigureAwait(false);
@@ -329,23 +329,6 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
 
         await Task.WhenAll(cachedClients.Select(client => client.Disposed.Task)).ConfigureAwait(false);
 
-        await this._clientLock.WaitAsync().ConfigureAwait(false);
-        try
-        {
-
-            // Dispose only HttpClients that the handler created (not user-provided ones)
-            foreach (HttpClient httpClient in this._ownedHttpClients.Values)
-            {
-                httpClient.Dispose();
-            }
-
-            this._ownedHttpClients.Clear();
-        }
-        finally
-        {
-            this._clientLock.Release();
-        }
-
         this._clientLock.Dispose();
         this._clientCreationSemaphore.Dispose();
     }
@@ -422,7 +405,7 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
             }
 
             connection = await this.CreateClientAsync(
-                trimmedUrl, serverLabel, headers, trimmedUrl, cancellationToken).ConfigureAwait(false);
+                trimmedUrl, serverLabel, headers, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception)
         {
@@ -636,39 +619,26 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
         string serverUrl,
         string? serverLabel,
         IDictionary<string, string>? headers,
-        string? httpClientCacheKey,
         CancellationToken cancellationToken)
     {
-        // Only the no-provider path shares handler-owned HTTP clients.
         HttpClient? httpClient = null;
         bool ownsHttpClient = false;
+        OwnedHttpClientLease? ownedHttpClientLease = null;
 
         if (this._httpClientProvider is not null)
         {
             httpClient = await this._httpClientProvider(serverUrl, cancellationToken).ConfigureAwait(false);
         }
 
-        if (httpClient is null && httpClientCacheKey is null)
+        if (httpClient is null && this._httpClientProvider is not null)
         {
             httpClient = this.CreatePinnedHttpClient(serverUrl);
             ownsHttpClient = true;
         }
-        else if (httpClient is null && httpClientCacheKey is not null)
+        else if (httpClient is null)
         {
-            string cacheKey = httpClientCacheKey;
-            await this._clientLock.WaitAsync(cancellationToken).ConfigureAwait(false);
-            try
-            {
-                if (!this._ownedHttpClients.TryGetValue(cacheKey, out httpClient))
-                {
-                    httpClient = this.CreatePinnedHttpClient(serverUrl);
-                    this._ownedHttpClients[cacheKey] = httpClient;
-                }
-            }
-            finally
-            {
-                this._clientLock.Release();
-            }
+            ownedHttpClientLease = await this.AcquireOwnedHttpClientAsync(serverUrl, cancellationToken).ConfigureAwait(false);
+            httpClient = ownedHttpClientLease.Client;
         }
 
         HttpClientTransportOptions transportOptions = new()
@@ -683,19 +653,78 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
             TransportMode = HttpTransportMode.StreamableHttp
         };
 
-        HttpClient resolvedHttpClient = httpClient ?? throw new InvalidOperationException("Failed to resolve MCP HTTP client.");
-        HttpClientTransport transport = new(transportOptions, resolvedHttpClient, ownsHttpClient: ownsHttpClient);
-
+        HttpClientTransport? transport = null;
         try
         {
+            HttpClient resolvedHttpClient = httpClient ?? throw new InvalidOperationException("Failed to resolve MCP HTTP client.");
+            transport = new(transportOptions, resolvedHttpClient, ownsHttpClient: ownsHttpClient);
             McpClient client = await McpClient.CreateAsync(transport, cancellationToken: cancellationToken).ConfigureAwait(false);
-            return new ClientConnection(client, transport);
+            ClientConnection connection = new(client, transport, ownedHttpClientLease);
+            ownedHttpClientLease = null;
+            return connection;
         }
         catch
         {
-            await DisposeResourceAsync(transport, "transport").ConfigureAwait(false);
+            try
+            {
+                if (transport is not null)
+                {
+                    await DisposeResourceAsync(transport, "transport").ConfigureAwait(false);
+                }
+            }
+            finally
+            {
+                if (ownedHttpClientLease is not null)
+                {
+                    await ownedHttpClientLease.DisposeAsync().ConfigureAwait(false);
+                }
+            }
+
             throw;
         }
+    }
+
+    private async Task<OwnedHttpClientLease> AcquireOwnedHttpClientAsync(
+        string serverUrl,
+        CancellationToken cancellationToken)
+    {
+        await this._clientLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (!this._ownedHttpClients.TryGetValue(serverUrl, out OwnedHttpClient? entry))
+            {
+                entry = new(this.CreatePinnedHttpClient(serverUrl));
+                this._ownedHttpClients[serverUrl] = entry;
+            }
+
+            entry.ReferenceCount++;
+            return new(this, serverUrl, entry.Client);
+        }
+        finally
+        {
+            this._clientLock.Release();
+        }
+    }
+
+    private async ValueTask ReleaseOwnedHttpClientAsync(string serverUrl)
+    {
+        HttpClient? clientToDispose = null;
+        await this._clientLock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+        try
+        {
+            OwnedHttpClient entry = this._ownedHttpClients[serverUrl];
+            if (--entry.ReferenceCount == 0)
+            {
+                this._ownedHttpClients.Remove(serverUrl);
+                clientToDispose = entry.Client;
+            }
+        }
+        finally
+        {
+            this._clientLock.Release();
+        }
+
+        clientToDispose?.Dispose();
     }
 
     private HttpClient CreatePinnedHttpClient(string serverUrl)
@@ -744,7 +773,36 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
         public bool DisposalClaimed { get; set; }
     }
 
-    internal sealed class ClientConnection(McpClient client, IAsyncDisposable transport) : IAsyncDisposable
+    private sealed class OwnedHttpClient(HttpClient client)
+    {
+        public HttpClient Client { get; } = client;
+
+        public int ReferenceCount { get; set; }
+    }
+
+    private sealed class OwnedHttpClientLease(
+        DefaultMcpToolHandler owner,
+        string serverUrl,
+        HttpClient client) : IAsyncDisposable
+    {
+        private bool _disposed;
+
+        public HttpClient Client { get; } = client;
+
+        public async ValueTask DisposeAsync()
+        {
+            if (!this._disposed)
+            {
+                this._disposed = true;
+                await owner.ReleaseOwnedHttpClientAsync(serverUrl).ConfigureAwait(false);
+            }
+        }
+    }
+
+    internal sealed class ClientConnection(
+        McpClient client,
+        IAsyncDisposable transport,
+        IAsyncDisposable? ownedHttpClientLease = null) : IAsyncDisposable
     {
         public McpClient Client { get; } = client;
 
@@ -756,8 +814,18 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
             }
             finally
             {
-                // McpClient owns the connected session, not the reusable transport factory.
-                await DisposeResourceAsync(transport, "transport").ConfigureAwait(false);
+                try
+                {
+                    // McpClient owns the connected session, not the reusable transport factory.
+                    await DisposeResourceAsync(transport, "transport").ConfigureAwait(false);
+                }
+                finally
+                {
+                    if (ownedHttpClientLease is not null)
+                    {
+                        await ownedHttpClientLease.DisposeAsync().ConfigureAwait(false);
+                    }
+                }
             }
         }
     }

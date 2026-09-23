@@ -17,7 +17,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 
 internal sealed class DeclarativeWorkflowContext : IWorkflowContext, IWorkflowSessionContext
 {
-    private const string WorkflowSessionIdStateKey = "__declarative_mcp_workflow_session_id";
+    internal const string WorkflowSessionIdStateKey = "__declarative_mcp_workflow_session_id";
 
     public static readonly FrozenSet<string> ManagedScopes =
         [

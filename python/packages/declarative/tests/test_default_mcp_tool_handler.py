@@ -1263,6 +1263,47 @@ class TestAclose:
         assert result.is_error is True
         assert "closed" in (result.error_message or "").lower()
 
+    @pytest.mark.asyncio
+    async def test_cancelled_creator_does_not_block_aclose(self) -> None:
+        handler = DefaultMCPToolHandler()
+        connect_started = asyncio.Event()
+        release_connect = asyncio.Event()
+        close_started = asyncio.Event()
+        release_close = asyncio.Event()
+        original_connect = FakeTool.connect
+        original_close_entry = handler._close_entry
+
+        async def gated_connect(self: FakeTool) -> None:
+            connect_started.set()
+            await release_connect.wait()
+            await original_connect(self)
+
+        async def gated_close_entry(entry: Any) -> None:
+            close_started.set()
+            await release_close.wait()
+            await original_close_entry(entry)
+
+        with (
+            _patch_tool(),
+            patch.object(FakeTool, "connect", gated_connect),
+            patch.object(handler, "_close_entry", gated_close_entry),
+        ):
+            invoke_task = asyncio.create_task(handler.invoke_tool(_invocation(headers={"X": "1"})))
+            await connect_started.wait()
+            close_task = asyncio.create_task(handler.aclose())
+            await asyncio.sleep(0)
+            release_connect.set()
+            await close_started.wait()
+            invoke_task.cancel()
+            release_close.set()
+
+            with pytest.raises(asyncio.CancelledError):
+                await invoke_task
+            await asyncio.wait_for(close_task, timeout=1)
+
+        assert FakeTool.instances[0].close_count == 1
+        assert not handler._inflight
+
 
 # ---------- Result normalisation ------------------------------------------
 
