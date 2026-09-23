@@ -2,18 +2,14 @@
 
 from __future__ import annotations
 
-import asyncio
-import hashlib
 import json
 import logging
+import sys
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
-from dataclasses import dataclass, field
-from types import TracebackType
 
 from agent_framework import AgentSession, ResponseStream, SessionStore, SupportsAgentRun
 from agent_framework._telemetry import mark_feature_used
-from anyio import CancelScope
 from azure.ai.agentserver.core import FoundryAgentRequestContext, get_request_context
 from azure.ai.agentserver.invocations import InvocationAgentServerHost
 from starlette.requests import Request
@@ -26,20 +22,6 @@ from ._feature_usage import FeatureIndex
 from ._state_store import AgentSessionStoreProvider, StoreProvider
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class _SessionLock:
-    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-    users: int = 0
-
-
-class _ShieldedAsyncExitStack(AsyncExitStack):
-    async def __aexit__(
-        self, exc_type: type[BaseException] | None, exc: BaseException | None, traceback: TracebackType | None
-    ) -> bool | None:
-        with CancelScope(shield=True):
-            return await super().__aexit__(exc_type, exc, traceback)
 
 
 class _InvocationStreamingResponse(StreamingResponse):
@@ -55,15 +37,14 @@ class _InvocationStreamingResponse(StreamingResponse):
         try:
             await super().__call__(scope, receive, send)
         finally:
-            # Sending a chunk can fail while the generator is suspended at yield.
-            with CancelScope(shield=True):
-                try:
-                    close = getattr(self.body_iterator, "aclose", None)
-                    if close is not None:
-                        await close()
-                finally:
-                    if self.body_iterator is not self._content:
-                        await self._content.aclose()
+            # The SDK may wrap the iterator in a keep-alive pump; join it before closing its source.
+            try:
+                close = getattr(self.body_iterator, "aclose", None)
+                if close is not None:
+                    await close()
+            finally:
+                if self.body_iterator is not self._content:
+                    await self._content.aclose()
 
 
 class InvocationsHostServer(InvocationAgentServerHost):
@@ -75,7 +56,6 @@ class InvocationsHostServer(InvocationAgentServerHost):
         *,
         openapi_spec: dict[str, Any] | None = None,
         agent_session_store_provider: StoreProvider[SessionStore] | None = None,
-        session_store_namespace: str | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize an InvocationsHostServer.
@@ -87,42 +67,21 @@ class InvocationsHostServer(InvocationAgentServerHost):
             agent_session_store_provider: Provider for conversation session storage. Defaults to Foundry storage
                 when hosted and the SDK's file-backed storage locally. New default stores expire sessions 30 days
                 after their last write. Custom providers control their own retention.
-            session_store_namespace: Stable application identity for session storage. Defaults to the configured
-                Foundry agent ID or name. Required for the default store when neither is configured, including
-                unnamed local applications. Keep it stable across restarts and distinct for independent applications.
-                Custom providers without a namespace are responsible for application and protocol isolation.
             **kwargs: Additional keyword arguments.
 
         This host will expect the request to be a JSON body with a "message" field.
         The response contains the agent's text, or streamed text when "stream" is true.
         """
         validate_agent_source(agent)
-        if session_store_namespace is not None and (
-            not isinstance(session_store_namespace, str) or not session_store_namespace.strip()
-        ):
-            raise ValueError("session_store_namespace must be a non-empty string")
         super().__init__(openapi_spec=openapi_spec, **kwargs)
 
         self._agent = agent
         self._owns_request_agent = not is_agent(agent)
-        self._session_namespace = (
-            session_store_namespace
-            if session_store_namespace is not None
-            else self.config.agent_guid or self.config.agent_name or None
-        )
-        if agent_session_store_provider is None and (
-            self._session_namespace is None or not self._session_namespace.strip()
-        ):
-            raise ValueError(
-                "The default invocation session store requires a stable application identity. "
-                "Set session_store_namespace or configure FOUNDRY_AGENT_ID or FOUNDRY_AGENT_NAME."
-            )
         self._session_store_provider = (
             AgentSessionStoreProvider(store_name="invocation_sessions")
             if agent_session_store_provider is None
             else agent_session_store_provider
         )
-        self._session_locks: dict[str | tuple[str, str], _SessionLock] = {}
         self.invoke_handler(self._handle_invoke)
         mark_feature_used(FeatureIndex.FOUNDRY_HOSTING)
 
@@ -160,7 +119,7 @@ class InvocationsHostServer(InvocationAgentServerHost):
     @asynccontextmanager
     async def _request_agent(self) -> AsyncGenerator[SupportsAgentRun]:
         agent = await resolve_agent(self._agent)
-        async with _ShieldedAsyncExitStack() as resources:
+        async with AsyncExitStack() as resources:
             if self._owns_request_agent and isinstance(agent, AbstractAsyncContextManager):
                 await resources.enter_async_context(agent)
             yield agent
@@ -169,53 +128,32 @@ class InvocationsHostServer(InvocationAgentServerHost):
     async def _request_session(
         self, partition_key: str | tuple[str, str], context: FoundryAgentRequestContext
     ) -> AsyncGenerator[AgentSession]:
-        entry = self._session_locks.get(partition_key)
-        if entry is None:
-            entry = self._session_locks[partition_key] = _SessionLock()
-        entry.users += 1
+        session_id = (
+            json.dumps(partition_key, separators=(",", ":")) if isinstance(partition_key, tuple) else partition_key
+        )
         try:
-            async with entry.lock:
-                session_id = (
-                    json.dumps(partition_key, separators=(",", ":"))
-                    if isinstance(partition_key, tuple)
-                    else partition_key
-                )
-                encoded_key = json.dumps((self._session_namespace, partition_key), separators=(",", ":"))
-                storage_key = "invocations:v1:" + hashlib.sha256(encoded_key.encode("utf-8")).hexdigest()
-                try:
-                    store = self._session_store_provider.get_store(config=self.config, platform_context=context)
-                    session = await store.get(storage_key)
-                    if session is None:
-                        session = AgentSession(session_id=session_id)
-                except Exception:
-                    logger.exception("Failed to load invocation session")
-                    raise
-
-                async def save_session(
-                    exc_type: type[BaseException] | None, failure: BaseException | None, traceback: TracebackType | None
-                ) -> None:
-                    try:
-                        await store.set(storage_key, session)
-                    except Exception as exc:
-                        logger.exception("Failed to persist invocation session")
-                        if failure is None:
-                            raise
-                        if isinstance(failure, Exception):
-                            raise RuntimeError(
-                                f"Invocation failed: {str(failure) or type(failure).__name__}; "
-                                f"session persistence also failed: {str(exc) or type(exc).__name__}"
-                            ) from exc
-                    except asyncio.CancelledError:
-                        logger.error("Invocation session persistence was cancelled")
-                        raise
-
-                async with _ShieldedAsyncExitStack() as cleanup:
-                    cleanup.push_async_exit(save_session)
-                    yield session
+            store = self._session_store_provider.get_store(config=self.config, platform_context=context)
+            session = await store.get(session_id)
+            if session is None:
+                session = AgentSession(session_id=session_id)
+        except Exception:
+            logger.exception("Failed to load invocation session")
+            raise
+        try:
+            yield session
         finally:
-            entry.users -= 1
-            if entry.users == 0:
-                del self._session_locks[partition_key]
+            failure = sys.exc_info()[1]
+            try:
+                await store.set(session_id, session)
+            except Exception as exc:
+                logger.exception("Failed to persist invocation session")
+                if failure is None:
+                    raise
+                if isinstance(failure, Exception):
+                    raise RuntimeError(
+                        f"Invocation failed: {str(failure) or type(failure).__name__}; "
+                        f"session persistence also failed: {str(exc) or type(exc).__name__}"
+                    ) from exc
 
     async def _handle_invoke(self, request: Request) -> Response:
         """Invoke the agent with the given request."""
@@ -249,13 +187,12 @@ class InvocationsHostServer(InvocationAgentServerHost):
                             if update.text:
                                 yield update.text
                     finally:
-                        with CancelScope(shield=True):
-                            if isinstance(stream, ResponseStream):
-                                await stream.close()
-                            else:
-                                close = getattr(stream, "aclose", None)
-                                if close is not None:
-                                    await close()
+                        if isinstance(stream, ResponseStream):
+                            await stream.close()
+                        else:
+                            close = getattr(stream, "aclose", None)
+                            if close is not None:
+                                await close()
 
             return _InvocationStreamingResponse(stream_response())
 

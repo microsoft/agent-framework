@@ -57,7 +57,7 @@ def server() -> InvocationsHostServer:
         default_options={"store": False},  # pyrefly: ignore[bad-argument-type]
     )
 
-    return InvocationsHostServer(agent, session_store_namespace="invocations-integration")
+    return InvocationsHostServer(agent)
 
 
 @tool
@@ -78,7 +78,7 @@ def server_with_tools() -> InvocationsHostServer:
         default_options={"store": False},  # pyrefly: ignore[bad-argument-type]
     )
 
-    return InvocationsHostServer(agent, session_store_namespace="invocations-with-tools-integration")
+    return InvocationsHostServer(agent)
 
 
 # ---------------------------------------------------------------------------

@@ -27,7 +27,7 @@ def main():
         default_options={"store": False},
     )
 
-    server = InvocationsHostServer(agent, session_store_namespace="basic-invocations")
+    server = InvocationsHostServer(agent)
     server.run()
 
 

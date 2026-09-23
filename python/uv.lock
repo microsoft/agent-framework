@@ -653,7 +653,6 @@ version = "1.0.0b260918"
 source = { editable = "packages/foundry_hosting" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "anyio", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "azure-ai-agentserver-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "azure-ai-agentserver-invocations", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "azure-ai-agentserver-responses", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -664,7 +663,6 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "anyio", specifier = ">=4,<5" },
     { name = "azure-ai-agentserver-core", specifier = ">=2.1.0,<3" },
     { name = "azure-ai-agentserver-invocations", specifier = ">=1.1.0,<2" },
     { name = "azure-ai-agentserver-responses", specifier = ">=2.2.0b1,<3" },

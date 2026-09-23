@@ -20,7 +20,6 @@ from itertools import product
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import httpx
 import pytest
 from agent_framework import (
     Agent,
@@ -40,7 +39,6 @@ from agent_framework import (
     SessionStore,
     tool,
 )
-from anyio import CancelScope
 from azure.ai.agentserver.core import (
     AgentConfig,
     FoundryAgentRequestContext,
@@ -57,13 +55,6 @@ from agent_framework_foundry_hosting._state_store import FoundryAgentSessionStor
 pytestmark = pytest.mark.filterwarnings("ignore:.*SessionStore is experimental.*")
 
 # region Helpers
-
-
-@pytest.fixture(autouse=True)
-def configure_local_application(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("FOUNDRY_AGENT_NAME", "invocation-test-application")
-    monkeypatch.delenv("FOUNDRY_AGENT_ID", raising=False)
-    monkeypatch.delenv("FOUNDRY_HOSTING_ENVIRONMENT", raising=False)
 
 
 def _mock_session_store() -> MagicMock:
@@ -266,24 +257,9 @@ class TestSessionLifecycle:
         assert restored is not None
         assert restored.state == {"protocol": "responses"}
 
-    async def test_independent_application_names_do_not_share_sessions(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        seen: list[dict[str, Any]] = []
-
-        for application in ["first-app", "second-app", "first-app"]:
-            monkeypatch.setenv("FOUNDRY_AGENT_NAME", application)
-
-            def update_session(session: AgentSession, application: str = application) -> None:
-                seen.append(dict(session.state))
-                session.state["application"] = application
-
-            server = InvocationsHostServer(_make_agent(response_text="ok", update_session=update_session))
-            with _request_context(session_id="shared-session"):
-                await server._handle_invoke(_make_request({"message": "hello"}))  # pyright: ignore[reportPrivateUsage]
-
-        assert seen == [{}, {}, {"application": "first-app"}]
-
     @pytest.mark.parametrize("spec_version", ["2.0", "2.4"])
-    async def test_keep_alive_disconnect_joins_pump_before_session_cleanup(self, spec_version: str) -> None:
+    @pytest.mark.parametrize("keep_alive", [False, True])
+    async def test_disconnect_closes_stream_before_session_save(self, spec_version: str, keep_alive: bool) -> None:
         entered = asyncio.Event()
         disconnected = asyncio.Event()
         saved: list[dict[str, Any]] = []
@@ -305,6 +281,8 @@ class TestSessionLifecycle:
                     pump = asyncio.current_task()
                     entered.set()
                     try:
+                        if not keep_alive:
+                            yield AgentResponseUpdate(contents=[Content.from_text("first")])
                         await asyncio.Event().wait()
                         yield AgentResponseUpdate(contents=[Content.from_text("unused")])
                     finally:
@@ -314,7 +292,7 @@ class TestSessionLifecycle:
                 return updates()
 
         server = InvocationsHostServer(IdleAgent(), agent_session_store_provider=_SessionStoreProvider(store))
-        server.config.sse_keepalive_interval = 1
+        server.config.sse_keepalive_interval = 1 if keep_alive else 0
         body = json.dumps({"message": "hello", "stream": True}).encode()
         received = False
 
@@ -327,7 +305,8 @@ class TestSessionLifecycle:
             return {"type": "http.disconnect"}
 
         async def send(message: Any) -> None:
-            if message["type"] == "http.response.body" and message.get("body") == b": keep-alive\n\n":
+            expected = b": keep-alive\n\n" if keep_alive else b"first"
+            if message["type"] == "http.response.body" and message.get("body") == expected:
                 assert entered.is_set()
                 if spec_version == "2.4":
                     raise OSError("disconnected while idle")
@@ -353,38 +332,13 @@ class TestSessionLifecycle:
             else:
                 await asyncio.wait_for(server(scope, receive, send), timeout=5)
             assert saved == [{"closed": True}]
-            assert server._session_locks == {}  # pyright: ignore[reportPrivateUsage]
             assert pump is not None
-            assert pump.done()
+            if keep_alive:
+                assert pump.done()
         finally:
-            if pump is not None and not pump.done():
+            if keep_alive and pump is not None and not pump.done():
                 pump.cancel()
                 await asyncio.gather(pump, return_exceptions=True)
-
-    @pytest.mark.parametrize("stream", [False, True])
-    async def test_http_requests_restore_sessions_without_changing_response_format(self, stream: bool) -> None:
-        turns: list[int] = []
-
-        def update_session(session: AgentSession) -> None:
-            session.state["turn"] = session.state.get("turn", 0) + 1
-            turns.append(session.state["turn"])
-
-        for _ in range(2):
-            server = InvocationsHostServer(
-                _make_agent(response_text="ok", stream_texts=["o", "k"], update_session=update_session)
-            )
-            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as client:
-                response = await client.post(
-                    "/invocations",
-                    params={"agent_session_id": "session"},
-                    json={"message": "hello", "stream": stream},
-                )
-            assert response.status_code == 200
-            assert response.text == "ok"
-            if stream:
-                assert response.headers["content-type"].startswith("text/event-stream")
-            assert server._session_locks == {}  # pyright: ignore[reportPrivateUsage]
-        assert turns == [1, 2]
 
     @pytest.mark.parametrize("stream", [False, True])
     async def test_function_history_is_restored_without_reexecuting_completed_tool(self, stream: bool) -> None:
@@ -455,124 +409,8 @@ class TestSessionLifecycle:
             await server._handle_invoke(_make_request({"message": "hello"}))  # pyright: ignore[reportPrivateUsage]
         assert agent.calls[0]["session"].session_id == "different"
         store.set.assert_awaited_once()
-        assert server._session_locks == {}  # pyright: ignore[reportPrivateUsage]
-
-    async def test_combined_failures_include_types_for_empty_messages(self) -> None:
-        store = _mock_session_store()
-        store.set.side_effect = RuntimeError()
-
-        def update_session(session: AgentSession) -> None:
-            raise ValueError
-
-        server = InvocationsHostServer(
-            _make_agent(response_text="ok", update_session=update_session),
-            agent_session_store_provider=_SessionStoreProvider(store),
-        )
-        with (
-            _request_context(session_id="session"),
-            pytest.raises(
-                RuntimeError, match="Invocation failed: ValueError; session persistence also failed: RuntimeError"
-            ) as raised,
-        ):
-            await server._handle_invoke(_make_request({"message": "hello"}))  # pyright: ignore[reportPrivateUsage]
-        assert raised.value.__cause__ is store.set.side_effect
-
-    async def test_control_flow_exception_still_closes_request_agent(self) -> None:
-        class ControlFlowExit(BaseException):
-            pass
-
-        events: list[str] = []
-        error = ControlFlowExit()
-        store = _mock_session_store()
-        store.set.side_effect = ValueError("save failed")
-
-        class ExitingAgent(_ContextAgent):
-            def run(
-                self, messages: Any = None, *, stream: bool = False, session: AgentSession | None = None, **kwargs: Any
-            ) -> Any:
-                raise error
-
-        server = InvocationsHostServer(
-            lambda: ExitingAgent(events), agent_session_store_provider=_SessionStoreProvider(store)
-        )
-        with _request_context(session_id="session"), pytest.raises(ControlFlowExit) as raised:
-            await server._handle_invoke(_make_request({"message": "hello"}))  # pyright: ignore[reportPrivateUsage]
-        assert raised.value is error
-        assert events == ["enter", "exit"]
-        store.set.assert_awaited_once()
-        assert server._session_locks == {}  # pyright: ignore[reportPrivateUsage]
-
-    async def test_cancelled_persistence_is_reported_and_releases_coordination(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        store = _mock_session_store()
-        store.set = AsyncMock(side_effect=asyncio.CancelledError)
-        server = InvocationsHostServer(
-            _make_agent(response_text="ok"), agent_session_store_provider=_SessionStoreProvider(store)
-        )
-        with _request_context(session_id="session"), pytest.raises(asyncio.CancelledError):
-            await server._handle_invoke(_make_request({"message": "hello"}))  # pyright: ignore[reportPrivateUsage]
-        assert "Invocation session persistence was cancelled" in caplog.text
-        assert server._session_locks == {}  # pyright: ignore[reportPrivateUsage]
-
-    @pytest.mark.parametrize("stream", [False, True])
-    async def test_factory_failure_does_not_retain_session(self, stream: bool) -> None:
-        def create_agent() -> _FakeAgent:
-            raise ValueError("factory failed")
-
-        server = InvocationsHostServer(create_agent)
-        with _request_context(session_id="session"), pytest.raises(ValueError, match="factory failed"):
-            response = await server._handle_invoke(  # pyright: ignore[reportPrivateUsage]
-                _make_request({"message": "hello", "stream": stream})
-            )
-            if isinstance(response, StreamingResponse):
-                await _collect_stream(response)
-        assert server._session_locks == {}  # pyright: ignore[reportPrivateUsage]
-
-    async def test_stream_close_failure_is_reported_after_persistence(self) -> None:
-        store = _mock_session_store()
-        store.set = AsyncMock()
-        agent = _make_agent(stream_texts=["ok"])
-        iterator = MagicMock()
-        iterator.__aiter__ = MagicMock(return_value=iterator)
-        iterator.__anext__ = AsyncMock(side_effect=StopAsyncIteration)
-        iterator.aclose = AsyncMock(side_effect=ValueError("close failed"))
-        server = InvocationsHostServer(agent, agent_session_store_provider=_SessionStoreProvider(store))
-        with patch.object(agent, "run", return_value=iterator), _request_context(session_id="session"):
-            response = await server._handle_invoke(  # pyright: ignore[reportPrivateUsage]
-                _make_request({"message": "hello", "stream": True})
-            )
-            assert isinstance(response, StreamingResponse)
-            with pytest.raises(ValueError, match="close failed"):
-                await _collect_stream(response)
-        store.set.assert_awaited_once()
-        assert server._session_locks == {}  # pyright: ignore[reportPrivateUsage]
-
-    async def test_custom_store_receives_request_context_and_namespaced_bounded_keys(self) -> None:
-        store = _mock_session_store()
-        store.get = AsyncMock(return_value=None)
-        store.set = AsyncMock()
-        provider = _SessionStoreProvider(store)
-        server = InvocationsHostServer(_make_agent(response_text="ok"), agent_session_store_provider=provider)
-
-        identities = ["x" * 1024, '["session","user"]']
-        for identity in identities:
-            with _request_context(call_id="call", session_id=identity):
-                await server._handle_invoke(_make_request({"message": "hello"}))  # pyright: ignore[reportPrivateUsage]
-        server.config.is_hosted = True
-        with _request_context(call_id="hosted-call", session_id="session", user_id="user"):
-            await server._handle_invoke(_make_request({"message": "hello"}))  # pyright: ignore[reportPrivateUsage]
-
-        keys = [call.args[0] for call in store.set.await_args_list]
-        assert len(set(keys)) == 3
-        assert all(key.startswith("invocations:v1:") and len(key) <= 128 for key in keys)
-        assert [call.args[1].session_id for call in store.set.await_args_list] == [
-            *identities,
-            '["session","user"]',
-        ]
-        assert provider.contexts[-1].user_id == "user"
-        assert provider.contexts[-1].call_id == "hosted-call"
-        assert server._session_locks == {}  # pyright: ignore[reportPrivateUsage]
+        assert store.get.call_args.args == ("session",)
+        assert store.set.call_args.args[0] == "session"
 
     async def test_unconsumed_stream_and_invalid_input_do_not_access_storage(self) -> None:
         store = _mock_session_store()
@@ -589,99 +427,6 @@ class TestSessionLifecycle:
         await cast(Any, response.body_iterator).aclose()
         assert provider.contexts == []
         assert agent.calls == []
-        assert server._session_locks == {}  # pyright: ignore[reportPrivateUsage]
-
-    @pytest.mark.parametrize("cancel_waiter", [False, True])
-    @pytest.mark.parametrize("stream", [False, True])
-    async def test_same_session_serializes_and_waiter_cleanup_is_bounded(
-        self, cancel_waiter: bool, stream: bool
-    ) -> None:
-        entered = asyncio.Event()
-        release = asyncio.Event()
-        second_started = asyncio.Event()
-        turns: list[int] = []
-
-        class BlockingAgent(_FakeAgent):
-            def run(
-                self, messages: Any = None, *, stream: bool = False, session: AgentSession | None = None, **kwargs: Any
-            ) -> Any:
-                async def complete() -> AgentResponse:
-                    assert session is not None
-                    turn = session.state.get("turn", 0) + 1
-                    if not turns:
-                        entered.set()
-                        await release.wait()
-                    session.state["turn"] = turn
-                    turns.append(turn)
-                    return AgentResponse(messages=[Message("assistant", "ok")])
-
-                async def updates() -> AsyncIterator[AgentResponseUpdate]:
-                    await complete()
-                    yield AgentResponseUpdate(contents=[Content.from_text("ok")])
-
-                return updates() if stream else complete()
-
-        server = InvocationsHostServer(BlockingAgent())
-
-        async def invoke(*, second: bool = False) -> Response:
-            with _request_context(session_id="session"):
-                if second:
-                    second_started.set()
-                response = await server._handle_invoke(  # pyright: ignore[reportPrivateUsage]
-                    _make_request({"message": "hello", "stream": stream})
-                )
-                if isinstance(response, StreamingResponse):
-                    await _collect_stream(response)
-                return response
-
-        first = asyncio.create_task(invoke())
-        await entered.wait()
-        second = asyncio.create_task(invoke(second=True))
-        try:
-            await second_started.wait()
-            assert not second.done()
-            assert server._session_locks["session"].users == 2  # pyright: ignore[reportPrivateUsage]
-            if cancel_waiter:
-                second.cancel()
-                with pytest.raises(asyncio.CancelledError):
-                    await second
-                assert server._session_locks["session"].users == 1  # pyright: ignore[reportPrivateUsage]
-            release.set()
-            await first
-            if not cancel_waiter:
-                await second
-        finally:
-            release.set()
-            await asyncio.gather(first, second, return_exceptions=True)
-        assert turns == ([1] if cancel_waiter else [1, 2])
-        assert server._session_locks == {}  # pyright: ignore[reportPrivateUsage]
-
-    async def test_different_sessions_run_concurrently(self) -> None:
-        entered: set[str] = set()
-        both_entered = asyncio.Event()
-
-        class ConcurrentAgent(_FakeAgent):
-            def run(
-                self, messages: Any = None, *, stream: bool = False, session: AgentSession | None = None, **kwargs: Any
-            ) -> Any:
-                async def complete() -> AgentResponse:
-                    assert session is not None
-                    entered.add(session.session_id)
-                    if len(entered) == 2:
-                        both_entered.set()
-                    await both_entered.wait()
-                    return AgentResponse(messages=[Message("assistant", "ok")])
-
-                return complete()
-
-        server = InvocationsHostServer(ConcurrentAgent())
-
-        async def invoke(session_id: str) -> None:
-            with _request_context(session_id=session_id):
-                await server._handle_invoke(_make_request({"message": "hello"}))  # pyright: ignore[reportPrivateUsage]
-
-        await asyncio.wait_for(asyncio.gather(invoke("one"), invoke("two")), timeout=5)
-        assert server._session_locks == {}  # pyright: ignore[reportPrivateUsage]
 
     @pytest.mark.parametrize("stream", [False, True])
     @pytest.mark.parametrize("failure", ["load", "save", "run", "run_and_save"])
@@ -722,7 +467,6 @@ class TestSessionLifecycle:
             assert store.set.await_args.args[1].state == {"turn": 1}
         if "save" in failure:
             assert "Failed to persist invocation session" in caplog.text
-        assert server._session_locks == {}  # pyright: ignore[reportPrivateUsage]
 
     @pytest.mark.parametrize("fail_save", [False, True])
     async def test_cancellation_preserves_state_and_cancellation_signal(
@@ -756,157 +500,17 @@ class TestSessionLifecycle:
             await task
         assert store.set.await_args is not None
         assert store.set.await_args.args[1].state == {"started": True}
-        assert server._session_locks == {}  # pyright: ignore[reportPrivateUsage]
         if fail_save:
             assert "Failed to persist invocation session" in caplog.text
-
-    @pytest.mark.parametrize("spec_version", ["2.0", "2.4"])
-    async def test_disconnect_closes_agent_and_saves_final_state(self, spec_version: str) -> None:
-        sent = asyncio.Event()
-        events: list[str] = []
-        store = _mock_session_store()
-
-        class StreamingAgent(_ContextAgent):
-            async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
-                await asyncio.sleep(0)
-                events.append("exit")
-
-            def run(
-                self, messages: Any = None, *, stream: bool = False, session: AgentSession | None = None, **kwargs: Any
-            ) -> Any:
-                async def updates() -> AsyncIterator[AgentResponseUpdate]:
-                    assert session is not None
-                    try:
-                        yield AgentResponseUpdate(contents=[Content.from_text("first")])
-                        await asyncio.Event().wait()
-                    finally:
-                        await asyncio.sleep(0)
-                        session.state["closed"] = True
-                        events.append("close")
-
-                return updates()
-
-        server = InvocationsHostServer(
-            lambda: StreamingAgent(events), agent_session_store_provider=_SessionStoreProvider(store)
-        )
-        with _request_context(session_id="session"):
-            response = await server._handle_invoke(  # pyright: ignore[reportPrivateUsage]
-                _make_request({"message": "hello", "stream": True})
-            )
-
-        async def send(message: Any) -> None:
-            if message["type"] == "http.response.body":
-                sent.set()
-                if spec_version == "2.4":
-                    raise OSError("disconnected")
-                await asyncio.Event().wait()
-
-        async def receive() -> Any:
-            await sent.wait()
-            return {"type": "http.disconnect"}
-
-        scope = {"type": "http", "asgi": {"spec_version": spec_version}}
-        if spec_version == "2.4":
-            with pytest.raises(ClientDisconnect):
-                await response(scope, receive, send)
-        else:
-            await response(scope, receive, send)
-        assert events == ["enter", "close", "exit"]
-        assert store.set.await_args is not None
-        assert store.set.await_args.args[1].state == {"closed": True}
-        assert server._session_locks == {}  # pyright: ignore[reportPrivateUsage]
-
-    async def test_cancelled_scope_still_awaits_persistence(self) -> None:
-        store = _mock_session_store()
-        saved = False
-
-        async def save(session_id: str, session: AgentSession) -> None:
-            nonlocal saved
-            await asyncio.sleep(0)
-            saved = True
-
-        store.set = AsyncMock(side_effect=save)
-        server = InvocationsHostServer(
-            _make_agent(response_text="ok"), agent_session_store_provider=_SessionStoreProvider(store)
-        )
-        with _request_context(session_id="session"):
-            with CancelScope() as scope:
-                async with server._request_session("session", FoundryAgentRequestContext()):  # pyright: ignore[reportPrivateUsage]
-                    scope.cancel()
-                    await asyncio.sleep(0)
-        assert saved
-        assert server._session_locks == {}  # pyright: ignore[reportPrivateUsage]
-
-    async def test_default_store_expiry_is_renewed_by_writes(self) -> None:
-        turns: list[int] = []
-
-        def update_session(session: AgentSession) -> None:
-            session.state["turn"] = session.state.get("turn", 0) + 1
-            turns.append(session.state["turn"])
-
-        server = InvocationsHostServer(_make_agent(response_text="ok", update_session=update_session))
-        day = 24 * 60 * 60
-        with (
-            _request_context(session_id="session"),
-            patch("azure.ai.agentserver.core.storage._local_state._now") as now,
-        ):
-            for timestamp in [0, 29 * day, 58 * day, 88 * day]:
-                now.return_value = timestamp
-                await server._handle_invoke(_make_request({"message": "hello"}))  # pyright: ignore[reportPrivateUsage]
-        assert turns == [1, 2, 3, 1]
-
-    async def test_unserializable_state_fails_explicitly(self) -> None:
-        def update_session(session: AgentSession) -> None:
-            session.state["unsupported"] = object()
-
-        server = InvocationsHostServer(_make_agent(response_text="ok", update_session=update_session))
-        with (
-            _request_context(session_id="session"),
-            pytest.warns(RuntimeWarning, match="unsupported type 'object'"),
-            pytest.raises(TypeError),
-        ):
-            await server._handle_invoke(_make_request({"message": "hello"}))  # pyright: ignore[reportPrivateUsage]
-        assert server._session_locks == {}  # pyright: ignore[reportPrivateUsage]
 
 
 # region Initialization
 
 
 class TestInit:
-    def test_default_store_requires_application_identity(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("FOUNDRY_AGENT_NAME")
-        with pytest.raises(ValueError, match="Set session_store_namespace"):
-            InvocationsHostServer(_make_agent(response_text="ok"))
-
-        server = InvocationsHostServer(_make_agent(response_text="ok"), session_store_namespace="explicit-app")
-        assert server._session_namespace == "explicit-app"  # pyright: ignore[reportPrivateUsage]
-
-    def test_custom_store_can_own_application_isolation(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("FOUNDRY_AGENT_NAME")
-        server = InvocationsHostServer(
-            _make_agent(response_text="ok"), agent_session_store_provider=_SessionStoreProvider(_mock_session_store())
-        )
-        assert server._session_namespace is None  # pyright: ignore[reportPrivateUsage]
-
-    @pytest.mark.parametrize("namespace", ["", " \t", 123])
-    def test_rejects_invalid_explicit_namespace(self, namespace: Any) -> None:
-        with pytest.raises(ValueError, match="session_store_namespace must be a non-empty string"):
-            InvocationsHostServer(_make_agent(response_text="ok"), session_store_namespace=namespace)
-
-    def test_namespace_precedence_is_explicit_then_agent_id_then_name(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        agent = _make_agent(response_text="ok")
-        named = InvocationsHostServer(agent)
-        assert named._session_namespace == "invocation-test-application"  # pyright: ignore[reportPrivateUsage]
-        monkeypatch.setenv("FOUNDRY_AGENT_ID", "stable-agent-id")
-        identified = InvocationsHostServer(agent)
-        assert identified._session_namespace == "stable-agent-id"  # pyright: ignore[reportPrivateUsage]
-        explicit = InvocationsHostServer(agent, session_store_namespace="explicit-app")
-        assert explicit._session_namespace == "explicit-app"  # pyright: ignore[reportPrivateUsage]
-
     def test_accepts_supports_agent_run(self) -> None:
         server = InvocationsHostServer(_make_agent(response_text="hi"))
         assert server._agent is not None  # pyright: ignore[reportPrivateUsage]
-        assert server._session_locks == {}  # pyright: ignore[reportPrivateUsage]
 
     @pytest.mark.parametrize("agent", [None, 42])
     def test_rejects_invalid_agent_source(self, agent: Any) -> None:
@@ -1119,7 +723,6 @@ class TestHandleInvoke:
         assert agent.calls[0]["session"] is not agent.calls[1]["session"]
         assert agent.calls[0]["session"].session_id == agent.calls[1]["session"].session_id == expected_id
         session_factory.assert_called_once_with(session_id=expected_id)
-        assert server._session_locks == {}  # pyright: ignore[reportPrivateUsage]
 
     async def test_missing_message_returns_400(self) -> None:
         server = InvocationsHostServer(_make_agent(response_text="hi"))
@@ -1160,7 +763,6 @@ class TestHandleInvoke:
         assert agent.calls[0]["messages"] == ["Hi"]
         assert agent.calls[0]["stream"] is False
         assert agent.calls[0]["session"].session_id == "sess-1"
-        assert server._session_locks == {}  # pyright: ignore[reportPrivateUsage]
 
     async def test_streaming_yields_update_text(self) -> None:
         agent = _make_agent(stream_texts=["Hel", "lo", "!"])
@@ -1192,7 +794,6 @@ class TestHandleInvoke:
         assert first_session is not second_session
         assert first_session.state == {"turn": 1}
         assert second_session.state == {"turn": 2}
-        assert server._session_locks == {}  # pyright: ignore[reportPrivateUsage]
 
     @pytest.mark.parametrize("stream", [False, True])
     @pytest.mark.parametrize(
@@ -1239,7 +840,6 @@ class TestHandleInvoke:
 
         assert sessions[0] is not sessions[1]
         assert sessions[0].session_id != sessions[1].session_id
-        assert server._session_locks == {}  # pyright: ignore[reportPrivateUsage]
 
         for (session_id, user_id), session in zip(identifiers, sessions):
             with _request_context(call_id="call-2", session_id=session_id, user_id=user_id):
