@@ -53,6 +53,8 @@ public static class MicrosoftAgentAIHostingOpenAIServiceCollectionExtensions
     /// isolation, also register <c>AddHttpContextAccessor()</c> and <c>UseClaimsBasedAgentIsolation(...)</c>
     /// from <c>Microsoft.Agents.AI.Hosting.AspNetCore</c>. Protect each mapped Responses and Conversations
     /// route group. Their storage needs caller isolation even without an <see cref="AgentSessionStore"/>.
+    /// A configured agent session store is used as registered; use an isolation-enabled helper such as
+    /// <c>WithSessionStore(...)</c> or wrap it in <see cref="IsolationKeyScopedAgentSessionStore"/> to scope it to the caller.
     /// </para>
     /// <para>
     /// Agents that expose <see cref="ApprovalRequiredAIFunction"/> tools must also

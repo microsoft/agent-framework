@@ -8,7 +8,7 @@ The .NET hosting packages expose agents through several protocols. Authenticatio
 | --- | --- | --- |
 | AG-UI | Protect the endpoints returned by `MapAGUIServer`. | Persisted agent sessions, including continuation and approval state. Without a session store, sessions are ephemeral. |
 | A2A | Protect both HTTP+JSON and JSON-RPC endpoints when both are exposed. | Sessions and tasks. The built-in task store retains tasks even when session persistence is disabled. |
-| OpenAI Responses / Conversations | Protect every mapped Responses and Conversations route group. | Responses, conversations, conversation listings, and any configured agent sessions. Response/conversation storage does not depend on explicitly registering an `AgentSessionStore`. |
+| OpenAI Responses / Conversations | Protect every mapped Responses and Conversations route group. | Responses, conversations, conversation listings, and configured agent sessions. Response/conversation storage does not depend on explicitly registering an `AgentSessionStore`. The mapping does not wrap a configured agent session store; register it with an isolation-enabled helper or wrap it explicitly. |
 | OpenAI Chat Completions | Protect the endpoints returned by `MapOpenAIChatCompletions`. | This adapter does not itself persist conversations across requests. Any additional application-owned state needs its own isolation. |
 | Core Hosting / AzureStorage | These libraries do not expose HTTP endpoints. The host owns access control. | Session-store helpers can wrap stores with caller isolation; storage credentials alone do not identify the caller. |
 | DevUI / Aspire DevUI | Development only; protect both the UI/proxy and the backend services. | Backend Responses/Conversations endpoints still require their own caller isolation. See [Development tools](#development-tools). |
@@ -76,7 +76,7 @@ Custom providers can resolve trusted identity without ASP.NET Core claims or `IH
 
 The built-in AG-UI and A2A wiring adds isolation decorators where absent. With a provider registered, the added decorators require an isolation key. Without a provider, they allow unscoped access; that shared mode is not appropriate for retained data belonging to different callers. A2A also wraps its task store, independently of session persistence.
 
-OpenAI Responses/Conversations use the registered provider to scope their own storage and lookup operations. This protection is needed even if no agent session store is configured.
+OpenAI Responses/Conversations use the registered provider to scope their own storage and lookup operations. This protection is needed even if no agent session store is configured. Unlike the AG-UI and A2A wiring, the Responses mapping does not add an isolation decorator to a configured agent session store. Register that store with one of the isolation-enabled helpers below, or wrap it in `IsolationKeyScopedAgentSessionStore`, so session and approval state is also scoped to the caller; a store registered directly as a keyed `AgentSessionStore` is used as-is.
 
 The generic `WithSessionStore(...)`, `WithInMemorySessionStore(...)`, and `WithAzureBlobSessionStore(...)` helpers enable isolation by default. Their default strict wrapper requires a key, including when no provider is registered. Existing decorators retain their configured behavior. Do not disable strict isolation merely to make an authenticated multi-user application accept requests with missing identity claims.
 

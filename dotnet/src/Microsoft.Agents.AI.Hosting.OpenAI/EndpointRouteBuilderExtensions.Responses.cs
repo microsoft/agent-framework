@@ -187,9 +187,12 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
     /// Protect separately mapped Conversations endpoints as well.
     /// </para>
     /// <para>
-    /// Multi-user hosts must register an <see cref="AgentIsolationKeyProvider"/> to scope stored responses,
-    /// conversations, and configured agent sessions. Response and conversation storage can retain data
-    /// even without an <see cref="AgentSessionStore"/>. For claims-based isolation, register
+    /// Multi-user hosts must register an <see cref="AgentIsolationKeyProvider"/> to scope stored responses
+    /// and conversations. Response and conversation storage can retain data even without an
+    /// <see cref="AgentSessionStore"/>. This method does not add an isolation decorator to a configured agent
+    /// session store; register it with an isolation-enabled helper such as <c>WithSessionStore(...)</c> or
+    /// <c>WithInMemorySessionStore()</c>, or wrap it in <see cref="IsolationKeyScopedAgentSessionStore"/>, so that
+    /// session and approval state is also scoped to the caller. For claims-based isolation, register
     /// <c>AddHttpContextAccessor()</c> and <c>UseClaimsBasedAgentIsolation(...)</c> from
     /// <c>Microsoft.Agents.AI.Hosting.AspNetCore</c>, using a claim that uniquely identifies the caller.
     /// Response and conversation identifiers are not authorization tokens. Clients must authenticate
