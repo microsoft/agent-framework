@@ -2564,6 +2564,30 @@ def test_content_from_dict_roundtrip_via_json() -> None:
     assert restored.arguments == {"key": "value"}
 
 
+def test_content_from_dict_data_preserves_metadata() -> None:
+    """Test Content.from_dict forwards annotations, additional_properties, and raw_representation
+    for raw-data content mappings, matching Content.from_data behavior (see GH issue #8632)."""
+    raw = object()
+    data = {
+        "type": "data",
+        "data": b"test data",
+        "media_type": "text/plain",
+        "annotations": [{"type": "citation", "title": "Source document", "file_id": "file-123"}],
+        "additional_properties": {"filename": "document.txt"},
+        "raw_representation": raw,
+    }
+
+    content = Content.from_dict(data)
+    assert content.annotations == data["annotations"]
+    assert content.additional_properties == data["additional_properties"]
+    assert content.raw_representation is raw
+
+    message_content = Message("user", [data]).contents[0]
+    assert message_content.annotations == data["annotations"]
+    assert message_content.additional_properties == data["additional_properties"]
+    assert message_content.raw_representation is raw
+
+
 def test_content_to_dict_exclude_none() -> None:
     """Test Content.to_dict excludes None fields by default."""
     content = Content.from_text("Hello")
