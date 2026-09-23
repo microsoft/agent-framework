@@ -1581,9 +1581,18 @@ class Content:
 
     def _add_text_content(self, other: Content) -> Content:
         """Add two TextContent instances."""
+        # `text` is optional on a text content, and a provider can stream one that
+        # carries only annotations or metadata. Concatenating the raw attributes
+        # raised TypeError and took the whole response down during coalescing, so
+        # treat a missing delta as empty. `None` is preserved when neither side
+        # has text, the same way `_add_text_reasoning_content` does it, so an
+        # absent value stays distinguishable from a real empty string.
+        self_text = self.text or ""
+        other_text = other.text or ""
+        combined_text = None if self.text is None and other.text is None else self_text + other_text
         return Content(
             "text",
-            text=self.text + other.text,  # type: ignore[attr-defined, operator]
+            text=combined_text,
             annotations=_combine_annotations(self.annotations, other.annotations),
             additional_properties=_combine_additional_props(self.additional_properties, other.additional_properties),
             raw_representation=_combine_raw_representations(self.raw_representation, other.raw_representation),

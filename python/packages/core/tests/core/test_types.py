@@ -2235,6 +2235,52 @@ def test_text_content_iadd_coverage():
     assert t1.additional_properties == {"key1": "val1", "key2": "val2"}
 
 
+def test_text_content_add_handles_missing_text() -> None:
+    """A text content may carry no text at all; adding one must not raise.
+
+    `text` is optional on a text content -- `Content.from_dict({"type": "text"})`
+    produces one, and a provider can stream a text part that carries only
+    annotations or metadata. Concatenating the raw attributes raised
+    `TypeError: can only concatenate str (not "NoneType") to str`.
+    """
+    with_text = Content("text", text="Hello")
+    without_text = Content("text")
+
+    assert (with_text + without_text).text == "Hello"
+    assert (without_text + with_text).text == "Hello"
+
+
+def test_text_content_add_preserves_none_and_empty_string() -> None:
+    """`None` means no text, `""` means an empty one, and adding keeps them apart.
+
+    Same rule `_add_text_reasoning_content` follows, so the two content types do
+    not disagree about what an absent value means.
+    """
+    assert (Content("text") + Content("text")).text is None
+    assert (Content("text", text="") + Content("text")).text == ""
+    assert (Content("text") + Content("text", text="")).text == ""
+
+
+def test_chat_response_from_updates_coalesces_text_update_without_text() -> None:
+    """The reachable path: coalescing a stream that contains a text part with no delta.
+
+    `_coalesce_text_content` merges consecutive text contents with `+`, so one
+    such part used to abort the whole response. The identical stream built from
+    `text_reasoning` parts already worked, which is the asymmetry being fixed.
+    """
+
+    def updates(content_type: str) -> list[ChatResponseUpdate]:
+        return [
+            ChatResponseUpdate(role="assistant", contents=[Content(content_type, text="Hello ")]),
+            ChatResponseUpdate(role="assistant", contents=[Content(content_type)]),
+            ChatResponseUpdate(role="assistant", contents=[Content(content_type, text="world")]),
+        ]
+
+    for content_type in ("text", "text_reasoning"):
+        response = ChatResponse.from_updates(updates(content_type))
+        assert [content.text for content in response.messages[0].contents] == ["Hello world"]
+
+
 def test_text_reasoning_content_add_coverage():
     """Test TextReasoningContent __add__ method for better coverage."""
 
