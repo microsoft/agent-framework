@@ -36,6 +36,18 @@ Authentication:
     Run ``az login`` before running this sample.
 """
 
+JUDGE_CRITERIA = [
+    "Explains why the sky is blue",
+    "Explains why sunsets are red",
+    "Uses clear language suitable for a general audience",
+]
+
+_JUDGE_FRAMING_MESSAGES = {
+    "Evaluate the agent's work. The user's original request follows:",
+    "The agent's latest response was:",
+    "Has the original request been fully addressed?",
+}
+
 
 @chat_middleware
 async def log_judge_exchange(
@@ -43,9 +55,23 @@ async def log_judge_exchange(
     call_next: Callable[[], Awaitable[None]],
 ) -> None:
     """Log the input evaluated by Jev and its structured judge verdict."""
-    print("\nJudge input:")
-    for message in context.messages:
-        print(f"  {message.role}: {message.text or message.contents}")
+    request_messages = [
+        message
+        for message in context.messages
+        if message.role == "user" and message.text not in _JUDGE_FRAMING_MESSAGES
+    ]
+    response_messages = [message for message in context.messages if message.role == "assistant"]
+
+    print("\nJudge evaluation:")
+    print("  Criteria:")
+    for criterion in JUDGE_CRITERIA:
+        print(f"    - {criterion}")
+    print("  Original request:")
+    for message in request_messages:
+        print(f"    {message.text or message.contents}")
+    print("  Latest response:")
+    for message in response_messages:
+        print(f"    {message.text or message.contents}")
 
     await call_next()
 
@@ -79,11 +105,7 @@ async def main() -> None:
                 AgentLoopMiddleware.with_judge(
                     # 2. TypeSafeChatClient is used here as a judge.
                     judge_client,
-                    criteria=[
-                        "Explains why the sky is blue",
-                        "Explains why sunsets are red",
-                        "Uses clear language suitable for a general audience",
-                    ],
+                    criteria=JUDGE_CRITERIA,
                     max_iterations=3,
                 )
             ],
@@ -103,14 +125,26 @@ if __name__ == "__main__":
 """
 Sample output (exact answer and iteration count vary by the Foundry model):
 
-Judge input:
-  user: Explain why the sky is blue.
-  assistant: The sky appears blue because ...
+Judge evaluation:
+  Criteria:
+    - Explains why the sky is blue
+    - Explains why sunsets are red
+    - Uses clear language suitable for a general audience
+  Original request:
+    Explain why the sky is blue.
+  Latest response:
+    The sky appears blue because ...
 Judge response: answered=False reasoning='Jev P(answered)=0.421'
 
-Judge input:
-  user: Explain why the sky is blue.
-  assistant: The sky appears blue because ...
+Judge evaluation:
+  Criteria:
+    - Explains why the sky is blue
+    - Explains why sunsets are red
+    - Uses clear language suitable for a general audience
+  Original request:
+    Explain why the sky is blue.
+  Latest response:
+    The sky appears blue because ...
 Judge response: answered=True reasoning='Jev P(answered)=0.873'
 
 Final answer: The sky appears blue because air molecules scatter shorter blue
