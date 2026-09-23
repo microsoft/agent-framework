@@ -31,6 +31,16 @@ describe('DevFlow PR repair entrypoint', () => {
     assert.match(workflow, /content: 'eyes'/);
   });
 
+  it('uses the review-proven App grant and the job token for Actions reads', () => {
+    assert.doesNotMatch(workflow, /actions-permission: read/);
+    assert.ok([...workflow.matchAll(/GITHUB_TOKEN: \$\{\{ github\.token \}\}/g)].length >= 3);
+    const authorization = workflow.slice(
+      workflow.indexOf('Get source-repository App token'),
+      workflow.indexOf('Authorize the frozen command requester'),
+    );
+    assert.doesNotMatch(authorization, /contents-permission|issues-permission|pull-requests-permission/);
+  });
+
   it('runs private policy code and preserves the exact-diff publication gate', () => {
     assert.match(workflow, /scripts\/trigger_fix_ci\.py --phase run/);
     assert.match(workflow, /environment: devflow-pr-repair-publish/);

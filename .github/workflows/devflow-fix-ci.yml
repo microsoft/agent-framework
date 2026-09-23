@@ -95,10 +95,6 @@ jobs:
           github-app-client-id: ${{ secrets.GH_APP_CLIENT_ID }}
           github-app-installation-id: ${{ secrets.GH_APP_INSTALLATION_ID }}
           repository: ${{ github.repository }}
-          contents-permission: read
-          actions-permission: read
-          issues-permission: write
-          pull-requests-permission: read
 
       - name: Authorize the frozen command requester
         id: team
@@ -163,6 +159,7 @@ jobs:
           GATEWAY_SHA256: ${{ needs.snapshot.outputs.gateway_sha256 }}
           DEVFLOW_SHA: ${{ steps.controller.outputs.sha }}
           GH_TOKEN: ${{ steps.auth.outputs.token }}
+          GITHUB_TOKEN: ${{ github.token }}
           DEVFLOW_PUBLISH_AUTH_SOURCE: ${{ steps.auth.outputs.source }}
           DEVFLOW_PUBLISH_AUTHORIZATION: ${{ steps.auth.outputs.authorization }}
           PR_REPAIR_TARGET_REPOSITORY: ${{ github.repository }}
@@ -260,10 +257,6 @@ jobs:
           github-app-client-id: ${{ secrets.GH_APP_CLIENT_ID }}
           github-app-installation-id: ${{ secrets.GH_APP_INSTALLATION_ID }}
           repository: ${{ github.repository }}
-          contents-permission: read
-          actions-permission: read
-          issues-permission: read
-          pull-requests-permission: read
       - name: Generate and verify the bounded repair
         id: run
         env:
@@ -271,6 +264,7 @@ jobs:
           DEVFLOW_SHA: ${{ needs.authorize.outputs.controller_sha }}
           PR_REPAIR_TARGET_REPOSITORY: ${{ github.repository }}
           GH_TOKEN: ${{ steps.read-auth.outputs.token }}
+          GITHUB_TOKEN: ${{ github.token }}
           DEVFLOW_MODEL_TOKEN: ${{ github.token }}
           DEVFLOW_PUBLISH_AUTH_SOURCE: ${{ steps.read-auth.outputs.source }}
           DEVFLOW_PUBLISH_AUTHORIZATION: ${{ steps.read-auth.outputs.authorization }}
@@ -386,6 +380,7 @@ jobs:
       PR_REPAIR_TARGET_REPOSITORY: ${{ github.repository }}
       PR_REPAIR_APPROVAL_ENVIRONMENT: ${{ needs.authorize.outputs.command == '/fix' && 'devflow-pr-repair-publish' || 'github-app-auth' }}
       DEVELOPER_TEAM: ${{ secrets.DEVELOPER_TEAM }}
+      GITHUB_TOKEN: ${{ github.token }}
     steps:
       - name: Checkout frozen public automation
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -440,10 +435,6 @@ jobs:
           github-app-client-id: ${{ secrets.GH_APP_CLIENT_ID }}
           github-app-installation-id: ${{ secrets.GH_APP_INSTALLATION_ID }}
           repository: ${{ github.repository }}
-          contents-permission: read
-          actions-permission: read
-          issues-permission: read
-          pull-requests-permission: read
       - name: Revalidate exact candidate and approval before write authority
         env:
           GH_TOKEN: ${{ steps.read-auth.outputs.token }}
@@ -469,9 +460,6 @@ jobs:
           github-app-installation-id: ${{ secrets.GH_APP_INSTALLATION_ID }}
           repository: ${{ github.repository }}
           contents-permission: write
-          actions-permission: read
-          issues-permission: write
-          pull-requests-permission: read
       - name: Publish only the revalidated candidate
         env:
           GH_TOKEN: ${{ steps.write-auth.outputs.token }}
