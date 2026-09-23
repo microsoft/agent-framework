@@ -83,6 +83,34 @@ public class InMemoryAgentSessionStoreTests
         Assert.Null(differentUser);
     }
 
+    [Fact]
+    public async Task GetSessionAsync_SharedStorageIdentity_RestoresAcrossDifferentAgentInstancesAsync()
+    {
+        // Arrange
+        var store = new InMemoryAgentSessionStore();
+        var firstAgent = new AIHostAgent(
+            new ChatClientAgent(new NotInvokedChatClient(), name: "first-instance"),
+            store,
+            sessionStorageIdentity: "registered-agent");
+        var secondAgent = new AIHostAgent(
+            new ChatClientAgent(new NotInvokedChatClient(), name: "second-instance"),
+            store,
+            sessionStorageIdentity: "registered-agent");
+        var key = new AgentSessionStoreKey("session-1");
+        AgentSession session = await firstAgent.CreateSessionAsync();
+        session.StateBag.SetValue("marker", "persisted");
+        await firstAgent.SaveSessionAsync(key, session);
+
+        // Act
+        AgentSession restored = await secondAgent.GetOrCreateSessionAsync(key);
+
+        // Assert
+        Assert.NotEqual(firstAgent.Id, secondAgent.Id);
+        Assert.NotEqual(firstAgent.Name, secondAgent.Name);
+        Assert.Equal(firstAgent.SessionStorageIdentity, secondAgent.SessionStorageIdentity);
+        Assert.Equal("persisted", restored.StateBag.GetValue<string>("marker"));
+    }
+
     // A chat client that is never invoked: these tests only create, serialize, and deserialize sessions.
     private sealed class NotInvokedChatClient : IChatClient
     {

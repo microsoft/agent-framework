@@ -29,6 +29,7 @@ internal sealed class InvokeFunctionToolExecutor(
     DeclarativeActionExecutor<InvokeFunctionTool>(model, state)
 {
     private const string ApprovalSnapshotStateKey = nameof(_approvalSnapshots);
+    private const string HasApprovalRequiredInvocationStateKey = nameof(_hasApprovalRequiredInvocation);
     private const string PendingCallIdsStateKey = nameof(_pendingNonApprovalCallIds);
     private const string LegacyApprovalSnapshotStateKey = "_approvalSnapshot";
 
@@ -38,6 +39,8 @@ internal sealed class InvokeFunctionToolExecutor(
     /// response is captured.
     /// </summary>
     private readonly ConcurrentDictionary<string, ApprovalSnapshot> _approvalSnapshots = new(StringComparer.Ordinal);
+
+    private bool _hasApprovalRequiredInvocation;
 
     /// <summary>
     /// Per-invocation call ids for in-flight non-approval requests; used to match the
@@ -94,6 +97,7 @@ internal sealed class InvokeFunctionToolExecutor(
             // Capture the evaluated parameters keyed by request id; the matching response
             // resumes from this snapshot.
             this._approvalSnapshots[requestId] = new ApprovalSnapshot(functionName, arguments);
+            this._hasApprovalRequiredInvocation = true;
 
             requestMessage.Contents.Add(new ToolApprovalRequestContent(requestId, functionCall));
         }
@@ -125,24 +129,29 @@ internal sealed class InvokeFunctionToolExecutor(
     {
         bool autoSend = this.GetAutoSendValue();
         string? conversationId = this.GetConversationId();
+        string? responseRequestId = response.RequestId;
 
         // Match the inbound result by its per-invocation call id.
         FunctionResultContent? matchingResult = response.Messages
             .SelectMany(m => m.Contents)
             .OfType<FunctionResultContent>()
-            .FirstOrDefault(r => this.IsKnownPendingId(r.CallId));
+            .FirstOrDefault(r => this.IsCorrelatedPendingNonApprovalResult(r, responseRequestId));
+        FunctionResultContent? approvedFunctionResult = null;
 
-        // Legacy non-approval backstop: when no pendings are tracked, accept a result
-        // whose CallId equals this.Id. The runtime has already routed the response to
-        // this executor's port and the framework does not invoke a function here.
+        // Legacy non-approval backstop: when no pendings are tracked and approval is
+        // not required, accept a result whose CallId equals this.Id. The runtime has
+        // already routed the response to this executor's port and the framework does
+        // not invoke a function here.
         if (matchingResult is null
+            && !this._hasApprovalRequiredInvocation
             && this._pendingNonApprovalCallIds.IsEmpty
             && this._approvalSnapshots.IsEmpty)
         {
             matchingResult = response.Messages
                 .SelectMany(m => m.Contents)
                 .OfType<FunctionResultContent>()
-                .FirstOrDefault(r => string.Equals(r.CallId, this.Id, StringComparison.Ordinal));
+                .FirstOrDefault(r => string.Equals(r.CallId, this.Id, StringComparison.Ordinal)
+                    && IsCorrelatedResponse(r.CallId, responseRequestId));
         }
 
         // When the caller approved an approval-required function call but didn't execute it
@@ -160,8 +169,9 @@ internal sealed class InvokeFunctionToolExecutor(
             // Prefer an approval matching a pending snapshot; otherwise take the first
             // present approval.
             ToolApprovalResponseContent? approval =
-                approvals.FirstOrDefault(r => this._approvalSnapshots.ContainsKey(r.RequestId))
-                ?? approvals.FirstOrDefault();
+                approvals.FirstOrDefault(r => this._approvalSnapshots.ContainsKey(r.RequestId)
+                    && IsCorrelatedResponse(r.RequestId, responseRequestId))
+                ?? approvals.FirstOrDefault(r => IsCorrelatedResponse(r.RequestId, responseRequestId));
 
             if (approval is not null)
             {
@@ -177,11 +187,16 @@ internal sealed class InvokeFunctionToolExecutor(
                 else if (this._approvalSnapshots.TryRemove(approval.RequestId, out ApprovalSnapshot? snapshot))
                 {
                     matchingResult = await this.InvokeRegisteredFunctionAsync(approval.RequestId, snapshot, cancellationToken).ConfigureAwait(false);
+                    approvedFunctionResult = matchingResult;
                 }
                 else
                 {
                     await this.AssignErrorAsync(context, "No pending approval matched the response.").ConfigureAwait(false);
                 }
+            }
+            else if (!this._approvalSnapshots.IsEmpty)
+            {
+                await this.AssignErrorAsync(context, "No pending approval matched the response.").ConfigureAwait(false);
             }
         }
 
@@ -196,16 +211,15 @@ internal sealed class InvokeFunctionToolExecutor(
                 AgentResponse resultResponse = new([new ChatMessage(ChatRole.Tool, [matchingResult])]);
                 await context.AddEventAsync(new AgentResponseEvent(this.Id, resultResponse), cancellationToken).ConfigureAwait(false);
             }
-
-            // Drop the per-invocation entry now that the response has been processed.
-            this._pendingNonApprovalCallIds.TryRemove(matchingResult.CallId, out _);
-            this._approvalSnapshots.TryRemove(matchingResult.CallId, out _);
         }
 
         // Store messages if output path is configured
         if (this.Model.Output?.Messages is not null)
         {
-            await this.AssignAsync(this.Model.Output.Messages?.Path, response.Messages.ToFormula(), context).ConfigureAwait(false);
+            await this.AssignAsync(
+                this.Model.Output.Messages?.Path,
+                this.GetSideEffectMessages(response).ToFormula(),
+                context).ConfigureAwait(false);
         }
 
         // Add messages to conversation if conversationId is provided
@@ -214,36 +228,59 @@ internal sealed class InvokeFunctionToolExecutor(
         // actual AI-generated tool calls and would be rejected by the API.
         if (conversationId is not null)
         {
-            foreach (ChatMessage message in TransformConversationMessages(response.Messages))
+            IEnumerable<ChatMessage> sideEffectMessages = this.GetSideEffectMessages(response);
+            if (approvedFunctionResult is not null)
+            {
+                sideEffectMessages = sideEffectMessages.Append(new ChatMessage(ChatRole.Tool, [approvedFunctionResult]));
+            }
+
+            foreach (ChatMessage message in TransformConversationMessages(sideEffectMessages))
             {
                 await agentProvider.CreateMessageAsync(conversationId, message, cancellationToken).ConfigureAwait(false);
             }
+        }
+
+        if (matchingResult is not null)
+        {
+            // Drop the per-invocation entry now that the response side effects have been processed.
+            this._pendingNonApprovalCallIds.TryRemove(matchingResult.CallId, out _);
+            this._approvalSnapshots.TryRemove(matchingResult.CallId, out _);
         }
 
         // Completes the action after processing the function result.
         await context.RaiseCompletionEventAsync(this.Model, cancellationToken).ConfigureAwait(false);
     }
 
-    private bool IsKnownPendingId(string callId) =>
-        this._pendingNonApprovalCallIds.ContainsKey(callId) || this._approvalSnapshots.ContainsKey(callId);
+    private IEnumerable<ChatMessage> GetSideEffectMessages(ExternalInputResponse response)
+    {
+        if (!this._hasApprovalRequiredInvocation)
+        {
+            return response.Messages;
+        }
+
+        return this.FilterRejectedApprovalResults(response);
+    }
 
     /// <inheritdoc/>
     public override ValueTask ResetAsync()
     {
         this._approvalSnapshots.Clear();
+        this._hasApprovalRequiredInvocation = false;
         this._pendingNonApprovalCallIds.Clear();
         return default;
     }
 
     /// <inheritdoc/>
     /// <remarks>
-    /// Persists pending approval snapshots and non-approval call ids so they survive
-    /// checkpoint/restore cycles.
+    /// Persists approval classification, pending approval snapshots, and non-approval
+    /// call ids so they survive checkpoint/restore cycles.
     /// </remarks>
     protected override async ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         Dictionary<string, ApprovalSnapshot> snapshotCopy = this._approvalSnapshots.ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.Ordinal);
         await context.QueueStateUpdateAsync(ApprovalSnapshotStateKey, snapshotCopy, null, cancellationToken).ConfigureAwait(false);
+
+        await context.QueueStateUpdateAsync(HasApprovalRequiredInvocationStateKey, this._hasApprovalRequiredInvocation, null, cancellationToken).ConfigureAwait(false);
 
         List<string> pendingCopy = [.. this._pendingNonApprovalCallIds.Keys];
         await context.QueueStateUpdateAsync(PendingCallIdsStateKey, pendingCopy, null, cancellationToken).ConfigureAwait(false);
@@ -259,7 +296,6 @@ internal sealed class InvokeFunctionToolExecutor(
     protected override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         await base.OnCheckpointRestoredAsync(context, cancellationToken).ConfigureAwait(false);
-
         this._approvalSnapshots.Clear();
         Dictionary<string, ApprovalSnapshot>? snapshots = await context.ReadStateAsync<Dictionary<string, ApprovalSnapshot>>(
             ApprovalSnapshotStateKey, null, cancellationToken).ConfigureAwait(false);
@@ -270,6 +306,10 @@ internal sealed class InvokeFunctionToolExecutor(
                 this._approvalSnapshots[entry.Key] = entry.Value;
             }
         }
+
+        this._hasApprovalRequiredInvocation =
+            await context.ReadStateAsync<bool>(HasApprovalRequiredInvocationStateKey, null, cancellationToken).ConfigureAwait(false)
+            || !this._approvalSnapshots.IsEmpty;
 
         this._pendingNonApprovalCallIds.Clear();
         List<string>? pending = await context.ReadStateAsync<List<string>>(
@@ -289,6 +329,7 @@ internal sealed class InvokeFunctionToolExecutor(
         if (legacy is not null)
         {
             this._approvalSnapshots.TryAdd(this.Id, legacy);
+            this._hasApprovalRequiredInvocation = true;
             await context.QueueStateUpdateAsync<ApprovalSnapshot?>(
                 LegacyApprovalSnapshotStateKey, null, null, cancellationToken).ConfigureAwait(false);
         }
@@ -340,6 +381,41 @@ internal sealed class InvokeFunctionToolExecutor(
             }
         }
     }
+
+    private IEnumerable<ChatMessage> FilterRejectedApprovalResults(ExternalInputResponse response)
+    {
+        foreach (ChatMessage message in response.Messages)
+        {
+            List<AIContent> contents =
+                [.. message.Contents.Where(c => c is not ToolApprovalResponseContent
+                    && (c is not FunctionResultContent functionResult
+                        || this.IsCorrelatedPendingNonApprovalResult(functionResult, response.RequestId)))];
+            if (contents.Count == message.Contents.Count)
+            {
+                yield return message;
+            }
+            else if (contents.Count > 0)
+            {
+                yield return new ChatMessage
+                {
+                    Role = message.Role,
+                    AuthorName = message.AuthorName,
+                    Contents = contents,
+                    MessageId = message.MessageId,
+                    CreatedAt = message.CreatedAt,
+                    RawRepresentation = message.RawRepresentation,
+                    AdditionalProperties = message.AdditionalProperties,
+                };
+            }
+        }
+    }
+
+    private bool IsCorrelatedPendingNonApprovalResult(FunctionResultContent functionResult, string? responseRequestId) =>
+        this._pendingNonApprovalCallIds.ContainsKey(functionResult.CallId)
+        && IsCorrelatedResponse(functionResult.CallId, responseRequestId);
+
+    private static bool IsCorrelatedResponse(string contentId, string? responseRequestId) =>
+        responseRequestId is null || string.Equals(contentId, responseRequestId, StringComparison.Ordinal);
 
     private async ValueTask AssignResultAsync(IWorkflowContext context, FunctionResultContent result)
     {

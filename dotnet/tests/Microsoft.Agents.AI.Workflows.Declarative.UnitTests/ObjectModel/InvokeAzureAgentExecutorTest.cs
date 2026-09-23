@@ -75,6 +75,43 @@ public sealed class InvokeAzureAgentExecutorTest(ITestOutputHelper output) : Wor
     }
 
     [Fact]
+    public async Task DeclaredAgentVersionIsForwardedAsync()
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        CapturingAgentProvider provider = new("acknowledged");
+        InvokeAzureAgent model =
+            this.CreateModel(
+                displayName: nameof(DeclaredAgentVersionIsForwardedAsync),
+                agentName: "BrainVersioned",
+                agentVersion: 7);
+
+        // Act
+        await this.ExecuteAsync(new InvokeAzureAgentExecutor(model, provider, this.State), isDiscrete: false);
+
+        // Assert
+        Assert.Equal("7", provider.CapturedAgentVersion);
+    }
+
+    [Fact]
+    public async Task OmittedAgentVersionUsesProviderDefaultAsync()
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        CapturingAgentProvider provider = new("acknowledged");
+        InvokeAzureAgent model =
+            this.CreateModel(
+                displayName: nameof(OmittedAgentVersionUsesProviderDefaultAsync),
+                agentName: "BrainLatest");
+
+        // Act
+        await this.ExecuteAsync(new InvokeAzureAgentExecutor(model, provider, this.State), isDiscrete: false);
+
+        // Assert
+        Assert.Null(provider.CapturedAgentVersion);
+    }
+
+    [Fact]
     public async Task RecordValuedArgumentIsBoundAsRecordAsync()
     {
         // Arrange
@@ -437,6 +474,7 @@ public sealed class InvokeAzureAgentExecutorTest(ITestOutputHelper output) : Wor
     private InvokeAzureAgent CreateModel(
         string displayName,
         string agentName,
+        long? agentVersion = null,
         IReadOnlyList<(string Key, ValueExpression Value)>? arguments = null,
         string? responseObjectVariable = null,
         string? externalLoopWhen = null)
@@ -452,6 +490,11 @@ public sealed class InvokeAzureAgentExecutorTest(ITestOutputHelper output) : Wor
                         Name = new StringExpression.Builder(StringExpression.Literal(agentName)),
                     },
             };
+
+        if (agentVersion is not null)
+        {
+            builder.Agent.Version = new IntExpression.Builder(IntExpression.Literal(agentVersion.Value));
+        }
 
         AzureAgentInput.Builder? inputBuilder = null;
         if (arguments is not null)
@@ -521,6 +564,8 @@ public sealed class InvokeAzureAgentExecutorTest(ITestOutputHelper output) : Wor
     /// </summary>
     private sealed class CapturingAgentProvider(string responseText) : ResponseAgentProvider
     {
+        public string? CapturedAgentVersion { get; private set; }
+
         public IDictionary<string, object?>? CapturedArguments { get; private set; }
 
         public override IAsyncEnumerable<AgentResponseUpdate> InvokeAgentAsync(
@@ -531,6 +576,7 @@ public sealed class InvokeAzureAgentExecutorTest(ITestOutputHelper output) : Wor
             IDictionary<string, object?>? inputArguments,
             CancellationToken cancellationToken = default)
         {
+            this.CapturedAgentVersion = agentVersion;
             this.CapturedArguments = inputArguments;
             return YieldAsync(responseText);
         }
