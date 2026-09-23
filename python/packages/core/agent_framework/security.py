@@ -128,6 +128,42 @@ def _top_level_argument_value(context: FunctionInvocationContext, arg_name: str)
     return None, None
 
 
+def _snapshot_arguments(arguments: object) -> dict[str, Any]:
+    """Return a deep copy of mapping arguments, or an empty dict otherwise."""
+    if isinstance(arguments, Mapping):
+        return deepcopy(dict(cast("Mapping[str, Any]", arguments)))
+    return {}
+
+
+def _refresh_rewritten_indices(
+    context: FunctionInvocationContext,
+    pre_validation_snapshot: Mapping[str, Any],
+) -> None:
+    """Refresh rewritten argument indices after Pydantic validation.
+
+    This function detects mutations and degrades the affected arguments' indices
+    to the scalar sentinel ({-1}) if the value changed.
+    """
+    rewritten = context.metadata.get(_REWRITTEN_ARGUMENT_INDICES_KEY)
+    if not rewritten:
+        return
+
+    refreshed: dict[str, set[int]] = {}
+    for arg_name, indices in cast(dict[str, set[int]], rewritten).items():
+        pre_val = pre_validation_snapshot.get(arg_name)
+        cur_val, _ = _top_level_argument_value(context, arg_name)
+
+        if cur_val is None:
+            continue
+
+        if cur_val != pre_val:
+            refreshed[arg_name] = {-1}
+        else:
+            refreshed[arg_name] = set(indices)
+
+    context.metadata[_REWRITTEN_ARGUMENT_INDICES_KEY] = refreshed
+
+
 @dataclass(frozen=True, order=True, slots=True)
 class _Principal:
     """Canonical tenant/user identity used internally for comparisons."""
@@ -1853,6 +1889,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
                 boundary="security policy",
             )
             if context.metadata.get(_AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY) is True:
+                pre_validation_args = _snapshot_arguments(context.arguments)
                 context.function._prepare_context_arguments(  # pyright: ignore[reportPrivateUsage]
                     context,
                     context.arguments,
@@ -1861,6 +1898,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
                     context.arguments,
                     boundary="security policy",
                 )
+                _refresh_rewritten_indices(context, pre_validation_args)
             argument_labels = [*input_labels, *resolved_labels]
             argument_label = combine_labels(*argument_labels) if argument_labels else ContentLabel()
 

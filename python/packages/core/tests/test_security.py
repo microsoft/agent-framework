@@ -8,11 +8,11 @@ import logging
 import math
 from datetime import timedelta
 from types import MappingProxyType, SimpleNamespace
-from typing import Any, cast
+from typing import Annotated, Any, cast
 from unittest.mock import AsyncMock
 
 import pytest
-from pydantic import BaseModel, field_validator
+from pydantic import AfterValidator, BaseModel, field_validator
 
 from agent_framework import (
     Agent,
@@ -26,6 +26,7 @@ from agent_framework import (
 )
 from agent_framework._middleware import FunctionMiddlewarePipeline, MiddlewareFailure, MiddlewareTermination
 from agent_framework._tools import (
+    _AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
     FunctionTool,
     _auto_invoke_function,
     _resolve_approval_responses,
@@ -7837,3 +7838,112 @@ async def test_rewritten_arguments_asyncio_to_thread():
     await tracker.process(context, call_next)
 
     assert captured["rewritten"] == {"files": {0}}
+
+
+def _reorder_files(v: list[str]) -> list[str]:
+    """A validator that reorders the list, invalidating original indices."""
+    return sorted(v, reverse=True)
+
+
+def _preserve_files(v: list[str]) -> list[str]:
+    """A validator that runs but does not mutate the list."""
+    return v
+
+
+ReorderedFiles = Annotated[list[str], AfterValidator(_reorder_files)]
+PreservedFiles = Annotated[list[str], AfterValidator(_preserve_files)]
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_degrade_when_validator_reorders():
+    """Verify indices degrade to -1 when a Pydantic validator mutates a list."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+
+    var_id = store.store("a", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+
+    captured: dict[str, Any] = {}
+
+    async def my_tool(files: ReorderedFiles):
+        captured["rewritten"] = rewritten_arguments()
+        captured["received"] = files
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(
+        function=tool,
+        arguments={"files": [f"[{var_id}]", "c", "b"]},
+        metadata={_AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY: True},
+    )
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+    assert captured["received"] == ["c", "b", "a"]
+    assert captured["rewritten"] == {"files": {-1}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_preserved_when_validator_does_not_mutate():
+    """Verify indices are preserved when a validator runs but doesn't mutate the list."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+
+    var_id = store.store("payload", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+    captured: dict[str, Any] = {}
+
+    async def my_tool(files: PreservedFiles):
+        captured["rewritten"] = rewritten_arguments()
+        captured["received"] = files
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(
+        function=tool,
+        arguments={"files": [f"[{var_id}]", "safe.txt"]},
+        metadata={_AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY: True},
+    )
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+    assert captured["received"] == ["payload", "safe.txt"]
+    assert captured["rewritten"] == {"files": {0}}
+
+
+def _filter_files(v: list[str]) -> list[str]:
+    """A validator that filters out items, invalidating original indices."""
+    return [f for f in v if f != "drop_me"]
+
+
+FilteredFiles = Annotated[list[str], AfterValidator(_filter_files)]
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_degrade_when_validator_filters():
+    """Verify indices degrade to -1 when a Pydantic validator filters a list."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id = store.store("keep_me", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+    captured: dict[str, Any] = {}
+
+    async def my_tool(files: FilteredFiles):
+        captured["rewritten"] = rewritten_arguments()
+        captured["received"] = files
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(
+        function=tool,
+        arguments={"files": [f"[{var_id}]", "drop_me", "safe.txt"]},
+        metadata={_AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY: True},
+    )
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+    assert captured["received"] == ["keep_me", "safe.txt"]
+    assert captured["rewritten"] == {"files": {-1}}
