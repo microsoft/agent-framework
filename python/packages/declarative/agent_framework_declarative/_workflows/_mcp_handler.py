@@ -548,7 +548,7 @@ class DefaultMCPToolHandler:
                 creating = True
 
         if not creating:
-            await inflight
+            _ = await asyncio.shield(inflight)
             return await self._get_or_create_entry(invocation)
 
         # Phase 2: we own creation. Build the entry outside the lock.

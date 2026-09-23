@@ -968,9 +968,10 @@ class TestCache:
 
             release_first.set()
             first_result = await first
-            await close_task
+            close_result = await close_task
 
         assert not first_result.is_error
+        assert close_result is None
         assert FakeTool.instances[0].close_count == 1
         assert FakeTool.instances[1].close_count == 1
 
@@ -1005,7 +1006,8 @@ class TestCache:
             assert len(FakeTool.instances) == 2
             cancelled.cancel()
             with pytest.raises(asyncio.CancelledError):
-                await cancelled
+                cancelled_result = await cancelled
+                assert cancelled_result is None
 
             release.set()
             results = await asyncio.gather(first, second)
@@ -1013,6 +1015,38 @@ class TestCache:
         assert all(not result.is_error for result in results)
         assert max_connecting == 2
         assert not handler._inflight
+
+    @pytest.mark.asyncio
+    async def test_cancelled_waiter_does_not_cancel_shared_inflight_creation(self) -> None:
+        handler = DefaultMCPToolHandler()
+        connect_started = asyncio.Event()
+        release_connect = asyncio.Event()
+        original_connect = FakeTool.connect
+
+        async def gated_connect(tool: FakeTool) -> None:
+            connect_started.set()
+            await release_connect.wait()
+            await original_connect(tool)
+
+        with _patch_tool(), patch.object(FakeTool, "connect", gated_connect):
+            creator = asyncio.create_task(handler.invoke_tool(_invocation(workflow_session_id="workflow-a")))
+            await connect_started.wait()
+            waiter = asyncio.create_task(handler.invoke_tool(_invocation(workflow_session_id="workflow-a")))
+            await asyncio.sleep(0)
+
+            waiter.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                waiter_result = await waiter
+                assert waiter_result is None
+
+            release_connect.set()
+            creator_result = await creator
+            follow_up_result = await handler.invoke_tool(_invocation(workflow_session_id="workflow-a"))
+
+        assert not creator_result.is_error
+        assert not follow_up_result.is_error
+        assert len(FakeTool.instances) == 1
+        assert FakeTool.instances[0].connect_count == 1
 
     @pytest.mark.asyncio
     async def test_repeated_use_keeps_lru_alive(self) -> None:

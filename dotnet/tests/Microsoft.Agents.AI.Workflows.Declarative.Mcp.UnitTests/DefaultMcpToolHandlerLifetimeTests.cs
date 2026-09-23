@@ -175,6 +175,35 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
     }
 
     [Fact]
+    public async Task NoProvider_ConcurrentWorkflowSessionCreations_DoNotSerializeHandshakeAsync()
+    {
+        // Arrange
+        ProtocolStub stub = new();
+        using SemaphoreSlim initializationsStarted = new(0);
+        using SemaphoreSlim releaseInitializations = new(0);
+        stub.BeforeInitializationAsync = async token =>
+        {
+            initializationsStarted.Release();
+            await releaseInitializations.WaitAsync(token);
+        };
+        await using DefaultMcpToolHandler handler = new(null, stub.CreateMessageHandler, clientCacheMaxSize: 2);
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+        using CancellationTokenSource concurrencyTimeout = new(TimeSpan.FromSeconds(2));
+
+        // Act
+        Task<McpServerToolResultContent> first = InvokeScopedAsync(handler, "workflow-a", "ping", timeout.Token);
+        await initializationsStarted.WaitAsync(timeout.Token);
+        Task<McpServerToolResultContent> second = InvokeScopedAsync(handler, "workflow-b", "ping", timeout.Token);
+        await initializationsStarted.WaitAsync(concurrencyTimeout.Token);
+        releaseInitializations.Release(2);
+        await Task.WhenAll(first, second);
+
+        // Assert
+        Assert.Equal(2, stub.Initializations);
+        Assert.Equal(0, stub.Terminations);
+    }
+
+    [Fact]
     public async Task NoProvider_DifferentConnectionNames_UseSeparateCachedSessionsAsync()
     {
         // Arrange
@@ -661,6 +690,7 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
         public int Terminations => this._terminations;
         public List<Mock<HttpMessageHandler>> Handlers { get; } = [];
         public Func<CancellationToken, Task>? BeforeOperationAsync { get; set; }
+        public Func<CancellationToken, Task>? BeforeInitializationAsync { get; set; }
         public bool FailInitialization { get; set; }
         public bool FailOperation { get; set; }
         public bool FailTransportDisposal { get; set; }
@@ -721,6 +751,11 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
             string? sessionId = null;
             if (method == "initialize")
             {
+                if (this.BeforeInitializationAsync is not null)
+                {
+                    await this.BeforeInitializationAsync(cancellationToken);
+                }
+
                 if (this.FailInitialization)
                 {
                     return EmptyResponse(HttpStatusCode.BadRequest, request);
