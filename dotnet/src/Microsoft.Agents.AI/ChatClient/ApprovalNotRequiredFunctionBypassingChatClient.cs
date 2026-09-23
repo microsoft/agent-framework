@@ -76,9 +76,16 @@ internal sealed partial class ApprovalNotRequiredFunctionBypassingChatClient : D
 
         var autoApprovableNames = ApprovalRequirement.GetApprovalNotRequiredToolNames(this, options);
 
-        messages = InjectPendingAutoApprovals(messages, session);
+        var (messagesToSend, injectedAutoApprovals) = InjectPendingAutoApprovals(messages, session);
 
-        var response = await base.GetResponseAsync(messages, options, cancellationToken).ConfigureAwait(false);
+        var response = await base.GetResponseAsync(messagesToSend, options, cancellationToken).ConfigureAwait(false);
+
+        // The injected auto-approvals are cleared only now that the run has succeeded, so a failed run leaves them
+        // in the session and the next run injects them again instead of leaving the tool calls unanswered.
+        if (injectedAutoApprovals)
+        {
+            session.StateBag.TryRemoveValue(StateBagKey);
+        }
 
         RemoveAutoApprovedFromMessages(response.Messages, autoApprovableNames, session);
 
@@ -103,13 +110,36 @@ internal sealed partial class ApprovalNotRequiredFunctionBypassingChatClient : D
 
         var autoApprovableNames = ApprovalRequirement.GetApprovalNotRequiredToolNames(this, options);
 
-        messages = InjectPendingAutoApprovals(messages, session);
+        var (messagesToSend, injectedAutoApprovals) = InjectPendingAutoApprovals(messages, session);
         List<ToolApprovalRequestContent>? autoApproved = null;
+
+        // Enumerated manually so that a failure can be told apart from an ordinary end of stream. The injected
+        // auto-approvals are retired only when no failure occurred, so a failed run leaves them in the session and
+        // the next run can inject them again instead of leaving the tool calls unanswered.
+        var enumerator = base.GetStreamingResponseAsync(messagesToSend, options, cancellationToken).GetAsyncEnumerator(cancellationToken);
+        bool failed = false;
 
         try
         {
-            await foreach (var update in base.GetStreamingResponseAsync(messages, options, cancellationToken).ConfigureAwait(false))
+            while (true)
             {
+                ChatResponseUpdate update;
+
+                try
+                {
+                    if (!await enumerator.MoveNextAsync().ConfigureAwait(false))
+                    {
+                        break;
+                    }
+
+                    update = enumerator.Current;
+                }
+                catch
+                {
+                    failed = true;
+                    throw;
+                }
+
                 if (FilterUpdateContents(update, autoApprovableNames, ref autoApproved))
                 {
                     yield return update;
@@ -118,6 +148,13 @@ internal sealed partial class ApprovalNotRequiredFunctionBypassingChatClient : D
         }
         finally
         {
+            await enumerator.DisposeAsync().ConfigureAwait(false);
+
+            if (!failed && injectedAutoApprovals)
+            {
+                session.StateBag.TryRemoveValue(StateBagKey);
+            }
+
             if (autoApproved is { Count: > 0 })
             {
                 session.StateBag.SetValue(StateBagKey, autoApproved, AgentJsonUtilities.DefaultOptions);
@@ -159,7 +196,13 @@ internal sealed partial class ApprovalNotRequiredFunctionBypassingChatClient : D
     /// All stored requests are unconditionally injected as approved responses regardless of whether the
     /// tool set has changed, because the LLM requires a complete set of tool call responses for a prior turn.
     /// </remarks>
-    private static IEnumerable<ChatMessage> InjectPendingAutoApprovals(
+    /// <returns>
+    /// The messages to send to the inner client, and whether any auto-approvals were injected into them. The
+    /// stored auto-approvals are cleared by the caller only once the run has completed successfully, so that a
+    /// failed run leaves them in the session and the next run injects them again rather than leaving the
+    /// auto-approved calls unanswered.
+    /// </returns>
+    private static (IEnumerable<ChatMessage> Messages, bool Injected) InjectPendingAutoApprovals(
         IEnumerable<ChatMessage> messages,
         AgentSession session)
     {
@@ -169,10 +212,8 @@ internal sealed partial class ApprovalNotRequiredFunctionBypassingChatClient : D
             AgentJsonUtilities.DefaultOptions)
             || pendingRequests is not { Count: > 0 })
         {
-            return messages;
+            return (messages, false);
         }
-
-        session.StateBag.TryRemoveValue(StateBagKey);
 
         List<AIContent> approvalResponses = [];
         foreach (var request in pendingRequests)
@@ -181,7 +222,7 @@ internal sealed partial class ApprovalNotRequiredFunctionBypassingChatClient : D
         }
 
         var userMessage = new ChatMessage(ChatRole.User, approvalResponses);
-        return messages.Concat([userMessage]);
+        return (messages.Concat([userMessage]), true);
     }
 
     /// <summary>
