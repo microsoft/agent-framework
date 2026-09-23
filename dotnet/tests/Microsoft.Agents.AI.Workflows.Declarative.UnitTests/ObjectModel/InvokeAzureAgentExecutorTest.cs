@@ -6,6 +6,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Events;
+using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
@@ -139,6 +140,32 @@ public sealed class InvokeAzureAgentExecutorTest(ITestOutputHelper output) : Wor
         IDictionary<string, object?> record = Assert.IsAssignableFrom<IDictionary<string, object?>>(provider.CapturedArguments!["input"]);
         Assert.Equal("alpha", record["a"]);
         Assert.Equal("beta", record["b"]);
+    }
+
+    [Fact]
+    public async Task SensitiveInputMessagesThrowAsync()
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        List<ChatMessage> testMessages =
+        [
+            new ChatMessage(ChatRole.User, "Message from variable")
+        ];
+        this.State.Set("SourceMessages", testMessages.ToTable(), sensitivity: SensitivityLevel.Sensitive);
+        CapturingAgentProvider provider = new("acknowledged");
+        InvokeAzureAgent model =
+            this.CreateModel(
+                displayName: nameof(SensitiveInputMessagesThrowAsync),
+                agentName: "BrainMessages",
+                messages: ValueExpression.Variable(PropertyPath.TopicVariable("SourceMessages")));
+
+        InvokeAzureAgentExecutor action = new(model, provider, this.State);
+        Task ExecuteAsync() => this.ExecuteAsync(action, isDiscrete: false);
+
+        // Act & Assert
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(ExecuteAsync);
+        Assert.Contains("Cannot send sensitive agent input messages", exception.Message);
+        Assert.Null(provider.CapturedMessages);
     }
 
     [Fact]
@@ -476,6 +503,7 @@ public sealed class InvokeAzureAgentExecutorTest(ITestOutputHelper output) : Wor
         string agentName,
         long? agentVersion = null,
         IReadOnlyList<(string Key, ValueExpression Value)>? arguments = null,
+        ValueExpression? messages = null,
         string? responseObjectVariable = null,
         string? externalLoopWhen = null)
     {
@@ -519,6 +547,11 @@ public sealed class InvokeAzureAgentExecutorTest(ITestOutputHelper output) : Wor
         if (inputBuilder is not null)
         {
             builder.Input = inputBuilder;
+        }
+
+        if (messages is not null)
+        {
+            (builder.Input ??= new AzureAgentInput.Builder()).Messages = messages;
         }
 
         if (responseObjectVariable is not null)
@@ -568,6 +601,8 @@ public sealed class InvokeAzureAgentExecutorTest(ITestOutputHelper output) : Wor
 
         public IDictionary<string, object?>? CapturedArguments { get; private set; }
 
+        public IEnumerable<ChatMessage>? CapturedMessages { get; private set; }
+
         public override IAsyncEnumerable<AgentResponseUpdate> InvokeAgentAsync(
             string agentId,
             string? agentVersion,
@@ -578,6 +613,7 @@ public sealed class InvokeAzureAgentExecutorTest(ITestOutputHelper output) : Wor
         {
             this.CapturedAgentVersion = agentVersion;
             this.CapturedArguments = inputArguments;
+            this.CapturedMessages = messages;
             return YieldAsync(responseText);
         }
 

@@ -229,6 +229,27 @@ public sealed class QuestionExecutorTest(ITestOutputHelper output) : WorkflowAct
     }
 
     [Fact]
+    public async Task QuestionCaptureResponseExceedingRepeatCountPreservesDefaultValueSensitivityAsync()
+    {
+        // Arrange
+        this.State.Set("SOME_SECRET", FormulaValue.New("secret-value"), VariableScopeNames.Environment, SensitivityLevel.Sensitive);
+        this.State.Bind();
+        Question model = this.CreateModel(
+            displayName: nameof(QuestionCaptureResponseExceedingRepeatCountPreservesDefaultValueSensitivityAsync),
+            variableName: "TestVariable",
+            repeatCount: 0,
+            defaultValueExpressionText: "Env.SOME_SECRET");
+
+        // Act & Assert
+        await this.CaptureResponseTestAsync(
+            model,
+            variableName: "TestVariable",
+            responseText: null,
+            expectResponse: false);
+        Assert.Equal(SensitivityLevel.Sensitive, this.State.GetSensitivity("TestVariable"));
+    }
+
+    [Fact]
     public async Task QuestionCaptureResponseWithAutoSendFalseAsync()
     {
         // Arrange
@@ -438,7 +459,8 @@ public sealed class QuestionExecutorTest(ITestOutputHelper output) : WorkflowAct
         SkipQuestionMode? skipMode = null,
         int? repeatCount = null,
         EntityReference? entity = null,
-        DataValue? autoSend = null)
+        DataValue? autoSend = null,
+        string? defaultValueExpressionText = null)
     {
         BoolExpression.Builder? alwaysPromptExpression = null;
         if (alwaysPrompt is not null)
@@ -456,6 +478,10 @@ public sealed class QuestionExecutorTest(ITestOutputHelper output) : WorkflowAct
         if (defaultValue is not null)
         {
             defaultValueExpression = ValueExpression.Literal(defaultValue).ToBuilder();
+        }
+        else if (defaultValueExpressionText is not null)
+        {
+            defaultValueExpression = ValueExpression.Expression(defaultValueExpressionText).ToBuilder();
         }
 
         EnumExpression<SkipQuestionModeWrapper>.Builder? skipModeExpression = null;
