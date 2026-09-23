@@ -113,19 +113,21 @@ def detect_media_type_from_base64(
 
             # Detect from base64 string
             base64_data = "iVBORw0KGgo..."
-            media_type = detect_media_type_from_base64(base64_data)
+            media_type = detect_media_type_from_base64(data_str=base64_data)
             # Returns: "image/png"
 
             # Works with data URIs too
             data_uri = "data:image/png;base64,iVBORw0KGgo..."
-            media_type = detect_media_type_from_base64(data_uri)
+            media_type = detect_media_type_from_base64(data_uri=data_uri)
             # Returns: "image/png"
     """
     data: bytes | None = None
     if data_bytes is not None:
         data = data_bytes
     if data_uri is not None:
-        if data is not None:
+        # The conflict check has to run before the URI payload is rebound into data_str,
+        # otherwise a caller-supplied data_str disappears instead of being rejected.
+        if data is not None or data_str is not None:
             raise ValueError("Provide exactly one of data_bytes, data_str, or data_uri.")
         # Remove data URI prefix if present
         if not data_uri.startswith("data:") or "," not in data_uri:
@@ -462,17 +464,20 @@ def add_usage_details(usage1: UsageDetails | None, usage2: UsageDetails | None) 
             combined = add_usage_details(usage1, usage2)
             # Result: {'input_token_count': 8, 'output_token_count': 16}
     """
-    if usage1 is None:
-        return usage2 or UsageDetails()
-    if usage2 is None:
-        return usage1
+    u1 = usage1 or UsageDetails()
+    u2 = usage2 or UsageDetails()
 
     result = UsageDetails()
     # Combine all keys from both dictionaries
-    all_keys = set(usage1.keys()) | set(usage2.keys())
+    all_keys = set(u1.keys()) | set(u2.keys())
     for key in all_keys:
-        if not isinstance((val1 := usage1.get(key, 0)), (int | None)) or not isinstance(
-            (val2 := usage2.get(key, 0)), (int | None)
+        val1 = u1.get(key, 0)
+        val2 = u2.get(key, 0)
+        if (
+            isinstance(val1, bool)
+            or isinstance(val2, bool)
+            or not isinstance(val1, (int, type(None)))
+            or not isinstance(val2, (int, type(None)))
         ):
             logger.warning("Non `int` value found in usage details, skipping.")
             continue
@@ -712,7 +717,7 @@ class Content:
 
                     from agent_framework import detect_media_type_from_base64, Content
 
-                    media_type = detect_media_type_from_base64(base64_string)
+                    media_type = detect_media_type_from_base64(data_str=base64_string)
                     if media_type is None:
                         raise ValueError("Could not detect media type")
                     data_bytes = base64.b64decode(base64_string)
@@ -741,7 +746,7 @@ class Content:
 
                 # If you have a base64 string and need to detect media type
                 base64_string = "iVBORw0KGgo..."
-                media_type = detect_media_type_from_base64(base64_string)
+                media_type = detect_media_type_from_base64(data_str=base64_string)
                 if media_type is None:
                     raise ValueError("Unknown media type")
                 image_bytes = base64.b64decode(base64_string)
@@ -2009,20 +2014,34 @@ def prepend_instructions_to_messages(
     if isinstance(instructions, str):
         instructions = [instructions]
 
-    # Skip instructions that are already present as leading messages with the
-    # same role and text.  This prevents duplicate system messages when
-    # instructions are injected by multiple layers (e.g. Agent + chat client).
-    deduplicated: list[str] = []
-    for idx, instr in enumerate(instructions):
-        if idx < len(messages) and messages[idx].role == role and messages[idx].text == instr:
-            continue
-        deduplicated.append(instr)
-
-    if not deduplicated:
+    # An empty instruction list (or all-empty strings) adds nothing; without
+    # this a caller that passes an unset options default of "" gets a
+    # contentless system message injected ahead of the real conversation.
+    instructions = [part for part in instructions if part.strip()]
+    if not instructions:
         return messages
 
-    instruction_messages = [Message(role, [instr]) for instr in deduplicated]
-    return [*instruction_messages, *messages]
+    # Skip instructions that are already present as the leading messages with the
+    # same role and text.  This prevents duplicate system messages when
+    # instructions are injected by multiple layers (e.g. Agent + chat client).
+    # Only a *prefix* of instructions can be deduplicated: once an instruction
+    # does not match, any remaining instructions must keep their relative order.
+    # Prepending the non-matching remainder in front of the matched messages
+    # would invert the instruction order (e.g. ["First", "Second"] with a
+    # leading "First" message becoming ["Second", "First", ...]), so the
+    # remainder is inserted right after the matched prefix instead.
+    matched_count = 0
+    for idx, instr in enumerate(instructions):
+        if idx < len(messages) and messages[idx].role == role and messages[idx].text == instr:
+            matched_count += 1
+        else:
+            break
+
+    if matched_count == len(instructions):
+        return messages
+
+    instruction_messages = [Message(role, [instr]) for instr in instructions[matched_count:]]
+    return [*messages[:matched_count], *instruction_messages, *messages[matched_count:]]
 
 
 # region ChatResponse
@@ -2066,12 +2085,8 @@ def _process_update(response: ChatResponse | AgentResponse, update: ChatResponse
                 logger.warning(f"Skipping unknown content type or invalid content: {exc}")
                 continue
         match content_type:
-            # mypy doesn't narrow type based on match/case, but we know these are FunctionCallContents
-            case "function_call" if message.contents and message.contents[-1].type == "function_call":
-                try:
-                    message.contents[-1] += content
-                except (AdditionItemMismatch, ContentError):
-                    message.contents.append(content)
+            case "function_call":
+                _merge_function_call_content(message, content)
             case "usage":
                 if response.usage_details is None:
                     response.usage_details = UsageDetails()
@@ -2100,6 +2115,8 @@ def _process_update(response: ChatResponse | AgentResponse, update: ChatResponse
             response.finish_reason = update.finish_reason
         if update.model is not None:
             response.model = update.model
+    if isinstance(response, AgentResponse) and isinstance(update, AgentResponseUpdate) and update.agent_id is not None:
+        response.agent_id = update.agent_id
     if (
         isinstance(response, AgentResponse)
         and isinstance(update, AgentResponseUpdate)
@@ -2107,6 +2124,47 @@ def _process_update(response: ChatResponse | AgentResponse, update: ChatResponse
     ):
         response.finish_reason = update.finish_reason
     response.continuation_token = update.continuation_token
+
+
+def _merge_function_call_content(message: Message, content: Content) -> None:
+    """Merge a streamed function_call chunk into the in-progress call it belongs to.
+
+    Providers can stream multiple tool calls in parallel, so the next function_call
+    chunk is not necessarily a continuation of the most recently appended one; a chunk
+    with a call_id is matched against existing contents by that id first. Chunks with
+    no call_id (continuation deltas some providers only stamp on the first chunk) fall
+    back to merging with the trailing function_call item, preserving prior behavior.
+    """
+    call_id = getattr(content, "call_id", None)
+    content_id = getattr(content, "id", None)
+    if call_id:
+        for index in range(len(message.contents) - 1, -1, -1):
+            existing = message.contents[index]
+            if existing.type != "function_call" or getattr(existing, "call_id", None) != call_id:
+                continue
+            if existing.id is not None and content_id is None:
+                # existing already has a stable occurrence id from its client (e.g. the
+                # Chat Completions client stamps one on every chunk); an untagged chunk
+                # that merely happens to share its call_id isn't proof it's a continuation
+                # of that specific occurrence - a provider could reuse a call_id for a
+                # later, unrelated call. Keep scanning rather than merge on a hunch.
+                continue
+            try:
+                message.contents[index] = existing + content
+            except (AdditionItemMismatch, ContentError):
+                break
+            return
+        # A tagged chunk that matches no in-progress call is a new call, not a
+        # continuation - an untagged trailing item would silently absorb it otherwise.
+        message.contents.append(content)
+        return
+    if message.contents and message.contents[-1].type == "function_call":
+        try:
+            message.contents[-1] += content
+            return
+        except (AdditionItemMismatch, ContentError):
+            pass
+    message.contents.append(content)
 
 
 def _coalesce_text_content(contents: list[Content], type_str: Literal["text", "text_reasoning"]) -> None:
@@ -3475,6 +3533,24 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
                 if isawaitable(update):
                     update = await update
             return await self._record_update(update)
+
+    async def close(self) -> None:
+        """Close the active iterator and run cleanup hooks.
+
+        This method is idempotent and also closes nested ``ResponseStream`` wrappers.
+        """
+        try:
+            iterator: AsyncIterator[UpdateT] | None = self._iterator
+            if iterator is not None:
+                if isinstance(iterator, ResponseStream):
+                    await cast(ResponseStream[UpdateT, Any], iterator).close()
+                else:
+                    close = getattr(iterator, "aclose", None)
+                    if close is not None:
+                        await close()
+        finally:
+            self._consumed = True
+            await self._run_cleanup_hooks()
 
     async def _resolve_stream_with_pull_contexts(self) -> AsyncIterable[UpdateT]:
         """Resolve the underlying stream while activating any registered pull context managers.

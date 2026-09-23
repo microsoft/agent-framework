@@ -2,14 +2,23 @@
 
 """Unit tests for WorkflowFactory."""
 
+from collections import UserDict
+from collections.abc import Iterator, ValuesView
+from copy import deepcopy
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
+import yaml
 from agent_framework import Message
 
 from agent_framework_declarative._feature_usage import FeatureIndex
+from agent_framework_declarative._workflows._declarative_base import (
+    DeclarativeActionExecutor,
+    discover_env_references,
+)
 from agent_framework_declarative._workflows._errors import DeclarativeWorkflowError
 from agent_framework_declarative._workflows._factory import WorkflowFactory
 
@@ -87,6 +96,116 @@ actions:
             })
 
         mark_feature_used.assert_called_once_with(FeatureIndex.DECLARATIVE_WORKFLOW)
+
+
+class TestWorkflowEnvironmentDiscovery:
+    """Environment discovery preserves shared definitions without expanding them repeatedly."""
+
+    def test_shared_containers_are_scanned_once(self) -> None:
+        class CountingMapping(UserDict[str, Any]):
+            visits = 0
+
+            def values(self) -> ValuesView[Any]:
+                self.visits += 1
+                return super().values()
+
+        class CountingList(list[Any]):
+            visits = 0
+
+            def __iter__(self) -> Iterator[Any]:
+                self.visits += 1
+                return super().__iter__()
+
+        leaf = CountingMapping({"expression": "=Env.SHARED & Env.SHARED"})
+        shared_list = CountingList([leaf])
+        shared = [shared_list, shared_list, leaf, {"expression": "=Env.OTHER"}]
+        tree = [[dict(leaf)], [dict(leaf)], dict(leaf), {"expression": "=Env.OTHER"}]
+
+        assert discover_env_references(shared) == discover_env_references(tree) == {"SHARED", "OTHER"}
+        assert leaf.visits == 1
+        assert shared_list.visits == 1
+        assert shared == tree
+        assert shared[0] is shared[1]
+        assert shared_list[0] is leaf
+
+    def test_only_expression_values_contribute_names(self) -> None:
+        definition = {
+            "=Env.KEY": "Env.PLAIN",
+            "nested": [MappingProxyType({"value": "=Env.FIRST & Env.SECOND"}), {"value": "=Env.FIRST"}],
+            "ignored": [None, 7, False, " =Env.LEADING", "Env.TEXT"],
+        }
+
+        assert discover_env_references(definition) == {"FIRST", "SECOND"}
+
+    @pytest.mark.parametrize("source", ["definition", "yaml"])
+    @pytest.mark.parametrize("cycle_kind", ["mapping", "list"])
+    def test_cycles_raise_definition_error(self, source: str, cycle_kind: str) -> None:
+        metadata: dict[str, Any] = {"value": "not-for-error-output"}
+        if cycle_kind == "mapping":
+            metadata["child"] = {"parent": metadata}
+        else:
+            child: list[Any] = []
+            child.append(child)
+            metadata["child"] = child
+        definition = {
+            "name": "cycle-check",
+            "actions": [{"kind": "SendActivity", "activity": "done"}],
+            "metadata": metadata,
+        }
+        factory = WorkflowFactory()
+
+        with pytest.raises(DeclarativeWorkflowError) as exc_info:
+            if source == "yaml":
+                factory.create_workflow_from_yaml(yaml.safe_dump(definition))
+            else:
+                factory.create_workflow_from_definition(definition)
+
+        assert str(exc_info.value) == "Cyclic mappings or lists are not supported in workflow definitions."
+        assert metadata["value"] == "not-for-error-output"
+        if cycle_kind == "mapping":
+            mapping_child = metadata["child"]
+            assert isinstance(mapping_child, dict)
+            assert mapping_child["parent"] is metadata
+        else:
+            list_child = metadata["child"]
+            assert isinstance(list_child, list)
+            assert list_child[0] is list_child
+
+    @pytest.mark.parametrize("source", ["definition", "yaml"])
+    @pytest.mark.parametrize("restrict_env", [True, False])
+    def test_shared_aliases_preserve_env_configuration(
+        self, source: str, restrict_env: bool, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("DISCOVERY_CONFIG", "environment")
+        monkeypatch.setenv("DISCOVERY_FALLBACK", "fallback")
+        monkeypatch.setenv("DISCOVERY_UNREFERENCED", "not-exposed")
+        shared = {"value": "=Env.DISCOVERY_CONFIG & Env.DISCOVERY_FALLBACK"}
+        definition: dict[str, Any] = {
+            "name": "shared-references",
+            "trigger": {"actions": [{"kind": "SendActivity", "activity": "done"}]},
+            "metadata": [shared, shared],
+        }
+        original = deepcopy(definition)
+        factory = WorkflowFactory(
+            configuration={"DISCOVERY_CONFIG": "configured"},
+            restrict_env_to_configuration=restrict_env,
+        )
+        if source == "yaml":
+            workflow = factory.create_workflow_from_yaml(yaml.safe_dump(definition))
+        else:
+            workflow = factory.create_workflow_from_definition(definition)
+
+        executor = workflow.get_start_executor()
+        assert isinstance(executor, DeclarativeActionExecutor)
+        config = executor._declarative_env_config
+        assert config.referenced_names == {"DISCOVERY_CONFIG", "DISCOVERY_FALLBACK"}
+        expected = {"DISCOVERY_CONFIG": "configured"}
+        if not restrict_env:
+            expected["DISCOVERY_FALLBACK"] = "fallback"
+        assert config.resolve() == expected
+        assert definition == original
+        assert definition["metadata"][0] is definition["metadata"][1]
+        assert shared == original["metadata"][0]
 
 
 class TestWorkflowFactoryMessageInput:
@@ -544,6 +663,27 @@ actions:
 
         assert workflow is not None
         assert workflow.name == "file-workflow"
+
+    def test_load_from_file_reads_utf8(self, tmp_path):
+        """Test loading a workflow file explicitly uses UTF-8."""
+        workflow_file = tmp_path / "UnicodeWorkflow.yaml"
+        workflow_file.write_text(
+            """
+name: unicode-workflow
+actions:
+  - kind: SetValue
+    path: Local.message
+    value: 政务助手 🏛️
+""",
+            encoding="utf-8",
+        )
+
+        factory = WorkflowFactory()
+        with patch("builtins.open", wraps=open) as mock_open:
+            workflow = factory.create_workflow_from_yaml_path(workflow_file)
+
+        mock_open.assert_called_once_with(workflow_file, encoding="utf-8")
+        assert workflow.name == "unicode-workflow"
 
 
 @_requires_powerfx

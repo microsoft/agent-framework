@@ -55,6 +55,13 @@ def test_concurrent_builder_rejects_duplicate_executors() -> None:
         ConcurrentBuilder(participants=[a, b])
 
 
+def test_concurrent_builder_uses_stable_default_and_custom_name() -> None:
+    participants = [_FakeAgentExec("agentA", "A"), _FakeAgentExec("agentB", "B")]
+
+    assert ConcurrentBuilder(participants=participants).build().name == "Concurrent"
+    assert ConcurrentBuilder(name="custom-concurrent", participants=participants).build().name == "custom-concurrent"
+
+
 async def test_concurrent_default_aggregator_emits_assistants_only() -> None:
     """Default aggregator yields a single AgentResponse with one assistant message per participant.
 
@@ -210,6 +217,7 @@ async def test_concurrent_checkpoint_resume_round_trip() -> None:
     )
 
     wf = ConcurrentBuilder(participants=list(participants), checkpoint_storage=storage).build()
+    assert wf.name == "Concurrent"
 
     baseline_output: AgentResponse | None = None
     async for ev in wf.run("checkpoint concurrent", stream=True):

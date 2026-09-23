@@ -2,6 +2,7 @@
 
 import builtins
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -1051,6 +1052,30 @@ instructions: Test agent from Path
 
         assert agent.name == "PathAgent"
 
+    def test_create_agent_from_yaml_path_reads_utf8(self, tmp_path):
+        """Test create_agent_from_yaml_path reads YAML as UTF-8."""
+        from unittest.mock import MagicMock
+
+        from agent_framework_declarative import AgentFactory
+
+        yaml_file = tmp_path / "unicode_agent.yaml"
+        yaml_file.write_text(
+            """
+kind: Prompt
+name: UnicodeAgent
+instructions: 政务助手 🏛️
+""",
+            encoding="utf-8",
+        )
+
+        mock_client = MagicMock()
+        factory = AgentFactory(client=mock_client)
+        with patch("builtins.open", wraps=builtins.open) as mock_open:
+            agent = factory.create_agent_from_yaml_path(yaml_file)
+
+        mock_open.assert_called_once_with(yaml_file, encoding="utf-8")
+        assert agent.name == "UnicodeAgent"
+
 
 class TestAgentFactoryAsyncMethods:
     """Tests for AgentFactory async methods."""
@@ -1137,6 +1162,41 @@ instructions: Test async path agent
         agent = await factory.create_agent_from_yaml_path_async(str(yaml_file))
 
         assert agent.name == "AsyncPathAgent"
+
+    async def test_create_agent_from_yaml_path_async_reads_utf8_off_event_loop(self, tmp_path):
+        """Test async path loading reads UTF-8 without blocking the event-loop thread."""
+        from unittest.mock import MagicMock
+
+        from agent_framework_declarative import AgentFactory
+
+        yaml_file = tmp_path / "async_unicode_agent.yaml"
+        yaml_file.write_text(
+            """
+kind: Prompt
+name: AsyncUnicodeAgent
+instructions: 政务助手 🏛️
+""",
+            encoding="utf-8",
+        )
+
+        event_loop_thread_id = threading.get_ident()
+        read_thread_id: int | None = None
+        original_read_text = Path.read_text
+
+        def tracked_read_text(path: Path, *args, **kwargs):
+            nonlocal read_thread_id
+            read_thread_id = threading.get_ident()
+            assert kwargs["encoding"] == "utf-8"
+            return original_read_text(path, *args, **kwargs)
+
+        mock_client = MagicMock()
+        factory = AgentFactory(client=mock_client)
+        with patch.object(Path, "read_text", autospec=True, side_effect=tracked_read_text):
+            agent = await factory.create_agent_from_yaml_path_async(yaml_file)
+
+        assert read_thread_id is not None
+        assert read_thread_id != event_loop_thread_id
+        assert agent.name == "AsyncUnicodeAgent"
 
 
 class TestAgentFactoryProviderLookup:

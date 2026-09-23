@@ -6,8 +6,12 @@ on:
       - ".github/actions/**"
       - ".github/scripts/**"
       - ".github/tests/**"
+      - ".github/workflows/python-api-compatibility.yml"
       - ".github/workflows/python-test-coverage.yml"
       - ".github/workflows/github-automation-tests.yml"
+      - ".github/workflows/devflow-fix-ci.yml"
+      - "python/pyproject.toml"
+      - "python/uv.lock"
   push:
     branches:
       - main
@@ -15,8 +19,12 @@ on:
       - ".github/actions/**"
       - ".github/scripts/**"
       - ".github/tests/**"
+      - ".github/workflows/python-api-compatibility.yml"
       - ".github/workflows/python-test-coverage.yml"
       - ".github/workflows/github-automation-tests.yml"
+      - ".github/workflows/devflow-fix-ci.yml"
+      - "python/pyproject.toml"
+      - "python/uv.lock"
 
 permissions:
   contents: read
@@ -35,8 +43,38 @@ jobs:
         with:
           python-version: "3.11"
 
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: "0.12.9"
+
       - name: Run JavaScript tests
         run: node --test .github/tests/*.js
 
       - name: Run Python tests
         run: python .github/tests/test_python_check_coverage.py
+
+      - name: Run Python API compatibility tests
+        working-directory: ${{ runner.temp }}
+        env:
+          UV_NO_CONFIG: "1"
+        run: |
+          griffe_requirement="$(
+            python3 - "$GITHUB_WORKSPACE/python/pyproject.toml" <<'PY'
+          import sys
+          import tomllib
+
+          with open(sys.argv[1], "rb") as pyproject_file:
+              dev_dependencies = tomllib.load(pyproject_file)["dependency-groups"]["dev"]
+          requirements = [
+              dependency for dependency in dev_dependencies if dependency.startswith("griffe")
+          ]
+          if len(requirements) != 1:
+              raise SystemExit("Expected exactly one Griffe development dependency")
+          print(requirements[0])
+          PY
+          )"
+
+          uv --no-config run \
+            --no-project \
+            --with "$griffe_requirement" \
+            python "$GITHUB_WORKSPACE/.github/tests/test_python_api_compatibility.py"

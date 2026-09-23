@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
@@ -20,10 +20,6 @@ from ._telemetry import FeatureIndex, mark_feature_used
 from ._vector_filters import (
     Filter,
     FilterExpression,
-    FilterGroup,
-    filter_values_equal,
-    require_filter_collection,
-    require_filter_string,
     validate_filter,
 )
 from ._vectors import (
@@ -37,6 +33,7 @@ from ._vectors import (
     SearchType,
     Vector,
     VectorStoreCollectionDefinition,
+    _evaluate_filter,  # pyright: ignore[reportPrivateUsage]
     _validate_vector_dimensions,  # pyright: ignore[reportPrivateUsage]
 )
 from .exceptions import IntegrationException
@@ -99,7 +96,7 @@ def _numeric_vector(value: Any, *, field_name: str) -> tuple[float, ...]:
         number = float(item)
         if not math.isfinite(number):
             raise ValueError(f"Vector field '{field_name}' must contain only finite numbers.")
-        vector.append(number)
+        vector.append(item)
     if not vector:
         raise ValueError(f"Vector field '{field_name}' cannot be empty.")
     return tuple(vector)
@@ -118,6 +115,11 @@ def _paired_vectors(left: Vector, right: Vector) -> tuple[tuple[float, ...], tup
 
 def _calculate_score(left: Vector, right: Vector, distance_function: DistanceFunction) -> float:
     left_values, right_values = _paired_vectors(left, right)
+    if distance_function == "hamming":
+        # Compare coordinates before float conversion can round distinct large integers to the same value.
+        return sum(a != b for a, b in zip(left_values, right_values, strict=True)) / len(left_values)
+    left_values = tuple(float(value) for value in left_values)
+    right_values = tuple(float(value) for value in right_values)
     if distance_function in ("cosine_similarity", "cosine_distance", "DEFAULT"):
         left_scale = max(abs(value) for value in left_values)
         right_scale = max(abs(value) for value in right_values)
@@ -143,8 +145,6 @@ def _calculate_score(left: Vector, right: Vector, distance_function: DistanceFun
         score = sum((a - b) * (a - b) for a, b in zip(left_values, right_values, strict=True))
     elif distance_function == "manhattan":
         score = sum(abs(a - b) for a, b in zip(left_values, right_values, strict=True))
-    elif distance_function == "hamming":
-        score = sum(a != b for a, b in zip(left_values, right_values, strict=True)) / len(left_values)
     else:
         raise NotImplementedError(f"Distance function '{distance_function}' is not supported by InMemoryCollection.")
     if not math.isfinite(score):
@@ -166,99 +166,6 @@ def _validate_in_memory_filter_value(value: Any) -> None:
             _validate_in_memory_filter_value(item)
         return
     raise TypeError(f"InMemoryCollection does not support filter values of type '{type(value).__name__}'.")
-
-
-def _resolve_record_value(
-    record: Mapping[str, Any],
-    filter_: Filter,
-    definition: VectorStoreCollectionDefinition,
-) -> tuple[bool, Any]:
-    if "." in filter_.field_name:
-        raise NotImplementedError("InMemoryCollection does not support nested filter field paths.")
-    field = definition.try_get_field(filter_.field_name)
-    if field is None:
-        raise ValueError(f"Filter field '{filter_.field_name}' is not part of the vector store definition.")
-    storage_name = field.storage_name or field.name
-    return storage_name in record, record.get(storage_name)
-
-
-def _evaluate_filter(
-    expression: FilterExpression,
-    record: Mapping[str, Any],
-    definition: VectorStoreCollectionDefinition,
-) -> bool:
-    if isinstance(expression, FilterGroup):
-        values = (_evaluate_filter(item, record, definition) for item in expression.filters)
-        match expression.operator:
-            case "and":
-                return all(values)
-            case "or":
-                return any(values)
-            case "not":
-                return not next(values)
-            case _:
-                raise ValueError(f"Unknown filter group operator '{expression.operator}'.")
-
-    exists, actual = _resolve_record_value(record, expression, definition)
-    operator = expression.operator
-    expected = expression.value
-    if operator == "exists":
-        return exists
-    if operator == "is_null":
-        return exists and actual is None
-    if operator == "is_not_null":
-        return exists and actual is not None
-    if not exists:
-        return False
-    if actual is None and operator not in ("eq", "ne"):
-        return False
-
-    try:
-        match operator:
-            case "eq":
-                return filter_values_equal(actual, expected)
-            case "ne":
-                return not filter_values_equal(actual, expected)
-            case "gt":
-                return actual > expected
-            case "gte":
-                return actual >= expected
-            case "lt":
-                return actual < expected
-            case "lte":
-                return actual <= expected
-            case "between":
-                lower, upper = cast(Sequence[Any], expected)
-                return lower <= actual <= upper
-            case "in":
-                return any(filter_values_equal(actual, item) for item in cast(Collection[Any], expected))
-            case "not_in":
-                return all(not filter_values_equal(actual, item) for item in cast(Collection[Any], expected))
-            case "contains":
-                return any(filter_values_equal(item, expected) for item in require_filter_collection(actual))
-            case "contains_any":
-                collection = require_filter_collection(actual)
-                return any(
-                    filter_values_equal(item, value) for value in cast(Sequence[Any], expected) for item in collection
-                )
-            case "contains_all":
-                collection = require_filter_collection(actual)
-                return all(
-                    any(filter_values_equal(item, value) for item in collection)
-                    for value in cast(Sequence[Any], expected)
-                )
-            case "starts_with":
-                return require_filter_string(actual).startswith(require_filter_string(expected))
-            case "ends_with":
-                return require_filter_string(actual).endswith(require_filter_string(expected))
-            case "contains_text":
-                return require_filter_string(expected) in require_filter_string(actual)
-            case _:
-                raise NotImplementedError(f"Filter operator '{operator}' is not supported by InMemoryCollection.")
-    except TypeError as exc:
-        raise ValueError(
-            f"Filter operator '{operator}' cannot compare field '{expression.field_name}' with value {expected!r}."
-        ) from exc
 
 
 @experimental(feature_id=ExperimentalFeature.VECTOR_STORES)
@@ -485,14 +392,14 @@ class InMemoryCollection(
                 ) from exc
             if score_threshold is not None and not comparison(score, score_threshold):
                 continue
-            results.append({"record": deepcopy(record), "score": score})
+            results.append({"record": record, "score": score})
         results.sort(
             key=lambda result: cast(float, result["score"]),
             reverse=distance_function in _DESCENDING_DISTANCE_FUNCTIONS,
         )
         total_count = len(results)
         return SearchResults(
-            results[skip : skip + top],
+            deepcopy(results[skip : skip + top]),
             metadata={"in_memory_total_count": total_count},
         )
 

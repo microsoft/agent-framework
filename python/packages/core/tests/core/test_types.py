@@ -4,9 +4,10 @@ import asyncio
 import base64
 import json
 import warnings
-from collections.abc import AsyncIterable, Awaitable, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from functools import partial
 from typing import Any, Literal, cast
 
 import pytest
@@ -286,16 +287,36 @@ def test_data_content_detect_image_format_from_base64():
     # Test error handling
     with pytest.raises(ValueError, match="Invalid base64 data provided."):
         detect_media_type_from_base64(data_str="invalid_base64!")
-        detect_media_type_from_base64(data_str="")
 
-    with pytest.raises(ValueError, match="Provide exactly one of data_bytes, data_str, or data_uri."):
-        detect_media_type_from_base64()
-        detect_media_type_from_base64(
-            data_bytes=b"data", data_str="data", data_uri="data:application/octet-stream;base64,AAA"
-        )
-        detect_media_type_from_base64(data_bytes=b"data", data_str="data")
-        detect_media_type_from_base64(data_bytes=b"data", data_uri="data:application/octet-stream;base64,AAA")
-        detect_media_type_from_base64(data_str="data", data_uri="data:application/octet-stream;base64,AAA")
+
+@mark.parametrize(
+    "call",
+    [
+        partial(detect_media_type_from_base64),
+        partial(detect_media_type_from_base64, data_bytes=b"data", data_str="data"),
+        partial(detect_media_type_from_base64, data_bytes=b"data", data_uri="data:application/octet-stream;base64,AAA"),
+        partial(detect_media_type_from_base64, data_str="data", data_uri="data:application/octet-stream;base64,AAA"),
+        partial(
+            detect_media_type_from_base64,
+            data_bytes=b"data",
+            data_str="data",
+            data_uri="data:application/octet-stream;base64,AAA",
+        ),
+    ],
+)
+def test_detect_media_type_from_base64_requires_exactly_one_source(call: Callable[[], Any]):
+    """Every combination other than a single source must be rejected, never silently resolved."""
+    with raises(ValueError, match="Provide exactly one of data_bytes, data_str, or data_uri."):
+        call()
+
+
+def test_detect_media_type_from_base64_rejects_data_str_alongside_data_uri():
+    """A data URI must not overwrite a caller-supplied base64 string and hide its error."""
+    png_data = b"\x89PNG\r\n\x1a\n" + b"fake_data"
+    data_uri = f"data:application/octet-stream;base64,{base64.b64encode(png_data).decode()}"
+
+    with raises(ValueError, match="Provide exactly one of data_bytes, data_str, or data_uri."):
+        detect_media_type_from_base64(data_str="invalid_base64!", data_uri=data_uri)
 
 
 @mark.parametrize(
@@ -787,12 +808,43 @@ def test_usage_details_add_with_none_and_type_errors():
 
 
 def test_usage_details_add_skips_non_int():
-    u1 = cast(UsageDetails, {"input_token_count": 10, "other": "test"})
-    u2 = cast(UsageDetails, {"input_token_count": 10, "another": "test"})
+    u1 = cast(UsageDetails, {"input_token_count": 10, "other": "test", "flag": True})
+    u2 = cast(UsageDetails, {"input_token_count": 10, "another": "test", "flag": 5})
     u3 = add_usage_details(u1, u2)
     assert len(u3.keys()) == 1
     assert "input_token_count" in u3
     assert u3["input_token_count"] == 20
+    assert "flag" not in u3
+
+
+def test_usage_details_add_with_none_returns_copy():
+    u = UsageDetails(input_token_count=1)
+    v1 = add_usage_details(u, None)
+    v2 = add_usage_details(None, u)
+    assert v1 == u
+    assert v1 is not u
+    assert v2 == u
+    assert v2 is not u
+
+
+def test_usage_details_add_with_none_filters_booleans_and_non_ints():
+    payload = cast(UsageDetails, {"input_token_count": 5, "flag": True, "text": "skip_me"})
+    v1 = add_usage_details(payload, None)
+    v2 = add_usage_details(None, payload)
+    assert v1 == {"input_token_count": 5}
+    assert v1 is not payload
+    assert "flag" not in v1
+    assert "text" not in v1
+    assert v2 == {"input_token_count": 5}
+    assert v2 is not payload
+    assert "flag" not in v2
+    assert "text" not in v2
+
+
+def test_usage_details_add_both_none_returns_empty():
+    result = add_usage_details(None, None)
+    assert result == {}
+    assert isinstance(result, dict)
 
 
 # region UserInputRequest and Response
@@ -1753,6 +1805,16 @@ def test_agent_run_response_from_updates(agent_response_update: AgentResponseUpd
     assert response.text == "Test contentTest content"
 
 
+def test_agent_run_response_from_updates_uses_last_non_none_agent_id() -> None:
+    response = AgentResponse.from_updates([
+        AgentResponseUpdate(agent_id="first-agent"),
+        AgentResponseUpdate(agent_id="source-agent"),
+        AgentResponseUpdate(agent_id=None),
+    ])
+
+    assert response.agent_id == "source-agent"
+
+
 def test_agent_run_response_str_method(chat_message: Message) -> None:
     response = AgentResponse(messages=chat_message)
     assert str(response) == "Hello"
@@ -1911,6 +1973,114 @@ def test_function_call_incompatible_ids_are_not_merged():
     resp = ChatResponse.from_updates([u1, u2])
     fcs = [c for c in resp.messages[0].contents if c.type == "function_call"]
     assert len(fcs) == 2
+
+
+def test_function_call_interleaved_parallel_streaming_merges_by_call_id():
+    """Argument deltas for two parallel tool calls can interleave; each must land on its own call.
+
+    This mirrors how the OpenAI Responses API streams parallel tool calls: every
+    ``response.function_call_arguments.delta`` event is tagged with the call's real
+    call_id (tracked per output_index), but deltas for different calls are not
+    guaranteed to arrive grouped together. Before this fix, only the trailing
+    content item was ever considered a merge target, so an out-of-turn delta for an
+    earlier call_id was appended as a stray duplicate instead of being folded into
+    its call, leaving both calls with incomplete, unparsable arguments.
+    """
+    updates = [
+        ChatResponseUpdate(contents=[Content.from_function_call(call_id="call_1", name="get_weather", arguments="")]),
+        ChatResponseUpdate(contents=[Content.from_function_call(call_id="call_2", name="get_time", arguments="")]),
+        ChatResponseUpdate(
+            contents=[Content.from_function_call(call_id="call_1", name="get_weather", arguments='{"location":')]
+        ),
+        ChatResponseUpdate(
+            contents=[Content.from_function_call(call_id="call_2", name="get_time", arguments='{"timezone":')]
+        ),
+        ChatResponseUpdate(
+            contents=[Content.from_function_call(call_id="call_1", name="get_weather", arguments='"NYC"}')]
+        ),
+        ChatResponseUpdate(
+            contents=[Content.from_function_call(call_id="call_2", name="get_time", arguments='"EST"}')]
+        ),
+    ]
+
+    resp = ChatResponse.from_updates(updates)
+    assert len(resp.messages) == 1
+    fcs = [c for c in resp.messages[0].contents if c.type == "function_call"]
+    assert len(fcs) == 2
+
+    by_call_id = {c.call_id: c for c in fcs}
+    assert by_call_id["call_1"].arguments == '{"location":"NYC"}'
+    assert by_call_id["call_2"].arguments == '{"timezone":"EST"}'
+
+
+def test_function_call_merge_falls_back_to_trailing_item_without_call_id():
+    """Continuation deltas some providers never re-stamp with a call_id still merge.
+
+    Not every provider repeats the call_id on every streamed chunk (e.g. the OpenAI
+    Chat Completions API only sends it on the first delta for a tool call), so the
+    fallback of merging into the trailing function_call item must still hold for the
+    single-call-in-flight case.
+    """
+    updates = [
+        ChatResponseUpdate(contents=[Content.from_function_call(call_id="call_1", name="f", arguments="{")]),
+        ChatResponseUpdate(contents=[Content.from_function_call(call_id="", name="", arguments="}")]),
+    ]
+
+    resp = ChatResponse.from_updates(updates)
+    fcs = [c for c in resp.messages[0].contents if c.type == "function_call"]
+    assert len(fcs) == 1
+    assert fcs[0].call_id == "call_1"
+    assert fcs[0].arguments == "{}"
+
+
+def test_function_call_reused_call_id_does_not_absorb_untagged_chunk():
+    """A reused call_id must not let an untagged chunk merge into an already-identified call.
+
+    The Chat Completions client stamps a stable occurrence ``id`` on every function-call
+    chunk it emits, precisely so a provider reusing a ``call_id`` (or a client that only
+    tags the first chunk) can't be confused with an unrelated call. If a later, untagged
+    chunk happens to carry the same ``call_id`` as a call that already has an occurrence
+    id, it must not be assumed to be that call's continuation - it should be treated as
+    a new, separate call instead of corrupting the finished one's arguments.
+    """
+    updates = [
+        ChatResponseUpdate(
+            contents=[Content.from_function_call(id="af-call-1", call_id="call_1", name="get_weather", arguments="{}")]
+        ),
+        # No `id` and a reused call_id: an unrelated call, not a continuation.
+        ChatResponseUpdate(contents=[Content.from_function_call(call_id="call_1", name="get_time", arguments="{}")]),
+    ]
+
+    resp = ChatResponse.from_updates(updates)
+    fcs = [c for c in resp.messages[0].contents if c.type == "function_call"]
+    assert len(fcs) == 2
+    assert fcs[0].name == "get_weather"
+    assert fcs[0].arguments == "{}"
+    assert fcs[1].name == "get_time"
+    assert fcs[1].arguments == "{}"
+
+
+def test_function_call_tagged_chunk_does_not_absorb_into_untagged_trailing_call():
+    """A tagged chunk with no matching in-progress call must not merge into an untagged one.
+
+    Content.__add__ only rejects a merge when *both* sides carry a call_id and they
+    differ, so an untagged trailing item (call_id falsy) would otherwise silently
+    accept a chunk tagged with a brand-new call_id, adopting that id and
+    concatenating unrelated arguments. The trailing-item fallback must be reserved
+    for chunks that carry no call_id at all.
+    """
+    untagged = Content("function_call", call_id=None, name="a", arguments="partial-a")
+    resp = ChatResponse.from_updates([
+        ChatResponseUpdate(contents=[untagged]),
+        ChatResponseUpdate(contents=[Content.from_function_call(call_id="call_new", name="b", arguments="{}")]),
+    ])
+
+    fcs = [c for c in resp.messages[0].contents if c.type == "function_call"]
+    assert len(fcs) == 2
+    assert fcs[0].call_id is None
+    assert fcs[0].arguments == "partial-a"
+    assert fcs[1].call_id == "call_new"
+    assert fcs[1].arguments == "{}"
 
 
 # region Role & FinishReason basics
@@ -4084,6 +4254,48 @@ class TestResponseStreamTransformHooks:
 class TestResponseStreamCleanupHooks:
     """Tests for cleanup hooks (after stream consumption, before finalizer)."""
 
+    async def test_close_closes_iterator_and_runs_cleanup_once(self) -> None:
+        """Closing a partially consumed stream releases its iterator and cleanup hooks."""
+        events: list[str] = []
+
+        async def updates() -> AsyncIterable[ChatResponseUpdate]:
+            try:
+                yield ChatResponseUpdate(contents=[Content.from_text("first")], role="assistant")
+                yield ChatResponseUpdate(contents=[Content.from_text("second")], role="assistant")
+            finally:
+                events.append("iterator")
+
+        stream: ResponseStream[ChatResponseUpdate, Sequence[ChatResponseUpdate]] = ResponseStream(
+            updates(), cleanup_hooks=[lambda: events.append("cleanup")]
+        )
+        await anext(stream)
+
+        await stream.close()
+        await stream.close()
+
+        assert events == ["iterator", "cleanup"]
+
+    async def test_close_closes_wrapped_stream(self) -> None:
+        """Closing a wrapper releases the concrete inner stream."""
+        events: list[str] = []
+
+        async def updates() -> AsyncIterable[ChatResponseUpdate]:
+            try:
+                yield ChatResponseUpdate(contents=[Content.from_text("first")], role="assistant")
+                yield ChatResponseUpdate(contents=[Content.from_text("second")], role="assistant")
+            finally:
+                events.append("iterator")
+
+        inner: ResponseStream[ChatResponseUpdate, Sequence[ChatResponseUpdate]] = ResponseStream(
+            updates(), cleanup_hooks=[lambda: events.append("inner")]
+        )
+        outer = inner.map(lambda update: update, _combine_updates).with_cleanup_hook(lambda: events.append("outer"))
+        await anext(outer)
+
+        await outer.close()
+
+        assert events == ["iterator", "inner", "outer"]
+
     async def test_cleanup_hook_called_after_iteration(self) -> None:
         """Cleanup hook is called after iteration completes."""
         cleanup_called = {"value": False}
@@ -4908,6 +5120,48 @@ def test_prepend_instructions_custom_role():
     result = prepend_instructions_to_messages(messages, "Be concise.", role="developer")
     assert len(result) == 2
     assert result[0].role == "developer"
+
+
+def test_prepend_instructions_partial_dedup_preserves_order():
+    """Test that partially deduplicated instructions keep their relative order.
+
+    When only a prefix of the instructions is already present as leading
+    messages, the remaining instructions must still appear in their original
+    order after the matched prefix, not inverted in front of it.
+    """
+    from agent_framework._types import prepend_instructions_to_messages
+
+    messages = [
+        Message("system", ["First instruction"]),
+        Message("user", ["Hello"]),
+    ]
+    result = prepend_instructions_to_messages(messages, ["First instruction", "Second instruction"])
+
+    assert [message.text for message in result] == [
+        "First instruction",
+        "Second instruction",
+        "Hello",
+    ]
+    assert result[0] is messages[0]
+    assert result[2] is messages[1]
+
+
+def test_prepend_instructions_partial_dedup_no_match_keeps_prefix_behavior():
+    """Test that a non-matching leading message still yields a plain prepend."""
+    from agent_framework._types import prepend_instructions_to_messages
+
+    messages = [
+        Message("system", ["Different instruction"]),
+        Message("user", ["Hello"]),
+    ]
+    result = prepend_instructions_to_messages(messages, ["First instruction", "Second instruction"])
+
+    assert [message.text for message in result] == [
+        "First instruction",
+        "Second instruction",
+        "Different instruction",
+        "Hello",
+    ]
 
 
 # endregion

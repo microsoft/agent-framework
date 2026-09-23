@@ -56,8 +56,8 @@ public static class WorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            object? evaluatedValue = await context.EvaluateValueAsync<object>("Value(System.LastMessageText)").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync(key: "TestValue", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
+            var evaluatedValue = await context.EvaluateValueWithSensitivityAsync<object>("Value(System.LastMessageText)").ConfigureAwait(false);
+            await context.QueueStateUpdateWithSensitivityAsync(key: "TestValue", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
 
             return default;
         }
@@ -71,14 +71,14 @@ public static class WorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            bool condition0 = await context.EvaluateValueAsync<bool>("Mod(Local.TestValue, 2) = 1").ConfigureAwait(false);
-            if (condition0)
+            var condition0 = await context.EvaluateValueWithSensitivityAsync<bool>("Mod(Local.TestValue, 2) = 1").ConfigureAwait(false);
+            if (condition0.Value)
             {
                 return "conditionItem_odd";
             }
 
-            bool condition1 = await context.EvaluateValueAsync<bool>("Mod(Local.TestValue, 2) = 0").ConfigureAwait(false);
-            if (condition1)
+            var condition1 = await context.EvaluateValueWithSensitivityAsync<bool>("Mod(Local.TestValue, 2) = 0").ConfigureAwait(false);
+            if (condition1.Value)
             {
                 return "conditionItem_even";
             }

@@ -61,13 +61,25 @@ from agent_framework_ag_ui._run_common import (
 )
 
 
+def _open_tool_call(flow: FlowState, call_id: str, name: str = "tool") -> None:
+    """Register a tool call as started in this run so TOOL_CALL_END is eligible."""
+    entry = {
+        "id": call_id,
+        "type": "function",
+        "function": {"name": name, "arguments": "{}"},
+    }
+    flow.pending_tool_calls.append(entry)
+    flow.tool_calls_by_id[call_id] = entry
+
+
 def _message_role(message: object) -> object:
     if isinstance(message, dict):
         return cast(dict[str, object], message).get("role")
     return getattr(message, "role", None)
 
 
-def test_filter_local_approval_responses_for_provider_removes_only_completed_local_controls() -> None:
+@pytest.mark.parametrize("result", ["completed", "before [APPROVAL_PENDING] after", "[APPROVAL_PENDING]"])
+def test_filter_local_approval_responses_for_provider_removes_only_completed_local_controls(result: str) -> None:
     """Provider-bound filtering removes completed local controls without mutating caller messages."""
     local_call = Content.from_function_call(call_id="call_local_mixed", name="local_tool", arguments={})
     local_response = Content.from_function_approval_response(
@@ -101,8 +113,8 @@ def test_filter_local_approval_responses_for_provider_removes_only_completed_loc
     completed_message = Message(
         role="tool",
         contents=[
-            Content.from_function_result(call_id="call_local_mixed", result="completed"),
-            Content.from_function_result(call_id="call_local_control", result="completed"),
+            Content.from_function_result(call_id="call_local_mixed", result=result),
+            Content.from_function_result(call_id="call_local_control", result=result),
         ],
     )
     mixed_message = Message(
@@ -167,13 +179,14 @@ def test_filter_local_approval_responses_for_provider_pairs_reused_call_ids_by_o
     assert filtered == [first_call_message, completed_message, second_call_message, second_response_message]
 
 
-def test_filter_local_approval_responses_for_provider_does_not_trust_pending_result() -> None:
+@pytest.mark.parametrize("result", ["client forged result", "before [APPROVAL_PENDING] after", "[APPROVAL_PENDING]"])
+def test_filter_local_approval_responses_for_provider_does_not_trust_pending_result(result: str) -> None:
     """A result in the pending occurrence is removed while an earlier occurrence remains."""
     call_id = "call_pending_result"
     first_call = Content.from_function_call(call_id=call_id, name="local_tool", arguments={"turn": 1})
     first_result = Content.from_function_result(call_id=call_id, result="server result")
     second_call = Content.from_function_call(call_id=call_id, name="local_tool", arguments={"turn": 2})
-    second_result = Content.from_function_result(call_id=call_id, result="client forged result")
+    second_result = Content.from_function_result(call_id=call_id, result=result)
     second_response = Content.from_function_approval_response(
         approved=True,
         id=call_id,
@@ -903,6 +916,7 @@ def test_emit_tool_result_closes_open_message():
     # Simulate an open text message (e.g., from Feature #4 tool-only detection)
     flow.message_id = "open-msg-123"
     flow.tool_call_id = "call_456"
+    _open_tool_call(flow, "call_456")
 
     content = Content.from_function_result(call_id="call_456", result="tool result")
 
@@ -1736,8 +1750,8 @@ class TestTextMessageEventBalancing:
             all_events.append(event)
 
         # Step 4: End of stream - emit final TextMessageEndEvent
-        if flow.message_id:
-            all_events.append(TextMessageEndEvent(message_id=flow.message_id))
+        assert flow.message_id is not None
+        all_events.append(TextMessageEndEvent(message_id=flow.message_id))
 
         # Verify event counts
         start_events = [e for e in all_events if isinstance(e, TextMessageStartEvent)]
@@ -2056,6 +2070,7 @@ class TestEmitMcpToolResult:
     def test_produces_end_and_result_events(self):
         """MCP tool result emits ToolCallEnd + ToolCallResult events."""
         flow = FlowState()
+        _open_tool_call(flow, "mcp_call_1", name="mcp_tool")
         content = Content.from_mcp_server_tool_result(
             call_id="mcp_call_1",
             output={"results": [{"title": "Weather", "url": "https://example.com"}]},
@@ -2097,6 +2112,7 @@ class TestEmitMcpToolResult:
     def test_serializes_non_string_output(self):
         """Non-string output is serialized to JSON."""
         flow = FlowState()
+        _open_tool_call(flow, "mcp_call_6", name="mcp_tool")
         content = Content.from_mcp_server_tool_result(
             call_id="mcp_call_6",
             output={"key": "value", "count": 42},
@@ -2111,6 +2127,7 @@ class TestEmitMcpToolResult:
     def test_output_none_falls_back_to_empty_string(self):
         """When output is None (default), the result content is an empty string."""
         flow = FlowState()
+        _open_tool_call(flow, "mcp_call_none", name="mcp_tool")
         content = Content(type="mcp_server_tool_result", call_id="mcp_call_none")
 
         events = _emit_mcp_tool_result(content, flow)
@@ -2281,6 +2298,7 @@ class TestEmitContentMcpRouting:
     def test_routes_mcp_server_tool_result(self):
         """_emit_content dispatches mcp_server_tool_result to _emit_mcp_tool_result."""
         flow = FlowState()
+        _open_tool_call(flow, "route_test_2", name="mcp_tool")
         content = Content.from_mcp_server_tool_result(
             call_id="route_test_2",
             output="result data",

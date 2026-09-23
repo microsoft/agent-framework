@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Purview.Models.Common;
@@ -21,6 +22,11 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
     private readonly IPurviewClient _purviewClient;
     private readonly ICacheProvider _cacheProvider;
     private readonly IChannelHandler _channelHandler;
+
+    /// <summary>
+    /// The characters that terminate the authority of a URL, being the start of the path, query or fragment.
+    /// </summary>
+    private static readonly char[] s_authorityDelimiters = ['/', '?', '#'];
 
     /// <summary>
     /// Create a new instance of <see cref="ScopedContentProcessor"/>.
@@ -52,12 +58,7 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
                 foreach (DlpActionInfo policyAction in processContentResponse.PolicyActions)
                 {
                     // We need to process all data before blocking, so set the flag and return it outside of this loop.
-                    if (policyAction.Action == DlpAction.BlockAccess)
-                    {
-                        shouldBlock = true;
-                    }
-
-                    if (policyAction.RestrictionAction == RestrictionAction.Block)
+                    if (IsBlockingAction(policyAction))
                     {
                         shouldBlock = true;
                     }
@@ -66,6 +67,85 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
         }
 
         return (shouldBlock, resolvedUserId);
+    }
+
+    /// <summary>
+    /// Whether a policy action means the content must not be released.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="DlpAction.RestrictAccess"/> is not blocking on its own: it carries a separate
+    /// <see cref="RestrictionAction"/> that selects the enforcement mode, which may be
+    /// <see cref="RestrictionAction.Audit"/>, <see cref="RestrictionAction.Warn"/> or
+    /// <see cref="RestrictionAction.Allow"/> as well as <see cref="RestrictionAction.Block"/>. Only an
+    /// explicit <see cref="RestrictionAction.Block"/> mode withholds the content.
+    /// </remarks>
+    /// <param name="actionInfo">The policy action to inspect.</param>
+    /// <returns><see langword="true"/> when the action blocks the content.</returns>
+    private static bool IsBlockingAction(DlpActionInfo actionInfo)
+        => actionInfo.Action == DlpAction.BlockAccess
+            || actionInfo.RestrictionAction == RestrictionAction.Block;
+
+    /// <summary>
+    /// Filter policy actions down to the ones that block.
+    /// </summary>
+    /// <param name="actionInfos">The policy actions to filter.</param>
+    /// <returns>The blocking subset of <paramref name="actionInfos"/>.</returns>
+    private static List<DlpActionInfo> GetBlockingActions(List<DlpActionInfo> actionInfos)
+    {
+        List<DlpActionInfo> blockingActions = [];
+
+        foreach (DlpActionInfo actionInfo in actionInfos)
+        {
+            if (IsBlockingAction(actionInfo))
+            {
+                blockingActions.Add(actionInfo);
+            }
+        }
+
+        return blockingActions;
+    }
+
+    /// <summary>
+    /// Normalize a policy location value for comparison, according to its location type.
+    /// </summary>
+    /// <remarks>
+    /// Application ids (GUIDs) and domain names are case-insensitive, so those fold whole. URL values
+    /// are not. Only the scheme and the host are case-insensitive; the userinfo, path, query and
+    /// fragment are all case-sensitive, so folding a URL whole would let a scope for
+    /// <c>contoso.com/public</c> match a request for <c>contoso.com/Public</c>. Location types that are
+    /// not recognized fold whole, which matches more scopes rather than fewer.
+    /// </remarks>
+    /// <param name="locationType">The location type segment, for example <c>policyLocationUrl</c>.</param>
+    /// <param name="value">The location value to normalize.</param>
+    /// <returns>The value in its comparable form.</returns>
+    private static string NormalizeLocationValue(string locationType, string value)
+    {
+        if (!locationType.EndsWith("url", StringComparison.OrdinalIgnoreCase))
+        {
+            return value.ToUpperInvariant();
+        }
+
+        int schemeEnd = value.IndexOf("://", StringComparison.Ordinal);
+        int authorityStart = schemeEnd >= 0 ? schemeEnd + 3 : 0;
+
+        // The authority ends at the first path, query or fragment delimiter, whichever comes first.
+        int authorityEnd = value.IndexOfAny(s_authorityDelimiters, authorityStart);
+        if (authorityEnd < 0)
+        {
+            authorityEnd = value.Length;
+        }
+
+        // Credentials are case-sensitive, so only the host half of the authority folds.
+        string authority = value.Substring(authorityStart, authorityEnd - authorityStart);
+        int userInfoEnd = authority.LastIndexOf('@');
+        string userInfo = userInfoEnd >= 0 ? authority.Substring(0, userInfoEnd + 1) : string.Empty;
+        string host = userInfoEnd >= 0 ? authority.Substring(userInfoEnd + 1) : authority;
+
+        return string.Concat(
+            value.Substring(0, authorityStart).ToUpperInvariant(),
+            userInfo,
+            host.ToUpperInvariant(),
+            value.Substring(authorityEnd));
     }
 
     private static bool TryGetUserIdFromPayload(IEnumerable<ChatMessage> messages, out string? userId)
@@ -115,12 +195,9 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
         foreach (ChatMessage message in messages)
         {
             string messageId = message.MessageId ?? Guid.NewGuid().ToString();
-            ContentBase content = new PurviewTextContent(message.Text);
             string correlationId = (sessionId ?? Guid.NewGuid().ToString()) + "@AF";
-            ProcessConversationMetadata conversationMetadata = new(content, messageId, false, $"Agent Framework Message {messageId}", correlationId)
-            {
-                SequenceNumber = DateTime.UtcNow.Ticks,
-            };
+            long baseSequenceNumber = DateTime.UtcNow.Ticks;
+            List<ContentBase> mappedContents = MapMessageContents(message);
             ActivityMetadata activityMetadata = new(activity);
             PolicyLocation policyLocation;
 
@@ -158,18 +235,125 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
                     OperatingSystemVersion = "Unknown"
                 }
             };
-            ContentToProcess contentToProcess = new([conversationMetadata], activityMetadata, deviceMetadata, integratedAppMetadata, protectedAppMetadata);
 
             if (string.IsNullOrEmpty(resolvedUserId))
             {
                 throw new PurviewRequestException("No user id provided or inferred for Purview request. Please provide an Entra user id in each message, pass a user id to the processor, or configure the TokenCredential to authenticate to an Entra user.");
             }
 
-            ProcessContentRequest pcRequest = new(contentToProcess, resolvedUserId, tenantId);
-            pcRequests.Add(pcRequest);
+            for (int entryIndex = 0; entryIndex < mappedContents.Count; entryIndex++)
+            {
+                string identifier = entryIndex == 0 ? messageId : $"{messageId}-{entryIndex}";
+                ProcessConversationMetadata contentEntry = new(mappedContents[entryIndex], identifier, false, $"Agent Framework Message {messageId}", correlationId)
+                {
+                    SequenceNumber = baseSequenceNumber + entryIndex,
+                };
+                ContentToProcess contentToProcess = new(contentEntry, activityMetadata, deviceMetadata, integratedAppMetadata, protectedAppMetadata);
+                ProcessContentRequest pcRequest = new(contentToProcess, resolvedUserId, tenantId);
+                pcRequests.Add(pcRequest);
+            }
         }
 
         return pcRequests;
+    }
+
+    /// <summary>
+    /// Map every content item of a message onto the Purview content type that fits it.
+    /// </summary>
+    /// <param name="message">The message whose contents should be evaluated.</param>
+    /// <returns>One content item per evaluable <see cref="AIContent"/>.</returns>
+    /// <remarks>
+    /// <see cref="UsageContent"/> and content with no data are skipped because they carry no user
+    /// data. Everything else is mapped to a real content item: submitting a message with part of
+    /// its payload unevaluated is a policy bypass.
+    /// </remarks>
+    private static List<ContentBase> MapMessageContents(ChatMessage message)
+    {
+        List<ContentBase> mapped = [];
+
+        foreach (AIContent content in message.Contents)
+        {
+            ContentBase? purviewContent = MapContent(content);
+            if (purviewContent != null)
+            {
+                mapped.Add(purviewContent);
+            }
+        }
+
+        return mapped;
+    }
+
+    /// <summary>
+    /// Map a single <see cref="AIContent"/> onto a Purview content item.
+    /// </summary>
+    /// <param name="content">The content item to map.</param>
+    /// <returns>The Purview content item, or <see langword="null"/> when the content carries no user data.</returns>
+    private static ContentBase? MapContent(AIContent content)
+    {
+        switch (content)
+        {
+            case UsageContent:
+                // Telemetry only; there is nothing for DLP to classify.
+                return null;
+
+            case TextContent { Text: null or "" }:
+            case TextReasoningContent { Text: null or "" }:
+            case DataContent { Data.IsEmpty: true }:
+                // Empty data is skipped because the Graph APIs do not support it. A request with
+                // empty data cannot violate content policies because it contains no content.
+                return null;
+
+            case TextContent textContent:
+                return new PurviewTextContent(textContent.Text);
+
+            case TextReasoningContent reasoningContent:
+                return new PurviewTextContent(reasoningContent.Text);
+
+            case DataContent dataContent:
+                return new PurviewBinaryContent(dataContent.Data.ToArray());
+
+            case UriContent uriContent:
+                return new PurviewTextContent($"{uriContent.MediaType} {uriContent.Uri}");
+
+            case FunctionCallContent functionCallContent:
+                return new PurviewTextContent(SerializeForEvaluation(functionCallContent));
+
+            case FunctionResultContent functionResultContent:
+                return new PurviewTextContent(SerializeForEvaluation(functionResultContent));
+
+            case ErrorContent errorContent:
+                return new PurviewTextContent(errorContent.Message ?? string.Empty);
+
+            default:
+                // Catch-all for every remaining content type, including ones added after this code
+                // was written. Serializing is always safe; skipping would be a policy bypass.
+                return new PurviewTextContent(SerializeForEvaluation(content));
+        }
+    }
+
+    /// <summary>
+    /// Render a content item as text so Purview can classify everything it carries.
+    /// </summary>
+    /// <param name="content">The content item to render.</param>
+    /// <returns>The text representation of <paramref name="content"/>.</returns>
+    /// <exception cref="PurviewRequestException">The content could not be rendered for evaluation.</exception>
+    /// <remarks>
+    /// The type info is resolved from the concrete runtime type rather than <see cref="AIContent"/>.
+    /// Polymorphic serialization through the base type throws for any subclass the abstractions do not
+    /// declare, which would push third-party and future content types onto the failure path.
+    /// </remarks>
+    private static string SerializeForEvaluation(AIContent content)
+    {
+        try
+        {
+            return JsonSerializer.Serialize(content, AIJsonUtilities.DefaultOptions.GetTypeInfo(content.GetType()));
+        }
+        catch (Exception ex) when (ex is NotSupportedException or InvalidOperationException or JsonException)
+        {
+            // Fail closed. Falling back to ToString() would submit a bare type name in place of the
+            // payload, so the content would clear policy without ever having been evaluated.
+            throw new PurviewRequestException($"Unable to serialize content of type '{content.GetType()}' for Purview policy evaluation. Content cannot be evaluated and will not be released.", ex);
+        }
     }
 
     /// <summary>
@@ -228,12 +412,18 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
 
         if (shouldProcess)
         {
-            pcRequest.ProcessInline = executionMode == ExecutionMode.EvaluateInline;
+            pcRequest.ProcessInline = executionMode != ExecutionMode.EvaluateOffline;
 
             if (executionMode == ExecutionMode.EvaluateOffline)
             {
                 this._channelHandler.QueueJob(new ProcessContentJob(pcRequest));
-                return new ProcessContentResponse();
+
+                // Offline evaluation is asynchronous, but an explicit block action already known
+                // from the cached scopes must still be enforced rather than discarded.
+                List<DlpActionInfo> blockingActions = GetBlockingActions(dlpActions);
+                return blockingActions.Count > 0
+                    ? new ProcessContentResponse { PolicyActions = blockingActions }
+                    : new ProcessContentResponse();
             }
 
             return await this.CallProcessContentAsync(pcRequest, cacheKey, dlpActions, cancellationToken).ConfigureAwait(false);
@@ -327,7 +517,8 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
 
             foreach (var location in scope.Locations ?? Array.Empty<PolicyLocation>())
             {
-                if (location.DataType.EndsWith(locationType, StringComparison.OrdinalIgnoreCase) && location.Value.Equals(locationValue, StringComparison.OrdinalIgnoreCase))
+                if (location.DataType.EndsWith(locationType, StringComparison.OrdinalIgnoreCase)
+                    && NormalizeLocationValue(locationType, location.Value).Equals(NormalizeLocationValue(locationType, locationValue), StringComparison.Ordinal))
                 {
                     locationMatch = true;
                     break;
@@ -338,7 +529,9 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
             {
                 shouldProcess = true;
 
-                if (scope.ExecutionMode == ExecutionMode.EvaluateInline)
+                // Only an explicitly offline scope may skip inline evaluation. ExecutionMode is an
+                // evolvable enum, so any unrecognised value is upgraded to inline (fail closed).
+                if (scope.ExecutionMode != ExecutionMode.EvaluateOffline)
                 {
                     executionMode = ExecutionMode.EvaluateInline;
                 }

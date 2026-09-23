@@ -201,6 +201,24 @@ def test_magentic_builder_marks_feature_with_custom_manager() -> None:
     assert int(token.split(".", 1)[1], 16) & (1 << FeatureIndex.ORCHESTRATION_MAGENTIC)
 
 
+def test_magentic_builder_uses_stable_default_and_custom_name() -> None:
+    default_manager = FakeManager()
+    custom_manager = FakeManager()
+
+    default_workflow = MagenticBuilder(
+        participants=[DummyExec(name=default_manager.next_speaker_name)],
+        manager=default_manager,
+    ).build()
+    custom_workflow = MagenticBuilder(
+        name="custom-magentic",
+        participants=[DummyExec(name=custom_manager.next_speaker_name)],
+        manager=custom_manager,
+    ).build()
+
+    assert default_workflow.name == "Magentic"
+    assert custom_workflow.name == "custom-magentic"
+
+
 async def test_magentic_builder_returns_workflow_and_runs() -> None:
     manager = FakeManager()
     agent = StubAgent(manager.next_speaker_name, "first draft")
@@ -429,6 +447,7 @@ async def test_magentic_checkpoint_resume_round_trip():
         manager=manager1,
     ).build()
 
+    assert wf.name == "Magentic"
     task_text = "checkpoint task"
     req_event: WorkflowEvent | None = None
     async for ev in wf.run(task_text, stream=True):
@@ -1083,18 +1102,120 @@ async def test_magentic_with_agent_factory():
     assert event_count > 0
 
 
-def test_magentic_agent_factory_uses_default_max_stall_count() -> None:
+@pytest.mark.parametrize("use_agent_factory", [False, True])
+def test_magentic_manager_agent_uses_default_max_stall_count(use_agent_factory: bool) -> None:
     def agent_factory() -> SupportsAgentRun:
         return cast(SupportsAgentRun, StubManagerAgent())
 
     participant = StubAgent("agentA", "reply from agentA")
-    workflow = MagenticBuilder(participants=[participant], manager_agent_factory=agent_factory).build()
+    workflow = MagenticBuilder(
+        participants=[participant],
+        manager_agent=None if use_agent_factory else StubManagerAgent(),
+        manager_agent_factory=agent_factory if use_agent_factory else None,
+    ).build()
 
     orchestrator = next(e for e in workflow.executors.values() if isinstance(e, MagenticOrchestrator))
     manager = orchestrator._manager  # type: ignore[reportPrivateUsage]
 
     assert isinstance(manager, StandardMagenticManager)
     assert manager.max_stall_count == 3
+
+
+def test_magentic_manager_agent_reusable_builder() -> None:
+    agent = StubManagerAgent()
+    builder = MagenticBuilder(participants=[StubAgent("agentA", "reply")], manager_agent=agent)
+
+    assert builder._manager is None
+    workflow1 = builder.build()
+    workflow2 = builder.build()
+    orchestrator1 = next(e for e in workflow1.executors.values() if isinstance(e, MagenticOrchestrator))
+    orchestrator2 = next(e for e in workflow2.executors.values() if isinstance(e, MagenticOrchestrator))
+    manager1 = orchestrator1._manager
+    manager2 = orchestrator2._manager
+
+    assert isinstance(manager1, StandardMagenticManager)
+    assert isinstance(manager2, StandardMagenticManager)
+    assert manager1 is not manager2
+    assert manager1._agent is manager2._agent is agent
+    assert manager1.task_ledger is None
+    assert manager2.task_ledger is None
+
+
+def test_magentic_supplied_manager_reusable_builder_preserves_identity() -> None:
+    manager = FakeManager()
+    builder = MagenticBuilder(participants=[StubAgent("agentA", "reply")], manager=manager)
+
+    workflow1 = builder.build()
+    workflow2 = builder.build()
+    orchestrator1 = next(e for e in workflow1.executors.values() if isinstance(e, MagenticOrchestrator))
+    orchestrator2 = next(e for e in workflow2.executors.values() if isinstance(e, MagenticOrchestrator))
+
+    assert orchestrator1 is not orchestrator2
+    assert orchestrator1._manager is orchestrator2._manager is manager
+
+
+@pytest.mark.parametrize("use_agent_factory", [False, True])
+async def test_magentic_reusable_builder_keeps_interleaved_task_ledgers_separate(use_agent_factory: bool) -> None:
+    class RecordingChatClient(BaseChatClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.calls: list[list[Message]] = []
+
+        @override
+        def _inner_get_response(self, *, messages, stream, options, **kwargs):  # type: ignore[override]
+            self.calls.append(list(messages))
+
+            async def _get() -> ChatResponse:
+                return ChatResponse(messages=Message("assistant", [messages[-1].text]))
+
+            return _get()
+
+    client = RecordingChatClient()
+    agent = Agent(name="manager", client=client)
+    builder = MagenticBuilder(
+        participants=[StubAgent("agentA", "reply")],
+        manager_agent=None if use_agent_factory else agent,
+        manager_agent_factory=(lambda: agent) if use_agent_factory else None,
+        enable_plan_review=True,
+        task_ledger_facts_prompt="FACTS:{task}",
+        task_ledger_plan_prompt="PLAN",
+        task_ledger_facts_update_prompt="UPDATE:{task}:{old_facts}",
+        task_ledger_plan_update_prompt="REVISED PLAN",
+    )
+    workflow_a = builder.build()
+    workflow_b = builder.build()
+
+    events_a = [event async for event in workflow_a.run("A_ONLY", stream=True)]
+    events_b = [event async for event in workflow_b.run("B_ONLY", stream=True)]
+    review_a = next(event for event in events_a if event.type == "request_info")
+    review_b = next(event for event in events_b if event.type == "request_info")
+    assert isinstance(review_a.data, MagenticPlanReviewRequest)
+    assert isinstance(review_b.data, MagenticPlanReviewRequest)
+    assert len(client.calls) == 4
+
+    revised_events = [
+        event
+        async for event in workflow_a.run(
+            stream=True, responses={review_a.request_id: review_a.data.revise("Revise the plan")}
+        )
+    ]
+    assert len(client.calls) == 6
+    assert client.calls[4][-1].text == "UPDATE:A_ONLY:FACTS:A_ONLY"
+    assert all("B_ONLY" not in message.text for call in client.calls[4:] for message in call)
+    revised_review = next(event for event in revised_events if event.type == "request_info")
+    assert isinstance(revised_review.data, MagenticPlanReviewRequest)
+    assert "UPDATE:A_ONLY:FACTS:A_ONLY" in revised_review.data.plan.text
+    assert "B_ONLY" not in revised_review.data.plan.text
+
+    _ = [
+        event
+        async for event in workflow_b.run(
+            stream=True, responses={review_b.request_id: review_b.data.revise("Revise the plan")}
+        )
+    ]
+    assert len(client.calls) == 8
+    assert client.calls[6][-1].text == "UPDATE:B_ONLY:FACTS:B_ONLY"
+    assert all("A_ONLY" not in message.text for call in client.calls[6:] for message in call)
 
 
 async def test_magentic_manager_factory_reusable_builder():
@@ -1121,10 +1242,12 @@ async def test_magentic_manager_factory_reusable_builder():
     orchestrator1 = next(e for e in wf1.executors.values() if isinstance(e, MagenticOrchestrator))
     orchestrator2 = next(e for e in wf2.executors.values() if isinstance(e, MagenticOrchestrator))
     assert orchestrator1 is not orchestrator2
+    assert orchestrator1._manager is not orchestrator2._manager
 
 
-def test_magentic_agent_factory_with_standard_manager_options():
-    """Test that agent_factory properly passes through standard manager options."""
+@pytest.mark.parametrize("use_agent_factory", [False, True])
+def test_magentic_manager_agent_with_standard_manager_options(use_agent_factory: bool) -> None:
+    """Both manager agent configurations pass through standard manager options."""
     factory_call_count = 0
 
     def agent_factory() -> SupportsAgentRun:
@@ -1155,7 +1278,8 @@ def test_magentic_agent_factory_with_standard_manager_options():
     participant = StubAgent("agentA", "reply from agentA")
     workflow = MagenticBuilder(
         participants=[participant],
-        manager_agent_factory=agent_factory,
+        manager_agent=None if use_agent_factory else StubManagerAgent(),
+        manager_agent_factory=agent_factory if use_agent_factory else None,
         task_ledger=custom_task_ledger,
         max_stall_count=custom_max_stall_count,
         max_reset_count=custom_max_reset_count,
@@ -1170,7 +1294,7 @@ def test_magentic_agent_factory_with_standard_manager_options():
     ).build()
 
     # Factory should be called during build
-    assert factory_call_count == 1
+    assert factory_call_count == (1 if use_agent_factory else 0)
 
     # Get the orchestrator and verify the manager has the custom options
     orchestrator = next(e for e in workflow.executors.values() if isinstance(e, MagenticOrchestrator))

@@ -506,6 +506,13 @@ def _normalize_variable_path(variable: str) -> str:
 class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
     """Executor that invokes a Microsoft Foundry agent.
 
+    ``output.autoSend`` defaults to true and accepts a Boolean or a
+    ``=``-prefixed PowerFx Boolean expression, such as ``=Local.publishResult``.
+    Expressions use current state before each invocation, including resumed
+    external-loop turns. False suppresses automatic output, not invocation,
+    result storage or conversation history; later actions can explicitly emit
+    the stored results.
+
     This executor supports both Python-style and .NET-style YAML schemas:
 
     Python-style (simple):
@@ -615,8 +622,8 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
 
         return arguments, messages, external_loop_when, max_iterations
 
-    def _get_output_config(self) -> tuple[str | None, str | None, str | None, bool]:
-        """Parse output configuration.
+    def _get_output_config(self, state: DeclarativeWorkflowState) -> tuple[str | None, str | None, str | None, bool]:
+        """Parse output bindings and evaluate autoSend against the current state.
 
         Returns:
             Tuple of (messages var, responseObject var, resultProperty, autoSend)
@@ -637,7 +644,7 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
         property_val: Any = output_dict.get("property")
         property_var: str | None = str(property_val) if property_val is not None else None
         auto_send_val: Any = output_dict.get("autoSend", True)
-        auto_send: bool = bool(auto_send_val)
+        auto_send: bool = bool(state.eval_if_expression(auto_send_val))
 
         return messages_var, response_obj_var, property_var or result_property, auto_send
 
@@ -675,6 +682,12 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
     async def _build_input_text(self, state: Any, arguments: dict[str, Any], messages_expr: Any) -> str:
         """Build input text from arguments and messages.
 
+        ``input.arguments`` are formatted as ``key: value`` lines (same shape as the
+        multi-value ``Workflow.Inputs`` fallback) and included in the text sent to
+        ``agent.run()``. Python's agent ``run()`` has no separate structured-inputs
+        channel, so arguments must be folded into this text rather than discarded
+        (#7902).
+
         Args:
             state: Workflow state for expression evaluation
             arguments: Input arguments to evaluate
@@ -683,55 +696,61 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
         Returns:
             Input text for the agent
         """
-        # Evaluate arguments
         evaluated_args: dict[str, Any] = {}
         for key, value in arguments.items():
             evaluated_args[key] = state.eval_if_expression(value)
+        args_text = "\n".join(f"{k}: {v}" for k, v in evaluated_args.items()) if evaluated_args else ""
 
-        # Evaluate messages/input
+        messages_text = ""
         if messages_expr:
             evaluated_input: Any = state.eval_if_expression(messages_expr)
             if isinstance(evaluated_input, str):
-                return evaluated_input
-            if isinstance(evaluated_input, list) and evaluated_input:
+                messages_text = evaluated_input
+            elif isinstance(evaluated_input, list) and evaluated_input:
                 # Extract text from last message
                 last: Any = evaluated_input[-1]  # type: ignore
                 if isinstance(last, str):
-                    return last
-                if isinstance(last, dict):
+                    messages_text = last
+                elif isinstance(last, dict):
                     last_dict = cast(dict[str, Any], last)
                     content_val: Any = last_dict.get("content", last_dict.get("text", ""))
-                    return str(content_val) if content_val else ""
-                if last is not None and hasattr(last, "text"):  # type: ignore
-                    return str(getattr(last, "text", ""))  # type: ignore
-            if evaluated_input:
-                return str(cast(Any, evaluated_input))
-            return ""
+                    messages_text = str(content_val) if content_val else ""
+                elif last is not None and hasattr(last, "text"):  # type: ignore
+                    messages_text = str(getattr(last, "text", ""))  # type: ignore
+            elif evaluated_input:
+                messages_text = str(cast(Any, evaluated_input))
+        elif not evaluated_args:
+            # Fallback chain for implicit input (like .NET conversationId pattern):
+            # Only when neither explicit messages nor explicit arguments are present.
+            # Otherwise arguments-only actions (e.g. customer-support TicketingAgent)
+            # would append System.LastMessage (prior agent's response) or
+            # Workflow.Inputs to their structured fields in chained workflows.
+            # 1. Local.input / Local.userInput (explicit turn state)
+            # 2. System.LastMessage.Text (previous agent's response)
+            # 3. Workflow.Inputs (first agent gets workflow inputs)
+            messages_text = str(state.get("Local.input") or state.get("Local.userInput") or "")
+            if not messages_text:
+                # Try System.LastMessage.Text (used by external loop and agent chaining)
+                last_message: Any = state.get("System.LastMessage")
+                if isinstance(last_message, dict):
+                    last_msg_dict = cast(dict[str, Any], last_message)
+                    text_val: Any = last_msg_dict.get("Text", "")
+                    messages_text = str(text_val) if text_val else ""
+            if not messages_text:
+                # Fall back to workflow inputs (for first agent in chain)
+                inputs: Any = state.get("Workflow.Inputs")
+                if isinstance(inputs, dict):
+                    inputs_dict = cast(dict[str, Any], inputs)
+                    # If single input, use its value directly
+                    if len(inputs_dict) == 1:
+                        messages_text = str(next(iter(inputs_dict.values())))
+                    else:
+                        # Multiple inputs - format as key: value pairs
+                        messages_text = "\n".join(f"{k}: {v}" for k, v in inputs_dict.items())
 
-        # Fallback chain for implicit input (like .NET conversationId pattern):
-        # 1. Local.input / Local.userInput (explicit turn state)
-        # 2. System.LastMessage.Text (previous agent's response)
-        # 3. Workflow.Inputs (first agent gets workflow inputs)
-        input_text: str = str(state.get("Local.input") or state.get("Local.userInput") or "")
-        if not input_text:
-            # Try System.LastMessage.Text (used by external loop and agent chaining)
-            last_message: Any = state.get("System.LastMessage")
-            if isinstance(last_message, dict):
-                last_msg_dict = cast(dict[str, Any], last_message)
-                text_val: Any = last_msg_dict.get("Text", "")
-                input_text = str(text_val) if text_val else ""
-        if not input_text:
-            # Fall back to workflow inputs (for first agent in chain)
-            inputs: Any = state.get("Workflow.Inputs")
-            if isinstance(inputs, dict):
-                inputs_dict = cast(dict[str, Any], inputs)
-                # If single input, use its value directly
-                if len(inputs_dict) == 1:
-                    input_text = str(next(iter(inputs_dict.values())))
-                else:
-                    # Multiple inputs - format as key: value pairs
-                    input_text = "\n".join(f"{k}: {v}" for k, v in inputs_dict.items())
-        return input_text if input_text else ""
+        if args_text and messages_text:
+            return f"{args_text}\n{messages_text}"
+        return args_text or messages_text or ""
 
     def _get_agent(self, agent_name: str, ctx: WorkflowContext[Any, Any]) -> Any:
         """Get agent from registry (sync helper for response handler)."""
@@ -788,16 +807,16 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
             _validate_conversation_history(messages_for_agent, agent_name)
 
         # Retrieve kwargs passed to workflow.run() so they propagate to agent tools
-        from agent_framework._workflows._const import WORKFLOW_RUN_KWARGS_KEY
+        from agent_framework._workflows._agent_utils import prepare_executor_run_kwargs
+        from agent_framework._workflows._const import RESOLVED_WORKFLOW_RUN_KWARGS_KEY, WORKFLOW_RUN_KWARGS_KEY
 
-        run_kwargs: dict[str, Any] = ctx.get_state(WORKFLOW_RUN_KWARGS_KEY, {})
-        options: dict[str, Any] | None = None
-        if run_kwargs:
-            # Merge caller-provided options to avoid duplicate keyword argument
-            options = dict(run_kwargs.get("options") or {})
-            options["additional_function_arguments"] = run_kwargs
-            # Exclude 'options' from splat to avoid TypeError on duplicate keyword
-            run_kwargs = {k: v for k, v in run_kwargs.items() if k != "options"}
+        run_kwargs = prepare_executor_run_kwargs(
+            self.id,
+            ctx.get_state(WORKFLOW_RUN_KWARGS_KEY, {}),
+            ctx.get_state(RESOLVED_WORKFLOW_RUN_KWARGS_KEY),
+        )
+        options = run_kwargs.pop("options", None)
+        run_kwargs = {k: v for k, v in run_kwargs.items() if not k.startswith("_")}
 
         # Use run() method to get properly structured messages (including tool calls and results)
         # This is critical for multi-turn conversations where tool calls must be followed
@@ -913,7 +932,7 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
         logger.debug("handle_action: starting agent '%s'", agent_name)
 
         arguments, messages_expr, external_loop_when, max_iterations = self._get_input_config()
-        messages_var, response_obj_var, result_property, auto_send = self._get_output_config()
+        messages_var, response_obj_var, result_property, auto_send = self._get_output_config(state)
 
         # Get conversation-specific messages path if conversationId is specified
         conversation_id_expr = self._get_conversation_id()
@@ -1083,6 +1102,9 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
                 f"Agent '{agent_name}' invocation failed: not found during loop resumption"
             )
 
+        _, _, _, auto_send = self._get_output_config(state)
+        loop_state.auto_send = auto_send
+
         try:
             accumulated_response, all_messages, tool_calls = await self._invoke_agent_and_store_results(
                 agent=agent,
@@ -1093,7 +1115,7 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
                 messages_var=loop_state.messages_var,
                 response_obj_var=loop_state.response_obj_var,
                 result_property=loop_state.result_property,
-                auto_send=loop_state.auto_send,
+                auto_send=auto_send,
                 messages_path=loop_state.messages_path,
             )
         except (AgentInvalidRequestException, AgentInvalidResponseException):

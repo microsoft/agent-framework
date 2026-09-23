@@ -31,7 +31,7 @@ import os
 import re
 import sys
 import uuid
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal as _Decimal
 from enum import Enum
@@ -44,6 +44,9 @@ from agent_framework import (
     WorkflowContext,
 )
 from agent_framework._workflows._state import State
+
+from ._errors import DeclarativeWorkflowError
+from ._powerfx_limits import _PowerFxStateBudget, _validate_powerfx_state  # pyright: ignore[reportPrivateUsage]
 
 try:
     from powerfx import Engine
@@ -65,6 +68,73 @@ _ENV_REFERENCE_RE = re.compile(r"\bEnv\.([A-Za-z_][A-Za-z0-9_]*)")
 
 # Allowed identifier shape for object-attribute steps in declarative state paths
 _SAFE_PATH_SEGMENT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
+
+
+def _skip_powerfx_opaque_token(formula: str, start: int) -> int:
+    """Return the end of an ordinary quoted token or comment, or start if neither."""
+    quote = formula[start]
+    if quote in ('"', "'"):
+        pos = start + 1
+        while pos < len(formula):
+            if formula[pos] == quote:
+                if pos + 1 < len(formula) and formula[pos + 1] == quote:
+                    pos += 2
+                    continue
+                return pos + 1
+            pos += 1
+        return pos
+    if formula.startswith("//", start):
+        pos = start + 2
+        while pos < len(formula) and formula[pos] not in "\r\n":
+            pos += 1
+        return pos
+    if formula.startswith("/*", start):
+        end = formula.find("*/", start + 2)
+        return len(formula) if end == -1 else end + 2
+    return start
+
+
+def _iter_powerfx_expression_indices(formula: str) -> Iterator[int]:
+    """Yield code positions, excluding literals/comments but including interpolation expressions."""
+    # None denotes interpolated text; integers track record braces in expression sections.
+    scopes: list[int | None] = [0]
+    cursor = 0
+    while cursor < len(formula):
+        depth = scopes[-1]
+        char = formula[cursor]
+        if depth is None:
+            if formula.startswith(('""', "{{", "}}"), cursor):
+                cursor += 2
+                continue
+            if char == "{":
+                scopes.append(0)
+            elif char == '"':
+                scopes.pop()
+            cursor += 1
+            continue
+
+        if formula.startswith('$"', cursor):
+            scopes.append(None)
+            cursor += 2
+            continue
+
+        token_end = _skip_powerfx_opaque_token(formula, cursor)
+        if token_end != cursor:
+            cursor = token_end
+            continue
+
+        if char == "{":
+            scopes[-1] = depth + 1
+        elif char == "}":
+            if depth > 0:
+                scopes[-1] = depth - 1
+            elif len(scopes) > 1:
+                scopes.pop()
+                cursor += 1
+                continue
+
+        yield cursor
+        cursor += 1
 
 
 @dataclass(frozen=True)
@@ -100,6 +170,8 @@ class DeclarativeEnvConfig:
         # contents of ``values`` / ``referenced_names``: caller mutations
         # to the original objects after construction cannot leak into
         # ``resolve()``.
+        _validate_powerfx_state(self.values)
+        _validate_powerfx_state(self.referenced_names)
         object.__setattr__(self, "values", MappingProxyType(dict(self.values)))
         object.__setattr__(self, "referenced_names", frozenset(self.referenced_names))
 
@@ -112,6 +184,8 @@ class DeclarativeEnvConfig:
         unrelated environment variables never enter the PowerFx scope.
         Configuration values always win over the environment fallback.
         """
+        _validate_powerfx_state(self.values)
+        _validate_powerfx_state(self.referenced_names)
         resolved = {name: str(value) for name, value in self.values.items()}
         if self.restrict_to_configuration:
             return resolved
@@ -130,6 +204,10 @@ def discover_env_references(node: Any) -> set[str]:
     happen to mention ``Env.SOMETHING`` as plain text, the scan only inspects
     strings that begin with ``=`` (PowerFx expression marker, matching the
     convention enforced by :meth:`DeclarativeWorkflowState.eval`).
+    Shared containers are scanned once by identity without Python recursion.
+    Cyclic mappings and lists are rejected rather than silently skipped.
+    This avoids repeated container traversal, but does not impose a definition-size,
+    depth, parsing-time, or execution budget.
 
     Args:
         node: A parsed workflow definition (typically the dict produced by
@@ -138,23 +216,43 @@ def discover_env_references(node: Any) -> set[str]:
     Returns:
         The set of ``Env`` identifier names referenced in PowerFx
         expressions inside ``node``.
+
+    Raises:
+        DeclarativeWorkflowError: If the definition contains a mapping/list cycle.
     """
     names: set[str] = set()
+    active: set[int] = set()
+    # Retain containers so their identities cannot be reused during the walk.
+    visited: dict[int, Mapping[Any, Any] | list[Any]] = {}
+    stack: list[tuple[int | None, Iterator[Any]]] = [(None, iter((node,)))]
 
-    def visit(value: Any) -> None:
+    while stack:
+        parent_id, children = stack[-1]
+        try:
+            value = next(children)
+        except StopIteration:
+            stack.pop()
+            if parent_id is not None:
+                active.remove(parent_id)
+            continue
         if isinstance(value, str):
             if value.startswith("="):
                 names.update(_ENV_REFERENCE_RE.findall(value))
-            return
-        if isinstance(value, Mapping):
-            for inner in cast(Mapping[Any, Any], value).values():
-                visit(inner)
-            return
-        if isinstance(value, list):
-            for item in cast(list[Any], value):
-                visit(item)
+            continue
+        if not isinstance(value, (Mapping, list)):
+            continue
 
-    visit(node)
+        container = cast(Mapping[Any, Any] | list[Any], value)
+        container_id = id(container)
+        if container_id in active:
+            raise DeclarativeWorkflowError("Cyclic mappings or lists are not supported in workflow definitions.")
+        if container_id in visited:
+            continue
+        visited[container_id] = container
+        active.add(container_id)
+        children = iter(container.values()) if isinstance(container, Mapping) else iter(container)
+        stack.append((container_id, children))
+
     return names
 
 
@@ -221,10 +319,16 @@ def _make_powerfx_safe(value: Any) -> Any:
 
     Returns:
         A PowerFx-safe representation of the value
-    """
-    if value is None:
-        return value
 
+    Raises:
+        ValueError: If the input or converted symbols exceed the state budget.
+    """
+    _validate_powerfx_state(value)
+    return _convert_powerfx_value(value, _PowerFxStateBudget(), 0)
+
+
+def _convert_powerfx_value(value: Any, budget: _PowerFxStateBudget, depth: int) -> Any:
+    """Convert an already bounded value without restarting its traversal budget."""
     # Enum coercion must run BEFORE the primitive type check: many MAF
     # enums (e.g. MessageRole) are ``str``-subclass enums, so they pass
     # ``isinstance(v, str)`` but pythonnet refuses to convert them to
@@ -233,25 +337,27 @@ def _make_powerfx_safe(value: Any) -> Any:
     # to the underlying value (or its string form) so PowerFx sees a
     # plain ``str``/``int``.
     if isinstance(value, Enum):
-        return _make_powerfx_safe(value.value)
+        return _convert_powerfx_value(value.value, budget, depth)
 
+    if not isinstance(value, (*_POWERFX_SAFE_TYPES, dict, list)):
+        if hasattr(value, "__dict__"):
+            return _convert_powerfx_value(vars(value), budget, depth)
+        value = str(value)
+
+    budget.consume(value, depth)
     if isinstance(value, _POWERFX_SAFE_TYPES):
         return value
 
     if isinstance(value, dict):
         value_dict = cast(Mapping[Any, Any], value)
-        return {str(k): _make_powerfx_safe(v) for k, v in value_dict.items()}
+        result: dict[str, Any] = {}
+        for key, member in value_dict.items():
+            name = str(key)
+            budget.consume(name, depth + 1)
+            result[name] = _convert_powerfx_value(member, budget, depth + 1)
+        return result
 
-    if isinstance(value, list):
-        value_list = cast(list[Any], value)
-        return [_make_powerfx_safe(item) for item in value_list]
-
-    # Try to convert objects with __dict__ or dataclass-style attributes
-    if hasattr(value, "__dict__"):
-        return _make_powerfx_safe(vars(value))
-
-    # For other objects, try to convert to string representation
-    return str(value)
+    return [_convert_powerfx_value(item, budget, depth + 1) for item in cast(list[Any], value)]
 
 
 class DeclarativeWorkflowState:
@@ -291,6 +397,7 @@ class DeclarativeWorkflowState:
         Args:
             inputs: Initial workflow inputs (become Workflow.Inputs.*)
         """
+        _validate_powerfx_state(inputs)
         conversation_id = str(uuid.uuid4())
         state_data: DeclarativeStateData = {
             "Inputs": dict(inputs) if inputs else {},
@@ -309,10 +416,11 @@ class DeclarativeWorkflowState:
             "Conversation": {"messages": [], "history": []},
             "Custom": {},
         }
-        self._state.set(DECLARATIVE_STATE_KEY, state_data)
+        self.set_state_data(state_data)
 
     def get_state_data(self) -> DeclarativeStateData:
         """Get the full state data dict from state."""
+        self._state._validate(DECLARATIVE_STATE_KEY, _validate_powerfx_state)  # pyright: ignore[reportPrivateUsage]
         result = self._state.get(DECLARATIVE_STATE_KEY)
         if result is None:
             # Initialize if not present
@@ -328,10 +436,12 @@ class DeclarativeWorkflowState:
         scenarios), the start executor needs to avoid calling initialize()
         and clobbering the prior turn's Conversation/Local/System data.
         """
+        self._state._validate(DECLARATIVE_STATE_KEY, _validate_powerfx_state)  # pyright: ignore[reportPrivateUsage]
         return self._state.get(DECLARATIVE_STATE_KEY) is not None
 
     def set_state_data(self, data: DeclarativeStateData) -> None:
         """Set the full state data dict in state."""
+        _validate_powerfx_state(data)
         self._state.set(DECLARATIVE_STATE_KEY, data)
 
     def get(self, path: str, default: Any = None) -> Any:
@@ -524,6 +634,8 @@ class DeclarativeWorkflowState:
         Raises:
             RuntimeError: If the powerfx package is not installed and the
                 expression requires PowerFx evaluation.
+            ValueError: If state copying or symbol conversion exceeds the
+                PowerFx state budget.
         """
         if not expression:
             return expression
@@ -667,11 +779,11 @@ class DeclarativeWorkflowState:
         When they appear nested inside other functions (e.g., Upper(MessageText(...))),
         we need to evaluate them first and replace with the result.
 
-        For long strings (>500 chars), the result is stored in a temporary state variable
-        to avoid exceeding PowerFx's 1000 character expression limit. This is a limitation
-        of the Python PowerFx wrapper (powerfx package), which doesn't expose the
-        MaximumExpressionLength configuration that the .NET PowerFxConfig provides.
-        The .NET implementation defaults to 10,000 characters, while Python defaults to 1,000.
+        Results are stored in temporary state variables so untrusted message text is
+        passed to PowerFx as data rather than inserted into formula source.
+        Temporary names avoid existing Local keys and references in the original formula.
+        Literal text, quoted identifiers, and comments are left untouched; expression
+        sections inside PowerFx interpolated strings are preprocessed as code.
 
         Args:
             formula: The PowerFx formula to pre-process
@@ -684,90 +796,53 @@ class DeclarativeWorkflowState:
         Returns:
             The rewritten formula.
         """
-        import re
-
-        # Threshold for storing in state vs embedding as literal.
-        # The Python PowerFx wrapper defaults to a 1000 char expression limit (vs 10,000 in .NET).
-        # We use 500 to leave room for the rest of the expression around the replaced value.
-        MAX_INLINE_LENGTH = 500
-
         temp_var_counter = 0
+        reserved_names = {name.casefold() for name in self.get_state_data().get("Local", {})}
+        # Reserve formula references too, so previously undefined names stay undefined.
+        folded_formula = formula.casefold()
+        function_name = "MessageText"
+        call_prefix = f"{function_name}("
+        result: list[str] = []
+        copied_until = 0
+        positions = _iter_powerfx_expression_indices(formula)
 
-        # Custom functions that need pre-processing: (regex pattern, handler)
-        custom_functions = [
-            (r"MessageText\(", self._eval_and_replace_message_text),
-        ]
+        for cursor in positions:
+            if not formula.startswith(call_prefix, cursor):
+                continue
 
-        for pattern, handler in custom_functions:
-            # Find all occurrences of the custom function
+            paren_start = cursor + len(function_name)
+            depth = 1
+            for pos in positions:
+                if pos <= paren_start:
+                    continue
+                char = formula[pos]
+                if char == "(":
+                    depth += 1
+                elif char == ")":
+                    depth -= 1
+                if depth == 0:
+                    break
+            else:
+                break
+
+            inner_expr = formula[paren_start + 1 : pos]
+            replacement = self._eval_and_replace_message_text(inner_expr)
             while True:
-                match = re.search(pattern, formula)
-                if not match:
+                temp_var_name = f"_TempMessageText{temp_var_counter}"
+                temp_var_counter += 1
+                folded_name = temp_var_name.casefold()
+                if folded_name not in reserved_names and folded_name not in folded_formula:
                     break
+            temp_var_path = f"Local.{temp_var_name}"
+            temp_writes.append((temp_var_path, self.get(temp_var_path, default=self._MISSING)))
+            self.set(temp_var_path, replacement)
+            result.append(formula[copied_until:cursor])
+            result.append(temp_var_path)
+            logger.debug(f"Stored MessageText result ({len(replacement)} chars) in temp variable {temp_var_name}")
+            copied_until = pos + 1
 
-                # Find the matching closing parenthesis
-                start = match.start()
-                paren_start = match.end() - 1  # Position of opening (
-                depth = 1
-                pos = paren_start + 1
-                in_string = False
-                escape_next = False
-
-                while pos < len(formula) and depth > 0:
-                    char = formula[pos]
-                    if escape_next:
-                        escape_next = False
-                        pos += 1
-                        continue
-                    if char == "\\":
-                        escape_next = True
-                        pos += 1
-                        continue
-                    if char == '"' and not escape_next:
-                        in_string = not in_string
-                    elif not in_string:
-                        if char == "(":
-                            depth += 1
-                        elif char == ")":
-                            depth -= 1
-                    pos += 1
-
-                if depth != 0:
-                    # Malformed expression, skip
-                    break
-
-                # Extract the inner expression (between parentheses)
-                end = pos
-                inner_expr = formula[paren_start + 1 : end - 1]
-
-                # Evaluate and get replacement
-                replacement = handler(inner_expr)
-
-                # Replace in formula
-                if isinstance(replacement, str):
-                    if len(replacement) > MAX_INLINE_LENGTH:
-                        # Store long results in an underscore-prefixed temp key;
-                        # record the prior value so eval() can restore it.
-                        temp_var_name = f"_TempMessageText{temp_var_counter}"
-                        temp_var_counter += 1
-                        temp_var_path = f"Local.{temp_var_name}"
-                        temp_writes.append((temp_var_path, self.get(temp_var_path, default=self._MISSING)))
-                        self.set(temp_var_path, replacement)
-                        replacement_str = temp_var_path
-                        logger.debug(
-                            f"Stored long MessageText result ({len(replacement)} chars) "
-                            f"in temp variable {temp_var_name}"
-                        )
-                    else:
-                        # Short strings can be embedded directly
-                        escaped = replacement.replace('"', '""')
-                        replacement_str = f'"{escaped}"'
-                else:
-                    replacement_str = str(replacement) if replacement is not None else '""'
-
-                formula = formula[:start] + replacement_str + formula[end:]
-
-        return formula
+        result.append(formula[copied_until:])
+        return "".join(result)
 
     def _eval_and_replace_message_text(self, inner_expr: str) -> str:
         """Evaluate MessageText() and return the text result.
@@ -884,10 +959,10 @@ class DeclarativeWorkflowState:
             symbols["Env"] = env_bound
         # Debug log the Local symbols to help diagnose type issues
         if local_data:
-            for key, value in local_data.items():
+            for value in local_data.values():
                 logger.debug(
-                    f"PowerFx symbol Local.{key}: type={type(value).__name__}, "
-                    f"value_preview={str(value)[:100] if value else None}"
+                    "PowerFx Local symbol type=%s",
+                    type(value).__name__,
                 )
         result = _make_powerfx_safe(symbols)
         return cast(dict[str, Any], result)

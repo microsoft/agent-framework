@@ -11,7 +11,12 @@ ownership semantics.
 
 from __future__ import annotations
 
+import asyncio
 import sys
+from collections.abc import AsyncIterator
+from typing import Any
+from unittest.mock import AsyncMock, patch
+from urllib.parse import urlsplit
 
 import httpx
 import pytest
@@ -387,16 +392,87 @@ class TestResponseHeaders:
 
 
 class TestClientOwnership:
-    @pytest.mark.asyncio
     async def test_owned_client_is_closed_on_aclose(self) -> None:
+        requests: list[httpx.Request] = []
+        clients: list[httpx.AsyncClient] = []
+        original_ctor = httpx.AsyncClient
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(200, headers={"Set-Cookie": "session=previous; Path=/; Secure"})
+
+        def create_client(**kwargs: Any) -> httpx.AsyncClient:
+            client = original_ctor(transport=httpx.MockTransport(respond), **kwargs)
+            clients.append(client)
+            return client
+
         handler = DefaultHttpRequestHandler()
-        # Inject a MockTransport-backed client into the owned slot and verify
-        # aclose() releases it. Avoids real network access.
-        owned = httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(200, text="ok")))
-        handler._owned_client = owned
-        assert not owned.is_closed
-        await handler.aclose()
-        assert owned.is_closed
+        info = HttpRequestInfo(method="GET", url="https://api.example.test/x")
+        with patch("httpx.AsyncClient", side_effect=create_client):
+            for index in range(2):
+                async with handler:
+                    assert handler._owned_client is None
+                    await handler.send(info)
+                    await handler.send(info)
+                    assert len(clients) == index + 1
+                    assert handler._owned_client is clients[index]
+                    assert not clients[index].is_closed
+                    assert clients[index].timeout == httpx.Timeout(5.0)
+                    assert not clients[index].follow_redirects
+                assert handler._owned_client is None
+                assert clients[index].is_closed
+            await handler.aclose()
+        assert clients[0].cookies.jar is not clients[1].cookies.jar
+        assert all(not client.cookies for client in clients)
+        assert all("Cookie" not in request.headers for request in requests)
+
+    @pytest.mark.parametrize("provider_fallback", [False, True])
+    @pytest.mark.parametrize("first_status", [200, 503])
+    async def test_owned_client_does_not_replay_response_cookies(
+        self, provider_fallback: bool, first_status: int
+    ) -> None:
+        requests: list[httpx.Request] = []
+        response_cookies = ["session=first; Path=/; HttpOnly; Secure", "affinity=first; Path=/; Secure"]
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(
+                first_status if len(requests) == 1 else 200,
+                text="ok",
+                headers=[("Set-Cookie", cookie) for cookie in response_cookies] if len(requests) == 1 else [],
+            )
+
+        async def provider(info: HttpRequestInfo) -> httpx.AsyncClient | None:
+            return None
+
+        original_ctor = httpx.AsyncClient
+
+        def create_client(**kwargs: Any) -> httpx.AsyncClient:
+            return original_ctor(transport=httpx.MockTransport(respond), **kwargs)
+
+        with patch("httpx.AsyncClient", side_effect=create_client):
+            async with DefaultHttpRequestHandler(client_provider=provider if provider_fallback else None) as handler:
+                first = await handler.send(
+                    HttpRequestInfo(
+                        method="GET", url="https://api.example.test/x", headers={"Authorization": "caller-a"}
+                    )
+                )
+                second = await handler.send(
+                    HttpRequestInfo(
+                        method="GET", url="https://api.example.test/x", headers={"Authorization": "caller-b"}
+                    )
+                )
+                await handler.send(
+                    HttpRequestInfo(
+                        method="GET", url="https://api.example.test/x", headers={"Cookie": "explicit=caller"}
+                    )
+                )
+        assert first.status_code == first_status
+        assert first.is_success_status_code is (first_status == 200)
+        assert first.headers["set-cookie"] == response_cookies
+        assert second.is_success_status_code
+        assert [request.headers.get("Authorization") for request in requests[:2]] == ["caller-a", "caller-b"]
+        assert [request.headers.get("Cookie") for request in requests] == [None, None, "explicit=caller"]
 
     @pytest.mark.asyncio
     async def test_caller_owned_client_is_not_closed(self) -> None:
@@ -407,7 +483,6 @@ class TestClientOwnership:
         assert not client.is_closed
         await client.aclose()  # cleanup
 
-    @pytest.mark.asyncio
     async def test_concurrent_first_send_creates_single_owned_client(self) -> None:
         """Concurrent first-send calls must not race-leak duplicate clients.
 
@@ -417,41 +492,180 @@ class TestClientOwnership:
         is serialized: all concurrent sends end up using the same client and
         ``aclose()`` cleanly closes it.
         """
-        import asyncio
-
-        # Patch httpx.AsyncClient to count constructions, but only when called
-        # from inside _resolve_client (no transport=) so we don't break the
-        # MockTransport-backed clients used elsewhere.
         original_ctor = httpx.AsyncClient
-        construction_count = 0
+        clients: list[httpx.AsyncClient] = []
+        requests: list[httpx.Request] = []
+        first_headers_received = asyncio.Event()
+        second_request_received = asyncio.Event()
 
-        def counting_ctor(*args, **kwargs):  # type: ignore[no-untyped-def]
-            nonlocal construction_count
-            if not args and not kwargs:
-                construction_count += 1
-                return original_ctor(transport=httpx.MockTransport(lambda r: httpx.Response(200, text="ok")))
-            return original_ctor(*args, **kwargs)
+        class PendingResponse(httpx.AsyncByteStream):
+            async def __aiter__(self) -> AsyncIterator[bytes]:
+                # HTTPX processes response cookies before reading the body.
+                first_headers_received.set()
+                await second_request_received.wait()
+                yield b"ok"
 
-        import agent_framework_declarative._workflows._http_handler as hh
+        def respond(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            if len(requests) == 1:
+                return httpx.Response(
+                    200,
+                    headers={"Set-Cookie": "session=first; Path=/; HttpOnly; Secure"},
+                    stream=PendingResponse(),
+                )
+            second_request_received.set()
+            return httpx.Response(200, text="ok")
 
-        hh.httpx.AsyncClient = counting_ctor  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
-        try:
-            handler = DefaultHttpRequestHandler()
-            try:
-                await asyncio.gather(*[
-                    handler.send(HttpRequestInfo(method="GET", url="https://api.example.test/x")) for _ in range(8)
-                ])
-            finally:
-                await handler.aclose()
-        finally:
-            hh.httpx.AsyncClient = original_ctor  # type: ignore[assignment]
+        def create_client(**kwargs: Any) -> httpx.AsyncClient:
+            client = original_ctor(transport=httpx.MockTransport(respond), **kwargs)
+            clients.append(client)
+            return client
 
-        assert construction_count == 1, (
-            f"Expected exactly 1 owned client to be lazily created but got {construction_count}"
-        )
+        with patch("httpx.AsyncClient", side_effect=create_client):
+            async with DefaultHttpRequestHandler() as handler:
+
+                async def send(index: int) -> None:
+                    if index:
+                        await first_headers_received.wait()
+                    result = await handler.send(HttpRequestInfo(method="GET", url="https://api.example.test/x"))
+                    assert result.body == "ok"
+
+                await asyncio.wait_for(asyncio.gather(*(send(index) for index in range(8))), timeout=5)
+                assert len(clients) == 1
+                assert handler._owned_client is clients[0]
+        assert clients[0].is_closed
+        assert len(requests) == 8
+        assert all("Cookie" not in request.headers for request in requests)
 
 
 class TestClientProvider:
+    @pytest.mark.parametrize(
+        ("query_parameters", "expected_query"),
+        [
+            ({}, "term=a%20b&download&x=1&y=2&x=3"),
+            ({"term": "c d", "q": "a&b"}, "term=a%20b&download&x=1&y=2&x=3&term=c%20d&q=a%26b"),
+            ({"q": "caf\u00e9", "": "ignored"}, "term=a%20b&download&x=1&y=2&x=3&q=caf%C3%A9"),
+        ],
+    )
+    async def test_client_provider_receives_canonical_composed_url(
+        self, query_parameters: dict[str, str], expected_query: str
+    ) -> None:
+        provider_urls: list[str] = []
+        requests: list[httpx.Request] = []
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(200, text="ok")
+
+        info = HttpRequestInfo(
+            method="POST",
+            url="https://API.EXAMPLE.TEST:443/items/../settings?term=a%20b&download&x=1&y=2&x=3#details",
+            headers={"X-Request": "value"},
+            query_parameters=dict(query_parameters),
+            body="request body",
+            body_content_type="text/plain",
+            timeout_ms=1500,
+            connection_name="example-connection",
+        )
+        original_url = info.url
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+
+            async def provider(request_info: HttpRequestInfo) -> httpx.AsyncClient:
+                provider_urls.append(request_info.url)
+                assert request_info is not info
+                assert request_info.query_parameters == {}
+                assert request_info.headers == info.headers
+                assert request_info.headers is not info.headers
+                assert request_info.method == info.method
+                assert request_info.body == info.body
+                assert request_info.body_content_type == info.body_content_type
+                assert request_info.timeout_ms == info.timeout_ms
+                assert request_info.connection_name == info.connection_name
+                return client
+
+            async with DefaultHttpRequestHandler(client_provider=provider) as handler:
+                await handler.send(info)
+
+        expected_url = f"https://api.example.test/settings?{expected_query}#details"
+        assert [str(request.url) for request in requests] == [expected_url]
+        assert provider_urls == [expected_url]
+        assert info.url == original_url
+        assert info.query_parameters == query_parameters
+        assert info.headers == {"X-Request": "value"}
+        assert requests[0].method == "POST"
+        assert requests[0].content == b"request body"
+
+    @pytest.mark.parametrize(
+        ("path", "expected_status"),
+        [
+            pytest.param("items/list", 200, id="allowed-path"),
+            pytest.param("settings/update", 403, id="restricted-path"),
+            pytest.param("items/../settings/update", 403, id="normalized-restricted-path"),
+        ],
+    )
+    async def test_client_provider_credentials_match_canonical_path(self, path: str, expected_status: int) -> None:
+        requests: list[httpx.Request] = []
+        protected_actions: list[str] = []
+        credential = "Bearer synthetic-test-credential"
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            authenticated = request.headers.get("Authorization") == credential
+            if request.url.path == "/settings/update" and authenticated:
+                protected_actions.append(request.url.path)
+            return httpx.Response(200 if authenticated else 403)
+
+        async with (
+            httpx.AsyncClient(
+                headers={"Authorization": credential}, transport=httpx.MockTransport(respond)
+            ) as authenticated_client,
+            httpx.AsyncClient(transport=httpx.MockTransport(respond)) as anonymous_client,
+        ):
+
+            async def provider(info: HttpRequestInfo) -> httpx.AsyncClient:
+                url = urlsplit(info.url)
+                if url.scheme == "https" and url.netloc == "api.example.test" and url.path.startswith("/items/"):
+                    return authenticated_client
+                return anonymous_client
+
+            async with DefaultHttpRequestHandler(client_provider=provider) as handler:
+                result = await handler.send(HttpRequestInfo(method="POST", url=f"https://api.example.test/{path}"))
+
+        assert result.status_code == expected_status
+        assert len(requests) == 1
+        assert requests[0].headers.get("Authorization") == (credential if expected_status == 200 else None)
+        assert protected_actions == []
+
+    @pytest.mark.parametrize("follow_redirects", [False, True])
+    async def test_provider_client_retains_redirect_behavior(self, follow_redirects: bool) -> None:
+        provider_urls: list[str] = []
+        request_paths: list[str] = []
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            request_paths.append(request.url.path)
+            if request.url.path == "/start":
+                return httpx.Response(307, headers={"Location": "/next"})
+            return httpx.Response(200, text="ok")
+
+        async with httpx.AsyncClient(
+            follow_redirects=follow_redirects, transport=httpx.MockTransport(respond)
+        ) as client:
+
+            async def provider(info: HttpRequestInfo) -> httpx.AsyncClient:
+                provider_urls.append(info.url)
+                return client
+
+            async with DefaultHttpRequestHandler(client_provider=provider) as handler:
+                result = await handler.send(
+                    HttpRequestInfo(method="GET", url="https://api.example.test/items/../start")
+                )
+            assert client.follow_redirects is follow_redirects
+            assert not client.is_closed
+
+        assert result.status_code == (200 if follow_redirects else 307)
+        assert request_paths == (["/start", "/next"] if follow_redirects else ["/start"])
+        assert provider_urls == ["https://api.example.test/start"]
+
     @pytest.mark.asyncio
     async def test_client_provider_overrides_default(self) -> None:
         captured: dict[str, str] = {}
@@ -477,6 +691,8 @@ class TestClientProvider:
             assert captured["transport"] == "provided"
         finally:
             await handler.aclose()
+            assert not primary_client.is_closed
+            assert not provided_client.is_closed
             await primary_client.aclose()
             await provided_client.aclose()
 
@@ -502,6 +718,25 @@ class TestClientProvider:
 
 
 class TestValidation:
+    @pytest.mark.parametrize(
+        ("url", "error_type"),
+        [
+            ("/items", ValueError),
+            ("//api.example.test/items", ValueError),
+            ("https:///items", ValueError),
+            ("ftp://api.example.test/items", ValueError),
+            ("https://api.example.test:invalid/items", httpx.InvalidURL),
+            ("https://api.example.test/items\n", httpx.InvalidURL),
+        ],
+    )
+    async def test_invalid_url_rejected_before_client_selection(self, url: str, error_type: type[Exception]) -> None:
+        provider = AsyncMock(return_value=None)
+        async with DefaultHttpRequestHandler(client_provider=provider) as handler:
+            with pytest.raises(error_type):
+                await handler.send(HttpRequestInfo(method="GET", url=url))
+            assert handler._owned_client is None
+        provider.assert_not_awaited()
+
     @pytest.mark.asyncio
     async def test_empty_url_raises(self) -> None:
         handler = DefaultHttpRequestHandler()
@@ -634,36 +869,62 @@ class TestRawQueryPreservation:
 
         assert captured["req"].url.raw_path == (b"/s?in-url=fromurl&in-explicit=fromexplicit&unique=kept")
 
-    @pytest.mark.asyncio
-    async def test_client_headers_cookies_auth_and_timeout_survive(self) -> None:
+    @pytest.mark.parametrize("client_source", ["caller", "provider", "provider_none"])
+    async def test_client_headers_cookies_auth_and_timeout_survive(self, client_source: str) -> None:
         """Building through the client keeps its configuration, params merge bypassed."""
-        captured: dict[str, httpx.Request] = {}
+        requests: list[httpx.Request] = []
+        provider_urls: list[str] = []
 
         def respond(request: httpx.Request) -> httpx.Response:
-            captured["req"] = request
-            return httpx.Response(200, text="ok")
+            requests.append(request)
+            return httpx.Response(200, text="ok", headers={"Set-Cookie": "response=retained; Path=/; Secure"})
 
+        auth = httpx.BasicAuth("user", "pass")
         client = httpx.AsyncClient(
-            params={"api-version": "2024-01-01"},
+            params={"api-version": "2024-01-01", "keep": "client", "extra": "client"},
             headers={"X-Client-Header": "client-value"},
             cookies={"session": "cookie-value"},
-            auth=("user", "pass"),
+            auth=auth,
+            timeout=17.0,
+            follow_redirects=True,
             transport=httpx.MockTransport(respond),
         )
-        handler = DefaultHttpRequestHandler(client=client)
+
+        async def provider(info: HttpRequestInfo) -> httpx.AsyncClient | None:
+            provider_urls.append(info.url)
+            return client if client_source == "provider" else None
+
+        handler = DefaultHttpRequestHandler(
+            client=client if client_source != "provider" else None,
+            client_provider=provider if client_source != "caller" else None,
+        )
         try:
             await handler.send(
                 HttpRequestInfo(
                     method="GET",
-                    url="https://api.example.test/s?keep=me",
+                    url="https://api.example.test/items/../s?keep=me",
+                    query_parameters={"extra": "a b"},
                     timeout_ms=4500,
                 )
             )
+            await handler.send(HttpRequestInfo(method="GET", url="https://api.example.test/s"))
+            await handler.aclose()
+            assert not client.is_closed
+            assert handler._owned_client is None
+            assert client.cookies["session"] == "cookie-value"
+            assert client.cookies["response"] == "retained"
+            assert client.auth is auth
+            assert client.timeout == httpx.Timeout(17.0)
+            assert client.follow_redirects
+            assert set(requests[1].headers["Cookie"].split("; ")) == {
+                "session=cookie-value",
+                "response=retained",
+            }
         finally:
             await handler.aclose()
             await client.aclose()
 
-        request = captured["req"]
+        request = requests[0]
         assert request.headers["X-Client-Header"] == "client-value"
         assert request.headers["Cookie"] == "session=cookie-value"
         assert request.headers["Authorization"].startswith("Basic ")
@@ -673,7 +934,12 @@ class TestRawQueryPreservation:
             "write": 4.5,
             "pool": 4.5,
         }
-        assert request.url.raw_path == b"/s?keep=me&api-version=2024-01-01"
+        assert request.url.raw_path == b"/s?keep=me&extra=a%20b&api-version=2024-01-01"
+        assert provider_urls == (
+            []
+            if client_source == "caller"
+            else ["https://api.example.test/s?keep=me&extra=a%20b", "https://api.example.test/s"]
+        )
 
     @pytest.mark.asyncio
     async def test_non_ascii_url_query_is_percent_encoded_not_rejected(self) -> None:

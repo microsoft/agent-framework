@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
@@ -75,11 +74,18 @@ internal sealed partial class ApprovalNotRequiredFunctionBypassingChatClient : D
             return await base.GetResponseAsync(messages, options, cancellationToken).ConfigureAwait(false);
         }
 
-        var autoApprovableNames = this.GetAutoApprovableToolNames(options);
+        var autoApprovableNames = ApprovalRequirement.GetApprovalNotRequiredToolNames(this, options);
 
-        messages = InjectPendingAutoApprovals(messages, session);
+        var (messagesToSend, injectedAutoApprovals) = InjectPendingAutoApprovals(messages, session);
 
-        var response = await base.GetResponseAsync(messages, options, cancellationToken).ConfigureAwait(false);
+        var response = await base.GetResponseAsync(messagesToSend, options, cancellationToken).ConfigureAwait(false);
+
+        // The injected auto-approvals are cleared only now that the run has succeeded, so a failed run leaves them
+        // in the session and the next run injects them again instead of leaving the tool calls unanswered.
+        if (injectedAutoApprovals)
+        {
+            session.StateBag.TryRemoveValue(StateBagKey);
+        }
 
         RemoveAutoApprovedFromMessages(response.Messages, autoApprovableNames, session);
 
@@ -102,26 +108,45 @@ internal sealed partial class ApprovalNotRequiredFunctionBypassingChatClient : D
             yield break;
         }
 
-        var autoApprovableNames = this.GetAutoApprovableToolNames(options);
+        var autoApprovableNames = ApprovalRequirement.GetApprovalNotRequiredToolNames(this, options);
 
-        messages = InjectPendingAutoApprovals(messages, session);
+        var (messagesToSend, injectedAutoApprovals) = InjectPendingAutoApprovals(messages, session);
         List<ToolApprovalRequestContent>? autoApproved = null;
+
+        // Set only once the stream has run to completion, so that any abnormal end - an exception from the inner
+        // client, a cancellation, or a consumer that stops enumerating early - leaves the stored state exactly as it
+        // was. A caught exception is not enough on its own: breaking out of the enumeration disposes this iterator
+        // without throwing, and the run then persists nothing either.
+        bool completedNormally = false;
 
         try
         {
-            await foreach (var update in base.GetStreamingResponseAsync(messages, options, cancellationToken).ConfigureAwait(false))
+            await foreach (var update in base.GetStreamingResponseAsync(messagesToSend, options, cancellationToken).ConfigureAwait(false))
             {
                 if (FilterUpdateContents(update, autoApprovableNames, ref autoApproved))
                 {
                     yield return update;
                 }
             }
+
+            completedNormally = true;
         }
         finally
         {
-            if (autoApproved is { Count: > 0 })
+            // Both writes are gated, mirroring the non-streaming path: the requests collected here were filtered out
+            // of the stream and so never reached the caller, and storing them on an abnormal end would overwrite the
+            // batch that was injected this run and still needs re-injecting.
+            if (completedNormally)
             {
-                session.StateBag.SetValue(StateBagKey, autoApproved, AgentJsonUtilities.DefaultOptions);
+                if (injectedAutoApprovals)
+                {
+                    session.StateBag.TryRemoveValue(StateBagKey);
+                }
+
+                if (autoApproved is { Count: > 0 })
+                {
+                    session.StateBag.SetValue(StateBagKey, autoApproved, AgentJsonUtilities.DefaultOptions);
+                }
             }
         }
     }
@@ -160,7 +185,13 @@ internal sealed partial class ApprovalNotRequiredFunctionBypassingChatClient : D
     /// All stored requests are unconditionally injected as approved responses regardless of whether the
     /// tool set has changed, because the LLM requires a complete set of tool call responses for a prior turn.
     /// </remarks>
-    private static IEnumerable<ChatMessage> InjectPendingAutoApprovals(
+    /// <returns>
+    /// The messages to send to the inner client, and whether any auto-approvals were injected into them. The
+    /// stored auto-approvals are cleared by the caller only once the run has completed successfully, so that a
+    /// failed run leaves them in the session and the next run injects them again rather than leaving the
+    /// auto-approved calls unanswered.
+    /// </returns>
+    private static (IEnumerable<ChatMessage> Messages, bool Injected) InjectPendingAutoApprovals(
         IEnumerable<ChatMessage> messages,
         AgentSession session)
     {
@@ -170,10 +201,8 @@ internal sealed partial class ApprovalNotRequiredFunctionBypassingChatClient : D
             AgentJsonUtilities.DefaultOptions)
             || pendingRequests is not { Count: > 0 })
         {
-            return messages;
+            return (messages, false);
         }
-
-        session.StateBag.TryRemoveValue(StateBagKey);
 
         List<AIContent> approvalResponses = [];
         foreach (var request in pendingRequests)
@@ -182,48 +211,7 @@ internal sealed partial class ApprovalNotRequiredFunctionBypassingChatClient : D
         }
 
         var userMessage = new ChatMessage(ChatRole.User, approvalResponses);
-        return messages.Concat([userMessage]);
-    }
-
-    /// <summary>
-    /// Builds a set of tool names that do not require approval and can be auto-approved,
-    /// by checking all available tools from <see cref="ChatOptions.Tools"/> and
-    /// <see cref="FunctionInvokingChatClient.AdditionalTools"/>.
-    /// </summary>
-    private HashSet<string> GetAutoApprovableToolNames(ChatOptions? options)
-    {
-        var ficc = this.GetService<FunctionInvokingChatClient>();
-
-        var allTools = (options?.Tools ?? Enumerable.Empty<AITool>())
-            .Concat(ficc?.AdditionalTools ?? Enumerable.Empty<AITool>());
-
-        return new HashSet<string>(
-            allTools
-                .OfType<AIFunction>()
-                .Where(static f => f.GetService<ApprovalRequiredAIFunction>() is null)
-                .Select(static f => f.Name),
-            StringComparer.Ordinal);
-    }
-
-    /// <summary>
-    /// Determines whether a <see cref="ToolApprovalRequestContent"/> can be auto-approved because
-    /// the underlying tool is not an <see cref="ApprovalRequiredAIFunction"/>.
-    /// </summary>
-    /// <returns>
-    /// <see langword="true"/> if the approval request is for a known tool that does not require approval
-    /// and can be auto-approved; <see langword="false"/> otherwise.
-    /// </returns>
-    private static bool IsAutoApprovable(ToolApprovalRequestContent approval, HashSet<string> autoApprovableNames)
-    {
-        if (approval.ToolCall is not FunctionCallContent fcc)
-        {
-            // Non-function tool calls cannot be auto-approved.
-            return false;
-        }
-
-        // Auto-approve only if the tool is known and explicitly does NOT require approval.
-        // Unknown tools are not in the set and are treated as approval-required (safe default).
-        return autoApprovableNames.Contains(fcc.Name);
+        return (messages.Concat([userMessage]), true);
     }
 
     /// <summary>
@@ -245,7 +233,7 @@ internal sealed partial class ApprovalNotRequiredFunctionBypassingChatClient : D
             for (int j = message.Contents.Count - 1; j >= 0; j--)
             {
                 if (message.Contents[j] is ToolApprovalRequestContent approval
-                    && IsAutoApprovable(approval, autoApprovableNames))
+                    && ApprovalRequirement.IsApprovalNotRequired(approval.ToolCall, autoApprovableNames))
                 {
                     (autoApproved ??= []).Add(approval);
                     message.Contents.RemoveAt(j);
@@ -294,7 +282,7 @@ internal sealed partial class ApprovalNotRequiredFunctionBypassingChatClient : D
             {
                 hasApprovalContent = true;
 
-                if (IsAutoApprovable(approval, autoApprovableNames))
+                if (ApprovalRequirement.IsApprovalNotRequired(approval.ToolCall, autoApprovableNames))
                 {
                     (autoApproved ??= []).Add(approval);
                     removedAny = true;

@@ -16,11 +16,14 @@ import subprocess
 import sys
 import threading
 import time
+import weakref
 from collections.abc import Awaitable, Callable, Coroutine, Generator, Mapping, Sequence
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, cast
+from types import MappingProxyType
+from typing import Any, Literal, cast
 from unittest.mock import patch
 
 import pytest
@@ -273,9 +276,15 @@ class _FakeSandbox:
         module_path: str | None = None,
         heap_size: str | None = None,
         stack_size: str | None = None,
+        max_file_size: str | None = None,
+        max_total_size: str | None = None,
+        max_file_count: int | None = None,
     ) -> None:
         self.input_dir = input_dir
         self.output_dir = output_dir
+        self.max_file_size = max_file_size
+        self.max_total_size = max_total_size
+        self.max_file_count = max_file_count
         self.registered_tools: dict[str, Any] = {}
         self.allowed_domains: list[tuple[str, list[str] | None]] = []
         self.restore_calls: list[Any] = []
@@ -1293,14 +1302,17 @@ async def test_execute_code_tool_clears_output_after_rejection(
         max_output_file_bytes=3,
     )
     config = execute_code._build_run_config()
-    output_root = Path(cast(Any, execute_code._registry)._get_or_create_entry(config).output_dir.name)
+    registry = cast(Any, execute_code._registry)
+    output_root = Path(registry._get_or_create_entry(config).output_dir.name)
 
     try:
         contents = await execute_code.invoke(arguments={"code": "create-memory-output"})
 
         _assert_bounded_output_error(contents, "per-file output limit")
-        remaining_outputs = await asyncio.to_thread(lambda: list(output_root.iterdir()))
-        assert remaining_outputs == []
+        # Rejection retires the entry and removes its directory on the single cleanup worker.
+        # Wait behind that cleanup before checking the directory, which may already be gone.
+        await asyncio.wrap_future(registry._cleanup_executor.submit(lambda: None))
+        assert not await asyncio.to_thread(output_root.exists)
     finally:
         _close_execute_code_registry(execute_code)
 
@@ -1877,6 +1889,316 @@ def test_execute_code_tool_description_contains_call_tool_guidance(tmp_path: Pat
     assert "github.com" in description
 
 
+@pytest.fixture
+def documented_tool() -> FunctionTool:
+    return FunctionTool(
+        name="lookup",
+        description="Look up an item.",
+        func=lambda **kwargs: kwargs,
+        input_model={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search text"},
+                "limit": {"type": "integer", "description": "Maximum results", "default": 10},
+                "order": {"type": "string", "enum": ["ascending", "descending"], "default": "ascending"},
+            },
+            "required": ["query"],
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    "mode",
+    ["compact", {}, {"lookup": "compact"}, {"LOOKUP": "json"}, MappingProxyType({"inactive": "json"})],
+)
+def test_description_format_compact_preserves_parameter_metadata(documented_tool: FunctionTool, mode: Any) -> None:
+    execute_code = HyperlightExecuteCodeTool(
+        tools=[documented_tool], tool_description_format=mode, _registry=_FakeRuntime()
+    )
+    description = execute_code.description
+
+    assert "- `lookup`: Look up an item." in description
+    assert "- `query` (string, required): Search text" in description
+    assert "- `limit` (integer, optional): Maximum results Default: 10." in description
+    expected_order = '- `order` (string, optional) Allowed values: ["ascending", "descending"]. Default: "ascending".'
+    assert expected_order in description
+    assert "Parameters (JSON Schema)" not in description
+    assert execute_code.to_dict()["description"] == description
+    assert execute_code.parameters() == execute_code_module.EXECUTE_CODE_INPUT_SCHEMA
+
+
+@pytest.mark.parametrize("mode", ["json", {"lookup": "json"}])
+@pytest.mark.parametrize("rich_schema", [False, True])
+def test_description_format_json_preserves_full_schema(
+    documented_tool: FunctionTool, mode: Any, rich_schema: bool
+) -> None:
+    schema = deepcopy(documented_tool.parameters())
+    if rich_schema:
+        schema["additionalProperties"] = False
+        schema["properties"]["filters"] = {"type": "array", "items": {"type": "integer", "minimum": 1}}
+    registered_tool = FunctionTool(name="lookup", description="", func=lambda **kwargs: kwargs, input_model=schema)
+    original_schema = deepcopy(registered_tool.parameters())
+    execute_code = HyperlightExecuteCodeTool(
+        tools=[registered_tool], tool_description_format=mode, _registry=_FakeRuntime()
+    )
+
+    description = execute_code.description
+    rendered_schema = json.loads(description.split("```json\n", 1)[1].split("\n```", 1)[0])
+    assert rendered_schema == original_schema
+    assert "Parameters (JSON Schema)" in description
+    assert "cannot be represented faithfully" not in description
+    assert registered_tool.parameters() == original_schema
+    assert execute_code.to_dict()["description"] == description
+
+
+def test_description_format_rich_schema_falls_back_without_mutation() -> None:
+    schema = {
+        "type": "object",
+        "properties": {
+            "record": {
+                "type": "object",
+                "properties": {"ids": {"type": "array", "items": {"type": "integer"}}},
+                "required": ["ids"],
+            }
+        },
+        "required": ["record"],
+        "additionalProperties": False,
+    }
+    original_schema = deepcopy(schema)
+    registered_tool = FunctionTool(name="nested", description="", func=lambda **kwargs: kwargs, input_model=schema)
+    execute_code = HyperlightExecuteCodeTool(tools=[registered_tool], _registry=_FakeRuntime())
+
+    description = execute_code.description
+    assert (
+        "Using JSON Schema because the parameter schema cannot be represented faithfully in compact form."
+        in description
+    )
+    rendered_schema = json.loads(description.split("```json\n", 1)[1].split("\n```", 1)[0])
+    assert rendered_schema == registered_tool.parameters() == original_schema
+    assert schema == original_schema
+    assert execute_code.to_dict()["description"] == description
+    assert execute_code.build_serializable_state()["tool_description_format"] == "compact"
+
+
+def test_description_format_mixed_mapping_and_dynamic_registration(documented_tool: FunctionTool) -> None:
+    modes: dict[str, Literal["compact", "json"]] = {"lookup": "json", "compute": "compact", "future": "json"}
+    execute_code = HyperlightExecuteCodeTool(tools=[compute], tool_description_format=modes, _registry=_FakeRuntime())
+    run_tool = execute_code.create_run_tool()
+    assert execute_code._tool_description_format is not modes
+    assert run_tool._tool_description_format is not execute_code._tool_description_format
+    modes["lookup"] = "compact"
+    execute_code.add_tools([documented_tool, dangerous_compute])
+
+    description = execute_code.description
+    assert description.count("Parameters (JSON Schema)") == 1
+    assert "- `a` (integer, required)" in description
+    assert "- `dangerous_compute`: No description provided." in description
+    assert "lookup" not in run_tool.description
+    run_tool.add_tools(documented_tool)
+    assert "Parameters (JSON Schema)" in run_tool.description
+    execute_code.remove_tool("lookup")
+    execute_code.add_tools(documented_tool)
+    assert "Parameters (JSON Schema)" in execute_code.description
+    state = execute_code.build_serializable_state()
+    assert state["tool_description_format"] == {"lookup": "json", "compute": "compact", "future": "json"}
+    state["tool_description_format"]["lookup"] = "compact"
+    assert "Parameters (JSON Schema)" in execute_code.description
+    assert json.loads(json.dumps(run_tool.build_serializable_state()))["tool_description_format"]["future"] == "json"
+
+
+@pytest.mark.parametrize("mode", ["compact", "json", {"compute": "json", "future": "compact"}])
+async def test_description_format_provider_run_state_and_snapshot(mode: Any) -> None:
+    provider = HyperlightCodeActProvider(tools=[compute], tool_description_format=mode, _registry=_FakeRuntime())
+    expected_mode = deepcopy(mode)
+    if isinstance(mode, dict):
+        mode["compute"] = "compact"
+    context = _FakeSessionContext()
+    state: dict[str, Any] = {}
+
+    await provider.before_run(agent=object(), session=None, context=cast(Any, context), state=state)
+    run_tool = context.tools[0][1][0]
+    assert isinstance(run_tool, HyperlightExecuteCodeTool)
+    assert state[provider.source_id]["tool_description_format"] == expected_mode
+    assert run_tool.build_serializable_state() == state[provider.source_id]
+    assert run_tool.to_dict()["description"] == run_tool.description
+    assert ("Parameters (JSON Schema)" in run_tool.description) == (expected_mode != "compact")
+    assert "Parameters (JSON Schema)" not in context.instructions[0][1]
+    assert "compute" not in context.instructions[0][1]
+    assert run_tool._tool_description_format == provider._execute_code_tool._tool_description_format
+    if isinstance(expected_mode, dict):
+        assert run_tool._tool_description_format is not provider._execute_code_tool._tool_description_format
+    provider.clear_tools()
+    assert "- `compute`:" in run_tool.description
+    assert "No tools are currently registered" in provider._execute_code_tool.description
+    json.dumps(state)
+
+
+@pytest.mark.parametrize(
+    ("mode", "error_type"),
+    [
+        ("verbose", ValueError),
+        ("JSON", ValueError),
+        (" compact", ValueError),
+        ({"inactive": "verbose"}, ValueError),
+        (None, TypeError),
+        (1, TypeError),
+        (["compact"], TypeError),
+        ({1: "json"}, TypeError),
+        ({"compute": None}, TypeError),
+        ({"inactive": 1}, TypeError),
+    ],
+)
+@pytest.mark.parametrize("entry_point", [HyperlightExecuteCodeTool, HyperlightCodeActProvider])
+def test_description_format_rejects_invalid_inputs(mode: Any, error_type: type[Exception], entry_point: Any) -> None:
+    with pytest.raises(error_type, match="tool_description_format"):
+        entry_point(tool_description_format=mode, _registry=_FakeRuntime())
+
+
+def test_description_format_defaults_no_tools_and_zero_parameters() -> None:
+    execute_code = HyperlightExecuteCodeTool(_registry=_FakeRuntime())
+    assert "- No tools are currently registered inside the sandbox." in execute_code.description
+    assert execute_code.build_serializable_state()["tool_description_format"] == "compact"
+
+    execute_code.add_tools(
+        FunctionTool(name="noop", description="", func=lambda: None, input_model={"type": "object", "properties": {}})
+    )
+    assert "- `noop`: No description provided.\n  Parameters: none." in execute_code.description
+    assert "call_tool(name, **kwargs)" in execute_code.description
+    assert "arguments only. Do not pass a dict or any other positional arguments" in execute_code.description
+    assert "Filesystem access is unavailable" in execute_code.description
+    assert "Outbound network access is unavailable" in execute_code.description
+
+
+async def test_description_format_does_not_change_runtime_config_or_input_schema() -> None:
+    runtime = _FakeRuntime()
+    compact_tool = HyperlightExecuteCodeTool(tools=[compute], _registry=runtime)
+    json_tool = HyperlightExecuteCodeTool(tools=[compute], tool_description_format="json", _registry=runtime)
+    for execute_code in (compact_tool, json_tool):
+        result = await execute_code.invoke(arguments={"code": "print(42)"})
+        assert result[0].text == "ok"
+        assert execute_code.parameters() == execute_code_module.EXECUTE_CODE_INPUT_SCHEMA
+    compact_config, compact_code = runtime.calls[0]
+    json_config, json_code = runtime.calls[1]
+    assert compact_config == json_config
+    assert compact_config.cache_key() == json_config.cache_key()
+    assert not hasattr(compact_config, "tool_description_format")
+    assert compact_code == json_code == "print(42)"
+    assert compact_tool.build_instructions(tools_visible_to_model=False) == json_tool.build_instructions(
+        tools_visible_to_model=False
+    )
+
+
+async def test_description_format_reuses_sandbox_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    _FakeSandbox.instances.clear()
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandbox)
+    registry = execute_code_module._SandboxRegistry()
+    compact_tool = HyperlightExecuteCodeTool(tools=[compute], _registry=registry)
+    json_tool = HyperlightExecuteCodeTool(tools=[compute], tool_description_format="json", _registry=registry)
+
+    try:
+        for execute_code in (compact_tool, json_tool):
+            await execute_code.invoke(arguments={"code": "None"})
+        assert len(_FakeSandbox.instances) == 1
+        assert set(_FakeSandbox.instances[0].registered_tools) == {"compute"}
+        assert _FakeSandbox.instances[0].restore_calls == ["snapshot", "snapshot"]
+    finally:
+        registry.close()
+
+
+@pytest.mark.parametrize("mutation", ["remove", "clear", "replace"])
+@pytest.mark.parametrize("cleanup", ["close", "discard"])
+async def test_sandbox_cache_retains_tool_identity_until_entry_removed(
+    monkeypatch: pytest.MonkeyPatch, mutation: str, cleanup: str
+) -> None:
+    _FakeSandbox.instances.clear()
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandbox)
+    registry = execute_code_module._SandboxRegistry()
+
+    @tool(name="compute")
+    def original(a: int, b: int) -> int:
+        return a + b
+
+    original_ref = weakref.ref(original)
+    execute_code = HyperlightExecuteCodeTool(tools=[original], _registry=registry)
+    del original
+
+    try:
+        await execute_code.invoke(arguments={"code": "None"})
+        if mutation == "remove":
+            execute_code.remove_tool("compute")
+        elif mutation == "clear":
+            execute_code.clear_tools()
+        else:
+            execute_code.add_tools(compute)
+
+        gc.collect()
+        assert original_ref() is not None
+        assert len(registry._entries) == 1
+
+        if cleanup == "close":
+            registry.close()
+        else:
+            registry._discard_entry(
+                cache_key=next(iter(registry._entries)), entry=next(iter(registry._entries.values()))
+            )
+            registry._cleanup_executor.submit(lambda: None).result(timeout=5)
+
+        gc.collect()
+        assert registry._entries == {}
+        assert original_ref() is None
+    finally:
+        registry.close()
+
+
+async def test_sandbox_cache_replacement_preserves_run_snapshots_and_identity_semantics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class ValueEqualTool(FunctionTool):
+        def __eq__(self, other: object) -> bool:
+            return isinstance(other, FunctionTool) and self.name == other.name
+
+    calls: list[str] = []
+
+    def original_callback(a: int, b: int) -> int:
+        calls.append("original")
+        return a + b
+
+    def replacement_callback(a: int, b: int) -> int:
+        calls.append("replacement")
+        return a - b
+
+    _FakeSandbox.instances.clear()
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandbox)
+    registry = execute_code_module._SandboxRegistry()
+    original = ValueEqualTool(name="compute", func=original_callback)
+    replacement = ValueEqualTool(name="compute", func=replacement_callback)
+    assert original == replacement
+    with pytest.raises(TypeError):
+        hash(original)
+    execute_code = HyperlightExecuteCodeTool(tools=[original], _registry=registry)
+    previous_run = execute_code.create_run_tool()
+    code = 'print(call_tool("compute", a=20, b=22))'
+
+    try:
+        await previous_run.invoke(arguments={"code": "None"})
+        execute_code.remove_tool("compute")
+        execute_code.add_tools(replacement)
+        current_run = execute_code.create_run_tool()
+
+        result = await current_run.invoke(arguments={"code": code})
+        repeated_result = await current_run.invoke(arguments={"code": code})
+        assert result[0].text == repeated_result[0].text == "-2\n"
+        assert calls == ["replacement", "replacement"]
+        assert len(_FakeSandbox.instances) == 2
+
+        previous_result = await previous_run.invoke(arguments={"code": code})
+        assert previous_result[0].text == "42\n"
+        assert calls == ["replacement", "replacement", "original"]
+        assert len(_FakeSandbox.instances) == 2
+    finally:
+        registry.close()
+
+
 async def test_execute_code_tool_executes_with_structured_content(monkeypatch: pytest.MonkeyPatch) -> None:
     _FakeSandbox.instances.clear()
     monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandbox)
@@ -2024,8 +2346,12 @@ async def test_execute_code_tool_retries_allowed_domains_with_urls_when_backend_
             backend: str = "wasm",
             module: str | None = None,
             module_path: str | None = None,
+            max_file_size: str | None = None,
+            max_total_size: str | None = None,
+            max_file_count: int | None = None,
         ) -> None:
             del input_dir, output_dir, backend, module, module_path
+            del max_file_size, max_total_size, max_file_count
             self.allowed_domains: list[tuple[str, list[str] | None]] = []
             _FakeStrictNetworkSandbox.instances.append(self)
 
@@ -2150,7 +2476,7 @@ async def test_provider_forwards_output_limits_to_run_tool_and_serializable_stat
     json.dumps(state)
 
 
-async def test_output_limits_are_invocation_scoped_when_registry_is_shared(
+async def test_output_limits_are_isolated_when_registry_is_shared(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2178,7 +2504,50 @@ async def test_output_limits_are_invocation_scoped_when_registry_is_shared(
 
     _assert_bounded_output_error(rejected, "per-file output limit")
     assert [_decode_content_bytes(item) for item in accepted if item.type == "data"] == [b"data"]
-    assert len(_FakeSandbox.instances) == 1
+    assert len(_FakeSandbox.instances) == 2
+    assert [
+        (sandbox.max_file_size, sandbox.max_total_size, sandbox.max_file_count) for sandbox in _FakeSandbox.instances
+    ] == [("4B", "10B", 20), ("3B", "10B", 20)]
+
+
+async def test_default_output_limits_are_forwarded_to_hyperlight_sandbox(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _FakeSandbox.instances.clear()
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandbox)
+    execute_code = HyperlightExecuteCodeTool()
+
+    try:
+        await execute_code.invoke(arguments={"code": "None"})
+    finally:
+        _close_execute_code_registry(execute_code)
+
+    sandbox = _FakeSandbox.instances[0]
+    assert (sandbox.max_file_size, sandbox.max_total_size, sandbox.max_file_count) == (
+        "5242880B",
+        "20971520B",
+        20,
+    )
+
+
+async def test_custom_output_limits_are_forwarded_to_hyperlight_sandbox(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _FakeSandbox.instances.clear()
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandbox)
+    execute_code = HyperlightExecuteCodeTool(
+        max_output_file_bytes=7,
+        max_output_total_bytes=11,
+        max_output_files=3,
+    )
+
+    try:
+        await execute_code.invoke(arguments={"code": "None"})
+    finally:
+        _close_execute_code_registry(execute_code)
+
+    sandbox = _FakeSandbox.instances[0]
+    assert (sandbox.max_file_size, sandbox.max_total_size, sandbox.max_file_count) == ("7B", "11B", 3)
 
 
 def test_execute_code_tool_uses_finite_default_output_limits() -> None:
@@ -2946,7 +3315,7 @@ def test_sandbox_entry_does_not_expose_unsendable_attributes() -> None:
     assert "sandbox" not in fields, "_SandboxEntry must not expose `sandbox` directly"
     assert "snapshot" not in fields, "_SandboxEntry must not expose `snapshot` directly"
     # Whatever attributes remain must be sendable / safe to GC on any thread.
-    assert fields <= {"worker", "input_dir", "output_dir"}
+    assert fields <= {"worker", "input_dir", "output_dir", "tools"}
 
 
 def test_sandbox_survives_external_thread_holding_stale_reference(

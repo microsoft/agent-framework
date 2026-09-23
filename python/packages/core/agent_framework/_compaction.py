@@ -30,6 +30,12 @@ GROUP_KIND_KEY = "kind"
 GROUP_INDEX_KEY = "index"
 GROUP_HAS_REASONING_KEY = "has_reasoning"
 GROUP_TOKEN_COUNT_KEY = "token_count"  # ruff:ignore[hardcoded-password-string] # nosec B105 - compaction metadata key, not a credential
+GROUP_TOKEN_COUNT_BASIS_KEY = "token_count_basis"  # ruff:ignore[hardcoded-password-string] # nosec B105 - compaction metadata key, not a credential
+# Bumped whenever the token-estimation serialization changes. Cached counts
+# stamped with an older basis are recomputed instead of reused: annotations
+# survive Message.to_dict()/from_dict() round-trips, so without the basis a
+# transcript annotated before a serialization change keeps its stale counts.
+TOKEN_COUNT_BASIS_VERSION = 2
 EXCLUDED_KEY = "_excluded"
 EXCLUDE_REASON_KEY = "_exclude_reason"
 SUMMARY_OF_MESSAGE_IDS_KEY = "_summary_of_message_ids"
@@ -46,6 +52,44 @@ _TOOL_CALL_CONTENT_TYPES: Final[set[str]] = {
     "shell_tool_call",
     "image_generation_tool_call",
 }
+
+
+def _deduplicate_origin_session_ids(origin_session_ids: Iterable[str]) -> list[str]:
+    """Return origin session IDs in first-seen order without duplicates."""
+    unique_origin_session_ids: list[str] = []
+    seen_origin_session_ids: set[str] = set()
+    for origin_session_id in origin_session_ids:
+        if origin_session_id not in seen_origin_session_ids:
+            seen_origin_session_ids.add(origin_session_id)
+            unique_origin_session_ids.append(origin_session_id)
+    return unique_origin_session_ids
+
+
+def _aggregate_origin_session_ids(messages: Sequence[Message]) -> list[str]:
+    """Aggregate origin_session_ids from a sequence of Message objects.
+
+    Extracts origin_session_ids from each message's _attribution and returns
+    a deduplicated list preserving first-seen order. Messages without attribution
+    or without origin_session_ids are silently skipped.
+
+    Args:
+        messages: The Message objects to aggregate provenance from.
+
+    Returns:
+        Deduplicated origin_session_ids in first-seen order.
+    """
+    origin_session_ids: list[str] = []
+    for message in messages:
+        attribution = message.additional_properties.get("_attribution")
+        if not isinstance(attribution, Mapping):
+            continue
+        origins = attribution.get("origin_session_ids")  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
+        if not isinstance(origins, Sequence) or isinstance(origins, str):
+            continue
+        for origin in cast("Sequence[Any]", origins):
+            if isinstance(origin, str):
+                origin_session_ids.append(origin)
+    return _deduplicate_origin_session_ids(origin_session_ids)
 
 
 @runtime_checkable
@@ -378,13 +422,13 @@ def _set_group_summarized_by_summary_id(message: Message, summary_id: str) -> No
 def _reconcile_compaction_summaries(  # pyright: ignore[reportUnusedFunction]
     source_messages: list[Message],
     working_messages: Sequence[Message],
-    previous_message_ids: set[int],
+    source_message_identities: set[int],
 ) -> None:
-    """Reconcile summaries of source messages without persisting unrelated rewrites."""
+    """Reconcile summaries supported by source-owned messages without persisting unrelated rewrites."""
     source_message_ids = {message.message_id for message in source_messages if message.message_id}
     candidates: list[tuple[Message, set[str]]] = []
     for message in working_messages:
-        if id(message) in previous_message_ids:
+        if id(message) in source_message_identities:
             continue
 
         annotation = _read_group_annotation_raw(message)
@@ -458,7 +502,13 @@ def _write_group_annotation(
     token_count: int | None = None
     if existing_raw_annotation is not None:
         raw_token_count = existing_raw_annotation.get(GROUP_TOKEN_COUNT_KEY)
-        if isinstance(raw_token_count, int) or raw_token_count is None:
+        raw_token_count_basis = existing_raw_annotation.get(GROUP_TOKEN_COUNT_BASIS_KEY)
+        # Preserve a cached count only when it was computed with the current
+        # serialization basis; counts from older bases are stale and get
+        # recomputed (see TOKEN_COUNT_BASIS_VERSION).
+        if raw_token_count_basis == TOKEN_COUNT_BASIS_VERSION and (
+            isinstance(raw_token_count, int) or raw_token_count is None
+        ):
             token_count = raw_token_count
         unknown_fields = {
             key: value
@@ -470,6 +520,7 @@ def _write_group_annotation(
                 GROUP_INDEX_KEY,
                 GROUP_HAS_REASONING_KEY,
                 GROUP_TOKEN_COUNT_KEY,
+                GROUP_TOKEN_COUNT_BASIS_KEY,
             }
         }
 
@@ -479,6 +530,7 @@ def _write_group_annotation(
         GROUP_INDEX_KEY: index,
         GROUP_HAS_REASONING_KEY: has_reasoning,
         GROUP_TOKEN_COUNT_KEY: token_count,
+        GROUP_TOKEN_COUNT_BASIS_KEY: TOKEN_COUNT_BASIS_VERSION if token_count is not None else None,
     }
     annotation.update(unknown_fields)
     message.additional_properties[GROUP_ANNOTATION_KEY] = annotation
@@ -512,6 +564,10 @@ def _token_count(message: Message) -> int | None:
     if annotation is None:
         return None
     token_count = annotation.get(GROUP_TOKEN_COUNT_KEY)
+    # Counts stamped with an older serialization basis are stale: they were
+    # computed from a different serialized form and must be recomputed.
+    if annotation.get(GROUP_TOKEN_COUNT_BASIS_KEY) != TOKEN_COUNT_BASIS_VERSION:
+        return None
     return token_count if isinstance(token_count, int) else None
 
 
@@ -520,6 +576,7 @@ def _write_token_count(message: Message, token_count: int) -> None:
     if annotation is None:
         return
     annotation[GROUP_TOKEN_COUNT_KEY] = token_count
+    annotation[GROUP_TOKEN_COUNT_BASIS_KEY] = TOKEN_COUNT_BASIS_VERSION
     message.additional_properties[GROUP_ANNOTATION_KEY] = annotation
 
 
@@ -694,12 +751,68 @@ def annotate_message_groups(
     return _ordered_group_ids_from_annotations(messages)
 
 
+_OPAQUE_REASONING_KEYS: Final[frozenset[str]] = frozenset({"encrypted_content"})
+
+
+def _strip_opaque_reasoning_payload(value: Any) -> Any:
+    """Recursively drop opaque reasoning members, keeping clear-text payloads."""
+    if isinstance(value, dict):
+        entries = cast("dict[Any, Any]", value)
+        filtered: dict[Any, Any] = {}
+        for key, item in entries.items():
+            if key in _OPAQUE_REASONING_KEYS:
+                continue
+            stripped = _strip_opaque_reasoning_payload(item)
+            if stripped is not None:
+                filtered[key] = stripped
+        return filtered or None
+    if isinstance(value, list):
+        entries = cast("list[Any]", value)
+        kept = [
+            stripped
+            for stripped in (_strip_opaque_reasoning_payload(entry) for entry in entries)
+            if stripped is not None
+        ]
+        return kept or None
+    return value
+
+
 def _serialize_content(content: Content) -> dict[str, Any]:
     payload = content.to_dict(exclude_none=True)
     payload.pop("raw_representation", None)
     # ``items`` mirrors ``result`` for function_result content; exclude it
     # to avoid double-counting tokens during estimation.
     payload.pop("items", None)
+    # ``protected_data`` carries provider reasoning payloads. JSON-serialised
+    # reasoning_details (Chat Completions) are replayed to the provider as
+    # clear text -- ``summary``, ``reasoning_text`` and nested ``reasoning.text``
+    # are part of the context the provider receives, so only their opaque
+    # members (``encrypted_content``) are excluded and the clear text stays
+    # counted. Anything that is not such a JSON structure (Anthropic thinking
+    # ``signature``, Responses API ``encrypted_content`` blobs) is replayed
+    # opaquely and never tokenised; exclude it so estimation measures the text
+    # the model actually sees.
+    protected_data = payload.get("protected_data")
+    if isinstance(protected_data, str) and protected_data:
+        try:
+            reasoning_payload = json.loads(protected_data)
+        except ValueError:
+            reasoning_payload = None
+        filtered = (
+            _strip_opaque_reasoning_payload(reasoning_payload) if isinstance(reasoning_payload, (dict, list)) else None
+        )
+        if filtered is None:
+            payload.pop("protected_data", None)
+        else:
+            payload["protected_data"] = json.dumps(filtered, ensure_ascii=False)
+    else:
+        payload.pop("protected_data", None)
+    additional_properties = payload.get("additional_properties")
+    if isinstance(additional_properties, dict) and "encrypted_content" in additional_properties:
+        typed_properties = cast("dict[str, Any]", additional_properties)
+        payload["additional_properties"] = {
+            key: value for key, value in typed_properties.items() if key != "encrypted_content"
+        }
     return payload
 
 
@@ -1142,19 +1255,28 @@ class ToolResultCompactionStrategy:
                 _set_group_summarized_by_summary_id(msg, summary_id)
                 changed = set_excluded(msg, excluded=True, reason="tool_result_compaction") or changed
 
+            # Aggregate provenance directly from the actual Message objects being summarized
+            # This ensures origin_session_ids are preserved even when message_id is None
+            aggregated_origins = _aggregate_origin_session_ids(group_msgs)
+
             # Insert summary with forward links to the originals.
             summary_annotation = {
                 SUMMARY_OF_MESSAGE_IDS_KEY: original_message_ids,
                 SUMMARY_OF_GROUP_IDS_KEY: [group_id],
             }
             insertion_index = starts.get(group_id, 0)
+
+            summary_additional_properties: dict[str, Any] = {
+                GROUP_ANNOTATION_KEY: summary_annotation,
+            }
+            if aggregated_origins:
+                summary_additional_properties["_attribution"] = {"origin_session_ids": aggregated_origins}
+
             summary_message = Message(
                 role="assistant",
                 contents=[summary_text],
                 message_id=summary_id,
-                additional_properties={
-                    GROUP_ANNOTATION_KEY: summary_annotation,
-                },
+                additional_properties=summary_additional_properties,
             )
             messages.insert(insertion_index, summary_message)
             annotate_message_groups(messages, from_index=insertion_index, force_reannotate=False)
@@ -1570,13 +1692,21 @@ class SummarizationStrategy:
             SUMMARY_OF_GROUP_IDS_KEY: summary_of_group_ids,
         }
 
+        # Aggregate provenance directly from the actual Message objects being summarized
+        # This ensures origin_session_ids are preserved even when message_id is None
+        aggregated_origins = _aggregate_origin_session_ids(messages_to_summarize)
+
+        summary_additional_properties: dict[str, Any] = {
+            GROUP_ANNOTATION_KEY: summary_annotation,
+        }
+        if aggregated_origins:
+            summary_additional_properties["_attribution"] = {"origin_session_ids": aggregated_origins}
+
         summary_message = Message(
             role="assistant",
             contents=[summary_text],
             message_id=summary_id,
-            additional_properties={
-                GROUP_ANNOTATION_KEY: summary_annotation,
-            },
+            additional_properties=summary_additional_properties,
         )
 
         for message in messages_to_summarize:
@@ -1817,6 +1947,11 @@ class CompactionProvider(ContextProvider):
         if not all_messages:
             return
 
+        # Track each original message's source before compaction
+        source_by_id: dict[int, str] = {
+            id(message): sid for sid, msgs in context.context_messages.items() for message in msgs
+        }
+
         await _run_compaction_strategy(
             all_messages,
             strategy=self.before_strategy,
@@ -1825,9 +1960,23 @@ class CompactionProvider(ContextProvider):
         )
 
         projected = project_included_messages(all_messages)
-        projected_set = {id(m) for m in projected}
-        for sid in list(context.context_messages):
-            context.context_messages[sid] = [m for m in context.context_messages[sid] if id(m) in projected_set]
+
+        # Rebuild provider message lists from the projected list, preserving source attribution
+        # and including new synthetic messages created by compaction strategies
+        rebuilt: dict[str, list[Message]] = {sid: [] for sid in context.context_messages}
+        fallback_sid = next(iter(rebuilt), self.source_id)
+        last_sid = fallback_sid
+        for message in projected:
+            # For new synthetic messages, use the last known source; for original messages, use their tracked source
+            sid = source_by_id.get(id(message), last_sid)
+            if sid not in rebuilt:
+                # If the source was somehow removed during compaction, fall back to the last known source
+                sid = last_sid
+            rebuilt[sid].append(message)
+            last_sid = sid
+
+        context.context_messages.clear()
+        context.context_messages.update(rebuilt)
 
     async def after_run(
         self,

@@ -49,6 +49,7 @@ from contextvars import ContextVar
 from copy import deepcopy
 from typing import Any, Generic, Literal, TypeVar, overload
 
+from .._agents import BaseAgent
 from .._feature_stage import ExperimentalFeature, experimental
 from .._serialization import make_json_safe
 from .._types import AgentResponse, AgentResponseUpdate, ResponseStream
@@ -65,7 +66,7 @@ from ._events import (
     WorkflowRunState,
     _framework_event,
 )
-from ._workflow import WorkflowRunResult
+from ._workflow import WorkflowRunResult, _coerce_request_info_response
 
 logger = logging.getLogger(__name__)
 
@@ -244,6 +245,9 @@ class RunContext:
         found, value = self._get_response(rid)
         if found:
             self._pending_requests.pop(rid, None)
+            # Functional workflows intentionally allow None responses; _set_responses logs a warning for them.
+            if value is not None:
+                value = _coerce_request_info_response(value, response_type, rid)
             return value
 
         # No response — emit event and interrupt
@@ -739,6 +743,7 @@ class FunctionalWorkflow:
         self._last_message: Any = None
         self._last_step_cache: dict[tuple[str, int], Any] = {}
         self._last_step_cache_auto_request_info_counts: dict[tuple[str, int], int] = {}
+        self._last_state: dict[str, Any] = {}
         self._last_pending_request_ids: set[str] = set()
 
         # Signature arity is validated once at decoration time.
@@ -751,6 +756,30 @@ class FunctionalWorkflow:
         self.graph_signature_hash = self._compute_signature_hash()
 
         functools.update_wrapper(self, func)  # type: ignore[arg-type]
+
+    def _capture_replay_state(self, ctx: RunContext, message: Any | None = None) -> None:
+        """Capture the state needed to continue a response-only HITL replay."""
+        if message is not None:
+            self._last_message = message
+        self._last_step_cache = dict(ctx._step_cache)
+        self._last_step_cache_auto_request_info_counts = dict(ctx._step_cache_auto_request_info_counts)
+        self._last_state = dict(ctx._state)
+        self._last_pending_request_ids = set(ctx._pending_requests)
+
+    def _restore_replay_state(self, ctx: RunContext) -> Any:
+        """Restore cached execution state and return the message used by the replay."""
+        ctx._step_cache = dict(self._last_step_cache)
+        ctx._step_cache_auto_request_info_counts = dict(self._last_step_cache_auto_request_info_counts)
+        ctx._state = dict(self._last_state)
+        return self._last_message
+
+    def _clear_replay_state(self) -> None:
+        """Clear all state retained for a response-only replay."""
+        self._last_message = None
+        self._last_step_cache = {}
+        self._last_step_cache_auto_request_info_counts = {}
+        self._last_state = {}
+        self._last_pending_request_ids = set()
 
     @staticmethod
     def _classify_signature(func: Callable[..., Any]) -> list[str]:
@@ -1011,10 +1040,9 @@ class FunctionalWorkflow:
 
         # For response-only replay (no checkpoint), restore cached state
         if checkpoint_id is None and responses:
+            replay_message = self._restore_replay_state(ctx)
             if message is None:
-                message = self._last_message
-            ctx._step_cache = dict(self._last_step_cache)
-            ctx._step_cache_auto_request_info_counts = dict(self._last_step_cache_auto_request_info_counts)
+                message = replay_message
 
         # Store message for future replays
         if message is not None:
@@ -1062,8 +1090,7 @@ class FunctionalWorkflow:
                     )
 
                 # Persist step cache for response-only replay
-                self._last_step_cache = dict(ctx._step_cache)
-                self._last_step_cache_auto_request_info_counts = dict(ctx._step_cache_auto_request_info_counts)
+                self._capture_replay_state(ctx, message)
 
             # Yield collected events.
             # NOTE: Events are buffered during _execute() and yielded after
@@ -1084,23 +1111,17 @@ class FunctionalWorkflow:
 
             # Final status
             if saw_request:
-                self._last_pending_request_ids = set(ctx._pending_requests)
                 yield _framework_event(WorkflowEvent.status, WorkflowRunState.IDLE_WITH_PENDING_REQUESTS)
             else:
                 # Clean completion — drop cross-run replay state.
-                self._last_message = None
-                self._last_step_cache = {}
-                self._last_step_cache_auto_request_info_counts = {}
-                self._last_pending_request_ids = set()
+                self._clear_replay_state()
                 yield _framework_event(WorkflowEvent.status, WorkflowRunState.IDLE)
 
             span.add_event(OtelAttr.WORKFLOW_COMPLETED)
 
         except WorkflowInterrupted:
             # Persist step cache for response-only replay
-            self._last_step_cache = dict(ctx._step_cache)
-            self._last_step_cache_auto_request_info_counts = dict(ctx._step_cache_auto_request_info_counts)
-            self._last_pending_request_ids = set(ctx._pending_requests)
+            self._capture_replay_state(ctx, message)
 
             # HITL interruption — yield events collected so far
             for event in ctx._get_events():
@@ -1387,7 +1408,7 @@ def workflow(
 
 
 @experimental(feature_id=ExperimentalFeature.FUNCTIONAL_WORKFLOWS)
-class FunctionalWorkflowAgent:
+class FunctionalWorkflowAgent(BaseAgent):
     """Agent adapter for a :class:`FunctionalWorkflow`.
 
     Provides a ``run()`` method with the same overloaded signature as
@@ -1432,10 +1453,13 @@ class FunctionalWorkflowAgent:
         # but not otherwise consumed.
         del kwargs
         self._workflow = workflow
-        self.name = name or workflow.name
-        self.id = f"FunctionalWorkflowAgent_{self.name}"
-        self.description: str | None = description if description is not None else workflow.description
-        self.context_providers: Sequence[Any] | None = context_providers
+        resolved_name = name or workflow.name
+        super().__init__(
+            id=f"FunctionalWorkflowAgent_{resolved_name}",
+            name=resolved_name,
+            description=description if description is not None else workflow.description,
+            context_providers=context_providers,
+        )
         self._pending_requests: dict[str, WorkflowEvent[Any]] = {}
 
     @property

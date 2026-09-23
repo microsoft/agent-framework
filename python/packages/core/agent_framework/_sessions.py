@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeAlias, TypeVar, cast
 
 import msgspec
+from typing_extensions import TypedDict
 
 from ._feature_stage import ExperimentalFeature, experimental
 from ._filesystem import (
@@ -52,6 +53,7 @@ from ._types import (
     Content,
     Message,
     ResponseStream,
+    _append_instructions,  # pyright: ignore[reportPrivateUsage]
     _build_agent_response_from_chat_response,  # pyright: ignore[reportPrivateUsage]
     normalize_messages,
 )
@@ -829,17 +831,14 @@ class ContextProvider:
         """
 
 
-def _is_approval_placeholder_result(content: Content) -> bool:
-    result = getattr(content, "result", None)
-    return isinstance(result, str) and "[APPROVAL_PENDING]" in result
-
-
 def _approval_controls_to_keep(messages: Sequence[Message]) -> set[int]:
     unresolved_requests_by_id: dict[str, Content] = {}
     local_request_ids_by_call_id: dict[str, deque[str]] = {}
     local_request_ids_by_occurrence: dict[str, str] = {}
+    local_requests_by_id: dict[str, Content] = {}
+    closed_request_occurrences: set[int] = set()
     unresolved_local_responses_by_id: dict[str, Content] = {}
-    local_responses_by_call_id: dict[str, deque[tuple[str, str | None]]] = {}
+    local_responses_by_call_id: dict[str, deque[tuple[str, Content | None]]] = {}
 
     for message in messages:
         for content in message.contents:
@@ -848,6 +847,7 @@ def _approval_controls_to_keep(messages: Sequence[Message]) -> set[int]:
                 if content.id is not None and function_call is not None and function_call.call_id is not None:
                     if content.id not in unresolved_requests_by_id:
                         unresolved_requests_by_id[content.id] = content
+                        local_requests_by_id[content.id] = content
                         local_request_ids_by_call_id.setdefault(function_call.call_id, deque()).append(content.id)
                         if function_call.id is not None:
                             local_request_ids_by_occurrence[function_call.id] = content.id
@@ -862,8 +862,14 @@ def _approval_controls_to_keep(messages: Sequence[Message]) -> set[int]:
                 continue
             if content.type == "function_approval_response":
                 function_call = content.function_call
-                if content.id is not None:
-                    unresolved_requests_by_id.pop(local_request_ids_by_occurrence.get(content.id, content.id), None)
+                request_id = (
+                    local_request_ids_by_occurrence.get(content.id, content.id) if content.id is not None else None
+                )
+                request = local_requests_by_id.get(request_id) if request_id is not None else None
+                if request_id is not None:
+                    unresolved_requests_by_id.pop(request_id, None)
+                if request is not None and id(request) in closed_request_occurrences:
+                    continue
                 if (
                     content.id is not None
                     and function_call is not None
@@ -872,15 +878,14 @@ def _approval_controls_to_keep(messages: Sequence[Message]) -> set[int]:
                     and content.id not in unresolved_local_responses_by_id
                 ):
                     unresolved_local_responses_by_id[content.id] = content
-                    request_id = local_request_ids_by_occurrence.get(content.id)
                     local_responses_by_call_id.setdefault(function_call.call_id, deque()).append((
                         content.id,
-                        request_id,
+                        request,
                     ))
                 continue
             if content.call_id is None:
                 continue
-            is_terminal_result = content.type == "function_result" and not _is_approval_placeholder_result(content)
+            is_terminal_result = content.type == "function_result"
             is_follow_up_request = content.user_input_request and content.type not in {
                 "function_approval_request",
                 "function_approval_response",
@@ -892,16 +897,20 @@ def _approval_controls_to_keep(messages: Sequence[Message]) -> set[int]:
                 while responses and responses[0][0] not in unresolved_local_responses_by_id:
                     responses.popleft()
                 if responses:
-                    response_id, request_id = responses.popleft()
+                    response_id, request = responses.popleft()
                     unresolved_local_responses_by_id.pop(response_id, None)
-                    if request_id is not None:
-                        unresolved_requests_by_id.pop(request_id, None)
+                    if request is not None:
+                        closed_request_occurrences.add(id(request))
+                        if request.id is not None:
+                            unresolved_requests_by_id.pop(request.id, None)
                     resolved_response = True
             if not resolved_response and (request_ids := local_request_ids_by_call_id.get(content.call_id)):
                 while request_ids and request_ids[0] not in unresolved_requests_by_id:
                     request_ids.popleft()
                 if request_ids:
-                    unresolved_requests_by_id.pop(request_ids.popleft(), None)
+                    request = unresolved_requests_by_id.pop(request_ids.popleft(), None)
+                    if request is not None:
+                        closed_request_occurrences.add(id(request))
 
     return {
         id(content) for content in (*unresolved_requests_by_id.values(), *unresolved_local_responses_by_id.values())
@@ -1099,7 +1108,7 @@ def _current_run_identity() -> object | None:  # pyright: ignore[reportUnusedFun
 
 
 @contextlib.contextmanager
-def _run_identity_scope(identity: object) -> Generator[None]:  # pyright: ignore[reportUnusedFunction]
+def _run_identity_scope(identity: object) -> Generator[None]:
     """Stamp ``identity`` as the current run identity for the enclosed extent."""
     token = _CURRENT_RUN_IDENTITY.set(identity)
     try:
@@ -1527,9 +1536,10 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
 
     This middleware runs around each model call when
     ``require_per_service_call_history_persistence`` is enabled. It loads history providers
-    before the model call, persists them after the model call, and uses a local
-    sentinel conversation id so the function loop follows the existing
-    service-managed branch without forwarding that sentinel to the leaf client.
+    before the model call, carries their messages, tools, and instructions into
+    the function loop, persists them after the model call, and uses a local sentinel
+    conversation id so the function loop follows the existing service-managed
+    branch without forwarding that sentinel to the leaf client.
     """
 
     def __init__(
@@ -1556,6 +1566,8 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
         self._session = session
         self._providers = list(providers)
         self._service_stores_history = service_stores_history
+        self._merged_provider_tool_names: set[str] = set()
+        self._merged_provider_instructions: set[str] = set()
 
     async def _prepare_service_call_context(self, messages: Sequence[Message]) -> SessionContext:
         """Create a per-call SessionContext and load history providers into it."""
@@ -1608,10 +1620,55 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
         if context.options is None:
             return
 
-        mutable_options = dict(context.options)
+        mutable_options = context.options if isinstance(context.options, dict) else dict(context.options)
         if is_local_history_conversation_id(cast(str | None, mutable_options.get("conversation_id"))):
             mutable_options.pop("conversation_id", None)
         context.options = mutable_options
+
+    def _merge_provider_context(self, context: ChatContext, service_call_context: SessionContext) -> None:
+        """Merge per-call provider tools and instructions into the function-loop options."""
+        if not service_call_context.tools and not service_call_context.instructions:
+            return
+        if context.options is None:
+            mutable_options: dict[str, Any] = {}
+            context.options = mutable_options
+        elif isinstance(context.options, dict):
+            mutable_options = context.options
+        else:
+            mutable_options = dict(context.options)
+            context.options = mutable_options
+
+        if service_call_context.tools:
+            from ._tools import _get_tool_name, normalize_tools  # pyright: ignore[reportPrivateUsage]
+
+            existing_value = mutable_options.get("tools")
+            if existing_value is None:
+                tools: list[Any] = []
+            elif isinstance(existing_value, Sequence) and not isinstance(existing_value, (str, bytes, bytearray)):
+                tools = list(cast(Sequence[Any], existing_value))
+            else:
+                tools = [existing_value]
+            previously_merged_names = set(self._merged_provider_tool_names)
+            newly_merged_names: set[str] = set()
+            for tool in normalize_tools(service_call_context.tools):
+                tool_name = _get_tool_name(tool)
+                if isinstance(tool_name, str) and tool_name in previously_merged_names:
+                    continue
+                tools.append(tool)
+                if isinstance(tool_name, str):
+                    newly_merged_names.add(tool_name)
+            self._merged_provider_tool_names.update(newly_merged_names)
+            mutable_options["tools"] = tools
+
+        new_instructions = [
+            instruction
+            for instruction in service_call_context.instructions
+            if instruction not in self._merged_provider_instructions
+        ]
+        if new_instructions:
+            addition = "\n".join(new_instructions)
+            mutable_options["instructions"] = _append_instructions(mutable_options.get("instructions"), addition)
+            self._merged_provider_instructions.update(new_instructions)
 
     async def _finalize_response(
         self,
@@ -1678,6 +1735,7 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
         # outgoing messages from the loaded local history and strip the local sentinel.
         if not self._service_stores_history:
             context.messages = service_call_context.get_messages(include_input=True)
+            self._merge_provider_context(context, service_call_context)
             self._strip_local_conversation_id(context)
 
         await call_next()
@@ -1702,6 +1760,32 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
             service_call_context=service_call_context,
             response=context.result,
         )
+
+
+class _AgentSessionDictRequired(TypedDict):
+    """Required fields for a serialized :class:`AgentSession`."""
+
+    session_id: str
+
+
+class AgentSessionDict(_AgentSessionDictRequired, total=False):
+    """Serialized :class:`AgentSession` payload shape produced by :meth:`AgentSession.to_dict`.
+
+    ``AgentSession.to_dict`` returns a plain ``dict[str, Any]`` that conforms to this
+    schema. Callers that need a TypedDict view can ``cast`` the result.
+
+    Built as a required base plus ``total=False`` optional fields so postponed
+    annotations do not turn optional keys into required runtime metadata.
+
+    ``service_session_id`` may be a plain string or a structured
+    :data:`ServiceSessionId` mapping, matching :attr:`AgentSession.service_session_id`.
+    ``state`` holds session-local data and may be incomplete when the session uses
+    service-side storage.
+    """
+
+    type: str
+    service_session_id: str | ServiceSessionId | None
+    state: dict[str, Any]
 
 
 class AgentSession:
@@ -1746,6 +1830,11 @@ class AgentSession:
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize session to a plain dict for storage/transfer.
+
+        The returned mapping matches :class:`AgentSessionDict`. The annotated
+        return type stays ``dict[str, Any]`` so subclasses and callers that
+        extend or pass the payload as a mutable ``dict`` remain type-correct
+        (TypedDict is not assignable to ``dict`` under pyright).
 
         Registered custom values use their configured codecs. Unregistered
         values defining ``to_dict`` retain the established dictionary behavior.

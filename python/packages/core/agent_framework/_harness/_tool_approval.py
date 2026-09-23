@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import inspect
 import json
@@ -17,8 +18,6 @@ from .._types import (
     AgentResponse,
     AgentResponseUpdate,
     Content,
-    FinishReason,
-    FinishReasonLiteral,
     Message,
     ResponseStream,
 )
@@ -77,6 +76,25 @@ def _contents_from_state(values: Any) -> list[Content]:
         return []
     state_items = list(cast(Iterable[Any], values))
     return [_content_from_state(value) for value in state_items]
+
+
+def _structured_response_format(context: AgentContext) -> Any | None:
+    """Return the structured-output schema for this invocation, if any.
+
+    Run ``options`` take precedence over the agent's ``default_options``. The
+    streaming re-wrap in :meth:`ToolApprovalMiddleware._process_stream` must
+    forward this to ``AgentResponse.from_updates`` or ``response.value`` is
+    dropped even when the inner stream already parsed it.
+    """
+    if context.options is not None:
+        response_format = context.options.get("response_format")
+        if response_format is not None:
+            return response_format
+    default_options = getattr(context.agent, "default_options", None)
+    if isinstance(default_options, Mapping):
+        typed_default_options = cast("Mapping[str, Any]", default_options)
+        return typed_default_options.get("response_format")
+    return None
 
 
 def _content_to_state(content: Content) -> dict[str, Any]:
@@ -411,9 +429,14 @@ class ToolApprovalMiddleware(AgentMiddleware):
                 _save_state(context.session, state, source_id=self.source_id)
                 return
 
-            all_auto_approved = await self._process_outbound_messages(context.result.messages, state)
+            has_other_user_input = self._has_non_approval_user_input(context.result.messages)
+            all_auto_approved = await self._process_outbound_messages(
+                context.result.messages,
+                state,
+                preserve_batch=has_other_user_input,
+            )
             _save_state(context.session, state, source_id=self.source_id)
-            if not all_auto_approved:
+            if not all_auto_approved or has_other_user_input:
                 return
             context.messages = []
             context.result = None
@@ -439,6 +462,14 @@ class ToolApprovalMiddleware(AgentMiddleware):
         call_next: Callable[[], Awaitable[None]],
         state: ToolApprovalState,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+        # Last inner AgentResponse. The outer finalizer resolves its structured
+        # value (completing its lazy parse) and forwards it through the public
+        # ``from_updates(value=...)`` contract, so an auto-approved preamble that
+        # the outer aggregation coalesces into the JSON message cannot mask it
+        # (#7418).
+        holder: dict[str, AgentResponse | None] = {"final": None}
+        response_format = _structured_response_format(context)
+
         async def _stream() -> AsyncIterable[AgentResponseUpdate]:
             if context.session is None:
                 raise RuntimeError("ToolApprovalMiddleware requires an AgentSession.")
@@ -454,53 +485,78 @@ class ToolApprovalMiddleware(AgentMiddleware):
                     raise ValueError("Streaming ToolApprovalMiddleware requires a ResponseStream result.")
 
                 approval_requests: list[Content] = []
+                buffered_approval_updates: list[AgentResponseUpdate] = []
+                streamed_user_input_contents: list[Content] = []
+                buffering = False
                 async for update in context.result:
-                    approval_contents = [
+                    update_approval_requests = [
                         content for content in update.contents if content.type == "function_approval_request"
                     ]
-                    if not approval_contents:
+                    if not buffering and not update_approval_requests:
+                        streamed_user_input_contents.extend(
+                            content for content in update.contents if content.user_input_request
+                        )
+                    if update_approval_requests:
+                        buffering = True
+                        approval_requests.extend(update_approval_requests)
+                    if not buffering:
                         yield update
                         continue
-                    approval_requests.extend(approval_contents)
-                    remaining_contents = [
-                        content for content in update.contents if content.type != "function_approval_request"
-                    ]
-                    if remaining_contents:
-                        raw_finish_reason = update.finish_reason
-                        finish_reason: FinishReasonLiteral | FinishReason | None
-                        if isinstance(raw_finish_reason, str):
-                            finish_reason = FinishReason(raw_finish_reason)
-                        else:
-                            finish_reason = cast(FinishReasonLiteral | FinishReason | None, raw_finish_reason)
-                        yield AgentResponseUpdate(
-                            contents=remaining_contents,
-                            role=update.role,
-                            author_name=update.author_name,
-                            agent_id=update.agent_id,
-                            response_id=update.response_id,
-                            message_id=update.message_id,
-                            created_at=update.created_at,
-                            finish_reason=finish_reason,
-                            continuation_token=update.continuation_token,
-                            additional_properties=update.additional_properties,
-                            raw_representation=update.raw_representation,
-                        )
-                await context.result.get_final_response()
+                    buffered_update = copy.copy(update)
+                    buffered_update.contents = list(update.contents)
+                    buffered_approval_updates.append(buffered_update)
+                holder["final"] = await context.result.get_final_response()
                 if not approval_requests:
                     return
 
-                response_messages = [Message(role="assistant", contents=approval_requests)]
-                all_auto_approved = await self._process_outbound_messages(response_messages, state)
+                response_messages = [
+                    Message(
+                        role="assistant",
+                        contents=[
+                            *streamed_user_input_contents,
+                            *(content for update in buffered_approval_updates for content in update.contents),
+                        ],
+                    )
+                ]
+                has_other_user_input = self._has_non_approval_user_input(response_messages)
+                all_auto_approved = await self._process_outbound_messages(
+                    response_messages,
+                    state,
+                    preserve_batch=has_other_user_input,
+                )
                 _save_state(context.session, state, source_id=self.source_id)
-                if not all_auto_approved:
-                    for message in response_messages:
-                        if message.contents:
-                            yield AgentResponseUpdate(role=message.role, contents=message.contents)
+                remaining_ids = {id(content) for message in response_messages for content in message.contents}
+                for update in buffered_approval_updates:
+                    remaining_contents = [content for content in update.contents if id(content) in remaining_ids]
+                    if remaining_contents:
+                        remaining_update = copy.copy(update)
+                        remaining_update.contents = remaining_contents
+                        yield remaining_update
+                if not all_auto_approved or has_other_user_input:
                     return
                 context.messages = []
                 context.result = None
 
-        return ResponseStream(_stream(), finalizer=AgentResponse.from_updates)
+        def _finalize(updates: Sequence[AgentResponseUpdate]) -> AgentResponse:
+            # Build the response from the streamed updates so the middleware's
+            # approval / user-input handling is preserved. The coalesced update text
+            # can include preamble from auto-approved turns, which would otherwise be
+            # parsed as one invalid string, so resolve the terminal inner response's
+            # structured value — reading ``value`` also completes its lazy parse — and
+            # forward it via ``from_updates``' public ``value`` argument (#7418). A
+            # parse failure is left unset so the outer response still surfaces the
+            # error lazily on ``value`` access, matching the error timing of a
+            # middleware-free streaming run.
+            final = holder["final"]
+            value: Any = None
+            if final is not None:
+                # ``ValidationError`` subclasses ``ValueError``; ``TypeError`` covers a
+                # malformed ``response_format`` in the terminal inner response.
+                with contextlib.suppress(ValueError, TypeError):
+                    value = final.value
+            return AgentResponse.from_updates(updates, output_format_type=response_format, value=value)
+
+        return ResponseStream(_stream(), finalizer=_finalize)
 
     def _prepare_inbound_messages(
         self,
@@ -591,7 +647,21 @@ class ToolApprovalMiddleware(AgentMiddleware):
             return None
         return state.queued_approval_requests.pop(0)
 
-    async def _process_outbound_messages(self, messages: list[Message], state: ToolApprovalState) -> bool:
+    @staticmethod
+    def _has_non_approval_user_input(messages: Sequence[Message]) -> bool:
+        return any(
+            content.type != "function_approval_request" and content.user_input_request
+            for message in messages
+            for content in message.contents
+        )
+
+    async def _process_outbound_messages(
+        self,
+        messages: list[Message],
+        state: ToolApprovalState,
+        *,
+        preserve_batch: bool = False,
+    ) -> bool:
         approval_requests = [
             content
             for message in messages
@@ -610,13 +680,14 @@ class ToolApprovalMiddleware(AgentMiddleware):
             else:
                 unresolved.append(request)
 
-        if not auto_approved and len(unresolved) <= 1:
+        if not auto_approved and (preserve_batch or len(unresolved) <= 1):
             return False
 
         queued_ids: set[int] = set()
-        for request in unresolved[1:]:
-            queued_ids.add(id(request))
-            state.queued_approval_requests.append(request)
+        if not preserve_batch:
+            for request in unresolved[1:]:
+                queued_ids.add(id(request))
+                state.queued_approval_requests.append(request)
 
         remove_ids = auto_approved | queued_ids
         self._remove_approval_requests(messages, remove_ids)

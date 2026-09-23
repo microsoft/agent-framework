@@ -168,6 +168,21 @@ asyncio.run(main())
 
 You can explore additional agent samples [here](https://github.com/microsoft/agent-framework/tree/main/python/samples/02-agents).
 
+### MCP HTTP client ownership and cookies
+
+**Breaking change:** HTTP clients created by `MCPStreamableHTTPTool` no longer persist
+response cookies. This applies with or without a `header_provider`, including repeated
+calls within the same MCP session. Connection reuse, timeout and redirect defaults,
+and cleanup on close or reset are preserved. Explicit `Cookie` headers supplied through
+`static_headers` or a `header_provider` are still supported.
+
+Applications relying on cookie-based authentication, sessions, or load-balancer affinity
+must supply an `httpx.AsyncClient` through `http_client=`. Supplied clients retain their
+configuration and response-cookie handling and must be closed by the caller. Scope
+cookie-bearing clients and MCP tool sessions to one authenticated principal; do not
+share a user-specific cookie jar across users. Rejecting cookies does not partition
+MCP protocol sessions or other server-side state between principals.
+
 ## 5. Multi-Agent Orchestration
 
 Coordinate multiple agents to collaborate on complex tasks using orchestration patterns:

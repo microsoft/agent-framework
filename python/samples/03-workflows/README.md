@@ -104,7 +104,11 @@ Builder-oriented request-info samples are maintained in the orchestration sample
 
 ### tool-approval
 
-Builder-based tool approval samples are maintained in the orchestration sample set.
+| Sample | File | Concepts |
+| ------ | ---- | -------- |
+| Agent Tool vs Workflow Approval | [tool-approval/agent_as_tool_vs_workflow_approval.py](./tool-approval/agent_as_tool_vs_workflow_approval.py) | Use child `ToolApprovalMiddleware` policy for immediate delegated approval; use a workflow for delayed or durable approval |
+
+Additional builder-based tool approval samples are maintained in the orchestration sample set.
 
 ### observability
 

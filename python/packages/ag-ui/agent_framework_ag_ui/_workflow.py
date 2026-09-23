@@ -12,6 +12,12 @@ from typing import Any, cast
 from ag_ui.core import (
     BaseEvent,
     MessagesSnapshotEvent,
+    ReasoningEncryptedValueEvent,
+    ReasoningEndEvent,
+    ReasoningMessageContentEvent,
+    ReasoningMessageEndEvent,
+    ReasoningMessageStartEvent,
+    ReasoningStartEvent,
     RunErrorEvent,
     RunFinishedEvent,
     RunStartedEvent,
@@ -128,10 +134,15 @@ class _WorkflowSnapshotBuilder:
 
     def __init__(self, raw_messages: list[dict[str, Any]]) -> None:
         self._synthesized_messages = agui_messages_to_snapshot_format(raw_messages)
+        self._synthesized_message_ids: set[Any] = {
+            message_id for message in self._synthesized_messages if (message_id := message.get("id"))
+        }
         self._emitted_messages: list[dict[str, Any]] | None = None
         self._open_text_message: dict[str, Any] | None = None
+        self._open_reasoning_message: dict[str, Any] | None = None
         self._tool_call_message: dict[str, Any] | None = None
         self._tool_calls_by_id: dict[str, dict[str, Any]] = {}
+        self._provisional_reasoning_messages: list[dict[str, Any]] = []
         self.state: dict[str, Any] | None = None
         self.interrupt: list[dict[str, Any]] | None = None
 
@@ -173,11 +184,25 @@ class _WorkflowSnapshotBuilder:
             self._observe_tool_call_args(event)
         elif isinstance(event, ToolCallResultEvent):
             self._observe_tool_call_result(event)
+        elif isinstance(event, ReasoningStartEvent):
+            # A new reasoning block supersedes anything still open from the last one.
+            self._begin_reasoning_block()
+        elif isinstance(event, ReasoningMessageStartEvent):
+            self._observe_reasoning_start(event)
+        elif isinstance(event, ReasoningMessageContentEvent):
+            self._observe_reasoning_content(event)
+        elif isinstance(event, (ReasoningMessageEndEvent, ReasoningEndEvent)):
+            self._observe_reasoning_end(event)
+        elif isinstance(event, ReasoningEncryptedValueEvent):
+            self._observe_reasoning_encrypted_value(event)
 
     def build(self) -> AGUIThreadSnapshot:
         """Return the replayable thread snapshot."""
+        self._flush_open_reasoning_message()
         self._flush_open_text_message()
-        messages = self._emitted_messages if self._emitted_messages is not None else self._synthesized_messages
+        messages = (
+            self._emitted_messages if self._emitted_messages is not None else self._replayable_synthesized_messages()
+        )
         persisted = _persistable_host_payload_history(messages)
         return AGUIThreadSnapshot(
             messages=_bound_host_payload_history(persisted),
@@ -186,12 +211,22 @@ class _WorkflowSnapshotBuilder:
         )
 
     def _observe_text_start(self, event: TextMessageStartEvent) -> None:
+        self._flush_open_reasoning_message()
         if self._open_text_message is not None and self._open_text_message.get("id") != event.message_id:
             self._flush_open_text_message()
         self._open_text_message = {"id": event.message_id, "role": event.role, "content": ""}
 
     def _observe_text_content(self, event: TextMessageContentEvent) -> None:
         if self._open_text_message is None or self._open_text_message.get("id") != event.message_id:
+            # Text arriving without a start event still opens a message, so it has to
+            # close what is open the way `_observe_text_start` does. Without the
+            # reasoning flush the reasoning outlives it and `build()` replays it after
+            # text that streamed later; without the text flush a message already open
+            # under a different id was overwritten and its content lost, which
+            # concurrently scheduled executors can trigger by interleaving content
+            # events.
+            self._flush_open_reasoning_message()
+            self._flush_open_text_message()
             self._open_text_message = {"id": event.message_id, "role": "assistant", "content": ""}
         self._open_text_message["content"] = f"{self._open_text_message.get('content', '')}{event.delta}"
 
@@ -201,6 +236,7 @@ class _WorkflowSnapshotBuilder:
         self._flush_open_text_message()
 
     def _observe_tool_call_start(self, event: ToolCallStartEvent) -> None:
+        self._flush_open_reasoning_message()
         parent_message_id = event.parent_message_id
         if (
             self._open_text_message is not None
@@ -218,7 +254,7 @@ class _WorkflowSnapshotBuilder:
                 "role": "assistant",
                 "tool_calls": [],
             }
-            self._synthesized_messages.append(self._tool_call_message)
+            self._append_synthesized_message(self._tool_call_message)
 
         tool_call = {
             "id": event.tool_call_id,
@@ -236,6 +272,9 @@ class _WorkflowSnapshotBuilder:
         function_payload["arguments"] = f"{function_payload.get('arguments', '')}{event.delta}"
 
     def _observe_tool_call_result(self, event: ToolCallResultEvent) -> None:
+        # `_observe_tool_call_start` closes open reasoning but the result path did not,
+        # so reasoning that streamed before a result replayed after it.
+        self._flush_open_reasoning_message()
         message: dict[str, Any] = {
             "id": event.message_id,
             "role": "tool",
@@ -252,7 +291,9 @@ class _WorkflowSnapshotBuilder:
                 _AGUI_TOOL_RESULT_MODEL_CONTENT_KEY,
                 [{"type": "text", "text": "Tool result unavailable."}],
             )
-        self._synthesized_messages.append(message)
+        # Through the helper, not `_synthesized_messages.append`, so the id index this
+        # branch relies on for collision detection stays in step.
+        self._append_synthesized_message(message)
         # A result closes the current tool-call group; later tool calls start a new
         # assistant message so replayed transcripts keep results adjacent to their
         # tool_calls message, which provider APIs require.
@@ -262,10 +303,132 @@ class _WorkflowSnapshotBuilder:
         if self._open_text_message is None:
             return
         if self._open_text_message.get("content"):
-            self._synthesized_messages.append(self._open_text_message)
+            # A text message resumed after an interleaved reasoning block reuses its
+            # `message_id`, so flushing both fragments would put two messages under one
+            # id. Re-id the later fragment the way `_observe_tool_call_start` re-ids a
+            # split message, and only when a collision is real, so the common case
+            # keeps the id it streamed under.
+            if self._has_synthesized_message_id(self._open_text_message.get("id")):
+                self._open_text_message["id"] = generate_event_id()
+            self._append_synthesized_message(self._open_text_message)
             # Text between tool calls closes the current tool-call group as well.
             self._tool_call_message = None
         self._open_text_message = None
+
+    def _append_synthesized_message(self, message: dict[str, Any]) -> None:
+        """Append a replayable message, keeping the id index in step.
+
+        Every append goes through here so ``_has_synthesized_message_id`` can stay a set
+        lookup. Scanning the accumulated list on each flush instead made snapshot
+        building quadratic in message count -- about 8us per message at any length
+        before, rising to 124us per message by 4000 messages.
+        """
+        self._synthesized_messages.append(message)
+        message_id = message.get("id")
+        if message_id:
+            self._synthesized_message_ids.add(message_id)
+
+    def _has_synthesized_message_id(self, message_id: Any) -> bool:
+        """Whether a message already replays under *message_id*.
+
+        A falsy id never collides: it would otherwise match every message that carries
+        no id of its own.
+        """
+        return bool(message_id) and message_id in self._synthesized_message_ids
+
+    def _begin_reasoning_block(self) -> None:
+        """Close whatever is open so a reasoning block replays where it streamed.
+
+        ``_observe_text_start`` and ``_observe_tool_call_start`` already flush open
+        reasoning, but nothing flushed open text, so an ``output`` event followed by a
+        later ``intermediate`` event left both open and let ``build()``'s flush order
+        decide the sequence -- reversing what streamed. Flushing here keeps the two
+        slots peers, so they can never both be open and that order cannot matter.
+        """
+        self._flush_open_reasoning_message()
+        self._flush_open_text_message()
+
+    def _observe_reasoning_start(self, event: ReasoningMessageStartEvent) -> None:
+        if self._open_reasoning_message is not None and self._open_reasoning_message.get("id") == event.message_id:
+            # A repeated start for the block already open is a no-op: reopening it would
+            # discard the deltas already folded in, and flushing first would replay two
+            # messages under one id.
+            return
+        self._begin_reasoning_block()
+        self._open_reasoning_message = {"id": event.message_id, "role": "reasoning", "content": ""}
+
+    def _observe_reasoning_content(self, event: ReasoningMessageContentEvent) -> None:
+        if self._open_reasoning_message is None or self._open_reasoning_message.get("id") != event.message_id:
+            self._begin_reasoning_block()
+            self._open_reasoning_message = {"id": event.message_id, "role": "reasoning", "content": ""}
+        self._open_reasoning_message["content"] = f"{self._open_reasoning_message.get('content', '')}{event.delta}"
+
+    def _observe_reasoning_end(self, event: ReasoningMessageEndEvent | ReasoningEndEvent) -> None:
+        if self._open_reasoning_message is None or self._open_reasoning_message.get("id") != event.message_id:
+            return
+        if isinstance(event, ReasoningMessageEndEvent):
+            # REASONING_MESSAGE_END closes the message, not the block, and an
+            # encrypted value is block-scoped so it legitimately trails it -- that is
+            # the order `_emit_text_reasoning` produces without a flow. Keep the
+            # message open so protected-data-only reasoning still has somewhere to
+            # land; REASONING_END, the next block, or build() finalizes it.
+            return
+        self._flush_open_reasoning_message()
+
+    def _observe_reasoning_encrypted_value(self, event: ReasoningEncryptedValueEvent) -> None:
+        # Only message-scoped encrypted values belong on a reasoning message; the
+        # protocol also uses this event for other subtypes.
+        if event.subtype != "message":
+            return
+        if self._open_reasoning_message is not None and self._open_reasoning_message.get("id") == event.entity_id:
+            self._open_reasoning_message["encryptedValue"] = event.encrypted_value
+            return
+        # Intervening text or tool output can flush the message before its encrypted
+        # value arrives; attach it to the message we already synthesized.
+        for message in reversed(self._synthesized_messages):
+            if message.get("role") == "reasoning" and message.get("id") == event.entity_id:
+                message["encryptedValue"] = event.encrypted_value
+                return
+
+    def _flush_open_reasoning_message(self) -> None:
+        if self._open_reasoning_message is None:
+            return
+        message = self._open_reasoning_message
+        self._open_reasoning_message = None
+        # An encrypted-value-only block carries no display text but still has to
+        # survive hydration, so it counts as content worth keeping.
+        self._append_synthesized_message(message)
+        if not (message.get("content") or message.get("encryptedValue")):
+            # A block whose only payload is protected data emits no content event, so an
+            # empty message here may still be waiting for its encrypted value. Measured
+            # on a live fan-out workflow: with a flow the value arrives between
+            # REASONING_MESSAGE_START and REASONING_MESSAGE_END, so output interleaved by
+            # a concurrent executor can flush this message before it lands; without a
+            # flow `_emit_text_reasoning` emits REASONING_MESSAGE_END first, widening the
+            # same window. Keep it addressable in the position it streamed rather than
+            # dropping it -- attaching the value on arrival instead would replay the
+            # reasoning after the output that flushed it. `build()` leaves it out of the
+            # snapshot while nothing has claimed it.
+            self._provisional_reasoning_messages.append(message)
+
+    def _replayable_synthesized_messages(self) -> list[dict[str, Any]]:
+        """Synthesized messages without reasoning shells that nothing ever claimed.
+
+        Filters rather than deletes so ``build()`` stays a projection of accumulated
+        state. The single caller builds once per run, so that is not observable today; it
+        keeps a shell excluded from one snapshot addressable afterwards, which is the
+        behaviour to want if the builder is ever driven incrementally.
+        """
+        # Compare by identity: a caller-supplied message from `raw_messages` may share
+        # an id with one we synthesized, and must not be filtered out with it.
+        unclaimed = {
+            id(message)
+            for message in self._provisional_reasoning_messages
+            if not (message.get("content") or message.get("encryptedValue"))
+        }
+        if not unclaimed:
+            return self._synthesized_messages
+        return [message for message in self._synthesized_messages if id(message) not in unclaimed]
 
 
 class AgentFrameworkWorkflow:
@@ -362,6 +525,12 @@ class AgentFrameworkWorkflow:
         (``forwarded_props: {"checkpoint_id": ...}``), which restores the persisted
         workflow state instead of starting a fresh turn.
 
+        Resume also works when storage lives only on the resolved workflow
+        (``WorkflowBuilder(checkpoint_storage=...)``) and this wrapper / endpoint omits
+        ``checkpoint_storage``, so emitted pause ids remain round-trippable for hosts that
+        expose the workflow through ``AgentFrameworkWorkflow`` or
+        ``add_agent_framework_fastapi_endpoint`` without duplicating storage configuration.
+
         Note:
             Checkpointing (the ``agent_framework`` workflow checkpoint mechanism) is
             independent from AG-UI Thread Snapshot persistence (``snapshot_store``).
@@ -384,11 +553,6 @@ class AgentFrameworkWorkflow:
 
         checkpoint_storage = self.checkpoint_storage
         checkpoint_id = _checkpoint_id_from_input(input_data)
-        if checkpoint_id is not None and checkpoint_storage is None:
-            raise ValueError(
-                "Resuming from a checkpoint requires checkpoint_storage to be configured on "
-                "AgentFrameworkWorkflow (or the AG-UI endpoint)."
-            )
 
         supplied_thread_id = input_data.get("thread_id") or input_data.get("threadId")
         request_owner = (snapshot_scope, str(supplied_thread_id) if supplied_thread_id is not None else None)
@@ -398,6 +562,15 @@ class AgentFrameworkWorkflow:
             if interrupt.get("id") is not None
         }
         workflow = self._resolve_workflow(thread_id, snapshot_scope)
+        # Prefer wrapper/endpoint storage; otherwise allow builder/runtime storage on the
+        # resolved workflow so pause ids emitted without AG-UI storage still resume.
+        if checkpoint_id is not None and checkpoint_storage is None:
+            if not workflow._runner.context.has_checkpointing():  # pyright: ignore[reportPrivateUsage]
+                raise ValueError(
+                    "Resuming from a checkpoint requires checkpoint_storage to be configured on "
+                    "AgentFrameworkWorkflow (or the AG-UI endpoint), or WorkflowBuilder "
+                    "checkpoint storage on the workflow instance."
+                )
         live_pending_events = await _pending_request_events(self.workflow) if self.workflow is not None else {}
         if self.workflow is not None and checkpoint_id is None:
             for request_event in live_pending_events.values():
@@ -409,9 +582,14 @@ class AgentFrameworkWorkflow:
                         code="WORKFLOW_RESUME_NOT_FOUND",
                     )
                     return
-        if checkpoint_id is not None and checkpoint_storage is not None:
+        if checkpoint_id is not None:
             try:
-                checkpoint = await checkpoint_storage.load(checkpoint_id)
+                if checkpoint_storage is not None:
+                    checkpoint = await checkpoint_storage.load(checkpoint_id)
+                else:
+                    checkpoint = await workflow._runner.context.load_checkpoint(checkpoint_id)  # pyright: ignore[reportPrivateUsage]
+                    if checkpoint is None:
+                        raise LookupError(f"checkpoint '{checkpoint_id}' was not found")
             except Exception as exc:
                 yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
                 yield RunErrorEvent(
@@ -468,10 +646,16 @@ class AgentFrameworkWorkflow:
             run_checkpoint_storage = _OwnedWorkflowCheckpointStorage(checkpoint_storage, request_owner)
         builder_seed_messages = raw_messages
         if resume_payload is not None or (checkpoint_id is not None and not raw_messages):
-            # Resume requests carry only the synthesized interrupt response, and a
-            # checkpoint-only resume carries no new messages at all; in both cases seed
-            # the builder with stored history to avoid persisting a truncated thread.
-            builder_seed_messages = snapshot_session.resume_seeded_messages(builder_seed_messages)
+            # Resume / checkpoint-only requests need stored history. Empty input prepends;
+            # non-empty/replayed transcripts overlap-merge (#8140).
+            if builder_seed_messages:
+                builder_seed_messages = _reconstruct_messages_from_thread_snapshot(
+                    stored_messages=stored_snapshot.messages if stored_snapshot is not None else [],
+                    incoming_messages=builder_seed_messages,
+                    stored_interrupt=stored_snapshot.interrupt if stored_snapshot is not None else None,
+                )
+            else:
+                builder_seed_messages = snapshot_session.resume_seeded_messages(builder_seed_messages)
         snapshot_builder = _WorkflowSnapshotBuilder(builder_seed_messages) if snapshot_session.enabled else None
         if snapshot_builder is not None and effective_state:
             # Seed builder state so a run that emits no StateSnapshotEvent still

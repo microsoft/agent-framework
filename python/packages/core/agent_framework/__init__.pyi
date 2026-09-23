@@ -266,14 +266,24 @@ from ._vectors import (
     SearchType,
     SupportsVectorSearch,
     SupportsVectorUpsert,
+    VectorCollectionContextProvider,
     VectorStoreCollectionDefinition,
     VectorStoreField,
+    VectorStoreHistoryProvider,
+    create_delete_tool,
+    create_get_tool,
+    create_upsert_tool,
     create_vector_search_tool,
     register_vectorstoremodel,
     vectorstoremodel,
 )
 from ._workflows._agent import WorkflowAgent
-from ._workflows._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
+from ._workflows._agent_executor import (
+    AgentExecutor,
+    AgentExecutorCheckpointState,
+    AgentExecutorRequest,
+    AgentExecutorResponse,
+)
 from ._workflows._agent_utils import resolve_agent_id
 from ._workflows._checkpoint import (
     CheckpointID,
@@ -335,6 +345,7 @@ from ._workflows._workflow_executor import SubWorkflowRequestMessage, SubWorkflo
 from .exceptions import (
     AgentFrameworkException,
     MiddlewareException,
+    ResponseInvalidatedException,
     UserInputRequiredException,
     WorkflowCheckpointException,
     WorkflowConvergenceException,
@@ -378,6 +389,7 @@ __all__ = [
     "AgentContext",
     "AgentEvalConverter",
     "AgentExecutor",
+    "AgentExecutorCheckpointState",
     "AgentExecutorRequest",
     "AgentExecutorResponse",
     "AgentFileStore",
@@ -520,6 +532,7 @@ __all__ = [
     "Param",
     "RawAgent",
     "ReleaseCandidateFeature",
+    "ResponseInvalidatedException",
     "ResponseStream",
     "Role",
     "RoleLiteral",
@@ -586,8 +599,10 @@ __all__ = [
     "UsageDetails",
     "UserInputRequiredException",
     "ValidationTypeEnum",
+    "VectorCollectionContextProvider",
     "VectorStoreCollectionDefinition",
     "VectorStoreField",
+    "VectorStoreHistoryProvider",
     "Workflow",
     "WorkflowAgent",
     "WorkflowBuilder",
@@ -620,8 +635,11 @@ __all__ = [
     "create_agent_hooks_middleware_from_emitter",
     "create_always_approve_tool_response",
     "create_always_approve_tool_with_arguments_response",
+    "create_delete_tool",
     "create_edge_runner",
+    "create_get_tool",
     "create_harness_agent",
+    "create_upsert_tool",
     "create_vector_search_tool",
     "detect_media_type_from_base64",
     "enqueue_messages",

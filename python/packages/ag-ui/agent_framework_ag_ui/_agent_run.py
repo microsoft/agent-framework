@@ -315,9 +315,7 @@ def _local_approval_content_ids_to_remove(
 
             if content.call_id is None:
                 continue
-            is_terminal_result = content.type == "function_result" and not (
-                isinstance(content.result, str) and "[APPROVAL_PENDING]" in content.result
-            )
+            is_terminal_result = content.type == "function_result"
             is_follow_up_request = content.user_input_request and content.type not in {
                 "function_approval_request",
                 "function_approval_response",
@@ -1938,7 +1936,22 @@ async def _resolve_approval_responses(
             raise TypeError("Local approval execution with context providers requires a core Agent execution path.")
         client = getattr(agent, "client", None)
         config = normalize_function_invocation_configuration(getattr(client, "function_invocation_configuration", None))
-        tool_kwargs = {k: v for k, v in run_kwargs.items() if k != "options"}
+        raw_function_invocation_kwargs = run_kwargs.get("function_invocation_kwargs")
+        tool_kwargs = (
+            dict(cast(Mapping[str, Any], raw_function_invocation_kwargs))
+            if raw_function_invocation_kwargs is not None
+            else {}
+        )
+        default_options = getattr(agent, "default_options", None)
+        if isinstance(default_options, Mapping) and (
+            default_function_arguments := default_options.get("additional_function_arguments")
+        ):
+            tool_kwargs.update(cast(Mapping[str, Any], default_function_arguments))
+        raw_options = run_kwargs.get("options")
+        if isinstance(raw_options, Mapping) and (
+            additional_function_arguments := raw_options.get("additional_function_arguments")
+        ):
+            tool_kwargs.update(cast(Mapping[str, Any], additional_function_arguments))
         for approval in static_approved:
             function_call = approval.function_call
             call_id = (function_call.call_id if function_call else None) or approval.id or ""
@@ -2668,6 +2681,8 @@ async def run_agent_stream(
     agent: SupportsAgentRun,
     config: AgentConfig,
     approval_state_store: InMemoryAGUIApprovalStateStore | None = None,
+    *,
+    function_invocation_kwargs: Mapping[str, Any] | None = None,
 ) -> AsyncGenerator[BaseEvent]:
     """Run agent and yield AG-UI events.
 
@@ -2680,6 +2695,7 @@ async def run_agent_stream(
         config: Agent configuration
         approval_state_store: Optional server-side Approval State store used to
             preserve approval-only middleware state across AG-UI requests.
+        function_invocation_kwargs: Keyword arguments forwarded only to tool invocation.
 
     Yields:
         AG-UI events
@@ -2692,6 +2708,7 @@ async def run_agent_stream(
         config,
         state_store,
         authorized_executions=authorized_executions,
+        function_invocation_kwargs=function_invocation_kwargs,
     )
     try:
         async for event in stream:
@@ -2711,6 +2728,7 @@ async def _run_agent_stream(
     approval_state_store: InMemoryAGUIApprovalStateStore,
     *,
     authorized_executions: dict[ApprovalOccurrenceIdentity, AuthorizedExecution],
+    function_invocation_kwargs: Mapping[str, Any] | None,
 ) -> AsyncGenerator[BaseEvent]:
     # Parse IDs
     supplied_thread_id = input_data.get("thread_id") or input_data.get("threadId")
@@ -2767,7 +2785,16 @@ async def _run_agent_stream(
             seeded_resume_from_snapshot = True
 
             if not config.use_service_session:
-                raw_messages = snapshot_session.resume_seeded_messages(raw_messages)
+                # Empty approval resumes prepend stored history; non-empty/replayed
+                # transcripts overlap-merge so clients do not double-write (#8140).
+                if raw_messages:
+                    raw_messages = _reconstruct_messages_from_thread_snapshot(
+                        stored_messages=stored_snapshot.messages,
+                        incoming_messages=raw_messages,
+                        stored_interrupt=stored_snapshot.interrupt,
+                    )
+                else:
+                    raw_messages = snapshot_session.resume_seeded_messages(raw_messages)
             else:
                 provider_suffix, snapshot_seed_messages = _split_service_session_input(
                     stored_snapshot_messages=stored_snapshot.messages,
@@ -2776,6 +2803,13 @@ async def _run_agent_stream(
                 )
                 raw_messages = provider_suffix
         elif not config.use_service_session:
+            if resume_payload is not None and raw_messages:
+                # Client-replayed transcript on predictive/generic resume: overlap-merge
+                # and mark seeded so save-time resume_seeded_messages does not prepend
+                # again (#8140). Empty interrupt-only resumes (e.g. confirm_changes)
+                # must stay empty so synthesized resume tool messages are the only
+                # turn input; history is restored at save when this flag stays false.
+                seeded_resume_from_snapshot = True
             raw_messages = _reconstruct_messages_from_thread_snapshot(
                 stored_messages=stored_snapshot.messages,
                 incoming_messages=raw_messages,
@@ -2899,7 +2933,10 @@ async def _run_agent_stream(
         raw_messages.extend(resume_messages)
         if snapshot_seed_messages is not None:
             snapshot_seed_messages.extend(copy.deepcopy(resume_messages))
-    if retained_approval_results and not raw_messages:
+    if retained_approval_results and not approval_resume_messages and not resume_messages:
+        # Fully handled via retained results. Reconstruction may have refilled
+        # ``raw_messages`` with the stored transcript on a client-replayed retry;
+        # do not fall through to a fresh agent run (#8140 / eavan review).
         yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
         for event in _make_approval_tool_result_events(retained_approval_results):
             yield event
@@ -2917,14 +2954,18 @@ async def _run_agent_stream(
             snapshot_seed_messages,
             protected_tool_call_ids=protected_tool_call_ids,
         )
-    # Check for structured output mode (skip text content)
+    # Check for structured output mode (skip text content only for Pydantic models whose fields map to state/message)
     skip_text = False
-    response_format: type[Any] | None = None
+    response_format: Any | None = None
+    is_pydantic_response_format = False
     default_options = getattr(agent, "default_options", None)
     if isinstance(default_options, dict):
+        from pydantic import BaseModel
+
         typed_default_options = cast(dict[str, Any], default_options)
-        response_format = cast(type[Any] | None, typed_default_options.get("response_format"))
-        skip_text = response_format is not None
+        response_format = typed_default_options.get("response_format")
+        is_pydantic_response_format = isinstance(response_format, type) and issubclass(response_format, BaseModel)
+        skip_text = is_pydantic_response_format
 
     # Handle empty messages (emit RunStarted immediately since no agent response)
     if not messages and not only_cancelled_resume:
@@ -3086,6 +3127,8 @@ async def _run_agent_stream(
 
     # Build run kwargs (Feature #6: Azure store flag when metadata present)
     run_kwargs: dict[str, Any] = {"session": session}
+    if function_invocation_kwargs is not None:
+        run_kwargs["function_invocation_kwargs"] = dict(function_invocation_kwargs)
     if tools:
         run_kwargs["tools"] = tools
     # Hand the forwarded AG-UI context to the A2UI runner PER REQUEST (not just at
@@ -3537,8 +3580,8 @@ async def _run_agent_stream(
         from agent_framework import AgentResponse
         from pydantic import BaseModel
 
-        if not (isinstance(response_format, type) and issubclass(response_format, BaseModel)):
-            logger.warning("Skipping structured output parsing: response_format is not a Pydantic model type.")
+        if not is_pydantic_response_format:
+            logger.debug("Skipping structured output parsing: response_format is not a Pydantic model type.")
         else:
             logger.info(f"Processing structured output, update count: {len(all_updates)}")
             final_response = AgentResponse.from_updates(all_updates, output_format_type=response_format)

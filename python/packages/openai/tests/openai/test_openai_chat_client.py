@@ -6,6 +6,7 @@ import json
 import os
 from collections.abc import AsyncGenerator, Iterator, Sequence
 from datetime import datetime, timezone
+from importlib import import_module
 from pathlib import Path
 from typing import Annotated, Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -41,7 +42,8 @@ from agent_framework.exceptions import (
     ChatClientInvalidRequestException,
     SettingNotFoundError,
 )
-from openai import AsyncOpenAI, BadRequestError
+from openai import AsyncOpenAI, BadRequestError, DefaultAsyncHttpxClient
+from openai.types.responses import ResponseFunctionShellToolCall, ResponseFunctionShellToolCallOutput
 from openai.types.responses.response_reasoning_item import Summary
 from openai.types.responses.response_reasoning_summary_text_delta_event import (
     ResponseReasoningSummaryTextDeltaEvent,
@@ -62,6 +64,8 @@ from pytest import param
 from agent_framework_openai import OpenAIChatClient, OpenAIChatOptions, RawOpenAIChatClient
 from agent_framework_openai._chat_client import OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY
 from agent_framework_openai._exceptions import OpenAIContentFilterException
+
+_OPENAI_HTTPX = cast(Any, import_module(DefaultAsyncHttpxClient.__mro__[1].__module__.partition(".")[0]))
 
 skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("OPENAI_API_KEY", "") in ("", "test-dummy-key"),
@@ -471,23 +475,32 @@ async def test_code_interpreter_tool_variations() -> None:
     assert run_options["tools"] == [code_tool_with_files]
 
 
-async def test_content_filter_exception() -> None:
+@pytest.mark.parametrize(
+    ("inner_code", "expected_code"),
+    [
+        ("ResponsibleAIPolicyViolation", "ResponsibleAIPolicyViolation"),
+        ("ContentFiltered", "ContentFiltered"),
+        ("FutureContentFilterCode", "Unknown"),
+    ],
+)
+async def test_content_filter_exception(inner_code: str, expected_code: str) -> None:
     """Test that content filter errors in get_response are properly handled."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
 
     # Mock a BadRequestError with content_filter code
     mock_error = BadRequestError(
         message="Content filter error",
-        response=MagicMock(),
-        body={"error": {"code": "content_filter", "message": "Content filter error"}},
+        response=MagicMock(status_code=400),
+        body={"code": "content_filter", "innererror": {"code": inner_code}},
     )
-    mock_error.code = "content_filter"
 
     with patch.object(client.client.responses, "create", side_effect=mock_error):
         with pytest.raises(OpenAIContentFilterException) as exc_info:
             await client.get_response(messages=[Message(role="user", contents=["Test message"])])
 
         assert "content error" in str(exc_info.value)
+        assert exc_info.value.content_filter_code.value == expected_code
+        assert exc_info.value.__cause__ is mock_error
 
 
 @pytest.mark.asyncio
@@ -1525,23 +1538,32 @@ async def test_bad_request_error_non_content_filter() -> None:
         assert "failed to complete the prompt" in str(exc_info.value)
 
 
-async def test_streaming_content_filter_exception_handling() -> None:
+@pytest.mark.parametrize(
+    ("inner_code", "expected_code"),
+    [
+        ("ResponsibleAIPolicyViolation", "ResponsibleAIPolicyViolation"),
+        ("ContentFiltered", "ContentFiltered"),
+        ("FutureContentFilterCode", "Unknown"),
+    ],
+)
+async def test_streaming_content_filter_exception_handling(inner_code: str, expected_code: str) -> None:
     """Test that content filter errors in get_response(..., stream=True) are properly handled."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
 
-    # Mock the OpenAI client to raise a BadRequestError with content_filter code
-    with patch.object(client.client.responses, "create") as mock_create:
-        mock_create.side_effect = BadRequestError(
-            message="Content filtered in stream",
-            response=MagicMock(),
-            body={"error": {"code": "content_filter", "message": "Content filtered"}},
-        )
-        mock_create.side_effect.code = "content_filter"
+    mock_error = BadRequestError(
+        message="Content filtered in stream",
+        response=MagicMock(status_code=400),
+        body={"code": "content_filter", "innererror": {"code": inner_code}},
+    )
 
-        with pytest.raises(OpenAIContentFilterException, match="service encountered a content error"):
+    with patch.object(client.client.responses, "create", side_effect=mock_error):
+        with pytest.raises(OpenAIContentFilterException, match="service encountered a content error") as exc_info:
             response_stream = client.get_response(stream=True, messages=[Message(role="user", contents=["Test"])])
             async for _ in response_stream:
                 break
+
+        assert exc_info.value.content_filter_code.value == expected_code
+        assert exc_info.value.__cause__ is mock_error
 
 
 def test_response_content_creation_with_annotations() -> None:
@@ -2273,9 +2295,65 @@ def test_response_content_creation_with_local_shell_call_maps_to_function_call()
     assert call_content.additional_properties[OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY] == "local-shell-item-1"
 
 
+@pytest.mark.parametrize(
+    ("item_type", "item_id", "command_parts"),
+    [
+        ("local_shell_call", None, ["echo", "ok"]),
+        ("local_shell_call", "item-1", "echo ok"),
+        ("forged_local_shell_call", "item-1", ["echo", "ok"]),
+    ],
+)
+def test_malformed_local_shell_call_is_not_executable(
+    item_type: str,
+    item_id: str | None,
+    command_parts: Any,
+) -> None:
+    """Malformed or unknown local shell items must not become function calls."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    item = MagicMock()
+    item.type = item_type
+    item.id = item_id
+    item.call_id = "local-shell-call-1"
+    item.action.command = command_parts
+    item.status = "completed"
+
+    contents = client._shell_item_to_contents(item, "run_shell")
+
+    assert all(content.type != "function_call" for content in contents)
+
+
+@pytest.mark.parametrize(
+    ("item_id", "call_id", "commands"),
+    [
+        (None, "local-shell-call-1", ["echo ok"]),
+        ("local-shell-item-1", None, ["echo ok"]),
+        ("local-shell-item-1", "local-shell-call-1", "echo ok"),
+        ("local-shell-item-1", "local-shell-call-1", []),
+    ],
+)
+def test_malformed_local_environment_shell_call_is_not_executable(
+    item_id: str | None,
+    call_id: str | None,
+    commands: Any,
+) -> None:
+    """Malformed local-environment shell items must not become function calls."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    item = MagicMock()
+    item.type = "shell_call"
+    item.id = item_id
+    item.call_id = call_id
+    item.action.commands = commands
+    item.environment.type = "local"
+    item.status = "completed"
+
+    contents = client._shell_item_to_contents(item, "run_shell")
+
+    assert all(content.type != "function_call" for content in contents)
+
+
 @pytest.mark.asyncio
-async def test_local_shell_tool_is_invoked_in_function_loop() -> None:
-    """Test local shell call executes executor and sends local_shell_call_output."""
+async def test_local_shell_tool_requires_approval_before_function_loop_execution() -> None:
+    """An explicit local shell call executes only after approval."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
     executed_commands: list[str] = []
 
@@ -2285,7 +2363,7 @@ async def test_local_shell_tool_is_invoked_in_function_loop() -> None:
 
     local_shell_tool = OpenAIChatClient.get_shell_tool(
         func=local_exec,
-        approval_mode="never_require",
+        approval_mode="always_require",
     )
 
     mock_response1 = MagicMock()
@@ -2300,14 +2378,18 @@ async def test_local_shell_tool_is_invoked_in_function_loop() -> None:
     mock_response1.incomplete = None
 
     mock_action = MagicMock()
-    mock_action.command = ["python", "--version"]
+    mock_action.commands = ["python --version"]
     mock_action.timeout_ms = 30000
 
+    mock_environment = MagicMock()
+    mock_environment.type = "local"
+
     mock_local_shell_call = MagicMock()
-    mock_local_shell_call.type = "local_shell_call"
+    mock_local_shell_call.type = "shell_call"
     mock_local_shell_call.id = "local-shell-item-1"
     mock_local_shell_call.call_id = "local-shell-call-1"
     mock_local_shell_call.action = mock_action
+    mock_local_shell_call.environment = mock_environment
     mock_local_shell_call.status = "completed"
     mock_response1.output = [mock_local_shell_call]
 
@@ -2333,23 +2415,34 @@ async def test_local_shell_tool_is_invoked_in_function_loop() -> None:
     with patch.object(
         client.client.responses, "create", side_effect=[_as_raw(mock_response1), _as_raw(mock_response2)]
     ) as mock_create:
-        await client.get_response(
+        response = await client.get_response(
             messages=[Message(role="user", contents=["What Python version is available?"])],
+            options={"tools": [local_shell_tool]},
+        )
+
+        assert executed_commands == []
+        assert mock_create.call_count == 1
+        approval_request = next(
+            content for content in response.messages[0].contents if content.type == "function_approval_request"
+        )
+        approval_response = approval_request.to_function_approval_response(approved=True)
+        await client.get_response(
+            messages=[Message(role="user", contents=[approval_response])],
             options={"tools": [local_shell_tool]},
         )
 
         assert executed_commands == ["python --version"]
         assert mock_create.call_count == 2
         second_call_input = mock_create.call_args_list[1].kwargs["input"]
-        local_shell_outputs = [item for item in second_call_input if item.get("type") == "local_shell_call_output"]
+        local_shell_outputs = [item for item in second_call_input if item.get("type") == "shell_call_output"]
         assert len(local_shell_outputs) == 1
-        output_payload = json.loads(local_shell_outputs[0]["output"])
-        assert output_payload["stdout"] == "Python 3.13.0"
+        assert local_shell_outputs[0]["call_id"] == "local-shell-call-1"
+        assert local_shell_outputs[0]["output"][0]["stdout"] == "Python 3.13.0"
 
 
 @pytest.mark.asyncio
-async def test_shell_call_is_invoked_as_local_shell_function_loop() -> None:
-    """Test shell_call maps to local function invocation and returns shell_call_output."""
+async def test_mixed_shell_calls_only_invoke_explicit_local_shell_call() -> None:
+    """Stateless replay preserves hosted shell transcript while executing only the local call."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
     executed_commands: list[str] = []
 
@@ -2361,6 +2454,29 @@ async def test_shell_call_is_invoked_as_local_shell_function_loop() -> None:
         func=local_exec,
         approval_mode="never_require",
     )
+    hosted_shell_call = ResponseFunctionShellToolCall.model_validate({
+        "id": "hosted-shell-item-1",
+        "type": "shell_call",
+        "call_id": "hosted-shell-call-1",
+        "action": {"commands": ["pwd"], "timeout_ms": 30000, "max_output_length": 4096},
+        "environment": {"type": "container_reference", "container_id": "container-1"},
+        "status": "completed",
+    })
+    hosted_shell_output = ResponseFunctionShellToolCallOutput.model_validate({
+        "id": "hosted-shell-output-1",
+        "type": "shell_call_output",
+        "call_id": "hosted-shell-call-1",
+        "output": [{"stdout": "/workspace", "stderr": "", "outcome": {"type": "exit", "exit_code": 0}}],
+        "status": "completed",
+    })
+    local_shell_call = ResponseFunctionShellToolCall.model_validate({
+        "id": "local-shell-item-1",
+        "type": "shell_call",
+        "call_id": "local-shell-call-1",
+        "action": {"commands": ["python --version"], "timeout_ms": 30000},
+        "environment": {"type": "local"},
+        "status": "completed",
+    })
 
     mock_response1 = MagicMock()
     mock_response1.output_parsed = None
@@ -2372,19 +2488,15 @@ async def test_shell_call_is_invoked_as_local_shell_function_loop() -> None:
     mock_response1.status = "completed"
     mock_response1.finish_reason = "tool_calls"
     mock_response1.incomplete = None
-
-    mock_action = MagicMock()
-    mock_action.commands = ["python --version"]
-    mock_action.timeout_ms = 30000
-    mock_action.max_output_length = 4096
-
-    mock_shell_call = MagicMock()
-    mock_shell_call.type = "shell_call"
-    mock_shell_call.id = "sh_test_shell_call_1"
-    mock_shell_call.call_id = "shell-call-1"
-    mock_shell_call.action = mock_action
-    mock_shell_call.status = "completed"
-    mock_response1.output = [mock_shell_call]
+    prefix_message = MagicMock()
+    prefix_message.type = "message"
+    prefix_content = MagicMock()
+    prefix_content.type = "output_text"
+    prefix_content.text = "Checking shell environments"
+    prefix_content.annotations = []
+    prefix_content.logprobs = None
+    prefix_message.content = [prefix_content]
+    mock_response1.output = [prefix_message, hosted_shell_call, hosted_shell_output, local_shell_call]
 
     mock_response2 = MagicMock()
     mock_response2.output_parsed = None
@@ -2410,19 +2522,100 @@ async def test_shell_call_is_invoked_as_local_shell_function_loop() -> None:
     ) as mock_create:
         await client.get_response(
             messages=[Message(role="user", contents=["What Python version is available?"])],
-            options={"tools": [local_shell_tool]},
+            options={"tools": [local_shell_tool], "store": False},
         )
 
         assert executed_commands == ["python --version"]
         assert mock_create.call_count == 2
         second_call_input = mock_create.call_args_list[1].kwargs["input"]
-        shell_outputs = [item for item in second_call_input if item.get("type") == "shell_call_output"]
-        assert len(shell_outputs) == 1
-        assert shell_outputs[0]["call_id"] == "shell-call-1"
-        assert isinstance(shell_outputs[0]["output"], list)
-        assert shell_outputs[0]["output"][0]["stdout"] == "Python 3.13.0"
-        local_shell_outputs = [item for item in second_call_input if item.get("type") == "local_shell_call_output"]
-        assert len(local_shell_outputs) == 0
+        assert [item.get("type") for item in second_call_input] == [
+            "message",
+            "message",
+            "shell_call",
+            "shell_call_output",
+            "shell_call",
+            "shell_call_output",
+        ]
+        assert second_call_input[1]["content"][0]["text"] == "Checking shell environments"
+        shell_items = [item for item in second_call_input if item.get("type") in {"shell_call", "shell_call_output"}]
+        assert shell_items == [
+            hosted_shell_call.model_dump(mode="json", exclude_none=True),
+            hosted_shell_output.model_dump(mode="json", exclude_none=True),
+            local_shell_call.model_dump(mode="json", exclude_none=True),
+            {
+                "type": "shell_call_output",
+                "call_id": "local-shell-call-1",
+                "output": [
+                    {
+                        "stdout": "Python 3.13.0",
+                        "stderr": "",
+                        "outcome": {"type": "exit", "exit_code": 0},
+                    }
+                ],
+            },
+        ]
+        assert all(item.get("type") != "function_call" for item in second_call_input)
+
+
+@pytest.mark.parametrize(
+    ("content", "expected_type"),
+    [
+        (Content.from_shell_tool_call(call_id="shell-call-1", commands=["pwd"]), "shell_call"),
+        (
+            Content.from_shell_tool_result(
+                call_id="shell-call-1",
+                outputs=[Content.from_shell_command_output(stdout="/workspace", stderr="", exit_code=0)],
+            ),
+            "shell_call_output",
+        ),
+        (
+            Content.from_shell_tool_call(
+                call_id="shell-call-1",
+                commands=["pwd"],
+                raw_representation={"type": "shell_call", "call_id": "shell-call-1"},
+            ),
+            "shell_call",
+        ),
+        (
+            Content.from_shell_tool_result(
+                call_id="shell-call-1",
+                outputs=[Content.from_shell_command_output(stdout="/workspace", stderr="", exit_code=0)],
+                raw_representation={"type": "shell_call_output", "call_id": "shell-call-1"},
+            ),
+            "shell_call_output",
+        ),
+        (
+            Content.from_shell_tool_call(
+                call_id="shell-call-1",
+                commands=["pwd"],
+                raw_representation=ResponseFunctionShellToolCall.model_validate({
+                    "id": "hosted-shell-item-1",
+                    "type": "shell_call",
+                    "call_id": "different-shell-call",
+                    "action": {"commands": ["pwd"]},
+                    "environment": {"type": "container_reference", "container_id": "container-1"},
+                    "status": "completed",
+                }),
+            ),
+            "shell_call",
+        ),
+    ],
+)
+def test_stateless_shell_transcript_without_provider_item_fails(
+    content: Content,
+    expected_type: str,
+) -> None:
+    """Stateless replay fails explicitly when provider shell shape is unavailable."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    with pytest.raises(
+        ChatClientInvalidRequestException,
+        match=rf"cannot reconstruct {expected_type}.*shell-call-1",
+    ):
+        client._prepare_messages_for_openai(
+            [Message(role="assistant", contents=[content])],
+            request_uses_service_side_storage=False,
+        )
 
 
 async def test_tool_loop_store_false_replays_encrypted_reasoning_group() -> None:
@@ -2552,9 +2745,14 @@ async def test_stateless_request_rejects_non_replayable_reasoning_bound_mcp_outp
     create.assert_not_awaited()
 
 
-def test_response_content_creation_with_shell_call() -> None:
-    """Test _parse_response_from_openai with shell_call output."""
+def test_response_content_creation_with_shell_call_remains_hosted_with_local_tool() -> None:
+    """A hosted shell call remains informational when a local shell tool is configured."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    def local_exec(command: str) -> str:
+        return command
+
+    local_shell_tool = OpenAIChatClient.get_shell_tool(func=local_exec)
 
     mock_response = MagicMock()
     mock_response.output_parsed = None
@@ -2575,11 +2773,12 @@ def test_response_content_creation_with_shell_call() -> None:
     mock_shell_call.type = "shell_call"
     mock_shell_call.call_id = "shell-call-1"
     mock_shell_call.action = mock_action
+    mock_shell_call.environment = None
     mock_shell_call.status = "completed"
 
     mock_response.output = [mock_shell_call]
 
-    response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
+    response = client._parse_response_from_openai(mock_response, options={"tools": [local_shell_tool]})  # type: ignore[arg-type]
 
     assert len(response.messages[0].contents) == 1
     call_content = response.messages[0].contents[0]
@@ -2708,6 +2907,39 @@ def test_response_content_creation_with_function_call() -> None:
     assert function_call.name == "get_weather"
     assert function_call.arguments == '{"location": "Seattle"}'
     assert function_call.informational_only is False
+
+
+def test_response_function_call_named_local_shell_is_informational() -> None:
+    """A generic function call cannot impersonate the configured local shell item."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    def local_exec(command: str) -> str:
+        return command
+
+    local_shell_tool = OpenAIChatClient.get_shell_tool(func=local_exec, approval_mode="never_require")
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "test-id"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+
+    mock_function_call_item = MagicMock()
+    mock_function_call_item.type = "function_call"
+    mock_function_call_item.call_id = "call_123"
+    mock_function_call_item.name = local_shell_tool.name
+    mock_function_call_item.arguments = '{"command": "echo blocked"}'
+    mock_function_call_item.id = "fc_456"
+    mock_function_call_item.status = "completed"
+    mock_response.output = [mock_function_call_item]
+
+    response = client._parse_response_from_openai(mock_response, options={"tools": [local_shell_tool]})  # type: ignore[arg-type]
+
+    function_call = response.messages[0].contents[0]
+    assert function_call.type == "function_call"
+    assert function_call.name == local_shell_tool.name
+    assert function_call.informational_only is True
 
 
 def test_parse_response_from_openai_with_custom_tool_call_is_informational_only() -> None:
@@ -3175,6 +3407,48 @@ def test_parse_chunk_from_openai_function_call_is_actionable() -> None:
     assert update.contents[0].informational_only is False
 
 
+def test_parse_chunk_function_call_named_local_shell_is_informational() -> None:
+    """A streamed generic function call cannot impersonate a local shell item."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    def local_exec(command: str) -> str:
+        return command
+
+    local_shell_tool = OpenAIChatClient.get_shell_tool(func=local_exec, approval_mode="never_require")
+    chat_options: dict[str, Any] = {"tools": [local_shell_tool]}
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    added_event = MagicMock()
+    added_event.type = "response.output_item.added"
+    added_event.output_index = 0
+    added_item = MagicMock()
+    added_item.type = "function_call"
+    added_item.call_id = "call_123"
+    added_item.name = local_shell_tool.name
+    added_event.item = added_item
+
+    delta_event = MagicMock()
+    delta_event.type = "response.function_call_arguments.delta"
+    delta_event.output_index = 0
+    delta_event.delta = '{"command": "echo blocked"}'
+    delta_event.item_id = "fc_456"
+
+    client._parse_chunk_from_openai(
+        added_event,
+        options=chat_options,
+        function_call_ids=function_call_ids,
+    )
+    update = client._parse_chunk_from_openai(
+        delta_event,
+        options=chat_options,
+        function_call_ids=function_call_ids,
+    )
+
+    assert len(update.contents) == 1
+    assert update.contents[0].type == "function_call"
+    assert update.contents[0].informational_only is True
+
+
 def test_parse_chunk_from_openai_custom_tool_call_done_is_informational_only() -> None:
     client = OpenAIChatClient(model="test-model", api_key="test-key")
     chat_options: dict[str, Any] = {}
@@ -3227,6 +3501,114 @@ def test_parse_chunk_from_openai_with_file_search_call_done() -> None:
     assert content.result == {"results": [{"file_id": "file_1", "text": "Seattle was cloudy."}]}
 
 
+def test_parse_chunk_from_openai_image_generation_call_done_emits_final_image() -> None:
+    """Test that response.output_item.done for image_generation_call emits the final image.
+
+    With the default ``partial_images=0`` there are no ``partial_image`` events; the completed
+    item on ``response.output_item.done`` is the only place the base64 result is delivered.
+    """
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    chat_options: dict[str, Any] = {}
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    png_signature = b"\x89PNG\r\n\x1a\n"
+    image_base64 = base64.b64encode(png_signature + b"fake_png_data_here").decode()
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.done"
+
+    mock_item = MagicMock()
+    mock_item.type = "image_generation_call"
+    mock_item.id = "ig_123"
+    mock_item.status = "completed"
+    mock_item.result = image_base64
+    mock_event.item = mock_item
+
+    update = client._parse_chunk_from_openai(mock_event, options=chat_options, function_call_ids=function_call_ids)
+
+    assert len(update.contents) == 2
+    call_content, result_content = update.contents
+    assert call_content.type == "image_generation_tool_call"
+    assert call_content.image_id == "ig_123"
+    assert call_content.raw_representation is mock_item
+    assert result_content.type == "image_generation_tool_result"
+    assert result_content.image_id == "ig_123"
+    assert result_content.raw_representation is mock_item
+    data_out = result_content.outputs
+    assert isinstance(data_out, Content)
+    assert data_out.type == "data"
+    assert data_out.media_type == "image/png"
+    assert data_out.uri == f"data:image/png;base64,{image_base64}"
+
+
+def test_parse_chunk_from_openai_image_generation_call_done_without_result() -> None:
+    """Test that a completed image_generation_call without a result still emits call + empty result.
+
+    Mirrors the non-streaming parser, which emits both contents with ``outputs=None``.
+    """
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    chat_options: dict[str, Any] = {}
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.done"
+
+    mock_item = MagicMock()
+    mock_item.type = "image_generation_call"
+    mock_item.id = "ig_456"
+    mock_item.status = "failed"
+    mock_item.result = None
+    mock_event.item = mock_item
+
+    update = client._parse_chunk_from_openai(mock_event, options=chat_options, function_call_ids=function_call_ids)
+
+    assert len(update.contents) == 2
+    call_content, result_content = update.contents
+    assert call_content.type == "image_generation_tool_call"
+    assert call_content.image_id == "ig_456"
+    assert result_content.type == "image_generation_tool_result"
+    assert result_content.image_id == "ig_456"
+    assert result_content.outputs is None
+
+
+def test_parse_chunk_from_openai_image_generation_call_done_matches_non_streaming() -> None:
+    """Test that streaming and non-streaming parsers produce the same contents for a completed image item."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    jpeg_signature = b"\xff\xd8\xff"
+    image_base64 = base64.b64encode(jpeg_signature + b"fake_jpeg_data").decode()
+
+    mock_item = MagicMock()
+    mock_item.type = "image_generation_call"
+    mock_item.id = "ig_789"
+    mock_item.status = "completed"
+    mock_item.result = image_base64
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.done"
+    mock_event.item = mock_item
+
+    update = client._parse_chunk_from_openai(mock_event, options={}, function_call_ids={})
+
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "test-response-id"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1234567890
+    mock_response.output = [mock_item]
+
+    with patch.object(client, "_get_metadata_from_response", return_value={}):
+        response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
+
+    streamed = [c.to_dict() for c in update.contents]
+    non_streamed = [c.to_dict() for c in response.messages[0].contents]
+    assert streamed == non_streamed
+    assert [c["type"] for c in streamed] == ["image_generation_tool_call", "image_generation_tool_result"]
+    assert streamed[1]["outputs"]["uri"] == f"data:image/jpeg;base64,{image_base64}"
+
+
 def test_parse_chunk_from_openai_shell_call_added_defers_command() -> None:
     """An in-progress shell_call on output_item.added has no command yet, so it must emit nothing.
 
@@ -3266,8 +3648,8 @@ def test_parse_chunk_from_openai_shell_call_added_defers_command() -> None:
     assert update.contents == []
 
 
-def test_parse_chunk_from_openai_shell_call_done_emits_command() -> None:
-    """A completed shell_call on output_item.done must emit a function call with the real command."""
+def test_parse_chunk_from_openai_shell_call_done_remains_hosted() -> None:
+    """A completed hosted shell call remains informational in streaming output."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
 
     def local_exec(command: str) -> str:
@@ -3281,11 +3663,15 @@ def test_parse_chunk_from_openai_shell_call_done_emits_command() -> None:
     mock_action.timeout_ms = 30000
     mock_action.max_output_length = 4096
 
+    mock_environment = MagicMock()
+    mock_environment.type = "container_reference"
+
     mock_item = MagicMock()
     mock_item.type = "shell_call"
     mock_item.id = "sh_1"
     mock_item.call_id = "shell-call-1"
     mock_item.action = mock_action
+    mock_item.environment = mock_environment
     mock_item.status = "completed"
 
     mock_event = MagicMock()
@@ -3298,18 +3684,13 @@ def test_parse_chunk_from_openai_shell_call_done_emits_command() -> None:
 
     assert len(update.contents) == 1
     call_content = update.contents[0]
-    assert call_content.type == "function_call"
+    assert call_content.type == "shell_tool_call"
     assert call_content.call_id == "shell-call-1"
-    assert call_content.name == local_shell_tool.name
-    assert call_content.parse_arguments() == {"command": "ls -la"}
+    assert call_content.commands == ["ls -la"]
 
 
-def test_parse_chunk_from_openai_local_shell_call_done_emits_command() -> None:
-    """A completed local_shell_call on output_item.done emits a function call with the command.
-
-    Mirrors the non-streaming local_shell_call mapping: the joined command and the
-    local-shell metadata (item id) must be present on the completed item.
-    """
+def test_parse_chunk_from_openai_local_environment_shell_call_done_emits_command() -> None:
+    """A completed shell call with a local environment emits an executable function call."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
 
     def local_exec(command: str) -> str:
@@ -3319,14 +3700,18 @@ def test_parse_chunk_from_openai_local_shell_call_done_emits_command() -> None:
     function_call_ids: dict[int, tuple[str, str]] = {}
 
     mock_action = MagicMock()
-    mock_action.command = ["python", "--version"]
+    mock_action.commands = ["python --version"]
     mock_action.timeout_ms = 30000
 
+    mock_environment = MagicMock()
+    mock_environment.type = "local"
+
     mock_item = MagicMock()
-    mock_item.type = "local_shell_call"
+    mock_item.type = "shell_call"
     mock_item.id = "local-shell-item-1"
     mock_item.call_id = "local-shell-call-1"
     mock_item.action = mock_action
+    mock_item.environment = mock_environment
     mock_item.status = "completed"
 
     mock_event = MagicMock()
@@ -3343,7 +3728,7 @@ def test_parse_chunk_from_openai_local_shell_call_done_emits_command() -> None:
     assert call_content.call_id == "local-shell-call-1"
     assert call_content.name == local_shell_tool.name
     assert call_content.parse_arguments() == {"command": "python --version"}
-    assert call_content.additional_properties[OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY] == "local-shell-item-1"
+    assert call_content.additional_properties["openai.responses.shell.output_type"] == "shell_call_output"
 
 
 def test_parse_chunk_from_openai_shell_call_output_added_defers_result() -> None:
@@ -3503,6 +3888,718 @@ def test_parse_chunk_from_openai_with_mcp_output_item_done() -> None:
     assert len(result_content.output) == 1
     assert result_content.output[0].text == "The weather in Seattle is 72F and sunny."
     assert result_content.raw_representation is mock_item
+
+
+def _seen_options(seen: set[str]) -> dict[str, Any]:
+    """Parse options carrying the per-request `function_call_output` dedup set.
+
+    The set travels in `options` rather than on `_parse_chunk_from_openai`'s signature, so that
+    released subclass overrides keep working -- see
+    `test_parse_chunk_from_openai_accepts_the_released_override_signature`.
+    """
+    from agent_framework_openai._chat_client import _SEEN_FUNCTION_CALL_OUTPUT_IDS_OPTION
+
+    return {_SEEN_FUNCTION_CALL_OUTPUT_IDS_OPTION: seen}
+
+
+def _make_function_call_output_item(output: object, item_id: str = "fco_1") -> MagicMock:
+    """Build a Responses `function_call_output` item stub (hosted-toolbox tool result)."""
+    item = MagicMock()
+    item.type = "function_call_output"
+    item.id = item_id
+    item.call_id = "call_XXXX"
+    item.output = output
+    item.status = "completed"
+    # `.name` must be assigned after construction; MagicMock(name=...) sets the mock's own name.
+    item.name = None
+    return item
+
+
+def test_parse_chunk_from_openai_with_function_call_output_added() -> None:
+    """A hosted-toolbox tool result on `.added` becomes function_result content (issue #8068)."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.added"
+    mock_item = _make_function_call_output_item("Seattle KB says it is 72F.")
+    mock_event.item = mock_item
+
+    update = client._parse_chunk_from_openai(mock_event, options={}, function_call_ids={})
+
+    assert len(update.contents) == 1
+    result_content = update.contents[0]
+    assert result_content.type == "function_result"
+    assert result_content.call_id == "call_XXXX"
+    assert result_content.result == "Seattle KB says it is 72F."
+    assert result_content.raw_representation is mock_item
+    assert result_content.additional_properties is not None
+    assert result_content.additional_properties["item_id"] == "fco_1"
+    assert result_content.additional_properties["status"] == "completed"
+
+
+def test_parse_chunk_from_openai_function_call_output_added_maps_list_output_to_text_items() -> None:
+    """List-shaped `output` becomes canonical text items, with `result` derived from them.
+
+    The parts here are plain mappings rather than SDK models: transports and test doubles deliver
+    those, and the mapping has to keep extracting their text rather than dumping them as JSON.
+    """
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.added"
+    mock_event.item = _make_function_call_output_item([
+        {"type": "input_text", "text": "part one"},
+        {"type": "input_text", "text": "part two"},
+    ])
+
+    update = client._parse_chunk_from_openai(mock_event, options={}, function_call_ids={})
+
+    assert len(update.contents) == 1
+    result_content = update.contents[0]
+    assert [item.type for item in result_content.items or []] == ["text", "text"]
+    assert [item.text for item in result_content.items or []] == ["part one", "part two"]
+    # `from_function_result` derives the flat `result` from the text items.
+    assert result_content.result is not None
+    assert "part one" in result_content.result
+    assert "part two" in result_content.result
+
+
+def test_parse_chunk_from_openai_function_call_output_added_ignores_missing_output() -> None:
+    """An in-progress skeleton with no output must not synthesize an empty result."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.added"
+    mock_event.item = _make_function_call_output_item(None)
+
+    update = client._parse_chunk_from_openai(mock_event, options={}, function_call_ids={})
+
+    assert update.contents == []
+
+
+class _ReleasedStyleOverride(OpenAIChatClient):
+    """A subclass implementing the signature that released `agent-framework-foundry` wheels use."""
+
+    def _parse_chunk_from_openai(  # type: ignore[override]
+        self,
+        event: Any,
+        options: dict[str, Any],
+        function_call_ids: dict[int, tuple[str, str]],
+        seen_reasoning_delta_item_ids: set[str] | None = None,
+    ) -> Any:
+        return super()._parse_chunk_from_openai(event, options, function_call_ids, seen_reasoning_delta_item_ids)
+
+
+def test_parse_chunk_from_openai_keeps_the_released_override_signature() -> None:
+    """`_parse_chunk_from_openai` must not grow parameters.
+
+    Released `agent-framework-foundry` wheels pin `agent-framework-openai>=1.14.2,<2` and override
+    this method with the signature ending at `seen_reasoning_delta_item_ids`. A new parameter makes
+    every streaming request raise `TypeError` for a user who upgrades only this package, and the
+    constraint that permits that pairing is already published, so raising the Foundry floor cannot
+    retract it. Per-request state belongs in `options` instead.
+    """
+    import inspect
+
+    parameters = list(inspect.signature(RawOpenAIChatClient._parse_chunk_from_openai).parameters)
+    assert parameters == [
+        "self",
+        "event",
+        "options",
+        "function_call_ids",
+        "seen_reasoning_delta_item_ids",
+    ], "adding a parameter here breaks released subclass overrides; carry state in `options`"
+
+
+def test_function_call_output_dedup_survives_a_released_style_override() -> None:
+    """Dedup must still work when reached through an override that cannot forward new parameters.
+
+    The signature check above is structural; this is the behavioural half. The override forwards
+    only the four arguments it knows about, so if the dedup state travelled on the signature the
+    same result would be emitted twice here.
+    """
+    client = _ReleasedStyleOverride(model="test-model", api_key="test-key")
+    seen: set[str] = set()
+
+    added = MagicMock()
+    added.type = "response.output_item.added"
+    added.item = _make_function_call_output_item("once only")
+
+    done = MagicMock()
+    done.type = "response.output_item.done"
+    done.item = _make_function_call_output_item("once only")
+
+    added_update = client._parse_chunk_from_openai(added, _seen_options(seen), {})
+    done_update = client._parse_chunk_from_openai(done, _seen_options(seen), {})
+
+    assert len(added_update.contents) == 1
+    assert added_update.contents[0].result == "once only"
+    assert done_update.contents == []
+
+
+def test_parse_chunk_from_openai_function_call_output_done_emits_when_added_did_not() -> None:
+    """`.done` carries the result when `.added` was an empty skeleton, so order does not matter."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    seen: set[str] = set()
+
+    added = MagicMock()
+    added.type = "response.output_item.added"
+    added.item = _make_function_call_output_item(None)
+
+    done = MagicMock()
+    done.type = "response.output_item.done"
+    done.item = _make_function_call_output_item("late result")
+
+    added_update = client._parse_chunk_from_openai(added, options=_seen_options(seen), function_call_ids={})
+    done_update = client._parse_chunk_from_openai(done, options=_seen_options(seen), function_call_ids={})
+
+    assert added_update.contents == []
+    assert len(done_update.contents) == 1
+    assert done_update.contents[0].result == "late result"
+
+
+@pytest.mark.parametrize("initial_output", ["", [], "partial result"], ids=["empty-string", "empty-list", "partial"])
+@pytest.mark.parametrize("final_output", ["final result", "", []], ids=["text", "empty-string", "empty-list"])
+def test_function_call_output_in_progress_does_not_claim_item(
+    initial_output: str | list[Any], final_output: str | list[Any]
+) -> None:
+    from openai.types.responses import (
+        ResponseFunctionToolCallOutputItem,
+        ResponseOutputItemAddedEvent,
+        ResponseOutputItemDoneEvent,
+    )
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    seen: set[str] = set()
+    pending_item = ResponseFunctionToolCallOutputItem(
+        type="function_call_output",
+        id="fco_pending",
+        call_id="call_pending",
+        output=initial_output,
+        status="in_progress",
+    )
+    completed_item = pending_item.model_copy(update={"output": final_output, "status": "completed"})
+    added = ResponseOutputItemAddedEvent.model_construct(
+        type="response.output_item.added", item=pending_item, output_index=0, sequence_number=0
+    )
+    done = ResponseOutputItemDoneEvent.model_construct(
+        type="response.output_item.done", item=completed_item, output_index=0, sequence_number=1
+    )
+
+    added_update = client._parse_chunk_from_openai(added, options=_seen_options(seen), function_call_ids={})
+
+    assert added_update.contents == []
+    assert seen == set()
+
+    done_update = client._parse_chunk_from_openai(done, options=_seen_options(seen), function_call_ids={})
+
+    assert len(done_update.contents) == 1
+    assert done_update.contents[0].call_id == "call_pending"
+    assert done_update.contents[0].result == (final_output if isinstance(final_output, str) else "")
+    assert done_update.contents[0].raw_representation is completed_item
+    assert seen == {"fco_pending"}
+    assert client._parse_chunk_from_openai(done, options=_seen_options(seen), function_call_ids={}).contents == []
+
+
+@pytest.mark.parametrize("output", ["", []], ids=["empty-string", "empty-list"])
+def test_function_call_output_completed_empty_added_result_is_valid(output: str | list[Any]) -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    seen: set[str] = set()
+    added = MagicMock(type="response.output_item.added", item=_make_function_call_output_item(output))
+    done = MagicMock(type="response.output_item.done", item=_make_function_call_output_item(output))
+
+    added_update = client._parse_chunk_from_openai(added, options=_seen_options(seen), function_call_ids={})
+    done_update = client._parse_chunk_from_openai(done, options=_seen_options(seen), function_call_ids={})
+
+    assert len(added_update.contents) == 1
+    assert added_update.contents[0].result == ""
+    assert seen == {"fco_1"}
+    assert done_update.contents == []
+
+
+@pytest.mark.parametrize(
+    ("output", "item_types", "expected_text"),
+    [
+        param("hosted answer", ["text"], "hosted answer", id="string"),
+        param(
+            [{"type": "input_image", "image_url": "https://example.com/chart.png", "detail": "auto"}],
+            ["uri"],
+            "",
+            id="image-only",
+        ),
+        param(
+            [{"type": "input_file", "file_id": "file-abc"}],
+            ["hosted_file"],
+            "",
+            id="file-only",
+        ),
+        param(
+            [
+                {"type": "input_text", "text": "See chart."},
+                {"type": "input_image", "image_url": "https://example.com/chart.png", "detail": "auto"},
+            ],
+            ["text", "uri"],
+            "See chart.",
+            id="text-and-image",
+        ),
+        param(
+            [{"type": "input_text", "text": "See file."}, {"type": "input_file", "file_id": "file-abc"}],
+            ["text", "hosted_file"],
+            "See file.",
+            id="text-and-file",
+        ),
+    ],
+)
+def test_function_call_output_agui_emits_text_while_parser_preserves_rich_items(
+    output: str | list[dict[str, str]], item_types: list[str], expected_text: str
+) -> None:
+    from ag_ui.core import ToolCallResultEvent
+    from agent_framework_ag_ui._run_common import FlowState, _emit_tool_result
+    from openai.types.responses import (
+        ResponseFunctionToolCallOutputItem,
+        ResponseOutputItemAddedEvent,
+        ResponseOutputItemDoneEvent,
+    )
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    item = ResponseFunctionToolCallOutputItem.model_validate({
+        "type": "function_call_output",
+        "id": "fco_agui",
+        "call_id": "call_agui",
+        "status": "completed",
+        "output": output,
+    })
+    events: list[ResponseOutputItemAddedEvent | ResponseOutputItemDoneEvent] = [
+        ResponseOutputItemAddedEvent.model_construct(
+            type="response.output_item.added", item=item, output_index=0, sequence_number=0
+        ),
+        ResponseOutputItemDoneEvent.model_construct(
+            type="response.output_item.done", item=item, output_index=0, sequence_number=1
+        ),
+    ]
+    seen: set[str] = set()
+    contents = [
+        content
+        for event in events
+        for content in client._parse_chunk_from_openai(
+            event, options=_seen_options(seen), function_call_ids={}
+        ).contents
+    ]
+
+    assert len(contents) == 1
+    content = contents[0]
+    assert [part.type for part in content.items or []] == item_types
+    assert content.result == expected_text
+    if "uri" in item_types:
+        assert any(part.uri == "https://example.com/chart.png" for part in content.items or [])
+    if "hosted_file" in item_types:
+        assert any(part.file_id == "file-abc" for part in content.items or [])
+
+    tool_results = [
+        event for event in _emit_tool_result(content, FlowState()) if isinstance(event, ToolCallResultEvent)
+    ]
+
+    assert len(tool_results) == 1
+    assert tool_results[0].tool_call_id == "call_agui"
+    assert tool_results[0].content == expected_text
+    assert [part.type for part in content.items or []] == item_types
+
+
+def test_parse_chunk_from_openai_function_call_output_is_not_emitted_twice() -> None:
+    """The same output item on both `.added` and `.done` yields exactly one result."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    seen: set[str] = set()
+
+    added = MagicMock()
+    added.type = "response.output_item.added"
+    added.item = _make_function_call_output_item("only once")
+
+    done = MagicMock()
+    done.type = "response.output_item.done"
+    done.item = _make_function_call_output_item("only once")
+
+    added_update = client._parse_chunk_from_openai(added, options=_seen_options(seen), function_call_ids={})
+    done_update = client._parse_chunk_from_openai(done, options=_seen_options(seen), function_call_ids={})
+
+    assert len(added_update.contents) == 1
+    assert done_update.contents == []
+
+
+def test_parse_chunk_from_openai_function_call_output_without_item_id_still_emits() -> None:
+    """A result carrying no usable item id is still emitted rather than silently swallowed."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    seen: set[str] = set()
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.added"
+    mock_event.item = _make_function_call_output_item("no id here", item_id="")
+
+    update = client._parse_chunk_from_openai(mock_event, options=_seen_options(seen), function_call_ids={})
+
+    assert len(update.contents) == 1
+    assert update.contents[0].result == "no id here"
+    assert update.contents[0].additional_properties is not None
+    assert "item_id" not in update.contents[0].additional_properties
+
+
+def test_parse_chunk_from_openai_function_call_output_keeps_tool_name() -> None:
+    """The inner tool name, when the host supplies one, survives onto the result content."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.added"
+    mock_item = _make_function_call_output_item("kb answer")
+    mock_item.name = "search_knowledge_base"
+    mock_event.item = mock_item
+
+    update = client._parse_chunk_from_openai(mock_event, options={}, function_call_ids={})
+
+    assert update.contents[0].additional_properties is not None
+    assert update.contents[0].additional_properties["name"] == "search_knowledge_base"
+
+
+def test_parse_chunk_from_openai_function_call_output_without_call_id_is_skipped() -> None:
+    """A result that cannot be paired to its call is not emitted at all.
+
+    A blank `call_id` would produce an orphaned function_result: transports drop it, and the
+    outbound serializer would re-send it as an unpairable `function_call_output` input item.
+    """
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.added"
+    mock_item = _make_function_call_output_item("orphan result")
+    mock_item.call_id = ""
+    mock_event.item = mock_item
+
+    update = client._parse_chunk_from_openai(mock_event, options={}, function_call_ids={})
+
+    assert update.contents == []
+
+
+def test_parse_chunk_from_openai_function_call_output_on_sdk_floor_without_name_field() -> None:
+    """Parsing must not require `name`, absent from the item on the openai>=2.25.0 floor.
+
+    On SDK 2.25.0 `ResponseFunctionToolCallOutputItem` carries only call_id/id/output/status/type.
+    Touching `.name` directly would raise AttributeError out of the parse and fail the whole
+    response rather than merely dropping the result.
+    """
+
+    class FloorItem:
+        """Stand-in for the 2.25.0 item shape -- no `name` attribute at all."""
+
+        type = "function_call_output"
+        id = "fco_floor"
+        call_id = "call_floor"
+        output = "floor result"
+        status = "completed"
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.added"
+    mock_event.item = FloorItem()
+
+    update = client._parse_chunk_from_openai(mock_event, options={}, function_call_ids={})
+
+    assert len(update.contents) == 1
+    assert update.contents[0].result == "floor result"
+    assert update.contents[0].additional_properties is not None
+    assert "name" not in update.contents[0].additional_properties
+
+
+def test_parse_chunk_from_openai_function_call_output_keeps_rich_parts_as_content() -> None:
+    """A returned image stays addressable content instead of becoming JSON inside text.
+
+    Flattening the part list meant a valid `input_image` arrived as JSON in a text item and OpenAI
+    replay sent a string where the supported content-part list belongs. AG-UI's ordinary text-only
+    result projection is covered separately.
+    """
+    from openai.types.responses.response_input_image import ResponseInputImage
+    from openai.types.responses.response_input_text import ResponseInputText
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.added"
+    mock_event.item = _make_function_call_output_item([
+        ResponseInputText(type="input_text", text="see chart: "),
+        ResponseInputImage(type="input_image", detail="auto", image_url="https://example.com/c.png"),
+    ])
+
+    update = client._parse_chunk_from_openai(mock_event, options={}, function_call_ids={})
+
+    items = update.contents[0].items or []
+    assert [item.type for item in items] == ["text", "uri"]
+    assert items[0].text == "see chart: "
+    assert items[1].uri == "https://example.com/c.png"
+    # Inferred from the URI so the content is not left untyped.
+    assert items[1].media_type == "image/png"
+    assert (items[1].additional_properties or {}).get("detail") == "auto"
+    # The flat `result` carries the text only; the image is no longer stringified into it.
+    assert update.contents[0].result == "see chart: "
+    assert "ResponseInputImage(" not in str(update.contents[0].result)
+
+
+def test_parse_chunk_from_openai_function_call_output_maps_hosted_and_inline_files() -> None:
+    """A `file_id` reference stays a hosted-file reference; inline base64 becomes real bytes.
+
+    Flattening either to text would lose the distinction: one is a provider-resolvable handle, the
+    other is the payload itself.
+    """
+    from openai.types.responses.response_input_file import ResponseInputFile
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.added"
+    mock_event.item = _make_function_call_output_item([
+        ResponseInputFile(type="input_file", file_id="file-abc", filename="report.pdf"),
+        ResponseInputFile(type="input_file", file_data="aGVsbG8=", filename="note.txt"),
+    ])
+
+    items = client._parse_chunk_from_openai(mock_event, options={}, function_call_ids={}).contents[0].items or []
+
+    assert [item.type for item in items] == ["hosted_file", "data"]
+    assert items[0].file_id == "file-abc"
+    # `from_data` stores the payload as a data URI.
+    assert items[1].uri == "data:text/plain;base64,aGVsbG8="
+    # Guessed from the filename, because `from_data` requires a media type.
+    assert items[1].media_type == "text/plain"
+
+
+def test_parse_chunk_from_openai_function_call_output_degrades_an_unknown_part() -> None:
+    """A part type this SDK does not know keeps its content as JSON instead of vanishing."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.added"
+    mock_event.item = _make_function_call_output_item([{"type": "input_future_thing", "payload": {"k": "v"}}])
+
+    items = client._parse_chunk_from_openai(mock_event, options={}, function_call_ids={}).contents[0].items or []
+
+    assert [item.type for item in items] == ["text"]
+    assert "input_future_thing" in (items[0].text or "")
+    assert '"k"' in (items[0].text or "")
+
+
+def test_parse_chunk_from_openai_function_call_output_tolerates_unusable_base64() -> None:
+    """Undecodable `file_data` degrades to JSON rather than raising out of the parse."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.added"
+    mock_event.item = _make_function_call_output_item([
+        {"type": "input_file", "file_data": "not!valid!base64", "filename": "x.bin"}
+    ])
+
+    items = client._parse_chunk_from_openai(mock_event, options={}, function_call_ids={}).contents[0].items or []
+
+    assert [item.type for item in items] == ["text"]
+    assert "not!valid!base64" in (items[0].text or "")
+
+
+def test_parse_chunk_from_openai_function_call_output_survives_a_failing_content_factory() -> None:
+    """A content factory that rejects provider data must not fail the whole streaming parse.
+
+    The previous flattening path could not realistically raise; the content factories validate
+    their input, so a part that trips one degrades to JSON instead of propagating out of the parse
+    and failing the request.
+    """
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.added"
+    mock_event.item = _make_function_call_output_item([
+        {"type": "input_image", "image_url": "https://example.com/c.png", "detail": "auto"}
+    ])
+
+    with patch(
+        "agent_framework_openai._chat_client.Content.from_uri",
+        side_effect=ValueError("rejected by the factory"),
+    ):
+        update = client._parse_chunk_from_openai(mock_event, options={}, function_call_ids={})
+
+    items = update.contents[0].items or []
+    assert [item.type for item in items] == ["text"]
+    # The payload survives as JSON rather than being lost with the exception.
+    assert "https://example.com/c.png" in (items[0].text or "")
+
+
+def test_parse_chunk_from_openai_function_call_output_reads_a_data_uri_media_type() -> None:
+    """A data URI declares its own media type, so it is used rather than guessed from a path."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.added"
+    mock_event.item = _make_function_call_output_item([
+        {"type": "input_image", "image_url": "data:image/webp;base64,UklGRg==", "detail": "low"}
+    ])
+
+    items = client._parse_chunk_from_openai(mock_event, options={}, function_call_ids={}).contents[0].items or []
+
+    # A data URI carries its payload, so the framework classifies it as `data` rather than `uri`.
+    assert items[0].type == "data"
+    assert items[0].media_type == "image/webp"
+
+
+def test_parse_chunk_from_openai_function_call_output_falls_back_to_octet_stream() -> None:
+    """Inline data with no guessable filename still gets a media type, which `from_data` requires."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.added"
+    mock_event.item = _make_function_call_output_item([{"type": "input_file", "file_data": "aGVsbG8="}])
+
+    items = client._parse_chunk_from_openai(mock_event, options={}, function_call_ids={}).contents[0].items or []
+
+    assert items[0].type == "data"
+    assert items[0].media_type == "application/octet-stream"
+
+
+def test_parse_response_from_openai_with_function_call_output() -> None:
+    """Non-streaming parsing agrees with streaming: the hosted tool result is not dropped."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "test-id"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+    mock_response.output = [_make_function_call_output_item("non-streaming KB result")]
+
+    response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
+
+    contents = response.messages[0].contents
+    assert len(contents) == 1
+    assert contents[0].type == "function_result"
+    assert contents[0].call_id == "call_XXXX"
+    assert contents[0].result == "non-streaming KB result"
+
+
+@pytest.mark.parametrize("parse_mode", ["response", "added", "done"])
+@pytest.mark.parametrize("with_text", [False, True], ids=["rich-only", "text-and-rich"])
+@pytest.mark.parametrize(
+    ("part", "expected_part"),
+    [
+        param(
+            {"type": "input_file", "file_id": "file-abc"},
+            {"type": "input_file", "file_id": "file-abc"},
+            id="hosted-file",
+        ),
+        param(
+            {"type": "input_file", "file_id": "file-photo", "filename": "photo.jpg"},
+            {"type": "input_file", "file_id": "file-photo"},
+            id="hosted-image-as-file",
+        ),
+        param(
+            {"type": "input_image", "file_id": "file-image", "detail": "high"},
+            {"type": "input_image", "file_id": "file-image", "detail": "high"},
+            id="hosted-image",
+        ),
+        param(
+            {"type": "input_image", "image_url": "https://example.com/image?id=1", "detail": "high"},
+            {"type": "input_image", "image_url": "https://example.com/image?id=1", "detail": "high"},
+            id="extensionless-image",
+        ),
+        param(
+            {"type": "input_image", "image_url": "https://example.com/chart.png", "detail": "low"},
+            {"type": "input_image", "image_url": "https://example.com/chart.png", "detail": "low"},
+            id="image-url",
+        ),
+        param(
+            {"type": "input_file", "file_data": "YWJj", "filename": "scan.jpg"},
+            {"type": "input_file", "file_data": "data:image/jpeg;base64,YWJj", "filename": "scan.jpg"},
+            id="inline-image-as-file",
+        ),
+        param(
+            {"type": "input_file", "file_data": "data:text/plain;base64,YWJj", "filename": "note.txt"},
+            {"type": "input_file", "file_data": "data:text/plain;base64,YWJj", "filename": "note.txt"},
+            id="inline-text-file",
+        ),
+        param(
+            {"type": "input_file", "file_url": "https://example.com/report.pdf"},
+            {"type": "input_file", "file_url": "https://example.com/report.pdf"},
+            id="file-url",
+        ),
+        param(
+            {"type": "input_file", "file_url": "https://example.com/photo.jpg"},
+            {"type": "input_file", "file_url": "https://example.com/photo.jpg"},
+            id="image-url-as-file",
+        ),
+        param(
+            {"type": "input_file", "file_url": "https://example.com/download?id=1"},
+            {"type": "input_file", "file_url": "https://example.com/download?id=1"},
+            id="extensionless-file",
+        ),
+    ],
+)
+def test_function_call_output_rich_parts_roundtrip(
+    parse_mode: str,
+    with_text: bool,
+    part: dict[str, str],
+    expected_part: dict[str, str],
+) -> None:
+    from openai.types.responses import (
+        Response,
+        ResponseFunctionToolCallOutputItem,
+        ResponseOutputItemAddedEvent,
+        ResponseOutputItemDoneEvent,
+    )
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    prefix = [{"type": "input_text", "text": "See attachment."}] if with_text else []
+    output_item = ResponseFunctionToolCallOutputItem.model_validate({
+        "type": "function_call_output",
+        "id": "fco_rich",
+        "call_id": "call_rich",
+        "status": "completed",
+        "output": [*prefix, part],
+    })
+
+    if parse_mode == "response":
+        response = Response.model_construct(
+            id="resp_rich",
+            object="response",
+            created_at=1,
+            model="test-model",
+            status="completed",
+            parallel_tool_calls=True,
+            tool_choice="auto",
+            tools=[],
+            metadata={},
+            usage=None,
+            output=[output_item],
+        )
+        contents = client._parse_response_from_openai(response, options={}).messages[0].contents
+    else:
+        event = (
+            ResponseOutputItemAddedEvent.model_construct(
+                type="response.output_item.added",
+                item=output_item,
+                output_index=0,
+                sequence_number=0,
+            )
+            if parse_mode == "added"
+            else ResponseOutputItemDoneEvent.model_construct(
+                type="response.output_item.done",
+                item=output_item,
+                output_index=0,
+                sequence_number=0,
+            )
+        )
+        contents = client._parse_chunk_from_openai(event, options={}, function_call_ids={}).contents
+
+    assert len(contents) == 1
+    result = client._prepare_content_for_openai("assistant", contents[0])
+
+    assert result == {
+        "type": "function_call_output",
+        "call_id": "call_rich",
+        "output": [*prefix, expected_part],
+    }
 
 
 def test_parse_chunk_from_openai_with_mcp_output_item_done_no_output() -> None:
@@ -4480,6 +5577,54 @@ def test_prepare_tools_for_openai_with_mcp() -> None:
     assert set(mcp["allowed_tools"]) == {"tool_a", "tool_b"}
     # approval mapping created from approval_mode dict
     assert "require_approval" in mcp
+
+
+@pytest.mark.parametrize("allowed_tools", [None, [], ["read_only"]], ids=["omitted", "empty", "nonempty"])
+async def test_get_mcp_tool_preserves_allowed_tools_in_request(allowed_tools: list[str] | None) -> None:
+    tool_config = OpenAIChatClient.get_mcp_tool(
+        name="Docs MCP",
+        url="https://mcp.example",
+        allowed_tools=allowed_tools,
+        headers={"Authorization": "Bearer test-token"},
+        approval_mode="never_require",
+    )
+    expected: dict[str, Any] = {
+        "type": "mcp",
+        "server_label": "Docs_MCP",
+        "server_url": "https://mcp.example",
+        "headers": {"Authorization": "Bearer test-token"},
+        "require_approval": "never",
+    }
+    if allowed_tools is not None:
+        expected["allowed_tools"] = allowed_tools
+    assert tool_config == expected
+
+    requests: list[dict[str, Any]] = []
+
+    def handle_request(request: Any) -> Any:
+        requests.append(json.loads(request.content))
+        return _OPENAI_HTTPX.Response(
+            200,
+            json={
+                "id": "resp_test",
+                "object": "response",
+                "created_at": 0,
+                "model": "test-model",
+                "status": "completed",
+                "output": [],
+            },
+        )
+
+    async with AsyncOpenAI(
+        api_key="test-key",
+        base_url="https://example.test/v1",
+        http_client=DefaultAsyncHttpxClient(transport=_OPENAI_HTTPX.MockTransport(handle_request)),
+    ) as async_client:
+        client = OpenAIChatClient(model="test-model", async_client=async_client)
+        await client.get_response([Message(role="user", contents=["Hello"])], options={"tools": [tool_config]})
+
+    assert len(requests) == 1
+    assert requests[0]["tools"] == [expected]
 
 
 def test_prepare_tools_for_openai_single_function_tool() -> None:
@@ -7492,6 +8637,203 @@ def test_map_chat_to_agent_update_preserves_continuation_token() -> None:
     assert _response_id_from_token(agent_update.continuation_token) == "resp_map_123"
 
 
+def _completed_response_event(response_id: str, output_type: str) -> MagicMock:
+    event = MagicMock()
+    event.type = "response.completed"
+    event.response.id = response_id
+    event.response.conversation = None
+    event.response.model = "test-model"
+    event.response.created_at = 1_700_000_000
+    event.response.usage = None
+    event.response.status = "completed"
+    event.response.incomplete_details = None
+    event.response.output = [MagicMock(type=output_type)]
+    return event
+
+
+def _completed_response(response_id: str, output_type: str) -> MagicMock:
+    response = MagicMock()
+    response.id = response_id
+    response.conversation = None
+    response.model = "test-model"
+    response.created_at = 1_700_000_000
+    response.usage = None
+    response.status = "completed"
+    response.incomplete_details = None
+    response.metadata = {}
+    if output_type == "function_call":
+        item = MagicMock(
+            type="function_call", call_id="call_1", arguments='{"to": "bob"}', id="fc_1", status="completed"
+        )
+        item.name = "send_email"
+    else:
+        item = MagicMock(
+            type="message", content=[MagicMock(type="output_text", text="Email sent.", annotations=[], logprobs=None)]
+        )
+    response.output = [item]
+    response.parse = MagicMock(return_value=response)
+    response.headers = {}
+    return response
+
+
+async def test_streaming_resume_with_tools_runs_the_tool_once() -> None:
+    """Resuming a background stream must not re-retrieve it on every tool-loop iteration.
+
+    Streaming twin of #5394: the non-streaming path drops ``continuation_token`` from the
+    options once the background response completes; without that, the next iteration
+    retrieves the same response again and runs its tool calls again.
+    """
+    executions: list[str] = []
+
+    @tool(approval_mode="never_require")
+    def send_email(to: str) -> str:
+        """Send an email."""
+        executions.append(to)
+        return "sent"
+
+    function_call_added = MagicMock()
+    function_call_added.type = "response.output_item.added"
+    function_call_added.output_index = 0
+    function_call_added.item.type = "function_call"
+    function_call_added.item.call_id = "call_1"
+    function_call_added.item.name = "send_email"
+    arguments_delta = MagicMock()
+    arguments_delta.type = "response.function_call_arguments.delta"
+    arguments_delta.output_index = 0
+    arguments_delta.item_id = "fc_1"
+    arguments_delta.delta = '{"to": "bob"}'
+    text_delta = MagicMock()
+    text_delta.type = "response.output_text.delta"
+    text_delta.delta = "Email sent."
+    text_delta.logprobs = None
+
+    retrieve = AsyncMock(
+        side_effect=lambda *args, **kwargs: _FakeAsyncEventStream([
+            function_call_added,
+            arguments_delta,
+            _completed_response_event("resp_bg", "function_call"),
+        ])
+    )
+    create = AsyncMock(
+        side_effect=lambda *args, **kwargs: _FakeAsyncEventStream([
+            text_delta,
+            _completed_response_event("resp_next", "message"),
+        ])
+    )
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    client.function_invocation_configuration["max_iterations"] = 4
+    options: OpenAIChatOptions[None] = {"continuation_token": {"response_id": "resp_bg"}, "tools": [send_email]}
+    with (
+        patch.object(client.client.responses.with_raw_response, "retrieve", new=retrieve),
+        patch.object(client.client.responses.with_raw_response, "create", new=create),
+    ):
+        stream = client.get_response([Message(role="user", contents=["email bob"])], stream=True, options=options)
+        async for _ in stream:
+            pass
+        final = await stream.get_final_response()
+
+    assert executions == ["bob"]
+    assert retrieve.await_count == 1
+    assert create.await_count == 1
+    assert create.await_args is not None
+    assert create.await_args.kwargs.get("previous_response_id") == "resp_bg"
+    assert final.text == "Email sent."
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_resume_with_tools_runs_the_tool_once_when_middleware_replaces_options(stream: bool) -> None:
+    """Chat middleware may replace the options for the service call; the tool loop must still drop the token."""
+    from agent_framework import ChatContext, ChatMiddleware
+
+    class ReplaceOptions(ChatMiddleware):
+        async def process(self, context: ChatContext, call_next: Any) -> None:
+            context.options = dict(context.options or {})
+            await call_next()
+
+    executions: list[str] = []
+
+    @tool(approval_mode="never_require")
+    def send_email(to: str) -> str:
+        """Send an email."""
+        executions.append(to)
+        return "sent"
+
+    function_call_added = MagicMock()
+    function_call_added.type = "response.output_item.added"
+    function_call_added.output_index = 0
+    function_call_added.item.type = "function_call"
+    function_call_added.item.call_id = "call_1"
+    function_call_added.item.name = "send_email"
+    arguments_delta = MagicMock()
+    arguments_delta.type = "response.function_call_arguments.delta"
+    arguments_delta.output_index = 0
+    arguments_delta.item_id = "fc_1"
+    arguments_delta.delta = '{"to": "bob"}'
+    text_delta = MagicMock()
+    text_delta.type = "response.output_text.delta"
+    text_delta.delta = "Email sent."
+    text_delta.logprobs = None
+
+    if stream:
+        retrieve = AsyncMock(
+            side_effect=lambda *args, **kwargs: _FakeAsyncEventStream([
+                function_call_added,
+                arguments_delta,
+                _completed_response_event("resp_bg", "function_call"),
+            ])
+        )
+        create = AsyncMock(
+            side_effect=lambda *args, **kwargs: _FakeAsyncEventStream([
+                text_delta,
+                _completed_response_event("resp_next", "message"),
+            ])
+        )
+    else:
+        retrieve = AsyncMock(side_effect=lambda *args, **kwargs: _completed_response("resp_bg", "function_call"))
+        create = AsyncMock(side_effect=lambda *args, **kwargs: _completed_response("resp_next", "message"))
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key", middleware=[ReplaceOptions()])
+    client.function_invocation_configuration["max_iterations"] = 4
+    options: OpenAIChatOptions[None] = {"continuation_token": {"response_id": "resp_bg"}, "tools": [send_email]}
+    with (
+        patch.object(client.client.responses.with_raw_response, "retrieve", new=retrieve),
+        patch.object(client.client.responses.with_raw_response, "create", new=create),
+    ):
+        messages = [Message(role="user", contents=["email bob"])]
+        if stream:
+            response_stream = client.get_response(messages, stream=True, options=options)
+            async for _ in response_stream:
+                pass
+            final = await response_stream.get_final_response()
+        else:
+            final = await client.get_response(messages, options=options)
+
+    assert executions == ["bob"]
+    assert retrieve.await_count == 1
+    assert create.await_count == 1
+    assert final.text == "Email sent."
+
+
+async def test_streaming_resume_drops_continuation_token_before_the_terminal_update() -> None:
+    """A consumer that stops at the terminal update must not leave the token in its options."""
+    retrieve = AsyncMock(
+        side_effect=lambda *args, **kwargs: _FakeAsyncEventStream([_completed_response_event("resp_bg", "message")])
+    )
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    # The tool loop hands its own options dict to _inner_get_response and reuses it.
+    options: dict[str, Any] = {"continuation_token": {"response_id": "resp_bg"}}
+    with patch.object(client.client.responses.with_raw_response, "retrieve", new=retrieve):
+        stream = _as_chat_response_stream(
+            client._inner_get_response(messages=[Message(role="user", contents=["hi"])], options=options, stream=True)
+        )
+        async for _ in stream:
+            break
+
+    assert "continuation_token" not in options
+
+
 async def test_prepare_options_excludes_continuation_token() -> None:
     """Test that _prepare_options does not pass continuation_token to OpenAI API."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
@@ -8337,9 +9679,8 @@ def test_stateless_history_preserves_pending_hosted_approval_request_until_respo
     assert resolved_items == []
 
 
-def test_prepare_messages_strips_local_shell_call_under_storage() -> None:
-    """Local-shell-call function_results carry a server-issued local_shell_call_item_id and must
-    be stripped under storage. Plain function_results (no shell ID) are kept either way (#3295)."""
+def test_prepare_messages_keeps_local_shell_output_under_storage() -> None:
+    """Locally generated shell output must reach the provider in every continuation mode."""
     from agent_framework_openai._chat_client import (
         OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY,
         OPENAI_SHELL_OUTPUT_TYPE_KEY,
@@ -8358,15 +9699,18 @@ def test_prepare_messages_strips_local_shell_call_under_storage() -> None:
     plain_result = Content.from_function_result(call_id="plain_1", result="plain")
     message = Message(role="tool", contents=[shell_result, plain_result])
 
-    storage_on = client._prepare_message_for_openai(message, request_uses_service_side_storage=True)
-    types_on = [item.get("type") for item in storage_on]
-    assert OPENAI_SHELL_OUTPUT_TYPE_LOCAL_SHELL_CALL not in types_on
-    assert "function_call_output" in types_on
-
-    storage_off = client._prepare_message_for_openai(message, request_uses_service_side_storage=False)
-    types_off = [item.get("type") for item in storage_off]
-    assert OPENAI_SHELL_OUTPUT_TYPE_LOCAL_SHELL_CALL in types_off
-    assert "function_call_output" in types_off
+    expected_shell_output = {
+        "id": "lsh_server_issued",
+        "type": OPENAI_SHELL_OUTPUT_TYPE_LOCAL_SHELL_CALL,
+        "output": '{"stdout": "ok", "exit_code": 0}',
+    }
+    for request_uses_service_side_storage in (True, False):
+        prepared = client._prepare_message_for_openai(
+            message,
+            request_uses_service_side_storage=request_uses_service_side_storage,
+        )
+        assert expected_shell_output in prepared
+        assert any(item.get("type") == "function_call_output" for item in prepared)
 
 
 def test_prepare_messages_strips_mcp_items_under_storage() -> None:

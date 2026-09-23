@@ -6,6 +6,7 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from agent_framework import WorkflowInvocationKwargs
 
 try:
     import powerfx  # noqa: F401
@@ -447,6 +448,77 @@ class TestAgentExecutors:
 
         assert "non_existent_agent" in str(exc_info.value)
         assert "not found in registry" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_invoke_agent_skips_internal_workflow_kwargs(self, mock_context, mock_state):
+        """Internal underscore keys in the run-kwargs bag must not reach Agent.run.
+
+        Regression for #8413: the workflow state bag carries internal routing
+        copies (e.g. `_raw_function_invocation_kwargs`) next to the public
+        kwargs, and the declarative agent step used to splat the whole bag into
+        `Agent.run`, which takes no `**kwargs` and raised TypeError.
+        """
+        from types import SimpleNamespace
+
+        from agent_framework_declarative._workflows import InvokeAzureAgentExecutor
+
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+
+        class _StrictAgent:
+            """Same public surface as Agent.run: no **kwargs catch-all."""
+
+            def __init__(self) -> None:
+                self.received_options: dict[str, Any] | None = None
+                self.received_public_kwargs: dict[str, Any] = {}
+
+            async def run(
+                self,
+                messages,
+                options=None,
+                function_invocation_kwargs=None,
+                client_kwargs=None,
+                session=None,
+                tools=None,
+                stream=False,
+            ):
+                self.received_options = options
+                self.received_public_kwargs = {
+                    "function_invocation_kwargs": function_invocation_kwargs,
+                    "client_kwargs": client_kwargs,
+                }
+                return SimpleNamespace(text="ok", messages=[], tool_calls=[])
+
+        agent = _StrictAgent()
+        run_kwargs_bag = {
+            "function_invocation_kwargs": {"__global__": {"forwarded_props": {"a": 1}}},
+            "_raw_function_invocation_kwargs": {"forwarded_props": {"a": 1}},
+        }
+        mock_context.get_state = MagicMock(
+            side_effect=lambda key, default=None: run_kwargs_bag if key == "_workflow_run_kwargs" else default
+        )
+
+        executor = InvokeAzureAgentExecutor(
+            {"kind": "InvokeAzureAgent", "agent": "StubAgent", "input": "hello"},
+            agents={"StubAgent": agent},
+        )
+
+        # Before the fix this raises TypeError: Agent.run() got an unexpected
+        # keyword argument '_raw_function_invocation_kwargs'.
+        await executor._invoke_agent_and_store_results(
+            agent,
+            "StubAgent",
+            "hello",
+            state,
+            mock_context,
+            messages_var=None,
+            response_obj_var=None,
+            result_property=None,
+            auto_send=False,
+        )
+
+        assert agent.received_options is None
+        assert agent.received_public_kwargs["function_invocation_kwargs"] == {"forwarded_props": {"a": 1}}
 
 
 class TestHumanInputExecutors:
@@ -1746,6 +1818,274 @@ class TestPowerFxConditionalImport:
 class TestExecutorKwargsForwarding:
     """Workflow run kwargs should be forwarded through executor agent invocations."""
 
+    @pytest.mark.parametrize("legacy_state", [False, True])
+    async def test_client_runtime_buckets_never_reach_functions_or_mcp(self, legacy_state: bool) -> None:
+        from agent_framework import (
+            Agent,
+            BaseChatClient,
+            ChatResponse,
+            Content,
+            FunctionInvocationContext,
+            FunctionInvocationLayer,
+            MCPStreamableHTTPTool,
+            Message,
+            tool,
+        )
+        from agent_framework._workflows._const import RESOLVED_WORKFLOW_RUN_KWARGS_KEY
+        from mcp import types
+        from mcp.client.session import ClientSession
+
+        from agent_framework_declarative._workflows import ExternalInputResponse
+
+        class RecordingClient(FunctionInvocationLayer, BaseChatClient):
+            def __init__(self):
+                super().__init__()
+                self.calls: list[dict[str, Any]] = []
+
+            async def _inner_get_response(self, *, messages, stream, options, **kwargs):
+                self.calls.append(kwargs)
+                if len(self.calls) == 1:
+                    return ChatResponse(
+                        messages=Message(
+                            "assistant",
+                            contents=[
+                                Content.from_function_call(call_id="local", name="capture", arguments={}),
+                                Content.from_function_call(call_id="remote", name="record", arguments={}),
+                            ],
+                        )
+                    )
+                return ChatResponse(messages=Message("assistant", "done"))
+
+        contexts: list[dict[str, Any]] = []
+
+        @tool
+        def capture(ctx: FunctionInvocationContext) -> str:
+            """Record runtime context."""
+            contexts.append(dict(ctx.kwargs))
+            return "ok"
+
+        session = MagicMock(spec=ClientSession)
+        session.list_tools = AsyncMock(
+            return_value=types.ListToolsResult(
+                tools=[
+                    types.Tool(
+                        name="record",
+                        inputSchema={
+                            "type": "object",
+                            "properties": {"client_kwargs": {"type": "object"}, "tool_marker": {"type": "string"}},
+                        },
+                    )
+                ]
+            )
+        )
+        session.call_tool = AsyncMock(
+            return_value=types.CallToolResult(content=[types.TextContent(type="text", text="ok")])
+        )
+        mcp = MCPStreamableHTTPTool(name="records", url="https://mcp.example/api", session=session, load_prompts=False)
+        mcp.is_connected = True
+        await mcp.load_tools()
+        clients = [RecordingClient(), RecordingClient()]
+        agents = {
+            name: Agent(client=client, tools=[capture, mcp])
+            for name, client in zip(("first", "second"), clients, strict=True)
+        }
+        workflow = DeclarativeWorkflowBuilder(
+            {
+                "name": "runtime_buckets",
+                "actions": [
+                    {
+                        "kind": "RequestExternalInput",
+                        "id": "pause",
+                        "prompt": "Continue?",
+                        "variable": "Local.answer",
+                    },
+                    *[{"kind": "InvokeAzureAgent", "id": name, "agent": name, "input": "hello"} for name in agents],
+                ],
+            },
+            agents=agents,
+        ).build()
+        paused = await workflow.run(
+            ActionTrigger(),
+            client_kwargs={name: {"extra_headers": {"X-Client-Context": name}} for name in agents},
+            function_invocation_kwargs={name: {"tool_marker": name} for name in agents},
+        )
+        if legacy_state:
+            workflow._runner.state.delete(RESOLVED_WORKFLOW_RUN_KWARGS_KEY)
+            workflow._runner.state.commit()
+        [request] = paused.get_request_info_events()
+        await workflow.run(responses={request.request_id: ExternalInputResponse(user_input="yes")})
+
+        for name, client in zip(agents, clients, strict=True):
+            assert client.calls
+            assert all(call["extra_headers"] == {"X-Client-Context": name} for call in client.calls)
+        assert [ctx["tool_marker"] for ctx in contexts] == ["first", "second"]
+        assert all("client_kwargs" not in ctx and "_raw_client_kwargs" not in ctx for ctx in contexts)
+        assert [call.kwargs["arguments"] for call in session.call_tool.call_args_list] == [
+            {"tool_marker": "first"},
+            {"tool_marker": "second"},
+        ]
+
+    @pytest.mark.parametrize("kwargs_channel", ["function_invocation_kwargs", "client_kwargs"])
+    @pytest.mark.parametrize(
+        ("executor_ids", "invocation_kwargs", "expected"),
+        [
+            (
+                ("agent1", "sibling"),
+                {
+                    "__global__": {"shared": "G", "overridden": "global"},
+                    "agent1": {"specific": "A", "overridden": "specific"},
+                },
+                (
+                    {"shared": "G", "specific": "A", "overridden": "specific"},
+                    {"shared": "G", "overridden": "global"},
+                ),
+            ),
+            (
+                ("__global__", "sibling"),
+                WorkflowInvocationKwargs(
+                    global_kwargs={"shared": "G", "overridden": "global"},
+                    executor_kwargs={"__global__": {"specific": "A", "overridden": "specific"}},
+                ),
+                (
+                    {"shared": "G", "specific": "A", "overridden": "specific"},
+                    {"shared": "G", "overridden": "global"},
+                ),
+            ),
+        ],
+        ids=["legacy-mixed", "global-executor-collision"],
+    )
+    async def test_workflow_run_resolves_executor_kwargs(
+        self,
+        kwargs_channel: str,
+        executor_ids: tuple[str, str],
+        invocation_kwargs: dict[str, Any] | WorkflowInvocationKwargs,
+        expected: tuple[dict[str, Any], dict[str, Any]],
+    ) -> None:
+        """The public declarative path resolves legacy mixed and collision-free state."""
+        agents: dict[str, Any] = {}
+        actions: list[dict[str, Any]] = []
+        for index, executor_id in enumerate(executor_ids):
+            agent_name = f"agent_{index}"
+            response = MagicMock(text="response", messages=[], tool_calls=[])
+            agent = MagicMock(name=agent_name)
+            agent.run = AsyncMock(return_value=response)
+            agents[agent_name] = agent
+            actions.append({"kind": "InvokeAzureAgent", "id": executor_id, "agent": agent_name, "input": "hello"})
+
+        workflow = DeclarativeWorkflowBuilder(
+            {"name": "kwargs_workflow", "actions": actions},
+            agents=agents,
+        ).build()
+        if kwargs_channel == "function_invocation_kwargs":
+            await workflow.run(ActionTrigger(), function_invocation_kwargs=invocation_kwargs)
+        else:
+            await workflow.run(ActionTrigger(), client_kwargs=invocation_kwargs)
+
+        for agent, expected_kwargs in zip(agents.values(), expected, strict=True):
+            call_kwargs = agent.run.call_args.kwargs
+            assert call_kwargs[kwargs_channel] == expected_kwargs
+            assert call_kwargs["options"] is None
+            assert "_raw_function_invocation_kwargs" not in call_kwargs
+            assert "_raw_client_kwargs" not in call_kwargs
+
+    @pytest.mark.parametrize("kwargs_channel", ["function_invocation_kwargs", "client_kwargs"])
+    @pytest.mark.parametrize("legacy_checkpoint", [False, True], ids=["new-state", "legacy-state"])
+    async def test_workflow_run_kwargs_survive_file_checkpoint_restore(
+        self,
+        tmp_path: Any,
+        kwargs_channel: str,
+        legacy_checkpoint: bool,
+    ) -> None:
+        """Both current and legacy checkpoints resolve kwargs for the receiving executor."""
+        from agent_framework import FileCheckpointStorage
+        from agent_framework._workflows._const import (
+            RESOLVED_WORKFLOW_RUN_KWARGS_KEY,
+            WORKFLOW_RUN_KWARGS_KEY,
+        )
+
+        from agent_framework_declarative._workflows._executors_external_input import ExternalInputResponse
+
+        storage = FileCheckpointStorage(
+            tmp_path,
+            allowed_checkpoint_types=[
+                "agent_framework_declarative._workflows._declarative_base:ActionComplete",
+                "agent_framework_declarative._workflows._declarative_base:ActionTrigger",
+                "agent_framework_declarative._workflows._executors_external_input:ExternalInputRequest",
+                "agent_framework_declarative._workflows._executors_external_input:ExternalInputResponse",
+            ],
+        )
+        executor_id = "sibling" if legacy_checkpoint else "__global__"
+
+        def build_workflow() -> tuple[Any, Any]:
+            response = MagicMock(text="response", messages=[], tool_calls=[])
+            agent = MagicMock(name="checkpoint_agent")
+            agent.run = AsyncMock(return_value=response)
+            workflow = DeclarativeWorkflowBuilder(
+                {
+                    "name": "declarative_kwargs_checkpoint",
+                    "actions": [
+                        {
+                            "kind": "RequestExternalInput",
+                            "id": "pause",
+                            "prompt": "Continue?",
+                            "variable": "Local.answer",
+                        },
+                        {
+                            "kind": "InvokeAzureAgent",
+                            "id": executor_id,
+                            "agent": "checkpoint_agent",
+                            "input": "hello",
+                        },
+                    ],
+                },
+                agents={"checkpoint_agent": agent},
+                checkpoint_storage=storage,
+            ).build()
+            return workflow, agent
+
+        if legacy_checkpoint:
+            invocation_kwargs: dict[str, Any] | WorkflowInvocationKwargs = {
+                "__global__": {"shared": "G"},
+                "sibling": {"specific": "S"},
+            }
+        else:
+            invocation_kwargs = WorkflowInvocationKwargs(
+                global_kwargs={"shared": "G"},
+                executor_kwargs={"__global__": {"specific": "S"}},
+            )
+
+        workflow, _ = build_workflow()
+        if kwargs_channel == "function_invocation_kwargs":
+            paused = await workflow.run(ActionTrigger(), function_invocation_kwargs=invocation_kwargs)
+        else:
+            paused = await workflow.run(ActionTrigger(), client_kwargs=invocation_kwargs)
+        [request] = paused.get_request_info_events()
+        checkpoints = await storage.list_checkpoints(workflow_name=workflow.name)
+        checkpoint = max(
+            (item for item in checkpoints if item.pending_request_info_events),
+            key=lambda item: item.timestamp,
+        )
+        if legacy_checkpoint:
+            checkpoint.state.pop(RESOLVED_WORKFLOW_RUN_KWARGS_KEY, None)
+            await storage.save(checkpoint)
+        else:
+            assert checkpoint.state[RESOLVED_WORKFLOW_RUN_KWARGS_KEY][kwargs_channel]
+            assert isinstance(checkpoint.state[WORKFLOW_RUN_KWARGS_KEY][kwargs_channel], dict)
+
+        resumed_workflow, resumed_agent = build_workflow()
+        resumed = await resumed_workflow.run(checkpoint_id=checkpoint.checkpoint_id)
+        [resumed_request] = resumed.get_request_info_events()
+        assert resumed_request.request_id == request.request_id
+        await resumed_workflow.run(
+            responses={resumed_request.request_id: ExternalInputResponse(user_input="yes")},
+        )
+
+        call_kwargs = resumed_agent.run.call_args.kwargs
+        assert call_kwargs[kwargs_channel] == {"shared": "G", "specific": "S"}
+        assert "_raw_function_invocation_kwargs" not in call_kwargs
+        assert "_raw_client_kwargs" not in call_kwargs
+        assert call_kwargs["options"] is None
+
     @pytest.mark.asyncio
     async def test_invoke_agent_forwards_kwargs(self):
         """InvokeAzureAgentExecutor should forward run_kwargs to agent.run()."""
@@ -1771,7 +2111,7 @@ class TestExecutorKwargsForwarding:
 
         # Store kwargs in state like Workflow.run() does
         test_kwargs = {"user_token": "abc123", "service_config": {"endpoint": "http://test"}}
-        state_data[WORKFLOW_RUN_KWARGS_KEY] = test_kwargs
+        state_data[WORKFLOW_RUN_KWARGS_KEY] = {"function_invocation_kwargs": {"__global__": test_kwargs}}
 
         # Initialize declarative state
         dws = DeclarativeWorkflowState(mock_state)
@@ -1791,6 +2131,7 @@ class TestExecutorKwargsForwarding:
         mock_ctx.yield_output = AsyncMock()
 
         executor = InvokeAzureAgentExecutor.__new__(InvokeAzureAgentExecutor)
+        executor.id = "test_agent"
         executor._agents = {"test_agent": mock_agent}
 
         await executor._invoke_agent_and_store_results(
@@ -1809,13 +2150,8 @@ class TestExecutorKwargsForwarding:
         mock_agent.run.assert_called_once()
         call_kwargs = mock_agent.run.call_args
 
-        # Check options contains additional_function_arguments
-        assert "options" in call_kwargs.kwargs
-        assert call_kwargs.kwargs["options"]["additional_function_arguments"] == test_kwargs
-
-        # Check direct kwargs were passed
-        assert call_kwargs.kwargs.get("user_token") == "abc123"
-        assert call_kwargs.kwargs.get("service_config") == {"endpoint": "http://test"}
+        assert call_kwargs.kwargs["options"] is None
+        assert call_kwargs.kwargs["function_invocation_kwargs"] == test_kwargs
 
     @pytest.mark.asyncio
     async def test_invoke_agent_merges_caller_options(self):
@@ -1841,8 +2177,8 @@ class TestExecutorKwargsForwarding:
 
         # Include 'options' in run_kwargs to test merge behavior
         test_kwargs = {
-            "user_token": "abc123",
-            "options": {"temperature": 0.5},
+            "function_invocation_kwargs": {"__global__": {"user_token": "abc123"}},
+            "options": {"temperature": 0.5, "additional_function_arguments": {"caller_value": "preserved"}},
         }
         state_data[WORKFLOW_RUN_KWARGS_KEY] = test_kwargs
 
@@ -1861,6 +2197,7 @@ class TestExecutorKwargsForwarding:
         mock_ctx.yield_output = AsyncMock()
 
         executor = InvokeAzureAgentExecutor.__new__(InvokeAzureAgentExecutor)
+        executor.id = "test_agent"
         executor._agents = {"test_agent": mock_agent}
 
         await executor._invoke_agent_and_store_results(
@@ -1878,10 +2215,8 @@ class TestExecutorKwargsForwarding:
         mock_agent.run.assert_called_once()
         call_kwargs = mock_agent.run.call_args
 
-        # Caller options should be merged with additional_function_arguments
-        merged_options = call_kwargs.kwargs["options"]
-        assert merged_options["temperature"] == 0.5
-        assert "additional_function_arguments" in merged_options
-
-        # Direct kwargs should be passed without 'options' (no duplicate keyword)
-        assert call_kwargs.kwargs.get("user_token") == "abc123"
+        assert call_kwargs.kwargs["options"] == {
+            "temperature": 0.5,
+            "additional_function_arguments": {"caller_value": "preserved"},
+        }
+        assert call_kwargs.kwargs["function_invocation_kwargs"] == {"user_token": "abc123"}
