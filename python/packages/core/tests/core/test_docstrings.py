@@ -86,7 +86,10 @@ def test_build_appends_to_existing_keyword_args_section() -> None:
     kw_index = next(i for i, line in enumerate(lines) if line == "Keyword Args:")
     ret_index = next(i for i, line in enumerate(lines) if line == "Returns:")
     retries_index = next(i for i, line in enumerate(lines) if "retries:" in line)
+    timeout_index = next(i for i, line in enumerate(lines) if "timeout:" in line)
     assert kw_index < retries_index < ret_index
+    assert retries_index == timeout_index + 1
+    assert lines[ret_index - 1] == ""
 
 
 def test_build_inserts_keyword_args_after_args_section() -> None:
@@ -102,6 +105,9 @@ def test_build_inserts_keyword_args_after_args_section() -> None:
     kw_index = next(i for i, line in enumerate(lines) if line == "Keyword Args:")
     ret_index = next(i for i, line in enumerate(lines) if line == "Returns:")
     assert args_index < kw_index < ret_index
+    assert lines[kw_index - 1] == ""
+    assert lines[kw_index - 2] != ""
+    assert lines[ret_index - 1] == ""
 
 
 def test_build_inserts_keyword_args_in_docstring_with_no_sections() -> None:

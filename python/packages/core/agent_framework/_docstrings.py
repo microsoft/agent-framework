@@ -92,11 +92,23 @@ def build_layered_docstring(
             insert_index = _find_next_section_index(lines, args_index + 1)
         else:
             insert_index = _find_next_section_index(lines, 0)
-        lines[insert_index:insert_index] = ["", "Keyword Args:", *formatted_keyword_arg_lines]
+        insertion: list[str] = []
+        if insert_index > 0 and lines[insert_index - 1] != "":
+            insertion.append("")
+        insertion.append("Keyword Args:")
+        insertion.extend(formatted_keyword_arg_lines)
+        if insert_index < len(lines) and lines[insert_index] != "":
+            insertion.append("")
+        lines[insert_index:insert_index] = insertion
         return "\n".join(lines).rstrip()
 
     insert_index = _find_next_section_index(lines, keyword_args_index + 1)
+    while insert_index > keyword_args_index + 1 and lines[insert_index - 1] == "":
+        insert_index -= 1
     lines[insert_index:insert_index] = formatted_keyword_arg_lines
+    after_index = insert_index + len(formatted_keyword_arg_lines)
+    if after_index < len(lines) and lines[after_index] != "":
+        lines.insert(after_index, "")
     return "\n".join(lines).rstrip()
 
 
