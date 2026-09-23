@@ -35,7 +35,7 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
     /// <para>
     /// Configure an authentication scheme separately. Claims-based isolation requires
     /// <c>AddHttpContextAccessor()</c> and a claim that uniquely identifies the caller.
-    /// These requirements apply even without an <see cref="Microsoft.Agents.AI.AgentSessionStore"/> because conversations
+    /// These requirements apply even without an <see cref="Agents.AI.AgentSessionStore"/> because conversations
     /// have their own storage. Protect separately mapped Responses endpoints as well.
     /// </para>
     /// </remarks>
