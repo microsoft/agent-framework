@@ -429,19 +429,16 @@ class _FilterCompiler:
                 raise NotImplementedError(
                     "Use contains, contains_any, or contains_all for Azure DocumentDB list fields."
                 )
-            operands = [_prepare_filter_operand(field, item) for item in value]
+            # Portable membership, unlike eq/ne, never matches a null field, even when None is an operand.
+            operands = [_prepare_filter_operand(field, item) for item in value if item is not None]
             operands = [item for item in operands if item is not _TYPE_MISMATCH]
             if not operands:
                 if operator == "in":
                     return self._false_filter()
                 return {"$and": [{name: {"$exists": True}}, {name: {"$ne": None}}]}
             condition = {name: {"$in" if operator == "in" else "$nin": operands}}
-            if operator == "not_in" or None in operands:
-                guards: list[_Document] = [{name: {"$exists": True}}]
-                if operator == "not_in":
-                    guards.append({name: {"$ne": None}})
-                guards.append(condition)
-                return {"$and": guards}
+            if operator == "not_in":
+                return {"$and": [{name: {"$exists": True}}, {name: {"$ne": None}}, condition]}
             return condition
         if operator in {"contains", "contains_any", "contains_all"}:
             if field.type_ != "list":

@@ -73,7 +73,7 @@ public sealed class InvokeToolWorkflowTest(ITestOutputHelper output) : Integrati
         string workflowPath = GetWorkflowPath(workflowFileName);
         IEnumerable<AIFunction> functionTools = new MenuPlugin().GetTools();
         Dictionary<string, AIFunction> functionMap = functionTools.ToDictionary(tool => tool.Name, tool => tool);
-        DeclarativeWorkflowOptions workflowOptions = await this.CreateOptionsAsync(externalConversation: false);
+        DeclarativeWorkflowOptions workflowOptions = await this.CreateOptionsAsync(externalConversation: false, functionTools);
         Workflow workflow = DeclarativeWorkflowBuilder.Build<string>(workflowPath, workflowOptions);
 
         WorkflowHarness harness = new(workflow, runId: Path.GetFileNameWithoutExtension(workflowPath));

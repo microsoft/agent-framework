@@ -16,13 +16,14 @@ internal static class AgentProviderExtensions
         string executorId,
         IWorkflowContext context,
         string agentName,
+        string? agentVersion,
         string? conversationId,
         bool autoSend,
         IEnumerable<ChatMessage>? inputMessages = null,
         IDictionary<string, object?>? inputArguments = null,
         CancellationToken cancellationToken = default)
     {
-        IAsyncEnumerable<AgentResponseUpdate> agentUpdates = agentProvider.InvokeAgentAsync(agentName, null, conversationId, inputMessages, inputArguments, cancellationToken);
+        IAsyncEnumerable<AgentResponseUpdate> agentUpdates = agentProvider.InvokeAgentAsync(agentName, agentVersion, conversationId, inputMessages, inputArguments, cancellationToken);
 
         // Foundry managed workflows treat responses produced on the workflow conversation
         // as workflow output even when autoSend is explicitly false. Preserve that direct-run

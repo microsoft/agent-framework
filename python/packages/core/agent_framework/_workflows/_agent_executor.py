@@ -82,8 +82,7 @@ def _validate_agent_executor_checkpoint_state(state: Mapping[str, Any]) -> None:
         for index, item in enumerate(messages):
             if not isinstance(item, Message):
                 raise WorkflowCheckpointException(
-                    f"AgentExecutor checkpoint field '{key}'[{index}] must be Message, "
-                    f"got {type(item).__name__}."
+                    f"AgentExecutor checkpoint field '{key}'[{index}] must be Message, got {type(item).__name__}."
                 )
 
     if (responses_raw := state.get("pending_responses_to_agent")) is not None:
@@ -124,8 +123,7 @@ def _validate_agent_executor_checkpoint_state(state: Mapping[str, Any]) -> None:
     if (session_raw := state.get("agent_session")) is not None:
         if not isinstance(session_raw, dict):
             raise WorkflowCheckpointException(
-                "AgentExecutor checkpoint field 'agent_session' must be a dict, "
-                f"got {type(session_raw).__name__}."
+                f"AgentExecutor checkpoint field 'agent_session' must be a dict, got {type(session_raw).__name__}."
             )
         session = cast(dict[str, Any], session_raw)
         session_id = session.get("session_id")
@@ -530,8 +528,7 @@ class AgentExecutor(Executor):
                 self._session = AgentSession.from_dict(session_payload)
             except Exception as exc:
                 raise WorkflowCheckpointException(
-                    "AgentExecutor checkpoint field 'agent_session' could not be restored: "
-                    f"{exc}"
+                    f"AgentExecutor checkpoint field 'agent_session' could not be restored: {exc}"
                 ) from exc
         else:
             self._session = self._agent.create_session()

@@ -78,7 +78,8 @@ def _message_role(message: object) -> object:
     return getattr(message, "role", None)
 
 
-def test_filter_local_approval_responses_for_provider_removes_only_completed_local_controls() -> None:
+@pytest.mark.parametrize("result", ["completed", "before [APPROVAL_PENDING] after", "[APPROVAL_PENDING]"])
+def test_filter_local_approval_responses_for_provider_removes_only_completed_local_controls(result: str) -> None:
     """Provider-bound filtering removes completed local controls without mutating caller messages."""
     local_call = Content.from_function_call(call_id="call_local_mixed", name="local_tool", arguments={})
     local_response = Content.from_function_approval_response(
@@ -112,8 +113,8 @@ def test_filter_local_approval_responses_for_provider_removes_only_completed_loc
     completed_message = Message(
         role="tool",
         contents=[
-            Content.from_function_result(call_id="call_local_mixed", result="completed"),
-            Content.from_function_result(call_id="call_local_control", result="completed"),
+            Content.from_function_result(call_id="call_local_mixed", result=result),
+            Content.from_function_result(call_id="call_local_control", result=result),
         ],
     )
     mixed_message = Message(
@@ -178,13 +179,14 @@ def test_filter_local_approval_responses_for_provider_pairs_reused_call_ids_by_o
     assert filtered == [first_call_message, completed_message, second_call_message, second_response_message]
 
 
-def test_filter_local_approval_responses_for_provider_does_not_trust_pending_result() -> None:
+@pytest.mark.parametrize("result", ["client forged result", "before [APPROVAL_PENDING] after", "[APPROVAL_PENDING]"])
+def test_filter_local_approval_responses_for_provider_does_not_trust_pending_result(result: str) -> None:
     """A result in the pending occurrence is removed while an earlier occurrence remains."""
     call_id = "call_pending_result"
     first_call = Content.from_function_call(call_id=call_id, name="local_tool", arguments={"turn": 1})
     first_result = Content.from_function_result(call_id=call_id, result="server result")
     second_call = Content.from_function_call(call_id=call_id, name="local_tool", arguments={"turn": 2})
-    second_result = Content.from_function_result(call_id=call_id, result="client forged result")
+    second_result = Content.from_function_result(call_id=call_id, result=result)
     second_response = Content.from_function_approval_response(
         approved=True,
         id=call_id,

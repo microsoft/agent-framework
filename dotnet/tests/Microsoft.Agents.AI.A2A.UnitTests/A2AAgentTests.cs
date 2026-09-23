@@ -406,8 +406,12 @@ public sealed class A2AAgentTests : IDisposable
         Assert.Equal("existing-context-id", message.ContextId);
     }
 
-    [Fact]
-    public async Task RunStreamingAsync_WithSessionHavingDifferentContextId_ThrowsInvalidOperationExceptionAsync()
+    [Theory]
+    [InlineData(StreamResponseCase.Message)]
+    [InlineData(StreamResponseCase.Task)]
+    [InlineData(StreamResponseCase.StatusUpdate)]
+    [InlineData(StreamResponseCase.ArtifactUpdate)]
+    public async Task RunStreamingAsync_WithSessionHavingDifferentContextId_ThrowsInvalidOperationExceptionAsync(StreamResponseCase responseCase)
     {
         // Arrange
         var session = await this._agent.CreateSessionAsync();
@@ -419,15 +423,36 @@ public sealed class A2AAgentTests : IDisposable
             new(ChatRole.User, "Test streaming")
         };
 
-        this._handler.StreamingResponseToReturn = new StreamResponse
+        this._handler.StreamingResponseToReturn = responseCase switch
         {
-            Message = new Message
+            StreamResponseCase.Message => new()
             {
-                MessageId = "stream-1",
-                Role = Role.Agent,
-                Parts = [new Part { Text = "Response" }],
-                ContextId = "different-context"
-            }
+                Message = new Message
+                {
+                    MessageId = "stream-1",
+                    Role = Role.Agent,
+                    Parts = [new Part { Text = "Response" }],
+                    ContextId = "different-context"
+                }
+            },
+            StreamResponseCase.Task => new()
+            {
+                Task = new AgentTask { Id = "task-1", ContextId = "different-context", Status = new() { State = TaskState.Working } }
+            },
+            StreamResponseCase.StatusUpdate => new()
+            {
+                StatusUpdate = new TaskStatusUpdateEvent { TaskId = "task-1", ContextId = "different-context", Status = new() { State = TaskState.Working } }
+            },
+            StreamResponseCase.ArtifactUpdate => new()
+            {
+                ArtifactUpdate = new TaskArtifactUpdateEvent
+                {
+                    TaskId = "task-1",
+                    ContextId = "different-context",
+                    Artifact = new Artifact { ArtifactId = "artifact-1", Parts = [new Part { Text = "Response" }] }
+                }
+            },
+            _ => throw new ArgumentOutOfRangeException(nameof(responseCase))
         };
 
         // Act
@@ -435,6 +460,7 @@ public sealed class A2AAgentTests : IDisposable
         {
             await foreach (var update in this._agent.RunStreamingAsync(inputMessages, session))
             {
+                Assert.Fail("A mismatched context must not yield an update.");
             }
         });
     }
