@@ -832,6 +832,7 @@ class FunctionTool(SerializationMixin):
         if arguments is None:
             return {}
 
+        validated_by_model = False
         try:
             if isinstance(arguments, Mapping):
                 parsed_arguments = dict(arguments)
@@ -843,6 +844,7 @@ class FunctionTool(SerializationMixin):
                     # parameter the model deliberately set to null, failing the
                     # invocation on the missing argument (#5934).
                     parsed_arguments = self.input_model.model_validate(parsed_arguments).model_dump(exclude_unset=True)
+                    validated_by_model = True
             elif isinstance(arguments, BaseModel):
                 if (
                     self.input_model is not None
@@ -850,6 +852,7 @@ class FunctionTool(SerializationMixin):
                     and not isinstance(arguments, self.input_model)
                 ):
                     raise TypeError(f"Expected {self.input_model.__name__}, got {type(arguments).__name__}")
+                validated_by_model = self.input_model is not None and not self._schema_supplied
                 parsed_arguments = arguments.model_dump(exclude_unset=True)
             else:
                 raise TypeError(
@@ -865,6 +868,12 @@ class FunctionTool(SerializationMixin):
                 str(exc),
                 redacted_message=f"Invalid arguments for '{self.name}'.",
             ) from exc
+
+        if validated_by_model:
+            # The input model already enforced the full schema and converted JSON values
+            # to the annotated Python types (e.g. datetime, set, tuple), which the
+            # lightweight JSON type checks below would wrongly reject (#8661).
+            return parsed_arguments
 
         try:
             return _validate_arguments_against_schema(
