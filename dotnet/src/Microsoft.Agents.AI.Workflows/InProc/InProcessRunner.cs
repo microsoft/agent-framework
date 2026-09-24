@@ -423,7 +423,7 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
                            restoreCheckpointIndexTask.AsTask()).ConfigureAwait(false);
 
         this._lastCheckpointInfo = checkpointInfo;
-        this.StepTracer.Reload(this.StepTracer.StepNumber);
+        this.StepTracer.Reload(checkpoint.StepNumber);
 
         async ValueTask UpdateCheckpointIndexAsync()
         {

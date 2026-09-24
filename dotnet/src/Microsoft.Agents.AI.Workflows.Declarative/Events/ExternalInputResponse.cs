@@ -16,6 +16,12 @@ public sealed class ExternalInputResponse
     /// </summary>
     public IList<ChatMessage> Messages { get; }
 
+    /// <summary>
+    /// Gets the request id that produced this response, if available.
+    /// </summary>
+    [JsonInclude]
+    public string? RequestId { get; internal init; }
+
     internal bool HasMessages => this.Messages?.Count > 0;
 
     /// <summary>
@@ -23,8 +29,8 @@ public sealed class ExternalInputResponse
     /// </summary>
     /// <param name="message">The external input message being provided to the workflow.</param>
     public ExternalInputResponse(ChatMessage message)
+        : this([message], requestId: null)
     {
-        this.Messages = [message];
     }
 
     /// <summary>
@@ -33,7 +39,14 @@ public sealed class ExternalInputResponse
     /// <param name="messages">The external input messages being provided to the workflow.</param>
     [JsonConstructor]
     public ExternalInputResponse(IList<ChatMessage> messages)
+        : this(messages, requestId: null)
+    {
+    }
+
+    internal ExternalInputResponse(IList<ChatMessage> messages, string? requestId)
     {
         this.Messages = messages;
+        this.RequestId = requestId;
     }
+
 }

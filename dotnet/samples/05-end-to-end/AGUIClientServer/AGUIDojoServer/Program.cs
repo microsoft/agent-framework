@@ -1,6 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using AGUIDojoServer;
+using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.Hosting;
 using Microsoft.Agents.AI.Hosting.AGUI.AspNetCore;
 using Microsoft.AspNetCore.HttpLogging;
 using Microsoft.Extensions.Options;
@@ -19,9 +21,22 @@ builder.Services.AddHttpClient().AddLogging();
 builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.TypeInfoResolverChain.Add(AGUIDojoServerSerializerContext.Default));
 builder.Services.AddAGUIServer();
 
-// WARNING: When adding session persistence (e.g., WithInMemorySessionStore), or running in production,
-// make sure to also register an AgentIsolationKeyProvider to scope sessions by principal in multi-user
-// deployments, e.g.:
+// A session store is REQUIRED for mixed client/server tool continuation. When write_document and
+// confirm_changes are requested together, invocable function bypassing saves the server's write_document
+// call in the session and sends only confirm_changes to the client. The client's result returns in a
+// separate HTTP request for the same thread, which must reload that session to execute the saved call.
+// Without a session store, the deferred call is lost between requests. Client-replayed tool calls are not
+// a trusted substitute for the server-side record. The registration key must match the agent's name so
+// MapAGUIServer can find its store.
+// In production, use a persistent session store instead of the in-memory one: InMemoryAgentSessionStore
+// loses sessions on restart and keeps every session for the lifetime of the process, with no size limit,
+// expiry or eviction. Thread ids are client-supplied, so multi-user hosts also need the isolation below.
+// This store has no atomic consume: concurrent continuations on one thread can read the same pending call
+// before either saves its updated session, potentially executing that call more than once.
+builder.Services.AddKeyedSingleton<AgentSessionStore>("PredictiveStateUpdatesAgent", new InMemoryAgentSessionStore());
+
+// WARNING: When session persistence is enabled, in a multi-user deployment you must also register an
+// AgentIsolationKeyProvider to scope sessions by principal, e.g.:
 // builder.Services.UseClaimsBasedAgentIsolation(new() { ClaimType = ClaimTypes.NameIdentifier });
 
 WebApplication app = builder.Build();

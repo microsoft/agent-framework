@@ -2954,14 +2954,18 @@ async def _run_agent_stream(
             snapshot_seed_messages,
             protected_tool_call_ids=protected_tool_call_ids,
         )
-    # Check for structured output mode (skip text content)
+    # Check for structured output mode (skip text content only for Pydantic models whose fields map to state/message)
     skip_text = False
-    response_format: type[Any] | None = None
+    response_format: Any | None = None
+    is_pydantic_response_format = False
     default_options = getattr(agent, "default_options", None)
     if isinstance(default_options, dict):
+        from pydantic import BaseModel
+
         typed_default_options = cast(dict[str, Any], default_options)
-        response_format = cast(type[Any] | None, typed_default_options.get("response_format"))
-        skip_text = response_format is not None
+        response_format = typed_default_options.get("response_format")
+        is_pydantic_response_format = isinstance(response_format, type) and issubclass(response_format, BaseModel)
+        skip_text = is_pydantic_response_format
 
     # Handle empty messages (emit RunStarted immediately since no agent response)
     if not messages and not only_cancelled_resume:
@@ -3576,8 +3580,8 @@ async def _run_agent_stream(
         from agent_framework import AgentResponse
         from pydantic import BaseModel
 
-        if not (isinstance(response_format, type) and issubclass(response_format, BaseModel)):
-            logger.warning("Skipping structured output parsing: response_format is not a Pydantic model type.")
+        if not is_pydantic_response_format:
+            logger.debug("Skipping structured output parsing: response_format is not a Pydantic model type.")
         else:
             logger.info(f"Processing structured output, update count: {len(all_updates)}")
             final_response = AgentResponse.from_updates(all_updates, output_format_type=response_format)

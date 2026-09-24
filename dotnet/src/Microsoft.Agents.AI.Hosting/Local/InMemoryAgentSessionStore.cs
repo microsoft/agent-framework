@@ -41,7 +41,7 @@ namespace Microsoft.Agents.AI.Hosting;
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class InMemoryAgentSessionStore : AgentSessionStore
 {
-    private readonly ConcurrentDictionary<(string AgentId, AgentSessionStoreKey Key), JsonElement> _sessions = new();
+    private readonly ConcurrentDictionary<(string AgentIdentity, AgentSessionStoreKey Key), JsonElement> _sessions = new();
 
     /// <inheritdoc/>
     public override async ValueTask SaveSessionAsync(
@@ -54,7 +54,7 @@ public sealed class InMemoryAgentSessionStore : AgentSessionStore
         _ = Throw.IfNull(key);
         _ = Throw.IfNull(session);
 
-        var storageKey = (agent.Id, key);
+        var storageKey = (GetStorageIdentity(agent), key);
         this._sessions[storageKey] = await agent.SerializeSessionAsync(session, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
@@ -67,8 +67,18 @@ public sealed class InMemoryAgentSessionStore : AgentSessionStore
         _ = Throw.IfNull(agent);
         _ = Throw.IfNull(key);
 
-        return this._sessions.TryGetValue((agent.Id, key), out JsonElement existingSession)
+        return this._sessions.TryGetValue((GetStorageIdentity(agent), key), out JsonElement existingSession)
             ? await agent.DeserializeSessionAsync(existingSession, cancellationToken: cancellationToken).ConfigureAwait(false)
             : null;
+    }
+
+    private static string GetStorageIdentity(AIAgent agent)
+    {
+        // Hosted execution can supply a logical storage identity that survives transient agent instances.
+        // Direct agents retain process-local instance isolation through their generated ID.
+        string? sessionStorageIdentity = agent.GetService<AIHostAgent>()?.SessionStorageIdentity;
+        return sessionStorageIdentity is null
+            ? $"id:{agent.Id}"
+            : $"host:{sessionStorageIdentity}";
     }
 }

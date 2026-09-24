@@ -3092,3 +3092,242 @@ async def test_tool_approval_middleware_empty_arguments_rule_is_not_tool_wide(
     requests = _approval_requests(second_response.messages)
     assert [_function_call(request).arguments for request in requests] == ['{"value": "custom"}']
     assert calls == 1
+
+
+@pytest.mark.parametrize("via", ["run_options", "default_options"], ids=["run-options", "default-options"])
+async def test_streaming_tool_approval_preserves_structured_value(
+    chat_client_base: MockBaseChatClient,
+    via: str,
+) -> None:
+    """Streaming ToolApprovalMiddleware must forward response_format to the outer finalizer.
+
+    Regression for https://github.com/microsoft/agent-framework/issues/7418:
+    re-wrapping with ``AgentResponse.from_updates`` dropped ``output_format_type``,
+    so ``response.value`` was None even when the inner stream had parsed it.
+    """
+    from pydantic import BaseModel
+
+    class Answer(BaseModel):
+        answer: str
+
+    json_text = '{"answer": "42"}'
+
+    @tool(name="echo", approval_mode="always_require")
+    def echo(text: str) -> str:
+        return text
+
+    # ``Any`` keeps the parametrized options out of ``Agent``'s generic client/options
+    # inference: the plain response-format dicts cannot be unified with the fixture's
+    # ``MockBaseChatClient[ChatOptions[None]]`` client type.
+    default_options: Any = {"response_format": Answer} if via == "default_options" else None
+    run_options: Any = {"response_format": Answer} if via == "run_options" else None
+    agent = Agent(
+        client=chat_client_base,
+        tools=[echo],
+        middleware=[ToolApprovalMiddleware()],
+        default_options=default_options,
+    )
+    session = AgentSession(session_id=f"structured-stream-{via}")
+    chat_client_base.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                role="assistant",
+                contents=[Content.from_text(json_text)],
+                finish_reason="stop",
+            )
+        ]
+    ]
+
+    stream = agent.run("return an Answer", stream=True, session=session, options=run_options)
+    async for _update in stream:
+        pass
+    response = await stream.get_final_response()
+
+    assert response.text == json_text
+    assert isinstance(response.value, Answer)
+    assert response.value.answer == "42"
+
+
+async def test_streaming_auto_approved_tool_preserves_structured_value(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    """Auto-approved tool calls must still parse structured output on the streaming path."""
+    from pydantic import BaseModel
+
+    class Answer(BaseModel):
+        answer: str
+
+    json_text = '{"answer": "42"}'
+    calls = 0
+
+    @tool(name="echo", approval_mode="always_require")
+    def echo(text: str) -> str:
+        nonlocal calls
+        calls += 1
+        return text
+
+    agent = Agent(
+        client=chat_client_base,
+        tools=[echo],
+        middleware=[ToolApprovalMiddleware(auto_approval_rules=[lambda function_call: True])],
+    )
+    session = AgentSession(session_id="structured-stream-auto-approve")
+    function_call = Content.from_function_call(call_id="call_echo", name="echo", arguments='{"text": "hi"}')
+    chat_client_base.streaming_responses = [
+        [ChatResponseUpdate(role="assistant", contents=[function_call])],
+        [
+            ChatResponseUpdate(
+                role="assistant",
+                contents=[Content.from_text(json_text)],
+                finish_reason="stop",
+            )
+        ],
+    ]
+
+    stream = agent.run(
+        "Call echo and return an Answer.",
+        stream=True,
+        session=session,
+        options={"response_format": Answer},
+    )
+    async for _update in stream:
+        pass
+    response = await stream.get_final_response()
+
+    assert calls == 1
+    assert isinstance(response.value, Answer)
+    assert response.value.answer == "42"
+
+
+async def test_streaming_auto_approved_tool_preserves_value_when_preamble_text_coalesces(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    """Preamble assistant text plus a tool call must not clobber the parsed structured value.
+
+    Updates without ``message_id`` are coalesced by ``AgentResponse.from_updates``. If the
+    outer finalizer rebuilt from every yielded update, ``Calling echo…{"answer":"42"}``
+    would fail to parse. The terminal inner response's value must be kept instead.
+    """
+    from pydantic import BaseModel
+
+    class Answer(BaseModel):
+        answer: str
+
+    json_text = '{"answer": "42"}'
+    calls = 0
+
+    @tool(name="echo", approval_mode="always_require")
+    def echo(text: str) -> str:
+        nonlocal calls
+        calls += 1
+        return text
+
+    agent = Agent(
+        client=chat_client_base,
+        tools=[echo],
+        middleware=[ToolApprovalMiddleware(auto_approval_rules=[lambda function_call: True])],
+    )
+    session = AgentSession(session_id="structured-stream-auto-approve-preamble")
+    function_call = Content.from_function_call(call_id="call_echo", name="echo", arguments='{"text": "hi"}')
+    chat_client_base.streaming_responses = [
+        [
+            ChatResponseUpdate(role="assistant", contents=[Content.from_text("Calling echo…")]),
+            ChatResponseUpdate(role="assistant", contents=[function_call]),
+        ],
+        [
+            ChatResponseUpdate(
+                role="assistant",
+                contents=[Content.from_text(json_text)],
+                finish_reason="stop",
+            )
+        ],
+    ]
+
+    stream = agent.run(
+        "Call echo and return an Answer.",
+        stream=True,
+        session=session,
+        options={"response_format": Answer},
+    )
+    updates = [update async for update in stream]
+    response = await stream.get_final_response()
+
+    assert any("Calling echo" in (content.text or "") for update in updates for content in update.contents)
+    assert calls == 1
+    assert isinstance(response.value, Answer)
+    assert response.value.answer == "42"
+
+
+async def test_non_streaming_tool_approval_preserves_structured_value(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    """Non-streaming ToolApprovalMiddleware already returns the inner AgentResponse."""
+    from pydantic import BaseModel
+
+    class Answer(BaseModel):
+        answer: str
+
+    json_text = '{"answer": "42"}'
+
+    @tool(name="echo", approval_mode="always_require")
+    def echo(text: str) -> str:
+        return text
+
+    agent = Agent(
+        client=chat_client_base,
+        tools=[echo],
+        middleware=[ToolApprovalMiddleware()],
+    )
+    session = AgentSession(session_id="structured-non-stream")
+    chat_client_base.run_responses = [ChatResponse(messages=Message(role="assistant", contents=[json_text]))]
+
+    response = await agent.run(
+        "return an Answer",
+        session=session,
+        options={"response_format": Answer},
+    )
+
+    assert isinstance(response.value, Answer)
+    assert response.value.answer == "42"
+
+
+async def test_streaming_tool_approval_defers_structured_parse_error_to_value_access(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    """A structured-output parse failure must surface on ``value`` access, not while streaming.
+
+    The outer finalizer resolves the terminal inner response's value eagerly so a coalesced
+    preamble cannot mask it (#7418). When that resolution fails, the value is left unset so
+    the outer response still parses lazily on ``value`` access — streaming iteration and
+    finalization succeed, matching the error timing of a middleware-free streaming run.
+    """
+    from pydantic import BaseModel
+
+    class Answer(BaseModel):
+        answer: str
+
+    bad_text = "not json"
+
+    agent = Agent(
+        client=chat_client_base,
+        middleware=[ToolApprovalMiddleware()],
+    )
+    session = AgentSession(session_id="structured-stream-parse-error")
+    chat_client_base.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                role="assistant",
+                contents=[Content.from_text(bad_text)],
+                finish_reason="stop",
+            )
+        ]
+    ]
+
+    stream = agent.run("return an Answer", stream=True, session=session, options={"response_format": Answer})
+    async for _ in stream:
+        pass  # must not raise
+    response = await stream.get_final_response()
+
+    assert response.text == bad_text
+    with pytest.raises(ValueError):
+        _ = response.value

@@ -16,6 +16,8 @@ internal sealed class WorkflowFactory(string workflowFile, Uri foundryEndpoint)
 
     public IConfiguration? Configuration { get; init; }
 
+    public IEnumerable<string>? AllowedEnvironmentVariables { get; init; }
+
     // Assign to continue an existing conversation
     public string? ConversationId { get; init; }
 
@@ -46,6 +48,7 @@ internal sealed class WorkflowFactory(string workflowFile, Uri foundryEndpoint)
             new(agentProvider)
             {
                 Configuration = this.Configuration,
+                AllowedEnvironmentVariables = this.AllowedEnvironmentVariables,
                 ConversationId = this.ConversationId,
                 LoggerFactory = this.LoggerFactory,
                 McpToolHandler = this.McpToolHandler,

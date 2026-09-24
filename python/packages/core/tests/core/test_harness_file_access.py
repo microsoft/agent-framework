@@ -175,6 +175,38 @@ async def test_in_memory_store_round_trips_files() -> None:
     assert sorted(await _list_files(store)) == []
 
 
+@pytest.mark.parametrize("directory", ["İstanbul", "i\u0307stanbul", "İSTANBUL/"])
+async def test_in_memory_store_lists_unicode_paths_without_truncation(directory: str) -> None:
+    """Length-changing lowercasing must not alter the displayed path components."""
+    store = InMemoryAgentFileStore()
+    await store.write("İstanbul/Notes.md", "memory")
+    await store.write("İstanbul/İzmir/plan.md", "nested memory")
+    await store.write("i\u0307stanbul/i\u0307zmir/other.md", "another memory")
+
+    assert await _list_dirs(store) == ["İstanbul"]
+    assert await _list_files(store, directory) == ["Notes.md"]
+    assert await _list_dirs(store, directory) == ["İzmir"]
+    assert sorted(await _list_files(store, f"{directory.rstrip('/')}/İzmir")) == ["other.md", "plan.md"]
+    assert await store.read(f"{directory.rstrip('/')}/notes.MD") == "memory"
+
+
+@pytest.mark.parametrize("directory", ["İstanbul", "i\u0307stanbul", "İSTANBUL/"])
+async def test_in_memory_store_search_preserves_unicode_relative_paths(directory: str) -> None:
+    """Search results must retain readable paths after matching a Unicode directory."""
+    store = InMemoryAgentFileStore()
+    await store.write("İstanbul/Notes.md", "memory")
+    await store.write("İstanbul/İzmir/plan.md", "memory")
+    await store.write("other/notes.md", "memory")
+
+    direct = await store.search(directory, "memory", "Notes.md")
+    assert [result.file_name for result in direct] == ["Notes.md"]
+
+    recursive = await store.search(directory, "memory", recursive=True)
+    assert {result.file_name for result in recursive} == {"Notes.md", "İzmir/plan.md"}
+    for result in recursive:
+        assert await store.read(f"{directory.rstrip('/')}/{result.file_name}") == "memory"
+
+
 async def test_in_memory_store_search_returns_matches_with_snippets() -> None:
     """The in-memory store should search file content case-insensitively and respect glob filters."""
     store = InMemoryAgentFileStore()
