@@ -49,6 +49,20 @@ class _UnsupportedToolSchema(ValueError):
     """Raised when a tool schema cannot be represented with TypeSafe questions."""
 
 
+@dataclass
+class _QuestionBudget:
+    count: int = 0
+
+    def reserve(self, count: int) -> None:
+        next_count = self.count + count
+        if next_count > MAX_INTERNAL_QUESTIONS:
+            raise ChatClientInvalidRequestException(
+                f"TypeSafe tool schemas require more than {MAX_INTERNAL_QUESTIONS} internal questions. "
+                "Narrow the available tools."
+            )
+        self.count = next_count
+
+
 @dataclass(frozen=True)
 class _ArgumentPlan:
     name: str
@@ -172,9 +186,17 @@ def compile_tool_call_plan(
 
     compiled: list[_CompiledTool] = []
     unsupported: dict[str, str] = {}
+    question_budget = _QuestionBudget()
     for index, tool in enumerate(selected_tools):
         try:
-            compiled.append(_compile_tool(tool, index, list((previous_calls or {}).get(tool.name, ()))))
+            compiled.append(
+                _compile_tool(
+                    tool,
+                    index,
+                    list((previous_calls or {}).get(tool.name, ())),
+                    question_budget=question_budget,
+                )
+            )
         except _UnsupportedToolSchema as exc:
             unsupported[tool.name] = str(exc)
 
@@ -211,6 +233,7 @@ def compile_tool_call_plan(
                 "Do not call a tool because all requested tool actions are already satisfied, "
                 "or because no tool is needed."
             )
+        question_budget.reserve(1)
         questions[route_question_id] = Choice(
             instructions="Which available tool, if any, should handle the latest user request?",
             criteria=criteria,
@@ -236,6 +259,8 @@ def _compile_tool(
     tool: FunctionTool,
     tool_index: int,
     previous_calls: list[Mapping[str, Any]],
+    *,
+    question_budget: _QuestionBudget,
 ) -> _CompiledTool:
     schema: dict[str, Any] = tool.parameters()
     if not schema:
@@ -283,6 +308,7 @@ def _compile_tool(
                 tool_index=tool_index,
                 argument_index=argument_index,
                 previous_values=[call[name] for call in previous_calls if name in call],
+                question_budget=question_budget,
             )
         except _UnsupportedToolSchema as exc:
             qualifier = "required" if name in required else "optional"
@@ -308,6 +334,7 @@ def _compile_argument(
     tool_index: int,
     argument_index: int,
     previous_values: list[Any],
+    question_budget: _QuestionBudget,
 ) -> tuple[_ArgumentPlan, Questions]:
     schema, nullable = _resolve_schema(raw_schema, root_schema)
     _reject_unsupported_schema_constraints(
@@ -328,15 +355,17 @@ def _compile_argument(
     )
     presence_question_id = None if required else f"{prefix}.present"
     questions: dict[str, Any] = {}
-    if presence_question_id is not None:
-        questions[presence_question_id] = Noul(
-            instructions=(
-                f"For the {tool.name} tool, did the user explicitly specify the {name} argument? "
-                f"Argument meaning: {description}.{previous_instruction}"
-            )
-        )
 
     if "const" in schema:
+        question_budget.reserve(0 if required else 1)
+        _add_presence_question(
+            questions,
+            presence_question_id=presence_question_id,
+            tool=tool,
+            name=name,
+            description=description,
+            previous_instruction=previous_instruction,
+        )
         return (
             _ArgumentPlan(
                 name=name,
@@ -355,6 +384,15 @@ def _compile_argument(
                 f"enum defines {len(enum_values)} values; the supported maximum is {MAX_ENUM_VALUES}"
             )
         if len(enum_values) == 1:
+            question_budget.reserve(0 if required else 1)
+            _add_presence_question(
+                questions,
+                presence_question_id=presence_question_id,
+                tool=tool,
+                name=name,
+                description=description,
+                previous_instruction=previous_instruction,
+            )
             return (
                 _ArgumentPlan(
                     name=name,
@@ -366,6 +404,15 @@ def _compile_argument(
             )
         values = tuple((f"v{index}", value) for index, value in enumerate(enum_values))
         question_id = f"{prefix}.value"
+        question_budget.reserve(1 if required else 2)
+        _add_presence_question(
+            questions,
+            presence_question_id=presence_question_id,
+            tool=tool,
+            name=name,
+            description=description,
+            previous_instruction=previous_instruction,
+        )
         questions[question_id] = Choice(
             instructions=(
                 f"For the {tool.name} tool, choose the {name} argument. "
@@ -387,6 +434,15 @@ def _compile_argument(
     schema_type = schema.get("type")
     if schema_type == "boolean":
         question_id = f"{prefix}.value"
+        question_budget.reserve(1 if required else 2)
+        _add_presence_question(
+            questions,
+            presence_question_id=presence_question_id,
+            tool=tool,
+            name=name,
+            description=description,
+            previous_instruction=previous_instruction,
+        )
         questions[question_id] = Noul(
             instructions=(
                 f"For the {tool.name} tool, should the {name} argument be true? "
@@ -423,6 +479,15 @@ def _compile_argument(
             raise _UnsupportedToolSchema(
                 f"array enum defines {len(members)} values; the supported maximum is {MAX_ENUM_VALUES}"
             )
+        question_budget.reserve(len(members) + (0 if required else 1))
+        _add_presence_question(
+            questions,
+            presence_question_id=presence_question_id,
+            tool=tool,
+            name=name,
+            description=description,
+            previous_instruction=previous_instruction,
+        )
         member_questions: list[tuple[str, Any]] = []
         for member_index, member in enumerate(members):
             question_id = f"{prefix}.m{member_index}"
@@ -476,6 +541,25 @@ def _resolve_schema(schema: dict[str, Any], root_schema: dict[str, Any]) -> tupl
         resolved = {**nested, **resolved}
         nullable = True
     return resolved, nullable
+
+
+def _add_presence_question(
+    questions: dict[str, Any],
+    *,
+    presence_question_id: str | None,
+    tool: FunctionTool,
+    name: str,
+    description: Any,
+    previous_instruction: str,
+) -> None:
+    if presence_question_id is None:
+        return
+    questions[presence_question_id] = Noul(
+        instructions=(
+            f"For the {tool.name} tool, did the user explicitly specify the {name} argument? "
+            f"Argument meaning: {description}.{previous_instruction}"
+        )
+    )
 
 
 def _reject_unsupported_schema_constraints(

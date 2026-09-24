@@ -10,8 +10,10 @@ from agent_framework.exceptions import ChatClientInvalidRequestException, ChatCl
 from pydantic import BaseModel
 from typesafe_sdk import SystemOneResponse
 
+import agent_framework_typesafe._tool_calls as tool_calls
 from agent_framework_typesafe._tool_calls import (
     MAX_ENUM_VALUES,
+    MAX_INTERNAL_QUESTIONS,
     MAX_ROUTABLE_TOOLS,
     MAX_TOOL_PROPERTIES,
     TOOL_QUESTION_PREFIX,
@@ -246,6 +248,42 @@ def test_routable_tool_limit_is_applied_after_tool_filter(tool_mode: ToolMode) -
 
     assert plan is not None
     assert [tool.function.name for tool in plan.tools] == ["tool_0"]
+
+
+def test_cumulative_question_limit_is_enforced_before_materialization(monkeypatch: pytest.MonkeyPatch) -> None:
+    created_questions = 0
+    original_noul = tool_calls.Noul
+
+    def counting_noul(*args: Any, **kwargs: Any) -> Any:
+        nonlocal created_questions
+        created_questions += 1
+        if created_questions > MAX_INTERNAL_QUESTIONS:
+            raise AssertionError("question materialization exceeded the cumulative budget")
+        return original_noul(*args, **kwargs)
+
+    monkeypatch.setattr(tool_calls, "Noul", counting_noul)
+    enum_values = [f"value_{index}" for index in range(MAX_ENUM_VALUES)]
+    tools = [
+        function(
+            f"tool_{tool_index}",
+            {
+                "type": "object",
+                "properties": {
+                    "values": {
+                        "type": "array",
+                        "items": {"type": "string", "enum": enum_values},
+                    }
+                },
+                "required": ["values"],
+            },
+        )
+        for tool_index in range(3)
+    ]
+
+    with pytest.raises(ChatClientInvalidRequestException, match="more than 128 internal questions"):
+        compile_tool_call_plan(tools, tool_mode=None, user_question_ids=set())
+
+    assert created_questions == MAX_INTERNAL_QUESTIONS
 
 
 def test_tool_property_limit_is_enforced_before_compilation() -> None:

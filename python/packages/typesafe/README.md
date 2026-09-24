@@ -172,7 +172,10 @@ routable. Use `tool_choice.allowed_tools` to narrow large MCP servers; a request
 supports at most 32 routable tools, 64 properties per tool, 64 enum members per
 argument, and 128 generated internal questions. The routable-tool limit is
 checked after tool-choice filtering and before any tool schemas are compiled. An
-explicitly empty `allowed_tools` list denies every tool.
+exact cumulative question budget is reserved before question objects are
+constructed, so schemas that would exceed 128 questions fail without
+materializing the excess. An explicitly empty `allowed_tools` list denies every
+tool.
 
 ## Configuration and lifecycle
 
