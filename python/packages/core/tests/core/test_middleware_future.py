@@ -42,23 +42,29 @@ class CallableChatMiddleware:
         await call_next()
 
 
-# Quoted forward references keep their quotes under postponed evaluation, e.g. "'ChatContext'".
-async def quoted_chat_mw(context: "ChatContext", call_next: Callable[[], Awaitable[None]]) -> None:  # noqa: UP037
+# Quoted forward references keep their quotes under postponed evaluation (e.g. "'ChatContext'"). pyupgrade
+# strips redundant quotes from annotations in this module, so the quoted definitions are compiled from source.
+_QUOTED_MIDDLEWARE_SOURCE = """
+from __future__ import annotations
+
+
+async def quoted_chat_mw(context: "ChatContext", call_next):
     await call_next()
 
 
-async def quoted_function_mw(
-    context: "FunctionInvocationContext",  # noqa: UP037
-    call_next: Callable[[], Awaitable[None]],
-) -> None:
+async def quoted_function_mw(context: "FunctionInvocationContext", call_next):
     await call_next()
 
 
-async def quoted_qualified_agent_mw(
-    context: "agent_framework.AgentContext",  # noqa: UP037
-    call_next: Callable[[], Awaitable[None]],
-) -> None:
+async def quoted_qualified_agent_mw(context: "agent_framework.AgentContext", call_next):
     await call_next()
+"""
+
+
+def _compile_quoted_middleware() -> dict[str, Any]:
+    namespace: dict[str, Any] = {}
+    exec(compile(_QUOTED_MIDDLEWARE_SOURCE, "<quoted_middleware>", "exec"), namespace)  # noqa: S102
+    return namespace
 
 
 def test_middleware_type_detected_from_postponed_annotations() -> None:
@@ -74,6 +80,12 @@ def test_middleware_type_detected_from_postponed_annotations() -> None:
 
 def test_middleware_type_detected_from_quoted_postponed_annotations() -> None:
     """Quoted context annotations are matched like unquoted ones under postponed evaluation."""
+    namespace = _compile_quoted_middleware()
+    quoted_chat_mw = namespace["quoted_chat_mw"]
+    quoted_function_mw = namespace["quoted_function_mw"]
+    quoted_qualified_agent_mw = namespace["quoted_qualified_agent_mw"]
+    assert quoted_chat_mw.__annotations__["context"] == "'ChatContext'"
+
     result = categorize_middleware([quoted_chat_mw, quoted_function_mw, quoted_qualified_agent_mw])
 
     assert result["agent"] == [quoted_qualified_agent_mw]
