@@ -59,13 +59,19 @@ _METRICS = {
     "negative_dot_prod": ("-array_inner_product", False),
 }
 _ORDER_OPERATORS = {"gt": ">", "gte": ">=", "lt": "<", "lte": "<="}
+_ASCII_FOLD = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
 _TABLE_SCOPE = (
     "FROM information_schema.tables "
     "WHERE table_catalog = current_database() AND table_schema = current_schema() "
     "AND table_type = 'BASE TABLE'"
 )
 _LIST_TABLES = f"SELECT table_name {_TABLE_SCOPE} ORDER BY table_name"
-_TABLE_EXISTS = f"SELECT 1 {_TABLE_SCOPE} AND lower(table_name) = lower(?)"
+# DuckDB folds only ASCII identifier case; C collation avoids a connection's Unicode NOCASE setting.
+_TABLE_EXISTS = (
+    f"SELECT 1 {_TABLE_SCOPE} "
+    "AND (translate(table_name, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz') COLLATE \"C\") = "
+    "(translate(?, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz') COLLATE \"C\")"
+)
 
 
 class DuckDBSettings(TypedDict, total=False):
@@ -415,7 +421,7 @@ class DuckDBCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
         )
         self._table = _identifier(self.collection_name)
         names = [field.storage_name or field.name for field in self.definition.fields]
-        if len({name.casefold() for name in names}) != len(names):
+        if len({name.translate(_ASCII_FOLD) for name in names}) != len(names):
             raise ValueError("DuckDB column names must be unique ignoring case.")
         self._fields = tuple(self.definition.fields)
         for name in names:

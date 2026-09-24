@@ -126,7 +126,8 @@ jobs:
     needs: paths-filter
     if: >
       github.event_name == 'pull_request' &&
-      needs.paths-filter.outputs.duckdbChanged == 'true'
+      (needs.paths-filter.outputs.duckdbChanged == 'true' ||
+       needs.paths-filter.outputs.coreChanged == 'true')
     runs-on: ubuntu-latest
     defaults:
       run:

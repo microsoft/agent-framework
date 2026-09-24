@@ -77,6 +77,51 @@ async def test_store_collection_checks_and_deletion_are_case_insensitive(tmp_pat
         assert "MiXeD" not in await store.list_collection_names()
 
 
+@pytest.mark.parametrize(
+    ("table_name", "same_table", "different_table"),
+    [("ÄBC", "Äbc", "äbc"), ("äbc", "äBC", "Äbc")],
+)
+@pytest.mark.parametrize("config", [None, {"default_collation": "NOCASE"}])
+async def test_non_ascii_table_existence_matches_duckdb_identifiers(
+    tmp_path, table_name: str, same_table: str, different_table: str, config: dict[str, str] | None
+):
+    definition = VectorStoreCollectionDefinition(
+        [VectorStoreField("key", name="id", type_="str")], collection_name=table_name
+    )
+    async with DuckDBStore(connection_string=str(tmp_path / "unicode.duckdb"), config=config) as store:
+        original = store.get_collection(dict, definition=definition)
+        same = store.get_collection(dict, definition=definition, collection_name=same_table)
+        different = store.get_collection(dict, definition=definition, collection_name=different_table)
+        await original.ensure_collection_exists()
+
+        assert await original.collection_exists()
+        assert await same.collection_exists()
+        assert await store.collection_exists(same_table)
+        assert not await different.collection_exists()
+        assert not await store.collection_exists(different_table)
+        await store.ensure_collection_deleted(different_table)
+        assert await original.collection_exists()
+        await store.ensure_collection_deleted(same_table)
+        assert not await original.collection_exists()
+
+
+async def test_non_ascii_columns_are_distinct(tmp_path):
+    definition = VectorStoreCollectionDefinition(
+        [
+            VectorStoreField("key", name="id", type_="str"),
+            VectorStoreField("data", name="first", type_="str", storage_name="Ä"),
+            VectorStoreField("data", name="second", type_="str", storage_name="ä"),
+        ],
+        collection_name="unicode_columns",
+    )
+    async with DuckDBCollection(
+        dict, definition=definition, connection_string=str(tmp_path / "unicode-columns.duckdb")
+    ) as collection:
+        await collection.ensure_collection_exists()
+        await collection.upsert([{"id": "one", "first": "upper", "second": "lower"}])
+        assert await collection.get(["one"]) == [{"id": "one", "first": "upper", "second": "lower"}]
+
+
 async def test_batch_crud_preserves_key_order_and_upserts(collection: DuckDBCollection[Any, Any], record_factory):
     first = record_factory("first", priority=1)
     second = record_factory("second", text="second text", priority=2, embedding=[0.0, 1.0, 0.0])
