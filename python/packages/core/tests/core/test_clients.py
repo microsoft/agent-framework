@@ -1136,14 +1136,20 @@ async def test_chat_middleware_rejects_duplicate_summary_ids(
     assert any(record.getMessage().startswith("Rejected 2 compaction summary message") for record in caplog.records)
 
 
+@pytest.mark.parametrize("restore_in_place", [False, True], ids=["rebind", "in-place"])
 async def test_chat_middleware_reconciles_recorded_replacement_before_termination_and_restore(
     chat_client_base: SupportsChatGetResponse,
+    restore_in_place: bool,
 ) -> None:
     class _RestoreAfterCall(ChatMiddleware):
         async def process(self, context: Any, call_next: Any) -> None:
             original_messages = tuple(context.messages)
             await call_next()
-            context.messages = original_messages
+            if restore_in_place:
+                assert isinstance(context.messages, list)
+                context.messages[:] = original_messages
+            else:
+                context.messages = original_messages
 
     class _ReplaceToolMessage(ChatMiddleware):
         async def process(self, context: Any, call_next: Any) -> None:

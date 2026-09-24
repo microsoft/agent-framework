@@ -1472,8 +1472,8 @@ class ChatMiddlewarePipeline(BaseMiddlewarePipeline):
                     await self._middleware[index].process(context, create_next_handler(index + 1))
                 finally:
                     if context._fallback_reconciliation_messages is None:  # pyright: ignore[reportPrivateUsage]
-                        context._fallback_reconciliation_messages = (  # pyright: ignore[reportPrivateUsage]
-                            context.messages if isinstance(context.messages, list) else list(context.messages)
+                        context._fallback_reconciliation_messages = list(  # pyright: ignore[reportPrivateUsage]
+                            context.messages
                         )
 
             return current_handler
