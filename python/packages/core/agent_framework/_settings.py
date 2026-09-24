@@ -34,7 +34,7 @@ import os
 import sys
 from collections.abc import Callable, Sequence
 from contextlib import suppress
-from typing import Any, Literal, Union, get_args, get_origin, get_type_hints
+from typing import Any, Literal, Union, cast, get_args, get_origin, get_type_hints
 
 from dotenv import dotenv_values
 
@@ -156,6 +156,8 @@ def _coerce_value(value: str, target_type: type) -> Any:
     if args and type(None) in args:
         for arg in args:
             if arg is not type(None):
+                if arg is Any:
+                    return value
                 runtime_type = _runtime_class(arg)
                 if runtime_type is None and get_origin(arg) is not Literal:
                     continue
@@ -166,8 +168,12 @@ def _coerce_value(value: str, target_type: type) -> Any:
         raise ValueError("Value cannot be converted to any allowed type.")
 
     if origin is Literal:
-        if any(type(choice) is str and value == choice for choice in args):
-            return value
+        for choice in args:
+            choice_type = cast(type[Any], type(choice))
+            with suppress(ValueError, TypeError):
+                coerced = _coerce_value(value, choice_type)
+                if type(coerced) is choice_type and coerced == choice:
+                    return coerced
         raise ValueError("Value is not an allowed literal.")
 
     # Handle SecretString
@@ -209,6 +215,8 @@ def _runtime_class(annotation: Any) -> type | None:
     is always preferred. Annotations without a runtime class, such as ``Literal[...]``,
     return ``None`` so callers can skip validation instead of guessing.
     """
+    if annotation is Any:
+        return None
     origin = get_origin(annotation)
     candidate = annotation if origin is None else origin
     return candidate if isinstance(candidate, type) else None

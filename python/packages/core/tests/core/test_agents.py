@@ -123,7 +123,12 @@ class _LifecycleMCPTool(_ConnectedMCPTool):
         self.is_connected = True
         return self
 
-    async def __aexit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: Any,
+    ) -> None:
         self.exit_exception_type = exc_type
         self.events.append(f"{self.name}.exit")
         self.is_connected = False

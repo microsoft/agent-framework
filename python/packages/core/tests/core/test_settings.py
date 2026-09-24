@@ -457,6 +457,27 @@ class TestTypeCoercion:
 
         assert settings["telemetry"] == '{"enabled": true}'
 
+    def test_optional_any_preserves_environment_value(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        class AnySettings(TypedDict, total=False):
+            value: Any | None
+
+        monkeypatch.setenv("TEST_VALUE", '{"enabled": true}')
+
+        settings = load_settings(AnySettings, env_prefix="TEST_")
+
+        assert settings["value"] == '{"enabled": true}'
+
+    def test_optional_any_preserves_dotenv_value(self, tmp_path: Path) -> None:
+        class AnySettings(TypedDict, total=False):
+            value: Any | None
+
+        env_file = tmp_path / ".env"
+        env_file.write_text("TEST_VALUE=provider-specific-value\n", encoding="utf-8")
+
+        settings = load_settings(AnySettings, env_prefix="TEST_", env_file_path=str(env_file))
+
+        assert settings["value"] == "provider-specific-value"
+
     def test_literal_union_accepts_valid_and_rejects_invalid_environment_values(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -468,6 +489,42 @@ class TestTypeCoercion:
 
         monkeypatch.setenv("TEST_MODE", "unknown")
         with pytest.raises(ValueError, match="setting 'mode' from environment variable 'TEST_MODE'"):
+            load_settings(LiteralSettings, env_prefix="TEST_")
+
+    def test_non_string_literal_union_coerces_environment_values(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        class LiteralSettings(TypedDict, total=False):
+            attempts: Literal[1, 2] | None
+            enabled: Literal[True, False] | None
+
+        monkeypatch.setenv("TEST_ATTEMPTS", "2")
+        monkeypatch.setenv("TEST_ENABLED", "false")
+
+        settings = load_settings(LiteralSettings, env_prefix="TEST_")
+
+        assert settings["attempts"] == 2
+        assert type(settings["attempts"]) is int
+        assert settings["enabled"] is False
+        assert type(settings["enabled"]) is bool
+
+    def test_non_string_literal_union_coerces_dotenv_values(self, tmp_path: Path) -> None:
+        class LiteralSettings(TypedDict, total=False):
+            attempts: Literal[3, 4] | None
+
+        env_file = tmp_path / ".env"
+        env_file.write_text("TEST_ATTEMPTS=4\n", encoding="utf-8")
+
+        settings = load_settings(LiteralSettings, env_prefix="TEST_", env_file_path=str(env_file))
+
+        assert settings["attempts"] == 4
+        assert type(settings["attempts"]) is int
+
+    def test_non_string_literal_uses_strict_type_equality(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        class LiteralSettings(TypedDict, total=False):
+            value: Literal[1] | None
+
+        monkeypatch.setenv("TEST_VALUE", "true")
+
+        with pytest.raises(ValueError, match="setting 'value' from environment variable 'TEST_VALUE'"):
             load_settings(LiteralSettings, env_prefix="TEST_")
 
 
