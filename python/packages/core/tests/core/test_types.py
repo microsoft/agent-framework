@@ -245,6 +245,38 @@ def test_data_content_uri():
     assert isinstance(content, Content)
 
 
+@mark.parametrize(
+    "parse_content",
+    [
+        pytest.param(Content.from_dict, id="content"),
+        pytest.param(lambda data: Message("user", [data]).contents[0], id="message"),
+    ],
+)
+def test_data_content_from_dict_preserves_metadata(parse_content: Callable[[dict[str, Any]], Content]) -> None:
+    """Raw data mappings retain the same metadata as Content.from_data."""
+    annotations: list[Annotation] = [{"type": "citation", "title": "Source document", "file_id": "file-123"}]
+    additional_properties = {"filename": "document.txt"}
+    raw_representation = object()
+    content_data = {
+        "type": "data",
+        "data": b"test data",
+        "media_type": "text/plain",
+        "annotations": annotations,
+        "additional_properties": additional_properties,
+        "raw_representation": raw_representation,
+    }
+    original_data = content_data.copy()
+
+    content = parse_content(content_data)
+
+    assert content.uri == "data:text/plain;base64,dGVzdCBkYXRh"
+    assert content.media_type == "text/plain"
+    assert content.annotations == annotations
+    assert content.additional_properties == additional_properties
+    assert content.raw_representation is raw_representation
+    assert content_data == original_data
+
+
 def test_data_content_invalid():
     """Test the DataContent class to ensure it raises an error for invalid initialization."""
     with pytest.raises(ContentError):
