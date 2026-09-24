@@ -1372,6 +1372,38 @@ async def test_file_access_write_reports_actionable_path_collision_errors(
     assert await store.read("archive") is None
 
 
+async def test_file_access_write_reports_filesystem_path_collision_errors(
+    chat_client_base: SupportsChatGetResponse,
+    tmp_path: Path,
+) -> None:
+    """The real filesystem store should distinguish path collisions from existing files."""
+    store = FileSystemAgentFileStore(tmp_path)
+    tools = await _prepare_access_tools(chat_client_base, store=store)
+    save = _tool_by_name(tools, "file_access_write")
+
+    await store.write("Reports", "keep")
+    await store.write("Archive/q1.txt", "keep")
+    await store.write("notes.md", "keep")
+
+    parent_collision = await save.invoke(arguments={"file_name": "Reports/q1.txt", "content": "nested"})
+    parent_message = _text(parent_collision[0])
+    assert "parent path is already a file" in parent_message
+    assert "Choose a different path" in parent_message
+    assert await store.read("Reports") == "keep"
+
+    directory_collision = await save.invoke(arguments={"file_name": "Archive", "content": "replace"})
+    directory_message = _text(directory_collision[0])
+    assert "already a directory" in directory_message
+    assert "Choose a different file name" in directory_message
+    assert await store.read("Archive/q1.txt") == "keep"
+
+    existing_file = await save.invoke(arguments={"file_name": "notes.md", "content": "replace"})
+    existing_file_message = _text(existing_file[0])
+    assert "already exists" in existing_file_message
+    assert "overwrite set to true" in existing_file_message
+    assert await store.read("notes.md") == "keep"
+
+
 async def test_file_access_write_preserves_exclusive_create_guidance(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:

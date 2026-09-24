@@ -1319,6 +1319,8 @@ class FileSystemAgentFileStore(AgentFileStore):
                 is_link = _is_link_or_reparse_point(current)
             except FileNotFoundError:
                 break
+            except NotADirectoryError as exc:
+                raise NotADirectoryError(f"Parent path is not a directory: {current}") from exc
             except OSError as exc:
                 # Fail closed: if we cannot verify whether a segment is a
                 # symlink/reparse point we refuse the operation rather than
@@ -1345,7 +1347,23 @@ class FileSystemAgentFileStore(AgentFileStore):
 
     @staticmethod
     def _write_file_sync(full_path: Path, content: str, overwrite: bool) -> None:
-        full_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            full_path.parent.mkdir(parents=True, exist_ok=True)
+        except FileExistsError as exc:
+            # ``mkdir(parents=True)`` reports FileExistsError when an existing
+            # file blocks any parent segment. Surface the path type so callers
+            # can distinguish this from an existing target file.
+            parent_file = next(
+                (
+                    candidate
+                    for candidate in (full_path.parent, *full_path.parent.parents)
+                    if candidate.exists() and not candidate.is_dir()
+                ),
+                None,
+            )
+            if parent_file is not None:
+                raise NotADirectoryError(f"Parent path is not a directory: {parent_file}") from exc
+            raise
         encoded = content.encode("utf-8")
         flags = os.O_WRONLY | os.O_CREAT
         if overwrite:
@@ -1360,6 +1378,8 @@ class FileSystemAgentFileStore(AgentFileStore):
         try:
             fd = os.open(full_path, flags, 0o644)
         except OSError as exc:
+            if not overwrite and isinstance(exc, FileExistsError) and full_path.is_dir():
+                raise IsADirectoryError(f"Path is a directory: {full_path}") from exc
             if not overwrite and isinstance(exc, FileExistsError):
                 raise
             # ``ELOOP`` (POSIX): the open refused because the leaf is a
