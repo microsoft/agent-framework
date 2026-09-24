@@ -697,7 +697,9 @@ class BedrockChatClient(
             contents.append(Content.from_usage(usage_details=usage_details))
         if not contents and finish_reason is None:
             return None
-        return ChatResponseUpdate(contents=contents, model=model, finish_reason=finish_reason, raw_representation=event)
+        return ChatResponseUpdate(
+            role="assistant", contents=contents, model=model, finish_reason=finish_reason, raw_representation=event
+        )
 
     def _parse_usage(self, usage: dict[str, Any] | None) -> UsageDetails | None:
         if not usage:

@@ -135,6 +135,7 @@ async def test_stream_yields_updates_as_converse_stream_events_arrive() -> None:
     response = await stream.get_final_response()
 
     assert [update.text for update in updates if update.text] == ["Checking", " the weather."]
+    assert all(update.role == "assistant" for update in updates)
     assert response.text == "Checking the weather."
     function_call = next(content for content in response.messages[0].contents if content.type == "function_call")
     assert function_call.call_id == "call-1"
