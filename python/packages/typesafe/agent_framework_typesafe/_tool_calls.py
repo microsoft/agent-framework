@@ -22,23 +22,27 @@ MAX_INTERNAL_QUESTIONS = 128
 MAX_TOOL_PROPERTIES = 64
 MAX_ENUM_VALUES = 64
 NOUL_TRUE_THRESHOLD = 0.5
-_SUPPORTED_ROOT_SCHEMA_KEYS = frozenset({
+_SCHEMA_ANNOTATION_KEYS = frozenset({
     "$comment",
-    "$defs",
     "$id",
     "$schema",
-    "additionalProperties",
     "default",
     "deprecated",
     "description",
     "examples",
-    "properties",
     "readOnly",
-    "required",
     "title",
-    "type",
     "writeOnly",
 })
+_SUPPORTED_ROOT_SCHEMA_KEYS = _SCHEMA_ANNOTATION_KEYS | {
+    "$defs",
+    "additionalProperties",
+    "properties",
+    "required",
+    "type",
+}
+_SUPPORTED_ARGUMENT_SCHEMA_KEYS = _SCHEMA_ANNOTATION_KEYS | {"const", "enum", "items", "type"}
+_SUPPORTED_ARRAY_ITEM_SCHEMA_KEYS = _SCHEMA_ANNOTATION_KEYS | {"enum", "type"}
 
 
 class _UnsupportedToolSchema(ValueError):
@@ -160,6 +164,11 @@ def compile_tool_call_plan(
 
     if required_name is not None and not selected_tools:
         raise ChatClientInvalidRequestException(f"Required TypeSafe tool {required_name!r} is unavailable.")
+    if len(selected_tools) > MAX_ROUTABLE_TOOLS:
+        raise ChatClientInvalidRequestException(
+            f"TypeSafe supports at most {MAX_ROUTABLE_TOOLS} routable tools per request. "
+            "Use tool_choice.allowed_tools to narrow MCP or local tools."
+        )
 
     compiled: list[_CompiledTool] = []
     unsupported: dict[str, str] = {}
@@ -181,11 +190,6 @@ def compile_tool_call_plan(
 
     if not compiled:
         return None
-    if len(compiled) > MAX_ROUTABLE_TOOLS:
-        raise ChatClientInvalidRequestException(
-            f"TypeSafe supports at most {MAX_ROUTABLE_TOOLS} routable tools per request. "
-            "Use tool_choice.allowed_tools to narrow MCP or local tools."
-        )
 
     required_tool = compiled[0] if mode == "required" and len(compiled) == 1 else None
     route_question_id: str | None = None
@@ -236,11 +240,11 @@ def _compile_tool(
     schema: dict[str, Any] = tool.parameters()
     if not schema:
         schema = cast(dict[str, Any], {"type": "object", "properties": {}})
-    unsupported_root_constraints = sorted(schema.keys() - _SUPPORTED_ROOT_SCHEMA_KEYS)
-    if unsupported_root_constraints:
-        raise _UnsupportedToolSchema(
-            f"unsupported root-level schema constraints: {', '.join(unsupported_root_constraints)}"
-        )
+    _reject_unsupported_schema_constraints(
+        schema,
+        supported_keys=_SUPPORTED_ROOT_SCHEMA_KEYS,
+        location="root-level",
+    )
     if schema.get("type") not in (None, "object"):
         raise _UnsupportedToolSchema("the top-level input schema must be an object")
     properties_raw: Any = schema.get("properties", {})
@@ -306,6 +310,11 @@ def _compile_argument(
     previous_values: list[Any],
 ) -> tuple[_ArgumentPlan, Questions]:
     schema, nullable = _resolve_schema(raw_schema, root_schema)
+    _reject_unsupported_schema_constraints(
+        schema,
+        supported_keys=_SUPPORTED_ARGUMENT_SCHEMA_KEYS,
+        location="argument",
+    )
     if nullable and required:
         raise _UnsupportedToolSchema("required nullable arguments are not supported")
 
@@ -395,20 +404,15 @@ def _compile_argument(
         )
 
     if schema_type == "array":
-        unsupported_constraints = [
-            constraint
-            for constraint in ("minItems", "maxItems", "uniqueItems", "prefixItems", "contains")
-            if constraint in schema
-        ]
-        if unsupported_constraints:
-            raise _UnsupportedToolSchema(
-                "enum arrays with cardinality or membership constraints are not supported: "
-                f"{', '.join(unsupported_constraints)}"
-            )
         items_raw = schema.get("items")
         if not isinstance(items_raw, dict):
             raise _UnsupportedToolSchema("array items must define an enum")
         items, items_nullable = _resolve_schema(cast(dict[str, Any], items_raw), root_schema)
+        _reject_unsupported_schema_constraints(
+            items,
+            supported_keys=_SUPPORTED_ARRAY_ITEM_SCHEMA_KEYS,
+            location="array item",
+        )
         if items_nullable:
             raise _UnsupportedToolSchema("nullable array members are not supported")
         members_raw = items.get("enum")
@@ -472,6 +476,19 @@ def _resolve_schema(schema: dict[str, Any], root_schema: dict[str, Any]) -> tupl
         resolved = {**nested, **resolved}
         nullable = True
     return resolved, nullable
+
+
+def _reject_unsupported_schema_constraints(
+    schema: dict[str, Any],
+    *,
+    supported_keys: frozenset[str],
+    location: str,
+) -> None:
+    unsupported_constraints = sorted(schema.keys() - supported_keys)
+    if unsupported_constraints:
+        raise _UnsupportedToolSchema(
+            f"unsupported {location} schema constraints: {', '.join(unsupported_constraints)}"
+        )
 
 
 def _describe_value(value: Any) -> str:

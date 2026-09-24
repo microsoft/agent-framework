@@ -120,12 +120,12 @@ Supported input-schema shapes:
   to omit the argument so the function's default can apply.
 
 Required free-form strings, numbers, nested objects, general arrays, and required
-nullable arguments are not supported. Root-level schema constraints that the
-connector cannot preserve, such as `allOf`, also exclude the entire tool. A tool
-is excluded when any declared argument is unsupported, including optional
-arguments, so invocation never falls back to an unintended default. In automatic
-tool mode, unsupported tools are excluded with a warning. Required unsupported
-tools fail the request.
+nullable arguments are not supported. Schema constraints that the connector
+cannot preserve, such as `allOf` on the root object, an argument, or an array
+item, also exclude the entire tool. A tool is excluded when any declared argument
+is unsupported, including optional arguments, so invocation never falls back to
+an unintended default. In automatic tool mode, unsupported tools are excluded
+with a warning. Required unsupported tools fail the request.
 
 Local tools can use inferred schemas or Pydantic input models:
 
@@ -170,8 +170,9 @@ agent = Agent(client=TypeSafeChatClient(), tools=[mcp])
 Only discovered MCP functions whose JSON schemas fit the supported subset are
 routable. Use `tool_choice.allowed_tools` to narrow large MCP servers; a request
 supports at most 32 routable tools, 64 properties per tool, 64 enum members per
-argument, and 128 generated internal questions. An explicitly empty
-`allowed_tools` list denies every tool.
+argument, and 128 generated internal questions. The routable-tool limit is
+checked after tool-choice filtering and before any tool schemas are compiled. An
+explicitly empty `allowed_tools` list denies every tool.
 
 ## Configuration and lifecycle
 
