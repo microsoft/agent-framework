@@ -159,6 +159,44 @@ def test_root_schema_constraints_exclude_entire_tool() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "property_schema",
+    [
+        {
+            "type": "string",
+            "enum": ["one", "all"],
+            "allOf": [{"const": "one"}],
+        },
+        {
+            "type": "array",
+            "items": {
+                "type": "string",
+                "enum": ["one", "all"],
+                "allOf": [{"const": "one"}],
+            },
+        },
+    ],
+    ids=["argument", "array-item"],
+)
+def test_nested_schema_constraints_exclude_entire_tool(property_schema: dict[str, Any]) -> None:
+    constrained = function(
+        "delete_records",
+        {
+            "type": "object",
+            "properties": {"scope": property_schema},
+            "required": ["scope"],
+        },
+    )
+
+    assert compile_tool_call_plan([constrained], tool_mode=None, user_question_ids=set()) is None
+    with pytest.raises(ChatClientInvalidRequestException, match="allOf"):
+        compile_tool_call_plan(
+            [constrained],
+            tool_mode={"mode": "required"},
+            user_question_ids=set(),
+        )
+
+
 def test_unsupported_optional_argument_excludes_entire_tool() -> None:
     broad_default = function(
         "delete_records",
@@ -177,11 +215,37 @@ def test_unsupported_optional_argument_excludes_entire_tool() -> None:
         )
 
 
-def test_routable_tool_limit_is_enforced() -> None:
+def test_routable_tool_limit_is_enforced_before_compilation(monkeypatch: pytest.MonkeyPatch) -> None:
     tools = [function(f"tool_{index}", {}) for index in range(MAX_ROUTABLE_TOOLS + 1)]
+
+    def fail_if_called(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("tool compilation should not run")
+
+    monkeypatch.setattr("agent_framework_typesafe._tool_calls._compile_tool", fail_if_called)
 
     with pytest.raises(ChatClientInvalidRequestException, match="at most"):
         compile_tool_call_plan(tools, tool_mode=None, user_question_ids=set())
+
+
+@pytest.mark.parametrize(
+    "tool_mode",
+    [
+        {"mode": "auto", "allowed_tools": ["tool_0"]},
+        {"mode": "required", "required_function_name": "tool_0"},
+    ],
+    ids=["allowed", "required"],
+)
+def test_routable_tool_limit_is_applied_after_tool_filter(tool_mode: ToolMode) -> None:
+    tools = [function(f"tool_{index}", {}) for index in range(MAX_ROUTABLE_TOOLS + 1)]
+
+    plan = compile_tool_call_plan(
+        tools,
+        tool_mode=tool_mode,
+        user_question_ids=set(),
+    )
+
+    assert plan is not None
+    assert [tool.function.name for tool in plan.tools] == ["tool_0"]
 
 
 def test_tool_property_limit_is_enforced_before_compilation() -> None:
