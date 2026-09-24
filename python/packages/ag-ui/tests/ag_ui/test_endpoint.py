@@ -1824,6 +1824,82 @@ async def test_endpoint_detached_run_admission_is_bounded(
     assert accepted_status == 200
 
 
+async def test_endpoint_snapshot_hydration_bypasses_detached_run_capacity(
+    streaming_chat_client_stub: Any,
+) -> None:
+    """Hydration remains available while a disconnected run occupies the only detached slot."""
+    release = asyncio.Event()
+    completed = asyncio.Event()
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del messages, options, kwargs
+        yield ChatResponseUpdate(contents=[Content.from_text(text="started")], role="assistant")
+        await release.wait()
+        yield ChatResponseUpdate(
+            contents=[Content.from_text(text="-finished")],
+            role="assistant",
+            finish_reason="stop",
+        )
+        completed.set()
+
+    store = InMemoryAGUIThreadSnapshotStore()
+    await store.save(
+        scope="tenant-a",
+        thread_id="capacity-thread",
+        snapshot=AGUIThreadSnapshot(
+            messages=[{"id": "stored-user", "role": "user", "content": "Stored safe point"}],
+        ),
+    )
+    agent = Agent(
+        name="detached-hydration-capacity",
+        instructions="Test agent",
+        client=streaming_chat_client_stub(stream_fn),
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/detached-hydration-capacity",
+        snapshot_store=store,
+        snapshot_scope_resolver=lambda _request: "tenant-a",
+        keepalive_seconds=None,
+        detached_runs=True,
+        max_detached_runs=1,
+    )
+
+    await _post_until_sse_event_then_disconnect(
+        app,
+        "/detached-hydration-capacity",
+        {
+            "runId": "active-run",
+            "threadId": "capacity-thread",
+            "messages": [{"role": "user", "content": "Start"}],
+        },
+        event_type="TEXT_MESSAGE_CONTENT",
+    )
+
+    hydration_status, hydration_body = await _post_asgi_request(
+        app,
+        "/detached-hydration-capacity",
+        {
+            "runId": "hydrate-run",
+            "threadId": "capacity-thread",
+            "messages": [],
+        },
+    )
+
+    assert hydration_status == 200
+    assert b'"type":"MESSAGES_SNAPSHOT"' in hydration_body
+    assert b"Stored safe point" in hydration_body
+
+    release.set()
+    await asyncio.wait_for(completed.wait(), timeout=5)
+
+
 async def test_endpoint_detached_run_expires_after_reader_disconnect(
     streaming_chat_client_stub: Any,
 ) -> None:

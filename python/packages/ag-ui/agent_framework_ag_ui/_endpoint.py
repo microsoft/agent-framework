@@ -264,16 +264,13 @@ def add_agent_framework_fastapi_endpoint(
             logger.info(f"Received request at {path}: {input_data.get('run_id', 'no-run-id')}")
 
             keepalive_enabled = keepalive_seconds is not None
+            snapshot_hydration_request = _is_snapshot_hydration_request(
+                request_body,
+                input_data,
+                snapshot_persistence_active=snapshot_persistence_active,
+            )
             active_run_key: tuple[str | None, str] | None = None
-            if (
-                detached_runs
-                and request_body.thread_id is not None
-                and not _is_snapshot_hydration_request(
-                    request_body,
-                    input_data,
-                    snapshot_persistence_active=snapshot_persistence_active,
-                )
-            ):
+            if detached_runs and request_body.thread_id is not None and not snapshot_hydration_request:
                 active_run_key = (snapshot_scope, request_body.thread_id)
                 active_task = active_runs.get(active_run_key)
                 if active_task is not None and not active_task.done():
@@ -282,7 +279,7 @@ def add_agent_framework_fastapi_endpoint(
                         content={"detail": "An AG-UI run is already active for this scoped thread."},
                     )
                 active_runs.pop(active_run_key, None)
-            if detached_runs:
+            if detached_runs and not snapshot_hydration_request:
                 for completed_task in tuple(producer_tasks):
                     if completed_task.done():
                         producer_tasks.discard(completed_task)
@@ -350,7 +347,7 @@ def add_agent_framework_fastapi_endpoint(
                     pass
 
             stream: AsyncGenerator[str | bytes]
-            if detached_runs:
+            if detached_runs and not snapshot_hydration_request:
                 queue: asyncio.Queue[str | bytes | None] = asyncio.Queue(maxsize=_DETACHED_STREAM_QUEUE_SIZE)
                 reader_started = asyncio.Event()
                 reader_abandoned = asyncio.Event()

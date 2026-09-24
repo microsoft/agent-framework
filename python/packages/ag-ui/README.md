@@ -426,7 +426,8 @@ add_agent_framework_fastapi_endpoint(
 
 Detached execution uses a bounded endpoint-owned producer queue. While a detached mutating request is active, another
 mutating request for the same `(Snapshot Scope, threadId)` returns HTTP 409; an empty snapshot Hydrate Request remains
-allowed and returns the latest committed safe point. Equal Thread ids in different Snapshot Scopes remain independent.
+allowed, bypasses detached producer capacity, and returns the latest committed safe point. Equal Thread ids in
+different Snapshot Scopes remain independent.
 Each endpoint registration retains at most `max_detached_runs` producers (32 by default); requests beyond that limit
 receive HTTP 503. After a reader disconnects or never starts, `detached_run_timeout_seconds` cancels a stalled producer
 and releases its capacity (one hour by default).

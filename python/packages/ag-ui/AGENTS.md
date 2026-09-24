@@ -125,8 +125,9 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
   disconnects. Bound endpoint-wide producer admission and cancel abandoned producers after the configured timeout.
   This mode discards unread events; it is not a resumable event log.
 - While a detached mutation is active, the endpoint may serve an empty Snapshot Hydrate Request but must reject another
-  mutation for the same `(Snapshot Scope, threadId)` with HTTP 409. The guard is process-local and does not replace
-  cross-replica coordination.
+  mutation for the same `(Snapshot Scope, threadId)` with HTTP 409. Classify hydration once and keep it on the direct
+  response path so it bypasses detached admission and producer wrapping. The guard is process-local and does not
+  replace cross-replica coordination.
 - Detached runs may outlive FastAPI request-scoped disposable resources. Resolve authorization and Snapshot Scope before
   spawning the producer, and do not rely on request-owned clients or sessions remaining open after disconnect.
 - SSE keepalive is endpoint-owned transport behavior configured through
