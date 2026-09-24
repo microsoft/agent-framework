@@ -320,6 +320,23 @@ def test_empty_membership_semantics(collection):
     }
 
 
+def test_membership_never_matches_null_operands(collection):
+    assert collection._prepare_filter(Filter("category", "in", [None, "database"])) == {
+        "category": {"$in": ["database"]}
+    }
+    assert collection._prepare_filter(Filter("category", "in", [None])) == {"_id": {"$exists": False}}
+    assert collection._prepare_filter(Filter("category", "not_in", [None, "database"])) == {
+        "$and": [
+            {"category": {"$exists": True}},
+            {"category": {"$ne": None}},
+            {"category": {"$nin": ["database"]}},
+        ]
+    }
+    assert collection._prepare_filter(Filter("category", "not_in", [None])) == {
+        "$and": [{"category": {"$exists": True}}, {"category": {"$ne": None}}]
+    }
+
+
 def test_filter_type_mismatches_preserve_bool_number_distinction(collection):
     assert collection._prepare_filter(Filter("number", "eq", True)) == {"_id": {"$exists": False}}
     assert collection._prepare_filter(Filter("flag", "eq", 1)) == {"_id": {"$exists": False}}

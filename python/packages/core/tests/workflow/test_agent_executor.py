@@ -698,12 +698,10 @@ async def test_agent_executor_checkpoint_restore_ignores_unknown_keys() -> None:
     agent = _CountingAgent(id="fwd_agent", name="FwdAgent")
     executor = AgentExecutor(agent)
 
-    await executor.on_checkpoint_restore(
-        {
-            "cache": [Message(role="user", contents=["ok"])],
-            "future_field": {"ignored": True},
-        }
-    )
+    await executor.on_checkpoint_restore({
+        "cache": [Message(role="user", contents=["ok"])],
+        "future_field": {"ignored": True},
+    })
 
     assert len(executor._cache) == 1  # pyright: ignore[reportPrivateUsage]
     assert executor._cache[0].text == "ok"  # pyright: ignore[reportPrivateUsage]

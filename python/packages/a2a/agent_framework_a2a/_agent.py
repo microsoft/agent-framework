@@ -411,6 +411,23 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             service_session_id.get("task_state"),
         )
 
+    def _validate_context(self, session: AgentSession | None, context_id: str | None) -> None:
+        """Ensure a context_id returned by the A2A agent matches the session's context_id.
+
+        Args:
+            session: The session the run was started with, if any.
+            context_id: The context_id returned by the A2A agent, if any.
+
+        Raises:
+            RuntimeError: If the session is already bound to a different context_id.
+        """
+        existing_context_id, _, _ = self._extract_a2a_session_state(session)
+        if existing_context_id is not None and context_id and existing_context_id != context_id:
+            raise RuntimeError(
+                f"The context_id returned from the A2A agent ('{context_id}') "
+                f"differs from the session's context_id ('{existing_context_id}')."
+            )
+
     def _get_otel_conversation_id(self, session: AgentSession | None) -> str | None:
         """Return A2A context_id as OpenTelemetry conversation id."""
         context_id, _, _ = self._extract_a2a_session_state(session)
@@ -600,6 +617,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             if payload_type == "message":
                 # Process A2A Message
                 msg = item.message
+                self._validate_context(session, msg.context_id)
                 if msg.context_id:
                     last_context_id = msg.context_id
                 contents = self._parse_contents_from_a2a(msg.parts)
@@ -616,6 +634,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 yield update
             elif payload_type == "task":
                 task = item.task
+                self._validate_context(session, task.context_id)
                 last_task_id = task.id
                 if task.context_id:
                     last_context_id = task.context_id
@@ -643,6 +662,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                     yield update
             elif payload_type == "status_update":
                 status_event = item.status_update
+                self._validate_context(session, status_event.context_id)
                 last_task_id = status_event.task_id
                 if status_event.context_id:
                     last_context_id = status_event.context_id
@@ -678,6 +698,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                         pending_updates_by_task.setdefault(status_event.task_id, []).extend(updates)
             elif payload_type == "artifact_update":
                 artifact_event = item.artifact_update
+                self._validate_context(session, artifact_event.context_id)
                 last_task_id = artifact_event.task_id
                 if artifact_event.context_id:
                     last_context_id = artifact_event.context_id
@@ -703,12 +724,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         if session is not None and (last_task_id or last_context_id):
             existing_context_id, existing_task_id, existing_task_state = self._extract_a2a_session_state(session)
 
-            # Validate context_id consistency
-            if existing_context_id is not None and last_context_id and existing_context_id != last_context_id:
-                raise RuntimeError(
-                    f"The context_id returned from the A2A agent ('{last_context_id}') "
-                    f"differs from the session's context_id ('{existing_context_id}')."
-                )
+            self._validate_context(session, last_context_id)
 
             persisted_context_id = existing_context_id or last_context_id
             if persisted_context_id is not None:

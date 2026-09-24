@@ -471,6 +471,11 @@ def is_type_compatible(source_type: type | UnionType | Any, target_type: type | 
     if target_type is Any:
         return True
 
+    # Case 0b: source_type is Any - the value can be of any type, so it is compatible with every
+    # target, the same way static type checkers treat Any.
+    if source_type is Any:
+        return True
+
     # Case 1: exact type match
     if source_type == target_type:
         return True

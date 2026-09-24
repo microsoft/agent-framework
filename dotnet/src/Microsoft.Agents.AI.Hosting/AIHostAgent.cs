@@ -27,20 +27,37 @@ namespace Microsoft.Agents.AI.Hosting;
 public class AIHostAgent : DelegatingAIAgent
 {
     private readonly AgentSessionStore _sessionStore;
+    private string? _capturedIsolationKey;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AIHostAgent"/> class.
     /// </summary>
     /// <param name="innerAgent">The underlying agent implementation to wrap.</param>
     /// <param name="sessionStore">The session store to use for persisting conversation state.</param>
+    /// <param name="sessionStorageIdentity">
+    /// The optional logical hosting identity used only to partition persisted sessions across agent instances.
+    /// It does not replace <see cref="AIAgent.Id"/> or <see cref="AIAgent.Name"/>.
+    /// </param>
     /// <exception cref="ArgumentNullException">
     /// <paramref name="innerAgent"/> or <paramref name="sessionStore"/> is <see langword="null"/>.
     /// </exception>
-    public AIHostAgent(AIAgent innerAgent, AgentSessionStore sessionStore)
+    public AIHostAgent(
+        AIAgent innerAgent,
+        AgentSessionStore sessionStore,
+        string? sessionStorageIdentity = null)
         : base(innerAgent)
     {
         this._sessionStore = Throw.IfNull(sessionStore);
+        this.SessionStorageIdentity = sessionStorageIdentity is null
+            ? null
+            : Throw.IfNullOrWhitespace(sessionStorageIdentity);
     }
+
+    /// <summary>
+    /// Gets the stable logical identity used to partition session storage, or <see langword="null"/> when
+    /// session storage follows the wrapped agent instance identity.
+    /// </summary>
+    internal string? SessionStorageIdentity { get; }
 
     /// <summary>
     /// Gets an existing agent session for the specified conversation, or creates a new one if none exists.
@@ -66,10 +83,9 @@ public class AIHostAgent : DelegatingAIAgent
         _ = Throw.IfNull(key);
 
         MarkFeatureUsed();
-        return this._sessionStore.GetOrCreateSessionAsync(
-            this.InnerAgent,
-            key,
-            cancellationToken);
+        return this._capturedIsolationKey is null
+            ? this._sessionStore.GetOrCreateSessionAsync(this, key, cancellationToken)
+            : this.GetOrCreateSessionWithCapturedIsolationKeyAsync(key, cancellationToken);
     }
 
     /// <summary>
@@ -100,11 +116,51 @@ public class AIHostAgent : DelegatingAIAgent
         _ = Throw.IfNull(session);
 
         MarkFeatureUsed();
-        return this._sessionStore.SaveSessionAsync(
-            this.InnerAgent,
-            key,
-            session,
-            cancellationToken);
+        return this._capturedIsolationKey is null
+            ? this._sessionStore.SaveSessionAsync(this, key, session, cancellationToken)
+            : this.SaveSessionWithCapturedIsolationKeyAsync(key, session, cancellationToken);
+    }
+
+    /// <summary>
+    /// Creates a host agent whose isolation-aware session store uses a key captured from the originating request.
+    /// </summary>
+    /// <param name="isolationKey">The trusted caller isolation key, or <see langword="null"/> when isolation does not apply.</param>
+    /// <returns>
+    /// A host agent bound to <paramref name="isolationKey"/>, or this instance when its store does not use
+    /// <see cref="IsolationKeyScopedAgentSessionStore"/> anywhere in its decorator pipeline or no key was supplied.
+    /// </returns>
+    public AIHostAgent BindIsolationKey(string? isolationKey)
+    {
+        if (isolationKey is null ||
+            this._sessionStore.GetService<IsolationKeyScopedAgentSessionStore>() is null)
+        {
+            return this;
+        }
+
+        // Keep the configured decorator pipeline intact. Session operations flow the captured key
+        // to the isolation layer when they reach it, even when other decorators wrap that layer.
+        var boundAgent = new AIHostAgent(this.InnerAgent, this._sessionStore, this.SessionStorageIdentity);
+        boundAgent._capturedIsolationKey = Throw.IfNullOrWhitespace(isolationKey);
+        return boundAgent;
+    }
+
+    private async ValueTask<AgentSession> GetOrCreateSessionWithCapturedIsolationKeyAsync(
+        AgentSessionStoreKey key,
+        CancellationToken cancellationToken)
+    {
+        using IDisposable isolationScope =
+            IsolationKeyScopedAgentSessionStore.UseCapturedIsolationKey(this._capturedIsolationKey!);
+        return await this._sessionStore.GetOrCreateSessionAsync(this, key, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask SaveSessionWithCapturedIsolationKeyAsync(
+        AgentSessionStoreKey key,
+        AgentSession session,
+        CancellationToken cancellationToken)
+    {
+        using IDisposable isolationScope =
+            IsolationKeyScopedAgentSessionStore.UseCapturedIsolationKey(this._capturedIsolationKey!);
+        await this._sessionStore.SaveSessionAsync(this, key, session, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />

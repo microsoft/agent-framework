@@ -38,7 +38,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 
-from agent_framework import Agent, AgentResponse, Message, SupportsAgentRun
+from agent_framework import Agent, AgentResponse, ContextProvider, Message, SessionContext, SupportsAgentRun
 from agent_framework._middleware import FunctionInvocationContext, FunctionMiddleware, MiddlewareTermination
 from agent_framework._sessions import AgentSession
 from agent_framework._telemetry import mark_feature_used
@@ -136,6 +136,7 @@ class _AutoHandoffMiddleware(FunctionMiddleware):
     def __init__(self, handoffs: Sequence[HandoffConfiguration]) -> None:
         """Initialise middleware with the mapping from tool name to specialist id."""
         self._handoff_functions = {get_handoff_tool_name(handoff.target_id): handoff.target_id for handoff in handoffs}
+        self._invoked_handoffs: list[tuple[str, str]] = []
 
     async def process(
         self,
@@ -147,12 +148,42 @@ class _AutoHandoffMiddleware(FunctionMiddleware):
             await call_next()
             return
 
+        call_id = context.metadata.get("call_id")
+        if not isinstance(call_id, str) or not call_id:
+            raise RuntimeError("Generated handoff invocation is missing its function call ID.")
+        target_id = self._handoff_functions[context.function.name]
+        self._invoked_handoffs.append((call_id, target_id))
+
         # Short-circuit execution and provide deterministic response payload for the tool call.
         # Parse the result using the default parser to ensure in a form that can be passed directly to LLM APIs.
-        context.result = FunctionTool.parse_result({
-            HANDOFF_FUNCTION_RESULT_KEY: self._handoff_functions[context.function.name]
-        })
+        context.result = FunctionTool.parse_result({HANDOFF_FUNCTION_RESULT_KEY: target_id})
         raise MiddlewareTermination(result=context.result)
+
+    def consume_invoked_handoffs(self) -> list[tuple[str, str]]:
+        """Consume handoffs that were intercepted since the previous completed response."""
+        invoked_handoffs = self._invoked_handoffs
+        self._invoked_handoffs = []
+        return invoked_handoffs
+
+
+class _AutoHandoffContextProvider(ContextProvider):
+    """Add auto-handoff middleware after application context providers."""
+
+    def __init__(self, middleware: _AutoHandoffMiddleware) -> None:
+        """Initialize the provider with the generated handoff middleware."""
+        super().__init__("agent_framework.handoff")
+        self._middleware = middleware
+
+    async def before_run(
+        self,
+        *,
+        agent: SupportsAgentRun,
+        session: AgentSession,
+        context: SessionContext,
+        state: dict[str, Any],
+    ) -> None:
+        """Add handoff interception after previously configured provider middleware."""
+        context.extend_middleware(self.source_id, self._middleware)
 
 
 @dataclass
@@ -210,6 +241,7 @@ class HandoffAgentExecutor(AgentExecutor):
         *,
         agent_session: AgentSession | None = None,
         is_start_agent: bool = False,
+        user_response_target_id: str | None = None,
         termination_condition: TerminationCondition | None = None,
         autonomous_mode: bool = False,
         autonomous_mode_prompt: str | None = None,
@@ -223,6 +255,8 @@ class HandoffAgentExecutor(AgentExecutor):
             agent_session: Optional AgentSession that manages the agent's execution context
             is_start_agent: Whether this agent is the starting agent in the handoff workflow.
                             There can only be one starting agent in a handoff workflow.
+            user_response_target_id: Optional executor ID that should handle user responses.
+                                     Defaults to this executor.
             termination_condition: Optional callable that determines when to terminate the workflow
             autonomous_mode: Whether the agent should operate involve external systems after
                              a response that does not trigger a handoff or before the turn
@@ -233,12 +267,14 @@ class HandoffAgentExecutor(AgentExecutor):
                                     This will guide the agent in the absence of user input.
             autonomous_mode_turn_limit: Maximum number of autonomous turns before requesting user input.
         """
-        cloned_agent = self._prepare_agent_with_handoffs(agent, handoffs)
+        self._auto_handoff_middleware = _AutoHandoffMiddleware(handoffs)
+        cloned_agent = self._prepare_agent_with_handoffs(agent, handoffs, self._auto_handoff_middleware)
         super().__init__(cloned_agent, session=agent_session)
 
         self._handoff_targets = {handoff.target_id for handoff in handoffs}
         self._termination_condition = termination_condition
         self._is_start_agent = is_start_agent
+        self._user_response_target_id = user_response_target_id
 
         # Autonomous mode members
         self._autonomous_mode = autonomous_mode
@@ -250,12 +286,14 @@ class HandoffAgentExecutor(AgentExecutor):
         self,
         agent: Agent,
         handoffs: Sequence[HandoffConfiguration],
+        auto_handoff_middleware: _AutoHandoffMiddleware,
     ) -> Agent:
         """Prepare an agent by adding handoff tools for the specified target agents.
 
         Args:
             agent: The ``Agent`` instance to prepare
             handoffs: Sequence of handoff configurations defining target agents
+            auto_handoff_middleware: Middleware that intercepts generated handoff tools
 
         Returns:
             A cloned ``Agent`` instance with handoff tools added
@@ -264,11 +302,14 @@ class HandoffAgentExecutor(AgentExecutor):
         cloned_agent = self._clone_chat_agent(agent)
         # Add handoff tools to the cloned agent
         self._apply_auto_tools(cloned_agent, handoffs)
-        # Add middleware to handle handoff tool invocations
-        middleware = _AutoHandoffMiddleware(handoffs)
-        existing_middleware = list(cloned_agent.middleware or [])
-        existing_middleware.append(middleware)
-        cloned_agent.middleware = existing_middleware
+        if cloned_agent.context_providers:
+            # Provider middleware is added after agent middleware. Contribute the interceptor
+            # last so existing provider policies can inspect or block generated handoff calls.
+            cloned_agent.context_providers.append(_AutoHandoffContextProvider(auto_handoff_middleware))
+        else:
+            existing_middleware = list(cloned_agent.middleware or [])
+            existing_middleware.append(auto_handoff_middleware)
+            cloned_agent.middleware = existing_middleware
 
         return cloned_agent
 
@@ -473,8 +514,15 @@ class HandoffAgentExecutor(AgentExecutor):
         # Broadcast the user response to all other agents
         await self._broadcast_messages(response, ctx)
 
-        # Append the user response messages to the cache
+        # Keep this executor synchronized even when another agent handles the response.
         self._cache.extend(response)
+        if self._user_response_target_id is not None and self._user_response_target_id != self.id:
+            await ctx.send_message(
+                AgentExecutorRequest(messages=[], should_respond=True),
+                target_id=self._user_response_target_id,
+            )
+            return
+
         await self._run_agent_and_emit(ctx)
 
     async def _broadcast_messages(
@@ -493,9 +541,10 @@ class HandoffAgentExecutor(AgentExecutor):
     def _is_handoff_requested(self, response: AgentResponse) -> tuple[str, Message] | None:
         """Determine if the agent response includes a handoff request.
 
-        If a handoff tool is invoked, the middleware will short-circuit execution
-        and provide a synthetic result that includes the target agent ID. The message
-        that contains the function result will be the last message in the response.
+        If a generated handoff tool is invoked, the middleware will short-circuit execution
+        and provide a synthetic result that includes the target agent ID. The matching
+        function call must occur in the same response, and the message containing its
+        function result must be the last message in the response.
 
         Args:
             response: The AgentResponse to inspect for handoff requests
@@ -510,12 +559,18 @@ class HandoffAgentExecutor(AgentExecutor):
             messages. By returning the full message, we can ensure the agent's chat history remains valid with
             a function result for the handoff tool call.
         """
-        if not response.messages:
+        invoked_handoffs = self._auto_handoff_middleware.consume_invoked_handoffs()
+        if not invoked_handoffs or not response.messages:
             return None
 
         last_message = response.messages[-1]
         for content in last_message.contents:
-            if content.type == "function_result":
+            if content.type == "function_result" and content.call_id:
+                matching_handoffs = [target_id for call_id, target_id in invoked_handoffs if call_id == content.call_id]
+                if len(matching_handoffs) != 1:
+                    continue
+                handoff_target = matching_handoffs[0]
+
                 payload = content.result
                 parsed_payload: dict[str, Any] | None = None
                 if isinstance(payload, Mapping):
@@ -529,11 +584,9 @@ class HandoffAgentExecutor(AgentExecutor):
                         parsed_payload = {key: value for key, value in maybe_payload.items() if isinstance(key, str)}  # pyright: ignore[reportUnknownVariableType]
 
                 if parsed_payload:
-                    handoff_target = parsed_payload.get(HANDOFF_FUNCTION_RESULT_KEY)
-                    if isinstance(handoff_target, str):
+                    payload_target = parsed_payload.get(HANDOFF_FUNCTION_RESULT_KEY)
+                    if payload_target == handoff_target:
                         return handoff_target, last_message
-            else:
-                continue
 
         return None
 
@@ -581,6 +634,8 @@ class HandoffBuilder:
     Agents can hand off to other agents using `.add_handoff()`. This provides a decentralized
     approach to multi-agent collaboration. Handoffs can be configured using `.add_handoff`. If
     none are specified, all agents can hand off to all others by default (making a mesh topology).
+    By default, user responses return to the agent that requested them. Use
+    `.enable_return_to_previous(False)` to route user responses through the start agent instead.
 
     Participants must be ``Agent`` instances. ``SupportsAgentRun`` protocol implementors that
     are not ``Agent`` subclasses are not supported because handoff workflows require cloning,
@@ -648,6 +703,7 @@ class HandoffBuilder:
 
         # Handoff related members
         self._handoff_config: dict[str, set[HandoffConfiguration]] = {}
+        self._return_to_previous: bool = True
 
         # Checkpoint related members
         self._checkpoint_storage: CheckpointStorage | None = checkpoint_storage
@@ -820,6 +876,33 @@ class HandoffBuilder:
             raise ValueError("Call participants(...) before with_start_agent(...)")
         self._start_id = resolved_id
 
+        return self
+
+    def enable_return_to_previous(self, enabled: bool = True) -> "HandoffBuilder":
+        """Configure whether user responses return to the agent that requested them.
+
+        Return-to-previous routing is enabled by default. Disable it to route each user response
+        through the configured start agent so that agent can re-evaluate the conversation before
+        handing off again.
+
+        Args:
+            enabled: Whether user responses should return to the agent that requested them.
+
+        Returns:
+            Self for method chaining.
+
+        Example:
+
+        .. code-block:: python
+
+            workflow = (
+                HandoffBuilder(participants=[triage, billing, support])
+                .with_start_agent(triage)
+                .enable_return_to_previous(False)
+                .build()
+            )
+        """
+        self._return_to_previous = enabled
         return self
 
     def with_autonomous_mode(
@@ -1113,6 +1196,7 @@ class HandoffBuilder:
                 agent=agent,
                 handoffs=handoffs.get(resolved_id, []),
                 is_start_agent=(id == self._start_id),
+                user_response_target_id=None if self._return_to_previous else self._start_id,
                 termination_condition=self._termination_condition,
                 autonomous_mode=autonomous_mode,
                 autonomous_mode_prompt=self._autonomous_mode_prompts.get(id, None),
