@@ -290,9 +290,9 @@ class RawFoundryChatClient(
         for content in reversed(contents):
             raw_item = content.additional_properties.get(_FOUNDRY_REASONING_REPLAY_ITEM_KEY)
             if isinstance(raw_item, Mapping):
-                typed_raw_item = cast("Mapping[str, Any]", raw_item)
-                if typed_raw_item.get("id") == reasoning_id:
-                    return dict(typed_raw_item)
+                payload = self._prepare_foundry_reasoning_replay_item(raw_item)
+                if payload is not None and payload["id"] == reasoning_id:
+                    return payload
         return None
 
     @classmethod

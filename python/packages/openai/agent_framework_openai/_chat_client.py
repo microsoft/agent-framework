@@ -1810,6 +1810,15 @@ class RawOpenAIChatClient(
             group_call_ids.setdefault(group_id, []).extend(call_ids)
 
         invalid_groups: list[str] = []
+        reasoning_id_groups: dict[str, set[str]] = {}
+        for group_id, reasoning_contents in group_reasoning_contents.items():
+            for content in reasoning_contents:
+                if content.id:
+                    reasoning_id_groups.setdefault(content.id, set()).add(group_id)
+        reasoning_ids_reused_across_groups = {
+            reasoning_id for reasoning_id, group_ids in reasoning_id_groups.items() if len(group_ids) > 1
+        }
+
         for group_id in groups_with_reasoning:
             call_ids = list(dict.fromkeys(group_call_ids.get(group_id, [])))
             if not call_ids:
@@ -1819,7 +1828,9 @@ class RawOpenAIChatClient(
                 dict.fromkeys(
                     content.id or "<missing provider reasoning id>"
                     for content in reasoning_contents
-                    if not content.id or content.id not in replayable_reasoning_ids
+                    if not content.id
+                    or content.id not in replayable_reasoning_ids
+                    or content.id in reasoning_ids_reused_across_groups
                 )
             )
             if not reasoning_contents:
@@ -1831,9 +1842,9 @@ class RawOpenAIChatClient(
 
         if invalid_groups:
             raise ChatClientInvalidRequestException(
-                f"Stateless replay cannot reconstruct {'; '.join(invalid_groups)} because encrypted reasoning "
-                "content is missing. Use service-side continuation or explicitly configured atomic compaction to "
-                "exclude each complete reasoning/tool-call group."
+                f"Stateless replay cannot reconstruct {'; '.join(invalid_groups)} because required reasoning replay "
+                "data is missing or invalid. Use service-side continuation or explicitly configured atomic "
+                "compaction to exclude each complete reasoning/tool-call group."
             )
 
     def _prepare_message_for_openai(

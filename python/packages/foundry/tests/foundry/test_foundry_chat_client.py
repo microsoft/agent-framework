@@ -677,7 +677,47 @@ async def test_stateless_replay_rejects_incomplete_foundry_reasoning_item() -> N
         ),
     ]
 
-    with pytest.raises(ChatClientInvalidRequestException, match="rs_incomplete"):
+    with pytest.raises(
+        ChatClientInvalidRequestException,
+        match="rs_incomplete.*required reasoning replay data is missing or invalid",
+    ):
+        await client._prepare_request(messages, {"store": False})
+
+
+async def test_stateless_replay_rejects_malformed_stored_foundry_reasoning_item() -> None:
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_text_reasoning(
+                    id="rs_malformed",
+                    text="",
+                    additional_properties={
+                        "__foundry_reasoning_replay_item__": {
+                            "id": "rs_malformed",
+                        }
+                    },
+                ),
+                Content.from_function_call(
+                    call_id="call_malformed",
+                    name="lookup_probe",
+                    arguments='{"step":1}',
+                ),
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[Content.from_function_result(call_id="call_malformed", result="probe-result-step-1")],
+        ),
+    ]
+
+    with pytest.raises(
+        ChatClientInvalidRequestException,
+        match="rs_malformed.*required reasoning replay data is missing or invalid",
+    ):
         await client._prepare_request(messages, {"store": False})
 
 

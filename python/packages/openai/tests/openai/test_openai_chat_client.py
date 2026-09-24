@@ -1899,8 +1899,56 @@ async def test_stateless_reasoning_group_without_encrypted_content_is_rejected_b
     assert "rs_missing" in message
     assert "call_one" in message
     assert "call_two" in message
+    assert "required reasoning replay data is missing or invalid" in message
     assert "service-side continuation" in message
     assert "atomic compaction" in message
+    create.assert_not_awaited()
+
+
+async def test_stateless_reasoning_id_reused_across_groups_is_rejected_before_transport() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    create = AsyncMock()
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_text_reasoning(id="rs_reused", text="First tool group."),
+                Content.from_function_call(call_id="call_first", name="first_tool", arguments="{}"),
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[Content.from_function_result(call_id="call_first", result="first result")],
+        ),
+        Message(role="user", contents=["Start a separate tool group."]),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_text_reasoning(
+                    id="rs_reused",
+                    text="Second tool group.",
+                    protected_data="encrypted-second-group",
+                ),
+                Content.from_function_call(call_id="call_second", name="second_tool", arguments="{}"),
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[Content.from_function_result(call_id="call_second", result="second result")],
+        ),
+    ]
+
+    with (
+        patch.object(client.client.responses.with_raw_response, "create", new=create),
+        pytest.raises(ChatClientInvalidRequestException) as exc_info,
+    ):
+        await client.get_response(messages, options={"store": False})
+
+    message = str(exc_info.value)
+    assert "rs_reused" in message
+    assert "call_first" in message
+    assert "call_second" in message
+    assert "required reasoning replay data is missing or invalid" in message
     create.assert_not_awaited()
 
 
