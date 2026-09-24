@@ -1335,6 +1335,60 @@ async def _prepare_access_tools(
     return tools
 
 
+async def test_file_access_write_reports_actionable_path_collision_errors(
+    chat_client_base: SupportsChatGetResponse,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Directory/file collisions should guide the model to a valid path."""
+    store = InMemoryAgentFileStore()
+    tools = await _prepare_access_tools(chat_client_base, store=store)
+    save = _tool_by_name(tools, "file_access_write")
+
+    await store.write("Reports", "keep")
+    await store.write("Archive/q1.txt", "keep")
+    original_write = store.write
+
+    async def collision_aware_write(path: str, content: str, *, overwrite: bool = True) -> None:
+        if path.lower() == "reports/q1.txt":
+            raise NotADirectoryError("Reports is a file")
+        if path.lower() == "archive":
+            raise IsADirectoryError("Archive is a directory")
+        await original_write(path, content, overwrite=overwrite)
+
+    monkeypatch.setattr(store, "write", collision_aware_write)
+
+    parent_collision = await save.invoke(arguments={"file_name": "reports/q1.txt", "content": "nested"})
+    parent_message = _text(parent_collision[0])
+    assert "parent path is already a file" in parent_message
+    assert "Choose a different path" in parent_message
+    assert await store.read("reports") == "keep"
+    assert await store.read("reports/q1.txt") is None
+
+    directory_collision = await save.invoke(arguments={"file_name": "ARCHIVE", "content": "replace"})
+    directory_message = _text(directory_collision[0])
+    assert "already a directory" in directory_message
+    assert "Choose a different file name" in directory_message
+    assert await store.read("archive/q1.txt") == "keep"
+    assert await store.read("archive") is None
+
+
+async def test_file_access_write_preserves_exclusive_create_guidance(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """An existing file with overwrite disabled should retain its overwrite guidance."""
+    store = InMemoryAgentFileStore()
+    tools = await _prepare_access_tools(chat_client_base, store=store)
+    save = _tool_by_name(tools, "file_access_write")
+
+    await save.invoke(arguments={"file_name": "notes.md", "content": "keep"})
+    collision = await save.invoke(arguments={"file_name": "NOTES.md", "content": "replace"})
+    message = _text(collision[0])
+
+    assert "already exists" in message
+    assert "overwrite set to true" in message
+    assert await store.read("notes.md") == "keep"
+
+
 async def test_file_access_replace(chat_client_base: SupportsChatGetResponse) -> None:
     """``file_access_replace`` should substitute text and enforce match-count rules."""
     tools = await _prepare_access_tools(chat_client_base)

@@ -2008,6 +2008,13 @@ class FileAccessProvider(ContextProvider):
                 store_path = _session_path(normalized)
                 async with self._write_lock:
                     await self.store.write(store_path, content, overwrite=overwrite)
+            except NotADirectoryError:
+                return f"Could not write file '{file_name}': a parent path is already a file. Choose a different path."
+            except IsADirectoryError:
+                return (
+                    f"Could not write file '{file_name}': this path is already a directory. "
+                    "Choose a different file name."
+                )
             except FileExistsError:
                 return f"File '{file_name}' already exists. To replace it, write again with overwrite set to true."
             except ValueError as exc:
