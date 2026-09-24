@@ -2405,7 +2405,15 @@ class RawOpenAIChatClient(
             )
             shell_timeout_ms = getattr(action, "timeout_ms", None)
             shell_max_output = getattr(action, "max_output_length", None)
-            is_local_environment = getattr(getattr(item, "environment", None), "type", None) == "local"
+            item_environment = getattr(item, "environment", None)
+            env_type = (
+                item_environment.get("type")
+                if isinstance(item_environment, Mapping)
+                else getattr(item_environment, "type", None)
+            )
+            is_local_environment = env_type == "local" or (
+                item_environment is None and local_shell_tool_name is not None
+            )
             if (
                 local_shell_tool_name
                 and is_local_environment
