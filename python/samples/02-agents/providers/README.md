@@ -17,3 +17,12 @@ This directory groups provider-specific samples for Agent Framework.
 | [`openai/`](openai/) | OpenAI provider samples for Chat and Chat Completion clients, including tools, structured output, sessions, MCP, web search, and multimodal tasks. |
 
 Each folder has its own README with setup requirements and file-by-file details.
+
+## Security & Untrusted Data
+
+When configuring providers with function tools or external data access, review [`../security/`](../security/) for production security controls:
+
+1. [`email_security_example.py`](../security/email_security_example.py): Prompt injection defense with `SecureAgentConfig` and `quarantined_llm`.
+2. [`github_mcp_example.py`](../security/github_mcp_example.py): Securing external MCP tools with `SecureMCPToolProxy`.
+3. [`repo_confidentiality_example.py`](../security/repo_confidentiality_example.py): Preventing confidential data exfiltration across tool invocations.
+4. [FIDES Developer Guide](../security/FIDES_DEVELOPER_GUIDE.md): Architecture reference and security middleware documentation.

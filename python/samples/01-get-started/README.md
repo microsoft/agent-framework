@@ -32,6 +32,17 @@ export FOUNDRY_MODEL="gpt-4o"   # optional, defaults to gpt-4o
 
 To host agents and workflows with Durable Task or Azure Functions, continue with the [Durable Agent Framework extension samples](https://github.com/microsoft/agent-framework-durable-extension/tree/main/python/samples).
 
+## Security in Production
+
+Introductory tutorials in this directory demonstrate core agent mechanics with minimal wiring. When building agents for production that handle untrusted external content (emails, user attachments, web browsing, third-party APIs) or execute privileged actions, incorporate security controls against indirect prompt injection and data exfiltration.
+
+See [`samples/02-agents/security/`](../02-agents/security/) for production-ready security patterns:
+
+1. [`email_security_example.py`](../02-agents/security/email_security_example.py): Demonstrates `SecureAgentConfig`, isolated execution using `quarantined_llm`, and approval gating before invoking sensitive tools.
+2. [`repo_confidentiality_example.py`](../02-agents/security/repo_confidentiality_example.py): Demonstrates tracking data confidentiality to prevent sensitive data leaks.
+3. [`github_mcp_example.py`](../02-agents/security/github_mcp_example.py): Demonstrates `SecureMCPToolProxy` wrapping remote MCP endpoints with local policy enforcement.
+4. [FIDES Developer Guide](../02-agents/security/FIDES_DEVELOPER_GUIDE.md): Architecture reference and security middleware documentation.
+
 Run any sample with:
 
 ```bash

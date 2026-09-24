@@ -7,7 +7,7 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 | Folder | Description |
 |--------|-------------|
 | [`01-get-started/`](./01-get-started/) | Progressive tutorial: hello agent → graph workflows |
-| [`02-agents/`](./02-agents/) | Deep-dive by concept: tools, middleware, providers, orchestrations |
+| [`02-agents/`](./02-agents/) | Deep-dive by concept: tools, middleware, providers, orchestrations, security |
 | [`03-workflows/`](./03-workflows/) | Workflow patterns: sequential, concurrent, state, declarative, explicit output designation |
 | [`04-hosting/`](./04-hosting/) | Deployment: A2A, self-hosted protocol helpers, and Foundry hosted agents |
 | [`05-end-to-end/`](./05-end-to-end/) | Full applications, evaluation, demos, including the [AG-UI single-agent demo](./05-end-to-end/ag_ui_single_agent/) using `FoundryChatClient` |
@@ -25,6 +25,18 @@ Start with `01-get-started/` and work through the numbered files:
 7. **[07_first_graph_workflow.py](./01-get-started/07_first_graph_workflow.py)** — Build a workflow with executors and edges
 
 Durable Task and Azure Functions samples have moved to the [Durable Agent Framework extension](https://github.com/microsoft/agent-framework-durable-extension/tree/main/python/samples).
+
+## Production Security & Prompt Injection Defense
+
+While getting-started tutorials demonstrate core mechanics with minimal boilerplate, real-world agents processing external or untrusted data (emails, web content, user-uploaded files, external APIs) require security controls against indirect prompt injection and data exfiltration.
+
+Review the production security patterns in [`02-agents/security/`](./02-agents/security/):
+
+1. **Prompt Injection Defense**: [`email_security_example.py`](./02-agents/security/email_security_example.py) shows `SecureAgentConfig`, quarantined processing with `quarantined_llm`, and approval gating for privileged tools.
+2. **Data Confidentiality & Exfiltration Prevention**: [`repo_confidentiality_example.py`](./02-agents/security/repo_confidentiality_example.py) demonstrates information flow tracking and preventing sensitive data exfiltration to public destinations.
+3. **MCP Tool Protection**: [`github_mcp_example.py`](./02-agents/security/github_mcp_example.py) demonstrates `SecureMCPToolProxy` wrapping remote MCP endpoints with local policy enforcement.
+4. **Principal-Bound Identity**: [`user_identity_security_example.py`](./02-agents/security/user_identity_security_example.py) shows principal binding and tenant isolation.
+5. **Architecture Reference**: Consult the [FIDES Developer Guide](./02-agents/security/FIDES_DEVELOPER_GUIDE.md) for full details on security middleware, labels, and auto-hiding behavior.
 
 ## Prerequisites
 
