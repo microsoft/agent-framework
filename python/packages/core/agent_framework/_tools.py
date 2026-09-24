@@ -3203,6 +3203,7 @@ def _match_mixed_pause_responses(
                 host_items_by_occurrence[request.id] = index
 
     matched_content_ids: set[int] = set()
+    preexisting_response_indexes = {index for index, item in enumerate(items) if item.get("response") is not None}
     for match_idless_host_results in (False, True):
         for response in responses:
             is_idless_host_result = response.type == "function_result" and response.id is None
@@ -3243,6 +3244,18 @@ def _match_mixed_pause_responses(
                         if items[pending_index].get("response") is None
                     ]
                     if len(unanswered_indexes) == 1:
+                        if any(
+                            pending_index in preexisting_response_indexes
+                            and isinstance(items[pending_index].get("response"), Mapping)
+                            and _same_mixed_pause_response(
+                                cast(Mapping[str, Any], items[pending_index]["response"]),
+                                response.to_dict(),
+                            )
+                            for pending_index in host_items_by_call[response.call_id]
+                        ):
+                            raise RuntimeError(
+                                f"Ambiguous id-less Host response for mixed pause call_id {response.call_id!r}."
+                            )
                         item_index = unanswered_indexes[0]
                     elif not unanswered_indexes and allow_idless_host_duplicates:
                         duplicate_indexes = [
@@ -3316,11 +3329,62 @@ def _stage_pending_mixed_pause_responses(
             consume=False,
         )
 
+    host_requests = [
+        request
+        for item in items
+        if item.get("kind") == "host"
+        and (request := _content_from_state(item.get("request"))) is not None
+        and request.call_id is not None
+    ]
+    host_call_ids = {request.call_id for request in host_requests if request.call_id is not None}
+    host_occurrences = {
+        (request.call_id, request.id)
+        for request in host_requests
+        if request.call_id is not None and request.id is not None
+    }
+    approval_anchor: int | None = None
+    host_anchor: int | None = None
+    indexed_contents: list[tuple[int, Content]] = []
+    content_index = -1
+    for message in messages:
+        for content in message.contents:
+            content_index += 1
+            indexed_contents.append((content_index, content))
+            if (
+                content.type == "function_approval_response"
+                and approval_anchor is None
+                and bind_approval_response(content) is not None
+            ):
+                approval_anchor = content_index
+            elif (
+                content.type == "function_result"
+                and content.call_id is not None
+                and content.id is not None
+                and (content.call_id, content.id) in host_occurrences
+                and host_anchor is None
+            ):
+                host_anchor = content_index
+    response_start = min(
+        (anchor for anchor in (approval_anchor, host_anchor) if anchor is not None),
+        default=None,
+    )
+    approval_is_staged = any(item.get("kind") == "approval" and item.get("response") is not None for item in items)
+    if response_start is None and approval_is_staged and messages:
+        last_message_start = len(indexed_contents) - len(messages[-1].contents)
+        response_start = next(
+            (
+                index
+                for index, content in indexed_contents[last_message_start:]
+                if content.type == "function_result" and content.id is None and content.call_id in host_call_ids
+            ),
+            None,
+        )
     responses = [
         content
-        for message in messages
-        for content in message.contents
-        if content.type in {"function_approval_response", "function_result"}
+        for index, content in indexed_contents
+        if response_start is not None
+        and index >= response_start
+        and content.type in {"function_approval_response", "function_result"}
     ]
     matched_content_ids, incomplete, ordered_responses, host_result_ids = _match_mixed_pause_responses(
         items,
