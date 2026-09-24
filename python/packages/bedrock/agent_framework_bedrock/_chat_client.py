@@ -475,6 +475,9 @@ class BedrockChatClient(
         ):
             if (value := options.get(key)) is not None:
                 run_options[key] = value
+        if guardrail_config := run_options.get("guardrailConfig"):
+            # streamProcessingMode is only valid for ConverseStream; Converse rejects requests that include it.
+            run_options["guardrailConfig"] = {k: v for k, v in guardrail_config.items() if k != "streamProcessingMode"}
 
         return run_options
 

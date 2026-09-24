@@ -411,6 +411,19 @@ async def test_get_response_forwards_bedrock_specific_options() -> None:
     assert {key: payload.get(key) for key in bedrock_options} == bedrock_options
 
 
+def test_prepare_options_omits_stream_processing_mode_from_guardrail_config() -> None:
+    """Converse rejects streamProcessingMode, so it should be left out while the guardrail still applies."""
+    client = _make_client()
+    options: BedrockChatOptions = {
+        "guardrailConfig": {"guardrailIdentifier": "gr-123", "guardrailVersion": "1", "streamProcessingMode": "async"}
+    }
+
+    request = client._prepare_options([Message(role="user", contents=[Content.from_text(text="hello")])], options)
+
+    assert request["guardrailConfig"] == {"guardrailIdentifier": "gr-123", "guardrailVersion": "1"}
+    assert options["guardrailConfig"]["streamProcessingMode"] == "async"
+
+
 def test_prepare_options_unsupported_tool_mode_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     """Unexpected tool modes should raise a clear error."""
     from agent_framework_bedrock import _chat_client as chat_client_module
