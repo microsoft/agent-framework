@@ -28,6 +28,7 @@ def definition() -> VectorStoreCollectionDefinition:
             VectorStoreField("key", name="id", type_="str", storage_name="record]id"),
             VectorStoreField("data", name="text", type_="str", storage_name="body [text]"),
             VectorStoreField("data", name="count", type_="int"),
+            VectorStoreField("data", name="ratio", type_="float"),
             VectorStoreField("data", name="flag", type_="bool"),
             VectorStoreField("data", name="tags", type_="list"),
             VectorStoreField("vector", name="embedding", type_="float32", dimensions=3),
@@ -141,10 +142,29 @@ def test_equality_does_not_coerce_mismatched_types(definition, name, value):
     assert condition == "(NOT (1 = 0))" and params == []
 
 
+@pytest.mark.parametrize("operator", ["eq", "ne", "gt", "gte", "lt", "lte"])
+def test_float_filters_accept_integral_values_outside_bigint_range(definition, operator):
+    _, params = _FilterCompiler(definition).compile(Filter("ratio", operator, 10**20))
+    assert params == [1e20]
+
+
+@pytest.mark.parametrize("operator", ["in", "not_in", "between"])
+def test_float_multi_value_filters_accept_integral_values_outside_bigint_range(definition, operator):
+    _, params = _FilterCompiler(definition).compile(Filter("ratio", operator, [10**20, 10**21]))
+    assert params == [1e20, 1e21]
+
+
 @pytest.mark.parametrize("operator", ["eq", "gt"])
-def test_out_of_range_numeric_filter_rejected(definition, operator):
-    with pytest.raises(ValueError, match="range"):
-        _FilterCompiler(definition).compile(Filter("count", operator, 10**1000))
+def test_integer_filters_reject_values_outside_bigint_range(definition, operator):
+    with pytest.raises(ValueError, match="bigint"):
+        _FilterCompiler(definition).compile(Filter("count", operator, 10**20))
+
+
+@pytest.mark.parametrize(("field", "error"), [("count", "range"), ("ratio", "finite")])
+@pytest.mark.parametrize("operator", ["eq", "gt"])
+def test_out_of_range_numeric_filter_rejected(definition, field, error, operator):
+    with pytest.raises(ValueError, match=error):
+        _FilterCompiler(definition).compile(Filter(field, operator, 10**1000))
 
 
 @pytest.mark.parametrize(

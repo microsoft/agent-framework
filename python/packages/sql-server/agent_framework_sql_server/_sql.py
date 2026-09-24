@@ -234,6 +234,10 @@ def _numeric_filter_value(value: int | float) -> int | float:
     return value
 
 
+def _prepare_numeric_filter_value(field: VectorStoreField, value: int | float) -> int | float:
+    return _numeric_filter_value(value) if field.type_ == "int" else _prepare_value(field, value)
+
+
 class _FilterCompiler:
     """Compile bounded data-only filter expressions into parameterized two-valued T-SQL."""
 
@@ -264,7 +268,7 @@ class _FilterCompiler:
         if kind != "bool" and isinstance(value, bool):
             return "1 = 0"
         if kind in ("int", "float") and type(value) in (int, float):
-            adapted = _numeric_filter_value(value)
+            adapted = _prepare_numeric_filter_value(field, value)
         elif (
             (kind == "str" and isinstance(value, str))
             or (kind == "bytes" and isinstance(value, bytes))
@@ -314,7 +318,7 @@ class _FilterCompiler:
             if any(item is None or isinstance(item, bool) for item in values):
                 raise TypeError("Ordered filter operands must be non-null scalars of the column's type.")
             adapted = [
-                _numeric_filter_value(item)
+                _prepare_numeric_filter_value(field, item)
                 if field.type_ in ("int", "float") and type(item) in (int, float)
                 else _prepare_value(field, item)
                 for item in values
