@@ -25,7 +25,8 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core>=1.19.0,<2",
-    "typesafe-sdk>=0.7.0,<0.8.0",
+    "httpx2>=2.0.0,<3",
+    "typesafe-sdk>=0.7.1,<0.8.0",
 ]
 
 [tool.uv]
