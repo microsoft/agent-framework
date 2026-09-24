@@ -2203,6 +2203,21 @@ def test_get_input_model_from_mcp_prompt():
     assert "arg2" not in result["required"]
 
 
+def test_get_input_model_from_mcp_prompt_argument_without_description():
+    """An argument with no description gets no description key, not `"description": None`."""
+    prompt = types.Prompt(
+        name="test_prompt",
+        arguments=[
+            types.PromptArgument(name="topic", required=True),
+            types.PromptArgument(name="tone", description="Tone of voice"),
+        ],
+    )
+    result = _get_input_model_from_mcp_prompt(prompt)
+
+    assert result["properties"]["topic"] == {"type": "string"}
+    assert result["properties"]["tone"] == {"type": "string", "description": "Tone of voice"}
+
+
 def test_get_input_model_from_mcp_prompt_without_arguments():
     """Test prompt schema generation when no prompt arguments are defined."""
     prompt = types.Prompt(name="empty_prompt", description="No args prompt", arguments=[])
