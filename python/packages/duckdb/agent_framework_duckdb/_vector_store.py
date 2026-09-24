@@ -237,15 +237,22 @@ class _Client:
         self._close_future: Future[None] | None = None
 
     def _execute(self, operation: Callable[[duckdb.DuckDBPyConnection], ResultT]) -> ResultT:
-        try:
-            if self._connection is None:
-                if self._address is None:
-                    raise RuntimeError("A DuckDB connection or database path is required.")
-                self._connection = duckdb.connect(
+        connection = self._connection
+        if connection is None:
+            if self._address is None:
+                raise RuntimeError("A DuckDB connection or database path is required.")
+            try:
+                connection = duckdb.connect(
                     database=self._address.get_secret_value(),
                     config={key: value.get_secret_value() for key, value in self._config.items()},
                 )
-            return operation(self._connection)
+            except duckdb.Error:
+                connection = None
+            if connection is None:
+                raise IntegrationException("DuckDB connection failed. Verify the connection string and configuration.")
+            self._connection = connection
+        try:
+            return operation(connection)
         except duckdb.Error as exc:
             raise IntegrationException("DuckDB operation failed; inspect the chained driver exception.") from exc
 
@@ -742,6 +749,18 @@ class DuckDBStore(BaseVectorStore):
         _check_options(operation_options)
         return await self._client.run(
             lambda connection: [str(row[0]) for row in connection.execute(_LIST_TABLES).fetchall()]
+        )
+
+    async def collection_exists(
+        self,
+        collection_name: str,
+        *,
+        operation_options: Mapping[str, Any] | None = None,
+    ) -> bool:
+        """Check for a table using DuckDB's case-insensitive identifier semantics."""
+        _check_options(operation_options)
+        return await self._client.run(
+            lambda connection: connection.execute(_TABLE_EXISTS, [collection_name]).fetchone() is not None
         )
 
     async def _inner_ensure_collection_deleted(

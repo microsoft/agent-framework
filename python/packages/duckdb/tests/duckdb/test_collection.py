@@ -60,6 +60,23 @@ async def test_lifecycle_and_direct_collection(definition, tmp_path):
         await store.ensure_collection_deleted("documents")
 
 
+async def test_store_collection_checks_and_deletion_are_case_insensitive(tmp_path):
+    definition = VectorStoreCollectionDefinition(
+        [VectorStoreField("key", name="id", type_="str")], collection_name="MiXeD"
+    )
+    async with DuckDBStore(connection_string=str(tmp_path / "mixed-case.duckdb")) as store:
+        collection = store.get_collection(dict, definition=definition)
+        await collection.ensure_collection_exists()
+        assert await store.list_collection_names() == ["MiXeD"]
+        assert await store.collection_exists("mixed")
+        assert await store.collection_exists("MIXED")
+
+        await store.ensure_collection_deleted("mIxEd")
+
+        assert not await store.collection_exists("MiXeD")
+        assert "MiXeD" not in await store.list_collection_names()
+
+
 async def test_batch_crud_preserves_key_order_and_upserts(collection: DuckDBCollection[Any, Any], record_factory):
     first = record_factory("first", priority=1)
     second = record_factory("second", text="second text", priority=2, embedding=[0.0, 1.0, 0.0])
@@ -450,8 +467,9 @@ async def test_owned_upsert_rolls_back_on_driver_failure(tmp_path):
     )
     async with DuckDBStore(connection_string=path) as store:
         collection = store.get_collection(dict, definition=definition)
-        with pytest.raises(IntegrationException, match="DuckDB operation failed"):
+        with pytest.raises(IntegrationException, match="DuckDB operation failed") as error:
             await collection.upsert([{"id": "one", "text": "ok"}, {"id": "two", "text": "fail"}])
+        assert isinstance(error.value.__cause__, duckdb.Error)
         assert await collection.get(["one", "two"]) == []
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import traceback
 from functools import partial
 from typing import Any, cast, get_type_hints
 from unittest.mock import patch
@@ -9,6 +10,7 @@ from unittest.mock import patch
 import duckdb
 import pytest
 from agent_framework import SecretString, VectorStoreCollectionDefinition, VectorStoreField, load_settings
+from agent_framework.exceptions import IntegrationException
 
 from agent_framework_duckdb import DuckDBCollection, DuckDBSettings, DuckDBStore
 from agent_framework_duckdb import _vector_store as module
@@ -139,6 +141,29 @@ async def test_service_uri_from_environment_reaches_duckdb_without_remote_creden
 async def test_duckdb_connection_config_is_applied_locally(tmp_path):
     async with DuckDBStore(connection_string=str(tmp_path / "configured.duckdb"), config={"threads": "2"}) as store:
         assert await store.list_collection_names() == []
+
+
+async def test_connection_failure_does_not_chain_unwrapped_secrets():
+    address_secret = "synthetic-address-secret"
+    config_secret = "synthetic-config-secret"
+    driver_error = duckdb.IOException(f"Could not connect to {address_secret} with token {config_secret}")
+    store = DuckDBStore(
+        connection_string=SecretString(address_secret),
+        config={"motherduck_token": SecretString(config_secret)},
+    )
+    try:
+        with (
+            patch.object(module.duckdb, "connect", side_effect=driver_error),
+            pytest.raises(IntegrationException, match="DuckDB connection failed") as error,
+        ):
+            await store.list_collection_names()
+        formatted = "".join(traceback.format_exception(type(error.value), error.value, error.value.__traceback__))
+        assert error.value.__cause__ is None
+        assert error.value.__context__ is None
+        assert address_secret not in formatted
+        assert config_secret not in formatted
+    finally:
+        await store.aclose()
 
 
 @pytest.mark.parametrize(

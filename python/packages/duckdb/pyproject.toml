@@ -52,6 +52,10 @@ omit = ["**/__init__.py"]
 executor.type = "uv"
 include = "../../shared_tasks.toml"
 
+[tool.poe.tasks.test]
+help = "Run DuckDB connector unit tests."
+cmd = 'pytest -m "not integration" --cov=agent_framework_duckdb --cov-report=term-missing:skip-covered tests'
+
 [build-system]
 requires = ["flit-core>=3.11,<4.0"]
 build-backend = "flit_core.buildapi"
