@@ -290,6 +290,9 @@ class FanOutEdgeRunner(EdgeRunner):
                         f"Invalid selection result: {selection_results}. "
                         f"Expected selections to be a subset of valid target executor IDs: {self._target_ids}."
                     )
+                # A selection function can name a target more than once, for example when two tags on a
+                # message route to the same executor. Deliver to each selected target once.
+                selection_results = list(dict.fromkeys(selection_results))
 
                 if message.target_id:
                     # If the target ID is specified and the selection result contains it, send the message to that edge

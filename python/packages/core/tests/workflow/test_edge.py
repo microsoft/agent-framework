@@ -673,6 +673,61 @@ async def test_source_edge_group_with_selection_func_send_message_with_invalid_s
         await edge_runner.send_message(message, state, ctx)
 
 
+async def test_source_edge_group_with_selection_func_send_message_with_duplicate_selection() -> None:
+    """Test that a target selected more than once receives the message once."""
+    source = MockExecutor(id="source_executor")
+    target1 = MockExecutor(id="target_executor_1")
+    target2 = MockExecutor(id="target_executor_2")
+
+    # e.g. a message tagged both "billing" and "refund" when both tags route to target1
+    edge_group = FanOutEdgeGroup(
+        source_id=source.id,
+        target_ids=[target1.id, target2.id],
+        selection_func=lambda data, target_ids: [target1.id, target1.id, target2.id],
+    )
+
+    executors: dict[str, Executor] = {source.id: source, target1.id: target1, target2.id: target2}
+    edge_runner = create_edge_runner(edge_group, executors)
+    state = State()
+    ctx = InProcRunnerContext()
+
+    data = MockMessage(data="test")
+    message = WorkflowMessage(data=data, source_id=source.id)
+
+    success = await edge_runner.send_message(message, state, ctx)
+
+    assert success is True
+    assert target1.call_count == 1
+    assert target2.call_count == 1
+
+
+async def test_source_edge_group_with_selection_func_send_message_with_duplicate_selection_keeps_order() -> None:
+    """Test that deduplicated targets are delivered in the order the selection function first names them."""
+    source = MockExecutor(id="source_executor")
+    target1 = MockExecutor(id="target_executor_1")
+    target2 = MockExecutor(id="target_executor_2")
+
+    edge_group = FanOutEdgeGroup(
+        source_id=source.id,
+        target_ids=[target1.id, target2.id],
+        selection_func=lambda data, target_ids: [target2.id, target1.id, target2.id],
+    )
+
+    executors: dict[str, Executor] = {source.id: source, target1.id: target1, target2.id: target2}
+    edge_runner = create_edge_runner(edge_group, executors)
+    state = State()
+    ctx = InProcRunnerContext()
+
+    data = MockMessage(data="test")
+    message = WorkflowMessage(data=data, source_id=source.id)
+
+    with patch("agent_framework._workflows._edge_runner.EdgeRunner._execute_on_target") as mock_send:
+        success = await edge_runner.send_message(message, state, ctx)
+
+        assert success is True
+        assert [call.args[0] for call in mock_send.call_args_list] == [target2.id, target1.id]
+
+
 async def test_source_edge_group_with_selection_func_send_message_with_target() -> None:
     """Test sending a message through a fan-out group with a selection func with a target."""
     source = MockExecutor(id="source_executor")
