@@ -100,6 +100,34 @@ public sealed class ClientHeadersExtensionsTests
         Assert.Throws<ArgumentException>(() => options.WithClientHeader("x-client-foo", ""));
     }
 
+    [Theory]
+    [InlineData("\r")]
+    [InlineData("\n")]
+    public void WithClientHeader_RejectsNewLineInName(string newLine)
+    {
+        // Arrange
+        var options = new ChatOptions();
+
+        // Act / Assert
+        var exception = Assert.Throws<ArgumentException>(
+            () => options.WithClientHeader($"x-client-safe{newLine}suffix", "value"));
+        Assert.Equal("name", exception.ParamName);
+    }
+
+    [Theory]
+    [InlineData("\r")]
+    [InlineData("\n")]
+    public void WithClientHeader_RejectsNewLineInValue(string newLine)
+    {
+        // Arrange
+        var options = new ChatOptions();
+
+        // Act / Assert
+        var exception = Assert.Throws<ArgumentException>(
+            () => options.WithClientHeader("x-client-safe", $"before{newLine}after"));
+        Assert.Equal("value", exception.ParamName);
+    }
+
     // -------------------------------------------------------------------------------------------
     // 4. WithClientHeaders (bulk) is all-or-nothing on first invalid key
     // -------------------------------------------------------------------------------------------
@@ -118,6 +146,25 @@ public sealed class ClientHeadersExtensionsTests
 
         // Act / Assert: throws, and no entries are written.
         Assert.Throws<ArgumentException>(() => options.WithClientHeaders(headers));
+        Assert.Null(options.GetClientHeaders());
+    }
+
+    [Theory]
+    [InlineData("\r")]
+    [InlineData("\n")]
+    public void WithClientHeaders_AllOrNothing_OnNewLineValue(string newLine)
+    {
+        // Arrange
+        var options = new ChatOptions();
+        var headers = new[]
+        {
+            new KeyValuePair<string, string>("x-client-first", "first"),
+            new KeyValuePair<string, string>("x-client-invalid", $"before{newLine}after"),
+        };
+
+        // Act / Assert
+        var exception = Assert.Throws<ArgumentException>(() => options.WithClientHeaders(headers));
+        Assert.Equal("value", exception.ParamName);
         Assert.Null(options.GetClientHeaders());
     }
 
@@ -301,6 +348,86 @@ public sealed class ClientHeadersExtensionsTests
 
         // Assert
         Assert.DoesNotContain(handler.Headers, kv => kv.Key.StartsWith("x-client-", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Theory]
+    [InlineData("\r")]
+    [InlineData("\n")]
+    public async Task ClientHeadersPolicy_RejectsNewLineInHeaderNameAsync(string newLine)
+    {
+        // Arrange
+        using var handler = new RecordingHandler();
+#pragma warning disable CA5399
+        using var http = new HttpClient(handler);
+#pragma warning restore CA5399
+        var pipeline = ClientPipeline.Create(
+            new ClientPipelineOptions { Transport = new HttpClientPipelineTransport(http) },
+            perCallPolicies: [ClientHeadersPolicy.Instance],
+            perTryPolicies: default,
+            beforeTransportPolicies: default);
+
+        ClientHeadersScope.Current = new Dictionary<string, string>
+        {
+            [$"x-client-safe{newLine}suffix"] = "value",
+        };
+
+        try
+        {
+            // Act
+            var msg = pipeline.CreateMessage();
+            msg.Request.Method = "GET";
+            msg.Request.Uri = new Uri("https://example.test/");
+
+            // Assert
+            var exception = await Assert.ThrowsAsync<ArgumentException>(
+                async () => await pipeline.SendAsync(msg));
+            Assert.Equal("name", exception.ParamName);
+            Assert.Empty(handler.Requests);
+        }
+        finally
+        {
+            ClientHeadersScope.Current = null;
+        }
+    }
+
+    [Theory]
+    [InlineData("\r")]
+    [InlineData("\n")]
+    public async Task ClientHeadersPolicy_RejectsNewLineInHeaderValueAsync(string newLine)
+    {
+        // Arrange
+        using var handler = new RecordingHandler();
+#pragma warning disable CA5399
+        using var http = new HttpClient(handler);
+#pragma warning restore CA5399
+        var pipeline = ClientPipeline.Create(
+            new ClientPipelineOptions { Transport = new HttpClientPipelineTransport(http) },
+            perCallPolicies: [ClientHeadersPolicy.Instance],
+            perTryPolicies: default,
+            beforeTransportPolicies: default);
+
+        ClientHeadersScope.Current = new Dictionary<string, string>
+        {
+            ["x-client-safe"] = $"before{newLine}after",
+        };
+
+        try
+        {
+            // Act
+            var msg = pipeline.CreateMessage();
+            msg.Request.Method = "GET";
+            msg.Request.Uri = new Uri("https://example.test/");
+
+            // Assert
+            var exception = await Assert.ThrowsAsync<ArgumentException>(
+                async () => await pipeline.SendAsync(msg));
+            Assert.Equal("value", exception.ParamName);
+            Assert.Empty(handler.Requests);
+        }
+        finally
+        {
+            ClientHeadersScope.Current = null;
+        }
     }
 
     // -------------------------------------------------------------------------------------------

@@ -37,9 +37,6 @@ public static class ClientHeadersExtensions
     /// <summary>The well-known <see cref="ChatOptions.AdditionalProperties"/> key used to carry the dictionary across packages.</summary>
     internal const string ClientHeadersKey = "Microsoft.Agents.AI.Foundry.ClientHeaders";
 
-    /// <summary>The required prefix on every client header name (case-insensitive).</summary>
-    private const string ClientHeaderPrefix = "x-client-";
-
     /// <summary>
     /// Adds a single <c>x-client-*</c> header to the per-call carrier on <paramref name="options"/>.
     /// </summary>
@@ -48,12 +45,12 @@ public static class ClientHeadersExtensions
     /// <param name="value">The header value. Must be non-empty.</param>
     /// <returns><paramref name="options"/> for fluent chaining.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="options"/>, <paramref name="name"/>, or <paramref name="value"/> is <see langword="null"/>.</exception>
-    /// <exception cref="ArgumentException"><paramref name="name"/> does not start with <c>x-client-</c>, or is empty/whitespace, or <paramref name="value"/> is empty.</exception>
+    /// <exception cref="ArgumentException"><paramref name="name"/> does not start with <c>x-client-</c>, is empty/whitespace, or contains a line break; or <paramref name="value"/> is empty or contains a line break.</exception>
     /// <exception cref="InvalidOperationException">The carrier slot on <see cref="ChatOptions.AdditionalProperties"/> is occupied by a value of a foreign type.</exception>
     public static ChatOptions WithClientHeader(this ChatOptions options, string name, string value)
     {
         _ = Throw.IfNull(options);
-        ValidateHeader(name, value);
+        ClientHeaderValidation.Validate(name, value);
 
         var dict = GetOrCreateHeadersDictionary(options);
         dict[name] = value;
@@ -68,7 +65,7 @@ public static class ClientHeadersExtensions
     /// <param name="headers">The headers to add. Each name must start with <c>x-client-</c>.</param>
     /// <returns><paramref name="options"/> for fluent chaining.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="options"/> or <paramref name="headers"/> is <see langword="null"/>, or any element of <paramref name="headers"/> has a <see langword="null"/> name or value.</exception>
-    /// <exception cref="ArgumentException">Any header name does not start with <c>x-client-</c>, or any name is empty/whitespace, or any value is empty.</exception>
+    /// <exception cref="ArgumentException">Any header name does not start with <c>x-client-</c>, is empty/whitespace, or contains a line break; or any value is empty or contains a line break.</exception>
     /// <exception cref="InvalidOperationException">The carrier slot on <see cref="ChatOptions.AdditionalProperties"/> is occupied by a value of a foreign type.</exception>
     public static ChatOptions WithClientHeaders(this ChatOptions options, IEnumerable<KeyValuePair<string, string>> headers)
     {
@@ -79,7 +76,7 @@ public static class ClientHeadersExtensions
         var staged = new List<KeyValuePair<string, string>>();
         foreach (var kvp in headers)
         {
-            ValidateHeader(kvp.Key, kvp.Value);
+            ClientHeaderValidation.Validate(kvp.Key, kvp.Value);
             staged.Add(kvp);
         }
 
@@ -177,28 +174,5 @@ public static class ClientHeadersExtensions
         var fresh = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         options.AdditionalProperties[ClientHeadersKey] = fresh;
         return fresh;
-    }
-
-    private static void ValidateHeader(string name, string value)
-    {
-        _ = Throw.IfNull(name);
-        _ = Throw.IfNull(value);
-
-        if (string.IsNullOrWhiteSpace(name))
-        {
-            throw new ArgumentException("Header name must not be empty or whitespace.", nameof(name));
-        }
-
-        if (value.Length == 0)
-        {
-            throw new ArgumentException("Header value must not be empty.", nameof(value));
-        }
-
-        if (!name.StartsWith(ClientHeaderPrefix, StringComparison.OrdinalIgnoreCase))
-        {
-            throw new ArgumentException(
-                $"Header name '{name}' must start with '{ClientHeaderPrefix}' (case-insensitive). Only x-client-* headers are forwarded by the Foundry platform.",
-                nameof(name));
-        }
     }
 }
