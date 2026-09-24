@@ -188,17 +188,19 @@ def compile_tool_call_plan(
     unsupported: dict[str, str] = {}
     question_budget = _QuestionBudget()
     for index, tool in enumerate(selected_tools):
+        tool_budget = _QuestionBudget(question_budget.count)
         try:
-            compiled.append(
-                _compile_tool(
-                    tool,
-                    index,
-                    list((previous_calls or {}).get(tool.name, ())),
-                    question_budget=question_budget,
-                )
+            compiled_tool = _compile_tool(
+                tool,
+                index,
+                list((previous_calls or {}).get(tool.name, ())),
+                question_budget=tool_budget,
             )
         except _UnsupportedToolSchema as exc:
             unsupported[tool.name] = str(exc)
+        else:
+            compiled.append(compiled_tool)
+            question_budget.count = tool_budget.count
 
     if unsupported:
         for name, reason in unsupported.items():

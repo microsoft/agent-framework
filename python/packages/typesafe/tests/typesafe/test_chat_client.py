@@ -251,6 +251,34 @@ async def test_context_manager_closes_owned_client(monkeypatch: pytest.MonkeyPat
     assert stub.closed
 
 
+async def test_owned_client_sends_configured_api_key_on_wire(monkeypatch: pytest.MonkeyPatch) -> None:
+    authorization_headers: list[str] = []
+
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
+        authorization_headers.append(request.headers["Authorization"])
+        return httpx2.Response(
+            200,
+            headers={"x-typesafe-request-id": "request-123"},
+            json=make_response().model_dump(mode="json"),
+        )
+
+    monkeypatch.setattr(
+        "agent_framework_typesafe._chat_client.httpx2.AsyncHTTPTransport",
+        lambda: httpx2.MockTransport(handle_request),
+    )
+
+    async with TypeSafeChatClient(
+        api_key="configured-api-key",
+        base_url="https://typesafe.example",
+    ) as client:
+        await client.get_response(
+            [Message("user", ["hello"])],
+            options={"response_format": questions()},
+        )
+
+    assert authorization_headers == ["configured-api-key"]
+
+
 async def test_streaming_is_rejected_on_consumption() -> None:
     client = make_client()
 

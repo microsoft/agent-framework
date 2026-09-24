@@ -286,6 +286,38 @@ def test_cumulative_question_limit_is_enforced_before_materialization(monkeypatc
     assert created_questions == MAX_INTERNAL_QUESTIONS
 
 
+def test_unsupported_tool_rolls_back_cumulative_question_budget() -> None:
+    enum_values = [f"value_{index}" for index in range(MAX_ENUM_VALUES)]
+    expensive_unsupported = function(
+        "unsupported",
+        {
+            "type": "object",
+            "properties": {
+                "first": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": enum_values},
+                },
+                "second": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": enum_values},
+                },
+                "unrepresentable": {"type": "string"},
+            },
+            "required": ["first", "second", "unrepresentable"],
+        },
+    )
+    valid = function("valid", {})
+
+    plan = compile_tool_call_plan(
+        [expensive_unsupported, valid],
+        tool_mode=None,
+        user_question_ids=set(),
+    )
+
+    assert plan is not None
+    assert [tool.function.name for tool in plan.tools] == ["valid"]
+
+
 def test_tool_property_limit_is_enforced_before_compilation() -> None:
     properties = {f"field_{index}": {"type": "boolean"} for index in range(MAX_TOOL_PROPERTIES + 1)}
 

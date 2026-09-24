@@ -27,6 +27,8 @@ Integration with TypeSafe AI System One models, including Jev.
   `SystemOneResponse` as the response model.
 - An injected `AsyncTypeSafeClient` is caller-owned. A client created by `TypeSafeChatClient` is closed by
   `close()` or the async context manager.
+- Connector-owned clients restore the configured API key at the HTTP transport boundary because TypeSafe SDK 0.7.1
+  keeps the prepared authorization header redacted; transport-level tests must verify the outgoing header.
 - Settings use `load_settings`; the API key is required only when the connector creates the SDK client.
 - Injected SDK clients remain authoritative: ambient model and endpoint settings are not applied to them.
 
