@@ -1378,7 +1378,9 @@ class FileSystemAgentFileStore(AgentFileStore):
         try:
             fd = os.open(full_path, flags, 0o644)
         except OSError as exc:
-            if not overwrite and isinstance(exc, FileExistsError) and full_path.is_dir():
+            # Windows reports PermissionError when opening a directory for
+            # writing; POSIX exclusive creation can report FileExistsError.
+            if isinstance(exc, (FileExistsError, PermissionError)) and full_path.is_dir():
                 raise IsADirectoryError(f"Path is a directory: {full_path}") from exc
             if not overwrite and isinstance(exc, FileExistsError):
                 raise

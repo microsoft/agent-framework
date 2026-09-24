@@ -1372,9 +1372,11 @@ async def test_file_access_write_reports_actionable_path_collision_errors(
     assert await store.read("archive") is None
 
 
+@pytest.mark.parametrize("overwrite", [False, True])
 async def test_file_access_write_reports_filesystem_path_collision_errors(
     chat_client_base: SupportsChatGetResponse,
     tmp_path: Path,
+    overwrite: bool,
 ) -> None:
     """The real filesystem store should distinguish path collisions from existing files."""
     store = FileSystemAgentFileStore(tmp_path)
@@ -1391,7 +1393,9 @@ async def test_file_access_write_reports_filesystem_path_collision_errors(
     assert "Choose a different path" in parent_message
     assert await store.read("Reports") == "keep"
 
-    directory_collision = await save.invoke(arguments={"file_name": "Archive", "content": "replace"})
+    directory_collision = await save.invoke(
+        arguments={"file_name": "Archive", "content": "replace", "overwrite": overwrite}
+    )
     directory_message = _text(directory_collision[0])
     assert "already a directory" in directory_message
     assert "Choose a different file name" in directory_message
@@ -1402,6 +1406,40 @@ async def test_file_access_write_reports_filesystem_path_collision_errors(
     assert "already exists" in existing_file_message
     assert "overwrite set to true" in existing_file_message
     assert await store.read("notes.md") == "keep"
+
+
+@pytest.mark.parametrize("overwrite", [False, True])
+@pytest.mark.parametrize("is_directory", [False, True])
+async def test_filesystem_store_write_classifies_permission_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, overwrite: bool, is_directory: bool
+) -> None:
+    """Windows directory-open errors are normalized without masking file permission failures."""
+    store = FileSystemAgentFileStore(tmp_path)
+    target = tmp_path / "target"
+    if is_directory:
+        target.mkdir()
+    else:
+        target.write_text("keep", encoding="utf-8")
+    denied = PermissionError("access denied")
+
+    def deny_open(path: str | os.PathLike[str], flags: int, mode: int = 0o777) -> int:
+        raise denied
+
+    with monkeypatch.context() as patch:
+        patch.setattr(_file_access_module.os, "open", deny_open)
+        if is_directory:
+            with pytest.raises(IsADirectoryError) as caught:
+                await store.write("target", "replace", overwrite=overwrite)
+            assert caught.value.__cause__ is denied
+        else:
+            with pytest.raises(PermissionError) as caught_permission:
+                await store.write("target", "replace", overwrite=overwrite)
+            assert caught_permission.value is denied
+
+    if is_directory:
+        assert target.is_dir()
+    else:
+        assert target.read_text(encoding="utf-8") == "keep"
 
 
 async def test_file_access_write_preserves_exclusive_create_guidance(
