@@ -197,7 +197,7 @@ class AGUIEventConverter:
 
     def _handle_tool_call_result(self, event: dict[str, Any]) -> ChatResponseUpdate:
         """Handle TOOL_CALL_RESULT event."""
-        tool_call_id = event.get("toolCallId", "")
+        tool_call_id = self._get_tool_call_id(event) or ""
         result = event.get("result") if event.get("result") is not None else event.get("content")
 
         return ChatResponseUpdate(
