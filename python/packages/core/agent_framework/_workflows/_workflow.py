@@ -1171,12 +1171,12 @@ class Workflow(DictConvertible):
     ) -> tuple[dict[str, Any], set[str]]:
         """Resolve invocation kwargs into collision-free global and executor namespaces.
 
-        Detects whether the provided kwargs dict uses per-executor targeting by checking
-        if any top-level key matches a known executor ID or a unique wrapped agent name
-        in the workflow. A legacy
-        ``"__global__"`` slot is separated from matched executor entries unless that name
-        is itself a real executor ID. If no executor ID matches, the complete dict is
-        treated as global application kwargs.
+        Detects whether a plain kwargs dict uses per-executor targeting by checking if any
+        top-level key matches a known executor ID in the workflow. Explicit executor kwargs
+        may also target a unique wrapped agent name. A legacy ``"__global__"`` slot is
+        separated from matched executor entries unless that name is itself a real executor
+        ID. If no executor ID matches a plain mapping, the complete dict is treated as
+        global application kwargs.
 
         Args:
             kwargs: The raw invocation kwargs from the caller.
@@ -1203,27 +1203,30 @@ class Workflow(DictConvertible):
             elif agent_name not in ambiguous_agent_names:
                 agent_name_aliases[agent_name] = executor_id
 
-        provided_executor_kwargs = kwargs.executor_kwargs if isinstance(kwargs, WorkflowInvocationKwargs) else kwargs
-        ambiguous_matches = provided_executor_kwargs.keys() & ambiguous_agent_names
-        if ambiguous_matches:
-            names = ", ".join(sorted(ambiguous_matches))
-            raise ValueError(
-                f"Ambiguous agent name(s) in {param_name}: {names}. "
-                "Use the corresponding executor IDs for per-executor kwargs."
-            )
-
+        is_explicit = isinstance(kwargs, WorkflowInvocationKwargs)
+        provided_executor_kwargs = kwargs.executor_kwargs if is_explicit else kwargs
         matched_ids = provided_executor_kwargs.keys() & executor_ids
-        matched_aliases = provided_executor_kwargs.keys() & agent_name_aliases.keys()
+        matched_aliases: set[str] = set()
+        if is_explicit:
+            ambiguous_matches = provided_executor_kwargs.keys() & ambiguous_agent_names
+            if ambiguous_matches:
+                names = ", ".join(sorted(ambiguous_matches))
+                raise ValueError(
+                    f"Ambiguous agent name(s) in {param_name}: {names}. "
+                    "Use the corresponding executor IDs for per-executor kwargs."
+                )
+            matched_aliases = provided_executor_kwargs.keys() & agent_name_aliases.keys()
         routed_keys = matched_ids | matched_aliases
 
         def normalize_executor_kwargs(
             values: Mapping[str, Any],
             *,
             copy_values: bool = False,
+            resolve_aliases: bool = False,
         ) -> dict[str, Any]:
             normalized: dict[str, Any] = {}
             for key, value in values.items():
-                executor_id = agent_name_aliases.get(key, key)
+                executor_id = agent_name_aliases.get(key, key) if resolve_aliases else key
                 if executor_id in normalized:
                     raise ValueError(f"{param_name} targets executor '{executor_id}' by both its ID and agent name.")
                 normalized[executor_id] = dict(value) if copy_values else value
@@ -1234,7 +1237,11 @@ class Workflow(DictConvertible):
             return (
                 {
                     "global_kwargs": dict(kwargs.global_kwargs),
-                    "executor_kwargs": normalize_executor_kwargs(kwargs.executor_kwargs, copy_values=True),
+                    "executor_kwargs": normalize_executor_kwargs(
+                        kwargs.executor_kwargs,
+                        copy_values=True,
+                        resolve_aliases=True,
+                    ),
                 },
                 routed_keys,
             )

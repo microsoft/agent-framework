@@ -1697,9 +1697,8 @@ async def test_per_executor_function_invocation_kwargs_routes_to_correct_agent()
 
 
 @pytest.mark.parametrize("kwargs_channel", ["function_invocation_kwargs", "client_kwargs"])
-@pytest.mark.parametrize("typed", [True, False], ids=["typed", "plain"])
-async def test_agent_name_routes_to_explicit_executor_id(kwargs_channel: str, typed: bool) -> None:
-    """A wrapped agent name remains a supported alias for an explicit executor ID."""
+async def test_explicit_agent_name_routes_to_executor_id(kwargs_channel: str) -> None:
+    """An explicitly executor-scoped agent name aliases its executor ID."""
     from agent_framework import AgentExecutor
 
     agent1 = _KwargsCapturingAgent(name="agent1")
@@ -1714,8 +1713,7 @@ async def test_agent_name_routes_to_explicit_executor_id(kwargs_channel: str, ty
         "agent1": {"api_key": "agent1-only"},
         "agent2": {"api_key": "agent2-only"},
     }
-    invocation_kwargs: Mapping[str, Any] | WorkflowInvocationKwargs
-    invocation_kwargs = WorkflowInvocationKwargs(executor_kwargs=executor_kwargs) if typed else executor_kwargs
+    invocation_kwargs = WorkflowInvocationKwargs(executor_kwargs=executor_kwargs)
 
     if kwargs_channel == "function_invocation_kwargs":
         await workflow.run("test", function_invocation_kwargs=invocation_kwargs)
@@ -1727,8 +1725,32 @@ async def test_agent_name_routes_to_explicit_executor_id(kwargs_channel: str, ty
 
 
 @pytest.mark.parametrize("kwargs_channel", ["function_invocation_kwargs", "client_kwargs"])
-async def test_global_agent_name_alias_is_not_treated_as_legacy_global(kwargs_channel: str) -> None:
-    """An agent named __global__ can be targeted through a different executor ID."""
+async def test_plain_agent_name_key_remains_global_with_explicit_executor_id(kwargs_channel: str) -> None:
+    """A plain application kwarg matching an agent name does not trigger executor routing."""
+    from agent_framework import AgentExecutor
+
+    agent1 = _KwargsCapturingAgent(name="agent1")
+    agent2 = _KwargsCapturingAgent(name="agent2")
+    workflow = SequentialBuilder(
+        participants=[
+            AgentExecutor(agent1, id="executor1"),
+            AgentExecutor(agent2, id="executor2"),
+        ]
+    ).build()
+    invocation_kwargs = {"agent1": {"api_key": "shared"}}
+
+    if kwargs_channel == "function_invocation_kwargs":
+        await workflow.run("test", function_invocation_kwargs=invocation_kwargs)
+    else:
+        await workflow.run("test", client_kwargs=invocation_kwargs)
+
+    assert agent1.captured_kwargs[0].get(kwargs_channel) == invocation_kwargs
+    assert agent2.captured_kwargs[0].get(kwargs_channel) == invocation_kwargs
+
+
+@pytest.mark.parametrize("kwargs_channel", ["function_invocation_kwargs", "client_kwargs"])
+async def test_explicit_global_agent_name_alias_targets_executor(kwargs_channel: str) -> None:
+    """An agent named __global__ can be explicitly targeted through a different executor ID."""
     from agent_framework import AgentExecutor
 
     global_agent = _KwargsCapturingAgent(name="__global__")
@@ -1739,7 +1761,7 @@ async def test_global_agent_name_alias_is_not_treated_as_legacy_global(kwargs_ch
             sibling,
         ]
     ).build()
-    invocation_kwargs = {"__global__": {"targeted": True}}
+    invocation_kwargs = WorkflowInvocationKwargs(executor_kwargs={"__global__": {"targeted": True}})
 
     if kwargs_channel == "function_invocation_kwargs":
         await workflow.run("test", function_invocation_kwargs=invocation_kwargs)
@@ -1747,7 +1769,7 @@ async def test_global_agent_name_alias_is_not_treated_as_legacy_global(kwargs_ch
         await workflow.run("test", client_kwargs=invocation_kwargs)
 
     assert global_agent.captured_kwargs[0].get(kwargs_channel) == {"targeted": True}
-    assert sibling.captured_kwargs[0].get(kwargs_channel) is None
+    assert sibling.captured_kwargs[0].get(kwargs_channel) == {}
 
 
 async def test_global_and_per_executor_function_invocation_kwargs_are_merged() -> None:

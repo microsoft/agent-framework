@@ -433,11 +433,23 @@ class WorkflowExecutor(Executor):
             )
             raw_value = parent_kwargs.get(raw_key)
             if raw_value is not None:
+                routed_keys = set(parent_routed_kwargs.get(key, ()))
+                transparent_alias = self._transparent_agent_name_alias() if self.id in routed_keys else None
                 resolved = _scope_invocation_kwargs_to_subworkflow(
                     cast(WorkflowInvocationKwargs | Mapping[str, Any], raw_value),
-                    self._parent_routed_keys_to_exclude(set(parent_routed_kwargs.get(key, ()))),
+                    self._parent_routed_keys_to_exclude(routed_keys),
                     cast(Mapping[str, Any] | None, parent_resolved_kwargs.get(key)),
                 )
+                if (
+                    transparent_alias is not None
+                    and isinstance(resolved, Mapping)
+                    and not isinstance(resolved, WorkflowInvocationKwargs)
+                    and self.id in resolved
+                ):
+                    resolved = dict(resolved)
+                    if transparent_alias in resolved:
+                        raise ValueError(f"{key} targets executor '{transparent_alias}' by both its ID and agent name.")
+                    resolved[transparent_alias] = resolved.pop(self.id)
             else:
                 normalized: Any = parent_kwargs.get(key)
                 if isinstance(normalized, dict):
@@ -468,16 +480,27 @@ class WorkflowExecutor(Executor):
         """Return parent-routed keys that must not be reinterpreted by the child workflow."""
         if self.id in self.workflow.executors:
             return routed_keys - {self.id}
+
+        if self._transparent_agent_name_alias() is not None:
+            return routed_keys - {self.id}
+
+        return routed_keys
+
+    def _transparent_agent_name_alias(self) -> str | None:
+        """Return the child executor ID uniquely identified by this wrapper's ID."""
+        if self.id in self.workflow.executors:
+            return None
+
         from ._agent_executor import AgentExecutor
 
         matching_agent_names = [
-            executor
-            for executor in self.workflow.executors.values()
+            executor_id
+            for executor_id, executor in self.workflow.executors.items()
             if isinstance(executor, AgentExecutor) and executor.agent.name == self.id
         ]
         if len(matching_agent_names) == 1:
-            return routed_keys - {self.id}
-        return routed_keys
+            return matching_agent_names[0]
+        return None
 
     @handler
     async def handle_message_wrapped_request_response(
