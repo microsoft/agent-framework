@@ -419,6 +419,9 @@ class OllamaChatClient(
             if key in OLLAMA_MODEL_OPTIONS:
                 # Apply model option translations (e.g., max_tokens -> num_predict)
                 translated_key = OLLAMA_MODEL_OPTION_TRANSLATIONS.get(key, key)
+                if key == "stop" and isinstance(value, str):
+                    # ChatOptions allows a single stop string; Ollama takes a list.
+                    value = [value]
                 model_options[translated_key] = value
             else:
                 # Apply top-level translations (e.g., response_format -> format)

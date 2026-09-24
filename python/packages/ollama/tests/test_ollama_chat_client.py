@@ -828,3 +828,13 @@ class TestParallelToolCallUniqueness:
 
         assert [message.role for message in prepared] == ["tool", "assistant"]
         assert prepared[0].content == "safe result"
+
+
+def test_prepare_options_single_stop_string_becomes_list(ollama_unit_test_env: dict[str, str]) -> None:
+    """Ollama expects options.stop to be a list, so a single stop string is wrapped."""
+    client = OllamaChatClient()
+    messages = [Message(role="user", contents=[Content.from_text(text="hello")])]
+
+    request = client._prepare_options(messages, {"stop": "END"})
+
+    assert request["options"]["stop"] == ["END"]

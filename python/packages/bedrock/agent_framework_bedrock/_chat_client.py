@@ -425,7 +425,8 @@ class BedrockChatClient(
         if (top_p := options.get("top_p")) is not None:
             run_options["inferenceConfig"]["topP"] = top_p
         if (stop := options.get("stop")) is not None:
-            run_options["inferenceConfig"]["stopSequences"] = stop
+            # ChatOptions allows a single stop string; stopSequences takes a list.
+            run_options["inferenceConfig"]["stopSequences"] = [stop] if isinstance(stop, str) else stop
 
         tool_config = self._prepare_tools(options.get("tools"))
         if tool_mode := validate_tool_mode(options.get("tool_choice")):
