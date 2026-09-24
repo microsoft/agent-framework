@@ -1961,6 +1961,21 @@ def _vector_tool_field_schema(field: VectorStoreField) -> dict[str, Any]:
     return {"type": json_type} if json_type is not None else {}
 
 
+def _vector_tool_has_nullable_auto_key(collection: BaseVectorCollection[Any, Any]) -> bool:
+    key_field = collection.definition.key_field
+    if not key_field.is_auto_generated:
+        return False
+    if collection.record_type is dict:
+        return True
+    try:
+        annotations = get_type_hints(collection.record_type, include_extras=True)
+        if key_field.name not in annotations:
+            annotations = get_type_hints(cast(Any, collection.record_type).__init__, include_extras=True)
+    except (NameError, TypeError):
+        return False
+    return type(None) in get_args(_unwrap_annotation(annotations.get(key_field.name)))
+
+
 def _vector_tool_record_schema(collection: BaseVectorCollection[Any, Any]) -> dict[str, Any]:
     properties = {
         field.name: (
@@ -1968,6 +1983,9 @@ def _vector_tool_record_schema(collection: BaseVectorCollection[Any, Any]) -> di
         )
         for field in collection.definition.fields
     }
+    if _vector_tool_has_nullable_auto_key(collection):
+        key_name = collection.definition.key_name
+        properties[key_name] = {"anyOf": [properties[key_name], {"type": "null"}]}
     required = [
         field.name
         for field in collection.definition.fields
@@ -2140,12 +2158,13 @@ def _decode_vector_tool_records(
     )
     decoded: list[ModelT] = []
     registration = _VECTOR_MODEL_REGISTRY.get(collection.record_type)
+    nullable_auto_key = _vector_tool_has_nullable_auto_key(collection)
     for record in raw_records:
         if not isinstance(record, Mapping):
             raise TypeError("Each record must be a mapping.")
         logical_record = dict(cast(Mapping[str, Any], record))
         key_name = collection.definition.key_name
-        if key_name in logical_record:
+        if key_name in logical_record and not (logical_record[key_name] is None and nullable_auto_key):
             logical_record[key_name] = collection.key_from_json(logical_record[key_name])
         if collection.record_type is dict:
             decoded.append(cast(ModelT, logical_record))
