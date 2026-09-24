@@ -478,6 +478,20 @@ class BedrockChatClient(
         if guardrail_config := run_options.get("guardrailConfig"):
             # streamProcessingMode is only valid for ConverseStream; Converse rejects requests that include it.
             run_options["guardrailConfig"] = {k: v for k, v in guardrail_config.items() if k != "streamProcessingMode"}
+        if ":prompt/" in model:
+            # A Prompt Management ARN takes these fields from the prompt, and Converse rejects requests that set them.
+            if run_options["inferenceConfig"] == {"maxTokens": DEFAULT_MAX_TOKENS}:
+                del run_options["inferenceConfig"]  # only the client default, nothing the caller asked for
+            if omitted := [
+                key
+                for key in ("inferenceConfig", "system", "toolConfig", "additionalModelRequestFields")
+                if run_options.pop(key, None) is not None
+            ]:
+                logger.warning(
+                    "Converse does not accept %s with a Prompt Management prompt; they are omitted from the request. "
+                    "Define them on the prompt in Prompt Management instead.",
+                    ", ".join(omitted),
+                )
 
         return run_options
 

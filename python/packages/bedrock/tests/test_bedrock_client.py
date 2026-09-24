@@ -424,6 +424,31 @@ def test_prepare_options_omits_stream_processing_mode_from_guardrail_config() ->
     assert options["guardrailConfig"]["streamProcessingMode"] == "async"
 
 
+def test_prepare_options_prompt_management_arn_omits_fields_converse_rejects(caplog: pytest.LogCaptureFixture) -> None:
+    """Converse rejects inferenceConfig, system, toolConfig and additionalModelRequestFields with a prompt ARN."""
+    client = _make_client()
+    client.model = "arn:aws:bedrock:us-east-1:123456789012:prompt/PROMPT1234:1"
+    messages = [Message(role="user", contents=[Content.from_text(text="hello")])]
+    variables: BedrockChatOptions = {"promptVariables": {"topic": {"text": "hash maps"}}}
+
+    with caplog.at_level("WARNING", logger="agent_framework.bedrock"):
+        request = client._prepare_options(messages, variables)
+    assert set(request) == {"modelId", "messages", "promptVariables"}
+    assert not caplog.records  # the client's default maxTokens is dropped without a warning
+
+    caller_set: BedrockChatOptions = {
+        **variables,
+        "instructions": "Be brief.",
+        "temperature": 0.2,
+        "tools": [{"toolSpec": {"name": "get_weather", "description": "Get weather", "inputSchema": {"json": {}}}}],
+        "additionalModelRequestFields": {"reasoning": {"effort": "low"}},
+    }
+    with caplog.at_level("WARNING", logger="agent_framework.bedrock"):
+        request = client._prepare_options(messages, caller_set)
+    assert set(request) == {"modelId", "messages", "promptVariables"}
+    assert "inferenceConfig, system, toolConfig, additionalModelRequestFields" in caplog.text
+
+
 def test_prepare_options_unsupported_tool_mode_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     """Unexpected tool modes should raise a clear error."""
     from agent_framework_bedrock import _chat_client as chat_client_module
