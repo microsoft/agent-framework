@@ -633,8 +633,9 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
             }
         };
 
-        // McpClient.CreateAsync performs discovery-first negotiation with down-level fallback and
-        // can throw for an unreachable proxy (the deferred-toolbox case, retried per request).
+        // McpClient.CreateAsync performs the Streamable HTTP initialize handshake (the transport is
+        // pinned, so there is no fallback to another transport) and can throw for an unreachable
+        // proxy (the deferred-toolbox case, retried per request).
         // Keep it inside the try so the HttpClient is always disposed on failure rather than
         // leaking a socket on every retry.
         McpClient? client = null;
