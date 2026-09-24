@@ -42,6 +42,25 @@ class CallableChatMiddleware:
         await call_next()
 
 
+# Quoted forward references keep their quotes under postponed evaluation, e.g. "'ChatContext'".
+async def quoted_chat_mw(context: "ChatContext", call_next: Callable[[], Awaitable[None]]) -> None:  # noqa: UP037
+    await call_next()
+
+
+async def quoted_function_mw(
+    context: "FunctionInvocationContext",  # noqa: UP037
+    call_next: Callable[[], Awaitable[None]],
+) -> None:
+    await call_next()
+
+
+async def quoted_qualified_agent_mw(
+    context: "agent_framework.AgentContext",  # noqa: UP037
+    call_next: Callable[[], Awaitable[None]],
+) -> None:
+    await call_next()
+
+
 def test_middleware_type_detected_from_postponed_annotations() -> None:
     """Context annotations stored as strings (PEP 563) still determine the middleware type."""
     callable_chat_mw = CallableChatMiddleware()
@@ -51,6 +70,15 @@ def test_middleware_type_detected_from_postponed_annotations() -> None:
     assert result["agent"] == [agent_mw]
     assert result["function"] == [function_mw]
     assert result["chat"] == [chat_mw, qualified_chat_mw, callable_chat_mw]
+
+
+def test_middleware_type_detected_from_quoted_postponed_annotations() -> None:
+    """Quoted context annotations are matched like unquoted ones under postponed evaluation."""
+    result = categorize_middleware([quoted_chat_mw, quoted_function_mw, quoted_qualified_agent_mw])
+
+    assert result["agent"] == [quoted_qualified_agent_mw]
+    assert result["function"] == [quoted_function_mw]
+    assert result["chat"] == [quoted_chat_mw]
 
 
 def test_middleware_with_unrecognized_postponed_annotation_still_raises() -> None:
