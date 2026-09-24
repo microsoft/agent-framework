@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import importlib.metadata
 
-from ._vector_store import SqlServerCollection, SqlServerSettings, SqlServerStore
+from ._vector_store import SqlServerCollection, SqlServerCommittedCleanupException, SqlServerSettings, SqlServerStore
 
 try:
     __version__ = importlib.metadata.version(__name__)
@@ -15,6 +15,7 @@ except importlib.metadata.PackageNotFoundError:
 
 __all__ = [
     "SqlServerCollection",
+    "SqlServerCommittedCleanupException",
     "SqlServerSettings",
     "SqlServerStore",
     "__version__",

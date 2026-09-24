@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import math
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -42,6 +43,11 @@ KeyT = TypeVar("KeyT", default=Any)
 ModelT = TypeVar("ModelT", default=Any)
 ResultT = TypeVar("ResultT")
 _KEY_BATCH_SIZE = 1000
+logger = logging.getLogger(__name__)
+
+
+class SqlServerCommittedCleanupException(IntegrationException):
+    """The SQL Server transaction committed, but closing its connection failed."""
 
 
 class SqlServerSettings(TypedDict, total=False):
@@ -99,22 +105,39 @@ class _Client:
     def _run_sync(self, operation: Callable[[mssql_python.Cursor], ResultT]) -> ResultT:
         try:
             connection = mssql_python.connect(self.connection_string.get_secret_value(), autocommit=False)
+            committed = False
+            failed = False
             try:
-                if self.query_timeout is not None:
-                    connection.timeout = self.query_timeout
-                cursor = connection.cursor()
                 try:
+                    if self.query_timeout is not None:
+                        connection.timeout = self.query_timeout
+                    cursor = connection.cursor()
                     try:
                         result = operation(cursor)
                     finally:
                         cursor.close()
                     connection.commit()
+                    committed = True
                     return result
                 except BaseException:
+                    failed = True
                     connection.rollback()
                     raise
             finally:
-                connection.close()
+                try:
+                    connection.close()
+                except Exception as exc:
+                    if committed:
+                        raise SqlServerCommittedCleanupException(
+                            "SQL Server transaction committed, but connection cleanup failed; "
+                            "do not retry this operation automatically."
+                        ) from exc
+                    if failed:
+                        logger.warning(
+                            "SQL Server connection cleanup also failed after an operation error.", exc_info=exc
+                        )
+                    else:
+                        raise
         except mssql_python.Error as exc:
             raise IntegrationException("SQL Server operation failed; inspect the chained driver exception.") from exc
 
@@ -127,7 +150,15 @@ class _Client:
         try:
             return await asyncio.shield(future)
         except asyncio.CancelledError:
-            await asyncio.shield(future)
+            while not future.done():
+                try:
+                    await asyncio.shield(future)
+                except asyncio.CancelledError:
+                    continue
+                except Exception:
+                    break
+            if not future.cancelled() and (error := future.exception()) is not None:
+                logger.warning("SQL Server worker failed after caller cancellation.", exc_info=error)
             raise
 
     async def close(self) -> None:

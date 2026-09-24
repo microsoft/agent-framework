@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 import threading
 from dataclasses import dataclass
 from functools import partial
@@ -26,7 +27,7 @@ from agent_framework import (
 )
 from agent_framework.exceptions import IntegrationException, IntegrationInvalidResponseException
 
-from agent_framework_sql_server import SqlServerCollection, SqlServerStore
+from agent_framework_sql_server import SqlServerCollection, SqlServerCommittedCleanupException, SqlServerStore
 from agent_framework_sql_server import _vector_store as module
 from agent_framework_sql_server._vector_store import _Client
 
@@ -535,6 +536,49 @@ async def test_cancelled_operation_and_close_wait_for_worker_cleanup():
     assert client._executor is not None and client._executor._shutdown
 
 
+async def test_cancelled_failing_operation_preserves_cancellation_until_worker_cleanup(caplog):
+    connection, cursor = fake_connection()
+    started, release = threading.Event(), threading.Event()
+    driver_error = mssql_python.OperationalError("query failed", "worker failure")
+
+    def fail_after_cancellation(*args):
+        started.set()
+        assert release.wait(timeout=10)
+        raise driver_error
+
+    cursor.execute.side_effect = fail_after_cancellation
+    client = _Client(SecretString("Server=unused;Database=test"))
+    with (
+        patch.object(module.mssql_python, "connect", return_value=connection),
+        caplog.at_level(logging.WARNING, logger=module.__name__),
+    ):
+        try:
+            operation = asyncio.create_task(client.run(lambda raw: module._execute(raw, "SELECT 1")))
+            assert await asyncio.to_thread(started.wait, 5)
+            operation.cancel()
+            await asyncio.sleep(0)
+            operation.cancel()
+            closing = asyncio.create_task(client.close())
+            await asyncio.sleep(0)
+            assert not operation.done() and not closing.done()
+        finally:
+            release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await operation
+        await closing
+    connection.commit.assert_not_called()
+    connection.rollback.assert_called_once()
+    cursor.close.assert_called_once()
+    connection.close.assert_called_once()
+    assert any(
+        "worker failed after caller cancellation" in record.message
+        and record.exc_info is not None
+        and isinstance(record.exc_info[1], IntegrationException)
+        and record.exc_info[1].__cause__ is driver_error
+        for record in caplog.records
+    )
+
+
 async def test_driver_error_is_chained_and_owned_connection_rolled_back():
     connection, cursor = fake_connection()
     cursor.execute.side_effect = [
@@ -578,6 +622,59 @@ async def test_commit_failure_rolls_back_and_closes_connection():
     assert isinstance(error.value.__cause__, mssql_python.OperationalError)
     connection.rollback.assert_called_once()
     cursor.close.assert_called_once()
+    connection.close.assert_called_once()
+
+
+async def test_committed_generated_key_is_distinguishable_from_failed_upsert():
+    definition = VectorStoreCollectionDefinition(
+        [
+            VectorStoreField("key", name="id", type_="int", is_auto_generated=True),
+            VectorStoreField("data", name="text", type_="str"),
+        ],
+        collection_name="generated",
+    )
+    collection = SqlServerCollection(dict, definition=definition, connection_string="Server=unused;Database=test")
+    connection, cursor = fake_connection()
+    cursor.fetchone.return_value = (42,)
+    cleanup_error = mssql_python.OperationalError("close failed", "connection cleanup error")
+    connection.close.side_effect = cleanup_error
+    try:
+        with (
+            patch.object(module.mssql_python, "connect", return_value=connection),
+            pytest.raises(SqlServerCommittedCleanupException) as error,
+        ):
+            await collection.upsert([{"text": "created"}], generate_vectors=False)
+    finally:
+        await collection.close()
+    assert "committed" in str(error.value)
+    assert "do not retry" in str(error.value)
+    assert error.value.__cause__ is cleanup_error
+    connection.commit.assert_called_once()
+    connection.rollback.assert_not_called()
+    cursor.close.assert_called_once()
+    connection.close.assert_called_once()
+
+
+async def test_cleanup_failure_during_rollback_preserves_original_error(caplog):
+    connection, cursor = fake_connection()
+    operation_error = mssql_python.OperationalError("query failed", "operation error")
+    cursor.execute.side_effect = operation_error
+    connection.close.side_effect = mssql_python.OperationalError("close failed", "cleanup error")
+    client = _Client(SecretString("Server=unused;Database=test"))
+    try:
+        with (
+            patch.object(module.mssql_python, "connect", return_value=connection),
+            caplog.at_level(logging.WARNING, logger=module.__name__),
+            pytest.raises(IntegrationException) as error,
+        ):
+            await client.run(lambda raw: module._execute(raw, "INSERT INTO [notes] ([id]) VALUES (?)", ["first"]))
+    finally:
+        await client.close()
+    assert not isinstance(error.value, SqlServerCommittedCleanupException)
+    assert error.value.__cause__ is operation_error
+    assert any("cleanup also failed" in record.message for record in caplog.records)
+    connection.commit.assert_not_called()
+    connection.rollback.assert_called_once()
     connection.close.assert_called_once()
 
 

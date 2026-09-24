@@ -2,8 +2,8 @@
 
 Store typed Agent Framework records in SQL Server and Azure SQL native `VECTOR`
 columns, with exact, database-side similarity search. This alpha package exports
-`SqlServerCollection`, `SqlServerStore`, and `SqlServerSettings` directly from
-`agent_framework_sql_server`.
+`SqlServerCollection`, `SqlServerStore`, `SqlServerSettings`, and
+`SqlServerCommittedCleanupException` directly from `agent_framework_sql_server`.
 
 ## Install and provision
 
@@ -84,6 +84,11 @@ have committed. Set `query_timeout=30` (seconds, for example) on the store or
 collection when bounding database calls; leaving it unset uses the driver's
 default, and `0` disables the timeout. Prefer stable application-provided
 keys when retrying writes.
+If closing the connection fails after a successful commit,
+`SqlServerCommittedCleanupException` explicitly signals that the transaction
+**already committed**; do not automatically retry, especially with generated
+keys. Cancellation remains `CancelledError` even if the worker fails while
+finishing; that worker error is logged after cleanup.
 
 ## Example
 
