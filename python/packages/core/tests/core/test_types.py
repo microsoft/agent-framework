@@ -2269,14 +2269,15 @@ def test_chat_response_from_updates_coalesces_text_update_without_text() -> None
     `text_reasoning` parts already worked, which is the asymmetry being fixed.
     """
 
-    def updates(content_type: str) -> list[ChatResponseUpdate]:
+    def updates(content_type: Literal["text", "text_reasoning"]) -> list[ChatResponseUpdate]:
         return [
             ChatResponseUpdate(role="assistant", contents=[Content(content_type, text="Hello ")]),
             ChatResponseUpdate(role="assistant", contents=[Content(content_type)]),
             ChatResponseUpdate(role="assistant", contents=[Content(content_type, text="world")]),
         ]
 
-    for content_type in ("text", "text_reasoning"):
+    content_types: tuple[Literal["text", "text_reasoning"], ...] = ("text", "text_reasoning")
+    for content_type in content_types:
         response = ChatResponse.from_updates(updates(content_type))
         assert [content.text for content in response.messages[0].contents] == ["Hello world"]
 
