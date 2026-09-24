@@ -24,8 +24,6 @@ internal abstract class DeclarativeActionExecutor<TAction>(TAction model, Workfl
 
 internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResult>, IResettableExecutor, IModeledAction
 {
-    private readonly WorkflowFormulaState _state;
-
     protected DeclarativeActionExecutor(DialogAction model, WorkflowFormulaState state)
         : base(model.Id.Value)
     {
@@ -34,7 +32,7 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
             throw new DeclarativeModelException($"Missing required properties for element: {model.GetId()} ({model.GetType().Name}).");
         }
 
-        this._state = state;
+        this.State = state;
 
         this.Model = model;
     }
@@ -51,9 +49,11 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
 
     public string ParentId { get => field ??= this.Model.GetParentId() ?? WorkflowActionVisitor.Steps.Root(); }
 
-    public RecalcEngine Engine => this._state.Engine;
+    public RecalcEngine Engine => this.State.Engine;
 
-    public WorkflowExpressionEngine Evaluator => this._state.Evaluator;
+    public WorkflowExpressionEngine Evaluator => this.State.Evaluator;
+
+    protected WorkflowFormulaState State { get; }
 
     internal ILogger Logger { get; set; } = NullLogger<DeclarativeActionExecutor>.Instance;
 
@@ -64,7 +64,7 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
     /// <inheritdoc/>
     public virtual ValueTask ResetAsync()
     {
-        this._state.Reset();
+        this.State.Reset();
         return default;
     }
 
@@ -89,7 +89,7 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
 
         try
         {
-            object? result = await this.ExecuteAsync(new DeclarativeWorkflowContext(context, this._state), cancellationToken).ConfigureAwait(false);
+            object? result = await this.ExecuteAsync(new DeclarativeWorkflowContext(context, this.State), cancellationToken).ConfigureAwait(false);
             Debug.WriteLine($"RESULT #{this.Id} - {result ?? "(null)"}");
 
             if (this.EmitResultEvent)
@@ -123,19 +123,21 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
     /// This must be overridden to restore any state that was saved during checkpointing.
     /// </summary>
     protected override ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default) =>
-        this._state.RestoreAsync(context, cancellationToken);
+        this.State.RestoreAsync(context, cancellationToken);
 
-    protected async ValueTask AssignAsync(PropertyPath? targetPath, FormulaValue result, IWorkflowContext context)
+    protected async ValueTask AssignAsync(PropertyPath? targetPath, FormulaValue result, IWorkflowContext context, SensitivityLevel sensitivity = SensitivityLevel.None)
     {
         if (targetPath is null)
         {
             return;
         }
 
-        await context.QueueStateUpdateAsync(targetPath, result).ConfigureAwait(false);
+        await context.QueueStateUpdateAsync(targetPath, result, sensitivity).ConfigureAwait(false);
+        string variableName = targetPath.VariableName ?? throw new DeclarativeActionException($"Invalid variable reference: '{targetPath}'.");
+        this.State.SetSensitivity(variableName, targetPath.NamespaceAlias, sensitivity);
 
 #if DEBUG
-        string? resultValue = result.Format();
+        string? resultValue = sensitivity == SensitivityLevel.Sensitive ? "<redacted>" : result.Format();
         string valuePosition = (resultValue?.IndexOf('\n') ?? -1) >= 0 ? Environment.NewLine : " ";
         Debug.WriteLine(
             $"""

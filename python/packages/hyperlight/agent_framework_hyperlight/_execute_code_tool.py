@@ -369,6 +369,8 @@ class _SandboxEntry:
     worker: _SandboxWorker
     input_dir: TemporaryDirectory[str] | None
     output_dir: TemporaryDirectory[str] | None
+    # Keep cache-key identities alive; registered callbacks retain copies.
+    tools: tuple[FunctionTool, ...]
 
     def cleanup_temp_dirs(self) -> None:
         """Clean up temporary directories after the sandbox worker has stopped."""
@@ -1512,6 +1514,7 @@ class _SandboxRegistry(SandboxRuntime):
             worker=worker,
             input_dir=input_dir_handle,
             output_dir=output_dir_handle,
+            tools=config.tools,
         )
 
 

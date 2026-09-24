@@ -242,6 +242,93 @@ public class ApprovalNotRequiredFunctionBypassingChatClientTests
     }
 
     [Fact]
+    public async Task GetResponseAsync_InnerCallThrows_RetainsStoredAutoApprovalsAsync()
+    {
+        // Arrange — the run that carries the injected auto-approvals fails. Nothing is persisted by a failed run, so
+        // the stored auto-approvals must survive for the next run to inject them again.
+        var fccNormal = new FunctionCallContent("call1", "normalTool");
+        var storedApproval = new ToolApprovalRequestContent("req1", fccNormal);
+
+        var session = new ChatClientAgentSession();
+        session.StateBag.SetValue(
+            ApprovalNotRequiredFunctionBypassingChatClient.StateBagKey,
+            new List<ToolApprovalRequestContent> { storedApproval },
+            AgentJsonUtilities.DefaultOptions);
+
+        var innerClient = CreateMockChatClient((_, _, _) => throw new InvalidOperationException("Service failure."));
+
+        var decorator = new ApprovalNotRequiredFunctionBypassingChatClient(innerClient);
+        var options = new ChatOptions { Tools = [AIFunctionFactory.Create(() => "result", "normalTool")] };
+
+        // Act
+        await Assert.ThrowsAsync<InvalidOperationException>(() => RunWithAgentContextAsync(decorator, session, options));
+
+        // Assert
+        Assert.True(session.StateBag.TryGetValue<List<ToolApprovalRequestContent>>(
+            ApprovalNotRequiredFunctionBypassingChatClient.StateBagKey, out var stored, AgentJsonUtilities.DefaultOptions));
+        Assert.Equal("req1", Assert.Single(stored!).RequestId);
+    }
+
+    [Fact]
+    public async Task GetStreamingResponseAsync_InnerCallThrows_RetainsStoredAutoApprovalsAsync()
+    {
+        // Arrange
+        var fccNormal = new FunctionCallContent("call1", "normalTool");
+        var storedApproval = new ToolApprovalRequestContent("req1", fccNormal);
+
+        var session = new ChatClientAgentSession();
+        session.StateBag.SetValue(
+            ApprovalNotRequiredFunctionBypassingChatClient.StateBagKey,
+            new List<ToolApprovalRequestContent> { storedApproval },
+            AgentJsonUtilities.DefaultOptions);
+
+        var innerClient = CreateMockStreamingChatClient((_, _, _) =>
+            ThrowingUpdatesAsync(new InvalidOperationException("Service failure.")));
+
+        var decorator = new ApprovalNotRequiredFunctionBypassingChatClient(innerClient);
+        var options = new ChatOptions { Tools = [AIFunctionFactory.Create(() => "result", "normalTool")] };
+
+        // Act
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => RunStreamingWithAgentContextAsync(decorator, session, [], options));
+
+        // Assert
+        Assert.True(session.StateBag.TryGetValue<List<ToolApprovalRequestContent>>(
+            ApprovalNotRequiredFunctionBypassingChatClient.StateBagKey, out var stored, AgentJsonUtilities.DefaultOptions));
+        Assert.Equal("req1", Assert.Single(stored!).RequestId);
+    }
+
+    [Fact]
+    public async Task GetStreamingResponseAsync_ThrowsAfterCollectingNewAutoApprovals_DoesNotOverwriteStoredAutoApprovalsAsync()
+    {
+        // Arrange — an earlier auto-approval is injected into this run, and the stream then surfaces a further
+        // auto-approvable call before failing. The new request was filtered out of the stream and the failed run
+        // persists nothing, so storing it would discard the injected one and leave its call unanswered forever.
+        var session = new ChatClientAgentSession();
+        session.StateBag.SetValue(
+            ApprovalNotRequiredFunctionBypassingChatClient.StateBagKey,
+            new List<ToolApprovalRequestContent> { new("req1", new FunctionCallContent("call1", "normalTool")) },
+            AgentJsonUtilities.DefaultOptions);
+
+        var innerClient = CreateMockStreamingChatClient((_, _, _) => UpdatesThenThrowAsync(
+            new InvalidOperationException("Service failure."),
+            new ChatResponseUpdate(ChatRole.Assistant, [
+                new ToolApprovalRequestContent("req2", new FunctionCallContent("call2", "normalTool"))])));
+
+        var decorator = new ApprovalNotRequiredFunctionBypassingChatClient(innerClient);
+        var options = new ChatOptions { Tools = [AIFunctionFactory.Create(() => "result", "normalTool")] };
+
+        // Act
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => RunStreamingWithAgentContextAsync(decorator, session, [], options));
+
+        // Assert — the injected batch is still the stored one, so the next run can inject it again.
+        Assert.True(session.StateBag.TryGetValue<List<ToolApprovalRequestContent>>(
+            ApprovalNotRequiredFunctionBypassingChatClient.StateBagKey, out var stored, AgentJsonUtilities.DefaultOptions));
+        Assert.Equal("req1", Assert.Single(stored!).RequestId);
+    }
+
+    [Fact]
     public async Task GetResponseAsync_UnknownTool_TreatedAsApprovalRequiredAsync()
     {
         // Arrange — tool is not in ChatOptions.Tools
@@ -722,6 +809,28 @@ public class ApprovalNotRequiredFunctionBypassingChatClientTests
 
         await Task.CompletedTask;
     }
+
+#pragma warning disable CS1998 // Async method lacks 'await' operators
+    private static async IAsyncEnumerable<ChatResponseUpdate> UpdatesThenThrowAsync(
+        Exception exception,
+        params ChatResponseUpdate[] updates)
+    {
+        foreach (var update in updates)
+        {
+            yield return update;
+        }
+
+        throw exception;
+    }
+
+    private static async IAsyncEnumerable<ChatResponseUpdate> ThrowingUpdatesAsync(Exception exception)
+    {
+        throw exception;
+#pragma warning disable CS0162 // Unreachable code detected
+        yield break;
+#pragma warning restore CS0162
+    }
+#pragma warning restore CS1998
 
     #endregion
 }

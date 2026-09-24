@@ -808,12 +808,43 @@ def test_usage_details_add_with_none_and_type_errors():
 
 
 def test_usage_details_add_skips_non_int():
-    u1 = cast(UsageDetails, {"input_token_count": 10, "other": "test"})
-    u2 = cast(UsageDetails, {"input_token_count": 10, "another": "test"})
+    u1 = cast(UsageDetails, {"input_token_count": 10, "other": "test", "flag": True})
+    u2 = cast(UsageDetails, {"input_token_count": 10, "another": "test", "flag": 5})
     u3 = add_usage_details(u1, u2)
     assert len(u3.keys()) == 1
     assert "input_token_count" in u3
     assert u3["input_token_count"] == 20
+    assert "flag" not in u3
+
+
+def test_usage_details_add_with_none_returns_copy():
+    u = UsageDetails(input_token_count=1)
+    v1 = add_usage_details(u, None)
+    v2 = add_usage_details(None, u)
+    assert v1 == u
+    assert v1 is not u
+    assert v2 == u
+    assert v2 is not u
+
+
+def test_usage_details_add_with_none_filters_booleans_and_non_ints():
+    payload = cast(UsageDetails, {"input_token_count": 5, "flag": True, "text": "skip_me"})
+    v1 = add_usage_details(payload, None)
+    v2 = add_usage_details(None, payload)
+    assert v1 == {"input_token_count": 5}
+    assert v1 is not payload
+    assert "flag" not in v1
+    assert "text" not in v1
+    assert v2 == {"input_token_count": 5}
+    assert v2 is not payload
+    assert "flag" not in v2
+    assert "text" not in v2
+
+
+def test_usage_details_add_both_none_returns_empty():
+    result = add_usage_details(None, None)
+    assert result == {}
+    assert isinstance(result, dict)
 
 
 # region UserInputRequest and Response

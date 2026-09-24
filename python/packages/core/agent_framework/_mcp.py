@@ -165,6 +165,9 @@ _MCP_FRAMEWORK_DENYLIST: frozenset[str] = frozenset({
     "_meta",
 })
 _mcp_call_headers: contextvars.ContextVar[dict[str, str]] = contextvars.ContextVar("_mcp_call_headers")
+_mcp_tool_runtime_context: contextvars.ContextVar[tuple[object, Mapping[str, Any]] | None] = contextvars.ContextVar(
+    "_mcp_tool_runtime_context", default=None
+)
 _MCP_HEADER_OWNER_EXTENSION = "agent_framework.mcp_header_owner"
 _MCP_INJECTED_HEADER_KEYS_EXTENSION = "agent_framework.mcp_injected_header_keys"
 _MCPHeaderIdentity: TypeAlias = tuple[tuple[str, str], ...]
@@ -624,10 +627,12 @@ def _make_mcp_tool_caller(
             apply_server_meta_to_model_items=mcp_tool.parse_tool_results is None,
         )
         token = _mcp_host_payload_capture.set(capture)
+        runtime_token = _mcp_tool_runtime_context.set((mcp_tool, dict(ctx.kwargs)))
         try:
             parsed = await mcp_tool.call_tool(remote_tool_name, **call_kwargs)
             return capture.prepare_model_result(parsed)
         finally:
+            _mcp_tool_runtime_context.reset(runtime_token)
             _mcp_host_payload_capture.reset(token)
             ctx.metadata[_FUNCTION_RESULT_CARRIER_CONTEXT_KEY] = capture.to_carrier()
 
@@ -3841,6 +3846,10 @@ class MCPStreamableHTTPTool(MCPTool):
             header_provider: Optional callable that receives the runtime keyword arguments
                 (from ``FunctionInvocationContext.kwargs``) and returns a ``dict[str, str]``
                 of HTTP headers to inject into every outbound request to the MCP server.
+                Generated tool calls supply only this host runtime context, never model
+                arguments, even when names collide. Direct ``call_tool`` calls use their
+                caller-supplied kwargs. Model-over-runtime precedence applies only to
+                outbound tool arguments, not to authentication.
                 Use this to forward per-request context (e.g. authentication tokens set in
                 agent middleware) without creating a separate ``httpx.AsyncClient``.
                 The complete header set used to initialize a connection becomes that session's
@@ -3860,7 +3869,7 @@ class MCPStreamableHTTPTool(MCPTool):
                 during the handshake is raised instead, since a missing key there is a
                 misconfiguration rather than an unavoidable gap. For an already-connected tool,
                 run preparation defers identity reconciliation when the provider needs a
-                model-supplied argument that is unavailable until invocation; provider errors at
+                runtime value supplied by invocation middleware; provider errors at
                 invocation still propagate. A credential that must authenticate an eager
                 handshake must therefore come from somewhere the provider can read without a run,
                 such as a closure or ``ContextVar``. A lazy connection established by an agent
@@ -4133,9 +4142,8 @@ class MCPStreamableHTTPTool(MCPTool):
         try:
             headers = self._effective_headers(kwargs)
         except KeyError:
-            # Some providers intentionally read model-supplied tool arguments that
-            # do not exist until invocation. Keep preparation non-breaking and let
-            # the strict invocation-time resolution reconcile the session later.
+            # Invocation middleware may supply runtime values unavailable during
+            # preparation. Strict invocation-time resolution reconciles the session later.
             logger.debug(
                 "Deferring MCP header identity reconciliation for %r until invocation.",
                 self.name,
@@ -4263,14 +4271,16 @@ class MCPStreamableHTTPTool(MCPTool):
 
         When a ``header_provider`` was supplied at construction time, the runtime
         *kwargs* (originating from ``FunctionInvocationContext.kwargs``) are passed
-        to the provider.  The returned headers are attached to every HTTP request
+        to the provider independently of model arguments in generated tool calls.
+        Direct callers supply both headers' inputs and tool arguments through *kwargs*.
+        The returned headers are attached to every HTTP request
         made during this tool call via a request hook on the underlying HTTP client. Fixed
         and dynamic headers form the effective identity. If they differ from a framework-created
         session's identity, the tool reconnects before sending the call; caller-supplied sessions
         reject the change.
 
-        The provider does not consume the kwargs: the same mapping continues to
-        :meth:`MCPTool.call_tool` and its outbound argument filter.
+        The provider does not consume runtime kwargs: their separately merged tool
+        argument mapping continues to :meth:`MCPTool.call_tool` and its outbound filter.
 
         Args:
             tool_name: The name of the tool to call.
@@ -4282,9 +4292,11 @@ class MCPStreamableHTTPTool(MCPTool):
             A list of Content items representing the tool output.
         """
         if self._header_provider is not None:
-            headers = self._effective_headers(kwargs)
+            runtime_context = _mcp_tool_runtime_context.get()
+            header_kwargs = runtime_context[1] if runtime_context is not None and runtime_context[0] is self else kwargs
+            headers = self._effective_headers(header_kwargs)
             async with self._call_headers_lock:
-                await self._ensure_session_identity(headers, kwargs)
+                await self._ensure_session_identity(headers, header_kwargs)
                 token = _mcp_call_headers.set(headers)
                 self._active_call_headers = headers
                 try:

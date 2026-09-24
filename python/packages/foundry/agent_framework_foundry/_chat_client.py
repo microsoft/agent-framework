@@ -674,6 +674,7 @@ class RawFoundryChatClient(
             description: A description of what the MCP server provides.
             approval_mode: Tool approval mode ("always_require", "never_require", or dict).
             allowed_tools: List of allowed tool names from this MCP server.
+                None omits the filter; an empty list is sent unchanged.
             headers: HTTP headers to include in requests to the MCP server.
             project_connection_id: Foundry connection ID for managed MCP connections.
             **kwargs: Additional arguments passed to the SDK MCPTool constructor.
@@ -699,7 +700,7 @@ class RawFoundryChatClient(
             mcp["project_connection_id"] = project_connection_id
         elif headers:
             mcp["headers"] = headers
-        if allowed_tools:
+        if allowed_tools is not None:
             mcp["allowed_tools"] = allowed_tools
         if approval_mode:
             if isinstance(approval_mode, str):
