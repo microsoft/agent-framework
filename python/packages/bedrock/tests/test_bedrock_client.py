@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections import deque
 from collections.abc import MutableMapping
 from typing import Any, cast
@@ -416,7 +417,10 @@ def test_prepare_bedrock_messages_skips_unsupported_content_and_unmatched_tool_r
     assert conversation == [{"role": "user", "content": [{"text": "hello"}]}]
 
 
-@pytest.mark.parametrize(("media_type", "image_format"), [("image/png", "png"), ("image/jpeg", "jpeg")])
+@pytest.mark.parametrize(
+    ("media_type", "image_format"),
+    [("image/png", "png"), ("image/jpeg", "jpeg"), ("image/jpg", "jpeg"), ("IMAGE/PNG", "png")],
+)
 async def test_get_response_sends_user_images_as_image_blocks(media_type: str, image_format: str) -> None:
     """Image data in a user message should be sent as a Converse image block."""
     stub = _StubBedrockRuntime()
@@ -456,6 +460,24 @@ def test_prepare_bedrock_messages_skips_images_outside_user_messages() -> None:
     _, conversation = client._prepare_bedrock_messages(messages)
 
     assert conversation[1] == {"role": "assistant", "content": [{"text": "Here it is."}]}
+
+
+@pytest.mark.parametrize("media_type", ["image/bmp", "image/svg+xml"])
+def test_prepare_bedrock_messages_skips_unsupported_image_formats(
+    media_type: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Images in formats Converse rejects should be skipped with a warning so the rest of the request still works."""
+    client = _make_client()
+    message = Message(
+        role="user",
+        contents=[Content.from_text(text="Describe this."), Content.from_data(data=b"x", media_type=media_type)],
+    )
+
+    with caplog.at_level(logging.WARNING, logger="agent_framework.bedrock"):
+        _, conversation = client._prepare_bedrock_messages([message])
+
+    assert conversation == [{"role": "user", "content": [{"text": "Describe this."}]}]
+    assert media_type in caplog.text
 
 
 def test_align_tool_results_handles_pending_edge_cases() -> None:

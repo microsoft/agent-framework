@@ -552,9 +552,12 @@ class BedrockChatClient(
             case "text":
                 return {"text": content.text}
             case "data" if content.has_top_level_media_type("image"):
-                return {
-                    "image": {"format": content.media_type.split("/")[1], "source": {"bytes": _get_data_bytes(content)}}
-                }
+                image_format = content.media_type.partition("/")[2].lower()
+                image_format = "jpeg" if image_format == "jpg" else image_format
+                if image_format not in ("gif", "jpeg", "png", "webp"):
+                    logger.warning("Skipping %s image: Bedrock accepts gif, jpeg, png or webp.", content.media_type)
+                    return None
+                return {"image": {"format": image_format, "source": {"bytes": _get_data_bytes(content)}}}
             case "function_call":
                 arguments = content.parse_arguments() or {}
                 return {
