@@ -36,7 +36,7 @@ To host agents and workflows with Durable Task or Azure Functions, continue with
 
 Introductory tutorials in this directory demonstrate core agent mechanics with minimal wiring. When building agents for production that handle untrusted external content (emails, user attachments, web browsing, third-party APIs) or execute privileged actions, incorporate security controls against indirect prompt injection and data exfiltration.
 
-See [`samples/02-agents/security/`](../02-agents/security/) for production-ready security patterns:
+For the official security guidance, see [Agent Safety](https://learn.microsoft.com/en-us/agent-framework/concepts/agents/safety) on Microsoft Learn. Then see [`samples/02-agents/security/`](../02-agents/security/) for production-ready security patterns:
 
 1. [`email_security_example.py`](../02-agents/security/email_security_example.py): Demonstrates `SecureAgentConfig`, isolated execution using `quarantined_llm`, and approval gating before invoking sensitive tools.
 2. [`repo_confidentiality_example.py`](../02-agents/security/repo_confidentiality_example.py): Demonstrates tracking data confidentiality to prevent sensitive data leaks.

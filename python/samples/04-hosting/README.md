@@ -36,5 +36,5 @@ Most hosting samples share a small set of prerequisites:
 
 ## Security in Hosted Environments
 
-Hosted agents that accept remote requests or execute tools with external effects should implement defense-in-depth controls. Review [`../02-agents/security/`](../02-agents/security/) for patterns covering `SecureAgentConfig`, policy enforcement middleware, and isolated processing of untrusted content.
+Hosted agents that accept remote requests or execute tools with external effects should implement defense-in-depth controls. Review the [Agent Safety](https://learn.microsoft.com/en-us/agent-framework/concepts/agents/safety) guidance on Microsoft Learn, then [`../02-agents/security/`](../02-agents/security/) for patterns covering `SecureAgentConfig`, policy enforcement middleware, and isolated processing of untrusted content.
 

@@ -20,7 +20,7 @@ Each folder has its own README with setup requirements and file-by-file details.
 
 ## Security & Untrusted Data
 
-When configuring providers with function tools or external data access, review [`../security/`](../security/) for production security controls:
+When configuring providers with function tools or external data access, review the [Agent Safety](https://learn.microsoft.com/en-us/agent-framework/concepts/agents/safety) guidance on Microsoft Learn, then [`../security/`](../security/) for production security controls:
 
 1. [`email_security_example.py`](../security/email_security_example.py): Prompt injection defense with `SecureAgentConfig` and `quarantined_llm`.
 2. [`github_mcp_example.py`](../security/github_mcp_example.py): Securing external MCP tools with `SecureMCPToolProxy`.

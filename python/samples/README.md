@@ -30,7 +30,7 @@ Durable Task and Azure Functions samples have moved to the [Durable Agent Framew
 
 While getting-started tutorials demonstrate core mechanics with minimal boilerplate, real-world agents processing external or untrusted data (emails, web content, user-uploaded files, external APIs) require security controls against indirect prompt injection and data exfiltration.
 
-Review the production security patterns in [`02-agents/security/`](./02-agents/security/):
+For the official security guidance, see [Agent Safety](https://learn.microsoft.com/en-us/agent-framework/concepts/agents/safety) on Microsoft Learn. The production security patterns in [`02-agents/security/`](./02-agents/security/) implement these practices end to end:
 
 1. **Prompt Injection Defense**: [`email_security_example.py`](./02-agents/security/email_security_example.py) shows `SecureAgentConfig`, quarantined processing with `quarantined_llm`, and approval gating for privileged tools.
 2. **Data Confidentiality & Exfiltration Prevention**: [`repo_confidentiality_example.py`](./02-agents/security/repo_confidentiality_example.py) demonstrates information flow tracking and preventing sensitive data exfiltration to public destinations.
