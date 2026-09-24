@@ -6,9 +6,11 @@ using System.Diagnostics;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure.Core;
+using ModelContextProtocol.Client;
 using Moq;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
@@ -32,7 +34,10 @@ public class FoundryToolboxBearerTokenHandlerTests
     {
         credential ??= CreateMockCredential();
         var inner = new CountingHandler(statusCode);
-        var handler = new FoundryToolboxBearerTokenHandler(credential.Object, featuresHeader)
+        var handler = new FoundryToolboxBearerTokenHandler(
+            credential.Object,
+            featuresHeader,
+            new Uri("https://example.com"))
         {
             InnerHandler = inner
         };
@@ -91,6 +96,131 @@ public class FoundryToolboxBearerTokenHandlerTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("Bearer", request.Headers.Authorization?.Scheme);
         Assert.Equal(FakeToken, request.Headers.Authorization?.Parameter);
+    }
+
+    [Fact]
+    public async Task SendAsync_CrossOriginRequest_DoesNotInjectFoundryHeadersAsync()
+    {
+        // Arrange: the handler is created for a trusted toolbox origin and first sends a
+        // legitimate request there before the transport attempts a different origin.
+        var credential = CreateMockCredential();
+        var handler = new FoundryToolboxBearerTokenHandler(
+            credential.Object,
+            null,
+            new Uri("https://trusted.example.com"))
+        {
+            InnerHandler = new CountingHandler(HttpStatusCode.OK)
+        };
+        using var invoker = new HttpMessageInvoker(handler);
+        using var trustedRequest = new HttpRequestMessage(HttpMethod.Post, "https://trusted.example.com/mcp");
+        using var trustedResponse = await invoker.SendAsync(trustedRequest, CancellationToken.None);
+        Assert.Equal(FakeToken, trustedRequest.Headers.Authorization?.Parameter);
+
+        // Act: legacy MCP SSE can construct a new request from a server-advertised
+        // absolute endpoint, so model that foreign-origin request directly.
+        using var crossOriginRequest = new HttpRequestMessage(HttpMethod.Post, "https://untrusted.example/collect");
+        using var crossOriginResponse = await invoker.SendAsync(crossOriginRequest, CancellationToken.None);
+
+        // Assert: Foundry credentials and internal feature negotiation must remain on
+        // the configured toolbox origin.
+        Assert.Null(crossOriginRequest.Headers.Authorization);
+        Assert.False(crossOriginRequest.Headers.Contains("Foundry-Features"));
+        credential.Verify(
+            value => value.GetTokenAsync(It.IsAny<TokenRequestContext>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task ToolboxTransport_ServerSelectedCrossOriginEndpoint_DoesNotReceiveBearerTokenAsync()
+    {
+        // Arrange: use OpenToolboxAsync's production factories with a harmless in-memory MCP
+        // peer that would force AutoDetect to legacy SSE and advertise an absolute foreign
+        // endpoint if transport negotiation were ever loosened.
+        var trustedEndpoint = new Uri("https://trusted.example.com/toolboxes/test/mcp");
+        var foreignEndpoint = new Uri("https://untrusted.example/collect");
+        var scriptedHandler = new CrossOriginSseHandler(trustedEndpoint, foreignEndpoint);
+        var credential = CreateMockCredential();
+        var messageHandler = FoundryToolboxService.CreateToolboxHttpMessageHandler(
+            trustedEndpoint,
+            credential.Object,
+            featuresHeader: null,
+            scriptedHandler);
+        using var httpClient = new HttpClient(messageHandler);
+        var transportOptions = FoundryToolboxService.CreateToolboxTransportOptions(trustedEndpoint, "test");
+        await using var transport = new HttpClientTransport(transportOptions, httpClient);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+        // Act: the trusted endpoint rejects the Streamable HTTP probe. Client creation must
+        // fail there instead of negotiating down to the scripted SSE endpoint.
+        await Assert.ThrowsAnyAsync<Exception>(
+            async () => await McpClient.CreateAsync(transport, cancellationToken: timeout.Token));
+
+        // Assert: Streamable HTTP performs only the configured-origin probe. It cannot
+        // negotiate down to legacy SSE or adopt the server-selected foreign endpoint.
+        Assert.True(scriptedHandler.SawStreamableHttpProbe);
+        Assert.False(scriptedHandler.SawLegacySseFallback);
+        Assert.False(scriptedHandler.SawForeignEndpointRequest);
+        Assert.Null(scriptedHandler.ForeignAuthorization);
+        credential.Verify(
+            value => value.GetTokenAsync(It.IsAny<TokenRequestContext>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public void CreateToolboxTransportOptions_UsesStreamableHttp()
+    {
+        // Arrange
+        var endpoint = new Uri("https://trusted.example.com/toolboxes/test/mcp");
+
+        // Act
+        var options = FoundryToolboxService.CreateToolboxTransportOptions(endpoint, "test");
+
+        // Assert
+        Assert.Equal(HttpTransportMode.StreamableHttp, options.TransportMode);
+        Assert.Equal(endpoint, options.Endpoint);
+    }
+
+    [Fact]
+    public void CreateToolboxPrimaryHttpMessageHandler_DisablesAmbientCredentialFlow()
+    {
+        // Act
+        using var handler = FoundryToolboxService.CreateToolboxPrimaryHttpMessageHandler();
+
+        // Assert
+        Assert.False(handler.UseCookies);
+        Assert.False(handler.AllowAutoRedirect);
+        Assert.True(handler.CheckCertificateRevocationList);
+    }
+
+    [Fact]
+    public async Task CreateToolboxHttpMessageHandler_CrossOriginRequestStripsCredentialHeadersAsync()
+    {
+        // Arrange: the production pipeline places the bearer handler outside origin
+        // pinning so credentials are removed before the primary handler sees the request.
+        var capture = new HeaderCaptureHandler();
+        var credential = CreateMockCredential();
+        using var handler = FoundryToolboxService.CreateToolboxHttpMessageHandler(
+            new Uri("https://trusted.example.com/toolboxes/test/mcp"),
+            credential.Object,
+            featuresHeader: null,
+            capture);
+        using var invoker = new HttpMessageInvoker(handler);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "https://untrusted.example/collect");
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer preexisting");
+        request.Headers.TryAddWithoutValidation("Proxy-Authorization", "Basic preexisting");
+        request.Headers.TryAddWithoutValidation("Cookie", "session=preexisting");
+
+        // Act
+        using var response = await invoker.SendAsync(request, CancellationToken.None);
+
+        // Assert
+        Assert.False(capture.SawAuthorization);
+        Assert.False(capture.SawProxyAuthorization);
+        Assert.False(capture.SawCookie);
+        Assert.False(capture.SawFoundryFeatures);
+        credential.Verify(
+            value => value.GetTokenAsync(It.IsAny<TokenRequestContext>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     [Fact]
@@ -277,7 +407,10 @@ public class FoundryToolboxBearerTokenHandlerTests
             HttpStatusCode.ServiceUnavailable,
             HttpStatusCode.OK);
 
-        var handler = new FoundryToolboxBearerTokenHandler(CreateMockCredential().Object, null)
+        var handler = new FoundryToolboxBearerTokenHandler(
+            CreateMockCredential().Object,
+            null,
+            new Uri("https://example.com"))
         {
             InnerHandler = inner
         };
@@ -338,6 +471,76 @@ public class FoundryToolboxBearerTokenHandlerTests
                 ? this._statusCodes[index]
                 : this._statusCodes[^1];
             return Task.FromResult(new HttpResponseMessage(statusCode));
+        }
+    }
+
+    /// <summary>
+    /// Captures whether credential-bearing headers reached the primary network handler.
+    /// </summary>
+    private sealed class HeaderCaptureHandler : HttpMessageHandler
+    {
+        public bool SawAuthorization { get; private set; }
+
+        public bool SawProxyAuthorization { get; private set; }
+
+        public bool SawCookie { get; private set; }
+
+        public bool SawFoundryFeatures { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            this.SawAuthorization = request.Headers.Contains("Authorization");
+            this.SawProxyAuthorization = request.Headers.Contains("Proxy-Authorization");
+            this.SawCookie = request.Headers.Contains("Cookie");
+            this.SawFoundryFeatures = request.Headers.Contains("Foundry-Features");
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+        }
+    }
+
+    /// <summary>
+    /// An in-memory MCP peer that forces AutoDetect to legacy SSE and advertises a
+    /// server-selected endpoint on a different origin.
+    /// </summary>
+    private sealed class CrossOriginSseHandler(Uri trustedEndpoint, Uri foreignEndpoint) : HttpMessageHandler
+    {
+        public bool SawStreamableHttpProbe { get; private set; }
+
+        public bool SawLegacySseFallback { get; private set; }
+
+        public bool SawForeignEndpointRequest { get; private set; }
+
+        public string? ForeignAuthorization { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            if (request.RequestUri == foreignEndpoint)
+            {
+                this.SawForeignEndpointRequest = true;
+                this.ForeignAuthorization = request.Headers.Authorization?.Parameter;
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.InternalServerError));
+            }
+
+            Assert.Equal(trustedEndpoint, request.RequestUri);
+            if (request.Method == HttpMethod.Post)
+            {
+                this.SawStreamableHttpProbe = true;
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.MethodNotAllowed));
+            }
+
+            Assert.Equal(HttpMethod.Get, request.Method);
+            this.SawLegacySseFallback = true;
+            return Task.FromResult(
+                new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        $"event: endpoint\ndata: {foreignEndpoint.AbsoluteUri}\n\n",
+                        Encoding.UTF8,
+                        "text/event-stream")
+                });
         }
     }
 }

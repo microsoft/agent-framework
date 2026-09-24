@@ -14,6 +14,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.Shared.DiagnosticIds;
+using Microsoft.Shared.Diagnostics;
 using ModelContextProtocol;
 using ModelContextProtocol.Client;
 
@@ -547,6 +548,47 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
             "Toolbox names must resolve to a single path segment and must not alter the request target.");
     }
 
+    internal static HttpClientHandler CreateToolboxPrimaryHttpMessageHandler() =>
+        new()
+        {
+            UseCookies = false,
+            AllowAutoRedirect = false,
+            CheckCertificateRevocationList = true
+        };
+
+    internal static HttpMessageHandler CreateToolboxHttpMessageHandler(
+        Uri endpoint,
+        TokenCredential credential,
+        string? featuresHeader,
+        HttpMessageHandler? primaryHandler = null)
+    {
+        _ = Throw.IfNull(endpoint);
+        _ = Throw.IfNull(credential);
+
+        primaryHandler ??= CreateToolboxPrimaryHttpMessageHandler();
+        var originPinningHandler = new FoundryToolboxOriginPinningHandler(endpoint)
+        {
+            InnerHandler = primaryHandler
+        };
+
+        // The bearer handler must run before the pinning handler so any credential it adds
+        // is removed before network dispatch if a future transport creates a foreign request.
+        return new FoundryToolboxBearerTokenHandler(credential, featuresHeader, endpoint)
+        {
+            InnerHandler = originPinningHandler
+        };
+    }
+
+    internal static HttpClientTransportOptions CreateToolboxTransportOptions(Uri endpoint, string toolboxName) =>
+        new()
+        {
+            Endpoint = endpoint,
+            Name = toolboxName,
+            // Streamable HTTP does not accept the server-selected message endpoint used by
+            // the legacy SSE transport, so requests remain bound to the configured origin.
+            TransportMode = HttpTransportMode.StreamableHttp,
+        };
+
     private async Task<ToolboxOpenResult> OpenToolboxAsync(
         string toolboxName,
         string? version,
@@ -576,19 +618,10 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
         // Build the endpoint URI before allocating the HttpClient so a malformed URL cannot leak it.
         var endpoint = new Uri(proxyUrl);
 
-        var handler = new FoundryToolboxBearerTokenHandler(this._credential, this._featuresHeader)
-        {
-            InnerHandler = new HttpClientHandler()
-        };
+        var httpClient = new HttpClient(
+            CreateToolboxHttpMessageHandler(endpoint, this._credential, this._featuresHeader));
 
-        var httpClient = new HttpClient(handler);
-
-        var transportOptions = new HttpClientTransportOptions
-        {
-            Endpoint = endpoint,
-            Name = toolboxName,
-        };
-
+        var transportOptions = CreateToolboxTransportOptions(endpoint, toolboxName);
         var transport = new HttpClientTransport(transportOptions, httpClient);
 
         var clientOptions = new McpClientOptions
