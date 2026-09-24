@@ -512,6 +512,13 @@ def is_type_compatible(source_type: type | UnionType | Any, target_type: type | 
                 return False
         return source_type == target_type
 
+    # A bare container class on one side (list[str] -> list, or list -> list[str]):
+    # the unparameterized side accepts any element type, so compare the containers.
+    if target_origin is None and isinstance(target_type, type) and isinstance(source_origin, type):
+        return issubclass(source_origin, target_type)
+    if source_origin is None and isinstance(source_type, type) and isinstance(target_origin, type):
+        return issubclass(source_type, target_origin)
+
     # Case 5: different container types are not compatible
     if source_origin != target_origin:
         return False
