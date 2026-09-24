@@ -97,7 +97,7 @@ jobs:
           repository: ${{ github.repository }}
           contents-permission: read
           issues-permission: write
-          pull-requests-permission: read
+          pull-requests-permission: write
 
       - name: Authorize the frozen command requester
         id: team
@@ -182,6 +182,7 @@ jobs:
 
       - name: Acknowledge accepted repair command
         if: ${{ steps.intake.outputs.mode == 'repair' }}
+        continue-on-error: true
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           github-token: ${{ steps.auth.outputs.token }}
@@ -307,7 +308,7 @@ jobs:
           repository: ${{ github.repository }}
           contents-permission: read
           issues-permission: write
-          pull-requests-permission: read
+          pull-requests-permission: write
       - name: Report exact candidate and approval instructions
         if: ${{ steps.run.outputs.status == 'ready' }}
         env:
@@ -469,7 +470,7 @@ jobs:
           repository: ${{ github.repository }}
           contents-permission: write
           issues-permission: write
-          pull-requests-permission: read
+          pull-requests-permission: write
       - name: Publish only the revalidated candidate
         env:
           GH_TOKEN: ${{ steps.write-auth.outputs.token }}
