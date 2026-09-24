@@ -20,10 +20,10 @@ internal static class ClientHeaderValidation
             throw new ArgumentException("Header name must not be empty or whitespace.", nameof(name));
         }
 
-        // Reject line breaks before using the name in exception text or a transport API.
-        if (ContainsNewLine(name))
+        // Reject transport delimiters before using the name in exception text or a transport API.
+        if (ContainsProhibitedCharacter(name))
         {
-            throw new ArgumentException("Header name must not contain carriage-return or line-feed characters.", nameof(name));
+            throw new ArgumentException("Header name must not contain NUL, carriage-return, or line-feed characters.", nameof(name));
         }
 
         if (value.Length == 0)
@@ -31,9 +31,9 @@ internal static class ClientHeaderValidation
             throw new ArgumentException("Header value must not be empty.", nameof(value));
         }
 
-        if (ContainsNewLine(value))
+        if (ContainsProhibitedCharacter(value))
         {
-            throw new ArgumentException("Header value must not contain carriage-return or line-feed characters.", nameof(value));
+            throw new ArgumentException("Header value must not contain NUL, carriage-return, or line-feed characters.", nameof(value));
         }
 
         if (!name.StartsWith(ClientHeaderPrefix, StringComparison.OrdinalIgnoreCase))
@@ -44,6 +44,6 @@ internal static class ClientHeaderValidation
         }
     }
 
-    private static bool ContainsNewLine(string value) =>
-        value.IndexOf('\r') >= 0 || value.IndexOf('\n') >= 0;
+    private static bool ContainsProhibitedCharacter(string value) =>
+        value.IndexOf('\0') >= 0 || value.IndexOf('\r') >= 0 || value.IndexOf('\n') >= 0;
 }

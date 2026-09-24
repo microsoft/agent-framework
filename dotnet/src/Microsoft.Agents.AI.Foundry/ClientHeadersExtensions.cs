@@ -45,7 +45,7 @@ public static class ClientHeadersExtensions
     /// <param name="value">The header value. Must be non-empty.</param>
     /// <returns><paramref name="options"/> for fluent chaining.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="options"/>, <paramref name="name"/>, or <paramref name="value"/> is <see langword="null"/>.</exception>
-    /// <exception cref="ArgumentException"><paramref name="name"/> does not start with <c>x-client-</c>, is empty/whitespace, or contains a line break; or <paramref name="value"/> is empty or contains a line break.</exception>
+    /// <exception cref="ArgumentException"><paramref name="name"/> does not start with <c>x-client-</c>, is empty/whitespace, or contains NUL or a line break; or <paramref name="value"/> is empty or contains NUL or a line break.</exception>
     /// <exception cref="InvalidOperationException">The carrier slot on <see cref="ChatOptions.AdditionalProperties"/> is occupied by a value of a foreign type.</exception>
     public static ChatOptions WithClientHeader(this ChatOptions options, string name, string value)
     {
@@ -65,7 +65,7 @@ public static class ClientHeadersExtensions
     /// <param name="headers">The headers to add. Each name must start with <c>x-client-</c>.</param>
     /// <returns><paramref name="options"/> for fluent chaining.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="options"/> or <paramref name="headers"/> is <see langword="null"/>, or any element of <paramref name="headers"/> has a <see langword="null"/> name or value.</exception>
-    /// <exception cref="ArgumentException">Any header name does not start with <c>x-client-</c>, is empty/whitespace, or contains a line break; or any value is empty or contains a line break.</exception>
+    /// <exception cref="ArgumentException">Any header name does not start with <c>x-client-</c>, is empty/whitespace, or contains NUL or a line break; or any value is empty or contains NUL or a line break.</exception>
     /// <exception cref="InvalidOperationException">The carrier slot on <see cref="ChatOptions.AdditionalProperties"/> is occupied by a value of a foreign type.</exception>
     public static ChatOptions WithClientHeaders(this ChatOptions options, IEnumerable<KeyValuePair<string, string>> headers)
     {

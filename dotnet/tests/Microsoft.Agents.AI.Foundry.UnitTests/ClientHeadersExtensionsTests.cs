@@ -101,30 +101,32 @@ public sealed class ClientHeadersExtensionsTests
     }
 
     [Theory]
+    [InlineData("\0")]
     [InlineData("\r")]
     [InlineData("\n")]
-    public void WithClientHeader_RejectsNewLineInName(string newLine)
+    public void WithClientHeader_RejectsProhibitedCharacterInName(string prohibitedCharacter)
     {
         // Arrange
         var options = new ChatOptions();
 
         // Act / Assert
         var exception = Assert.Throws<ArgumentException>(
-            () => options.WithClientHeader($"x-client-safe{newLine}suffix", "value"));
+            () => options.WithClientHeader($"x-client-safe{prohibitedCharacter}suffix", "value"));
         Assert.Equal("name", exception.ParamName);
     }
 
     [Theory]
+    [InlineData("\0")]
     [InlineData("\r")]
     [InlineData("\n")]
-    public void WithClientHeader_RejectsNewLineInValue(string newLine)
+    public void WithClientHeader_RejectsProhibitedCharacterInValue(string prohibitedCharacter)
     {
         // Arrange
         var options = new ChatOptions();
 
         // Act / Assert
         var exception = Assert.Throws<ArgumentException>(
-            () => options.WithClientHeader("x-client-safe", $"before{newLine}after"));
+            () => options.WithClientHeader("x-client-safe", $"before{prohibitedCharacter}after"));
         Assert.Equal("value", exception.ParamName);
     }
 
@@ -150,16 +152,17 @@ public sealed class ClientHeadersExtensionsTests
     }
 
     [Theory]
+    [InlineData("\0")]
     [InlineData("\r")]
     [InlineData("\n")]
-    public void WithClientHeaders_AllOrNothing_OnNewLineValue(string newLine)
+    public void WithClientHeaders_AllOrNothing_OnProhibitedValueCharacter(string prohibitedCharacter)
     {
         // Arrange
         var options = new ChatOptions();
         var headers = new[]
         {
             new KeyValuePair<string, string>("x-client-first", "first"),
-            new KeyValuePair<string, string>("x-client-invalid", $"before{newLine}after"),
+            new KeyValuePair<string, string>("x-client-invalid", $"before{prohibitedCharacter}after"),
         };
 
         // Act / Assert
@@ -351,9 +354,10 @@ public sealed class ClientHeadersExtensionsTests
     }
 
     [Theory]
+    [InlineData("\0")]
     [InlineData("\r")]
     [InlineData("\n")]
-    public async Task ClientHeadersPolicy_RejectsNewLineInHeaderNameAsync(string newLine)
+    public async Task ClientHeadersPolicy_RejectsProhibitedHeaderNameCharacterWithoutMutatingRequestAsync(string prohibitedCharacter)
     {
         // Arrange
         using var handler = new RecordingHandler();
@@ -368,7 +372,8 @@ public sealed class ClientHeadersExtensionsTests
 
         ClientHeadersScope.Current = new Dictionary<string, string>
         {
-            [$"x-client-safe{newLine}suffix"] = "value",
+            ["x-client-first"] = "first",
+            [$"x-client-safe{prohibitedCharacter}suffix"] = "value",
         };
 
         try
@@ -382,6 +387,7 @@ public sealed class ClientHeadersExtensionsTests
             var exception = await Assert.ThrowsAsync<ArgumentException>(
                 async () => await pipeline.SendAsync(msg));
             Assert.Equal("name", exception.ParamName);
+            Assert.False(msg.Request.Headers.TryGetValue("x-client-first", out _));
             Assert.Empty(handler.Requests);
         }
         finally
@@ -391,9 +397,10 @@ public sealed class ClientHeadersExtensionsTests
     }
 
     [Theory]
+    [InlineData("\0")]
     [InlineData("\r")]
     [InlineData("\n")]
-    public async Task ClientHeadersPolicy_RejectsNewLineInHeaderValueAsync(string newLine)
+    public async Task ClientHeadersPolicy_RejectsProhibitedHeaderValueCharacterWithoutMutatingRequestAsync(string prohibitedCharacter)
     {
         // Arrange
         using var handler = new RecordingHandler();
@@ -408,7 +415,8 @@ public sealed class ClientHeadersExtensionsTests
 
         ClientHeadersScope.Current = new Dictionary<string, string>
         {
-            ["x-client-safe"] = $"before{newLine}after",
+            ["x-client-first"] = "first",
+            ["x-client-invalid"] = $"before{prohibitedCharacter}after",
         };
 
         try
@@ -422,6 +430,7 @@ public sealed class ClientHeadersExtensionsTests
             var exception = await Assert.ThrowsAsync<ArgumentException>(
                 async () => await pipeline.SendAsync(msg));
             Assert.Equal("value", exception.ParamName);
+            Assert.False(msg.Request.Headers.TryGetValue("x-client-first", out _));
             Assert.Empty(handler.Requests);
         }
         finally
