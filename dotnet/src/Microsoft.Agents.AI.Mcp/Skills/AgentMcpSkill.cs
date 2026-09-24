@@ -130,12 +130,14 @@ internal sealed partial class AgentMcpSkill : AgentSkill
 
     private static bool IsResourceNameSafe(string normalized)
     {
-        // Validate only the path before a literal "?"/"#", fully decoded; e.g. "a%3f/%2e%2e/x" stays one path, "a/b.md?q=/../x" ignores the query.
-        string? path = FullyUnescape(normalized.Split(['?', '#'], 2)[0]);
-        string? decodedName = FullyUnescape(normalized);
+        // Split at the first literal "?"/"#" before decoding, so "a%3f/%2e%2e/x" stays one path while
+        // "a/b.md?q=/../x" leaves "/../x" in the query; then decode each part once.
+        string[] parts = normalized.Split(['?', '#'], 2);
+        string? path = FullyUnescape(parts[0]);
+        string? suffix = FullyUnescape(parts.Length > 1 ? parts[1] : string.Empty);
 
         // Excessive encoding depth, e.g. a name requiring more than 32 decoding passes.
-        return path is not null && decodedName is not null
+        return path is not null && suffix is not null
             // Absolute path, e.g. "/etc/passwd" or "%2fetc/passwd".
             && !path.StartsWith('/')
             // Embedded URI, e.g. "http://example.com/other" or "%68ttp%3a%2f%2fexample.com".
@@ -143,7 +145,7 @@ internal sealed partial class AgentMcpSkill : AgentSkill
             // Parent traversal, e.g. "../x", "%2e%2e/x", "%252e%252e/x", "a%3f/../../x", or ".. " (URI parsers can trim trailing spaces).
             && !path.Split(['/', '?', '#']).Any(segment => segment.TrimEnd(' ') == "..")
             // Control characters anywhere, e.g. "a/\0/b.md", ".\t./x", or ".%09./x".
-            && !decodedName.Any(char.IsControl);
+            && !(path + suffix).Any(char.IsControl);
     }
 
     /// <summary>

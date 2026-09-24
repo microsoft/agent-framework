@@ -185,6 +185,9 @@ public sealed class AgentMcpSkillsSourceTests
     [InlineData("references/guide.md?value=%00")]
     [InlineData("references/guide.md#value=%2509")]
     [InlineData("references/guide.md?value=%C2%85")]
+    [InlineData("references/%2500guide.md?version=1")]
+    [InlineData("references/guide.md?version=1#value=%2509")]
+    [InlineData("references/guide.md#section?value=%2509")]
     public async Task GetResourceAsync_PathTraversalName_ReturnsNullAsync(string name)
     {
         foreach (string root in new[]
@@ -249,6 +252,10 @@ public sealed class AgentMcpSkillsSourceTests
             "references/guide.md#example=/../../other.md",
             "references/guide.md?example=%2e%2e%2f%2e%2e%2fother.md",
             "references/guide.md?src=https://example.com/other",
+            "references/guide%2520one.md?value=%2520#section%2520",
+            "references/guide%253fname.md#section?value=%2520",
+            "references/guide.md?",
+            "references/guide.md#",
             "references/guide.md "
         })
         {

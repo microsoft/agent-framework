@@ -9,6 +9,7 @@ import hashlib
 import io
 import json
 import zipfile
+from collections.abc import Iterator
 from datetime import timedelta
 from unittest.mock import AsyncMock, patch
 from urllib.parse import unquote
@@ -24,7 +25,7 @@ from mcp.types import (
 from pydantic import AnyUrl
 
 from agent_framework import CachingSkillsSource, MCPSkill, MCPSkillResource, MCPSkillsSource, SkillsSourceContext
-from agent_framework._skills import _parse_mcp_skill_index
+from agent_framework._skills import _fully_unquote, _parse_mcp_skill_index
 
 from .conftest import MockAgent
 
@@ -98,6 +99,43 @@ def _make_client(**read_resource_responses: ReadResourceResult) -> AsyncMock:
 
     client.read_resource = AsyncMock(side_effect=_read_resource)
     return client
+
+
+@pytest.fixture(autouse=True)
+def _clear_resource_name_decode_cache() -> Iterator[None]:
+    _fully_unquote.cache_clear()
+    yield
+    _fully_unquote.cache_clear()
+
+
+def _encode(depth: int) -> str:
+    """Return ``"A"`` percent-encoded *depth* times, e.g. ``%2541`` for depth 2."""
+    return "%" + "25" * (depth - 1) + "41"
+
+
+# ---------------------------------------------------------------------------
+# _fully_unquote tests
+# ---------------------------------------------------------------------------
+
+
+class TestFullyUnquote:
+    """Tests for recursive, cached resource-name decoding."""
+
+    def test_reuses_cached_layers(self) -> None:
+        assert _fully_unquote("guide%2520one.md") == "guide one.md"
+
+        with patch("agent_framework._skills.unquote", wraps=unquote) as decode:
+            # A repeated name is served entirely from the cache.
+            assert _fully_unquote("guide%2520one.md") == "guide one.md"
+            decode.assert_not_called()
+            # A different name reaching a cached layer ("guide%20one.md") decodes only its first layer.
+            assert _fully_unquote("guide%25%32%30one.md") == "guide one.md"
+            decode.assert_called_once_with("guide%25%32%30one.md")
+
+    @pytest.mark.parametrize("depths", [(32, 33), (33, 32)])
+    def test_cached_layers_preserve_depth_limit(self, depths: tuple[int, int]) -> None:
+        for depth in depths:
+            assert _fully_unquote(_encode(depth)) == ("A" if depth <= 32 else None)
 
 
 # ---------------------------------------------------------------------------
@@ -334,6 +372,9 @@ class TestMCPSkill:
             "references/guide.md?value=%00",
             "references/guide.md#value=%2509",
             "references/guide.md?value=%C2%85",
+            "references/%2500guide.md?version=1",
+            "references/guide.md?version=1#value=%2509",
+            "references/guide.md#section?value=%2509",
         ],
     )
     @pytest.mark.parametrize(
@@ -379,6 +420,10 @@ class TestMCPSkill:
             "references/guide.md#example=/../../other.md",
             "references/guide.md?example=%2e%2e%2f%2e%2e%2fother.md",
             "references/guide.md?src=https://example.com/other",
+            "references/guide%2520one.md?value=%2520#section%2520",
+            "references/guide%253fname.md#section?value=%2520",
+            "references/guide.md?",
+            "references/guide.md#",
             "references/guide.md ",
         ],
     )
@@ -420,12 +465,13 @@ class TestMCPSkill:
         client.read_resource.return_value = _make_text_result("safe content")
         fm = SkillFrontmatter(name="unit-converter", description="Convert between common units.")
         skill = MCPSkill(frontmatter=fm, skill_md_uri=root + "SKILL.md", client=client)
-        name = template.format("%" + "25" * (depth - 1) + "41")
+        name = template.format(_encode(depth))
 
         with patch("agent_framework._skills.unquote", wraps=unquote) as decode:
             resource = await skill.get_resource(name)
 
-        assert decode.call_count <= 66
+        # One pass decodes the unencoded part; the encoded part takes depth + 1 passes, capped at 33.
+        assert decode.call_count == min(depth + 1, 33) + 1
         if depth <= 32 and not name.startswith("../"):
             assert resource is not None
             assert resource.name == name
