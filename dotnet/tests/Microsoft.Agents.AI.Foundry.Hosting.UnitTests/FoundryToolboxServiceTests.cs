@@ -15,6 +15,24 @@ namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 public class FoundryToolboxServiceTests
 {
     [Fact]
+    public void Constructor_InvalidAllowedOAuthConsentOrigin_Throws()
+    {
+        // Arrange
+        var options = new FoundryToolboxOptions
+        {
+            AllowedOAuthConsentOrigins = ["https://auth.example.com/path"],
+        };
+
+        // Act
+        void CreateService() => _ = new FoundryToolboxService(
+            Options.Create(options),
+            Mock.Of<TokenCredential>());
+
+        // Assert
+        Assert.Throws<ArgumentException>(CreateService);
+    }
+
+    [Fact]
     public async Task GetToolboxToolsAsync_StrictMode_ThrowsForUnknownToolboxAsync()
     {
         var options = new FoundryToolboxOptions { StrictMode = true };

@@ -61,6 +61,12 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
     private string _agentVersion = "1.0.0";
 
     /// <summary>
+    /// Gets the consent link policy built from <see cref="FoundryToolboxOptions.AllowedOAuthConsentOrigins"/>.
+    /// The response handler applies it before surfacing any consent link from these toolboxes.
+    /// </summary>
+    internal OAuthConsentLinkPolicy ConsentLinkPolicy { get; }
+
+    /// <summary>
     /// Gets the cached list of <see cref="AITool"/> instances discovered from all
     /// pre-registered toolboxes. Always non-null after startup.
     /// </summary>
@@ -117,6 +123,7 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
         this._options = options.Value;
         this._credential = credential;
         this._logger = logger ?? NullLogger<FoundryToolboxService>.Instance;
+        this.ConsentLinkPolicy = new OAuthConsentLinkPolicy(this._options.AllowedOAuthConsentOrigins);
     }
 
     /// <summary>

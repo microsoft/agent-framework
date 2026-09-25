@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Azure.AI.AgentServer.Responses;
@@ -43,5 +44,69 @@ public class OAuthConsentEmissionTests
 
         var doneItem = Assert.IsType<OAuthConsentRequestOutputItem>(done.Item);
         Assert.Equal(addedItem.Id, doneItem.Id);
+    }
+
+    [Fact]
+    public void EmitOAuthConsentRequest_ConfiguredOriginAllowlist_AllowsMatchingOrigin()
+    {
+        // Arrange
+        const string ConsentUrl = "https://auth.example.com/authorize?state=1";
+        var stream = CreateTestStream();
+        var policy = new OAuthConsentLinkPolicy(["https://auth.example.com"]);
+
+        // Act
+        List<ResponseStreamEvent> events =
+            AgentFrameworkResponseHandler.EmitOAuthConsentRequest(
+                stream,
+                "outlook_mail",
+                ConsentUrl,
+                policy).ToList();
+
+        // Assert
+        Assert.Equal(2, events.Count);
+    }
+
+    [Fact]
+    public void EmitOAuthConsentRequest_ConfiguredOriginAllowlist_RejectsOtherOrigin()
+    {
+        // Arrange
+        var stream = CreateTestStream();
+        var policy = new OAuthConsentLinkPolicy(["https://auth.example.com"]);
+
+        // Act
+        void Emit()
+        {
+            var events = AgentFrameworkResponseHandler.EmitOAuthConsentRequest(
+                stream,
+                "outlook_mail",
+                "https://other.example.com/authorize",
+                policy).ToList();
+            Assert.Empty(events);
+        }
+
+        // Assert
+        Assert.Throws<InvalidOperationException>(Emit);
+    }
+
+    [Theory]
+    [InlineData("http://external.example/authorize")]
+    [InlineData("javascript:alert(1)")]
+    public void EmitOAuthConsentRequest_NullPolicy_StillRejectsUnsafeLink(string consentUrl)
+    {
+        // Arrange: a null policy falls back to the safe-HTTPS policy instead of skipping validation.
+        var stream = CreateTestStream();
+
+        // Act
+        void Emit()
+        {
+            var events = AgentFrameworkResponseHandler.EmitOAuthConsentRequest(
+                stream,
+                "outlook_mail",
+                consentUrl).ToList();
+            Assert.Empty(events);
+        }
+
+        // Assert
+        Assert.Throws<InvalidOperationException>(Emit);
     }
 }

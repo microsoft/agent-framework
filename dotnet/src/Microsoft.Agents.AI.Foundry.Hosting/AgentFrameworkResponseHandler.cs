@@ -37,6 +37,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
 {
     private const string LatestWorkflowCheckpointIdMetadataKey = "_last_checkpoint_id";
     private const string UserPartitionName = "user";
+    private const string ConsentLinkRejectedMessage = "The OAuth consent request was rejected by the consent link policy.";
 
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<AgentFrameworkResponseHandler> _logger;
@@ -304,12 +305,21 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                 .ConfigureAwait(false);
             if (pendingConsents.Count > 0)
             {
+                // A pending consent whose link fails the policy fails the request rather than
+                // surfacing the link. The toolbox stays pending, so a later request retries it.
+                if (!this.AreConsentLinksAllowed(pendingConsents, context.ResponseId))
+                {
+                    yield return stream.EmitFailed(ResponseErrorCode.ServerError, ConsentLinkRejectedMessage);
+                    yield break;
+                }
+
                 foreach (var consent in pendingConsents)
                 {
                     foreach (var consentEvent in EmitOAuthConsentRequest(
                         stream,
                         consent.ToolName,
-                        consent.ConsentUrl))
+                        consent.ConsentUrl,
+                        this._toolboxService.ConsentLinkPolicy))
                     {
                         yield return consentEvent;
                     }
@@ -391,12 +401,19 @@ public class AgentFrameworkResponseHandler : ResponseHandler
             // not recorded globally), so it cannot leak onto a request that did not reference the marker.
             if (markerConsents is { Count: > 0 })
             {
+                if (!this.AreConsentLinksAllowed(markerConsents, context.ResponseId))
+                {
+                    yield return stream.EmitFailed(ResponseErrorCode.ServerError, ConsentLinkRejectedMessage);
+                    yield break;
+                }
+
                 foreach (var consent in markerConsents)
                 {
                     foreach (var consentEvent in EmitOAuthConsentRequest(
                         stream,
                         consent.ToolName,
-                        consent.ConsentUrl))
+                        consent.ConsentUrl,
+                        this._toolboxService.ConsentLinkPolicy))
                     {
                         yield return consentEvent;
                     }
@@ -562,11 +579,21 @@ public class AgentFrameworkResponseHandler : ResponseHandler
 
                 if (consentInfo is not null)
                 {
+                    // The tool wrapper records every -32006 and cancels the loop, so a rejected link
+                    // fails the turn here instead of reaching the model as a tool error.
+                    if (!this.AreConsentLinksAllowed([consentInfo], context.ResponseId))
+                    {
+                        turnFailed = true;
+                        yield return stream.EmitFailed(ResponseErrorCode.ServerError, ConsentLinkRejectedMessage);
+                        yield break;
+                    }
+
                     // Emit oauth_consent_request output item + incomplete for the consent URL.
                     foreach (var consentEvent in EmitOAuthConsentRequest(
                         stream,
                         consentInfo.ToolName,
-                        consentInfo.ConsentUrl))
+                        consentInfo.ConsentUrl,
+                        this._toolboxService?.ConsentLinkPolicy))
                     {
                         yield return consentEvent;
                     }
@@ -782,16 +809,57 @@ public class AgentFrameworkResponseHandler : ResponseHandler
     /// <param name="stream">The response event stream to emit on.</param>
     /// <param name="serverLabel">The tool source / server label that requires consent.</param>
     /// <param name="consentUrl">The OAuth consent URL the user must visit.</param>
+    /// <param name="consentLinkPolicy">
+    /// The consent link policy to enforce. When <see langword="null"/>, <see cref="OAuthConsentLinkPolicy.AnySafeOrigin"/>
+    /// is used, so the link must still be a safe absolute HTTPS URL.
+    /// </param>
     /// <returns>An enumerable of events: <c>output_item.added</c> → <c>output_item.done</c>.</returns>
+    /// <exception cref="InvalidOperationException">The consent link does not satisfy the policy.</exception>
     internal static IEnumerable<ResponseStreamEvent> EmitOAuthConsentRequest(
         ResponseEventStream stream,
         string serverLabel,
-        string consentUrl)
+        string consentUrl,
+        OAuthConsentLinkPolicy? consentLinkPolicy = null)
     {
+        // Callers validate first so they can fail the response cleanly; this is the last line of
+        // defense and never skips validation, even when no policy is supplied.
+        if (!(consentLinkPolicy ?? OAuthConsentLinkPolicy.AnySafeOrigin).IsAllowed(consentUrl))
+        {
+            throw new InvalidOperationException(ConsentLinkRejectedMessage);
+        }
+
         var item = new OAuthConsentRequestOutputItem(NewOAuthConsentItemId(), consentUrl, serverLabel);
         var builder = stream.AddOutputItem<OAuthConsentRequestOutputItem>(item.Id);
         yield return builder.EmitAdded(item);
         yield return builder.EmitDone(item);
+    }
+
+    /// <summary>
+    /// Returns whether every consent link satisfies the toolbox consent link policy. Rejected links are
+    /// logged by tool and toolbox name only; the URL is not logged because it comes from an external
+    /// error payload.
+    /// </summary>
+    private bool AreConsentLinksAllowed(IEnumerable<McpConsentInfo> consents, string responseId)
+    {
+        var policy = this._toolboxService?.ConsentLinkPolicy ?? OAuthConsentLinkPolicy.AnySafeOrigin;
+        foreach (var consent in consents)
+        {
+            if (!policy.IsAllowed(consent.ConsentUrl))
+            {
+                if (this._logger.IsEnabled(LogLevel.Warning))
+                {
+                    this._logger.LogWarning(
+                        "OAuth consent request for tool '{ToolName}' in toolbox '{ToolboxName}' was rejected by the consent link policy for response {ResponseId}.",
+                        consent.ToolName,
+                        consent.ToolboxName,
+                        responseId);
+                }
+
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>

@@ -80,6 +80,7 @@ from agent_framework_foundry_hosting._responses import (
     ConsentError,
     _item_to_message,  # pyright: ignore[reportPrivateUsage]
     _json_safe_to_str,  # pyright: ignore[reportPrivateUsage]
+    _OAuthConsentLinkPolicy,  # pyright: ignore[reportPrivateUsage]
     _output_item_to_message,  # pyright: ignore[reportPrivateUsage]
     _OutputItemTracker,  # pyright: ignore[reportPrivateUsage]
     _SignalledIterator,  # pyright: ignore[reportPrivateUsage]
@@ -5002,6 +5003,58 @@ class TestConsentUrlFromError:
         assert consent_url_from_error(exc) is None
 
 
+class TestOAuthConsentLinkPolicy:
+    @pytest.mark.parametrize(
+        "policy_kwargs",
+        [{}, {"allowed_origins": None}],
+        ids=["omitted", "explicit-none"],
+    )
+    def test_omitted_allowlist_preserves_existing_safe_https_behavior(self, policy_kwargs: dict[str, Any]) -> None:
+        policy = _OAuthConsentLinkPolicy(**policy_kwargs)
+
+        assert policy.is_allowed("https://external.example/authorize")
+        assert not policy.is_allowed("http://external.example/authorize")
+        assert not policy.is_allowed("javascript:alert(1)")
+
+    def test_empty_allowlist_rejects_all_origins(self) -> None:
+        policy = _OAuthConsentLinkPolicy([])
+
+        assert not policy.is_allowed("https://external.example/authorize")
+
+    @pytest.mark.parametrize(
+        "consent_link",
+        [
+            "https://auth.example.com/authorize?state=1",
+            "https://auth.example.com:443/authorize",
+            "https://login.partner.example:8443/consent",
+        ],
+    )
+    def test_configured_allowlist_accepts_matching_origins(self, consent_link: str) -> None:
+        policy = _OAuthConsentLinkPolicy([
+            "https://auth.example.com",
+            "https://login.partner.example:8443",
+        ])
+
+        assert policy.is_allowed(consent_link)
+
+    def test_configured_allowlist_rejects_other_safe_https_origins(self) -> None:
+        policy = _OAuthConsentLinkPolicy(["https://auth.example.com"])
+
+        assert not policy.is_allowed("https://other.example.com/authorize")
+
+    @pytest.mark.parametrize(
+        "origin",
+        [
+            "http://auth.example.com",
+            "https://auth.example.com/path",
+            "https://auth.example.com?tenant=1",
+        ],
+    )
+    def test_invalid_allowlist_origin_raises(self, origin: str) -> None:
+        with pytest.raises(ValueError, match="origin"):
+            _OAuthConsentLinkPolicy([origin])
+
+
 class TestAgentLifecycle:
     async def test_factory_agent_is_entered_and_exited_for_each_request(self) -> None:
         agents: list[MagicMock] = []
@@ -5079,6 +5132,49 @@ class TestAgentLifecycle:
 
 
 class TestOAuthConsentSurfacing:
+    async def test_explicit_none_origin_allowlist_accepts_any_safe_https_consent(self) -> None:
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
+        )
+        agent.__aenter__.side_effect = _make_consent_error("https://external.example/authorize")
+        server = _make_server(agent, allowed_oauth_consent_origins=None)
+
+        resp = await _post(server, input_text="hello", stream=False)
+        body = resp.json()
+
+        assert body["status"] == "incomplete"
+        oauth_items = [item for item in body["output"] if item["type"] == "oauth_consent_request"]
+        assert [item["consent_link"] for item in oauth_items] == ["https://external.example/authorize"]
+
+    async def test_configured_origin_allowlist_accepts_connect_time_consent(self) -> None:
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
+        )
+        agent.__aenter__.side_effect = _make_consent_error("https://auth.example.com/authorize?state=1")
+        server = _make_server(agent, allowed_oauth_consent_origins=["https://auth.example.com"])
+
+        resp = await _post(server, input_text="hello", stream=False)
+
+        assert resp.json()["status"] == "incomplete"
+
+    async def test_configured_origin_allowlist_rejects_connect_time_consent(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
+        )
+        agent.__aenter__.side_effect = _make_consent_error("https://other.example.com/authorize")
+        server = _make_server(agent, allowed_oauth_consent_origins=["https://auth.example.com"])
+
+        with caplog.at_level(logging.ERROR):
+            resp = await _post(server, input_text="hello", stream=False)
+        body = resp.json()
+
+        assert body["status"] == "failed"
+        assert not any(item["type"] == "oauth_consent_request" for item in body["output"])
+        assert "must include an allowed safe HTTPS consent link" in caplog.text
+        agent.run.assert_not_called()
+
     async def test_non_streaming_consent_error_emits_oauth_output_item(self) -> None:
         agent = _make_agent(
             response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
@@ -5330,6 +5426,29 @@ class TestOAuthConsentSurfacing:
         resp = await _post(server, input_text="hello", stream=False)
         assert resp.status_code == 200
         body = resp.json()
+        assert body["status"] == "failed"
+        assert not any(item["type"] == "oauth_consent_request" for item in body["output"])
+
+    async def test_mid_run_consent_rejects_origin_outside_configured_allowlist(self) -> None:
+        agent = _make_agent(
+            response=AgentResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[
+                            Content.from_oauth_consent_request(
+                                consent_link="https://other.example.com/authorize",
+                            )
+                        ],
+                    )
+                ]
+            )
+        )
+        server = _make_server(agent, allowed_oauth_consent_origins=["https://auth.example.com"])
+
+        resp = await _post(server, input_text="hello", stream=False)
+        body = resp.json()
+
         assert body["status"] == "failed"
         assert not any(item["type"] == "oauth_consent_request" for item in body["output"])
 

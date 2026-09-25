@@ -52,6 +52,25 @@ implementations must use `history_source="agent"` because that protocol does not
 instance with another host or invoke it directly after constructing the server. An agent returned by a callable belongs
 to that request.
 
+### OAuth consent origin allowlist
+
+OAuth consent links keep their existing absolute-HTTPS safety validation. Hosts that know the expected authorization
+origins can add an exact origin allowlist:
+
+```python
+server = ResponsesHostServer(
+    agent,
+    allowed_oauth_consent_origins=[
+        "https://logic-region.consent.azure-apihub.net",
+        "https://auth.partner.example",
+    ],
+)
+```
+
+An omitted allowlist preserves existing behavior and does not restrict the HTTPS origin. A provided allowlist activates
+the gate, so an empty sequence rejects every consent link. Entries are normalized as origins, so paths and query strings
+belong on the emitted consent link, not in the configuration.
+
 To preserve the agent's regular history and service-storage behavior, select the agent as the history source:
 
 ```python
