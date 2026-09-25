@@ -73,6 +73,7 @@ __all__ = [
     "get_security_tools",
     "inspect_variable",
     "quarantined_llm",
+    "rewritten_arguments",
     "set_quarantine_client",
     "store_untrusted_content",
 ]
@@ -101,12 +102,30 @@ _INTERNAL_SECURITY_TOOL_MARKER = object()
 # ``variable_ids`` list internally. Expanding their arguments would replace the ID
 # with the content and break the lookup.
 _VARIABLE_ID_CONSUMERS = frozenset({"inspect_variable", "quarantined_llm"})
+_REWRITTEN_ARGUMENT_INDICES_KEY = "_rewritten_argument_indices"
 
 
 def _get_additional_properties(obj: Any) -> dict[str, Any]:
     """Return a typed additional_properties mapping."""
     props = getattr(obj, "additional_properties", None)
     return cast(dict[str, Any], props) if isinstance(props, dict) else {}
+
+
+def _top_level_argument_value(context: FunctionInvocationContext, arg_name: str) -> tuple[Any, str | None]:
+    """Locate a top-level argument value in either context.arguments or context.kwargs.
+
+    Returns the value and a string indicating its source ('arguments' or 'kwargs'),
+    or (None, None) if not found.
+    """
+    args = cast(Any, context.arguments)
+    if isinstance(args, Mapping) and arg_name in args:
+        return cast(Any, args[arg_name]), "arguments"
+
+    kwargs = cast(Any, context.kwargs)
+    if isinstance(kwargs, Mapping) and arg_name in kwargs:
+        return cast(Any, kwargs[arg_name]), "kwargs"
+
+    return None, None
 
 
 @dataclass(frozen=True, order=True, slots=True)
@@ -1252,6 +1271,11 @@ _current_middleware: ContextVar[LabelTrackingFunctionMiddleware | None] = Contex
     default=None,
 )
 
+_current_context: ContextVar[FunctionInvocationContext | None] = ContextVar(
+    "agent_framework_current_security_context",
+    default=None,
+)
+
 
 @experimental(feature_id=ExperimentalFeature.FIDES)
 class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding):
@@ -1478,6 +1502,8 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         depth: int,
         active_variables: set[str],
         reference_count: list[int],
+        rewritten_paths: set[tuple[str | int, ...]] | None = None,
+        current_path: tuple[str | int, ...] = (),
     ) -> Any:
         if not _EMBEDDED_VAR_REF_RE.search(value):
             return value
@@ -1496,6 +1522,8 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
                 return value
             if whole.group("bare"):
                 logger.warning(_BARE_REFERENCE_WARNING)
+            if rewritten_paths is not None:
+                rewritten_paths.add(current_path)
             return resolved
 
         def replace(match: re.Match[str]) -> str:
@@ -1511,6 +1539,8 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
                 return match.group(0)
             if match.group("bare"):
                 logger.warning(_BARE_REFERENCE_WARNING)
+            if rewritten_paths is not None:
+                rewritten_paths.add(current_path)
             return str(resolved)
 
         return _EMBEDDED_VAR_REF_RE.sub(replace, value)
@@ -1523,6 +1553,8 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         depth: int,
         active_variables: set[str],
         reference_count: list[int],
+        rewritten_paths: set[tuple[str | int, ...]] | None = None,
+        current_path: tuple[str | int, ...] = (),
     ) -> Any:
         if isinstance(value, str):
             return self._resolve_string(
@@ -1531,6 +1563,8 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
                 depth=depth,
                 active_variables=active_variables,
                 reference_count=reference_count,
+                rewritten_paths=rewritten_paths,
+                current_path=current_path,
             )
         if isinstance(value, BaseModel):
             value = value.model_dump()
@@ -1543,6 +1577,8 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
                     depth=depth,
                     active_variables=active_variables,
                     reference_count=reference_count,
+                    rewritten_paths=rewritten_paths,
+                    current_path=(*current_path, key),
                 )
                 for key, item in value_dict.items()
             }
@@ -1554,8 +1590,10 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
                     depth=depth,
                     active_variables=active_variables,
                     reference_count=reference_count,
+                    rewritten_paths=rewritten_paths,
+                    current_path=(*current_path, index),
                 )
-                for item in cast(list[Any], value)
+                for index, item in enumerate(cast(list[Any], value))
             ]
         if isinstance(value, tuple):
             return tuple(
@@ -1565,8 +1603,10 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
                     depth=depth,
                     active_variables=active_variables,
                     reference_count=reference_count,
+                    rewritten_paths=rewritten_paths,
+                    current_path=(*current_path, index),
                 )
-                for item in cast(tuple[Any, ...], value)
+                for index, item in enumerate(cast(tuple[Any, ...], value))
             )
         return value
 
@@ -1578,6 +1618,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         labels: list[ContentLabel] = []
         active_variables: set[str] = set()
         reference_count = [0]
+        rewritten_paths: set[tuple[str | int, ...]] = set()
         if context.arguments:
             context.arguments = self._resolve_value(
                 context.arguments,
@@ -1585,6 +1626,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
                 depth=0,
                 active_variables=active_variables,
                 reference_count=reference_count,
+                rewritten_paths=rewritten_paths,
             )
         if context.kwargs:
             context.kwargs = cast(
@@ -1595,8 +1637,40 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
                     depth=0,
                     active_variables=active_variables,
                     reference_count=reference_count,
+                    rewritten_paths=rewritten_paths,
                 ),
             )
+
+        rewritten_args: dict[str, set[int]] = {}
+        for path in rewritten_paths:
+            if not path or not isinstance(path[0], str):
+                continue
+
+            arg_name = path[0]
+            if arg_name not in rewritten_args:
+                rewritten_args[arg_name] = set()
+
+            arg_value, arg_source = _top_level_argument_value(context, arg_name)
+
+            if arg_source is None:
+                rewritten_args[arg_name].add(-1)
+            elif len(path) == 1:
+                if isinstance(arg_value, (list, tuple)):
+                    resolved_list = cast(Sequence[Any], arg_value)
+                    rewritten_args[arg_name].update(range(len(resolved_list)))
+                else:
+                    rewritten_args[arg_name].add(-1)
+            elif (
+                len(path) > 1
+                and isinstance(path[1], int)
+                and not isinstance(path[1], bool)
+                and isinstance(arg_value, (list, tuple))
+            ):
+                rewritten_args[arg_name].add(path[1])
+            else:
+                rewritten_args[arg_name].add(-1)
+
+        context.metadata[_REWRITTEN_ARGUMENT_INDICES_KEY] = rewritten_args
         return labels
 
     def _get_input_labels(self, context: FunctionInvocationContext) -> list[ContentLabel]:
@@ -1756,6 +1830,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         """Resolve hidden arguments, publish their labels, and label the result."""
         scope_token = self._activate_security_scope(context)
         middleware_token = _current_middleware.set(self)
+        context_token = _current_context.set(context)
         try:
             function_name = context.function.name
             if "original_arguments_for_messages" not in context.metadata:
@@ -1778,6 +1853,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
                 boundary="security policy",
             )
             if context.metadata.get(_AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY) is True:
+                pre_validation_token = _argument_authority_token(context.arguments, boundary="security policy")
                 context.function._prepare_context_arguments(  # pyright: ignore[reportPrivateUsage]
                     context,
                     context.arguments,
@@ -1786,6 +1862,13 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
                     context.arguments,
                     boundary="security policy",
                 )
+                if pre_validation_token != context.metadata[_SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY]:
+                    rewritten = context.metadata.get(_REWRITTEN_ARGUMENT_INDICES_KEY)
+                    if rewritten:
+                        context.metadata[_REWRITTEN_ARGUMENT_INDICES_KEY] = {
+                            arg_name: {-1} for arg_name in cast(dict[str, set[int]], rewritten)
+                        }
+
             argument_labels = [*input_labels, *resolved_labels]
             argument_label = combine_labels(*argument_labels) if argument_labels else ContentLabel()
 
@@ -1839,6 +1922,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
                 return
             self._label_result(context, function_name, fallback_label)
         finally:
+            _current_context.reset(context_token)
             _current_middleware.reset(middleware_token)
             self._active_security_scope.reset(scope_token)
 
@@ -2243,6 +2327,31 @@ def get_current_middleware() -> LabelTrackingFunctionMiddleware | None:
         The current LabelTrackingFunctionMiddleware instance, or None if not set.
     """
     return _current_middleware.get()
+
+
+def rewritten_arguments(context: FunctionInvocationContext | None = None) -> dict[str, set[int]]:
+    """Get a mapping of argument names to the set of rewritten positions.
+
+    Returns a dictionary where keys are argument names and values are sets of
+    indices. For list arguments, the set contains the indices of the items
+    that were rewritten by variable expansion. For non-list arguments, the set
+    contains -1.
+
+    Args:
+        context: The function invocation context. If None, the context from
+            the current execution flow is used.
+
+    Returns:
+        A dictionary mapping argument names to sets of rewritten indices.
+    """
+    if context is None:
+        context = _current_context.get()
+    if context is None:
+        return {}
+    rewritten = context.metadata.get(_REWRITTEN_ARGUMENT_INDICES_KEY)
+    if rewritten is None:
+        return {}
+    return {k: set(v) for k, v in cast(dict[str, set[int]], rewritten).items()}
 
 
 @dataclass(frozen=True, slots=True)
