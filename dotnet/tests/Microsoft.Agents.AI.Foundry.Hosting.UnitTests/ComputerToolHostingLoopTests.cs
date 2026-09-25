@@ -148,13 +148,10 @@ public sealed class ComputerToolHostingLoopTests
         Assert.False(call.TryGetProperty("response_id", out _));
         Assert.False(call.TryGetProperty("agent_reference", out _));
 
-        // OpenAI .NET 2.13.0 re-serializes the GA call with "action": null, which the service rejects on replay (see the
-        // known-issue test in InputConverterTests). These tests check what MAF controls: a populated single action here
-        // would mean the batch was rewritten.
-        if (call.TryGetProperty("action", out JsonElement action))
-        {
-            Assert.Equal(JsonValueKind.Null, action.ValueKind);
-        }
+        // OpenAI .NET 2.13.0 models only the preview item and would write "action": null next to "actions", which the
+        // Responses API rejects ("Computer call input must include exactly one of `action` or `actions`."). The resent
+        // GA call must carry the batch only.
+        Assert.False(call.TryGetProperty("action", out _), "A resent GA computer_call must not carry an \"action\" key.");
     }
 
     private static void AssertReplayedComputerCallOutput(JsonElement output)

@@ -9,6 +9,7 @@ using Azure.AI.AgentServer.Responses;
 using Azure.AI.AgentServer.Responses.Models;
 using Microsoft.Extensions.AI;
 using ChatMessage = Microsoft.Extensions.AI.ChatMessage;
+using ComputerCallAction = OpenAI.Responses.ComputerCallAction;
 using OpenAIComputerCallOutputResponseItem = OpenAI.Responses.ComputerCallOutputResponseItem;
 using OpenAIComputerCallResponseItem = OpenAI.Responses.ComputerCallResponseItem;
 using OpenAIContext = OpenAI.OpenAIContext;
@@ -30,7 +31,8 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// <para>
 /// The OpenAI item is carried as the <see cref="AIContent.RawRepresentation"/> of a <see cref="ToolCallContent"/> or
 /// <see cref="ToolResultContent"/>. The MEAI OpenAI Responses client sends any content whose raw representation is a
-/// <see cref="OpenAIResponseItem"/> to the model unchanged, which is what keeps the batch intact on replay.
+/// <see cref="OpenAIResponseItem"/> to the model unchanged, which is what keeps the batch intact on replay. Computer
+/// calls sent back to the model are a <see cref="ResentComputerCallResponseItem"/>, which writes the GA shape.
 /// </para>
 /// </remarks>
 internal static class ComputerToolItemConverter
@@ -71,12 +73,9 @@ internal static class ComputerToolItemConverter
         where T : OutputItem
     {
         // The builder id replaces the model's item id: AgentServer requires its own {prefix}_{50 chars} id format and
-        // does not stamp one on EmitAdded. A null "action" is how OpenAI .NET writes a GA call; leaving it out keeps
-        // the emitted item in the GA shape (actions only). A populated preview "action" is kept.
-        BinaryData agentServerJson = RewriteTopLevelProperties(
-            openAIJson,
-            static property => property.NameEquals("action"u8) && property.Value.ValueKind == JsonValueKind.Null,
-            replacementId: itemId);
+        // does not stamp one on EmitAdded. Leaving out a null "action" keeps the emitted item in the GA shape (actions
+        // only).
+        BinaryData agentServerJson = RewriteTopLevelProperties(openAIJson, IsNullAction, replacementId: itemId);
 
         return ModelReaderWriter.Read<OutputItem>(agentServerJson, ModelReaderWriterOptions.Json, AzureAIAgentServerResponsesContext.Default) as T
             ?? throw new InvalidOperationException(
@@ -130,30 +129,31 @@ internal static class ComputerToolItemConverter
 
     private static ChatMessage ToToolCallMessage(BinaryData agentServerJson, string callId)
     {
-        // Known blocker (OpenAI .NET 2.13.0 and 2.14.0): ComputerCallResponseItem models the preview item and always
-        // writes "action", so a GA call replayed from here reaches the model with "action": null next to "actions",
-        // which the Responses API rejects. Its Patch API cannot remove "action" (NullReferenceException), and hosting
-        // does not own the agent's HTTP pipeline, so the item is left as OpenAI .NET writes it until the SDK models
-        // the GA item.
-        var item = ReadOpenAIItem<OpenAIComputerCallResponseItem>(agentServerJson, "computer_call", callId);
-        return new ChatMessage(ChatRole.Assistant, [new ToolCallContent(callId) { RawRepresentation = item }]);
+        // OpenAI .NET (2.13.0 and 2.14.0) models only the preview item: ComputerCallResponseItem always writes "action",
+        // so a GA call sent back as that type would carry "action": null next to "actions", which the Responses API
+        // rejects. Its Patch API cannot remove "action" (NullReferenceException), so the item is wrapped in a subclass
+        // that writes this JSON as is. The JSON also drops a null "action" in case a caller sent one.
+        BinaryData openAIJson = RewriteTopLevelProperties(
+            agentServerJson,
+            static property => IsAgentServerEnvelopeProperty(property) || IsNullAction(property));
+        var item = ReadOpenAIItem<OpenAIComputerCallResponseItem>(openAIJson, "computer_call", callId);
+        return new ChatMessage(
+            ChatRole.Assistant,
+            [new ToolCallContent(callId) { RawRepresentation = new ResentComputerCallResponseItem(item, openAIJson) }]);
     }
 
     private static ChatMessage ToToolResultMessage(BinaryData agentServerJson, string callId)
     {
-        var item = ReadOpenAIItem<OpenAIComputerCallOutputResponseItem>(agentServerJson, "computer_call_output", callId);
+        BinaryData openAIJson = RewriteTopLevelProperties(agentServerJson, IsAgentServerEnvelopeProperty);
+        var item = ReadOpenAIItem<OpenAIComputerCallOutputResponseItem>(openAIJson, "computer_call_output", callId);
         return new ChatMessage(ChatRole.Tool, [new ToolResultContent(callId) { RawRepresentation = item }]);
     }
 
-    private static T ReadOpenAIItem<T>(BinaryData agentServerJson, string itemType, string callId)
-        where T : OpenAIResponseItem
-    {
-        BinaryData openAIJson = RewriteTopLevelProperties(agentServerJson, IsAgentServerEnvelopeProperty);
-
-        return ModelReaderWriter.Read<OpenAIResponseItem>(openAIJson, ModelReaderWriterOptions.Json, OpenAIContext.Default) as T
+    private static T ReadOpenAIItem<T>(BinaryData openAIJson, string itemType, string callId)
+        where T : OpenAIResponseItem =>
+        ModelReaderWriter.Read<OpenAIResponseItem>(openAIJson, ModelReaderWriterOptions.Json, OpenAIContext.Default) as T
             ?? throw new InvalidOperationException(
                 $"The {itemType} item for call '{callId}' could not be converted to the OpenAI {typeof(T).Name} representation.");
-    }
 
     /// <summary>
     /// AgentServer adds these fields to stored output items. They are not part of the model's item schema, and the
@@ -163,6 +163,12 @@ internal static class ComputerToolItemConverter
         property.NameEquals("response_id"u8) ||
         property.NameEquals("agent_reference"u8) ||
         property.NameEquals("created_by"u8);
+
+    /// <summary>
+    /// A null <c>"action"</c> is how OpenAI .NET writes a GA call. A populated preview <c>"action"</c> is kept.
+    /// </summary>
+    private static bool IsNullAction(JsonProperty property) =>
+        property.NameEquals("action"u8) && property.Value.ValueKind == JsonValueKind.Null;
 
     /// <summary>
     /// Copies a JSON object, leaving out the top-level properties selected by <paramref name="skip"/> and, when
@@ -194,5 +200,39 @@ internal static class ComputerToolItemConverter
         }
 
         return new BinaryData(buffer.WrittenMemory.ToArray());
+    }
+
+    /// <summary>
+    /// A <see cref="OpenAIComputerCallResponseItem"/> that is sent back to the model with the JSON it was read from.
+    /// </summary>
+    /// <remarks>
+    /// Callers still see the typed OpenAI item (<c>CallId</c>, <c>Id</c>, <c>Status</c>, <c>Action</c>), but the item is
+    /// written as the computer call it was read from, so a GA call keeps its <c>actions</c> batch without the
+    /// <c>"action": null</c> the base type would add. Changes to the typed properties are not written. Remove this
+    /// once OpenAI .NET models the GA computer call.
+    /// </remarks>
+    private sealed class ResentComputerCallResponseItem : OpenAIComputerCallResponseItem
+    {
+        private readonly BinaryData _json;
+
+        public ResentComputerCallResponseItem(OpenAIComputerCallResponseItem item, BinaryData json)
+            // The only public constructor requires an action, which a GA call does not have. A placeholder satisfies
+            // it and is replaced right away, so Action reads null for a GA call as it does on the parsed item.
+            : base(item.CallId, item.Action ?? ComputerCallAction.CreateScreenshotAction(), item.PendingSafetyChecks)
+        {
+            this._json = json;
+            this.Action = item.Action;
+            this.Status = item.Status;
+            this.Id = item.Id;
+        }
+
+        protected override void JsonModelWriteCore(Utf8JsonWriter writer, ModelReaderWriterOptions options)
+        {
+            using JsonDocument document = JsonDocument.Parse(this._json);
+            foreach (JsonProperty property in document.RootElement.EnumerateObject())
+            {
+                property.WriteTo(writer);
+            }
+        }
     }
 }

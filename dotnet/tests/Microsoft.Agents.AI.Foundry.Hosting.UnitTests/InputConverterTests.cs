@@ -11,6 +11,7 @@ using MeaiTextContent = Microsoft.Extensions.AI.TextContent;
 using OpenAIComputerCallActionKind = OpenAI.Responses.ComputerCallActionKind;
 using OpenAIComputerCallOutputResponseItem = OpenAI.Responses.ComputerCallOutputResponseItem;
 using OpenAIComputerCallResponseItem = OpenAI.Responses.ComputerCallResponseItem;
+using OpenAIComputerCallStatus = OpenAI.Responses.ComputerCallStatus;
 
 #pragma warning disable OPENAI001 // Experimental Responses API surfaces
 
@@ -1490,7 +1491,7 @@ public class InputConverterTests
         Assert.Equal(typeof(ToolCallContent), toolCall.GetType());
         Assert.Equal("call_cu_1", ((ToolCallContent)toolCall).CallId);
 
-        var item = Assert.IsType<OpenAIComputerCallResponseItem>(toolCall.RawRepresentation);
+        var item = Assert.IsAssignableFrom<OpenAIComputerCallResponseItem>(toolCall.RawRepresentation);
         Assert.Equal("cu_input_1", item.Id);
         Assert.Equal("call_cu_1", item.CallId);
 
@@ -1546,9 +1547,14 @@ public class InputConverterTests
 
         // Assert
         var toolCall = Assert.Single(Assert.Single(messages).Contents);
-        var item = Assert.IsType<OpenAIComputerCallResponseItem>(toolCall.RawRepresentation);
+        var item = Assert.IsAssignableFrom<OpenAIComputerCallResponseItem>(toolCall.RawRepresentation);
         Assert.Equal("call_preview_1", item.CallId);
         Assert.Equal(OpenAIComputerCallActionKind.Click, item.Action.Kind);
+
+        // A preview call is resent with its single action, not rewritten to the GA shape.
+        string json = ModelReaderWriter.Write(item, ModelReaderWriterOptions.Json).ToString();
+        Assert.Contains("\"action\":{\"type\":\"click\"", json);
+        Assert.DoesNotContain("\"actions\"", json);
     }
 
     [Fact]
@@ -1568,7 +1574,7 @@ public class InputConverterTests
         // Assert
         var message = Assert.Single(messages);
         Assert.Equal(ChatRole.Assistant, message.Role);
-        var item = Assert.IsType<OpenAIComputerCallResponseItem>(Assert.Single(message.Contents).RawRepresentation);
+        var item = Assert.IsAssignableFrom<OpenAIComputerCallResponseItem>(Assert.Single(message.Contents).RawRepresentation);
         Assert.Equal("cu_input_1", item.Id);
 
         string json = ModelReaderWriter.Write(item, ModelReaderWriterOptions.Json).ToString();
@@ -1603,7 +1609,7 @@ public class InputConverterTests
     }
 
     [Fact]
-    public void ConvertOutputItemsToMessages_GaComputerCall_ReplaysWithNullActionKnownIssue()
+    public void ConvertOutputItemsToMessages_GaComputerCall_ReplaysWithoutNullAction()
     {
         // Arrange
         var history = ReadOutputItem(GaComputerCallJson);
@@ -1611,15 +1617,18 @@ public class InputConverterTests
         // Act
         var messages = InputConverter.ConvertOutputItemsToMessages([history]);
 
-        // Assert: documents a known OpenAI .NET 2.13.0 behavior, not a desired one. ComputerCallResponseItem models the
-        // preview item: it has no typed "actions" and always writes "action", so a replayed GA call carries
-        // "action": null next to "actions". The Responses API rejects that with "Computer call input must include
-        // exactly one of `action` or `actions`." When this test starts failing, OpenAI .NET changed the shape: revisit
-        // the caveat in ComputerToolItemConverter.
-        var item = Assert.IsType<OpenAIComputerCallResponseItem>(Assert.Single(Assert.Single(messages).Contents).RawRepresentation);
+        // Assert: OpenAI .NET 2.13.0 models only the preview item and would write "action": null next to "actions",
+        // which the Responses API rejects ("Computer call input must include exactly one of `action` or `actions`.").
+        // The resent item keeps the typed surface of the SDK item but writes the GA shape.
+        var item = Assert.IsAssignableFrom<OpenAIComputerCallResponseItem>(Assert.Single(Assert.Single(messages).Contents).RawRepresentation);
+        Assert.Equal("cu_input_1", item.Id);
+        Assert.Equal("call_cu_1", item.CallId);
+        Assert.Equal(OpenAIComputerCallStatus.Completed, item.Status);
+        Assert.Null(item.Action);
+
         string json = ModelReaderWriter.Write(item, ModelReaderWriterOptions.Json).ToString();
-        Assert.Contains("\"action\":null", json);
-        Assert.Contains("\"actions\":[", json);
+        Assert.DoesNotContain("\"action\"", json);
+        Assert.Contains("\"actions\":[{\"type\":\"click\"", json);
     }
 
     private static OutputItem ReadOutputItem(string json) =>

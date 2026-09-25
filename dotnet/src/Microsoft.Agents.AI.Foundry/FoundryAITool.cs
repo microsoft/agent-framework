@@ -146,11 +146,11 @@ public static class FoundryAITool
     /// use the <see cref="CreateComputerTool(ComputerToolEnvironment, int, int)"/> overload instead.
     /// </para>
     /// <para>
-    /// Known limitation: the OpenAI .NET SDK models only the preview <c>computer_call</c> item, so sending a GA
-    /// <c>computer_call</c> back to the model (for example with stored responses disabled and the history kept locally)
-    /// adds <c>"action": null</c>, which the Responses API rejects for the GA tool.
-    /// Continuing the conversation from the stored response (the default for a Responses agent session) only sends
-    /// the new <c>computer_call_output</c> and is not affected.
+    /// Known limitation: the OpenAI .NET SDK models only the preview <c>computer_call</c> item, so an agent that keeps its
+    /// history locally and sends a GA <c>computer_call</c> back to the model (for example with stored responses disabled)
+    /// adds <c>"action": null</c>, which the Responses API rejects for the GA tool. Continuing the conversation from the
+    /// stored response (the default for a Responses agent session) only sends the new <c>computer_call_output</c> and is
+    /// not affected, and Foundry hosting sends computer calls back in the GA shape.
     /// </para>
     /// </remarks>
     /// <returns>An <see cref="AITool"/> for the GA computer tool.</returns>
