@@ -444,6 +444,10 @@
     <Project Path="samples/05-end-to-end/AspNetAgentAuthorization/RazorWebClient/RazorWebClient.csproj" />
     <Project Path="samples/05-end-to-end/AspNetAgentAuthorization/Service/Service.csproj" />
   </Folder>
+  <Folder Name="/Samples/05-end-to-end/AspNetAgentPersistence/">
+    <File Path="samples/05-end-to-end/AspNetAgentPersistence/README.md" />
+    <Project Path="samples/05-end-to-end/AspNetAgentPersistence/AspNetAgentPersistence.csproj" />
+  </Folder>
   <Folder Name="/Solution Items/">
     <File Path=".editorconfig" />
     <File Path=".gitignore" />
@@ -661,6 +665,7 @@
     <Project Path="tests/OpenAIResponse.IntegrationTests/OpenAIResponse.IntegrationTests.csproj" />
   </Folder>
   <Folder Name="/Tests/UnitTests/">
+    <Project Path="tests/AspNetAgentPersistence.UnitTests/AspNetAgentPersistence.UnitTests.csproj" />
     <Project Path="tests/Aspire.Hosting.AgentFramework.DevUI.UnitTests/Aspire.Hosting.AgentFramework.DevUI.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.A2A.UnitTests/Microsoft.Agents.AI.A2A.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Abstractions.UnitTests/Microsoft.Agents.AI.Abstractions.UnitTests.csproj" />

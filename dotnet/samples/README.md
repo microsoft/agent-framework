@@ -40,6 +40,10 @@ Some additional samples of note include:
 - [Agent Telemetry](./02-agents/AgentOpenTelemetry/README.md): Demo which showcases the integration of OpenTelemetry with the Microsoft Agent Framework using Azure OpenAI and .NET Aspire Dashboard for telemetry visualization.
 - [Durable Agent Framework extension](https://github.com/microsoft/agent-framework-durable-extension/tree/main/dotnet/samples): Durable agents and workflows for console applications and Azure Functions.
 
+For a database-backed HTTP API example, see
+[ASP.NET agent persistence](./05-end-to-end/AspNetAgentPersistence/README.md),
+which saves and restores conversation sessions in SQLite.
+
 ## Migration from Semantic Kernel
 
 If you are migrating from Semantic Kernel to the Microsoft Agent Framework, the following resources provide guidance and side-by-side examples to help you transition your existing agents, tools, and orchestration patterns. 
