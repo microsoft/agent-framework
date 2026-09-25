@@ -215,6 +215,31 @@ settings = PurviewSettings(
 
 ### Selecting Agent vs Chat Middleware
 
+Both middlewares apply the same policy logic, but they are handed different content, so
+they do not evaluate the same thing. **Prefer the chat middleware for data loss
+prevention**; use the agent middleware when a single check at the run boundary is what
+you want.
+
+| | Agent middleware | Chat middleware |
+|---|---|---|
+| Caller's input messages | evaluated | evaluated |
+| Context provider output (for example retrieval results or memory) | not evaluated | evaluated |
+| Conversation history replayed into the request | not evaluated | evaluated |
+| A model's tool call, before the tool executes | not evaluated | evaluated |
+| Tool results | evaluated at the end of the run | evaluated on the next request |
+| Final response | evaluated | evaluated |
+| How often it evaluates | once per run | once per model request |
+
+The agent middleware receives the messages passed to `Agent.run()`. Content added while
+the run executes — context provider output, replayed history, and the tool calls and
+results produced by the function calling loop — is assembled downstream of it, so it is
+visible only in the final response, after any tool has already run.
+
+The chat middleware sits below the function calling loop and receives the fully prepared
+request on every model round trip. A tool call returned by the model is therefore
+evaluated before that tool executes, and its result is evaluated on the following round
+trip.
+
 Use the agent middleware when you already have / want the full agent pipeline:
 
 ```python
@@ -256,14 +281,15 @@ client = OpenAIChatCompletionClient(
 agent = Agent(client=client, instructions="You are helpful.")
 ```
 
-The policy logic is identical; the difference is only the hook point in the pipeline.
+Both middlewares can be attached at the same time. The chat middleware then evaluates
+each model round trip and the agent middleware evaluates the run boundary.
 
 ---
 
 ## Middleware Lifecycle
 
 1. **Before agent execution** (`prompt phase`): all `context.messages` are evaluated.
-   - If no valid user_id is found, processing is skipped (no policy evaluation)
+   - A valid user_id is required; if none can be resolved, the request fails rather than proceeding unevaluated
    - Protection scopes are retrieved (with caching)
    - Applicable scopes are checked to determine execution mode
    - In inline mode: content is evaluated immediately
@@ -272,7 +298,7 @@ The policy logic is identical; the difference is only the hook point in the pipe
 3. **After successful agent execution** (`response phase`): the produced messages are evaluated using the same user_id from the prompt phase.
 4. **If blocked**: result messages are replaced with a blocking notice.
 
-The user identifier is discovered from `Message.additional_properties['user_id']` during the prompt phase and reused for the response phase, ensuring both evaluations map consistently to the same user. If no user_id is present, policy evaluation is skipped entirely.
+The user identifier is discovered from `Message.additional_properties['user_id']` during the prompt phase and reused for the response phase, ensuring both evaluations map consistently to the same user. See [Fail-closed behaviour](#fail-closed-behaviour) for what happens when no user identifier can be resolved.
 
 You can customize the blocking messages using the `blocked_prompt_message` and `blocked_response_message` fields in `PurviewSettings`. For more advanced scenarios, you can wrap the middleware or post-process `context.result` in later middleware.
 
@@ -350,12 +376,34 @@ sent as Purview binary content, and function calls, function results and other s
 serialized to text. Only `usage` content is skipped, because it carries token counts rather than user
 data.
 
+### Remote references are not dereferenced
+
+Purview classifies the content it is handed; a reference to content is not the content.
+
+Content that carries its own bytes is evaluated as bytes: a `data:` URI is decoded and the decoded bytes
+are submitted as Purview binary content.
+
+A *remote* reference is not. A `uri` content pointing at a remote location, a hosted file reference, or a
+link nested inside a tool result is submitted as the reference itself, and the bytes it points at are
+never fetched or evaluated. A host that needs those bytes evaluated must resolve them and pass the
+resolved content through the middleware.
+
+### Streaming responses
+
+A streamed response is buffered in full and evaluated before any update is released, so it receives the
+same evaluation as a non-streaming response. Content is therefore not delivered incrementally while
+either middleware is attached: the first update is released only once the whole response has been
+evaluated.
+
+This uses an experimental core API, so attaching the middleware to a streaming call emits an
+`ExperimentalWarning`.
+
 ---
 
 ## Notes
 - **User Identification**: When the configured credential resolves to a user token, that token's `user_id` is used for per-user policy scoping. For app-token credentials, provide a `user_id` per request (e.g. in `Message(..., additional_properties={"user_id": "<guid>"})`). If no user_id can be provided or inferred, the request fails rather than proceeding unevaluated — see [Security Considerations](#security-considerations).
 - **Blocking Messages**: Can be customized via `blocked_prompt_message` and `blocked_response_message` in `PurviewSettings`. By default, they are "Prompt blocked by policy" and "Response blocked by policy" respectively.
-- **Streaming Responses**: Post-response policy evaluation presently applies only to non-streaming chat responses.
+- **Streaming Responses**: Streamed responses are buffered and evaluated in full before any update is released, so content is not delivered incrementally while the middleware is attached — see [Streaming responses](#streaming-responses).
 - **Error Handling**: Use `ignore_exceptions` and `ignore_payment_required` settings for graceful degradation. When enabled, errors are logged but don't fail the request.
 - **Caching**: Protection scopes responses and 402 errors are cached by default with a 4-hour TTL. Cache is automatically invalidated when protection scope state changes.
 - **Cold-cache parallelization**: On a `ProtectionScopes` cache miss, scopes are refreshed in the background while `ProcessContent` runs in the foreground.

@@ -191,6 +191,22 @@ var settings = new PurviewSettings("My Sample App")
 
 ### Selecting Agent vs Chat Middleware
 
+Both middlewares apply the same policy logic, but they are handed different content, so they do not evaluate the same thing. **Prefer the chat middleware for data loss prevention**; use the agent middleware when a single check at the run boundary is what you want.
+
+| | Agent middleware | Chat middleware |
+| --- | --- | --- |
+| Caller's input messages | evaluated | evaluated |
+| Context provider output (for example retrieval results or memory) | not evaluated | evaluated |
+| Conversation history replayed into the request | not evaluated | evaluated |
+| A model's tool call, before the tool executes | not evaluated | evaluated |
+| Tool results | evaluated at the end of the run | evaluated on the next request |
+| Final response | evaluated | evaluated |
+| How often it evaluates | once per run | once per model request |
+
+The agent middleware receives the messages passed to the agent. Content added while the run executes — context provider output, replayed history, and the function calls and results produced by `FunctionInvokingChatClient` — is assembled downstream of it, so it is visible only in the final response, after any tool has already run.
+
+The chat middleware receives the fully prepared request on every model round trip, provided it is composed **below** `FunctionInvokingChatClient` (see [Composition order](#composition-order)). A function call returned by the model is then evaluated before that function executes, and its result is evaluated on the following round trip.
+
 Use the agent middleware when you already have / want the full agent pipeline:
 
 ``` csharp
@@ -217,7 +233,36 @@ IChatClient client = new OpenAIClient(
     .Build();
 ```
 
-The policy logic is identical; the only difference is the hook point in the pipeline.
+Both middlewares can be attached at the same time. The chat middleware then evaluates each model round trip and the agent middleware evaluates the run boundary.
+
+### Composition order
+
+`WithPurview` on an `IChatClient` must end up **below** `FunctionInvokingChatClient`, otherwise the middleware sees only the run boundary and function calls execute before it evaluates them.
+
+``` csharp
+// Correct: the agent adds function invocation above the Purview-wrapped client.
+IChatClient client = chatClient
+    .AsBuilder()
+    .WithPurview(credential, settings)
+    .Build();
+AIAgent agent = client.AsAIAgent("You are a helpful assistant.");
+
+// Correct: the first Use is outermost, so function invocation stays above Purview.
+IChatClient client = chatClient
+    .AsBuilder()
+    .UseFunctionInvocation()
+    .WithPurview(credential, settings)
+    .Build();
+
+// Not recommended: Purview is outermost, so it evaluates only the completed run.
+IChatClient client = chatClient
+    .AsBuilder()
+    .WithPurview(credential, settings)
+    .UseFunctionInvocation()
+    .Build();
+```
+
+The last form is not corrected automatically. When a chat client is turned into an agent, the framework only adds a `FunctionInvokingChatClient` if the pipeline does not already expose one, and the Purview client delegates that lookup inward — so an existing instance is found and the ordering is preserved as written.
 
 ---
 
@@ -309,3 +354,15 @@ Every content item on a message is submitted for evaluation, not just its text: 
 as Purview binary content, and `FunctionCallContent`, `FunctionResultContent` and other structured
 content are serialized to text. Only `UsageContent` is skipped, because it carries token counts rather
 than user data.
+
+### Remote references are not dereferenced
+
+Purview classifies the content it is handed; a reference to content is not the content.
+
+Content that carries its own bytes is evaluated as bytes: `DataContent` is submitted as Purview binary
+content.
+
+A *remote* reference is not. A `UriContent`, a hosted file reference, or a link nested inside a
+`FunctionResultContent` is submitted as the reference itself, and the bytes it points at are never
+fetched or evaluated. A host that needs those bytes evaluated must resolve them and pass the resolved
+content through the middleware.

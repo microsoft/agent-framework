@@ -1496,6 +1496,49 @@ def test_chat_response_from_streaming_updates_parses_final_assistant_message() -
     assert response.value.response == "Hello"
 
 
+def test_chat_response_to_updates_carries_response_level_fields() -> None:
+    response = ChatResponse(
+        messages=[
+            Message(role="assistant", contents=[Content.from_text("first")], message_id="m1"),
+            Message(role="tool", contents=[Content.from_text("second")], message_id="m2"),
+        ],
+        response_id="resp-1",
+        conversation_id="conv-1",
+        model="model-1",
+        created_at="2024-01-01T00:00:00Z",
+        finish_reason="stop",
+        continuation_token=cast(Any, {"token": "token-1"}),
+        usage_details=UsageDetails(input_token_count=3, output_token_count=5),
+        additional_properties={"custom": "value"},
+    )
+
+    round_tripped = ChatResponse.from_updates(response.to_updates())
+
+    assert round_tripped.response_id == "resp-1"
+    assert round_tripped.conversation_id == "conv-1"
+    assert round_tripped.model == "model-1"
+    assert round_tripped.created_at == response.created_at
+    assert round_tripped.finish_reason == "stop"
+    assert round_tripped.continuation_token == {"token": "token-1"}
+    assert round_tripped.additional_properties["custom"] == "value"
+    assert round_tripped.usage_details is not None
+    assert round_tripped.usage_details["input_token_count"] == 3
+    assert round_tripped.usage_details["output_token_count"] == 5
+    assert [message.role for message in round_tripped.messages] == ["assistant", "tool"]
+    assert round_tripped.text == response.text
+
+
+def test_chat_response_to_updates_without_messages_still_carries_fields() -> None:
+    response = ChatResponse(messages=[], response_id="resp-1", model="model-1", finish_reason="stop")
+
+    updates = response.to_updates()
+
+    assert len(updates) == 1
+    assert updates[0].response_id == "resp-1"
+    assert updates[0].model == "model-1"
+    assert updates[0].finish_reason == "stop"
+
+
 # region ToolMode
 
 
@@ -1813,6 +1856,47 @@ def test_agent_run_response_from_updates_uses_last_non_none_agent_id() -> None:
     ])
 
     assert response.agent_id == "source-agent"
+
+
+def test_agent_run_response_to_updates_carries_response_level_fields() -> None:
+    response = AgentResponse(
+        messages=[
+            Message(role="assistant", contents=[Content.from_text("first")], message_id="m1"),
+            Message(role="tool", contents=[Content.from_text("second")], message_id="m2"),
+        ],
+        response_id="resp-1",
+        agent_id="agent-1",
+        created_at="2024-01-01T00:00:00Z",
+        finish_reason="stop",
+        continuation_token=cast(Any, {"token": "token-1"}),
+        usage_details=UsageDetails(input_token_count=3, output_token_count=5),
+        additional_properties={"custom": "value"},
+    )
+
+    round_tripped = AgentResponse.from_updates(response.to_updates())
+
+    assert round_tripped.response_id == "resp-1"
+    assert round_tripped.agent_id == "agent-1"
+    assert round_tripped.created_at == response.created_at
+    assert round_tripped.finish_reason == "stop"
+    assert round_tripped.continuation_token == {"token": "token-1"}
+    assert round_tripped.additional_properties["custom"] == "value"
+    assert round_tripped.usage_details is not None
+    assert round_tripped.usage_details["input_token_count"] == 3
+    assert round_tripped.usage_details["output_token_count"] == 5
+    assert [message.role for message in round_tripped.messages] == ["assistant", "tool"]
+    assert round_tripped.text == response.text
+
+
+def test_agent_run_response_to_updates_without_messages_still_carries_fields() -> None:
+    response = AgentResponse(messages=[], response_id="resp-1", agent_id="agent-1", finish_reason="stop")
+
+    updates = response.to_updates()
+
+    assert len(updates) == 1
+    assert updates[0].response_id == "resp-1"
+    assert updates[0].agent_id == "agent-1"
+    assert updates[0].finish_reason == "stop"
 
 
 def test_agent_run_response_str_method(chat_message: Message) -> None:

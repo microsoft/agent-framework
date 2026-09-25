@@ -2135,6 +2135,26 @@ def _process_update(response: ChatResponse | AgentResponse, update: ChatResponse
     response.continuation_token = update.continuation_token
 
 
+def _apply_response_tail_to_update(
+    response: ChatResponse[Any] | AgentResponse[Any],
+    update: ChatResponseUpdate | AgentResponseUpdate,
+) -> None:
+    """Carry the response-level fields that belong on the final update of a stream.
+
+    ``finish_reason``, ``continuation_token``, ``additional_properties`` and usage are properties
+    of the response as a whole rather than of any single message, so they ride on the last update.
+    This mirrors how :func:`_process_update` reads them back.
+    """
+    update.finish_reason = response.finish_reason
+    update.continuation_token = response.continuation_token
+    if response.additional_properties:
+        merged = dict(update.additional_properties) if update.additional_properties else {}
+        merged.update(response.additional_properties)
+        update.additional_properties = merged
+    if response.usage_details is not None:
+        update.contents.append(Content.from_usage(response.usage_details))
+
+
 def _merge_function_call_content(message: Message, content: Content) -> None:
     """Merge a streamed function_call chunk into the in-progress call it belongs to.
 
@@ -2660,6 +2680,54 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
         _finalize_response(msg)
         return msg
 
+    def to_updates(self) -> list[ChatResponseUpdate]:
+        """Split this response into the stream updates it would have been assembled from.
+
+        This is the inverse of :meth:`from_updates`: each message becomes one update, and the
+        response-level fields are carried on those updates so that re-assembling them reproduces
+        this response. Usage is carried as usage content on the final update, because
+        :meth:`from_updates` reads usage from an update's contents rather than from a field.
+
+        This is useful where a complete response has to be emitted as a stream, for example when
+        middleware buffers a stream, decides on the complete content, and then releases it.
+
+        Returns:
+            The updates representing this response; always at least one.
+
+        Example:
+            .. code-block:: python
+
+                from agent_framework import ChatResponse
+
+                response = ChatResponse.from_updates(updates)
+                assert response.text == ChatResponse.from_updates(response.to_updates()).text
+        """
+        updates = [
+            ChatResponseUpdate(
+                contents=list(message.contents),
+                role=cast(Any, message.role),
+                author_name=message.author_name,
+                message_id=message.message_id,
+                response_id=self.response_id,
+                conversation_id=self.conversation_id,
+                model=self.model,
+                created_at=self.created_at,
+            )
+            for message in self.messages
+        ]
+        if not updates:
+            updates = [
+                ChatResponseUpdate(
+                    role="assistant",
+                    response_id=self.response_id,
+                    conversation_id=self.conversation_id,
+                    model=self.model,
+                    created_at=self.created_at,
+                )
+            ]
+        _apply_response_tail_to_update(self, updates[-1])
+        return updates
+
     @property
     def text(self) -> str:
         """Returns the concatenated text of all messages in the response."""
@@ -3071,6 +3139,52 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
             _process_update(msg, update)
         _finalize_response(msg)
         return msg
+
+    def to_updates(self) -> list[AgentResponseUpdate]:
+        """Split this response into the stream updates it would have been assembled from.
+
+        This is the inverse of :meth:`from_updates`: each message becomes one update, and the
+        response-level fields are carried on those updates so that re-assembling them reproduces
+        this response. Usage is carried as usage content on the final update, because
+        :meth:`from_updates` reads usage from an update's contents rather than from a field.
+
+        This is useful where a complete response has to be emitted as a stream, for example when
+        middleware buffers a stream, decides on the complete content, and then releases it.
+
+        Returns:
+            The updates representing this response; always at least one.
+
+        Example:
+            .. code-block:: python
+
+                from agent_framework import AgentResponse
+
+                response = AgentResponse.from_updates(updates)
+                assert response.text == AgentResponse.from_updates(response.to_updates()).text
+        """
+        updates = [
+            AgentResponseUpdate(
+                contents=list(message.contents),
+                role=message.role,
+                author_name=message.author_name,
+                message_id=message.message_id,
+                response_id=self.response_id,
+                agent_id=self.agent_id,
+                created_at=self.created_at,
+            )
+            for message in self.messages
+        ]
+        if not updates:
+            updates = [
+                AgentResponseUpdate(
+                    role="assistant",
+                    response_id=self.response_id,
+                    agent_id=self.agent_id,
+                    created_at=self.created_at,
+                )
+            ]
+        _apply_response_tail_to_update(self, updates[-1])
+        return updates
 
     def __str__(self) -> str:
         return self.text

@@ -826,42 +826,6 @@ class _OutputCodec:
 # region Enforcement helpers
 
 
-def _chat_updates_from_response(response: ChatResponse[Any]) -> list[ChatResponseUpdate]:
-    """Re-derive stream updates from a (transformed) assembled chat response."""
-    updates = [
-        ChatResponseUpdate(
-            contents=list(message.contents),
-            role=cast(Any, message.role),
-            author_name=message.author_name,
-            message_id=message.message_id,
-            response_id=response.response_id,
-            model=response.model,
-        )
-        for message in response.messages
-    ]
-    if not updates:
-        updates = [ChatResponseUpdate(role="assistant", response_id=response.response_id)]
-    updates[-1].finish_reason = response.finish_reason
-    return updates
-
-
-def _agent_updates_from_response(response: AgentResponse[Any]) -> list[AgentResponseUpdate]:
-    """Re-derive stream updates from a (transformed) assembled agent response."""
-    updates = [
-        AgentResponseUpdate(
-            contents=list(message.contents),
-            role=message.role,
-            author_name=message.author_name,
-            message_id=message.message_id,
-            response_id=response.response_id,
-        )
-        for message in response.messages
-    ]
-    if not updates:
-        updates = [AgentResponseUpdate(role="assistant", response_id=response.response_id)]
-    return updates
-
-
 def _normalized_tools(tools: Any, *, point: str) -> list[Any]:
     """Normalize a tools value for projection; empty (with a warning) when it cannot be.
 
@@ -1290,6 +1254,9 @@ class _AgentHooksAgentMiddleware(_AgentHooksMiddlewareBase, AgentMiddleware):
                 raise
             finally:
                 _RUN_STATE.reset(run_token)
+                # Cancellation or failure part-way through the drain still has to release
+                # the inner stream, which the cleanup hook below would never reach.
+                await inner.close()
             return list(inner.updates), final
 
         async def _gate(
@@ -1318,12 +1285,15 @@ class _AgentHooksAgentMiddleware(_AgentHooksMiddlewareBase, AgentMiddleware):
                 await self._emit_shutdown(state, "error")
                 raise
 
-        return cast(
+        gated = cast(
             "ResponseStream[AgentResponseUpdate, AgentResponse[Any]]",
             cast(Any, ResponseStream).buffered_and_gated(
-                consume=_consume, gate=_gate, rederive=_agent_updates_from_response
+                consume=_consume, gate=_gate, rederive=AgentResponse.to_updates
             ),
         )
+        # Closing the gated stream before it is ever pulled never reaches ``_consume``, so
+        # the inner stream is released through a cleanup hook rather than from inside it.
+        return gated.with_cleanup_hook(inner.close)
 
 
 class _AgentHooksChatMiddleware(_AgentHooksMiddlewareBase, ChatMiddleware):
@@ -1422,8 +1392,13 @@ class _AgentHooksChatMiddleware(_AgentHooksMiddlewareBase, ChatMiddleware):
         """
 
         async def _consume() -> tuple[Sequence[ChatResponseUpdate], ChatResponse[Any]]:
-            with gate_handle:
-                response = await inner.get_final_response()
+            try:
+                with gate_handle:
+                    response = await inner.get_final_response()
+            finally:
+                # Cancellation or failure part-way through the drain still has to release
+                # the inner stream, which the cleanup hook below would never reach.
+                await inner.close()
             return list(inner.updates), response
 
         async def _gate(_updates: list[ChatResponseUpdate], final: ChatResponse[Any]) -> tuple[ChatResponse[Any], bool]:
@@ -1444,12 +1419,15 @@ class _AgentHooksChatMiddleware(_AgentHooksMiddlewareBase, ChatMiddleware):
             await gate_handle.flush()
             return final, changed
 
-        return cast(
+        gated = cast(
             "ResponseStream[ChatResponseUpdate, ChatResponse[Any]]",
             cast(Any, ResponseStream).buffered_and_gated(
-                consume=_consume, gate=_gate, rederive=_chat_updates_from_response
+                consume=_consume, gate=_gate, rederive=ChatResponse.to_updates
             ),
         )
+        # Closing the gated stream before it is ever pulled never reaches ``_consume``, so
+        # the inner stream is released through a cleanup hook rather than from inside it.
+        return gated.with_cleanup_hook(inner.close)
 
 
 class _AgentHooksFunctionMiddleware(_AgentHooksMiddlewareBase, FunctionMiddleware):
