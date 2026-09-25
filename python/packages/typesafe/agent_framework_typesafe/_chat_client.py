@@ -61,7 +61,7 @@ _TYPESAFE_SYSTEM_ONE_PATH = "/v1/systemone"
 
 
 class _ApiKeyTransport(httpx2.AsyncBaseTransport):
-    """Restore the API key after the TypeSafe SDK prepares its redacted wire headers."""
+    """Restore bearer authentication after the TypeSafe SDK prepares redacted wire headers."""
 
     def __init__(self, api_key: str) -> None:
         self._api_key = api_key
@@ -69,7 +69,7 @@ class _ApiKeyTransport(httpx2.AsyncBaseTransport):
 
     @override
     async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
-        request.headers["Authorization"] = self._api_key
+        request.headers["Authorization"] = f"Bearer {self._api_key}"
         return await self._transport.handle_async_request(request)
 
     @override

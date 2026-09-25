@@ -222,7 +222,11 @@ def compile_tool_call_plan(
         route_question_id = TOOL_ROUTE_QUESTION_ID
         criteria: dict[str, str] = {}
         for tool in compiled:
-            description = tool.function.description or f"Call the {tool.function.name} tool."
+            description = (
+                f"Tool {tool.function.name!r}: {tool.function.description}"
+                if tool.function.description
+                else f"Call the {tool.function.name!r} tool."
+            )
             prior = list((previous_calls or {}).get(tool.function.name, ()))
             if prior:
                 description += (
@@ -481,6 +485,13 @@ def _compile_argument(
             raise _UnsupportedToolSchema(
                 f"array enum defines {len(members)} values; the supported maximum is {MAX_ENUM_VALUES}"
             )
+        item_types = _get_schema_types(items.get("type"), location="array item")
+        for member in members:
+            if item_types and not any(_matches_json_schema_type(member, item_type) for item_type in item_types):
+                raise _UnsupportedToolSchema(
+                    f"array enum member {_describe_value(member)} does not match declared item type "
+                    f"{_describe_value(item_types[0] if len(item_types) == 1 else item_types)}"
+                )
         question_budget.reserve(len(members) + (0 if required else 1))
         _add_presence_question(
             questions,
@@ -516,6 +527,7 @@ def _compile_argument(
 def _resolve_schema(schema: dict[str, Any], root_schema: dict[str, Any]) -> tuple[dict[str, Any], bool]:
     resolved = dict(schema)
     if "$ref" in resolved:
+        _reject_composition_sibling_constraints(resolved, keyword="$ref")
         ref = resolved.pop("$ref")
         if not isinstance(ref, str) or not ref.startswith("#/$defs/"):
             raise _UnsupportedToolSchema("only local $defs references are supported")
@@ -530,6 +542,7 @@ def _resolve_schema(schema: dict[str, Any], root_schema: dict[str, Any]) -> tupl
 
     nullable = False
     if "anyOf" in resolved:
+        _reject_composition_sibling_constraints(resolved, keyword="anyOf")
         any_of_raw = resolved.pop("anyOf")
         if not isinstance(any_of_raw, list):
             raise _UnsupportedToolSchema("anyOf must be an array")
@@ -543,6 +556,14 @@ def _resolve_schema(schema: dict[str, Any], root_schema: dict[str, Any]) -> tupl
         resolved = {**nested, **resolved}
         nullable = True
     return resolved, nullable
+
+
+def _reject_composition_sibling_constraints(schema: dict[str, Any], *, keyword: str) -> None:
+    unsupported_siblings = sorted(schema.keys() - _SCHEMA_ANNOTATION_KEYS - {keyword})
+    if unsupported_siblings:
+        raise _UnsupportedToolSchema(
+            f"{keyword} sibling constraints are not supported: {', '.join(unsupported_siblings)}"
+        )
 
 
 def _add_presence_question(
@@ -562,6 +583,38 @@ def _add_presence_question(
             f"Argument meaning: {description}.{previous_instruction}"
         )
     )
+
+
+def _get_schema_types(schema_type: Any, *, location: str) -> tuple[str, ...]:
+    if schema_type is None:
+        return ()
+    if isinstance(schema_type, str):
+        return (schema_type,)
+    if isinstance(schema_type, list) and schema_type:
+        schema_types = cast(list[Any], schema_type)
+        if all(isinstance(item, str) for item in schema_types):
+            return tuple(item for item in schema_types if isinstance(item, str))
+    raise _UnsupportedToolSchema(f"{location} type must be a string or non-empty string array")
+
+
+def _matches_json_schema_type(value: Any, schema_type: str) -> bool:
+    match schema_type:
+        case "string":
+            return isinstance(value, str)
+        case "integer":
+            return isinstance(value, int) and not isinstance(value, bool)
+        case "number":
+            return isinstance(value, int | float) and not isinstance(value, bool)
+        case "boolean":
+            return isinstance(value, bool)
+        case "null":
+            return value is None
+        case "array":
+            return isinstance(value, list)
+        case "object":
+            return isinstance(value, dict)
+        case _:
+            return False
 
 
 def _reject_unsupported_schema_constraints(
