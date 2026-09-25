@@ -423,9 +423,94 @@ def _reconcile_compaction_summaries(  # pyright: ignore[reportUnusedFunction]
     source_messages: list[Message],
     working_messages: Sequence[Message],
     source_message_identities: set[int],
+    *,
+    message_replacements: Sequence[tuple[Message, Sequence[Message]]] = (),
+    warn_on_rejection: bool = False,
 ) -> None:
-    """Reconcile summaries supported by source-owned messages without persisting unrelated rewrites."""
+    """Reconcile summaries rooted in source-owned messages without persisting unrelated rewrites."""
+    source_messages_by_identity = {id(message): message for message in source_messages}
+    source_messages_by_id: dict[str, list[Message]] = {}
+    for source_message in source_messages:
+        if source_message.message_id:
+            source_messages_by_id.setdefault(source_message.message_id, []).append(source_message)
     source_message_ids = {message.message_id for message in source_messages if message.message_id}
+
+    replacement_messages_by_identity: dict[int, Message] = {}
+    replacement_dependencies: dict[int, set[int]] = {}
+    for replacement, sources in message_replacements:
+        replacement_identity = id(replacement)
+        replacement_messages_by_identity[replacement_identity] = replacement
+        replacement_dependencies.setdefault(replacement_identity, set()).update(id(source) for source in sources)
+
+    roots_by_identity = {
+        source_identity: {source_identity}
+        for source_identity in source_message_identities
+        if source_identity in source_messages_by_identity
+    }
+    pending_replacement_identities = set(replacement_dependencies).difference(roots_by_identity)
+    while pending_replacement_identities:
+        newly_supported_replacements = {
+            replacement_identity
+            for replacement_identity in pending_replacement_identities
+            if replacement_dependencies[replacement_identity]
+            and replacement_dependencies[replacement_identity].issubset(roots_by_identity)
+        }
+        if not newly_supported_replacements:
+            break
+        for replacement_identity in newly_supported_replacements:
+            roots_by_identity[replacement_identity] = set().union(
+                *(
+                    roots_by_identity[source_identity]
+                    for source_identity in replacement_dependencies[replacement_identity]
+                )
+            )
+        pending_replacement_identities.difference_update(newly_supported_replacements)
+
+    resolved_replacement_identities = set(replacement_messages_by_identity).intersection(roots_by_identity)
+    superseded_replacement_identities = {
+        source_identity
+        for replacement_identity in resolved_replacement_identities
+        for source_identity in replacement_dependencies[replacement_identity]
+        if source_identity in resolved_replacement_identities
+    }
+    leaf_replacement_identities = resolved_replacement_identities.difference(superseded_replacement_identities)
+    required_leaves_by_source_identity: dict[int, set[int]] = {}
+    for replacement_identity in leaf_replacement_identities:
+        for source_identity in roots_by_identity[replacement_identity]:
+            required_leaves_by_source_identity.setdefault(source_identity, set()).add(replacement_identity)
+
+    roots_by_supported_id: dict[str, set[int]] = {}
+    leaves_by_supported_id: dict[str, set[int]] = {}
+    ambiguous_supported_ids: set[str] = set()
+
+    def add_supported_id(message_id: str, roots: set[int], leaves: set[int]) -> None:
+        if message_id in ambiguous_supported_ids:
+            return
+        existing_roots = roots_by_supported_id.get(message_id)
+        existing_leaves = leaves_by_supported_id.get(message_id)
+        if existing_roots is not None and (existing_roots != roots or existing_leaves != leaves):
+            roots_by_supported_id.pop(message_id, None)
+            leaves_by_supported_id.pop(message_id, None)
+            ambiguous_supported_ids.add(message_id)
+            return
+        roots_by_supported_id[message_id] = roots
+        leaves_by_supported_id[message_id] = leaves
+
+    for source_message in source_messages:
+        if source_message.message_id:
+            add_supported_id(source_message.message_id, {id(source_message)}, set())
+
+    resolved_replacements_by_id: dict[str, list[tuple[Message, set[int]]]] = {}
+    for replacement_identity, replacement in replacement_messages_by_identity.items():
+        roots = roots_by_identity.get(replacement_identity)
+        if roots is None or not replacement.message_id:
+            continue
+        replacement_leaves: set[int] = (
+            {replacement_identity} if replacement_identity in leaf_replacement_identities else set()
+        )
+        add_supported_id(replacement.message_id, roots, replacement_leaves)
+        resolved_replacements_by_id.setdefault(replacement.message_id, []).append((replacement, roots))
+
     candidates: list[tuple[Message, set[str]]] = []
     for message in working_messages:
         if id(message) in source_message_identities:
@@ -443,17 +528,125 @@ def _reconcile_compaction_summaries(  # pyright: ignore[reportUnusedFunction]
         ):
             candidates.append((message, set(cast("list[str]", summarized_message_ids))))
 
-    dependencies = {message.message_id: summary_ids for message, summary_ids in candidates if message.message_id}
-    supported_ids = set(source_message_ids)
-    pending_ids = set(dependencies)
-    while pending_ids:
-        newly_supported = {summary_id for summary_id in pending_ids if dependencies[summary_id].issubset(supported_ids)}
-        if not newly_supported:
-            break
-        supported_ids.update(newly_supported)
-        pending_ids.difference_update(newly_supported)
+    dependencies: dict[str, set[str]] = {}
+    ambiguous_summary_ids: set[str] = set()
+    for message, summary_ids in candidates:
+        if not message.message_id:
+            continue
+        if message.message_id in dependencies:
+            ambiguous_summary_ids.add(message.message_id)
+            continue
+        dependencies[message.message_id] = summary_ids
 
-    accepted_ids = set(dependencies).difference(pending_ids)
+    resolved_summary_roots: dict[str, set[int]] = {}
+    resolved_summary_leaves: dict[str, set[int]] = {}
+    pending_summary_ids = set(dependencies).difference(ambiguous_summary_ids)
+    while pending_summary_ids:
+        newly_supported_summaries: dict[str, tuple[set[int], set[int]]] = {}
+        for summary_id in pending_summary_ids:
+            dependency_roots: list[set[int]] = []
+            dependency_leaves: list[set[int]] = []
+            for dependency_id in dependencies[summary_id]:
+                if dependency_id in ambiguous_supported_ids:
+                    break
+                roots: set[int] | None = resolved_summary_roots.get(dependency_id)
+                dependency_leaf_ids: set[int] | None = resolved_summary_leaves.get(dependency_id)
+                if roots is None:
+                    roots = roots_by_supported_id.get(dependency_id)
+                    dependency_leaf_ids = leaves_by_supported_id.get(dependency_id)
+                if roots is None:
+                    break
+                dependency_roots.append(roots)
+                dependency_leaves.append(dependency_leaf_ids or set())
+            else:
+                summary_roots: set[int] = set()
+                for roots in dependency_roots:
+                    summary_roots.update(roots)
+                summary_leaves: set[int] = set()
+                for leaves in dependency_leaves:
+                    summary_leaves.update(leaves)
+                existing_roots = roots_by_supported_id.get(summary_id)
+                existing_leaves = leaves_by_supported_id.get(summary_id)
+                if summary_id not in ambiguous_supported_ids and (
+                    existing_roots is None or (existing_roots == summary_roots and existing_leaves == summary_leaves)
+                ):
+                    newly_supported_summaries[summary_id] = (summary_roots, summary_leaves)
+
+        if not newly_supported_summaries:
+            break
+        for summary_id, (summary_roots, summary_leaves) in newly_supported_summaries.items():
+            resolved_summary_roots[summary_id] = summary_roots
+            resolved_summary_leaves[summary_id] = summary_leaves
+            roots_by_supported_id[summary_id] = summary_roots
+            leaves_by_supported_id[summary_id] = summary_leaves
+        pending_summary_ids.difference_update(newly_supported_summaries)
+
+    accepted_ids = {
+        summary_id
+        for summary_id, summary_roots in resolved_summary_roots.items()
+        if all(
+            required_leaves_by_source_identity.get(source_identity, set()).issubset(resolved_summary_leaves[summary_id])
+            for source_identity in summary_roots
+        )
+    }
+
+    def nested_summary_ids(summary_id: str) -> set[str]:
+        nested_ids: set[str] = set()
+        pending_ids = [summary_id]
+        while pending_ids:
+            current_id = pending_ids.pop()
+            for dependency_id in dependencies[current_id]:
+                if dependency_id not in resolved_summary_roots or dependency_id in nested_ids:
+                    continue
+                nested_ids.add(dependency_id)
+                pending_ids.append(dependency_id)
+        return nested_ids
+
+    consumed_accepted_ids: set[str] = set()
+    used_summary_ids = set(accepted_ids)
+    for summary_id in accepted_ids:
+        nested_ids = nested_summary_ids(summary_id)
+        used_summary_ids.update(nested_ids)
+        consumed_accepted_ids.update(nested_ids.intersection(accepted_ids))
+    endpoint_summary_ids = accepted_ids.difference(consumed_accepted_ids)
+
+    def transfer_summary_exclusions(summary_id: str, durable_summary_id: str, visited_ids: set[str]) -> None:
+        if summary_id in visited_ids:
+            return
+        visited_ids.add(summary_id)
+        for dependency_id in dependencies[summary_id]:
+            if dependency_id in resolved_summary_roots:
+                transfer_summary_exclusions(dependency_id, durable_summary_id, visited_ids)
+
+            for source_message in source_messages_by_id.get(dependency_id, ()):
+                source_annotation = _read_group_annotation_raw(source_message)
+                if (
+                    source_annotation is None
+                    or source_annotation.get(SUMMARIZED_BY_SUMMARY_ID_KEY) != summary_id
+                    or source_message.additional_properties.get(EXCLUDED_KEY) is not True
+                ):
+                    continue
+                _set_group_summarized_by_summary_id(source_message, durable_summary_id)
+
+            for replacement, roots in resolved_replacements_by_id.get(dependency_id, ()):
+                replacement_annotation = _read_group_annotation_raw(replacement)
+                if (
+                    replacement_annotation is None
+                    or replacement_annotation.get(SUMMARIZED_BY_SUMMARY_ID_KEY) != summary_id
+                    or replacement.additional_properties.get(EXCLUDED_KEY) is not True
+                ):
+                    continue
+                exclusion_reason = replacement.additional_properties.get(EXCLUDE_REASON_KEY)
+                for source_identity in roots:
+                    source_message = source_messages_by_identity[source_identity]
+                    _set_group_summarized_by_summary_id(source_message, durable_summary_id)
+                    source_message.additional_properties[EXCLUDED_KEY] = True
+                    if isinstance(exclusion_reason, str):
+                        source_message.additional_properties[EXCLUDE_REASON_KEY] = exclusion_reason
+
+    for summary_id in endpoint_summary_ids:
+        transfer_summary_exclusions(summary_id, summary_id, set())
+
     for message in [*source_messages, *(candidate for candidate, _ in candidates)]:
         annotation = _read_group_annotation_raw(message)
         if annotation is None:
@@ -465,24 +658,25 @@ def _reconcile_compaction_summaries(  # pyright: ignore[reportUnusedFunction]
         message.additional_properties.pop(EXCLUDED_KEY, None)
         message.additional_properties.pop(EXCLUDE_REASON_KEY, None)
 
-    def source_dependencies(summary_id: str) -> set[str]:
-        expanded: set[str] = set()
-        for dependency_id in dependencies[summary_id]:
-            if dependency_id in source_message_ids:
-                expanded.add(dependency_id)
-            elif dependency_id in accepted_ids:
-                expanded.update(source_dependencies(dependency_id))
-        return expanded
+    if warn_on_rejection:
+        rejected_count = sum(message.message_id not in used_summary_ids for message, _ in candidates)
+        if rejected_count:
+            logger.warning(
+                "Rejected %d compaction summary message(s) because their dependencies were not fully rooted in "
+                "caller-owned messages or registered middleware replacements.",
+                rejected_count,
+                extra={"compaction_rejected_summary_count": rejected_count},
+            )
 
     for message, _ in candidates:
         if message.message_id not in accepted_ids:
             continue
-        summarized_source_ids = source_dependencies(message.message_id)
+        summarized_source_identities = resolved_summary_roots[message.message_id]
         insertion_index = min(
             (
                 index
                 for index, source_message in enumerate(source_messages)
-                if source_message.message_id in summarized_source_ids
+                if id(source_message) in summarized_source_identities
             ),
             default=len(source_messages),
         )

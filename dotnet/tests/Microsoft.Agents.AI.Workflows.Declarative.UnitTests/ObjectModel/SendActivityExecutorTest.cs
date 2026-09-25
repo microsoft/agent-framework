@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 using Microsoft.Agents.ObjectModel;
 using Microsoft.Extensions.AI;
+using Microsoft.PowerFx.Types;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.ObjectModel;
 
@@ -41,6 +42,25 @@ public sealed class SendActivityExecutorTest(ITestOutputHelper output) : Workflo
         AgentResponseUpdateEvent updateEvent = Assert.Single(events.OfType<AgentResponseUpdateEvent>());
         Assert.Equal(agentEvent.Response.ResponseId, updateEvent.Update.ResponseId);
         Assert.Equal(message.MessageId, updateEvent.Update.MessageId);
+    }
+
+    [Fact]
+    public async Task CaptureActivity_WithSensitiveEnvironmentValue_ThrowsAsync()
+    {
+        // Arrange
+        this.State.Set("SOME_SECRET", FormulaValue.New("secret-value"), VariableScopeNames.Environment, SensitivityLevel.Sensitive);
+        SendActivity model =
+            this.CreateModel(
+                this.FormatDisplayName(nameof(CaptureActivity_WithSensitiveEnvironmentValue_ThrowsAsync)),
+                "={Env.SOME_SECRET}");
+
+        // Act
+        SendActivityExecutor action = new(model, this.State);
+        Task ExecuteAsync() => this.ExecuteAsync(action);
+
+        // Assert
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(ExecuteAsync);
+        Assert.Contains("Cannot send sensitive activity text", exception.Message);
     }
 
     private SendActivity CreateModel(string displayName, string activityMessage, string? summary = null)

@@ -87,6 +87,7 @@ agent-framework-claude = { workspace = true }
 agent-framework-copilotstudio = { workspace = true }
 agent-framework-declarative = { workspace = true }
 agent-framework-devui = { workspace = true }
+agent-framework-duckdb = { workspace = true }
 agent-framework-foundry = { workspace = true }
 agent-framework-foundry-hosting = { workspace = true }
 agent-framework-foundry-local = { workspace = true }
@@ -107,6 +108,7 @@ agent-framework-openai = { workspace = true }
 agent-framework-oracle = { workspace = true }
 agent-framework-orchestrations = { workspace = true }
 agent-framework-postgres = { workspace = true }
+agent-framework-sql-server = { workspace = true }
 agent-framework-purview = { workspace = true }
 agent-framework-qdrant = { workspace = true }
 agent-framework-redis = { workspace = true }

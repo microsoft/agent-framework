@@ -45,13 +45,18 @@ agent_framework/
   display a mask. String-only APIs such as `str.join()` and JSON encoding reject it unless callers explicitly
   convert it. Use `get_secret_value()` when passing credentials to provider SDKs; `str(secret)` returns the mask.
 - **`load_settings`** accepts plain string overrides for `SecretString` fields and wraps them, as it does for
-  environment and `.env` values. Existing `SecretString` overrides are preserved.
+  environment and `.env` values. Existing `SecretString` overrides are preserved. Invalid supplied numeric and
+  boolean environment or `.env` values raise `ValueError` identifying the field and source instead of falling back
+  to raw strings.
 
 ### Agents (`_agents.py`)
 
 - **`SupportsAgentRun`** - Protocol defining the agent interface
 - **`BaseAgent`** - Abstract base class for agents
 - **`Agent`** - Main agent class wrapping a chat client with tools, instructions, and middleware
+- **`RawAgent.open()` / `close()`** (inherited by `Agent`) - Explicitly enter the client's and configured MCP tools'
+  async contexts, then release them along with lazily connected MCP tools. `async with agent` delegates to these
+  methods; a partially failed `open()` closes resources already entered.
 
 ### Chat Clients (`_clients.py`)
 
@@ -141,7 +146,7 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
 - **`AgentMiddleware`** - Intercepts agent `run()` calls
 - **`ChatMiddleware`** - Intercepts chat client `get_response()` calls
 - **`FunctionMiddleware`** - Intercepts function/tool invocations
-- **`AgentContext`** / **`ChatContext`** / **`FunctionInvocationContext`** - Context objects passed through middleware. A tool can declare a `FunctionInvocationContext` parameter to receive it; `context.tools` is the live, mutable tools list for the run, and `context.add_tools(...)` / `context.remove_tools(...)` enable progressive tool exposure (changes apply on the next function-calling iteration).
+- **`AgentContext`** / **`ChatContext`** / **`FunctionInvocationContext`** - Context objects passed through middleware. A tool can declare a `FunctionInvocationContext` parameter to receive it; `context.tools` is the live, mutable tools list for the run, and `context.add_tools(...)` / `context.remove_tools(...)` enable progressive tool exposure (changes apply on the next function-calling iteration). Chat middleware that constructs provider-local replacement messages must call `context.record_message_replacement(...)` for every replacement before downstream compaction so complete summaries can reconcile to caller-owned messages without persisting the replacements themselves.
 - **`MessageInjectionMiddleware`** - Session-scoped chat middleware that lets tools or other code enqueue messages for the next model call in the current `AgentSession`; it drains queued messages into the next call and loops only when no function calls need to be handled by the function invocation layer.
 
 ### Sessions (`_sessions.py`)

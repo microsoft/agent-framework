@@ -33,6 +33,7 @@ from ._const import (
     RAW_CLIENT_KWARGS_KEY,
     RAW_FUNCTION_INVOCATION_KWARGS_KEY,
     RESOLVED_WORKFLOW_RUN_KWARGS_KEY,
+    ROUTED_WORKFLOW_RUN_KWARGS_KEY,
     WORKFLOW_RUN_KWARGS_KEY,
 )
 from ._edge import (
@@ -599,29 +600,38 @@ class Workflow(DictConvertible):
                 if function_invocation_kwargs is not None or client_kwargs is not None:
                     combined_kwargs: dict[str, Any] = {}
                     resolved_combined_kwargs: dict[str, Any] = {}
+                    routed_combined_kwargs: dict[str, list[str]] = {}
                     if function_invocation_kwargs is not None:
-                        resolved = self._resolve_invocation_kwargs(
+                        resolved, routed_keys = self._resolve_invocation_kwargs(
                             function_invocation_kwargs, "function_invocation_kwargs"
                         )
                         resolved_combined_kwargs["function_invocation_kwargs"] = resolved
+                        routed_combined_kwargs["function_invocation_kwargs"] = sorted(routed_keys)
                         combined_kwargs["function_invocation_kwargs"] = self._to_legacy_invocation_kwargs(resolved)
-                        if isinstance(function_invocation_kwargs, WorkflowInvocationKwargs) or any(
-                            isinstance(value, Mapping) for value in function_invocation_kwargs.values()
+                        if (
+                            isinstance(function_invocation_kwargs, WorkflowInvocationKwargs)
+                            or routed_keys
+                            or any(isinstance(value, Mapping) for value in function_invocation_kwargs.values())
                         ):
                             combined_kwargs[RAW_FUNCTION_INVOCATION_KWARGS_KEY] = function_invocation_kwargs
                     if client_kwargs is not None:
-                        resolved = self._resolve_invocation_kwargs(client_kwargs, "client_kwargs")
+                        resolved, routed_keys = self._resolve_invocation_kwargs(client_kwargs, "client_kwargs")
                         resolved_combined_kwargs["client_kwargs"] = resolved
+                        routed_combined_kwargs["client_kwargs"] = sorted(routed_keys)
                         combined_kwargs["client_kwargs"] = self._to_legacy_invocation_kwargs(resolved)
-                        if isinstance(client_kwargs, WorkflowInvocationKwargs) or any(
-                            isinstance(value, Mapping) for value in client_kwargs.values()
+                        if (
+                            isinstance(client_kwargs, WorkflowInvocationKwargs)
+                            or routed_keys
+                            or any(isinstance(value, Mapping) for value in client_kwargs.values())
                         ):
                             combined_kwargs[RAW_CLIENT_KWARGS_KEY] = client_kwargs
                     self._runner.state.set(WORKFLOW_RUN_KWARGS_KEY, combined_kwargs)
                     self._runner.state.set(RESOLVED_WORKFLOW_RUN_KWARGS_KEY, resolved_combined_kwargs)
+                    self._runner.state.set(ROUTED_WORKFLOW_RUN_KWARGS_KEY, routed_combined_kwargs)
                 elif not is_continuation:
                     self._runner.state.set(WORKFLOW_RUN_KWARGS_KEY, {})
                     self._runner.state.set(RESOLVED_WORKFLOW_RUN_KWARGS_KEY, {})
+                    self._runner.state.set(ROUTED_WORKFLOW_RUN_KWARGS_KEY, {})
                 self._runner.state.commit()  # Commit immediately so kwargs are available
 
                 # Explicitly set streaming mode per run
@@ -1158,57 +1168,117 @@ class Workflow(DictConvertible):
         self,
         kwargs: WorkflowInvocationKwargs | Mapping[str, Any],
         param_name: str,
-    ) -> dict[str, Any]:
+    ) -> tuple[dict[str, Any], set[str]]:
         """Resolve invocation kwargs into collision-free global and executor namespaces.
 
-        Detects whether the provided kwargs dict uses per-executor targeting by checking
-        if any top-level key matches a known executor ID in the workflow. A legacy
-        ``"__global__"`` slot is separated from matched executor entries unless that name
-        is itself a real executor ID. If no executor ID matches, the complete dict is
-        treated as global application kwargs.
+        Detects whether a plain kwargs dict uses per-executor targeting by checking if any
+        top-level key matches a known executor ID in the workflow. Explicit executor kwargs
+        may also target a unique wrapped agent name. A legacy ``"__global__"`` slot is
+        separated from matched executor entries unless that name is itself a real executor
+        ID. If no executor ID matches a plain mapping, the complete dict is treated as
+        global application kwargs.
 
         Args:
             kwargs: The raw invocation kwargs from the caller.
             param_name: The parameter name (for logging), e.g. ``"function_invocation_kwargs"``.
 
         Returns:
-            A dict containing normalized global or per-executor mappings.
+            The normalized global or per-executor mappings and the caller keys routed
+            to executors in this workflow.
         """
+        executor_ids = set(self.executors.keys())
+        agent_name_aliases: dict[str, str] = {}
+        ambiguous_agent_names: set[str] = set()
+        from ._agent_executor import AgentExecutor
+
+        for executor_id, executor in self.executors.items():
+            if not isinstance(executor, AgentExecutor):
+                continue
+            agent_name = executor.agent.name
+            if not agent_name or agent_name == executor_id or agent_name in executor_ids:
+                continue
+            if agent_name in agent_name_aliases:
+                ambiguous_agent_names.add(agent_name)
+                agent_name_aliases.pop(agent_name)
+            elif agent_name not in ambiguous_agent_names:
+                agent_name_aliases[agent_name] = executor_id
+
+        is_explicit = isinstance(kwargs, WorkflowInvocationKwargs)
+        provided_executor_kwargs = kwargs.executor_kwargs if is_explicit else kwargs
+        matched_ids = provided_executor_kwargs.keys() & executor_ids
+        matched_aliases: set[str] = set()
+        if is_explicit:
+            ambiguous_matches = provided_executor_kwargs.keys() & ambiguous_agent_names
+            if ambiguous_matches:
+                names = ", ".join(sorted(ambiguous_matches))
+                raise ValueError(
+                    f"Ambiguous agent name(s) in {param_name}: {names}. "
+                    "Use the corresponding executor IDs for per-executor kwargs."
+                )
+            matched_aliases = provided_executor_kwargs.keys() & agent_name_aliases.keys()
+        routed_keys = matched_ids | matched_aliases
+
+        def normalize_executor_kwargs(
+            values: Mapping[str, Any],
+            *,
+            copy_values: bool = False,
+            resolve_aliases: bool = False,
+        ) -> dict[str, Any]:
+            normalized: dict[str, Any] = {}
+            for key, value in values.items():
+                executor_id = agent_name_aliases.get(key, key) if resolve_aliases else key
+                if executor_id in normalized:
+                    raise ValueError(f"{param_name} targets executor '{executor_id}' by both its ID and agent name.")
+                normalized[executor_id] = dict(value) if copy_values else value
+            return normalized
+
         if isinstance(kwargs, WorkflowInvocationKwargs):
             logger.info("Explicit global %s provided with executor-specific overrides.", param_name)
-            return {
-                "global_kwargs": dict(kwargs.global_kwargs),
-                "executor_kwargs": {
-                    executor_id: dict(executor_kwargs)
-                    for executor_id, executor_kwargs in kwargs.executor_kwargs.items()
+            return (
+                {
+                    "global_kwargs": dict(kwargs.global_kwargs),
+                    "executor_kwargs": normalize_executor_kwargs(
+                        kwargs.executor_kwargs,
+                        copy_values=True,
+                        resolve_aliases=True,
+                    ),
                 },
-            }
+                routed_keys,
+            )
 
-        executor_ids = set(self.executors.keys())
-        matched_ids = kwargs.keys() & executor_ids
-        if matched_ids:
+        if routed_keys:
             executor_kwargs = dict(kwargs)
-            if GLOBAL_KWARGS_KEY not in executor_ids and GLOBAL_KWARGS_KEY in executor_kwargs:
+            if (
+                GLOBAL_KWARGS_KEY not in executor_ids
+                and GLOBAL_KWARGS_KEY not in routed_keys
+                and GLOBAL_KWARGS_KEY in executor_kwargs
+            ):
                 global_kwargs = executor_kwargs.pop(GLOBAL_KWARGS_KEY)
                 logger.info(
                     "Detected legacy mixed %s with global values and executor ID(s) %s.",
                     param_name,
-                    matched_ids,
+                    routed_keys,
                 )
-                return {"global_kwargs": global_kwargs, "executor_kwargs": executor_kwargs}
+                return (
+                    {
+                        "global_kwargs": global_kwargs,
+                        "executor_kwargs": normalize_executor_kwargs(executor_kwargs),
+                    },
+                    routed_keys,
+                )
             logger.info(
                 "Detected per-executor %s: executor ID(s) %s found in keys. "
                 "All entries will be treated as per-executor.",
                 param_name,
-                matched_ids,
+                routed_keys,
             )
-            return {"executor_kwargs": executor_kwargs}
+            return {"executor_kwargs": normalize_executor_kwargs(executor_kwargs)}, routed_keys
 
         logger.info(
             "No executor IDs found in %s keys; treating as global kwargs for all executors.",
             param_name,
         )
-        return {"global_kwargs": dict(kwargs), "executor_kwargs": {}}
+        return {"global_kwargs": dict(kwargs), "executor_kwargs": {}}, set()
 
     @staticmethod
     def _to_legacy_invocation_kwargs(resolved: dict[str, Any]) -> dict[str, Any]:

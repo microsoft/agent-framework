@@ -23,6 +23,11 @@ public static class AzureBlobHostedAgentBuilderExtensions
     /// Whether to add an isolation partition from the configured <see cref="AgentIsolationKeyProvider"/>.
     /// </param>
     /// <returns>The supplied <paramref name="builder"/>.</returns>
+    /// <remarks>
+    /// The default isolation wrapper requires an <see cref="AgentIsolationKeyProvider"/> that supplies
+    /// a trusted caller key. Blob Storage credentials authorize the host's storage access, not the
+    /// caller's access to a session. The host must separately authenticate and authorize its callers.
+    /// </remarks>
     public static IHostedAgentBuilder WithAzureBlobSessionStore(
         this IHostedAgentBuilder builder,
         BlobContainerClient containerClient,
@@ -52,6 +57,11 @@ public static class AzureBlobHostedAgentBuilderExtensions
     /// Whether to add an isolation partition from the configured <see cref="AgentIsolationKeyProvider"/>.
     /// </param>
     /// <returns>The supplied <paramref name="builder"/>.</returns>
+    /// <remarks>
+    /// The default isolation wrapper requires an <see cref="AgentIsolationKeyProvider"/> that supplies
+    /// a trusted caller key. Blob Storage credentials authorize the host's storage access, not the
+    /// caller's access to a session. The host must separately authenticate and authorize its callers.
+    /// </remarks>
     public static IHostedAgentBuilder WithAzureBlobSessionStore(
         this IHostedAgentBuilder builder,
         Func<IServiceProvider, string, BlobContainerClient> createBlobContainerClient,

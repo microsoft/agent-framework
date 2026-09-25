@@ -28,7 +28,12 @@ from agent_framework import (
 from agent_framework._sessions import AgentSession
 from agent_framework._telemetry import get_user_agent, mark_feature_used
 from agent_framework.exceptions import ChatClientException, ChatClientInvalidRequestException
-from agent_framework_openai import OpenAIChatClient, OpenAIContentFilterException
+from agent_framework_openai import (
+    OpenAIChatClient,
+    OpenAIChatOptions,
+    OpenAIContentFilterException,
+    OpenAIContinuationToken,
+)
 from agent_framework_openai._chat_client import RawOpenAIChatClient
 from azure.ai.projects.models import MCPTool as FoundryMCPTool
 from azure.core.exceptions import ResourceNotFoundError
@@ -51,6 +56,16 @@ class OutputStruct(BaseModel):
 
     location: str
     weather: str | None = None
+
+
+class FoundryReasoningItem(BaseModel):
+    """Minimal Foundry reasoning item used to verify provider-native replay."""
+
+    type: str = "reasoning"
+    id: str
+    response_id: str
+    summary: list[Any]
+    content: list[Any]
 
 
 @pytest.mark.parametrize(
@@ -524,6 +539,186 @@ async def test_get_response_preserves_explicit_encrypted_reasoning_opt_in() -> N
     )
 
     assert response.response_id == "response_123"
+
+
+async def test_stateless_replay_uses_foundry_reasoning_item_without_encrypted_content() -> None:
+    reasoning_item = FoundryReasoningItem(
+        id="rs_foundry",
+        response_id="resp_background",
+        summary=[],
+        content=[],
+    )
+    function_call = MagicMock(
+        type="function_call",
+        id="fc_foundry",
+        call_id="call_foundry",
+        arguments='{"step":1}',
+        status="completed",
+    )
+    function_call.name = "lookup_probe"
+    mock_response = MagicMock(
+        id="resp_background",
+        model="test-model",
+        created_at=1000000000,
+        metadata={},
+        output_parsed=None,
+        output=[reasoning_item, function_call],
+        usage=None,
+        conversation=None,
+        status="completed",
+        incomplete_details=None,
+    )
+
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+    response = client._parse_response_from_openai(mock_response, options={"store": False})
+
+    messages = [
+        Message(role="user", contents=["Run the probe."]),
+        *response.messages,
+        Message(
+            role="tool",
+            contents=[Content.from_function_result(call_id="call_foundry", result="probe-result-step-1")],
+        ),
+    ]
+    _, run_options, _ = await client._prepare_request(messages, {"store": False})
+
+    assert run_options["input"] == [
+        {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "Run the probe."}],
+        },
+        {
+            "type": "reasoning",
+            "id": "rs_foundry",
+            "response_id": "resp_background",
+            "summary": [],
+            "content": [],
+        },
+        {
+            "call_id": "call_foundry",
+            "id": "fc_foundry",
+            "type": "function_call",
+            "name": "lookup_probe",
+            "arguments": '{"step":1}',
+            "status": "completed",
+        },
+        {
+            "call_id": "call_foundry",
+            "type": "function_call_output",
+            "output": "probe-result-step-1",
+        },
+    ]
+
+
+def test_streaming_stateless_replay_prefers_completed_foundry_reasoning_item() -> None:
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+
+    added = MagicMock()
+    added.type = "response.output_item.added"
+    added.output_index = 0
+    added.item = FoundryReasoningItem(
+        id="rs_foundry",
+        response_id="resp_incomplete",
+        summary=[],
+        content=[],
+    )
+    done = MagicMock()
+    done.type = "response.output_item.done"
+    done.output_index = 0
+    done.item = FoundryReasoningItem(
+        id="rs_foundry",
+        response_id="resp_complete",
+        summary=[],
+        content=[],
+    )
+
+    response = ChatResponse.from_updates([
+        client._parse_chunk_from_openai(added, {}, {}),
+        client._parse_chunk_from_openai(done, {}, {}),
+    ])
+
+    reasoning_items = client._prepare_reasoning_items_for_openai(response.messages)
+
+    assert reasoning_items == {
+        "rs_foundry": {
+            "type": "reasoning",
+            "id": "rs_foundry",
+            "response_id": "resp_complete",
+            "summary": [],
+            "content": [],
+        }
+    }
+
+
+async def test_stateless_replay_rejects_incomplete_foundry_reasoning_item() -> None:
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_text_reasoning(id="rs_incomplete", text=""),
+                Content.from_function_call(
+                    call_id="call_incomplete",
+                    name="lookup_probe",
+                    arguments='{"step":1}',
+                ),
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[Content.from_function_result(call_id="call_incomplete", result="probe-result-step-1")],
+        ),
+    ]
+
+    with pytest.raises(
+        ChatClientInvalidRequestException,
+        match="rs_incomplete.*required reasoning replay data is missing or invalid",
+    ):
+        await client._prepare_request(messages, {"store": False})
+
+
+async def test_stateless_replay_rejects_malformed_stored_foundry_reasoning_item() -> None:
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_text_reasoning(
+                    id="rs_malformed",
+                    text="",
+                    additional_properties={
+                        "__foundry_reasoning_replay_item__": {
+                            "id": "rs_malformed",
+                        }
+                    },
+                ),
+                Content.from_function_call(
+                    call_id="call_malformed",
+                    name="lookup_probe",
+                    arguments='{"step":1}',
+                ),
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[Content.from_function_result(call_id="call_malformed", result="probe-result-step-1")],
+        ),
+    ]
+
+    with pytest.raises(
+        ChatClientInvalidRequestException,
+        match="rs_malformed.*required reasoning replay data is missing or invalid",
+    ):
+        await client._prepare_request(messages, {"store": False})
 
 
 async def test_web_search_tool_with_location() -> None:
@@ -1142,6 +1337,59 @@ async def test_integration_options(
                 assert response.value is not None
                 assert isinstance(response.value, dict)
                 assert "location" in response.value
+
+
+@pytest.mark.flaky
+@pytest.mark.integration
+@skip_if_foundry_integration_tests_disabled
+@pytest.mark.parametrize("store", [True, False])
+@_with_foundry_debug()
+async def test_integration_background_local_tool_loop(store: bool) -> None:
+    executions: list[int] = []
+
+    @tool(approval_mode="never_require")
+    def lookup_probe(step: int) -> str:
+        """Return a deterministic marker for the requested step."""
+        executions.append(step)
+        return f"probe-result-step-{step}"
+
+    client = FoundryChatClient(credential=cast(Any, AzureCliCredential()))
+    client.function_invocation_configuration["max_iterations"] = 4
+    agent = Agent(
+        client=client,
+        name=f"background_tool_probe_store_{str(store).lower()}",
+        instructions=(
+            "Call lookup_probe with step=1 exactly once. "
+            "After receiving the tool result, return that exact result and do not call any tool again."
+        ),
+        tools=[lookup_probe],
+        default_options=OpenAIChatOptions(
+            store=store,
+            allow_multiple_tool_calls=False,
+            tool_choice={"mode": "required", "required_function_name": "lookup_probe"},
+        ),
+    )
+    session = AgentSession()
+
+    response = await agent.run(
+        "Run the probe.",
+        session=session,
+        options=OpenAIChatOptions(background=True),
+    )
+    deadline = asyncio.get_running_loop().time() + 180
+    while response.continuation_token is not None:
+        if asyncio.get_running_loop().time() >= deadline:
+            pytest.fail("Background local-tool probe did not finish within 180 seconds.")
+        await asyncio.sleep(1)
+        response = await agent.run(
+            session=session,
+            options=OpenAIChatOptions(
+                continuation_token=cast(OpenAIContinuationToken, response.continuation_token),
+            ),
+        )
+
+    assert executions == [1]
+    assert response.text == "probe-result-step-1"
 
 
 @pytest.mark.flaky
