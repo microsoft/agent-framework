@@ -643,7 +643,7 @@ requires-dist = [
     { name = "agent-framework-openai", editable = "packages/openai" },
     { name = "aiohttp", specifier = ">=3.9,<4" },
     { name = "azure-ai-inference", specifier = ">=1.0.0b9,<1.0.0b10" },
-    { name = "azure-ai-projects", specifier = ">=2.2.0,<2.7.0" },
+    { name = "azure-ai-projects", specifier = ">=2.2.0,<2.8.0" },
     { name = "httpx", specifier = ">=0.28,<1" },
 ]
 
@@ -1415,7 +1415,7 @@ wheels = [
 
 [[package]]
 name = "azure-ai-projects"
-version = "2.6.1"
+version = "2.7.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "azure-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -1425,9 +1425,9 @@ dependencies = [
     { name = "openai", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "typing-extensions", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d4/5f/871dfc7d664d72d5c080b6b4a97561aee80b24de87bc2182b620d6a41e4a/azure_ai_projects-2.6.1.tar.gz", hash = "sha256:7726b5a44555dbb9190fee15f21c21896f406063e657f17603f11543863ab35e", size = 39813087, upload-time = "2026-09-14T20:51:04.646Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e6/6b/634eb4403c60bbef36612a3dd9da3cd42ccc2b4fe64b7180fab8e965d832/azure_ai_projects-2.7.0.tar.gz", hash = "sha256:ba3c6626bfa710031de37f927ae488ca9614168382407d7b2bb8d6e20fe32ff8", size = 39992282, upload-time = "2026-09-18T20:50:49.486Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f2/63/0d60d719adc8b8d3c1130d0448b1950b3ac475b26b80332736fb1a116e0f/azure_ai_projects-2.6.1-py3-none-any.whl", hash = "sha256:bc698227391ad1e00bc983b87d918eed8a348319152bce554c47a9bf141f4fee", size = 404182, upload-time = "2026-09-14T20:51:11.3Z" },
+    { url = "https://files.pythonhosted.org/packages/14/62/6031657cb26334542584302006f79c2e25689a6f3736e74002071b1163b0/azure_ai_projects-2.7.0-py3-none-any.whl", hash = "sha256:4bce987ebc93641311f7f9406b94f75f00d96b7d388056bb8b06e1f6f64deeaf", size = 517253, upload-time = "2026-09-18T20:50:52.529Z" },
 ]
 
 [[package]]

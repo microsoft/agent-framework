@@ -47,6 +47,7 @@ logger = logging.getLogger("agent_framework")
 
 _TOOL_CALL_CONTENT_TYPES: Final[set[str]] = {
     "function_call",
+    "computer_tool_call",
     "mcp_server_tool_call",
     "code_interpreter_tool_call",
     "shell_tool_call",
@@ -146,20 +147,25 @@ def _is_reasoning_only_assistant(message: Message) -> bool:
     return all(content.type == "text_reasoning" for content in message.contents)
 
 
-def _unambiguous_function_call_result_pairs(messages: Sequence[Message]) -> list[tuple[int, int]]:
-    unmatched_declaration_indices: dict[str, list[int]] = {}
+def _unambiguous_tool_call_result_pairs(messages: Sequence[Message]) -> list[tuple[int, int]]:
+    unmatched_declaration_indices: dict[tuple[str, str], list[int]] = {}
     pairs: list[tuple[int, int]] = []
 
     for message_index, message in enumerate(messages):
         if message.role not in ("assistant", "tool"):
             continue
         for content in message.contents:
-            if message.role == "assistant" and content.type == "function_call" and content.call_id:
-                unmatched_declaration_indices.setdefault(content.call_id, []).append(message_index)
+            if (
+                message.role == "assistant"
+                and content.type in ("function_call", "computer_tool_call")
+                and content.call_id
+            ):
+                unmatched_declaration_indices.setdefault((content.type, content.call_id), []).append(message_index)
                 continue
-            if content.type != "function_result" or not content.call_id:
+            if content.type not in ("function_result", "computer_tool_result") or not content.call_id:
                 continue
-            candidates = unmatched_declaration_indices.get(content.call_id)
+            call_type = "function_call" if content.type == "function_result" else "computer_tool_call"
+            candidates = unmatched_declaration_indices.get((call_type, content.call_id))
             if candidates is None or len(candidates) != 1:
                 continue
             pairs.append((candidates.pop(), message_index))
@@ -191,8 +197,8 @@ def _group_id_for(message: Message, group_index: int) -> str:
     return f"group_index_{group_index}"
 
 
-def _link_function_call_result_spans(messages: Sequence[Message], spans: list[dict[str, Any]]) -> None:
-    """Link non-adjacent function results to unambiguous declaration occurrences."""
+def _link_tool_call_result_spans(messages: Sequence[Message], spans: list[dict[str, Any]]) -> None:
+    """Link non-adjacent tool results to unambiguous declaration occurrences."""
     if len(spans) < 2:
         return
 
@@ -222,7 +228,7 @@ def _link_function_call_result_spans(messages: Sequence[Message], spans: list[di
         return True
 
     linked = False
-    for declaration_message_index, result_message_index in _unambiguous_function_call_result_pairs(messages):
+    for declaration_message_index, result_message_index in _unambiguous_tool_call_result_pairs(messages):
         declaration_span_index = span_by_message_index[declaration_message_index]
         result_span_index = span_by_message_index[result_message_index]
         if declaration_span_index < result_span_index and union(result_span_index, declaration_span_index):
@@ -260,7 +266,7 @@ def group_messages(
     Returns:
         Ordered list of lightweight span dicts with keys:
         ``group_id``, ``kind``, ``start_index``, ``end_index``, ``has_reasoning``.
-        Non-contiguous function-call declaration and result spans share a group id.
+        Non-contiguous function or computer call/result spans share a group id.
     """
     _ensure_message_ids(messages, id_offset=id_offset, reserved_ids=reserved_ids)
     spans: list[dict[str, Any]] = []
@@ -365,7 +371,7 @@ def group_messages(
         i += 1
         group_index += 1
 
-    _link_function_call_result_spans(messages, spans)
+    _link_tool_call_result_spans(messages, spans)
     return spans
 
 
@@ -634,19 +640,24 @@ def _reannotation_start(messages: Sequence[Message], index: int) -> int:
     return previous_index
 
 
-def _function_pair_reannotation_start(messages: Sequence[Message], start_index: int) -> int:
-    unmatched_declaration_indices: dict[str, list[int]] = {}
+def _tool_pair_reannotation_start(messages: Sequence[Message], start_index: int) -> int:
+    unmatched_declaration_indices: dict[tuple[str, str], list[int]] = {}
     matching_indices: list[int] = []
     for message_index, message in enumerate(messages):
         if message.role not in ("assistant", "tool"):
             continue
         for content in message.contents:
-            if message.role == "assistant" and content.type == "function_call" and content.call_id:
-                unmatched_declaration_indices.setdefault(content.call_id, []).append(message_index)
+            if (
+                message.role == "assistant"
+                and content.type in ("function_call", "computer_tool_call")
+                and content.call_id
+            ):
+                unmatched_declaration_indices.setdefault((content.type, content.call_id), []).append(message_index)
                 continue
-            if content.type != "function_result" or not content.call_id:
+            if content.type not in ("function_result", "computer_tool_result") or not content.call_id:
                 continue
-            candidates = unmatched_declaration_indices.get(content.call_id)
+            call_type = "function_call" if content.type == "function_result" else "computer_tool_call"
+            candidates = unmatched_declaration_indices.get((call_type, content.call_id))
             if not candidates:
                 continue
             if message_index >= start_index:
@@ -700,7 +711,7 @@ def annotate_message_groups(
         start_index = min(candidate_starts)
 
     start_index = _reannotation_start(messages, start_index)
-    start_index = _function_pair_reannotation_start(messages, start_index)
+    start_index = _tool_pair_reannotation_start(messages, start_index)
 
     # Linked groups can be non-contiguous, so the last prefix message does not
     # necessarily carry the highest group index.
@@ -1391,6 +1402,14 @@ def _format_summary_content(content: Content) -> str:
         if content.call_id:
             call += f" [call_id={content.call_id}]"
         return call
+    if content.type == "computer_tool_call":
+        actions = _tool_result_text(content.actions) if content.actions is not None else "no actions"
+        call_id_suffix = f" [call_id={content.call_id}]" if content.call_id else ""
+        return f"computer_tool_call: {actions}{call_id_suffix}"
+    if content.type == "computer_tool_result":
+        call_id_suffix = f" [call_id={content.call_id}]" if content.call_id else ""
+        screenshot_label = ": screenshot" if content.screenshot is not None else ""
+        return f"computer_tool_result{screenshot_label}{call_id_suffix}"
     if content.type == "function_result":
         result_text = _format_summary_result_items(content.items) if content.items else ""
         if not result_text:

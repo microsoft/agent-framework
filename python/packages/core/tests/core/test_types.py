@@ -21,6 +21,7 @@ from agent_framework import (
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
+    ComputerSafetyCheck,
     Content,
     FunctionTool,
     Message,
@@ -591,6 +592,79 @@ def test_shell_content_serialization_roundtrip():
     assert restored_result.outputs[0].stdout == "hello\n"
     assert restored_result.outputs[0].exit_code == 0
     assert restored_result.max_output_length == 4096
+
+
+# region: Computer tool content
+
+
+def test_computer_tool_call_preserves_actions_and_pending_checks():
+    checks: list[ComputerSafetyCheck] = [
+        {"id": "check-1", "code": "malicious_instructions", "message": "Review this page before continuing."}
+    ]
+    call = Content.from_computer_tool_call(
+        id="cu_1",
+        call_id="call_1",
+        actions=[{"type": "click", "x": 12, "y": 30}, {"type": "keypress", "keys": ["CTRL", "A"]}],
+        pending_safety_checks=checks,
+        status="completed",
+    )
+
+    assert call.user_input_request is True
+    assert call.actions == [{"type": "click", "x": 12, "y": 30}, {"type": "keypress", "keys": ["CTRL", "A"]}]
+    assert call.pending_safety_checks == checks
+    assert call.acknowledged_safety_checks is None
+    assert "pending_safety_checks" not in call.additional_properties
+    restored = Content.from_dict(json.loads(json.dumps(call.to_dict())))
+    assert restored == call
+    assert AgentResponse(messages=[Message(role="assistant", contents=[call])]).user_input_requests == [call]
+    assert AgentResponseUpdate(contents=[call]).user_input_requests == [call]
+
+
+@pytest.mark.parametrize(
+    "screenshot",
+    [
+        Content.from_data(b"png", "image/png"),
+        Content.from_uri("https://example.com/screen.png", media_type="image/png"),
+        Content.from_hosted_file(file_id="file_1"),
+    ],
+)
+def test_computer_tool_result_preserves_screenshot_content(screenshot: Content):
+    result = Content.from_computer_tool_result(
+        call_id="call_1",
+        screenshot=screenshot,
+        acknowledged_safety_checks=[{"id": "check-1"}],
+    )
+
+    assert result.screenshot is screenshot
+    assert result.acknowledged_safety_checks == [{"id": "check-1"}]
+    assert "acknowledged_safety_checks" not in result.additional_properties
+    restored = Content.from_dict(json.loads(json.dumps(result.to_dict())))
+    assert isinstance(restored.screenshot, Content)
+    assert restored == result
+
+
+def test_computer_tool_result_without_screenshot_round_trips():
+    result = Content.from_computer_tool_result(
+        call_id="call_1",
+        acknowledged_safety_checks=[{"id": "check-1"}],
+    )
+
+    assert result.screenshot is None
+    assert "screenshot" not in result.to_dict()
+    assert Content.from_dict(json.loads(json.dumps(result.to_dict()))) == result
+
+
+def test_computer_tool_result_does_not_acknowledge_checks_by_default():
+    result = Content.from_computer_tool_result(call_id="call_1", screenshot=Content.from_data(b"png", "image/png"))
+    assert result.acknowledged_safety_checks is None
+    assert "acknowledged_safety_checks" not in result.to_dict()
+
+
+def test_computer_tool_requires_valid_call_and_screenshot():
+    with pytest.raises(ValueError, match="at least one action"):
+        Content.from_computer_tool_call(id="cu_1", call_id="call_1", actions=[])
+    with pytest.raises(ValueError, match="screenshot"):
+        Content.from_computer_tool_result(call_id="call_1", screenshot=Content.from_text("not an image"))
 
 
 # region: HostedVectorStoreContent

@@ -8,6 +8,7 @@ from collections.abc import AsyncGenerator, Iterator, Sequence
 from datetime import datetime, timezone
 from importlib import import_module
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Annotated, Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -43,7 +44,12 @@ from agent_framework.exceptions import (
     SettingNotFoundError,
 )
 from openai import AsyncOpenAI, BadRequestError, DefaultAsyncHttpxClient
-from openai.types.responses import ResponseFunctionShellToolCall, ResponseFunctionShellToolCallOutput
+from openai.types.responses import (
+    ResponseComputerToolCall,
+    ResponseComputerToolCallOutputItem,
+    ResponseFunctionShellToolCall,
+    ResponseFunctionShellToolCallOutput,
+)
 from openai.types.responses.response_reasoning_item import Summary
 from openai.types.responses.response_reasoning_summary_text_delta_event import (
     ResponseReasoningSummaryTextDeltaEvent,
@@ -3341,6 +3347,206 @@ def test_parse_response_from_openai_with_mcp_server_tool_result() -> None:
     assert result_content.type == "mcp_server_tool_result"
     assert result_content.call_id == "mcp_call_123"
     assert result_content.output is not None
+
+
+def test_get_computer_tool_uses_non_preview_type() -> None:
+    assert OpenAIChatClient.get_computer_tool() == {"type": "computer"}
+
+
+def test_parse_computer_call_preserves_batched_actions_ids_and_safety_checks() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    item = ResponseComputerToolCall.model_validate({
+        "type": "computer_call",
+        "id": "cu_item_1",
+        "call_id": "call_1",
+        "actions": [
+            {"type": "click", "button": "left", "x": 12, "y": 34},
+            {"type": "keypress", "keys": ["CTRL", "A"]},
+        ],
+        "pending_safety_checks": [{"id": "check_1", "code": "malicious_instructions", "message": "Review."}],
+        "status": "completed",
+    })
+    response = MagicMock(
+        output=[item],
+        output_parsed=None,
+        id="resp_1",
+        status="completed",
+        model="test-model",
+        metadata={},
+        usage=None,
+        created_at=1,
+    )
+
+    parsed = client._parse_response_from_openai(response, options={})
+    call = parsed.messages[0].contents[0]
+    assert parsed.finish_reason == "tool_calls"
+    assert call.type == "computer_tool_call"
+    assert call.id == "cu_item_1"
+    assert call.call_id == "call_1"
+    assert call.actions is not None
+    assert [action["type"] for action in call.actions] == ["click", "keypress"]
+    assert call.pending_safety_checks == [{"id": "check_1", "code": "malicious_instructions", "message": "Review."}]
+    assert call.user_input_request is True
+    assert "pending_safety_checks" not in call.additional_properties
+
+
+def test_preview_computer_action_normalizes_to_ordered_actions() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    item = ResponseComputerToolCall.model_validate({
+        "type": "computer_call",
+        "id": "cu_preview",
+        "call_id": "call_preview",
+        "action": {"type": "screenshot"},
+        "pending_safety_checks": [],
+        "status": "completed",
+    })
+    call = client._parse_computer_tool_call_content(item)
+
+    assert call.actions == [{"type": "screenshot"}]
+    assert client._prepare_content_for_openai("assistant", call) == {
+        "type": "computer_call",
+        "id": "cu_preview",
+        "call_id": "call_preview",
+        "action": {"type": "screenshot"},
+        "status": "completed",
+        "pending_safety_checks": [],
+    }
+
+
+@pytest.mark.parametrize(
+    ("screenshot_output", "expected_type"),
+    [
+        ({"type": "computer_screenshot", "image_url": "data:image/png;base64,YWJj"}, "data"),
+        ({"type": "computer_screenshot", "image_url": "https://example.com/s.png"}, "uri"),
+        ({"type": "computer_screenshot", "file_id": "file_1"}, "hosted_file"),
+    ],
+)
+def test_parse_computer_output_preserves_content_and_explicit_acknowledgments(
+    screenshot_output: dict[str, str], expected_type: str
+) -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    item = ResponseComputerToolCallOutputItem.model_validate({
+        "type": "computer_call_output",
+        "id": "cco_1",
+        "call_id": "call_1",
+        "output": screenshot_output,
+        "acknowledged_safety_checks": [{"id": "check_1"}],
+        "status": "completed",
+    })
+    result = client._parse_computer_tool_result_content(item)
+
+    assert result.type == "computer_tool_result"
+    assert result.id == "cco_1"
+    assert result.call_id == "call_1"
+    assert isinstance(result.screenshot, Content)
+    assert result.screenshot.type == expected_type
+    assert result.acknowledged_safety_checks == [{"id": "check_1"}]
+    assert "acknowledged_safety_checks" not in result.additional_properties
+    assert client._prepare_content_for_openai("tool", result) == {
+        "type": "computer_call_output",
+        "id": "cco_1",
+        "call_id": "call_1",
+        "status": "completed",
+        "output": screenshot_output,
+        "acknowledged_safety_checks": [{"id": "check_1"}],
+    }
+
+
+@pytest.mark.parametrize(
+    ("output", "error"),
+    [
+        (None, "must contain a computer screenshot"),
+        ({"type": "text"}, "must contain a computer screenshot"),
+        ({"type": "computer_screenshot"}, "missing its image URL or file ID"),
+    ],
+)
+def test_parse_computer_output_rejects_missing_screenshot(output: dict[str, str] | None, error: str) -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    item = SimpleNamespace(type="computer_call_output", call_id="call_1", output=output)
+
+    with pytest.raises(ChatClientInvalidRequestException, match=error):
+        client._parse_computer_tool_result_content(item)
+
+
+def test_streamed_computer_call_and_screenshot_emit_only_once_on_done() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    added = MagicMock(type="response.output_item.added")
+    added.item = SimpleNamespace(type="computer_call", id="cu_1", call_id="call_1", actions=None)
+    done = MagicMock(type="response.output_item.done")
+    done.item = SimpleNamespace(
+        type="computer_call",
+        id="cu_1",
+        call_id="call_1",
+        actions=[{"type": "move", "x": 1, "y": 2}, {"type": "click", "x": 1, "y": 2}],
+        pending_safety_checks=[],
+        status="completed",
+    )
+    output_added = MagicMock(type="response.output_item.added")
+    output_added.item = SimpleNamespace(
+        type="computer_call_output",
+        id="cco_1",
+        call_id="call_1",
+        output={"type": "computer_screenshot", "file_id": "file_1"},
+    )
+    output_done = MagicMock(type="response.output_item.done")
+    output_done.item = output_added.item
+
+    updates = [
+        client._parse_chunk_from_openai(event, options={}, function_call_ids={})
+        for event in (added, done, output_added, output_done)
+    ]
+    assert [content.type for update in updates for content in update.contents] == [
+        "computer_tool_call",
+        "computer_tool_result",
+    ]
+    assert updates[1].contents[0].actions is not None
+    assert updates[1].contents[0].actions[1]["type"] == "click"
+    assert updates[3].contents[0].screenshot is not None
+    assert updates[3].contents[0].screenshot.file_id == "file_1"
+
+
+def test_computer_stateless_replay_and_service_continuation() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    call = Content.from_computer_tool_call(
+        id="cu_1",
+        call_id="call_1",
+        actions=[{"type": "move", "x": 2, "y": 3}, {"type": "click", "x": 2, "y": 3}],
+        pending_safety_checks=[{"id": "check_1"}],
+    )
+    result = Content.from_computer_tool_result(
+        call_id="call_1",
+        screenshot=Content.from_data(b"screenshot", "image/png"),
+        acknowledged_safety_checks=[{"id": "check_1"}],
+    )
+    messages = [
+        Message(role="assistant", contents=[call]),
+        Message(role="tool", contents=[result]),
+    ]
+    stateless = client._prepare_messages_for_openai(messages, request_uses_service_side_storage=False)
+    continuation = client._prepare_messages_for_openai(messages, request_uses_service_side_storage=True)
+
+    assert [item["type"] for item in stateless] == ["computer_call", "computer_call_output"]
+    assert stateless[0]["id"] != stateless[0]["call_id"]
+    assert stateless[0]["actions"] == call.actions
+    assert stateless[0]["pending_safety_checks"] == [{"id": "check_1"}]
+    assert stateless[1]["call_id"] == "call_1"
+    assert result.screenshot is not None
+    assert stateless[1]["output"]["image_url"] == result.screenshot.uri
+    assert stateless[1]["acknowledged_safety_checks"] == [{"id": "check_1"}]
+    assert continuation == [stateless[1]]
+
+
+@pytest.mark.parametrize("request_uses_service_side_storage", [False, True])
+def test_computer_result_without_screenshot_is_rejected_by_openai(request_uses_service_side_storage: bool) -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    call = Content.from_computer_tool_call(id="cu_1", call_id="call_1", actions=[{"type": "screenshot"}])
+    result = Content.from_computer_tool_result(call_id="call_1")
+    messages = [Message(role="assistant", contents=[call]), Message(role="tool", contents=[result])]
+
+    with pytest.raises(ChatClientInvalidRequestException, match="Computer results require a call_id and screenshot"):
+        client._prepare_messages_for_openai(
+            messages, request_uses_service_side_storage=request_uses_service_side_storage
+        )
 
 
 def test_parse_chunk_from_openai_with_web_search_call_added() -> None:

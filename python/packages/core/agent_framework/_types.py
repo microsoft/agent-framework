@@ -26,7 +26,7 @@ from datetime import datetime
 from inspect import isawaitable
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, NewType, cast, overload
 
-from typing_extensions import TypedDict
+from typing_extensions import Required, TypedDict
 
 from ._feature_stage import ExperimentalFeature, experimental
 from ._serialization import SerializationMixin, get_pickle_state, restore_pickle_state
@@ -382,6 +382,8 @@ ContentType = Literal[
     "shell_tool_call",
     "shell_tool_result",
     "shell_command_output",
+    "computer_tool_call",
+    "computer_tool_result",
     "function_approval_request",
     "function_approval_response",
     "oauth_consent_request",
@@ -408,6 +410,15 @@ class Annotation(TypedDict, total=False):
     annotated_regions: Sequence[TextSpanRegion]
     additional_properties: dict[str, Any]
     raw_representation: Any
+
+
+@experimental(feature_id=ExperimentalFeature.COMPUTER_USE)
+class ComputerSafetyCheck(TypedDict, total=False):
+    """A provider warning that must be reviewed before running computer actions."""
+
+    id: Required[str]
+    code: str
+    message: str
 
 
 ContentT = TypeVar("ContentT", bound="Content")
@@ -537,6 +548,11 @@ class Content:
         timeout_ms: int | None = None,
         max_output_length: int | None = None,
         status: str | None = None,
+        # Computer tool fields
+        actions: list[dict[str, Any]] | None = None,
+        screenshot: Content | None = None,
+        pending_safety_checks: list[ComputerSafetyCheck] | None = None,
+        acknowledged_safety_checks: list[ComputerSafetyCheck] | None = None,
         # Shell command output fields
         stdout: str | None = None,
         stderr: str | None = None,
@@ -594,6 +610,10 @@ class Content:
         self.timeout_ms = timeout_ms
         self.max_output_length = max_output_length
         self.status = status
+        self.actions = actions
+        self.screenshot = screenshot
+        self.pending_safety_checks = pending_safety_checks
+        self.acknowledged_safety_checks = acknowledged_safety_checks
         self.stdout = stdout
         self.stderr = stderr
         self.exit_code = exit_code
@@ -1252,6 +1272,81 @@ class Content:
         )
 
     @classmethod
+    @experimental(feature_id=ExperimentalFeature.COMPUTER_USE)
+    def from_computer_tool_call(
+        cls: type[ContentT],
+        *,
+        id: str,
+        call_id: str,
+        actions: Sequence[Mapping[str, Any]],
+        status: str | None = None,
+        pending_safety_checks: Sequence[ComputerSafetyCheck] | None = None,
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> ContentT:
+        """Create an actionable computer request with ordered actions and provider safety warnings.
+
+        The application must review any pending safety checks and supply its own
+        acknowledgments with the result; they are never acknowledged automatically.
+        """
+        if not id or not call_id or not actions:
+            raise ValueError("A computer tool call requires an id, call_id, and at least one action.")
+        return cls(
+            "computer_tool_call",
+            id=id,
+            call_id=call_id,
+            actions=[dict(action) for action in actions],
+            status=status,
+            pending_safety_checks=list(pending_safety_checks) if pending_safety_checks is not None else None,
+            user_input_request=True,
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+        )
+
+    @classmethod
+    @experimental(feature_id=ExperimentalFeature.COMPUTER_USE)
+    def from_computer_tool_result(
+        cls: type[ContentT],
+        *,
+        call_id: str,
+        screenshot: Content | None = None,
+        id: str | None = None,
+        status: str | None = None,
+        acknowledged_safety_checks: Sequence[ComputerSafetyCheck] | None = None,
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> ContentT:
+        """Create the result for a computer call after the application executes its actions.
+
+        A screenshot is optional in shared content; connectors that require one validate it
+        when sending the result. If supplied, it may be ``Content.from_data``,
+        ``Content.from_uri``, or ``Content.from_hosted_file``. Pass only safety checks
+        explicitly acknowledged by the application.
+        """
+        if not call_id:
+            raise ValueError("A computer tool result requires a call_id.")
+        if screenshot is not None and (
+            not isinstance(screenshot, Content) or screenshot.type not in ("data", "uri", "hosted_file")
+        ):
+            raise ValueError("A computer screenshot must be image data, a URI, or a hosted file Content.")
+        return cls(
+            "computer_tool_result",
+            id=id,
+            call_id=call_id,
+            status=status,
+            screenshot=screenshot,
+            acknowledged_safety_checks=(
+                list(acknowledged_safety_checks) if acknowledged_safety_checks is not None else None
+            ),
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+        )
+
+    @classmethod
     def from_mcp_server_tool_call(
         cls: type[ContentT],
         call_id: str,
@@ -1465,6 +1560,10 @@ class Content:
             "timeout_ms",
             "max_output_length",
             "status",
+            "actions",
+            "screenshot",
+            "pending_safety_checks",
+            "acknowledged_safety_checks",
             "stdout",
             "stderr",
             "exit_code",
@@ -1538,6 +1637,8 @@ class Content:
         # Handle nested Content objects (e.g., function_call in function_approval_request)
         if (function_call := remaining.get("function_call")) and isinstance(function_call, dict):
             remaining["function_call"] = cls.from_dict(function_call)  # type: ignore[reportUnknownArgumentType]
+        if (screenshot := remaining.get("screenshot")) and isinstance(screenshot, dict):
+            remaining["screenshot"] = cls.from_dict(screenshot)  # type: ignore[reportUnknownArgumentType]
 
         if content_type == "function_approval_response" and type(remaining.get("approved")) is not bool:
             remaining["approved"] = False

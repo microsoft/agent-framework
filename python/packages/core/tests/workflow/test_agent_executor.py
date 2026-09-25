@@ -628,6 +628,7 @@ async def test_agent_executor_checkpoint_state_public_schema_keys() -> None:
         "agent_session",
         "pending_agent_requests",
         "pending_responses_to_agent",
+        "pending_request_order",
     }
     assert isinstance(state, dict)
     assert len(state["cache"]) == 1
@@ -653,6 +654,17 @@ async def test_agent_executor_checkpoint_restore_missing_optional_fields() -> No
     assert executor._full_conversation == []  # pyright: ignore[reportPrivateUsage]
     assert executor._pending_agent_requests == {}  # pyright: ignore[reportPrivateUsage]
     assert executor._pending_responses_to_agent == []  # pyright: ignore[reportPrivateUsage]
+    assert executor._pending_request_order == []  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_agent_executor_restores_legacy_pending_request_order() -> None:
+    """A checkpoint without ordering metadata can still order replies when none were queued."""
+    request = Content.from_function_call(id="request-1", call_id="call-1", name="tool", arguments={})
+    executor = AgentExecutor(_CountingAgent(id="legacy_agent", name="LegacyAgent"))
+
+    await executor.on_checkpoint_restore({"pending_agent_requests": {"request-1": request}})
+
+    assert executor._pending_request_order == ["request-1"]  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_agent_executor_checkpoint_restore_rejects_malformed_fields() -> None:
@@ -670,6 +682,15 @@ async def test_agent_executor_checkpoint_restore_rejects_malformed_fields() -> N
 
     with pytest.raises(WorkflowCheckpointException, match="pending_responses_to_agent"):
         await executor.on_checkpoint_restore({"pending_responses_to_agent": ["bad"]})  # type: ignore[typeddict-item]
+
+    with pytest.raises(WorkflowCheckpointException, match="pending_request_order"):
+        await executor.on_checkpoint_restore({"pending_request_order": "not-a-list"})  # type: ignore[typeddict-item]
+
+    with pytest.raises(WorkflowCheckpointException, match="pending_request_order"):
+        await executor.on_checkpoint_restore({"pending_request_order": [1]})  # type: ignore[typeddict-item]
+
+    with pytest.raises(WorkflowCheckpointException, match="pending_request_order"):
+        await executor.on_checkpoint_restore({"pending_request_order": ["req", "req"]})
 
     with pytest.raises(WorkflowCheckpointException, match="agent_session"):
         await executor.on_checkpoint_restore({"agent_session": "not-a-dict"})  # type: ignore[typeddict-item]
@@ -698,12 +719,10 @@ async def test_agent_executor_checkpoint_restore_ignores_unknown_keys() -> None:
     agent = _CountingAgent(id="fwd_agent", name="FwdAgent")
     executor = AgentExecutor(agent)
 
-    await executor.on_checkpoint_restore(
-        {
-            "cache": [Message(role="user", contents=["ok"])],
-            "future_field": {"ignored": True},
-        }
-    )
+    await executor.on_checkpoint_restore({
+        "cache": [Message(role="user", contents=["ok"])],
+        "future_field": {"ignored": True},
+    })
 
     assert len(executor._cache) == 1  # pyright: ignore[reportPrivateUsage]
     assert executor._cache[0].text == "ok"  # pyright: ignore[reportPrivateUsage]

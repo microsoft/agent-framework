@@ -844,6 +844,23 @@ class RawFoundryChatClient(
         return MemorySearchPreviewTool(**params)
 
     @staticmethod
+    def get_computer_tool() -> Any:
+        """Create a non-preview Foundry computer tool (requires azure-ai-projects >= 2.3.0).
+
+        Older supported SDK releases can still import this client; calling this
+        factory on those releases raises ``ImportError`` with upgrade guidance.
+        """
+        try:
+            from azure.ai.projects.models import ComputerTool
+        except ImportError as exc:
+            raise ImportError(
+                "FoundryChatClient.get_computer_tool() requires ComputerTool from azure-ai-projects>=2.3.0. "
+                "Upgrade azure-ai-projects to >=2.3.0 to use this tool."
+            ) from exc
+
+        return ComputerTool()
+
+    @staticmethod
     @experimental(feature_id=ExperimentalFeature.FOUNDRY_PREVIEW_TOOLS)
     def get_computer_use_tool(
         *,
