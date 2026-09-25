@@ -4,9 +4,10 @@ import asyncio
 import base64
 import json
 import warnings
-from collections.abc import AsyncIterable, Awaitable, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from functools import partial
 from typing import Any, Literal, cast
 
 import pytest
@@ -286,16 +287,36 @@ def test_data_content_detect_image_format_from_base64():
     # Test error handling
     with pytest.raises(ValueError, match="Invalid base64 data provided."):
         detect_media_type_from_base64(data_str="invalid_base64!")
-        detect_media_type_from_base64(data_str="")
 
-    with pytest.raises(ValueError, match="Provide exactly one of data_bytes, data_str, or data_uri."):
-        detect_media_type_from_base64()
-        detect_media_type_from_base64(
-            data_bytes=b"data", data_str="data", data_uri="data:application/octet-stream;base64,AAA"
-        )
-        detect_media_type_from_base64(data_bytes=b"data", data_str="data")
-        detect_media_type_from_base64(data_bytes=b"data", data_uri="data:application/octet-stream;base64,AAA")
-        detect_media_type_from_base64(data_str="data", data_uri="data:application/octet-stream;base64,AAA")
+
+@mark.parametrize(
+    "call",
+    [
+        partial(detect_media_type_from_base64),
+        partial(detect_media_type_from_base64, data_bytes=b"data", data_str="data"),
+        partial(detect_media_type_from_base64, data_bytes=b"data", data_uri="data:application/octet-stream;base64,AAA"),
+        partial(detect_media_type_from_base64, data_str="data", data_uri="data:application/octet-stream;base64,AAA"),
+        partial(
+            detect_media_type_from_base64,
+            data_bytes=b"data",
+            data_str="data",
+            data_uri="data:application/octet-stream;base64,AAA",
+        ),
+    ],
+)
+def test_detect_media_type_from_base64_requires_exactly_one_source(call: Callable[[], Any]):
+    """Every combination other than a single source must be rejected, never silently resolved."""
+    with raises(ValueError, match="Provide exactly one of data_bytes, data_str, or data_uri."):
+        call()
+
+
+def test_detect_media_type_from_base64_rejects_data_str_alongside_data_uri():
+    """A data URI must not overwrite a caller-supplied base64 string and hide its error."""
+    png_data = b"\x89PNG\r\n\x1a\n" + b"fake_data"
+    data_uri = f"data:application/octet-stream;base64,{base64.b64encode(png_data).decode()}"
+
+    with raises(ValueError, match="Provide exactly one of data_bytes, data_str, or data_uri."):
+        detect_media_type_from_base64(data_str="invalid_base64!", data_uri=data_uri)
 
 
 @mark.parametrize(
@@ -787,12 +808,43 @@ def test_usage_details_add_with_none_and_type_errors():
 
 
 def test_usage_details_add_skips_non_int():
-    u1 = cast(UsageDetails, {"input_token_count": 10, "other": "test"})
-    u2 = cast(UsageDetails, {"input_token_count": 10, "another": "test"})
+    u1 = cast(UsageDetails, {"input_token_count": 10, "other": "test", "flag": True})
+    u2 = cast(UsageDetails, {"input_token_count": 10, "another": "test", "flag": 5})
     u3 = add_usage_details(u1, u2)
     assert len(u3.keys()) == 1
     assert "input_token_count" in u3
     assert u3["input_token_count"] == 20
+    assert "flag" not in u3
+
+
+def test_usage_details_add_with_none_returns_copy():
+    u = UsageDetails(input_token_count=1)
+    v1 = add_usage_details(u, None)
+    v2 = add_usage_details(None, u)
+    assert v1 == u
+    assert v1 is not u
+    assert v2 == u
+    assert v2 is not u
+
+
+def test_usage_details_add_with_none_filters_booleans_and_non_ints():
+    payload = cast(UsageDetails, {"input_token_count": 5, "flag": True, "text": "skip_me"})
+    v1 = add_usage_details(payload, None)
+    v2 = add_usage_details(None, payload)
+    assert v1 == {"input_token_count": 5}
+    assert v1 is not payload
+    assert "flag" not in v1
+    assert "text" not in v1
+    assert v2 == {"input_token_count": 5}
+    assert v2 is not payload
+    assert "flag" not in v2
+    assert "text" not in v2
+
+
+def test_usage_details_add_both_none_returns_empty():
+    result = add_usage_details(None, None)
+    assert result == {}
+    assert isinstance(result, dict)
 
 
 # region UserInputRequest and Response
@@ -1753,6 +1805,16 @@ def test_agent_run_response_from_updates(agent_response_update: AgentResponseUpd
     assert response.text == "Test contentTest content"
 
 
+def test_agent_run_response_from_updates_uses_last_non_none_agent_id() -> None:
+    response = AgentResponse.from_updates([
+        AgentResponseUpdate(agent_id="first-agent"),
+        AgentResponseUpdate(agent_id="source-agent"),
+        AgentResponseUpdate(agent_id=None),
+    ])
+
+    assert response.agent_id == "source-agent"
+
+
 def test_agent_run_response_str_method(chat_message: Message) -> None:
     response = AgentResponse(messages=chat_message)
     assert str(response) == "Hello"
@@ -2543,6 +2605,70 @@ def test_content_roundtrip_preserves_compaction_annotation_dict() -> None:
     assert isinstance(annotation, dict)
     assert annotation[GROUP_ID_KEY] == "group_2"
     assert annotation[GROUP_TOKEN_COUNT_KEY] is None
+
+
+def test_content_from_dict_data_keeps_annotations_and_metadata() -> None:
+    """The `data` + `media_type` branch must not lose what every other type keeps.
+
+    `from_dict` pops `annotations`, `additional_properties` and `raw_representation`
+    before dispatching, then returns early for a data content. `from_data` accepts
+    all three, but they were not being passed, so they were silently dropped -- and
+    this runs inside `Message.from_dict` and `ChatResponse.from_dict`.
+    """
+    content = Content.from_dict({
+        "type": "data",
+        "data": b"hello",
+        "media_type": "text/plain",
+        "annotations": [{"type": "citation", "title": "t"}],
+        "additional_properties": {"origin": "upload"},
+        "raw_representation": "provider-blob",
+    })
+
+    assert content.type == "data"
+    assert content.uri == "data:text/plain;base64,aGVsbG8="
+    assert content.annotations == [{"type": "citation", "title": "t"}]
+    assert content.additional_properties == {"origin": "upload"}
+    assert content.raw_representation == "provider-blob"
+
+
+def test_content_from_dict_data_matches_other_types_on_metadata() -> None:
+    """Same mapping shape, two content types, same treatment of the extra fields."""
+    common = {
+        "additional_properties": {"origin": "upload"},
+        "raw_representation": "provider-blob",
+    }
+    data_content = Content.from_dict({
+        "type": "data",
+        "data": b"hello",
+        "media_type": "text/plain",
+        **common,
+    })
+    uri_content = Content.from_dict({
+        "type": "uri",
+        "uri": "https://example.com/x.png",
+        "media_type": "image/png",
+        **common,
+    })
+
+    assert data_content.additional_properties == uri_content.additional_properties
+    assert data_content.raw_representation == uri_content.raw_representation
+
+
+def test_message_from_dict_keeps_data_content_metadata() -> None:
+    """Through the reachable path: rebuilding a message from its mapping."""
+    message = Message.from_dict({
+        "role": "user",
+        "contents": [
+            {
+                "type": "data",
+                "data": b"hello",
+                "media_type": "text/plain",
+                "additional_properties": {"origin": "upload"},
+            }
+        ],
+    })
+
+    assert message.contents[0].additional_properties == {"origin": "upload"}
 
 
 def test_content_from_dict_via_json() -> None:
@@ -4191,6 +4317,48 @@ class TestResponseStreamTransformHooks:
 
 class TestResponseStreamCleanupHooks:
     """Tests for cleanup hooks (after stream consumption, before finalizer)."""
+
+    async def test_close_closes_iterator_and_runs_cleanup_once(self) -> None:
+        """Closing a partially consumed stream releases its iterator and cleanup hooks."""
+        events: list[str] = []
+
+        async def updates() -> AsyncIterable[ChatResponseUpdate]:
+            try:
+                yield ChatResponseUpdate(contents=[Content.from_text("first")], role="assistant")
+                yield ChatResponseUpdate(contents=[Content.from_text("second")], role="assistant")
+            finally:
+                events.append("iterator")
+
+        stream: ResponseStream[ChatResponseUpdate, Sequence[ChatResponseUpdate]] = ResponseStream(
+            updates(), cleanup_hooks=[lambda: events.append("cleanup")]
+        )
+        await anext(stream)
+
+        await stream.close()
+        await stream.close()
+
+        assert events == ["iterator", "cleanup"]
+
+    async def test_close_closes_wrapped_stream(self) -> None:
+        """Closing a wrapper releases the concrete inner stream."""
+        events: list[str] = []
+
+        async def updates() -> AsyncIterable[ChatResponseUpdate]:
+            try:
+                yield ChatResponseUpdate(contents=[Content.from_text("first")], role="assistant")
+                yield ChatResponseUpdate(contents=[Content.from_text("second")], role="assistant")
+            finally:
+                events.append("iterator")
+
+        inner: ResponseStream[ChatResponseUpdate, Sequence[ChatResponseUpdate]] = ResponseStream(
+            updates(), cleanup_hooks=[lambda: events.append("inner")]
+        )
+        outer = inner.map(lambda update: update, _combine_updates).with_cleanup_hook(lambda: events.append("outer"))
+        await anext(outer)
+
+        await outer.close()
+
+        assert events == ["iterator", "inner", "outer"]
 
     async def test_cleanup_hook_called_after_iteration(self) -> None:
         """Cleanup hook is called after iteration completes."""

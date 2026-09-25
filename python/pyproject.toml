@@ -39,8 +39,8 @@ dev = [
     "pytest-retry==1.7.0",
     "mypy==2.3.1",
     "pyright==1.1.414",
-    "pyrefly==1.3.0",
-    "ty==0.0.80",
+    "pyrefly==1.3.1",
+    "ty==0.0.81",
     "zuban==0.9.3",
     "opentelemetry-sdk",
     #tasks
@@ -51,7 +51,7 @@ dev = [
     "griffe==2.3.0",
 ]
 test = [
-    "azure-monitor-opentelemetry",
+    "azure-monitor-opentelemetry>=1.8.10,<2",
     "mcp[ws]",
     # Optional SDK used by the agent-hooks tests and isolated source checks.
     "agent-hooks-sdk>=0.1.0a4,<0.2",
@@ -87,6 +87,7 @@ agent-framework-claude = { workspace = true }
 agent-framework-copilotstudio = { workspace = true }
 agent-framework-declarative = { workspace = true }
 agent-framework-devui = { workspace = true }
+agent-framework-duckdb = { workspace = true }
 agent-framework-foundry = { workspace = true }
 agent-framework-foundry-hosting = { workspace = true }
 agent-framework-foundry-local = { workspace = true }
@@ -106,6 +107,7 @@ agent-framework-ollama = { workspace = true }
 agent-framework-openai = { workspace = true }
 agent-framework-orchestrations = { workspace = true }
 agent-framework-postgres = { workspace = true }
+agent-framework-sql-server = { workspace = true }
 agent-framework-purview = { workspace = true }
 agent-framework-qdrant = { workspace = true }
 agent-framework-redis = { workspace = true }

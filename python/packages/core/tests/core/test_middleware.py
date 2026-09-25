@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from collections.abc import AsyncIterable, Awaitable, Callable
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -130,6 +130,26 @@ class TestChatContext:
         assert context.options is chat_options
         assert context.stream is True
         assert context.metadata == metadata
+
+    def test_record_message_replacement(self, mock_chat_client: Any) -> None:
+        """Replacement provenance is validated, deduplicated, and returned."""
+        source = Message(role="tool", contents=["source"])
+        replacement = Message(role="user", contents=["replacement"])
+        context = ChatContext(client=mock_chat_client, messages=[source], options={})
+
+        result = context.record_message_replacement(replacement, [source, source])
+
+        assert result is replacement
+        assert context._message_replacements == [(replacement, (source,))]
+
+        with pytest.raises(ValueError, match="at least one"):
+            context.record_message_replacement(replacement, [])
+        with pytest.raises(ValueError, match="cannot also be"):
+            context.record_message_replacement(replacement, replacement)
+        with pytest.raises(TypeError, match="replacement must be"):
+            context.record_message_replacement(cast(Any, "replacement"), source)
+        with pytest.raises(TypeError, match="only Message"):
+            context.record_message_replacement(replacement, [cast(Any, "source")])
 
 
 class TestAgentMiddlewarePipeline:

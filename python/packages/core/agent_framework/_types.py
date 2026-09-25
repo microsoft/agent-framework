@@ -113,19 +113,21 @@ def detect_media_type_from_base64(
 
             # Detect from base64 string
             base64_data = "iVBORw0KGgo..."
-            media_type = detect_media_type_from_base64(base64_data)
+            media_type = detect_media_type_from_base64(data_str=base64_data)
             # Returns: "image/png"
 
             # Works with data URIs too
             data_uri = "data:image/png;base64,iVBORw0KGgo..."
-            media_type = detect_media_type_from_base64(data_uri)
+            media_type = detect_media_type_from_base64(data_uri=data_uri)
             # Returns: "image/png"
     """
     data: bytes | None = None
     if data_bytes is not None:
         data = data_bytes
     if data_uri is not None:
-        if data is not None:
+        # The conflict check has to run before the URI payload is rebound into data_str,
+        # otherwise a caller-supplied data_str disappears instead of being rejected.
+        if data is not None or data_str is not None:
             raise ValueError("Provide exactly one of data_bytes, data_str, or data_uri.")
         # Remove data URI prefix if present
         if not data_uri.startswith("data:") or "," not in data_uri:
@@ -462,17 +464,20 @@ def add_usage_details(usage1: UsageDetails | None, usage2: UsageDetails | None) 
             combined = add_usage_details(usage1, usage2)
             # Result: {'input_token_count': 8, 'output_token_count': 16}
     """
-    if usage1 is None:
-        return usage2 or UsageDetails()
-    if usage2 is None:
-        return usage1
+    u1 = usage1 or UsageDetails()
+    u2 = usage2 or UsageDetails()
 
     result = UsageDetails()
     # Combine all keys from both dictionaries
-    all_keys = set(usage1.keys()) | set(usage2.keys())
+    all_keys = set(u1.keys()) | set(u2.keys())
     for key in all_keys:
-        if not isinstance((val1 := usage1.get(key, 0)), (int | None)) or not isinstance(
-            (val2 := usage2.get(key, 0)), (int | None)
+        val1 = u1.get(key, 0)
+        val2 = u2.get(key, 0)
+        if (
+            isinstance(val1, bool)
+            or isinstance(val2, bool)
+            or not isinstance(val1, (int, type(None)))
+            or not isinstance(val2, (int, type(None)))
         ):
             logger.warning("Non `int` value found in usage details, skipping.")
             continue
@@ -712,7 +717,7 @@ class Content:
 
                     from agent_framework import detect_media_type_from_base64, Content
 
-                    media_type = detect_media_type_from_base64(base64_string)
+                    media_type = detect_media_type_from_base64(data_str=base64_string)
                     if media_type is None:
                         raise ValueError("Could not detect media type")
                     data_bytes = base64.b64decode(base64_string)
@@ -741,7 +746,7 @@ class Content:
 
                 # If you have a base64 string and need to detect media type
                 base64_string = "iVBORw0KGgo..."
-                media_type = detect_media_type_from_base64(base64_string)
+                media_type = detect_media_type_from_base64(data_str=base64_string)
                 if media_type is None:
                     raise ValueError("Unknown media type")
                 image_bytes = base64.b64decode(base64_string)
@@ -1530,8 +1535,17 @@ class Content:
 
         # Special handling for DataContent with data and media_type
         if content_type == "data" and "data" in remaining and "media_type" in remaining:
-            # Use from_data() to properly create the DataContent with URI
-            return cls.from_data(remaining["data"], remaining["media_type"])
+            # Use from_data() to properly create the DataContent with URI. The three
+            # fields popped above are passed on explicitly: this branch returns before
+            # the constructor below, so leaving them out dropped on a data content what
+            # every other content type keeps.
+            return cls.from_data(
+                remaining["data"],
+                remaining["media_type"],
+                annotations=annotations,
+                additional_properties=additional_properties,
+                raw_representation=raw_representation,
+            )
 
         # Handle nested Content objects (e.g., function_call in function_approval_request)
         if (function_call := remaining.get("function_call")) and isinstance(function_call, dict):
@@ -2009,6 +2023,13 @@ def prepend_instructions_to_messages(
     if isinstance(instructions, str):
         instructions = [instructions]
 
+    # An empty instruction list (or all-empty strings) adds nothing; without
+    # this a caller that passes an unset options default of "" gets a
+    # contentless system message injected ahead of the real conversation.
+    instructions = [part for part in instructions if part.strip()]
+    if not instructions:
+        return messages
+
     # Skip instructions that are already present as the leading messages with the
     # same role and text.  This prevents duplicate system messages when
     # instructions are injected by multiple layers (e.g. Agent + chat client).
@@ -2103,6 +2124,8 @@ def _process_update(response: ChatResponse | AgentResponse, update: ChatResponse
             response.finish_reason = update.finish_reason
         if update.model is not None:
             response.model = update.model
+    if isinstance(response, AgentResponse) and isinstance(update, AgentResponseUpdate) and update.agent_id is not None:
+        response.agent_id = update.agent_id
     if (
         isinstance(response, AgentResponse)
         and isinstance(update, AgentResponseUpdate)
@@ -3519,6 +3542,24 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
                 if isawaitable(update):
                     update = await update
             return await self._record_update(update)
+
+    async def close(self) -> None:
+        """Close the active iterator and run cleanup hooks.
+
+        This method is idempotent and also closes nested ``ResponseStream`` wrappers.
+        """
+        try:
+            iterator: AsyncIterator[UpdateT] | None = self._iterator
+            if iterator is not None:
+                if isinstance(iterator, ResponseStream):
+                    await cast(ResponseStream[UpdateT, Any], iterator).close()
+                else:
+                    close = getattr(iterator, "aclose", None)
+                    if close is not None:
+                        await close()
+        finally:
+            self._consumed = True
+            await self._run_cleanup_hooks()
 
     async def _resolve_stream_with_pull_contexts(self) -> AsyncIterable[UpdateT]:
         """Resolve the underlying stream while activating any registered pull context managers.

@@ -383,24 +383,25 @@ that manually replay messages own the equivalent rule: do not resend an approval
   must treat the exception as an explicit instruction to discard those calls and never execute them. Caller
   cancellation remains cancellation rather than becoming this provider signal.
 - Every actionable local `function_call` produces exactly one terminal `function_result`, unless execution pauses
-  for a new user-input request or the run is aborted by `MiddlewareFailure`.
+  for a new user-input request or the run is aborted by a fail-closed error.
 - An ordinary exception raised by function middleware or a tool body becomes one terminal error `function_result`
-  and the loop continues; `MiddlewareFailure` is the loop's only fail-closed escape: it is never converted into a
+  and the loop continues. `MiddlewareFailure` is the execution-time fail-closed escape: it is never converted into a
   tool result, the in-flight parallel batch is cancelled, no further tool call starts, no further model turn is
-  consumed, and the exception propagates to the caller (for streaming runs, when the stream is consumed). On a
-  service-managed conversation the loop first settles the aborted batch — one error `function_result` per dangling
-  call (approval-response wrappers unwrap to their underlying calls; hosted-tool approvals are left to their own
-  provider protocol), submitted with `tool_choice="none"` in a single extra request — so the hosted thread is not
-  left ending in unresolved function calls that the service would reject on the session's next request; the
-  persisted continuation then advances to the settlement response (for response-ID continuations the settled
-  endpoint is the new handle; for conversation-object ids the advance is a no-op) and the settlement response is
-  otherwise discarded. Settlement covers the approval-resolution phase too: a fatal abort while an approved tool is
-  replayed settles the original, already-persisted calls. Without a service-managed conversation no extra request
-  is made. Batch
-  cancellation is cooperative: an async sibling stops at its next suspension point, while a synchronous tool body
-  already executing in a worker thread cannot be interrupted and may complete its side effects — its result is
-  discarded either way and never reaches the transcript, the model, or history. Middleware must not catch
-  `MiddlewareFailure` — swallowing it converts a fail-closed abort back into a running, possibly unguarded loop.
+  consumed, and the exception propagates to the caller (for streaming runs, when the stream is consumed). A
+  configured fatal unknown call likewise raises `KeyError` and propagates, but complete-batch classification detects
+  it before any call executes. On a service-managed conversation the loop first settles either aborted batch — one
+  error `function_result` per dangling call (approval-response wrappers unwrap to their underlying calls; hosted-tool
+  approvals are left to their own provider protocol), submitted with `tool_choice="none"` in a single extra request —
+  so the hosted thread is not left ending in unresolved function calls that the service would reject on the session's
+  next request; the persisted continuation then advances to the settlement response (for response-ID continuations
+  the settled endpoint is the new handle; for conversation-object ids the advance is a no-op) and the settlement
+  response is otherwise discarded. Settlement covers the approval-resolution phase too: a fatal abort while an
+  approved tool is replayed settles the original, already-persisted calls. Without a service-managed conversation no
+  extra request is made. Batch cancellation is cooperative: an async sibling stops at its next suspension point,
+  while a synchronous tool body already executing in a worker thread cannot be interrupted and may complete its side
+  effects — its result is discarded either way and never reaches the transcript, the model, or history. Middleware
+  must not catch `MiddlewareFailure` — swallowing it converts a fail-closed abort back into a running, possibly
+  unguarded loop.
 - `Content.exception` is host-internal diagnostic state. Default `Content.to_dict()` and nested response serialization replace it with a fixed non-sensitive failure marker,
   while the original field remains directly available to trusted local code. Remote protocol serializers use the
   marker only for status and use the channel-visible `result` or `items` for output text. `include_detailed_errors=False` keeps the channel-visible
@@ -500,6 +501,15 @@ that manually replay messages own the equivalent rule: do not resend an approval
   approval `Message`, approval `Content`, or an earlier returned response.
 - Approval-time `UserInputRequiredException` and `MiddlewareTermination` return immediately without another model
   call.
+- `Agent.as_tool()` keeps child function approvals inside the delegated invocation. A child
+  `ToolApprovalMiddleware` may resolve them through runtime `auto_approval_rules`; any unresolved child function
+  approval does not enter the caller's approval state or model transcript. An approval-only response fails the
+  agent-tool invocation; a mixed response preserves its non-approval user-input requests while discarding the child
+  approval continuation. Interactive, delayed, or durable approval belongs in a workflow. When
+  `propagate_session=True`, child application-state changes merge back into the parent while framework approval and
+  invocation-budget state remain isolated, including approval queues stored under custom child middleware
+  `source_id` values. Parent and child `ToolApprovalMiddleware` instances must use distinct `source_id` values; an
+  overlap fails before the child runs.
 
 ### Approval control content
 
@@ -538,6 +548,11 @@ that manually replay messages own the equivalent rule: do not resend an approval
   same turn.
 - A trusted terminal result consumes the corresponding approval authority in explicit stateless replay; a result in a
   server-registered pending occurrence cannot consume that authority before local execution.
+- A matched `function_result` is terminal regardless of its text, including an exact or embedded
+  `[APPROVAL_PENDING]`. Legacy textual placeholder results are no longer supported. Applications that persisted
+  those placeholders must migrate genuine pending occurrences using authoritative pending state and typed
+  `function_approval_request` controls, without synthetic `function_result` contents. Actual completed results must
+  remain in history; their text must not be used to infer pending approval state.
 - Non-streaming runs that exclude tool groups through in-run compaction return the inserted summary messages in the
   final response transcript, each positioned before the group it replaces, so history loaded with `skip_excluded`
   keeps the summarized content; summaries of caller-owned input messages stay out of the returned transcript.
@@ -578,6 +593,7 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Mixed approved/rejected batch | Every call gets one correctly correlated terminal result. | `packages/core/tests/core/test_function_invocation_logic.py::test_rejected_approval` |
 | Persisted approval replay | Resume executes with the prior call available. | `test_persisted_approval_messages_replay_correctly` |
 | Hosted approval pass-through | Hosted requests/responses are bound to the recorded provider request and are not processed as local calls. | `test_hosted_tool_approval_response`, `test_hosted_mcp_approval_response_passthrough`, `test_session_approval_binding_reconstructs_hosted_response`, `test_mixed_local_and_hosted_approval_flow` |
+| Agent-tool child approval | A child `ToolApprovalMiddleware` can auto-approve runtime tool requests inside one delegated invocation; unresolved child approvals execute nothing and do not enter the caller's approval state or dispatch a same-named parent tool, including with propagated application state. Mixed batches preserve non-approval user-input requests. Shared parent and child state rejects overlapping `ToolApprovalMiddleware.source_id` values before running the child; parent approval state is neither visible nor mutable inside the child, and custom child approval queues do not leak into later delegations. | `packages/core/tests/core/test_agents.py::test_chat_agent_as_tool_auto_approves_child_tool_with_middleware`, `test_chat_agent_as_tool_fails_closed_for_unresolved_child_approval`, `test_chat_agent_as_tool_child_approval_does_not_dispatch_same_named_parent_tool`, `test_chat_agent_as_tool_preserves_non_approval_requests_from_mixed_child_batch`, `test_chat_agent_as_tool_shared_session_requires_distinct_tool_approval_source_ids`, `test_chat_agent_as_tool_isolates_custom_parent_approval_state`, `test_chat_agent_as_tool_approved_delegation_does_not_confuse_framework_approval_state`, `test_chat_agent_as_tool_does_not_restore_custom_approval_queue_on_fresh_delegation` |
 | Approval-time user input | Every user-input request from one approved execution returns in order with assistant role and no extra model call; the execution consumes one call-budget unit. | `packages/core/tests/core/test_harness_tool_approval.py::test_approval_resume_returns_all_user_input_requests_without_another_model_call`, `packages/core/tests/core/test_function_invocation_logic.py::test_approval_resume_user_input_counts_toward_function_call_budget` |
 | Mixed terminal result and follow-up input | Completed siblings remain tool-role while only follow-up input requests use assistant-role messages/updates. | `packages/core/tests/core/test_function_invocation_logic.py::test_approval_resume_separates_terminal_results_from_follow_up_requests`, `packages/openai/tests/openai/test_openai_chat_completion_client.py::test_mixed_approval_resume_roles_serialize_function_result_as_tool`, `packages/core/tests/core/test_harness_tool_approval.py::test_dynamic_policy_approval_partitions_safe_sibling_result_roles` |
 | Approval-time middleware termination | Terminal result returns with no extra model call in either response mode. | `packages/core/tests/core/test_function_invocation_logic.py::test_approval_resume_honors_middleware_termination` |
@@ -607,12 +623,14 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Multiple reused-id rounds | Approved and rejected rounds retain separate call/result occurrences. | `test_replace_approval_contents_with_results_correlates_reused_call_id_occurrences` |
 | Multi-content result with reused id | Every content produced by one execution stays with that approval occurrence and cannot bleed into the next reused-id round. | `test_replace_approval_contents_with_results_keeps_multi_content_group_with_reused_call_id` |
 | Follow-up request closes one occurrence | A user-input follow-up consumes only the preceding approval authority and leaves a later reused-id response pending. | `test_collect_approval_responses_consumes_matching_follow_up_request_occurrence` |
-| Reused-id placeholders | Placeholder results consume approved results by occurrence. | `test_replace_approval_contents_with_results_correlates_reused_call_id_placeholders` |
-| Rejected placeholder | Rejection replaces the pending placeholder instead of adding a second result. | `test_replace_approval_contents_with_results_replaces_rejected_placeholder` |
-| Results reordered with placeholders | Results still match the correct call ids. | `test_replace_approval_contents_with_results_uses_result_call_ids_for_placeholders` |
+| Reused-id pending requests | Typed pending requests consume approved results by occurrence. | `test_replace_approval_contents_with_results_correlates_reused_call_id_pending_requests` |
+| Rejected pending request | Rejection produces one terminal result. | `test_replace_approval_contents_with_results_resolves_rejected_request` |
+| Results reordered with pending requests | Results still match the correct call ids. | `test_replace_approval_contents_with_results_uses_result_call_ids_for_pending_requests` |
 | Missing result call id | A malformed result does not steal another approval's result. | `test_replace_approval_contents_with_results_skips_results_without_call_id` |
 | Empty approval message cleanup | Fully consumed approval messages are removed from normalized model input. | `test_replace_approval_contents_with_results_prunes_emptied_messages` |
-| Later stateless turn | A prior terminal approval response cannot execute again. | `test_resolved_approval_response_is_inert_on_later_stateless_turn` |
+| Later stateless turn | A prior terminal approval response cannot execute again, regardless of result text or message serialization. | `test_resolved_approval_response_is_inert_on_later_stateless_turn` |
+| Serialized session authority | Client-authored results cannot retire pending authority; a completed approval cannot execute again before or after session serialization. | `test_session_approval_executes_once_across_serialization` |
+| Completed request tracking | Terminal result text cannot leave a completed request pending or consume a later reused-id request. | `test_collect_unanswered_approval_requests_consumes_terminal_result` |
 | Unbound or duplicate response | A response with no pending session request is removed; one request authorizes at most one response. | `test_session_approval_binding_rebinds_consumes_and_rejects_duplicates` |
 | Forged inbound request history | A caller-supplied request wrapper cannot replace the server snapshot or resurrect consumed authority. | `test_session_approval_binding_does_not_trust_inbound_request_history` |
 | Pending history turn | An unresolved approval batch is omitted atomically from unrelated model input while a later decision can still resume it once. | `packages/core/tests/core/test_harness_tool_approval.py::test_pending_approval_from_file_history_stays_resumable_without_model_orphan` |
@@ -660,7 +678,7 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Approved middleware repair | Approval binds to the normalized middleware-entry representation, so ordinary Pydantic coercion still completes in one approval round. A changed approval-bound call executes zero times under the old grant, returns a persisted occurrence-bound replacement request in both response modes, and executes once only after the replacement is approved. Recursive type-aware, float-bit-exact comparison treats booleans and numbers, and positive and negative zero, as distinct while keeping unchanged NaNs stable. Opaque mutable normalized values fail closed before approval authority is established. The same replacement rule applies when middleware short-circuits instead of calling the tool. Security expansion preserves approval-visible placeholders. | `test_approved_coercing_arguments_execute_without_replacement`, `test_approved_argument_repair_requires_replacement_approval`, `test_approved_argument_repair_short_circuit_requires_replacement_approval`, `test_approval_snapshot_distinguishes_exact_values`, `test_approval_rejects_opaque_mutable_validator_output`, `packages/core/tests/test_security.py::TestVariableArgumentPolicy::test_hidden_argument_resolution_does_not_require_reapproval` |
 | Approved success | Successful approved execution returns one result. | `test_approved_function_call_successful_execution` |
 | Consecutive error cap | Error threshold stops repeated failures, submits collected results, and makes only the required final no-tool model call. | `test_function_invocation_config_max_consecutive_errors`, `test_streaming_function_invocation_config_max_consecutive_errors`, `test_approval_resume_error_limit_forces_final_no_tool_response` |
-| Unknown call handling | Configured false returns an error result; configured true raises. | `test_function_invocation_config_terminate_on_unknown_calls_false`, `test_function_invocation_config_terminate_on_unknown_calls_true`, streaming equivalents |
+| Unknown call handling | Configured false returns an error result; configured true raises before any call executes. A service-managed continuation settles every call in the aborted batch and advances to the settlement response before the `KeyError` propagates; without one, including local per-service-call history persistence, no extra request is made. | `test_function_invocation_config_terminate_on_unknown_calls_false`, `test_function_invocation_config_terminate_on_unknown_calls_true`, streaming equivalents, `test_fatal_unknown_settles_service_conversation`, `test_fatal_unknown_with_local_history_makes_no_settlement_request` |
 | Middleware termination | Normal non-approval loop stops without a second model call. | `test_terminate_loop_single_function_call`, `test_terminate_loop_multiple_function_calls_one_terminates`, `test_terminate_loop_streaming_single_function_call` |
 | Middleware failure (fatal) | `MiddlewareFailure` from function middleware or a tool body propagates to the caller without becoming a tool result; the tool does not execute (pre-invocation) or its result never feeds another model call (post-invocation); the cause chain is preserved; ordinary exceptions still become tool-error results and the loop continues. | `packages/core/tests/core/test_middleware_with_agent.py::TestMiddlewareFailure::test_failure_before_tool_aborts_run`, `test_failure_after_tool_aborts_run_before_next_model_turn`, `test_failure_cause_chain_reaches_caller`, `test_failure_from_tool_escapes_without_middleware`, `test_failure_streaming_reaches_stream_consumer`, `test_ordinary_exception_still_becomes_tool_error` |
 | Middleware failure batch cancellation | A fatal signal fails the whole parallel batch: in-flight sibling tool invocations are cancelled and awaited before the failure propagates. Cancellation is cooperative — an async sibling stops at its next suspension point; a synchronous tool body already executing in a worker thread cannot be interrupted and may complete its side effects, but its result is discarded and never reaches the transcript, the model, or history, and failure propagation is not delayed behind it. | `TestMiddlewareFailure::test_failure_cancels_concurrent_sibling_tool`, `test_failure_with_sync_sibling_discards_late_result` |
@@ -677,7 +695,8 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Scenario | Required invariant | Primary regression test |
 |---|---|---|
 | Append-only history replay | Resolved approval wrappers do not reach a later model call; one call/result pair remains. | `packages/core/tests/core/test_harness_tool_approval.py::test_approval_resume_filters_resolved_control_items_from_file_history` |
-| Pending placeholder history | An approval response remains replayable while its only result is `[APPROVAL_PENDING]`. | `packages/core/tests/core/test_sessions.py::test_filter_approval_controls_keeps_response_for_pending_placeholder` |
+| Typed pending history | An approval response remains replayable until its occurrence completes, without synthetic results. | `packages/core/tests/core/test_sessions.py::test_filter_approval_controls_keeps_response_without_terminal_result` |
+| Terminal result history | Every matched function result consumes completed approval controls regardless of its text. | `packages/core/tests/core/test_sessions.py::test_filter_approval_controls_consumes_terminal_result_regardless_of_text`, `packages/ag-ui/tests/ag_ui/test_run.py::test_filter_local_approval_responses_for_provider_removes_only_completed_local_controls` |
 | Pending hosted history replay | Stateless hosted approval requests remain replayable until a response is recorded, then both controls become inert. | `packages/openai/tests/openai/test_openai_chat_client.py::test_stateless_history_preserves_pending_hosted_approval_request_until_response` |
 | Non-history provider plus session | Local history is still auto-injected for approval resume. | `packages/core/tests/core/test_agents.py::test_non_history_context_provider_still_injects_inmemory` |
 | Hosted per-service-call persistence | A host-managed transcript remains available throughout a local function-call loop without being persisted into the framework session and replayed on the next hosted request. | `packages/foundry_hosting/tests/test_responses.py::TestAgentSessionPersistence::test_per_service_call_persistence_preserves_function_loop_history` |

@@ -20,6 +20,10 @@ public static class HostedAgentBuilderExtensions
     /// <param name="withIsolation">When <see langword="true"/>, wraps the session store with an <see cref="IsolationKeyScopedAgentSessionStore"/>
     /// that adds a partition from <see cref="AgentIsolationKeyProvider"/>. Defaults to <see langword="true"/>.</param>
     /// <returns>The same <paramref name="builder"/> instance, configured to use an in-memory session store.</returns>
+    /// <remarks>
+    /// Isolation is enabled by default and its default strict wrapper requires a key from an
+    /// <see cref="AgentIsolationKeyProvider"/>. This does not configure authentication or endpoint authorization.
+    /// </remarks>
     public static IHostedAgentBuilder WithInMemorySessionStore(this IHostedAgentBuilder builder, bool withIsolation = true)
         => builder.WithSessionStore(new InMemoryAgentSessionStore(), withIsolation);
 
@@ -32,6 +36,10 @@ public static class HostedAgentBuilderExtensions
     /// <param name="withIsolation">When <see langword="true"/>, wraps the session store with an <see cref="IsolationKeyScopedAgentSessionStore"/>
     /// that adds a partition from <see cref="AgentIsolationKeyProvider"/>. Defaults to <see langword="true"/>.</param>
     /// <returns>The same host agent builder instance, allowing for method chaining.</returns>
+    /// <remarks>
+    /// Isolation is enabled by default and its default strict wrapper requires a key from an
+    /// <see cref="AgentIsolationKeyProvider"/>. This does not configure authentication or endpoint authorization.
+    /// </remarks>
     public static IHostedAgentBuilder WithSessionStore(this IHostedAgentBuilder builder, AgentSessionStore store, bool withIsolation = true)
         => builder.WithSessionStore((sp, key) => store, ServiceLifetime.Singleton, withIsolation);
 
@@ -46,6 +54,12 @@ public static class HostedAgentBuilderExtensions
     /// <param name="withIsolation">When <see langword="true"/>, wraps the session store with an <see cref="IsolationKeyScopedAgentSessionStore"/>
     /// that adds a partition from <see cref="AgentIsolationKeyProvider"/>. Defaults to <see langword="true"/>.</param>
     /// <returns>The same host agent builder instance, enabling further configuration.</returns>
+    /// <remarks>
+    /// When adding isolation, the default <see cref="IsolationKeyScopedAgentSessionStoreOptions.Strict"/>
+    /// behavior rejects a missing key, including when no <see cref="AgentIsolationKeyProvider"/> is registered.
+    /// Existing isolation decorators retain their configuration. Hosts must resolve identity from a trusted
+    /// source and separately enforce authentication and authorization at their entry points.
+    /// </remarks>
     public static IHostedAgentBuilder WithSessionStore(this IHostedAgentBuilder builder, Func<IServiceProvider, string, AgentSessionStore> createAgentSessionStore, ServiceLifetime lifetime = ServiceLifetime.Singleton, bool withIsolation = true)
     {
         builder.ServiceCollection.AddKeyedService(builder.Name, (sp, key) =>

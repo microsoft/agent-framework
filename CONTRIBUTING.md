@@ -49,6 +49,17 @@ report should contain the following information:
 
 Project maintainers will merge accepted code changes from contributors.
 
+We welcome contributions, but maintainers must prioritize their limited review time
+across issues and pull requests, so we may not be able to get to reviewing every
+contribution immediately.
+
+AI tooling has also made it easier for more people to
+submit contributions, which has increased the overall volume we receive; as a
+result, contributors should expect longer wait times for reviews.
+
+Note that your pull request may receive automated review comments from a bot; addressing or
+at least replying to those comments will help fast track the eventual human review.
+
 ### DOs and DON'Ts
 
 DO's:

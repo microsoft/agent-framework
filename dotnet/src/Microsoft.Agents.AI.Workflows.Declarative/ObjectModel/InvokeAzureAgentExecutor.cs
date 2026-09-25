@@ -1,6 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
@@ -67,9 +69,10 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, ResponseA
     {
         string? conversationId = this.GetConversationId();
         string agentName = this.GetAgentName();
+        string? agentVersion = this.GetAgentVersion();
         bool autoSend = this.GetAutoSendValue();
         Dictionary<string, object?>? inputParameters = this.GetStructuredInputs();
-        AgentResponse agentResponse = await agentProvider.InvokeAgentAsync(this.Id, context, agentName, conversationId, autoSend, messages, inputParameters, cancellationToken).ConfigureAwait(false);
+        AgentResponse agentResponse = await agentProvider.InvokeAgentAsync(this.Id, context, agentName, agentVersion, conversationId, autoSend, messages, inputParameters, cancellationToken).ConfigureAwait(false);
 
         ChatMessage[] actionableMessages = FilterActionableContent(agentResponse).ToArray();
         if (actionableMessages.Length > 0)
@@ -92,33 +95,48 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, ResponseA
         // Attempt to parse the last message as JSON and assign to the response object variable.
         PropertyPath? responseObjectPath = this.AgentOutput?.ResponseObject?.Path;
         string? lastMessageText = agentResponse.Messages.LastOrDefault()?.Text;
-        if (responseObjectPath is not null && !string.IsNullOrEmpty(lastMessageText))
+        bool responseObjectWasBlanked = false;
+        if (responseObjectPath is not null)
         {
-            FormulaValue? responseObjectValue = null;
-            try
+            FormulaValue responseObjectValue = FormulaValue.NewBlank();
+            responseObjectWasBlanked = true;
+            if (!string.IsNullOrEmpty(lastMessageText))
             {
-                using JsonDocument jsonDocument = JsonDocument.Parse(lastMessageText);
-                responseObjectValue = jsonDocument.ParseJsonValue(lastMessageText).ToFormula();
-            }
-            catch (JsonException)
-            {
-                // Not valid JSON — skip assignment.
-            }
-            catch (DeclarativeWorkflowException)
-            {
-                // Valid JSON, but not convertible to a workflow value (e.g. a mixed-type or nested array).
-                // Output parsing is best-effort — skip assignment rather than fail the action.
+                try
+                {
+                    using JsonDocument jsonDocument = JsonDocument.Parse(lastMessageText);
+                    responseObjectValue = jsonDocument.ParseJsonValue(lastMessageText).ToFormula();
+                    responseObjectWasBlanked = responseObjectValue is BlankValue;
+                }
+                catch (JsonException)
+                {
+                    // Not valid JSON — leave the current response blank.
+                }
+                catch (DeclarativeWorkflowException)
+                {
+                    // Valid JSON, but not convertible to a workflow value (e.g. a mixed-type or nested array).
+                    // Output parsing is best-effort — leave the current response blank rather than fail the action.
+                }
             }
 
-            if (responseObjectValue is not null)
-            {
-                await this.AssignAsync(responseObjectPath, responseObjectValue, context).ConfigureAwait(false);
-            }
+            await this.AssignAsync(responseObjectPath, responseObjectValue, context).ConfigureAwait(false);
         }
 
         if (this.Model.Input?.ExternalLoop?.When is not null)
         {
-            bool requestInput = this.Evaluator.GetValue(this.Model.Input.ExternalLoop.When).Value;
+            bool requestInput;
+            try
+            {
+                requestInput = this.Evaluator.GetValue(this.Model.Input.ExternalLoop.When).Value;
+            }
+            catch (Exception exception) when (
+                responseObjectWasBlanked &&
+                responseObjectPath is not null &&
+                IsBlankResponseMemberAccessFailure(exception, this.Model.Input.ExternalLoop.When, responseObjectPath))
+            {
+                requestInput = false;
+            }
+
             if (requestInput)
             {
                 ExternalInputRequest inputRequest = new(agentResponse);
@@ -128,6 +146,29 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, ResponseA
         }
 
         await context.SendResultMessageAsync(this.Id, result: null, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static bool IsBlankResponseMemberAccessFailure(Exception exception, BoolExpression expression, PropertyPath path)
+    {
+        string? expressionText =
+            expression.IsVariableReference ?
+            expression.VariableReference?.ToString() :
+            expression.ExpressionText;
+
+        if (expressionText?.Contains($"{path}.", StringComparison.OrdinalIgnoreCase) is not true)
+        {
+            return false;
+        }
+
+        IEnumerable<Exception> exceptions =
+            exception is AggregateException aggregateException ?
+            aggregateException.Flatten().InnerExceptions :
+            [exception];
+
+        return exceptions.Any(
+            currentException =>
+                currentException is InvalidOperationException &&
+                currentException.Message.Contains("Deprecated use of '.'", StringComparison.Ordinal));
     }
 
     private Dictionary<string, object?>? GetStructuredInputs()
@@ -154,6 +195,11 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, ResponseA
         if (this.AgentInput?.Messages is not null)
         {
             EvaluationResult<DataValue> expressionResult = this.Evaluator.GetValue(this.AgentInput.Messages);
+            if (expressionResult.Sensitivity == SensitivityLevel.Sensitive)
+            {
+                throw new DeclarativeActionException($"Cannot send sensitive agent input messages: {this.Id}.");
+            }
+
             userInput = expressionResult.Value;
         }
 
@@ -201,6 +247,11 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, ResponseA
             Throw.IfNull(
                 this.AgentUsage.Name,
                 $"{nameof(this.Model)}.{nameof(this.Model.Agent)}.{nameof(this.Model.Agent.Name)}")).Value;
+
+    private string? GetAgentVersion() =>
+        this.AgentUsage.Version is null
+            ? null
+            : this.Evaluator.GetValue(this.AgentUsage.Version).Value.ToString(CultureInfo.InvariantCulture);
 
     private bool GetAutoSendValue()
     {

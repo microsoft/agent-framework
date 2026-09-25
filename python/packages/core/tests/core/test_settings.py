@@ -147,6 +147,48 @@ class TestDotenvFile:
         finally:
             os.unlink(env_path)
 
+    def test_override_ignores_invalid_lower_priority_values(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        env_file = tmp_path / ".env"
+        env_file.write_text("TEST_APP_TIMEOUT=invalid\n", encoding="utf-8")
+        monkeypatch.setenv("TEST_APP_TIMEOUT", "also-invalid")
+
+        settings = load_settings(SimpleSettings, env_prefix="TEST_APP_", env_file_path=str(env_file), timeout=60)
+
+        assert settings["timeout"] == 60
+
+    @pytest.mark.parametrize(
+        ("field", "invalid", "environment_value"),
+        [
+            ("timeout", "not-an-int", "30"),
+            ("rate_limit", "not-a-float", "2.5"),
+            ("enabled", "maybe", "true"),
+        ],
+    )
+    def test_invalid_dotenv_value_raises_without_falling_back_to_environment(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, field: str, invalid: str, environment_value: str
+    ) -> None:
+        env_var = f"TEST_APP_{field.upper()}"
+        env_file = tmp_path / ".env"
+        env_file.write_text(f"{env_var}={invalid}\n", encoding="utf-8")
+        monkeypatch.setenv(env_var, environment_value)
+
+        with pytest.raises(ValueError, match=rf"setting '{field}' from \.env file") as exc_info:
+            load_settings(SimpleSettings, env_prefix="TEST_APP_", env_file_path=str(env_file))
+
+        assert str(env_file) in str(exc_info.value)
+        assert invalid not in str(exc_info.value)
+
+    def test_bool_and_float_from_dotenv(self, tmp_path: Path) -> None:
+        env_file = tmp_path / ".env"
+        env_file.write_text("TEST_APP_ENABLED=ON\nTEST_APP_RATE_LIMIT=2.5\n", encoding="utf-8")
+
+        settings = load_settings(SimpleSettings, env_prefix="TEST_APP_", env_file_path=str(env_file))
+
+        assert settings["enabled"] is True
+        assert settings["rate_limit"] == 2.5
+
     def test_missing_dotenv_file_raises(self) -> None:
         with pytest.raises(FileNotFoundError):
             load_settings(SimpleSettings, env_prefix="TEST_APP_", env_file_path="/nonexistent/.env")
@@ -365,6 +407,126 @@ class TestTypeCoercion:
             settings = load_settings(SimpleSettings, env_prefix="TEST_APP_")
             assert settings["enabled"] is False, f"Failed for {false_val}"
 
+    def test_bool_coercion_ignores_surrounding_whitespace(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("TEST_APP_ENABLED", "  YeS  ")
+
+        assert load_settings(SimpleSettings, env_prefix="TEST_APP_")["enabled"] is True
+
+    @pytest.mark.parametrize(
+        ("field", "invalid"),
+        [("timeout", "sk-invalid-number"), ("rate_limit", "not-a-float")],
+    )
+    def test_invalid_optional_numeric_from_environment_raises(
+        self, monkeypatch: pytest.MonkeyPatch, field: str, invalid: str
+    ) -> None:
+        env_var = f"TEST_APP_{field.upper()}"
+        monkeypatch.setenv(env_var, invalid)
+
+        with pytest.raises(ValueError, match=f"setting '{field}' from environment variable '{env_var}'") as exc_info:
+            load_settings(SimpleSettings, env_prefix="TEST_APP_")
+
+        assert invalid not in str(exc_info.value)
+        assert exc_info.value.__cause__ is None
+        assert exc_info.value.__context__ is None
+
+    @pytest.mark.parametrize("invalid", ["maybe", "2", ""])
+    def test_invalid_bool_from_environment_raises(self, monkeypatch: pytest.MonkeyPatch, invalid: str) -> None:
+        monkeypatch.setenv("TEST_APP_ENABLED", invalid)
+
+        with pytest.raises(ValueError, match="setting 'enabled' from environment variable 'TEST_APP_ENABLED'"):
+            load_settings(SimpleSettings, env_prefix="TEST_APP_")
+
+    def test_unsupported_union_arm_does_not_accept_invalid_numeric_string(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        class MixedSettings(TypedDict, total=False):
+            value: int | dict[str, Any] | None
+
+        monkeypatch.setenv("MIXED_VALUE", "invalid")
+
+        with pytest.raises(ValueError, match="setting 'value' from environment variable 'MIXED_VALUE'"):
+            load_settings(MixedSettings, env_prefix="MIXED_")
+
+    def test_string_arm_preserves_provider_specific_parsing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        class MixedSettings(TypedDict, total=False):
+            telemetry: dict[str, Any] | str | None
+
+        monkeypatch.setenv("MIXED_TELEMETRY", '{"enabled": true}')
+
+        settings = load_settings(MixedSettings, env_prefix="MIXED_")
+
+        assert settings["telemetry"] == '{"enabled": true}'
+
+    def test_optional_any_preserves_environment_value(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        class AnySettings(TypedDict, total=False):
+            value: Any | None
+
+        monkeypatch.setenv("TEST_VALUE", '{"enabled": true}')
+
+        settings = load_settings(AnySettings, env_prefix="TEST_")
+
+        assert settings["value"] == '{"enabled": true}'
+
+    def test_optional_any_preserves_dotenv_value(self, tmp_path: Path) -> None:
+        class AnySettings(TypedDict, total=False):
+            value: Any | None
+
+        env_file = tmp_path / ".env"
+        env_file.write_text("TEST_VALUE=provider-specific-value\n", encoding="utf-8")
+
+        settings = load_settings(AnySettings, env_prefix="TEST_", env_file_path=str(env_file))
+
+        assert settings["value"] == "provider-specific-value"
+
+    def test_literal_union_accepts_valid_and_rejects_invalid_environment_values(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        class LiteralSettings(TypedDict, total=False):
+            mode: Literal["fast", "safe"] | None
+
+        monkeypatch.setenv("TEST_MODE", "fast")
+        assert load_settings(LiteralSettings, env_prefix="TEST_")["mode"] == "fast"
+
+        monkeypatch.setenv("TEST_MODE", "unknown")
+        with pytest.raises(ValueError, match="setting 'mode' from environment variable 'TEST_MODE'"):
+            load_settings(LiteralSettings, env_prefix="TEST_")
+
+    def test_non_string_literal_union_coerces_environment_values(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        class LiteralSettings(TypedDict, total=False):
+            attempts: Literal[1, 2] | None
+            enabled: Literal[True, False] | None
+
+        monkeypatch.setenv("TEST_ATTEMPTS", "2")
+        monkeypatch.setenv("TEST_ENABLED", "false")
+
+        settings = load_settings(LiteralSettings, env_prefix="TEST_")
+
+        assert settings["attempts"] == 2
+        assert type(settings["attempts"]) is int
+        assert settings["enabled"] is False
+        assert type(settings["enabled"]) is bool
+
+    def test_non_string_literal_union_coerces_dotenv_values(self, tmp_path: Path) -> None:
+        class LiteralSettings(TypedDict, total=False):
+            attempts: Literal[3, 4] | None
+
+        env_file = tmp_path / ".env"
+        env_file.write_text("TEST_ATTEMPTS=4\n", encoding="utf-8")
+
+        settings = load_settings(LiteralSettings, env_prefix="TEST_", env_file_path=str(env_file))
+
+        assert settings["attempts"] == 4
+        assert type(settings["attempts"]) is int
+
+    def test_non_string_literal_uses_strict_type_equality(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        class LiteralSettings(TypedDict, total=False):
+            value: Literal[1] | None
+
+        monkeypatch.setenv("TEST_VALUE", "true")
+
+        with pytest.raises(ValueError, match="setting 'value' from environment variable 'TEST_VALUE'"):
+            load_settings(LiteralSettings, env_prefix="TEST_")
+
 
 class TestRequiredFields:
     """Test required field validation."""
@@ -403,8 +565,7 @@ class TestOverrideTypeValidation:
     """Test override type validation."""
 
     def test_invalid_type_raises(self) -> None:
-
-        with pytest.raises(ValueError, match="Invalid type for setting 'api_key'"):
+        with pytest.raises(ValueError, match="Invalid type for setting 'api_key' from explicit override"):
             load_settings(SimpleSettings, env_prefix="TEST_", api_key={"bad": "type"})
 
     def test_valid_types_accepted(self) -> None:
@@ -474,6 +635,17 @@ class TestOverrideTypeValidation:
         settings = load_settings(LiteralUnionSettings, env_prefix="TEST_", mode=["a", "b"])
 
         assert settings["mode"] == ["a", "b"]
+
+    def test_callable_override_is_preserved(self) -> None:
+        class CallableSettings(TypedDict, total=False):
+            token_provider: Callable[[], str] | None
+
+        def token_provider() -> str:
+            return "token"
+
+        settings = load_settings(CallableSettings, token_provider=token_provider)
+
+        assert settings["token_provider"] is token_provider
 
 
 class TestMutuallyExclusive:
