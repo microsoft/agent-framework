@@ -43,7 +43,8 @@ def main() -> None:
     )
 
     server = ResponsesHostServer(
-        agent,
+        agent=agent,
+        inner_history="host",
         options=ResponsesServerOptions(steerable_conversations=True),
         log_level="DEBUG",
     )

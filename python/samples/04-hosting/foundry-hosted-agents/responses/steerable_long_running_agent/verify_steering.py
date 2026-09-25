@@ -17,21 +17,23 @@ Usage:
 import argparse
 import json
 import os
-import shutil
 import subprocess
 import sys
 import threading
 import time
 import urllib.error
 import urllib.request
+import uuid
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import IO, Any
 
 HOST = "127.0.0.1"
 PORT = 8088
 BASE_URL = f"http://{HOST}:{PORT}"
 SAMPLE_DIR = Path(__file__).parent
-LOG_PATH = SAMPLE_DIR / "verify_steering.log"
+STATE_DIR = TemporaryDirectory(prefix="af-steering-")
+LOG_PATH = Path(STATE_DIR.name) / "verify_steering.log"
 
 
 def _http_get(path: str, timeout: float = 5.0) -> tuple[int, dict[str, Any]]:
@@ -72,7 +74,7 @@ def _start_server(log_file: IO[str]) -> subprocess.Popen:  # type: ignore
     return subprocess.Popen(
         [sys.executable, "main.py"],
         cwd=SAMPLE_DIR,
-        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+        env={**os.environ, "PYTHONIOENCODING": "utf-8", "AGENTSERVER_STATE_ROOT": STATE_DIR.name},
         stdout=log_file,
         stderr=subprocess.STDOUT,
     )
@@ -100,18 +102,10 @@ def _kill(server: subprocess.Popen) -> None:  # type: ignore
 def _watch_sse(request: "urllib.request.Request | str", progress: dict[str, Any]) -> None:
     """Read an SSE stream from a streaming create POST and track its progress.
 
-    Tracks the response id (on ``response.created``), a running count of text delta events (a
-    single-agent response streams as one message, not discrete output items), and signals
-    ``progress["done"]`` on any terminal event.
+    Tracks the response id (on ``response.created``), text deltas, and terminal events.
     """
     try:
         with urllib.request.urlopen(request) as resp:
-            # Without an explicit conversation_id, the session id (which scopes the conversation
-            # chain id used to attach a steered turn to the same task) must be forwarded by the
-            # caller on later turns -- otherwise each turn derives a different session id locally.
-            session_id = resp.headers.get("x-agent-session-id")
-            if session_id:
-                progress["session_id"] = session_id
             current_event: str | None = None
             for raw_line in resp:
                 line = raw_line.decode("utf-8").rstrip("\n")
@@ -149,14 +143,6 @@ def _extract_output_text(output_items: list[dict[str, Any]]) -> str:
     return "".join(parts)
 
 
-def _clear_stale_state() -> None:
-    """Wipe ~/.agentserver so a prior run's task/queue state never leaks into this run."""
-    state_root = Path.home() / ".agentserver"
-    if state_root.exists():
-        shutil.rmtree(state_root, ignore_errors=True)
-        print(f"      cleared stale state: {state_root}")
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--first-target", type=int, default=30, help="First turn's countdown starting value.")
@@ -164,17 +150,16 @@ def main() -> None:
     parser.add_argument(
         "--min-deltas-before-steering",
         type=int,
-        default=15,
+        default=5,
         help="Minimum text delta events to observe on turn 1 before sending the steering turn.",
     )
     args = parser.parse_args()
-
-    _clear_stale_state()
 
     log_file = LOG_PATH.open("w", encoding="utf-8")
     print(f"Server logs (DEBUG level) are redirected to {LOG_PATH}.")
 
     print(f"[1/5] Starting server (first target={args.first_target}, second target={args.second_target})...")
+    conversation_id = f"steering-{uuid.uuid4().hex}"
     server = _start_server(log_file)  # type: ignore
     print(f"      PID: {server.pid}")
     try:
@@ -191,6 +176,7 @@ def main() -> None:
             "store": True,
             "background": True,
             "stream": True,
+            "conversation": conversation_id,
         }
         first_data = json.dumps(first_payload).encode("utf-8")
         first_request = urllib.request.Request(
@@ -215,6 +201,10 @@ def main() -> None:
                 )
             time.sleep(0.1)
         count_at_steer_time = first_progress["delta_count"]
+        if first_progress["done"].is_set():
+            raise SystemExit(
+                "FAIL: first turn finished before steering; increase --first-target or reduce --min-deltas."
+            )
         print(f"      turn 1 text deltas observed before steering: {count_at_steer_time}")
 
         print(f"[4/5] Sending the steering turn (new target={args.second_target})...")
@@ -223,17 +213,13 @@ def main() -> None:
             "store": True,
             "background": True,
             "stream": False,
-            "previous_response_id": first_id,
+            "conversation": conversation_id,
         }
-        # Forward the session id turn 1 was assigned so this turn resolves to the same
-        # conversation chain and is queued as a steer instead of starting a fresh task.
-        if "session_id" in first_progress:
-            second_payload["agent_session_id"] = first_progress["session_id"]
         status, body = _http_post("/responses", second_payload)
-        if status != 200 or body.get("status") != "queued":
-            raise SystemExit(f"FAIL: expected an immediate queued response for the steering turn, got: {body}")
+        if status != 200 or body.get("status") not in ("queued", "in_progress"):
+            raise SystemExit(f"FAIL: expected an immediately accepted steering turn, got: {body}")
         second_id = body["id"]
-        print(f"      steering turn accepted immediately as queued; response id: {second_id}")
+        print(f"      steering turn accepted as {body['status']}; response id: {second_id}")
 
         print("[5/5] Watching turn 1 end early and the steered turn complete...")
         first_progress["done"].wait(timeout=120)
@@ -246,11 +232,12 @@ def main() -> None:
     first_text = _extract_output_text(first_final.get("output", []))
     second_text = _extract_output_text(second_final.get("output", []))
 
-    print(f"      turn 1 final status: {first_final['status']}, {len(first_text)} character(s): {first_text}")
-    print(f"      turn 2 final status: {second_final['status']}, {len(second_text)} character(s): {second_text}")
+    print(f"      turn 1 final status: {first_final['status']}, {len(first_text)} character(s)")
+    print(f"      turn 2 final status: {second_final['status']}, {len(second_text)} character(s)")
 
-    if "Serving steered turn" in LOG_PATH.read_text(encoding="utf-8"):
-        print("      confirmed 'Serving steered turn' in the server log.")
+    if "Serving steered turn" not in LOG_PATH.read_text(encoding="utf-8"):
+        raise SystemExit("FAIL: the follow-up was not processed as a steered turn.")
+    print("      confirmed 'Serving steered turn' in the server log.")
 
     if first_final["status"] != "completed":
         raise SystemExit(
@@ -280,6 +267,7 @@ def main() -> None:
         search_from = idx + 1
 
     print("PASS: the steering turn cancelled the in-progress countdown early and completed its own countdown.")
+    STATE_DIR.cleanup()
 
 
 if __name__ == "__main__":

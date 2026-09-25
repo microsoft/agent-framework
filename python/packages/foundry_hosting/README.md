@@ -29,52 +29,63 @@ The Responses host continues regular agents through its existing session store a
 existing checkpoint store. A callable does not make arbitrary instance fields persistent; state needed by later
 requests must remain in the supported stores.
 
-## Conversation history
+## Responses agent history and storage
 
-`ResponsesHostServer` uses AgentServer response history as the model's conversation history by default:
+The caller's `POST /responses` **`store` flag** controls whether the *outer* response is retrievable and whether
+MAF session and approval state is saved. It does not choose the *inner* history source:
 
-```python
-server = ResponsesHostServer(agent)
-```
-
-In this mode, the configured AgentServer response provider supplies the prior transcript. Hosting rejects
-`HistoryProvider` instances with `load_messages=True` and agents configured with a default `conversation_id`,
-`previous_response_id`, or `conversation`, adds a transient in-memory provider for function-call loops, and clears
-restored downstream service IDs. For clients that advertise `STORES_BY_DEFAULT=True`, hosting forces downstream
-`store=False`; for other clients it removes an explicit agent-level `store` option and does not forward one. These
-safeguards ensure the model receives the transcript once without sending unsupported storage options.
-
-AgentServer history requires a framework `RawAgent` whose client declares the boolean `STORES_BY_DEFAULT` capability;
-the agent's runtime options then let hosting enforce downstream storage behavior. Custom `SupportsAgentRun`
-implementations must use `history_source="agent"` because that protocol does not accept runtime chat options.
-
-`ResponsesHostServer` owns a supplied agent instance and may add hosting-specific context providers. Do not reuse that
-instance with another host or invoke it directly after constructing the server. An agent returned by a callable belongs
-to that request.
-
-To preserve the agent's regular history and service-storage behavior, select the agent as the history source:
+| `inner_history` | What the model receives | Inner storage on `store=True` |
+| --- | --- | --- |
+| `"host"` (default) | Prior outer Responses transcript plus new input | Disabled. Storing clients run with `store=False`; non-storing clients receive no storage option. |
+| `"service"` | New input only | Enabled. The service-issued `AgentSession.service_session_id` is saved privately under the outer response ID or conversation. |
+| `"agent"` | New input plus the agent's `HistoryProvider` | Disabled. Agent history in `AgentSession.state` is saved by the host, without duplicating service history. |
 
 ```python
-server = ResponsesHostServer(agent, history_source="agent")
+server = ResponsesHostServer(agent=agent, inner_history="service")
 ```
 
-Hosting then passes only current request input, allows load-enabled history providers, and does not override the
-agent's downstream `store` option. For example, `InMemoryHistoryProvider` stores messages in `AgentSession.state`, which
-the default `FoundryAgentSessionStore` persists in Foundry:
+`"host"` and `"service"` reject a load-enabled `HistoryProvider` alongside their own history source; `"host"`
+also rejects default downstream continuation IDs. Explicit modes require a `RawAgent` with a client declaring
+`STORES_BY_DEFAULT`; `"service"` requires a storing client that returns a private continuation ID. Hosting may
+add a transient in-memory provider to support function-call loops, but **never edits `agent.default_options`**.
+The host owns the provided agent instance and any providers it adds; do not reuse it with another host. A factory
+creates an independent agent for each request.
 
-```python
-agent = Agent(
-    client=client,
-    context_providers=[InMemoryHistoryProvider()],
-    default_options={"store": False},
-)
-server = ResponsesHostServer(agent, history_source="agent")
-```
+The deprecated `history_source="agent_server"` still selects `"host"`. **Deprecated `history_source="agent"` is
+not an alias for `inner_history="agent"`**: on stored requests, it preserves the old behavior of sending only new
+input while the developer's defaults choose *either* a HistoryProvider *or* downstream service storage (including
+`default_options={"store": True}`). Existing custom `SupportsAgentRun` implementations can continue using this
+stored-request compatibility path. Each use of `history_source=` emits one deprecation warning per host; new code
+should choose its explicit history mode. The outer storage-backend constructor argument is now `response_store=`.
+The old `store=` backend argument remains an alias with its own once-per-host deprecation warning; supplying both
+is an error. Neither constructor argument sets the caller's per-request `store` flag.
 
-The `store` argument remains independent: it selects the AgentServer response provider used for Responses API
-persistence and retrieval. Omitting it or passing `None` selects the environment default. With
-`history_source="agent_server"`, that response provider also supplies model history; with `history_source="agent"`, it
-does not.
+`store=False` returns a one-shot response without **writing** host-managed session, conversation, or approval state;
+it also disables inner service storage regardless of the developer's defaults. Unsafe custom agents, external
+history providers that store messages, and fixed downstream continuation defaults fail with an actionable error
+instead of silently persisting. An unstored service-mode request cannot resume a private service thread. The legacy
+agent mode also rejects an unstored continuation if its restored session uses downstream storage. Application-owned
+tools and external services may still have their own side effects. `background=True` requires outer `store=True`.
+
+Outer background work always uses the caller-visible `response.id` for polling; it does not enable provider-native
+background automatically. `inner_background="provider"` is a separate opt-in for `"service"` with a storing
+Responses client. Its private continuation token is saved under the outer ID and never returned to the caller.
+Use `ResponsesServerOptions(resilient_background=True)` to permit recovery from a **saved** token; a crash before
+the token is saved cannot safely restart the inner job. Provider background and steering cannot be combined.
+Regular agent runs without this opt-in are not crash-replayable. `steerable_conversations=True` enables AgentServer's
+process-wide multi-turn TaskManager; a superseded turn keeps its own response snapshot but cannot replace a later
+CAS-protected conversation head. Start an in-progress background turn with `stream=True` before steering it: the
+current AgentServer release can leave a superseded **non-streamed** background response in progress on retrieval.
+Legacy `WorkflowAgent` dispatch is unchanged.
+
+Native CreateResponse generation fields become MAF runtime options (notably `max_output_tokens` -> `max_tokens` and
+`parallel_tool_calls` -> `allow_multiple_tool_calls`). Flattened OpenAI `extra_body` fields overlay translated keys
+**last**. A sync or async `prepare_options(request: HostedResponseRequest, options: dict)` hook can remove or replace
+*caller* options before `Agent.run`; removed values fall back to the developer's unchanged agent defaults. Hosting
+filters caller platform IDs and private continuation/storage controls from model options and rejects attempts to
+reintroduce them through the hook. A custom agent cannot accept MAF runtime options: choose
+`unsupported_options` as `"ignore"`, `"warn"` (default), or `"error"` for that case. See the
+[agent history and options samples](../../samples/04-hosting/foundry-hosted-agents/responses/basic/).
 
 ## State store
 
@@ -152,12 +163,14 @@ durably. By default they use `FoundryAgentSessionStore`, backed by Foundry stora
 and file-based storage locally. Responses sessions use the `agent_sessions` logical store;
 Invocations sessions use the separate `invocation_sessions` store.
 
-Loaded MAF sessions are saved with an ETag condition. A competing turn that has
-already advanced the same conversation causes a visible persistence failure instead
-of silently overwriting its state. New hosted session keys are created only if absent;
-turns using `previous_response_id` write their own new response ID, without applying
-the predecessor's ETag to a different key. Local callers can still upsert directly
-without first loading a session.
+Each stored agent turn saves a snapshot under its **own** outer `response.id`. For a named `conversation`, a
+separate mutable conversation-head key is also updated. Loaded MAF sessions use PR1's ETag condition for that key:
+a competing turn that advanced the head causes a visible conflict rather than a stale overwrite. A superseded
+steered turn saves its response snapshot but skips the head update. Service-backed history is linear: when
+continuing by `previous_response_id`, the prior response is claimed with a conditional write so a second branch
+cannot reuse the same downstream service thread; attempting to fork a named service conversation is also rejected.
+New hosted keys are created only if absent. Custom store providers must provide equivalent scoped conditional
+writes for concurrent turns. Local callers can still upsert directly without first loading a session.
 
 See the [custom storage provider sample](../../samples/04-hosting/foundry-hosted-agents/responses/custom_storage/)
 for an example that uses an in-memory session store locally and Azure Cosmos DB when hosted.

@@ -15,8 +15,11 @@ import copy
 import json
 import logging
 import os
+import threading
+import time
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import aclosing, asynccontextmanager
 from dataclasses import dataclass
 from importlib import import_module
@@ -55,7 +58,7 @@ from agent_framework import (
     tool,
 )
 from agent_framework.ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
-from agent_framework.openai import OpenAIChatClient
+from agent_framework.openai import OpenAIChatClient, OpenAIChatOptions, OpenAIContinuationToken
 from azure.ai.agentserver.core import FoundryAgentRequestContext, get_request_context
 from azure.ai.agentserver.responses import (
     FileResponseStore,
@@ -70,6 +73,7 @@ from azure.ai.agentserver.responses.streaming._checkpoint import ResponseCheckpo
 from mcp import McpError
 from mcp.types import ErrorData
 from openai import AsyncOpenAI, DefaultAsyncHttpxClient
+from starlette.testclient import TestClient
 from typing_extensions import Any
 
 from agent_framework_foundry_hosting import ResponsesHostServer
@@ -145,6 +149,11 @@ async def _raising_updates(
     for update in initial_updates:
         yield update
     raise RuntimeError(message)
+
+
+async def _single_state_update(session: AgentSession) -> AsyncIterator[AgentResponseUpdate]:
+    session.state["turn"] = 1
+    yield AgentResponseUpdate(contents=[Content.from_text("recorded")], role="assistant")
 
 
 class _AgentProtocolMock(MagicMock):
@@ -424,6 +433,17 @@ class _FailingSessionStore(SessionStore):
         raise OSError("session storage is full")
 
 
+class _ConflictingConversationStore(SessionStore):
+    def __init__(self) -> None:
+        super().__init__()
+        self.fail_conversation = False
+
+    async def set(self, session_id: str, session: AgentSession) -> None:
+        if self.fail_conversation and session_id == "conversation-head":
+            raise RuntimeError("Another request advanced this agent session; reload before writing.")
+        await super().set(session_id, session)
+
+
 _SESSION_STORE_UNSET = object()
 
 
@@ -431,7 +451,7 @@ def _make_server(agent: Any, **kwargs: Any) -> ResponsesHostServer:
     """Create a ResponsesHostServer, optionally replacing its private store for tests."""
     session_store = kwargs.pop("session_store", _SESSION_STORE_UNSET)
     response_store = kwargs.pop("response_store", InMemoryResponseProvider())
-    server = ResponsesHostServer(agent, store=response_store, **kwargs)
+    server = ResponsesHostServer(agent, response_store=response_store, **kwargs)
     if session_store is not _SESSION_STORE_UNSET:
         provider = MagicMock(spec=AgentSessionStoreProvider)
         provider.get_store.return_value = cast(SessionStore | None, session_store)
@@ -593,6 +613,14 @@ def _parse_sse_events(body: str) -> list[dict[str, Any]]:
             current_data_lines = []
 
     return events
+
+
+def _failure_message(events: Sequence[Any]) -> str:
+    failed_events = [event for event in events if isinstance(event, Mapping) and event.get("type") == "response.failed"]
+    assert len(failed_events) == 1
+    response = cast(Mapping[str, Any], failed_events[0]["response"])
+    error = cast(Mapping[str, Any], response["error"])
+    return cast(str, error["message"])
 
 
 async def test_agui_service_storage_conversation_mode_sends_only_incremental_provider_input() -> None:
@@ -933,7 +961,7 @@ class TestResponsesHostServerInit:
         agent = _make_agent(
             response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
         )
-        server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
+        server = ResponsesHostServer(agent, response_store=InMemoryResponseProvider())
 
         assert isinstance(
             server._session_storage_provider,  # pyright: ignore[reportPrivateUsage]
@@ -1057,6 +1085,57 @@ class TestResponsesHostServerInit:
                 store=InMemoryResponseProvider(),
                 options=ResponsesServerOptions(steerable_conversations=True),
             )
+
+    def test_steerable_agent_enables_multi_turn_task_manager(self) -> None:
+        with patch("azure.ai.agentserver.core.tasks.set_resilient_tasks_enabled") as enable:
+            _make_server(_make_agent(), options=ResponsesServerOptions(steerable_conversations=True))
+        enable.assert_called_once_with(True)
+
+    def test_provider_background_rejects_steering_and_wrong_history_mode(self) -> None:
+        agent = Agent(client=_ServiceStorageRecordingClient())
+        with pytest.raises(ValueError, match="inner_history='service'"):
+            _make_server(agent, inner_background="provider")
+        with pytest.raises(ValueError, match="cannot be combined"):
+            _make_server(
+                agent,
+                inner_history="service",
+                inner_background="provider",
+                options=ResponsesServerOptions(steerable_conversations=True),
+            )
+
+    def test_legacy_aliases_warn_once_per_host(self) -> None:
+        agent = Agent(client=_ServiceStorageRecordingClient(), default_options=OpenAIChatOptions(store=True))
+        with pytest.warns(DeprecationWarning) as recorded:
+            server = ResponsesHostServer(
+                agent,
+                history_source="agent",
+                store=InMemoryResponseProvider(),
+            )
+        assert server is not None
+        assert len(recorded) == 2
+        assert any("history_source" in str(warning.message) for warning in recorded)
+        assert any("response_store" in str(warning.message) for warning in recorded)
+
+    def test_explicit_history_rejects_legacy_alias_and_invalid_policy(self) -> None:
+        agent = _make_agent()
+        with pytest.raises(ValueError, match="cannot be combined"):
+            _make_server(agent, inner_history="agent", history_source="agent")
+        with pytest.raises(ValueError, match="unsupported_options"):
+            _make_server(agent, unsupported_options="silent")
+
+    @pytest.mark.parametrize(
+        "identity_field", ["session_id", "agent_session_id", "user_id", "call_id", "service_session_id"]
+    )
+    @pytest.mark.parametrize("legacy", [False, True])
+    def test_agent_defaults_cannot_supply_platform_identity(self, identity_field: str, legacy: bool) -> None:
+        agent = Agent(
+            client=_ServiceStorageRecordingClient(),
+            default_options=cast(Any, {identity_field: "forged"}),
+        )
+        selection = {"history_source": "agent"} if legacy else {"inner_history": "host"}
+
+        with pytest.raises(RuntimeError, match="Model defaults cannot supply Foundry platform identity"):
+            _make_server(agent, **selection)
 
     async def test_previous_response_requires_existing_agent_session(self) -> None:
         agent = _make_agent()
@@ -1223,20 +1302,30 @@ class TestAgentSessionPersistence:
         assert stored is not None
         assert stored.service_session_id is None
 
-    async def test_agent_server_history_removes_store_for_non_storing_client(self) -> None:
+    async def test_host_history_rejects_storing_default_without_mutating_it(self) -> None:
         client = _RecordingHistoryClient()
         agent = Agent(
             client=client,
             name="Non-Storing Agent",
             default_options={"store": True},  # pyrefly: ignore[bad-argument-type]
         )
-        server = _make_server(agent, session_store=SessionStore())
+        with pytest.raises(RuntimeError, match="Remove that developer-owned default"):
+            _make_server(agent, session_store=SessionStore())
+        assert agent.default_options["store"] is True
+        assert agent.context_providers == []
 
-        response = await _post(server, input_text="first")
+    async def test_host_history_preserves_non_storing_client_default(self) -> None:
+        client = _RecordingHistoryClient()
+        agent = Agent(
+            client=client,
+            default_options={"store": False},  # pyrefly: ignore[bad-argument-type]
+        )
+        server = _make_server(agent)
+        response = await _post(server)
 
         assert response.json()["status"] == "completed"
-        assert "store" not in agent.default_options
-        assert "store" not in client.options[0]
+        assert agent.default_options["store"] is False
+        assert client.options[0]["store"] is False
 
     async def test_agent_history_does_not_forward_runtime_options_to_custom_agent(self) -> None:
         agent = _StrictCustomAgent()
@@ -1290,6 +1379,688 @@ class TestAgentSessionPersistence:
         stored = await store.get(second.json()["id"])
         assert stored is not None
         assert stored.service_session_id == "service-thread-1"
+
+    async def test_service_history_preserves_private_continuation(self) -> None:
+        client = _ServiceStorageRecordingClient()
+        agent = Agent(client=client, default_options=OpenAIChatOptions(store=False))
+        store = SessionStore()
+        server = _make_server(agent, session_store=store, inner_history="service")
+
+        first = await _post(server, input_text="first")
+        second = await _post(server, input_text="second", previous_response_id=first.json()["id"])
+
+        assert second.json()["status"] == "completed"
+        assert [[message.text for message in call] for call in client.calls] == [["first"], ["second"]]
+        assert client.store_options == [True, True]
+        assert client.conversation_ids == [None, "service-thread-1"]
+        assert "service-thread-1" not in str(second.json())
+        assert agent.default_options["store"] is False
+        stored = await store.get(second.json()["id"])
+        assert stored is not None and stored.service_session_id == "service-thread-1"
+
+    async def test_async_agent_factory_reuses_private_service_session_across_requests(self) -> None:
+        clients: list[_ServiceStorageRecordingClient] = []
+
+        async def create_agent() -> SupportsAgentRun:
+            client = _ServiceStorageRecordingClient()
+            clients.append(client)
+            return Agent(client=client, default_options=OpenAIChatOptions(store=True))
+
+        store = SessionStore()
+        server = _make_server(create_agent, session_store=store, inner_history="service")
+        first = await _post(server, input_text="first")
+        second = await _post(server, input_text="second", previous_response_id=first.json()["id"])
+
+        assert second.json()["status"] == "completed"
+        assert len(clients) == 2
+        assert [client.store_options for client in clients] == [[True], [True]]
+        assert [client.conversation_ids for client in clients] == [[None], ["service-thread-1"]]
+        saved = await store.get(second.json()["id"])
+        assert saved is not None and saved.service_session_id == "service-thread-1"
+
+    async def test_service_history_rejects_second_child_of_provider_response(self) -> None:
+        client = _ServiceStorageRecordingClient()
+        server = _make_server(Agent(client=client), session_store=SessionStore(), inner_history="service")
+        first = await _post(server, input_text="first")
+        second = await _post(server, input_text="second", previous_response_id=first.json()["id"])
+        branch = await _post(server, input_text="fork", previous_response_id=first.json()["id"])
+
+        assert second.json()["status"] == "completed"
+        assert branch.json()["status"] == "failed"
+        assert "cannot be forked" in branch.json()["error"]["message"]
+        assert len(client.calls) == 2
+
+    async def test_explicit_agent_history_uses_provider_without_inner_storage(self) -> None:
+        client = _ServiceStorageRecordingClient()
+        history = InMemoryHistoryProvider()
+        agent = Agent(client=client, context_providers=[history], default_options=OpenAIChatOptions(store=True))
+        store = SessionStore()
+        server = _make_server(agent, session_store=store, inner_history="agent")
+
+        first = await _post(server, input_text="first")
+        second = await _post(server, input_text="second", previous_response_id=first.json()["id"])
+
+        assert second.json()["status"] == "completed"
+        assert [[message.text for message in call] for call in client.calls] == [
+            ["first"],
+            ["first", "recorded", "second"],
+        ]
+        assert client.store_options == [False, False]
+        assert agent.default_options["store"] is True
+        saved = await store.get(second.json()["id"])
+        assert saved is not None and history.source_id in saved.state
+        assert saved.service_session_id is None
+
+    @pytest.mark.parametrize("mode", ["host", "service", "agent", "legacy"])
+    async def test_store_false_neither_saves_session_nor_stores_inner_response(self, mode: str) -> None:
+        client = _ServiceStorageRecordingClient()
+        agent = Agent(client=client, default_options=OpenAIChatOptions(store=True))
+        store = SessionStore()
+        selection = {"history_source": "agent"} if mode == "legacy" else {"inner_history": mode}
+        server = _make_server(agent, session_store=store, **selection)
+        approvals = MagicMock(spec=FunctionApprovalStoreProvider)
+        server._function_approval_storage_provider = approvals  # pyright: ignore[reportPrivateUsage]
+
+        response = await _post_json(server, {"input": "one shot", "store": False, "model": "test-model"})
+
+        assert response.json()["status"] == "completed", response.json()
+        assert await store.get(response.json()["id"]) is None
+        assert client.store_options == [False]
+        assert client.conversation_ids == [None]
+        assert agent.default_options["store"] is True
+        provider = cast(MagicMock, server._session_storage_provider)  # pyright: ignore[reportPrivateUsage]
+        provider.get_store.assert_not_called()
+        approvals.get_store.assert_not_called()
+
+    async def test_store_false_rejects_external_history_and_custom_agent(self) -> None:
+        history = _PerServiceCallHistoryProvider()
+        agent = Agent(client=_RecordingHistoryClient(), context_providers=[history])
+        server = _make_server(agent, history_source="agent")
+        response = await _post_json(server, {"input": "one shot", "store": False})
+        assert response.json()["status"] == "failed"
+        assert "external HistoryProvider" in response.json()["error"]["message"]
+
+        custom = _StrictCustomAgent()
+        server = _make_server(custom, history_source="agent")
+        response = await _post_json(server, {"input": "one shot", "store": False})
+        assert response.json()["status"] == "failed"
+        assert "custom agent" in response.json()["error"]["message"]
+        assert custom.calls == []
+
+    async def test_store_false_legacy_continuation_fails_instead_of_using_service_history(self) -> None:
+        client = _ServiceStorageRecordingClient()
+        server = _make_server(
+            Agent(client=client, default_options=OpenAIChatOptions(store=True)),
+            session_store=SessionStore(),
+            history_source="agent",
+        )
+        first = await _post(server)
+        request = CreateResponse(input="cannot resume", store=False, previous_response_id=first.json()["id"])
+        context = ResponseContext(response_id="one-shot", mode_flags=MagicMock())
+        events = [event async for event in server._handle_response(request, context, asyncio.Event())]
+
+        assert "store=false cannot continue legacy" in _failure_message(events)
+        assert len(client.calls) == 1
+
+    async def test_extra_options_overlay_then_developer_hook_preserves_defaults(self) -> None:
+        client = _RecordingHistoryClient()
+        agent = Agent(client=client, default_options=OpenAIChatOptions(temperature=0.2, max_tokens=256))
+        defaults = dict(agent.default_options)
+
+        def prepare_options(_request: Any, options: dict[str, Any]) -> dict[str, Any]:
+            options.pop("temperature")
+            return options
+
+        server = _make_server(agent, prepare_options=prepare_options)
+        response = await _post_json(
+            server,
+            {
+                "input": "hello",
+                "model": "test-model",
+                "temperature": 0.8,
+                "max_output_tokens": 300,
+                "max_tokens": 150,
+                "session_id": "forged-sandbox",
+                "call_id": "forged-call",
+            },
+        )
+
+        assert response.json()["status"] == "completed"
+        assert client.options[0]["temperature"] == 0.2
+        assert client.options[0]["max_tokens"] == 150
+        assert "session_id" not in client.options[0]
+        assert "call_id" not in client.options[0]
+        assert agent.default_options == defaults
+
+    async def test_hook_cannot_reintroduce_host_owned_storage_or_identity(self) -> None:
+        agent = _make_agent()
+        server = _make_server(
+            agent,
+            prepare_options=lambda _request, options: {**options, "store": True, "agent_session_id": "forged"},
+        )
+        response = await _post_json(server, {"input": "one shot", "store": False})
+
+        assert response.json()["status"] == "failed"
+        assert "host-controlled" in response.json()["error"]["message"]
+        agent.run.assert_not_called()
+
+    async def test_unsupported_options_policy_rejects_custom_agent(self) -> None:
+        agent = _StrictCustomAgent()
+        server = _make_server(agent, history_source="agent", unsupported_options="error")
+        response = await _post_json(server, {"input": "hello", "temperature": 0.8})
+
+        assert response.json()["status"] == "failed"
+        assert "does not accept caller runtime options" in response.json()["error"]["message"]
+        assert agent.calls == []
+
+    @pytest.mark.parametrize(("policy", "warn"), [("warn", True), ("ignore", False)])
+    async def test_custom_agent_unsupported_options_warning_policy(
+        self, policy: str, warn: bool, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        agent = _StrictCustomAgent()
+        server = _make_server(agent, history_source="agent", unsupported_options=policy)
+
+        with caplog.at_level(logging.WARNING):
+            response = await _post(server, temperature=0.5)
+
+        assert response.json()["status"] == "completed"
+        assert ("Agent doesn't support runtime options" in caplog.text) is warn
+
+    @pytest.mark.parametrize(
+        ("finish_reason", "expected_status"),
+        [(None, "failed"), ("stop", "completed"), ("length", "incomplete")],
+    )
+    async def test_streaming_continuation_requires_an_unfinished_final_response(
+        self, finish_reason: str | None, expected_status: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        agent = Agent(client=_ServiceStorageRecordingClient())
+
+        async def stream_updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(continuation_token=OpenAIContinuationToken(response_id="private-provider-token"))
+            if finish_reason is not None:
+                yield AgentResponseUpdate(
+                    contents=[Content.from_text("finished")],
+                    role="assistant",
+                    finish_reason=cast(FinishReasonLiteral, finish_reason),
+                    continuation_token=(
+                        OpenAIContinuationToken(response_id="private-provider-token")
+                        if finish_reason == "length"
+                        else None
+                    ),
+                )
+
+        monkeypatch.setattr(
+            agent,
+            "run",
+            MagicMock(
+                side_effect=lambda **_kwargs: ResponseStream(stream_updates(), finalizer=AgentResponse.from_updates)
+            ),
+        )
+        server = _make_server(agent)
+        response = await _post_json(server, {"input": "hello", "store": True})
+
+        assert response.json()["status"] == expected_status, response.json()
+        assert "private-provider-token" not in str(response.json())
+
+    async def test_provider_background_keeps_private_token_under_outer_response(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        agent = Agent(client=_ServiceStorageRecordingClient(), default_options=OpenAIChatOptions(store=True))
+        calls: list[dict[str, Any]] = []
+
+        async def run(
+            messages: Any = None,
+            *,
+            session: AgentSession,
+            options: Mapping[str, Any],
+            **kwargs: Any,
+        ) -> AgentResponse:
+            del messages, kwargs
+            calls.append(dict(options))
+            if "continuation_token" not in options:
+                return AgentResponse(
+                    messages=[], continuation_token=OpenAIContinuationToken(response_id="private-provider-token")
+                )
+            session.service_session_id = "private-service-conversation"
+            return AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("finished")])])
+
+        monkeypatch.setattr(agent, "run", MagicMock(side_effect=run))
+        store = SessionStore()
+        server = _make_server(
+            agent,
+            session_store=store,
+            inner_history="service",
+            inner_background="provider",
+            options=ResponsesServerOptions(resilient_background=True),
+            response_store=FileResponseStore(storage_dir=tmp_path),
+        )
+        request = CreateResponse(input="hello", store=True, background=True)
+        context = ResponseContext(response_id="outer-response", mode_flags=MagicMock())
+        with (
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
+            patch("agent_framework_foundry_hosting._responses.asyncio.sleep", new=AsyncMock()),
+        ):
+            events = [event async for event in server._handle_response(request, context, asyncio.Event())]
+
+        assert [event.get("type") for event in events if isinstance(event, Mapping)][-1] == "response.completed"
+        assert [call.get("background") for call in calls] == [True, None]
+        assert calls[1]["continuation_token"] == {"response_id": "private-provider-token"}
+        assert "private-provider-token" not in str(events)
+        saved = await store.get("outer-response")
+        assert saved is not None
+        assert saved.service_session_id == "private-service-conversation"
+        assert "_foundry_provider_background" not in saved.state
+
+    async def test_provider_recovery_without_saved_token_does_not_restart_job(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        agent = Agent(client=_ServiceStorageRecordingClient())
+        run = MagicMock()
+        monkeypatch.setattr(agent, "run", run)
+        server = _make_server(
+            agent,
+            session_store=SessionStore(),
+            inner_history="service",
+            inner_background="provider",
+            options=ResponsesServerOptions(resilient_background=True),
+            response_store=FileResponseStore(storage_dir=tmp_path),
+        )
+        request = CreateResponse(input="hello", store=True, background=True)
+        context = ResponseContext(response_id="outer-response", mode_flags=MagicMock())
+        context.is_recovery = True
+
+        with patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])):
+            events = [event async for event in server._handle_response(request, context, asyncio.Event())]
+
+        assert "before its continuation token was stored" in _failure_message(events)
+        run.assert_not_called()
+
+    async def test_provider_recovery_polls_saved_token_without_reclaiming_parent(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = SessionStore()
+        await store.set("previous-outer-response", AgentSession(service_session_id="previous-service-session"))
+        calls: list[dict[str, Any]] = []
+
+        async def run(
+            messages: Any = None,
+            *,
+            session: AgentSession,
+            options: Mapping[str, Any],
+            **kwargs: Any,
+        ) -> AgentResponse:
+            del messages, kwargs
+            calls.append(dict(options))
+            if "continuation_token" not in options:
+                return AgentResponse(
+                    messages=[], continuation_token=OpenAIContinuationToken(response_id="private-provider-token")
+                )
+            session.service_session_id = "next-service-session"
+            return AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("resumed")])])
+
+        first_agent = Agent(client=_ServiceStorageRecordingClient())
+        monkeypatch.setattr(first_agent, "run", MagicMock(side_effect=run))
+        first_server = _make_server(
+            first_agent,
+            session_store=store,
+            inner_history="service",
+            inner_background="provider",
+            options=ResponsesServerOptions(resilient_background=True),
+            response_store=FileResponseStore(storage_dir=tmp_path),
+        )
+        request = CreateResponse(
+            input="long job", store=True, background=True, previous_response_id="previous-outer-response"
+        )
+        first_context = ResponseContext(response_id="outer-recover", mode_flags=MagicMock())
+        with (
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
+            patch(
+                "agent_framework_foundry_hosting._responses.asyncio.sleep",
+                new=AsyncMock(side_effect=ResponseExitForRecovery()),
+            ),
+            pytest.raises(ResponseExitForRecovery),
+        ):
+            _ = [event async for event in first_server._handle_response(request, first_context, asyncio.Event())]
+
+        parent = await store.get("previous-outer-response")
+        assert parent is not None and parent.state["_foundry_service_child"] == "outer-recover"
+        token_session = await store.get("outer-recover")
+        assert token_session is not None
+        assert token_session.state["_foundry_provider_background"]["continuation_token"] == {
+            "response_id": "private-provider-token"
+        }
+
+        resumed_agent = Agent(client=_ServiceStorageRecordingClient())
+        monkeypatch.setattr(resumed_agent, "run", MagicMock(side_effect=run))
+        resumed_server = _make_server(
+            resumed_agent,
+            session_store=store,
+            inner_history="service",
+            inner_background="provider",
+            options=ResponsesServerOptions(resilient_background=True),
+            response_store=FileResponseStore(storage_dir=tmp_path),
+        )
+        recovered_context = ResponseContext(response_id="outer-recover", mode_flags=MagicMock())
+        recovered_context.is_recovery = True
+        with (
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
+            patch("agent_framework_foundry_hosting._responses.asyncio.sleep", new=AsyncMock()),
+        ):
+            events = [
+                event async for event in resumed_server._handle_response(request, recovered_context, asyncio.Event())
+            ]
+
+        assert [event.get("type") for event in events if isinstance(event, Mapping)][-1] == "response.completed"
+        assert [call.get("background") for call in calls] == [True, None]
+        saved = await store.get("outer-recover")
+        assert saved is not None and saved.service_session_id == "next-service-session"
+        assert "_foundry_provider_background" not in saved.state
+        assert "private-provider-token" not in str(events)
+
+    async def test_provider_poll_errors_cannot_reveal_private_token(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        agent = Agent(client=_ServiceStorageRecordingClient())
+
+        async def run(
+            messages: Any = None,
+            *,
+            session: AgentSession,
+            options: Mapping[str, Any],
+            **kwargs: Any,
+        ) -> AgentResponse:
+            del messages, session, kwargs
+            if "continuation_token" not in options:
+                return AgentResponse(
+                    messages=[], continuation_token=OpenAIContinuationToken(response_id="private-provider-token")
+                )
+            raise RuntimeError("provider failed for private-provider-token")
+
+        monkeypatch.setattr(agent, "run", MagicMock(side_effect=run))
+        server = _make_server(
+            agent,
+            session_store=SessionStore(),
+            inner_history="service",
+            inner_background="provider",
+            options=ResponsesServerOptions(resilient_background=True),
+            response_store=FileResponseStore(storage_dir=tmp_path),
+        )
+        request = CreateResponse(input="hello", store=True, background=True)
+        context = ResponseContext(response_id="outer-response", mode_flags=MagicMock())
+        with (
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
+            patch("agent_framework_foundry_hosting._responses.asyncio.sleep", new=AsyncMock()),
+        ):
+            events = [event async for event in server._handle_response(request, context, asyncio.Event())]
+
+        assert "Inner provider background execution failed" in _failure_message(events)
+        assert "private-provider-token" not in str(events)
+
+    async def test_steering_keeps_superseded_snapshot_without_replacing_conversation_head(self) -> None:
+        store = SessionStore()
+        await store.set("conversation-head", AgentSession())
+        first_continues = asyncio.Event()
+        calls = 0
+        agent = _make_agent()
+
+        def run_with_state(*args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+            nonlocal calls
+            del args
+            calls += 1
+            turn = calls
+            kwargs["session"].state["turn"] = turn
+
+            async def updates() -> AsyncIterator[AgentResponseUpdate]:
+                yield AgentResponseUpdate(contents=[Content.from_text(f"turn {turn}")], role="assistant")
+                if turn == 1:
+                    await first_continues.wait()
+                    yield AgentResponseUpdate(contents=[Content.from_text("stale")], role="assistant")
+
+            return ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+        agent.run = MagicMock(side_effect=run_with_state)
+        server = _make_server(
+            agent,
+            session_store=store,
+            options=ResponsesServerOptions(steerable_conversations=True),
+        )
+        first = ResponseContext(
+            response_id="first-response", conversation_id="conversation-head", mode_flags=MagicMock()
+        )
+        second = ResponseContext(
+            response_id="second-response", conversation_id="conversation-head", mode_flags=MagicMock()
+        )
+        first_signal = asyncio.Event()
+        with (
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
+            patch.object(ResponseContext, "get_history", new=AsyncMock(return_value=[])),
+        ):
+            first_handler = server._handle_response(CreateResponse(input="first"), first, first_signal)
+            async for event in first_handler:
+                if isinstance(event, Mapping) and event.get("type") == "response.output_text.delta":
+                    break
+            newer = [
+                event
+                async for event in server._handle_response(CreateResponse(input="second"), second, asyncio.Event())
+            ]
+            first_signal.set()
+            older = [event async for event in first_handler]
+
+        assert isinstance(newer[-1], Mapping) and newer[-1]["type"] == "response.completed"
+        assert isinstance(older[-1], Mapping) and older[-1]["type"] == "response.completed"
+        first_snapshot = await store.get("first-response")
+        second_snapshot = await store.get("second-response")
+        conversation_head = await store.get("conversation-head")
+        assert first_snapshot is not None and first_snapshot.state["turn"] == 1
+        assert second_snapshot is not None and second_snapshot.state["turn"] == 2
+        assert conversation_head is not None and conversation_head.state["turn"] == 2
+
+    async def test_conversation_write_conflict_keeps_response_snapshot(self) -> None:
+        store = _ConflictingConversationStore()
+        await store.set("conversation-head", AgentSession())
+        store.fail_conversation = True
+        agent = _make_agent()
+        agent.run = MagicMock(
+            side_effect=lambda **kwargs: ResponseStream(
+                _single_state_update(kwargs["session"]), finalizer=AgentResponse.from_updates
+            )
+        )
+        server = _make_server(agent, session_store=store)
+        context = ResponseContext(
+            response_id="conflicting-response", conversation_id="conversation-head", mode_flags=MagicMock()
+        )
+        with (
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
+            patch.object(ResponseContext, "get_history", new=AsyncMock(return_value=[])),
+        ):
+            events = [
+                event
+                async for event in server._handle_response(CreateResponse(input="hello"), context, asyncio.Event())
+            ]
+
+        assert "Another request advanced" in _failure_message(events)
+        snapshot = await store.get("conflicting-response")
+        conversation_head = await store.get("conversation-head")
+        assert snapshot is not None and snapshot.state["turn"] == 1
+        assert conversation_head is not None and "turn" not in conversation_head.state
+
+    async def test_http_outer_storage_is_independent_of_inner_service_history(self) -> None:
+        client = _ServiceStorageRecordingClient()
+        store = SessionStore()
+        server = _make_server(Agent(client=client), inner_history="service", session_store=store)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as http:
+            stored = await http.post("/responses", json={"input": "remember me", "store": True})
+            stored_id = stored.json()["id"]
+            retrieved = await http.get(f"/responses/{stored_id}")
+            unstored = await http.post("/responses", json={"input": "one shot", "store": False})
+            missing = await http.get(f"/responses/{unstored.json()['id']}")
+
+        assert stored.json()["status"] == "completed"
+        assert retrieved.status_code == 200 and retrieved.json()["id"] == stored_id
+        assert unstored.json()["status"] == "completed"
+        assert missing.status_code == 404
+        assert client.store_options == [True, False]
+        saved = await store.get(stored_id)
+        assert saved is not None and saved.service_session_id == "service-thread-1"
+        assert await store.get(unstored.json()["id"]) is None
+
+    @pytest.mark.parametrize("mode", ["service", "agent"])
+    async def test_http_outer_background_polling_is_independent_of_inner_history(self, mode: str) -> None:
+        client = _ServiceStorageRecordingClient()
+        history = [InMemoryHistoryProvider()] if mode == "agent" else []
+        server = _make_server(
+            Agent(client=client, context_providers=history), session_store=SessionStore(), inner_history=mode
+        )
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as http:
+            pending = await http.post("/responses", json={"input": "background", "store": True, "background": True})
+            assert pending.status_code == 200
+            response_id = pending.json()["id"]
+            for _ in range(100):
+                final = await http.get(f"/responses/{response_id}")
+                if final.json()["status"] == "completed":
+                    break
+                await asyncio.sleep(0.02)
+            else:
+                pytest.fail(f"Background response {response_id} did not finish.")
+            rejected = await http.post("/responses", json={"input": "invalid", "store": False, "background": True})
+
+        assert final.json()["id"] == response_id
+        assert "service-thread-1" not in str(final.json())
+        assert client.store_options == ([True] if mode == "service" else [False])
+        assert rejected.status_code == 400
+
+    async def test_http_background_polling_and_unstored_stream_use_outer_response_id(self) -> None:
+        started = asyncio.Event()
+        release = asyncio.Event()
+        agent = _make_agent()
+
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            started.set()
+            await release.wait()
+            yield AgentResponseUpdate(contents=[Content.from_text("finished")], role="assistant")
+
+        agent.run = MagicMock(
+            side_effect=lambda **_kwargs: ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+        )
+        server = _make_server(agent)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=server), base_url="http://test", timeout=10
+        ) as http:
+            pending = await http.post("/responses", json={"input": "long", "store": True, "background": True})
+            assert pending.status_code == 200
+            outer_id = pending.json()["id"]
+            assert pending.json()["status"] in ("queued", "in_progress")
+            await asyncio.wait_for(started.wait(), timeout=5)
+            release.set()
+            for _ in range(100):
+                result = await http.get(f"/responses/{outer_id}")
+                if result.json()["status"] == "completed":
+                    break
+                await asyncio.sleep(0.02)
+            else:
+                pytest.fail("Outer background response did not complete.")
+            stream = await http.post("/responses", json={"input": "one shot", "store": False, "stream": True})
+            completed = [
+                event["data"]["response"]
+                for event in _parse_sse_events(stream.text)
+                if event["event"] == "response.completed"
+            ]
+            assert len(completed) == 1
+            missing = await http.get(f"/responses/{completed[0]['id']}")
+
+        assert result.json()["id"] == outer_id
+        assert "finished" in str(result.json()["output"])
+        assert missing.status_code == 404
+        assert agent.run.call_args_list[0].kwargs["options"].get("background") is None
+
+    def test_http_steering_uses_task_manager_and_keeps_latest_conversation_state(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("AGENTSERVER_STATE_ROOT", str(tmp_path / "state"))
+        first_output = threading.Event()
+        release = threading.Event()
+        turn_number = 0
+        store = SessionStore()
+        agent = _make_agent()
+
+        def run(*args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+            nonlocal turn_number
+            del args
+            turn_number += 1
+            turn = turn_number
+            kwargs["session"].state["turn"] = turn
+
+            async def updates() -> AsyncIterator[AgentResponseUpdate]:
+                yield AgentResponseUpdate(contents=[Content.from_text(f"turn {turn}")], role="assistant")
+                if turn == 1:
+                    await asyncio.to_thread(release.wait)
+                    yield AgentResponseUpdate(contents=[Content.from_text("stale")], role="assistant")
+
+            return ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+        agent.run = MagicMock(side_effect=run)
+        server = _make_server(
+            agent,
+            session_store=store,
+            response_store=FileResponseStore(storage_dir=tmp_path / "responses"),
+            options=ResponsesServerOptions(steerable_conversations=True),
+        )
+
+        async def observe_output(request: Any, context: Any, cancellation_signal: Any) -> AsyncIterator[Any]:
+            async for event in server._handle_response(request, context, cancellation_signal):
+                if isinstance(event, Mapping) and event.get("type") == "response.output_text.delta":
+                    first_output.set()
+                yield event
+
+        server.response_handler(observe_output)
+        with TestClient(server) as http, ThreadPoolExecutor(max_workers=1) as executor:
+            try:
+                first_future = executor.submit(
+                    http.post,
+                    "/responses",
+                    json={
+                        "input": "first",
+                        "store": True,
+                        "stream": True,
+                        "background": True,
+                        "conversation": "http-steering",
+                    },
+                )
+                assert first_output.wait(timeout=5), "The first turn did not produce streamed output."
+                second = http.post(
+                    "/responses",
+                    json={"input": "second", "store": True, "background": True, "conversation": "http-steering"},
+                )
+                assert second.status_code == 200
+                assert second.json()["status"] in ("queued", "in_progress")
+                first_stream = first_future.result(timeout=8)
+            finally:
+                release.set()
+
+            assert first_stream.status_code == 200
+            first_events = _parse_sse_events(first_stream.text)
+            first_completions = [
+                event["data"]["response"] for event in first_events if event["event"] == "response.completed"
+            ]
+            assert len(first_completions) == 1
+            first_id = first_completions[0]["id"]
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                latest_response = http.get(f"/responses/{second.json()['id']}")
+                if latest_response.json()["status"] in ("completed", "incomplete", "failed"):
+                    break
+                time.sleep(0.05)
+            else:
+                pytest.fail(f"Steered response {second.json()['id']} did not finish.")
+            first_retrieved = http.get(f"/responses/{first_id}")
+
+        assert latest_response.json()["status"] == "completed"
+        assert first_retrieved.json()["status"] == "completed"
+        assert turn_number == 2
+        snapshot = asyncio.run(store.get(first_id))
+        latest = asyncio.run(store.get(second.json()["id"]))
+        assert snapshot is not None and snapshot.state["turn"] == 1
+        assert latest is not None and latest.state["turn"] == 2
 
     async def test_agent_history_uses_in_memory_history_from_session_store(self) -> None:
         client = _RecordingHistoryClient()
