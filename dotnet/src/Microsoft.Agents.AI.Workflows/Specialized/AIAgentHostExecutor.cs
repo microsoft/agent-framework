@@ -69,8 +69,12 @@ internal class AIAgentHostExecutor : ChatProtocolExecutor
 
     protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
     {
-        return this.ConfigureUserInputHandling(base.ConfigureProtocol(protocolBuilder))
-                   .ConfigureRoutes(routeBuilder => routeBuilder.AddHandler<ResetChatSignal>(this.ResetChat));
+        protocolBuilder = this.ConfigureUserInputHandling(base.ConfigureProtocol(protocolBuilder))
+                              .ConfigureRoutes(routeBuilder => routeBuilder.AddHandler<ResetChatSignal>(this.ResetChat));
+
+        return this._options.ForwardAgentResponse
+             ? protocolBuilder.SendsMessage<AIAgentHostResponse>()
+             : protocolBuilder;
     }
 
     internal void ResetChat(ResetChatSignal signal, IWorkflowContext context)
@@ -199,6 +203,17 @@ internal class AIAgentHostExecutor : ChatProtocolExecutor
         {
             await context.SendMessageAsync(forwardableMessages, cancellationToken)
                          .ConfigureAwait(false);
+        }
+
+        if (this._options.ForwardAgentResponse)
+        {
+            await context.SendMessageAsync(
+                new AIAgentHostResponse(
+                    this.Id,
+                    response,
+                    [.. messages, .. forwardableMessages],
+                    forwardableMessages),
+                cancellationToken).ConfigureAwait(false);
         }
 
         // If we have no outstanding requests, we can yield a turn token back to the workflow.
