@@ -5624,7 +5624,7 @@ class TestSkillsProviderFactories:
         args = {"value": "model", "context": "model-context"}
         arguments = {"skill_name": "my-skill", "script_name": "s1", "args": args}
         session = MockAgentSession()
-        tools = [run_tool]
+        tools: list[Any] = [run_tool]
         context = FunctionInvocationContext(
             function=run_tool,
             arguments=arguments,
