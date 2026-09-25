@@ -374,6 +374,30 @@ def test_constrained_enum_arrays_are_rejected(constraint: str) -> None:
         )
 
 
+def test_array_enum_members_must_match_declared_item_type() -> None:
+    mixed = function(
+        "select",
+        {
+            "type": "object",
+            "properties": {
+                "values": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": ["safe", 42]},
+                }
+            },
+            "required": ["values"],
+        },
+    )
+
+    assert compile_tool_call_plan([mixed], tool_mode=None, user_question_ids=set()) is None
+    with pytest.raises(ChatClientInvalidRequestException, match="array enum member 42.*string"):
+        compile_tool_call_plan(
+            [mixed],
+            tool_mode={"mode": "required"},
+            user_question_ids=set(),
+        )
+
+
 def test_optional_nullable_enum_and_const_decode_deterministically() -> None:
     class Arguments(BaseModel):
         unit: Literal["c", "f"] | None = None

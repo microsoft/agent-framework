@@ -115,7 +115,7 @@ Supported input-schema shapes:
   set-like selections in schema order; duplicates and caller-defined ordering are
   not supported. Arrays with `minItems`, `maxItems`, uniqueness, prefix, or
   membership constraints are rejected because the connector cannot preserve those
-  semantics.
+  semantics. Every enum member must match the declared item type.
 - Optional versions of those shapes. A separate TypeSafe question decides whether
   to omit the argument so the function's default can apply.
 

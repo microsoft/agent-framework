@@ -22,7 +22,7 @@ Integration with TypeSafe AI System One models, including Jev.
   calls must receive expanded `FunctionTool` instances.
 - A tool is excluded if any declared argument or object/argument/array-item schema constraint is unsupported. Tool,
   property, enum, and cumulative question counts are bounded before question materialization, and constrained arrays
-  are rejected.
+  or array enum members that do not match the declared item type are rejected.
 - The connector forwards `response_format` as the TypeSafe SDK `questions` argument and internally uses
   `SystemOneResponse` as the response model.
 - An injected `AsyncTypeSafeClient` is caller-owned. A client created by `TypeSafeChatClient` is closed by
