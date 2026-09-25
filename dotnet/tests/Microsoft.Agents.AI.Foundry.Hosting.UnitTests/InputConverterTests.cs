@@ -1603,7 +1603,7 @@ public class InputConverterTests
     }
 
     [Fact]
-    public void ConvertOutputItemsToMessages_GaComputerCall_ReplaysWithPreviewOnlyKeysKnownIssue()
+    public void ConvertOutputItemsToMessages_GaComputerCall_ReplaysWithNullActionKnownIssue()
     {
         // Arrange
         var history = ReadOutputItem(GaComputerCallJson);
@@ -1612,15 +1612,13 @@ public class InputConverterTests
         var messages = InputConverter.ConvertOutputItemsToMessages([history]);
 
         // Assert: documents a known OpenAI .NET 2.13.0 behavior, not a desired one. ComputerCallResponseItem models the
-        // preview item: it has no typed "actions" and always writes "action" and "pending_safety_checks", so a replayed
-        // GA call carries both keys next to "actions". The Responses API rejects each of them for the GA tool:
-        //   "action": null            -> "Computer call input must include exactly one of `action` or `actions`."
-        //   "pending_safety_checks"   -> "`pending_safety_checks` is not supported for the "computer" tool."
-        // When this test starts failing, OpenAI .NET changed the shape: revisit the caveat in ComputerToolItemConverter.
+        // preview item: it has no typed "actions" and always writes "action", so a replayed GA call carries
+        // "action": null next to "actions". The Responses API rejects that with "Computer call input must include
+        // exactly one of `action` or `actions`." When this test starts failing, OpenAI .NET changed the shape: revisit
+        // the caveat in ComputerToolItemConverter.
         var item = Assert.IsType<OpenAIComputerCallResponseItem>(Assert.Single(Assert.Single(messages).Contents).RawRepresentation);
         string json = ModelReaderWriter.Write(item, ModelReaderWriterOptions.Json).ToString();
         Assert.Contains("\"action\":null", json);
-        Assert.Contains("\"pending_safety_checks\":[]", json);
         Assert.Contains("\"actions\":[", json);
     }
 

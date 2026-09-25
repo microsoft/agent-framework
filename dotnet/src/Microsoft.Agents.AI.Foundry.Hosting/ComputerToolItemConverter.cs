@@ -131,10 +131,10 @@ internal static class ComputerToolItemConverter
     private static ChatMessage ToToolCallMessage(BinaryData agentServerJson, string callId)
     {
         // Known blocker (OpenAI .NET 2.13.0 and 2.14.0): ComputerCallResponseItem models the preview item and always
-        // writes "action" and "pending_safety_checks", so a GA call replayed from here reaches the model with
-        // "action": null and "pending_safety_checks": [] next to "actions". The Responses API rejects both keys for the
-        // GA tool. Its Patch API cannot remove "action" (NullReferenceException), and hosting does not own the agent's
-        // HTTP pipeline, so the item is left as OpenAI .NET writes it until the SDK models the GA item.
+        // writes "action", so a GA call replayed from here reaches the model with "action": null next to "actions",
+        // which the Responses API rejects. Its Patch API cannot remove "action" (NullReferenceException), and hosting
+        // does not own the agent's HTTP pipeline, so the item is left as OpenAI .NET writes it until the SDK models
+        // the GA item.
         var item = ReadOpenAIItem<OpenAIComputerCallResponseItem>(agentServerJson, "computer_call", callId);
         return new ChatMessage(ChatRole.Assistant, [new ToolCallContent(callId) { RawRepresentation = item }]);
     }

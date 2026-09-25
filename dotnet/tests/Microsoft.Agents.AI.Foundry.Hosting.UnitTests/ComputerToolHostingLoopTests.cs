@@ -148,9 +148,9 @@ public sealed class ComputerToolHostingLoopTests
         Assert.False(call.TryGetProperty("response_id", out _));
         Assert.False(call.TryGetProperty("agent_reference", out _));
 
-        // OpenAI .NET 2.13.0 re-serializes the GA call with "action": null and "pending_safety_checks": [], and the
-        // service rejects both on replay (see the known-issue test in InputConverterTests). These tests check what MAF
-        // controls: a populated single action here would mean the batch was rewritten.
+        // OpenAI .NET 2.13.0 re-serializes the GA call with "action": null, which the service rejects on replay (see the
+        // known-issue test in InputConverterTests). These tests check what MAF controls: a populated single action here
+        // would mean the batch was rewritten.
         if (call.TryGetProperty("action", out JsonElement action))
         {
             Assert.Equal(JsonValueKind.Null, action.ValueKind);

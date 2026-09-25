@@ -7,7 +7,6 @@ This sample shows how to use the generally available (GA) computer tool with an 
 - Using the parameterless `FoundryAITool.CreateComputerTool()` to add the GA `computer` tool (`{"type":"computer"}`)
 - Running every action of a batched `computer_call` (the GA call returns an ordered `actions` list) before sending back one screenshot
 - Returning screenshots as inline image data, so no file upload or cleanup is needed
-- Acknowledging pending safety checks in the `computer_call_output`
 
 For the preview `computer_use_preview` tool, which takes an environment and display size and returns a single `action` per call, see [Agent_Step15_ComputerUsePreview](../Agent_Step15_ComputerUsePreview/).
 
@@ -25,7 +24,7 @@ Microsoft Foundry does not accept the GA `computer` tool type yet. Until it does
 
 ## Known limitation
 
-The sample continues each turn from the stored response, so only the new `computer_call_output` is sent. Sending a GA `computer_call` back to the model instead (for example with stored responses disabled and the history kept locally) currently fails. The OpenAI .NET SDK models only the preview item and adds `"action": null` and `"pending_safety_checks": []`, which the Responses API rejects for the GA tool.
+The sample continues each turn from the stored response, so only the new `computer_call_output` is sent. Sending a GA `computer_call` back to the model instead (for example with stored responses disabled and the history kept locally) currently fails. The OpenAI .NET SDK models only the preview item and adds `"action": null`, which the Responses API rejects for the GA tool.
 
 ## How the simulation works
 

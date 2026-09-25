@@ -148,7 +148,7 @@ public static class FoundryAITool
     /// <para>
     /// Known limitation: the OpenAI .NET SDK models only the preview <c>computer_call</c> item, so sending a GA
     /// <c>computer_call</c> back to the model (for example with stored responses disabled and the history kept locally)
-    /// adds <c>"action": null</c> and <c>"pending_safety_checks": []</c>, which the Responses API rejects for the GA tool.
+    /// adds <c>"action": null</c>, which the Responses API rejects for the GA tool.
     /// Continuing the conversation from the stored response (the default for a Responses agent session) only sends
     /// the new <c>computer_call_output</c> and is not affected.
     /// </para>
