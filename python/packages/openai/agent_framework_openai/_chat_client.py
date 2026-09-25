@@ -3372,7 +3372,8 @@ class RawOpenAIChatClient(
                     )
                 case "computer_call":
                     contents.append(self._parse_computer_tool_call_content(item))
-                case "computer_call_output":
+                case _ if getattr(item, "type", None) == "computer_call_output":
+                    # The 2.25 SDK omits this model from the response output union.
                     contents.append(self._parse_computer_tool_result_content(item))
                 case _ if getattr(item, "type", None) == "function_call_output":
                     # The 2.25 SDK exposes this model but omits it from the response output union.
