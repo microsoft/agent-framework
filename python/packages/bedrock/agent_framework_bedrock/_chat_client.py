@@ -137,9 +137,10 @@ class BedrockChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], t
         user: Not supported.
         store: Not supported.
         logit_bias: Not supported.
-        metadata: Not supported (use additional_properties for additionalModelRequestFields).
+        metadata: Not supported (use requestMetadata).
 
         # Bedrock-specific options:
+        additionalModelRequestFields: Model-specific request fields not covered by the Converse API.
         guardrailConfig: Guardrails configuration for content filtering.
         performanceConfig: Performance optimization settings.
         requestMetadata: Key-value metadata for the request.
@@ -147,6 +148,10 @@ class BedrockChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], t
     """
 
     # Bedrock-specific options
+    additionalModelRequestFields: dict[str, Any]
+    """Model-specific request fields passed through as ``additionalModelRequestFields``
+    (e.g. ``{"reasoning": {"effort": "low"}}``)."""
+
     guardrailConfig: BedrockGuardrailConfig
     """Guardrails configuration for content filtering and safety."""
 
@@ -456,6 +461,33 @@ class BedrockChatClient(
 
         if output_config := self._prepare_output_config(options.get("response_format")):
             run_options["outputConfig"] = output_config
+
+        for key in (
+            "additionalModelRequestFields",
+            "guardrailConfig",
+            "performanceConfig",
+            "requestMetadata",
+            "promptVariables",
+        ):
+            if (value := options.get(key)) is not None:
+                run_options[key] = value
+        if guardrail_config := run_options.get("guardrailConfig"):
+            # streamProcessingMode is only valid for ConverseStream; Converse rejects requests that include it.
+            run_options["guardrailConfig"] = {k: v for k, v in guardrail_config.items() if k != "streamProcessingMode"}
+        if ":prompt/" in model:
+            # A Prompt Management ARN takes these fields from the prompt, and Converse rejects requests that set them.
+            if run_options["inferenceConfig"] == {"maxTokens": DEFAULT_MAX_TOKENS}:
+                del run_options["inferenceConfig"]  # only the client default, nothing the caller asked for
+            if omitted := [
+                key
+                for key in ("inferenceConfig", "system", "toolConfig", "additionalModelRequestFields")
+                if run_options.pop(key, None) is not None
+            ]:
+                logger.warning(
+                    "Converse does not accept %s with a Prompt Management prompt; they are omitted from the request. "
+                    "Define them on the prompt in Prompt Management instead.",
+                    ", ".join(omitted),
+                )
 
         return run_options
 

@@ -15,7 +15,7 @@ from agent_framework._settings import SecretString
 from boto3.session import Session as Boto3Session
 from botocore.client import BaseClient
 
-from agent_framework_bedrock import BedrockChatClient, BedrockEmbeddingClient
+from agent_framework_bedrock import BedrockChatClient, BedrockChatOptions, BedrockEmbeddingClient
 from agent_framework_bedrock._chat_client import BedrockSettings
 from agent_framework_bedrock._feature_usage import FeatureIndex
 
@@ -453,6 +453,68 @@ def test_prepare_options_adds_instructions_and_sampling_settings() -> None:
         "topP": 0.9,
         "stopSequences": ["DONE"],
     }
+
+
+async def test_get_response_forwards_bedrock_specific_options() -> None:
+    """Bedrock-specific options should reach the Converse request as top-level fields."""
+    stub = _StubBedrockRuntime()
+    client = BedrockChatClient(
+        model="us.openai.gpt-6-sol",
+        region="us-east-1",
+        client=stub,  # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type] # pyright: ignore[reportArgumentType]
+    )
+    bedrock_options: BedrockChatOptions = {
+        "additionalModelRequestFields": {"reasoning": {"effort": "low"}},
+        "guardrailConfig": {"guardrailIdentifier": "gr-123", "guardrailVersion": "1"},
+        "performanceConfig": {"latency": "optimized"},
+        "requestMetadata": {"tenant": "contoso"},
+        "promptVariables": {"topic": {"text": "hash maps"}},
+    }
+
+    await client.get_response(
+        [Message(role="user", contents=[Content.from_text(text="hello")])], options=bedrock_options
+    )
+
+    payload = stub.calls[0]
+    assert {key: payload.get(key) for key in bedrock_options} == bedrock_options
+
+
+def test_prepare_options_omits_stream_processing_mode_from_guardrail_config() -> None:
+    """Converse rejects streamProcessingMode, so it should be left out while the guardrail still applies."""
+    client = _make_client()
+    options: BedrockChatOptions = {
+        "guardrailConfig": {"guardrailIdentifier": "gr-123", "guardrailVersion": "1", "streamProcessingMode": "async"}
+    }
+
+    request = client._prepare_options([Message(role="user", contents=[Content.from_text(text="hello")])], options)
+
+    assert request["guardrailConfig"] == {"guardrailIdentifier": "gr-123", "guardrailVersion": "1"}
+    assert options["guardrailConfig"]["streamProcessingMode"] == "async"
+
+
+def test_prepare_options_prompt_management_arn_omits_fields_converse_rejects(caplog: pytest.LogCaptureFixture) -> None:
+    """Converse rejects inferenceConfig, system, toolConfig and additionalModelRequestFields with a prompt ARN."""
+    client = _make_client()
+    client.model = "arn:aws:bedrock:us-east-1:123456789012:prompt/PROMPT1234:1"
+    messages = [Message(role="user", contents=[Content.from_text(text="hello")])]
+    variables: BedrockChatOptions = {"promptVariables": {"topic": {"text": "hash maps"}}}
+
+    with caplog.at_level("WARNING", logger="agent_framework.bedrock"):
+        request = client._prepare_options(messages, variables)
+    assert set(request) == {"modelId", "messages", "promptVariables"}
+    assert not caplog.records  # the client's default maxTokens is dropped without a warning
+
+    caller_set: BedrockChatOptions = {
+        **variables,
+        "instructions": "Be brief.",
+        "temperature": 0.2,
+        "tools": [{"toolSpec": {"name": "get_weather", "description": "Get weather", "inputSchema": {"json": {}}}}],
+        "additionalModelRequestFields": {"reasoning": {"effort": "low"}},
+    }
+    with caplog.at_level("WARNING", logger="agent_framework.bedrock"):
+        request = client._prepare_options(messages, caller_set)
+    assert set(request) == {"modelId", "messages", "promptVariables"}
+    assert "inferenceConfig, system, toolConfig, additionalModelRequestFields" in caplog.text
 
 
 def test_prepare_options_unsupported_tool_mode_raises(monkeypatch: pytest.MonkeyPatch) -> None:
