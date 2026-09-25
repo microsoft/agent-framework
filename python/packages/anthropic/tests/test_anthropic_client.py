@@ -3051,6 +3051,19 @@ def test_prepare_response_format_openai_style(mock_anthropic_client: MagicMock) 
     assert result["schema"]["properties"]["name"]["type"] == "string"
 
 
+def test_prepare_response_format_does_not_modify_caller_schema(mock_anthropic_client: MagicMock) -> None:
+    """The caller's schema dict keeps its own additionalProperties for later requests."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    schema = {"type": "object", "properties": {"name": {"type": "string"}}, "additionalProperties": True}
+    response_format = {"json_schema": {"schema": schema}}
+
+    result = client._prepare_response_format(response_format)
+
+    assert result["schema"]["additionalProperties"] is False
+    assert schema["additionalProperties"] is True
+
+
 def test_prepare_response_format_direct_schema(
     mock_anthropic_client: MagicMock,
 ) -> None:
