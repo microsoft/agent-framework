@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json
 import os
 import re
 import stat
+import threading
 import time
+from contextlib import suppress
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 import regex
@@ -324,6 +328,186 @@ async def test_filesystem_store_round_trips_files(tmp_path: Path) -> None:
 
     assert await store.delete("nested/a.txt") is True
     assert await store.delete("nested/a.txt") is False
+    assert await store.delete("nested") is False
+    assert (tmp_path / "nested").is_dir()
+
+
+async def _run_deterministic_concurrent_deletes(
+    store: FileSystemAgentFileStore,
+    other_store: FileSystemAgentFileStore,
+    first_path: str,
+    second_path: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[bool, bool]:
+    target_paths = {store._resolve_safe_path(first_path), other_store._resolve_safe_path(second_path)}
+    original_to_thread = asyncio.to_thread
+    original_unlink = Path.unlink
+    worker_barrier = threading.Barrier(2)
+    unlink_barrier = threading.Barrier(2)
+    unlink_guard = threading.Lock()
+    overlapping_delete_completed = False
+
+    async def synchronized_to_thread(function: Any, /, *args: Any, **kwargs: Any) -> Any:
+        def synchronized_call() -> Any:
+            worker_barrier.wait(timeout=5)
+            return function(*args, **kwargs)
+
+        return await original_to_thread(synchronized_call)
+
+    def macos_style_unlink(path: Path, missing_ok: bool = False) -> None:
+        nonlocal overlapping_delete_completed
+        if path not in target_paths:
+            original_unlink(path, missing_ok=missing_ok)
+            return
+
+        try:
+            unlink_barrier.wait(timeout=0.5)
+        except threading.BrokenBarrierError:
+            original_unlink(path, missing_ok=missing_ok)
+            return
+
+        # Model concurrent macOS unlinks, where both calls may report success even though only one removes the file.
+        with unlink_guard:
+            if not overlapping_delete_completed:
+                original_unlink(path, missing_ok=missing_ok)
+                overlapping_delete_completed = True
+
+    monkeypatch.setattr(asyncio, "to_thread", synchronized_to_thread)
+    monkeypatch.setattr(Path, "unlink", macos_style_unlink)
+    return await asyncio.gather(store.delete(first_path), other_store.delete(second_path))
+
+
+async def test_filesystem_store_concurrent_delete(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Concurrent deletion should report one deletion and one missing file."""
+    store = FileSystemAgentFileStore(tmp_path)
+    other_store = FileSystemAgentFileStore(tmp_path)
+    await store.write("shared.txt", "content")
+
+    results = await _run_deterministic_concurrent_deletes(store, other_store, "shared.txt", "shared.txt", monkeypatch)
+
+    assert sorted(results) == [False, True]
+
+
+async def test_filesystem_store_concurrent_delete_aliases_with_distinct_hashes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Different hashes for aliases must not allow both deletes to report success."""
+    exists = True
+    state_lock = threading.Lock()
+    worker_barrier = threading.Barrier(2)
+    probe_barrier = threading.Barrier(2)
+
+    class AliasedPath:
+        def __init__(self, hash_value: int) -> None:
+            self.hash_value = hash_value
+
+        def __hash__(self) -> int:
+            return self.hash_value
+
+        def is_file(self) -> bool:
+            with state_lock:
+                present = exists
+            with suppress(threading.BrokenBarrierError):
+                probe_barrier.wait(timeout=1)
+            return present
+
+        def unlink(self) -> None:
+            nonlocal exists
+            with state_lock:
+                exists = False
+
+    store = FileSystemAgentFileStore(tmp_path)
+    other_store = FileSystemAgentFileStore(tmp_path)
+    monkeypatch.setattr(store, "_resolve_safe_path", lambda _path: cast(Path, AliasedPath(0)))
+    monkeypatch.setattr(other_store, "_resolve_safe_path", lambda _path: cast(Path, AliasedPath(1)))
+
+    original_to_thread = asyncio.to_thread
+
+    async def synchronized_to_thread(function: Any, /, *args: Any, **kwargs: Any) -> Any:
+        def synchronized_call() -> Any:
+            worker_barrier.wait(timeout=5)
+            return function(*args, **kwargs)
+
+        return await original_to_thread(synchronized_call)
+
+    monkeypatch.setattr(asyncio, "to_thread", synchronized_to_thread)
+
+    results = await asyncio.gather(
+        store.delete("first.txt"),
+        other_store.delete("second.txt"),
+    )
+
+    assert sorted(results) == [False, True]
+
+
+async def test_filesystem_store_delete_handles_only_missing_file_from_unlink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A vanished file returns False, while an unrelated unlink failure propagates."""
+    store = FileSystemAgentFileStore(tmp_path)
+    await store.write("gone.txt", "content")
+    gone_path = tmp_path / "gone.txt"
+    original_unlink = Path.unlink
+
+    def disappear(path: Path, missing_ok: bool = False) -> None:
+        original_unlink(path, missing_ok=missing_ok)
+        raise FileNotFoundError(path)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "unlink", disappear)
+        assert await store.delete("gone.txt") is False
+    assert not gone_path.exists()
+
+    await store.write("denied.txt", "content")
+    denied_path = tmp_path / "denied.txt"
+
+    def deny_unlink(path: Path, missing_ok: bool = False) -> None:
+        raise PermissionError(f"Cannot unlink {path}")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "unlink", deny_unlink)
+        with pytest.raises(PermissionError, match="Cannot unlink"):
+            await store.delete("denied.txt")
+    assert denied_path.is_file()
+
+
+async def test_filesystem_store_concurrent_delete_case_aliases(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Concurrent deletion through case aliases should report one deletion."""
+    store = FileSystemAgentFileStore(tmp_path)
+    other_store = FileSystemAgentFileStore(tmp_path)
+    original_name = "Shared.txt"
+    await store.write(original_name, "content")
+
+    original_path = store._resolve_safe_path(original_name)
+    lower_path = tmp_path / original_name.lower()
+    if not await asyncio.to_thread(lower_path.exists) or not await asyncio.to_thread(
+        os.path.samefile, original_path, lower_path
+    ):
+        pytest.skip("filesystem does not treat ASCII case variants as aliases")
+
+    # Choose a case alias with opposite hash parity so the regression
+    # deterministically exercises the former path-hash-keyed synchronization bug
+    # without depending on this interpreter's randomized hash values.
+    alias_name = next(
+        (
+            candidate_name
+            for characters in itertools.product(*[
+                (character.lower(), character.upper()) for character in original_name
+            ])
+            if (candidate_name := "".join(characters)) != original_name
+            and hash(store._resolve_safe_path(candidate_name)) % 2 != hash(original_path) % 2
+        ),
+        None,
+    )
+    if alias_name is None:
+        pytest.skip("no case alias has opposite Path hash parity on this platform")
+    assert alias_name is not None
+    alias_path = other_store._resolve_safe_path(alias_name)
+    assert await asyncio.to_thread(os.path.samefile, original_path, alias_path)
+
+    results = await _run_deterministic_concurrent_deletes(store, other_store, original_name, alias_name, monkeypatch)
+
+    assert sorted(results) == [False, True]
 
 
 async def test_filesystem_store_rejects_traversal_and_rooted_paths(tmp_path: Path) -> None:
