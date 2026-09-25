@@ -6,6 +6,7 @@ using System.Linq;
 using System.Security;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -29,6 +30,12 @@ namespace Microsoft.Agents.AI;
 /// <item><description><strong>Read resources</strong> — supplementary content is read on demand via the <c>read_skill_resource</c> tool.</description></item>
 /// <item><description><strong>Run scripts</strong> — scripts are executed via the <c>run_skill_script</c> tool (when scripts exist).</description></item>
 /// </list>
+/// <para>
+/// The <c>run_skill_script</c> tool accepts its <c>arguments</c> parameter as a JSON-encoded string,
+/// or <see langword="null"/> when no arguments are needed. The provider decodes the string once
+/// before passing the resulting JSON value to the script and its argument marshaler. Direct tool
+/// invocations can also pass structured JSON objects or arrays.
+/// </para>
 /// <para>
 /// The provider can optionally own the lifetime of its underlying <see cref="AgentSkillsSource"/>. When
 /// constructed via one of the convenience constructors (skill paths or in-memory skills) or via
@@ -333,8 +340,22 @@ public sealed partial class AgentSkillsProvider : AIContextProvider, IDisposable
             this.WrapWithApprovalIfRequired(AIFunctionFactory.Create(
                 (string skillName, string scriptName, JsonElement? arguments = null, IServiceProvider? serviceProvider = null, CancellationToken cancellationToken = default) =>
                     this.RunSkillScriptAsync(skills, skillName, scriptName, arguments, serviceProvider, cancellationToken),
-                name: RunSkillScriptToolName,
-                description: "Runs a script associated with a skill."),
+                new AIFunctionFactoryOptions
+                {
+                    Name = RunSkillScriptToolName,
+                    Description = "Runs a script associated with a skill.",
+                    JsonSchemaCreateOptions = new AIJsonSchemaCreateOptions
+                    {
+                        TransformSchemaNode = static (context, schema) =>
+                            context.TypeInfo.Type == typeof(JsonElement?) ?
+                                new JsonObject
+                                {
+                                    ["type"] = new JsonArray("string", "null"),
+                                    ["description"] = "Script arguments encoded as a JSON string matching the script's parameter schema. Use null when no arguments are needed.",
+                                    ["default"] = null,
+                                } : schema,
+                    },
+                }),
                 this._options?.DisableRunSkillScriptApproval is not true),
         ];
     }
@@ -439,6 +460,14 @@ public sealed partial class AgentSkillsProvider : AIContextProvider, IDisposable
             if (script is null)
             {
                 return $"Error: Script '{scriptName}' not found in skill '{skillName}'.";
+            }
+
+            // Models supply a JSON-encoded string so the tool has a strict-compatible schema.
+            // Continue accepting structured JSON from callers invoking the tool directly.
+            if (arguments is { ValueKind: JsonValueKind.String })
+            {
+                using JsonDocument document = JsonDocument.Parse(arguments.Value.GetString()!);
+                arguments = document.RootElement.Clone();
             }
 
             return await script.RunAsync(skill, arguments, serviceProvider, cancellationToken).ConfigureAwait(false);
