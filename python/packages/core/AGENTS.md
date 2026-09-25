@@ -70,6 +70,9 @@ agent_framework/
 - **`ChatResponseUpdate`** - Streaming response update
 - **`AgentResponse`** / **`AgentResponseUpdate`** - Agent-level response wrappers
 - **`Content`** - Base class for message content (text, function calls, images, etc.)
+- **Computer use** - `ComputerSafetyCheck` and the `Content.from_computer_tool_call` / `from_computer_tool_result`
+  constructors are experimental under `COMPUTER_USE`; the rest of `Content` retains its existing stage. Computer
+  results can omit screenshots in core; OpenAI-based connectors require them when converting to Responses items.
 - **`ChatOptions`** - TypedDict for chat request options
 
 ### Tools (`_tools.py`)

@@ -36,6 +36,7 @@ from agent_framework import (
     ChatMiddlewareLayer,
     ChatResponse,
     ChatResponseUpdate,
+    ComputerSafetyCheck,
     Content,
     FinishReasonLiteral,
     FunctionInvocationLayer,
@@ -64,12 +65,15 @@ from azure.ai.agentserver.responses import (
     ResponseExitForRecovery,
     ResponsesServerOptions,
 )
+from azure.ai.agentserver.responses._id_generator import IdGenerator
 from azure.ai.agentserver.responses.aio import ResponseEventStream
 from azure.ai.agentserver.responses.models import CreateResponse, Item, OutputItem, ResponseIncompleteReason
 from azure.ai.agentserver.responses.streaming._checkpoint import ResponseCheckpointEvent
 from mcp import McpError
 from mcp.types import ErrorData
 from openai import AsyncOpenAI, DefaultAsyncHttpxClient
+from openai.types.responses.response_input_item_param import ResponseInputItemParam
+from pydantic import TypeAdapter
 from typing_extensions import Any
 
 from agent_framework_foundry_hosting import ResponsesHostServer
@@ -81,6 +85,7 @@ from agent_framework_foundry_hosting._responses import (
     _item_to_message,  # pyright: ignore[reportPrivateUsage]
     _json_safe_to_str,  # pyright: ignore[reportPrivateUsage]
     _output_item_to_message,  # pyright: ignore[reportPrivateUsage]
+    _output_items_to_messages,  # pyright: ignore[reportPrivateUsage]
     _OutputItemTracker,  # pyright: ignore[reportPrivateUsage]
     _SignalledIterator,  # pyright: ignore[reportPrivateUsage]
     _stringify_mcp_output,  # pyright: ignore[reportPrivateUsage]
@@ -1806,6 +1811,204 @@ class TestNonStreaming:
         assert "function_call_output" in types
         assert "message" in types
 
+    async def test_native_computer_call_and_result(self) -> None:
+        item_id = IdGenerator.new_computer_call_item_id()
+        actions: list[dict[str, Any]] = [
+            {"type": "click", "x": 100, "y": 200},
+            {"type": "keypress", "keys": ["ENTER"]},
+        ]
+        checks: list[ComputerSafetyCheck] = [{"id": "check-1", "code": "untrusted", "message": "Review this page."}]
+        agent = _make_agent(
+            response=AgentResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[
+                            Content.from_computer_tool_call(
+                                id=item_id, call_id="call-computer-1", actions=actions, pending_safety_checks=checks
+                            )
+                        ],
+                    ),
+                    Message(
+                        role="tool",
+                        contents=[
+                            Content.from_computer_tool_result(
+                                call_id="call-computer-1",
+                                screenshot=Content.from_data(b"png-data", "image/png"),
+                                acknowledged_safety_checks=[{"id": "check-1"}],
+                            )
+                        ],
+                    ),
+                ]
+            )
+        )
+        server = _make_server(agent)
+
+        resp = await _post(server)
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "completed"
+        call, result = body["output"]
+        assert call["type"] == "computer_call"
+        assert call["id"] == item_id
+        assert call["call_id"] == "call-computer-1"
+        assert call["actions"] == actions
+        assert "action" not in call
+        assert call["pending_safety_checks"] == checks
+        assert result["type"] == "computer_call_output"
+        assert result["call_id"] == "call-computer-1"
+        assert result["output"] == {"type": "computer_screenshot", "image_url": "data:image/png;base64,cG5nLWRhdGE="}
+        assert result["acknowledged_safety_checks"] == [{"id": "check-1"}]
+
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_computer_result_without_screenshot_fails_response(self, stream: bool) -> None:
+        call = Content.from_computer_tool_call(
+            id=IdGenerator.new_computer_call_item_id(), call_id="call-no-image", actions=[{"type": "screenshot"}]
+        )
+        result = Content.from_computer_tool_result(call_id="call-no-image")
+        agent = _make_agent(
+            response=AgentResponse(
+                messages=[Message(role="assistant", contents=[call]), Message(role="tool", contents=[result])]
+            )
+        )
+
+        resp = await _post(_make_server(agent), stream=stream)
+
+        assert resp.status_code == 200
+        error: dict[str, Any]
+        if stream:
+            events = _parse_sse_events(resp.text)
+            assert _sse_event_types(events)[-1] == "response.failed"
+            failed = [event for event in events if event["event"] == "response.failed"]
+            assert len(failed) == 1
+            error = (failed[0]["data"].get("response") or {}).get("error") or {}
+        else:
+            body = resp.json()
+            assert body["status"] == "failed"
+            error = body.get("error") or {}
+        assert error.get("message") == "A computer result requires a call_id and screenshot."
+
+    async def test_computer_items_with_provider_ids_use_valid_host_ids(self) -> None:
+        call_id = "provider-computer-call"
+        call = Content.from_computer_tool_call(id="cu_" + "a" * 32, call_id=call_id, actions=[{"type": "screenshot"}])
+        result = Content.from_computer_tool_result(
+            id="cco_" + "b" * 32,
+            call_id=call_id,
+            screenshot=Content.from_data(b"png", "image/png"),
+        )
+        agent = _make_agent(
+            response=AgentResponse(
+                messages=[Message(role="assistant", contents=[call]), Message(role="tool", contents=[result])]
+            )
+        )
+
+        resp = await _post(_make_server(agent))
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "completed"
+        output_call, output_result = body["output"]
+        assert output_call["type"] == "computer_call"
+        assert IdGenerator.is_valid(output_call["id"])[0]
+        assert output_call["call_id"] == call_id
+        assert output_call["actions"] == [{"type": "screenshot"}]
+        assert output_result["type"] == "computer_call_output"
+        assert IdGenerator.is_valid(output_result["id"])[0]
+        assert output_result["call_id"] == call_id
+        assert result.screenshot is not None
+        assert output_result["output"]["image_url"] == result.screenshot.uri
+
+        history = [await _output_item_to_message(cast(OutputItem, item)) for item in (output_call, output_result)]
+        replay = OpenAIChatClient(model="test-model", api_key="test-key")._prepare_messages_for_openai(
+            history, request_uses_service_side_storage=False
+        )
+        assert [item["type"] for item in replay] == ["computer_call", "computer_call_output"]
+        assert replay[0]["id"] == output_call["id"]
+        assert replay[0]["call_id"] == replay[1]["call_id"] == call_id
+        assert replay[0]["actions"] == output_call["actions"]
+        assert replay[1]["output"] == output_result["output"]
+        for item in replay:
+            TypeAdapter(ResponseInputItemParam).validate_python(item)
+
+    async def test_computer_items_survive_previous_response_history(self) -> None:
+        item_id = IdGenerator.new_computer_call_item_id()
+        actions = [{"type": "move", "x": 10, "y": 20}, {"type": "click", "x": 10, "y": 20}]
+        call = Content.from_computer_tool_call(id=item_id, call_id="call-history", actions=actions)
+        result = Content.from_computer_tool_result(
+            call_id="call-history", screenshot=Content.from_hosted_file("file-screenshot")
+        )
+        agent = _make_agent(
+            response=AgentResponse(
+                messages=[Message(role="assistant", contents=[call]), Message(role="tool", contents=[result])]
+            )
+        )
+        server = _make_server(agent, session_store=SessionStore())
+
+        first = await _post(server, input_text="first")
+        second = await _post(server, input_text="next", previous_response_id=first.json()["id"])
+
+        assert first.json()["status"] == "completed"
+        assert second.json()["status"] == "completed"
+        prior_messages = agent.run.call_args_list[1].kwargs["messages"]
+        prior_contents = [content for message in prior_messages for content in message.contents]
+        previous_call = next(content for content in prior_contents if content.type == "computer_tool_call")
+        previous_result = next(content for content in prior_contents if content.type == "computer_tool_result")
+        assert previous_call.id == item_id
+        assert previous_call.call_id == "call-history"
+        assert previous_call.actions == actions
+        assert previous_result.call_id == "call-history"
+        assert previous_result.screenshot is not None
+        assert previous_result.screenshot.file_id == "file-screenshot"
+
+    async def test_computer_result_input_resumes_native_call_with_history(self) -> None:
+        call = Content.from_computer_tool_call(
+            id=IdGenerator.new_computer_call_item_id(),
+            call_id="call-awaiting-screenshot",
+            actions=[{"type": "click", "x": 10, "y": 20}],
+            pending_safety_checks=[{"id": "check-1"}],
+        )
+        agent = _make_multi_response_agent([
+            AgentResponse(messages=[Message(role="assistant", contents=[call])]),
+            AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("done")])]),
+        ])
+        server = _make_server(agent, session_store=SessionStore())
+
+        first = await _post(server, input_text="Use the computer")
+        second = await _post_json(
+            server,
+            {
+                "model": "test-model",
+                "previous_response_id": first.json()["id"],
+                "input": [
+                    {
+                        "type": "computer_call_output",
+                        "call_id": "call-awaiting-screenshot",
+                        "output": {"type": "computer_screenshot", "image_url": "data:image/png;base64,cG5n"},
+                        "acknowledged_safety_checks": [{"id": "check-1"}],
+                    }
+                ],
+                "stream": False,
+            },
+        )
+
+        assert first.json()["status"] == "completed"
+        assert second.json()["status"] == "completed"
+        inputs = agent.run.call_args_list[1].kwargs["messages"]
+        [past_call] = [
+            content for message in inputs for content in message.contents if content.type == "computer_tool_call"
+        ]
+        [result_message] = [message for message in inputs if message.role == "tool"]
+        [result] = result_message.contents
+        assert past_call.id == call.id
+        assert past_call.actions == call.actions
+        assert result.type == "computer_tool_result"
+        assert result.call_id == call.call_id
+        assert result.screenshot is not None
+        assert result.screenshot.type == "data"
+        assert result.screenshot.uri == "data:image/png;base64,cG5n"
+        assert result.acknowledged_safety_checks == [{"id": "check-1"}]
+
     async def test_function_result_omits_internal_exception(self) -> None:
         agent = _make_agent(
             response=AgentResponse(
@@ -2157,6 +2360,42 @@ class TestStreaming:
         done_events = [e for e in events if e["event"] == "response.output_text.done"]
         assert len(done_events) == 1
         assert done_events[0]["data"]["text"] == "Hello world!"
+
+    async def test_computer_call_streaming_emits_complete_items_once(self) -> None:
+        item_id = "cu_" + "a" * 32
+        call = Content.from_computer_tool_call(
+            id=item_id,
+            call_id="call-stream",
+            actions=[{"type": "scroll", "scroll_y": 100}, {"type": "screenshot"}],
+            pending_safety_checks=[{"id": "check-stream"}],
+        )
+        result = Content.from_computer_tool_result(
+            call_id="call-stream",
+            screenshot=Content.from_uri("https://example.com/screenshot.png"),
+            acknowledged_safety_checks=[{"id": "check-stream"}],
+        )
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(contents=[call], role="assistant"),
+                AgentResponseUpdate(contents=[call], role="assistant"),
+                AgentResponseUpdate(contents=[result], role="tool"),
+            ]
+        )
+
+        resp = await _post(_make_server(agent), stream=True)
+
+        assert resp.status_code == 200
+        events = _parse_sse_events(resp.text)
+        added = [event["data"]["item"] for event in events if event["event"] == "response.output_item.added"]
+        done = [event["data"]["item"] for event in events if event["event"] == "response.output_item.done"]
+        assert [item["type"] for item in added] == ["computer_call", "computer_call_output"]
+        assert [item["type"] for item in done] == ["computer_call", "computer_call_output"]
+        assert IdGenerator.is_valid(done[0]["id"])[0]
+        assert done[0]["actions"] == call.actions
+        assert done[0]["pending_safety_checks"] == [{"id": "check-stream"}]
+        assert done[1]["call_id"] == call.call_id
+        assert done[1]["output"]["image_url"] == "https://example.com/screenshot.png"
+        assert done[1]["acknowledged_safety_checks"] == [{"id": "check-stream"}]
 
     async def test_usage_is_aggregated_in_completed_response(self, caplog: pytest.LogCaptureFixture) -> None:
         agent = _make_agent(
@@ -2943,12 +3182,12 @@ class TestOutputItemToMessage:
         )
         msg = await _output_item_to_message(item)
         assert msg.role == "assistant"
-        assert msg.contents[0].type == "function_call"
-        assert msg.contents[0].name == "computer_use"
-        arguments = msg.contents[0].arguments
-        assert isinstance(arguments, str)
-        assert json.loads(arguments) == {"type": "click"}
-        assert msg.contents[0].informational_only is True
+        assert msg.contents[0].type == "computer_tool_call"
+        assert msg.contents[0].id == "cc-1"
+        assert msg.contents[0].call_id == "call_cc"
+        assert msg.contents[0].actions == [{"type": "click"}]
+        assert msg.contents[0].additional_properties["computer_action_format"] == "single"
+        assert msg.contents[0].user_input_request is True
 
     async def test_computer_call_output(self) -> None:
         item = cast(
@@ -2964,12 +3203,65 @@ class TestOutputItemToMessage:
         )
         msg = await _output_item_to_message(item)
         assert msg.role == "tool"
-        assert msg.contents[0].type == "function_result"
+        assert msg.contents[0].type == "computer_tool_result"
         assert msg.contents[0].call_id == "call_cc"
-        assert json.loads(msg.contents[0].result) == {
-            "type": "computer_screenshot",
-            "image_url": "data:image/png;base64,abc",
-        }
+        assert msg.contents[0].screenshot is not None
+        assert msg.contents[0].screenshot.type == "data"
+        assert msg.contents[0].screenshot.uri == "data:image/png;base64,abc"
+
+    @pytest.mark.parametrize(
+        ("output", "error"),
+        [
+            ({"type": "text"}, "must contain a computer screenshot"),
+            ({"type": "computer_screenshot"}, "missing its image URL or file ID"),
+        ],
+    )
+    async def test_computer_call_output_requires_screenshot(self, output: dict[str, str], error: str) -> None:
+        item = cast(OutputItem, {"type": "computer_call_output", "call_id": "call_cc", "output": output})
+
+        with pytest.raises(ValueError, match=error):
+            await _output_item_to_message(item)
+
+    async def test_computer_history_preserves_ordered_actions_ids_and_safety_checks(self) -> None:
+        actions = [{"type": "click", "x": 1, "y": 2}, {"type": "keypress", "keys": ["ENTER"]}]
+        messages = await _output_items_to_messages([
+            cast(
+                OutputItem,
+                {
+                    "type": "computer_call",
+                    "id": "cc-history",
+                    "call_id": "call-history",
+                    "actions": actions,
+                    "pending_safety_checks": [{"id": "check-1", "code": "untrusted"}],
+                    "status": "completed",
+                },
+            ),
+            cast(
+                OutputItem,
+                {
+                    "type": "computer_call_output",
+                    "id": "cco-history",
+                    "call_id": "call-history",
+                    "output": {"type": "computer_screenshot", "file_id": "file-screenshot"},
+                    "acknowledged_safety_checks": [{"id": "check-1"}],
+                    "status": "completed",
+                },
+            ),
+        ])
+        assert [message.role for message in messages] == ["assistant", "tool"]
+        call, result = (message.contents[0] for message in messages)
+        assert call.type == "computer_tool_call"
+        assert call.id == "cc-history"
+        assert call.call_id == "call-history"
+        assert call.actions == actions
+        assert call.pending_safety_checks == [{"id": "check-1", "code": "untrusted"}]
+        assert result.type == "computer_tool_result"
+        assert result.id == "cco-history"
+        assert result.call_id == "call-history"
+        assert result.screenshot is not None
+        assert result.screenshot.type == "hosted_file"
+        assert result.screenshot.file_id == "file-screenshot"
+        assert result.acknowledged_safety_checks == [{"id": "check-1"}]
 
     async def test_custom_tool_call(self) -> None:
         item = cast(
@@ -3494,12 +3786,12 @@ class TestItemToMessage:
         msg = await _item_to_message(item)
         assert msg is not None
         assert msg.role == "assistant"
-        assert msg.contents[0].type == "function_call"
-        assert msg.contents[0].name == "computer_use"
-        arguments = msg.contents[0].arguments
-        assert isinstance(arguments, str)
-        assert json.loads(arguments) == {"type": "click"}
-        assert msg.contents[0].informational_only is True
+        assert msg.contents[0].type == "computer_tool_call"
+        assert msg.contents[0].id == "cc-1"
+        assert msg.contents[0].call_id == "call_cc"
+        assert msg.contents[0].actions == [{"type": "click"}]
+        assert msg.contents[0].additional_properties["computer_action_format"] == "single"
+        assert msg.contents[0].user_input_request is True
 
     async def test_computer_call_output(self) -> None:
         from azure.ai.agentserver.responses.models import ComputerCallOutputItemParam, ComputerScreenshotImage
@@ -3515,12 +3807,52 @@ class TestItemToMessage:
         msg = await _item_to_message(item)
         assert msg is not None
         assert msg.role == "tool"
-        assert msg.contents[0].type == "function_result"
+        assert msg.contents[0].type == "computer_tool_result"
         assert msg.contents[0].call_id == "call_cc"
-        assert json.loads(msg.contents[0].result) == {
-            "type": "computer_screenshot",
-            "image_url": "data:image/png;base64,abc",
-        }
+        assert msg.contents[0].screenshot is not None
+        assert msg.contents[0].screenshot.type == "data"
+        assert msg.contents[0].screenshot.uri == "data:image/png;base64,abc"
+
+    async def test_computer_call_with_ordered_actions_and_safety_checks(self) -> None:
+        actions = [{"type": "move", "x": 1, "y": 2}, {"type": "click", "x": 1, "y": 2}]
+        pending_checks = [{"id": "check-1", "code": "untrusted", "message": "Review this page."}]
+        item = cast(
+            Item,
+            {
+                "type": "computer_call",
+                "id": "cc-plural",
+                "call_id": "call-plural",
+                "actions": actions,
+                "pending_safety_checks": pending_checks,
+                "status": "completed",
+            },
+        )
+        msg = await _item_to_message(item)
+        call = msg.contents[0]
+        assert call.type == "computer_tool_call"
+        assert call.actions == actions
+        assert call.pending_safety_checks == pending_checks
+        assert "computer_action_format" not in call.additional_properties
+
+    async def test_computer_call_output_with_acknowledged_safety_checks(self) -> None:
+        item = cast(
+            Item,
+            {
+                "type": "computer_call_output",
+                "id": "cco-plural",
+                "call_id": "call-plural",
+                "output": {"type": "computer_screenshot", "file_id": "file-screenshot"},
+                "acknowledged_safety_checks": [{"id": "check-1"}],
+                "status": "completed",
+            },
+        )
+        msg = await _item_to_message(item)
+        result = msg.contents[0]
+        assert result.type == "computer_tool_result"
+        assert result.id == "cco-plural"
+        assert result.screenshot is not None
+        assert result.screenshot.file_id == "file-screenshot"
+        assert result.acknowledged_safety_checks == [{"id": "check-1"}]
 
     async def test_custom_tool_call(self) -> None:
         from azure.ai.agentserver.responses.models import ItemCustomToolCall

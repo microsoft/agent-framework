@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import builtins
 import inspect
 import json
 import os
@@ -1650,6 +1651,48 @@ def test_get_computer_use_tool() -> None:
     assert tool_obj.environment == "browser"
     assert tool_obj.display_width == 1920
     assert tool_obj.display_height == 1080
+
+
+def test_get_computer_tool_uses_non_preview_sdk_model() -> None:
+    from azure.ai.projects.models import ComputerTool
+
+    tool = FoundryChatClient.get_computer_tool()
+    assert isinstance(tool, ComputerTool)
+    assert tool.type == "computer"
+    assert isinstance(RawFoundryChatClient.get_computer_tool(), ComputerTool)
+
+
+def test_foundry_computer_result_without_screenshot_is_rejected() -> None:
+    mock_project_client = MagicMock()
+    mock_project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=mock_project_client, model="test-model")
+    result = Content.from_computer_tool_result(call_id="call_1")
+
+    with pytest.raises(ChatClientInvalidRequestException, match="Computer results require a call_id and screenshot"):
+        client._prepare_content_for_openai("tool", result)
+
+
+def test_get_computer_tool_fails_only_when_invoked_with_older_sdk() -> None:
+    original_import = builtins.__import__
+
+    def missing_computer_tool(
+        name: str,
+        globals: dict[str, Any] | None = None,
+        locals: dict[str, Any] | None = None,
+        fromlist: tuple[str, ...] = (),
+        level: int = 0,
+    ) -> Any:
+        if name == "azure.ai.projects.models" and "ComputerTool" in fromlist:
+            raise ImportError("cannot import name 'ComputerTool' from azure.ai.projects.models")
+        return original_import(name, globals, locals, fromlist, level)
+
+    with (
+        patch.object(builtins, "__import__", side_effect=missing_computer_tool),
+        pytest.raises(ImportError, match=r"ComputerTool from azure-ai-projects>=2\.3\.0") as exc_info,
+    ):
+        FoundryChatClient.get_computer_tool()
+    assert "Upgrade azure-ai-projects to >=2.3.0 to use this tool." in str(exc_info.value)
+    assert isinstance(exc_info.value.__cause__, ImportError)
 
 
 @pytest.mark.filterwarnings("ignore::FutureWarning")
