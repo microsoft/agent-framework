@@ -16,7 +16,6 @@ using OpenAI;
 using OpenAI.Responses;
 
 #pragma warning disable OPENAI001
-#pragma warning disable OPENAICUA001
 
 namespace Microsoft.Agents.AI.Foundry.UnitTests;
 

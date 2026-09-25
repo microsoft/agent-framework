@@ -20,8 +20,7 @@ using Moq;
 using OpenAIClient = OpenAI.OpenAIClient;
 using OpenAIClientOptions = OpenAI.OpenAIClientOptions;
 
-#pragma warning disable OPENAI001 // Experimental Responses API surfaces
-#pragma warning disable OPENAICUA001 // FoundryAITool.CreateComputerTool is experimental.
+#pragma warning disable OPENAI001 // Experimental Responses API surfaces, including FoundryAITool.CreateComputerTool
 
 namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 

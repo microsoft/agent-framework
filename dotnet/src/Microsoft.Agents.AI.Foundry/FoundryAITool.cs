@@ -154,7 +154,7 @@ public static class FoundryAITool
     /// </para>
     /// </remarks>
     /// <returns>An <see cref="AITool"/> for the GA computer tool.</returns>
-    [Experimental(DiagnosticIds.Experiments.AIOpenAIComputerUse)]
+    [Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
     public static AITool CreateComputerTool()
     {
         // OpenAI .NET (2.13.0 and 2.14.0) has no factory for the GA tool: ResponseTool.CreateComputerTool always emits
@@ -181,7 +181,7 @@ public static class FoundryAITool
     /// <param name="displayWidth">The display width in pixels.</param>
     /// <param name="displayHeight">The display height in pixels.</param>
     /// <returns>An <see cref="AITool"/> for the preview computer use tool.</returns>
-    [Experimental(DiagnosticIds.Experiments.AIOpenAIComputerUse)]
+    [Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
     public static AITool CreateComputerTool(ComputerToolEnvironment environment, int displayWidth, int displayHeight)
         => ResponseTool.CreateComputerTool(environment, displayWidth, displayHeight).AsAITool();
 

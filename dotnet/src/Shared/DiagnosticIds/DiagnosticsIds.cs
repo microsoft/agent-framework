@@ -31,11 +31,6 @@ internal static class DiagnosticIds
         // when using the experimental OpenAI APIs.
         internal const string AIOpenAIResponses = "OPENAI001";
 
-        // The OpenAI package used OPENAICUA001 for its computer use APIs until 2.13.0, which folded
-        // them into OPENAI001 (openai/openai-dotnet#1245). The ID now only gates the computer tool
-        // factories in this repo; it is kept so existing suppressions of the preview factory keep working.
-        internal const string AIOpenAIComputerUse = "OPENAICUA001";
-
         private const string MEAIExperiments = "MEAI001";
     }
 }
