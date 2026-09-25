@@ -1,18 +1,91 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.ClientModel;
 using System.ClientModel.Primitives;
 using System.Collections.Generic;
+using System.IO;
+using System.Net;
+using System.Net.Http;
+using System.Text;
+using System.Text.Json;
+using System.Threading.Tasks;
 using Azure.AI.Projects.Agents;
 using Microsoft.Extensions.AI;
+using OpenAI;
 using OpenAI.Responses;
 
 #pragma warning disable OPENAI001
+#pragma warning disable OPENAICUA001
 
 namespace Microsoft.Agents.AI.Foundry.UnitTests;
 
 public class FoundryAIToolTests
 {
+    [Fact]
+    public void CreateComputerTool_Parameterless_SerializesAsGaComputerTool()
+    {
+        // Arrange & Act
+        AITool tool = FoundryAITool.CreateComputerTool();
+
+        // Assert
+        var responseTool = Assert.IsAssignableFrom<ResponseTool>(tool.GetService(typeof(ResponseTool)));
+        string json = ModelReaderWriter.Write(responseTool, ModelReaderWriterOptions.Json).ToString();
+
+        // The GA tool has no environment or display settings; anything besides the type would be a preview field.
+        Assert.Equal("{\"type\":\"computer\"}", json);
+    }
+
+    [Fact]
+    public async Task CreateComputerTool_Parameterless_IsSentAsGaComputerToolOnTheWireAsync()
+    {
+        // Arrange
+        string? requestBody = null;
+        using var handler = new HttpHandlerAssert(async request =>
+        {
+            requestBody = await request.Content!.ReadAsStringAsync();
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    File.ReadAllText(Path.Combine("TestData", "OpenAIDefaultResponse.json")),
+                    Encoding.UTF8,
+                    "application/json"),
+            };
+        });
+#pragma warning disable CA5399
+        using var httpClient = new HttpClient(handler);
+#pragma warning restore CA5399
+        IChatClient chatClient = new OpenAIClient(
+                new ApiKeyCredential("test-key"),
+                new OpenAIClientOptions { Transport = new HttpClientPipelineTransport(httpClient) })
+            .GetResponsesClient()
+            .AsIChatClient("test-model");
+
+        // Act
+        await chatClient.GetResponseAsync("Take a screenshot.", new ChatOptions { Tools = [FoundryAITool.CreateComputerTool()] });
+
+        // Assert
+        Assert.NotNull(requestBody);
+        using JsonDocument body = JsonDocument.Parse(requestBody!);
+        JsonElement tool = Assert.Single(body.RootElement.GetProperty("tools").EnumerateArray());
+        Assert.Equal("{\"type\":\"computer\"}", tool.GetRawText());
+    }
+
+    [Fact]
+    public void CreateComputerTool_WithEnvironmentAndDisplay_SerializesAsPreviewTool()
+    {
+        // Arrange & Act
+        AITool tool = FoundryAITool.CreateComputerTool(ComputerToolEnvironment.Browser, 1024, 768);
+
+        // Assert
+        var responseTool = Assert.IsAssignableFrom<ResponseTool>(tool.GetService(typeof(ResponseTool)));
+        string json = ModelReaderWriter.Write(responseTool, ModelReaderWriterOptions.Json).ToString();
+        Assert.Contains("\"type\":\"computer_use_preview\"", json);
+        Assert.Contains("\"environment\":\"browser\"", json);
+        Assert.Contains("\"display_width\":1024", json);
+        Assert.Contains("\"display_height\":768", json);
+    }
+
     [Fact]
     public void CreateMcpTool_WithProjectConnectionId_SetsProjectConnectionId()
     {
