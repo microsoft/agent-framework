@@ -691,8 +691,13 @@ async def test_full_batch_item_size_and_json_preflight() -> None:
         ),
         (
             Filter("text", "eq", "O'Reilly"),
-            '(IS_DEFINED(c["content"]) AND c["content"] = @filter_0)',
+            '(IS_DEFINED(c["content"]) AND NOT IS_NULL(c["content"]) AND c["content"] = @filter_0)',
             ["O'Reilly"],
+        ),
+        (
+            FilterGroup("not", [Filter("optional", "eq", "value")]),
+            '(NOT (IS_DEFINED(c["optional"]) AND NOT IS_NULL(c["optional"]) AND c["optional"] = @filter_0))',
+            ["value"],
         ),
         (
             Filter("text", "ne", "x"),
@@ -765,7 +770,7 @@ async def test_full_batch_item_size_and_json_preflight() -> None:
     ],
 )
 def test_filter_translation_matches_portable_semantics(
-    expression: Filter,
+    expression: Filter | FilterGroup,
     clause: str,
     values: list[Any],
 ) -> None:
@@ -790,7 +795,7 @@ def test_filter_groups_and_rejections() -> None:
     clause, parameters = collection._prepare_filter(group)
     assert clause == (
         '((IS_DEFINED(c["count"]) AND NOT IS_NULL(c["count"]) AND c["count"] >= @filter_0) '
-        'AND (NOT (IS_DEFINED(c["active"]) AND c["active"] = @filter_1)))'
+        'AND (NOT (IS_DEFINED(c["active"]) AND NOT IS_NULL(c["active"]) AND c["active"] = @filter_1)))'
     )
     assert [item["value"] for item in parameters] == [1, False]
     for expression, exception in (
@@ -958,7 +963,7 @@ async def test_filtered_get_query_is_parameterized_and_bounded() -> None:
     kwargs = container.query_items.call_args.kwargs
     query = kwargs["query"]
     assert "hello" not in query
-    assert 'WHERE (IS_DEFINED(c["content"]) AND c["content"] = @filter_0)' in query
+    assert 'WHERE (IS_DEFINED(c["content"]) AND NOT IS_NULL(c["content"]) AND c["content"] = @filter_0)' in query
     assert 'ORDER BY c["count"] DESC OFFSET @skip LIMIT @top' in query
     assert kwargs["parameters"] == [
         {"name": "@filter_0", "value": "hello"},
