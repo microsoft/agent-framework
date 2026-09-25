@@ -39,7 +39,7 @@ public record SubworkflowBinding(Workflow WorkflowInstance, string Id, ExecutorO
     public override bool IsSharedInstance => false;
 
     /// <inheritdoc/>
-    public override bool SupportsConcurrentSharedExecution => true;
+    public override bool SupportsConcurrentSharedExecution => this.WorkflowInstance.AllowConcurrent;
 
     /// <inheritdoc/>
     public override bool SupportsResetting => false;
