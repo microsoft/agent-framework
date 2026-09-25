@@ -2,9 +2,12 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using AGUI.Abstractions;
+using AGUI.Server;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.AI;
@@ -221,6 +224,35 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
         // Act & Assert
         Assert.Throws<ArgumentNullException>(() =>
             endpointsMock.Object.MapAGUIServer((IHostedAgentBuilder)null!, "/api/agent"));
+    }
+
+    [Fact]
+    public void RemoveReasoningMessages_FollowUpTurnWithReasoning_AllowsChatRequestConversion()
+    {
+        // Arrange
+        Microsoft.AspNetCore.Http.Json.JsonOptions jsonOptions = new();
+        new ConfigureAGUIJsonOptions().Configure(jsonOptions);
+        const string Body = """
+            {
+              "threadId": "t1", "runId": "r2", "state": {}, "tools": [], "context": [], "forwardedProps": {},
+              "messages": [
+                { "id": "u1", "role": "user", "content": "hi" },
+                { "id": "rs1", "role": "reasoning", "content": "thinking..." },
+                { "id": "a1", "role": "assistant", "content": "hello" },
+                { "id": "u2", "role": "user", "content": "follow up" }
+              ]
+            }
+            """;
+        RunAgentInput input = JsonSerializer.Deserialize<RunAgentInput>(Body, jsonOptions.SerializerOptions)!;
+        Assert.Throws<InvalidOperationException>(() => input.ToChatRequestContext(jsonOptions.SerializerOptions, null));
+
+        // Act
+        AGUIEndpointRouteBuilderExtensions.RemoveReasoningMessages(input);
+        var ctx = input.ToChatRequestContext(jsonOptions.SerializerOptions, null);
+
+        // Assert
+        Assert.Equal(["u1", "a1", "u2"], input.Messages.Select(m => m.Id));
+        Assert.Equal(3, ctx.Messages.Count);
     }
 
     private sealed class TestAgent : AIAgent
