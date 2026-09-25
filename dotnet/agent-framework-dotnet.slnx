@@ -158,6 +158,7 @@
     <Project Path="samples/02-agents/AgentProviders/foundry/Agent_Step13_Plugins/Agent_Step13_Plugins.csproj" />
     <Project Path="samples/02-agents/AgentProviders/foundry/Agent_Step14_CodeInterpreter/Agent_Step14_CodeInterpreter.csproj" />
     <Project Path="samples/02-agents/AgentProviders/foundry/Agent_Step15_ComputerUsePreview/Agent_Step15_ComputerUsePreview.csproj" />
+    <Project Path="samples/02-agents/AgentProviders/foundry/Agent_Step15.2_ComputerUse/Agent_Step15.2_ComputerUse.csproj" />
     <Project Path="samples/02-agents/AgentProviders/foundry/Agent_Step16_FileSearch/Agent_Step16_FileSearch.csproj" />
     <Project Path="samples/02-agents/AgentProviders/foundry/Agent_Step17_OpenAPITools/Agent_Step17_OpenAPITools.csproj" />
     <Project Path="samples/02-agents/AgentProviders/foundry/Agent_Step18_BingCustomSearch/Agent_Step18_BingCustomSearch.csproj" />
@@ -169,7 +170,6 @@
     <Project Path="samples/02-agents/AgentProviders/foundry/Agent_Step24_CodeInterpreterFileDownload/Agent_Step24_CodeInterpreterFileDownload.csproj" />
     <Project Path="samples/02-agents/AgentProviders/foundry/Agent_Step25_FoundryToolboxMcp/Agent_Step25_FoundryToolboxMcp.csproj" />
     <Project Path="samples/02-agents/AgentProviders/foundry/Agent_Step26_FoundryToolboxMcpSkills/Agent_Step26_FoundryToolboxMcpSkills.csproj" />
-    <Project Path="samples/02-agents/AgentProviders/foundry/Agent_Step27_ComputerUse/Agent_Step27_ComputerUse.csproj" />
   </Folder>
   <Folder Name="/Samples/02-agents/Evaluation/">
     <Project Path="samples/02-agents/Evaluation/Evaluation_CustomEvals/Evaluation_CustomEvals.csproj" />

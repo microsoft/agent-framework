@@ -8,7 +8,7 @@ This sample shows how to use the preview Computer Use tool with `AIProjectClient
 - Processing computer call actions (click, type, key press)
 - Managing the computer use interaction loop with screenshots
 
-For the generally available (GA) `computer` tool, created with the parameterless `FoundryAITool.CreateComputerTool()` and returning batched actions, see [Agent_Step27_ComputerUse](../Agent_Step27_ComputerUse/).
+For the generally available (GA) `computer` tool, created with the parameterless `FoundryAITool.CreateComputerTool()` and returning batched actions, see [Agent_Step15.2_ComputerUse](../Agent_Step15.2_ComputerUse/).
 
 For more information, see [Use the computer tool](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/computer-use?pivots=csharp).
 

@@ -1197,8 +1197,8 @@ internal static class AgentsSamples
 
         new SampleDefinition
         {
-            Name = "FoundryAgent_Step27_ComputerUse",
-            ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step27_ComputerUse",
+            Name = "FoundryAgent_Step15.2_ComputerUse",
+            ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step15.2_ComputerUse",
             RequiredEnvironmentVariables = ["OPENAI_API_KEY"],
             OptionalEnvironmentVariables = ["OPENAI_CHAT_MODEL_NAME"],
             ExpectedOutputDescription =
