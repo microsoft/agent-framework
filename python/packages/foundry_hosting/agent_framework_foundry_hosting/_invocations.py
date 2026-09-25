@@ -14,6 +14,7 @@ from typing_extensions import Any, AsyncGenerator
 
 from ._agent_source import is_agent, resolve_agent, validate_agent_source
 from ._feature_usage import FeatureIndex
+from ._scope import FoundryRequestScope
 
 
 class InvocationsHostServer(InvocationAgentServerHost):
@@ -69,7 +70,8 @@ class InvocationsHostServer(InvocationAgentServerHost):
                     "The hosted environment is missing session_id or user_id in the request context. "
                     "Please ensure that the request is coming from a valid Foundry platform service."
                 )
-            return context.session_id, context.user_id
+            scope = FoundryRequestScope.from_context(self.config, context)
+            return scope.session_id, context.user_id
 
         if not context.session_id:
             raise RuntimeError(

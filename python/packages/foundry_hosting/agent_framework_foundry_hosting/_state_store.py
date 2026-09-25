@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 
+import hashlib
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Generic, Protocol, TypeVar
@@ -15,9 +16,30 @@ from agent_framework import (
     WorkflowCheckpointException,
 )
 from azure.ai.agentserver.core import AgentConfig, FoundryAgentRequestContext
-from azure.ai.agentserver.core.storage import FoundryStateStore, FoundryStorageConflictError
+from azure.ai.agentserver.core.storage import (
+    FoundryStateStore,
+    FoundryStorageConflictError,
+    FoundryStoragePreconditionError,
+)
+
+from ._scope import FoundryRequestScope
 
 StoreT = TypeVar("StoreT")
+
+
+def _store_scope(config: AgentConfig, platform_context: FoundryAgentRequestContext) -> FoundryRequestScope | None:
+    if not config.is_hosted:
+        return None
+    return FoundryRequestScope.from_context(config, platform_context)
+
+
+def _store_name(root: str, scope: FoundryRequestScope | None, context_id: str | None = None) -> str:
+    if scope is None:
+        return f"{root}/{context_id}" if context_id is not None else root
+    name = f"{root}/v2/{scope.storage_key}"
+    if context_id is not None:
+        name += f"/{hashlib.sha256(context_id.encode('utf-8')).hexdigest()[:24]}"
+    return name
 
 
 class StoreProvider(ABC, Generic[StoreT]):
@@ -78,6 +100,7 @@ class FoundryCheckpointStore:
         platform_context: FoundryAgentRequestContext,
         *,
         allowed_checkpoint_types: list[str] | None = None,
+        scope: FoundryRequestScope | None = None,
     ) -> None:
         """Initialize a Foundry-scoped checkpoint store for the given context ID.
 
@@ -89,6 +112,7 @@ class FoundryCheckpointStore:
                 and framework types) that are permitted during checkpoint
                 deserialization.  Each entry should be a ``"module:qualname"``
                 string (e.g., ``"my_app.models:MyState"``).
+            scope: Trusted request scope for hosted sandbox isolation.
         """
         if not context_id:
             raise ValueError("context_id must be provided to initialize a FoundryCheckpointStore.")
@@ -96,10 +120,11 @@ class FoundryCheckpointStore:
         self.context_id = context_id
         self.platform_context = platform_context
         self._allowed_types: frozenset[str] = frozenset(allowed_checkpoint_types or [])
+        self._scope = scope
 
     async def _get_store(self) -> FoundryStateStore:
         return await FoundryStateStore.get_or_create(
-            f"{self.DEFAULT_ROOT_SCOPE}/{self.context_id}",
+            _store_name(self.DEFAULT_ROOT_SCOPE, self._scope, self.context_id),
             user_isolation=True,
         )
 
@@ -222,6 +247,7 @@ class CheckpointStoreProvider(ContextScopedStoreProvider[CheckpointStorage]):
             context_id,
             platform_context,
             allowed_checkpoint_types=self._allowed_checkpoint_types,
+            scope=_store_scope(config, platform_context),
         )
 
 
@@ -243,22 +269,24 @@ class FunctionApprovalStore(Protocol):
 
 
 class FoundryFunctionApprovalStore:
-    """Function approval store backed by the `FoundryStateStore`.
-
-    This storage implements a hybrid approach where the checkpoint metadata and structure are
-    stored in JSON format, while the actual state data (which may contain complex Python objects)
-    is serialized using pickle and embedded as base64-encoded strings within the JSON. This allows
-    for human-readable checkpoint files while preserving the ability to store complex Python objects.
-    """
+    """Function approval store backed by the `FoundryStateStore`."""
 
     DEFAULT_ROOT_SCOPE = "function_approvals"
 
-    def __init__(self, platform_context: FoundryAgentRequestContext) -> None:
+    def __init__(
+        self,
+        platform_context: FoundryAgentRequestContext,
+        *,
+        scope: FoundryRequestScope | None = None,
+        context_id: str | None = None,
+    ) -> None:
         self.platform_context = platform_context
+        self._scope = scope
+        self._context_id = context_id
 
     async def _get_store(self) -> FoundryStateStore:
         return await FoundryStateStore.get_or_create(
-            self.DEFAULT_ROOT_SCOPE,
+            _store_name(self.DEFAULT_ROOT_SCOPE, self._scope, self._context_id),
             user_isolation=True,
         )
 
@@ -285,9 +313,19 @@ class FunctionApprovalStoreProvider(StoreProvider[FunctionApprovalStore]):
     This defaults to using the `FoundryFunctionApprovalStore` in all environments.
     """
 
-    def get_store(self, *, config: AgentConfig, platform_context: FoundryAgentRequestContext) -> FunctionApprovalStore:
+    def get_store(
+        self,
+        *,
+        config: AgentConfig,
+        platform_context: FoundryAgentRequestContext,
+        context_id: str | None = None,
+    ) -> FunctionApprovalStore:
         """Get function approval store for the requested hosting environment."""
-        return FoundryFunctionApprovalStore(platform_context)
+        return FoundryFunctionApprovalStore(
+            platform_context,
+            scope=_store_scope(config, platform_context),
+            context_id=context_id,
+        )
 
 
 # endregion Function approval persistence
@@ -300,12 +338,19 @@ class FoundryAgentSessionStore(SessionStore):
 
     DEFAULT_ROOT_SCOPE = "agent_sessions"
 
-    def __init__(self, platform_context: FoundryAgentRequestContext) -> None:
+    def __init__(
+        self,
+        platform_context: FoundryAgentRequestContext,
+        *,
+        scope: FoundryRequestScope | None = None,
+    ) -> None:
         self.platform_context = platform_context
+        self._scope = scope
+        self._etags: dict[str, str | None] = {}
 
     async def _get_store(self) -> FoundryStateStore:
         return await FoundryStateStore.get_or_create(
-            f"{self.DEFAULT_ROOT_SCOPE}",
+            _store_name(self.DEFAULT_ROOT_SCOPE, self._scope),
             user_isolation=True,
         )
 
@@ -314,13 +359,33 @@ class FoundryAgentSessionStore(SessionStore):
         async with store:
             item = await store.get_item(session_id, call_id=self.platform_context.call_id)
         if item is None:
+            self._etags[session_id] = None
             return None
+        if not item.etag:
+            raise RuntimeError("Foundry agent session storage returned a loaded session without an ETag.")
+        self._etags[session_id] = item.etag
         return AgentSession.from_dict(item.value)
 
     async def set(self, session_id: str, session: AgentSession) -> None:
         store = await self._get_store()
         async with store:
-            await store.set_item(session_id, session.to_dict(), call_id=self.platform_context.call_id)
+            try:
+                etag = self._etags.get(session_id)
+                if etag is not None:
+                    result = await store.set_item(
+                        session_id, session.to_dict(), if_match=etag, call_id=self.platform_context.call_id
+                    )
+                elif self._scope is not None or session_id in self._etags:
+                    result = await store.create_item(
+                        session_id, session.to_dict(), call_id=self.platform_context.call_id
+                    )
+                else:
+                    result = await store.set_item(session_id, session.to_dict(), call_id=self.platform_context.call_id)
+            except (FoundryStorageConflictError, FoundryStoragePreconditionError) as exc:
+                raise RuntimeError("Another request advanced this agent session; reload before writing.") from exc
+        if not result.etag:
+            raise RuntimeError("Foundry agent session storage did not return an ETag after saving.")
+        self._etags[session_id] = result.etag
 
     async def delete(self, session_id: str) -> None:
         store = await self._get_store()
@@ -336,7 +401,7 @@ class AgentSessionStoreProvider(StoreProvider[SessionStore]):
 
     def get_store(self, *, config: AgentConfig, platform_context: FoundryAgentRequestContext) -> SessionStore:
         """Get agent session store for the requested hosting environment."""
-        return FoundryAgentSessionStore(platform_context)
+        return FoundryAgentSessionStore(platform_context, scope=_store_scope(config, platform_context))
 
 
 # endregion Agent session persistence

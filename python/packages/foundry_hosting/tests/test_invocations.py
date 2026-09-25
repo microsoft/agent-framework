@@ -253,6 +253,15 @@ class TestPartitionKey:
         with _request_context(call_id="call-1", session_id="sess-1", user_id="user-1"):
             assert server._partition_key() == ("sess-1", "user-1")  # pyright: ignore[reportPrivateUsage]
 
+    def test_hosted_requires_platform_call_id(self) -> None:
+        server = InvocationsHostServer(_make_agent(response_text="hi"))
+        server.config.is_hosted = True
+        with (
+            _request_context(session_id="sess-1", user_id="user-1"),
+            pytest.raises(RuntimeError, match="trusted user ID and call ID"),
+        ):
+            server._partition_key()  # pyright: ignore[reportPrivateUsage]
+
     async def test_hosted_keys_and_session_ids_preserve_identifier_values(self) -> None:
         agent = _make_agent(response_text="hi")
         server = InvocationsHostServer(agent)
@@ -400,6 +409,15 @@ class TestHandleInvoke:
             response = await server._handle_invoke(request)  # pyright: ignore[reportPrivateUsage]
         assert isinstance(response, Response)
         assert response.status_code == 500
+
+    async def test_hosted_missing_call_id_rejects_before_running_agent(self) -> None:
+        agent = _make_agent(response_text="hi")
+        server = InvocationsHostServer(agent)
+        server.config.is_hosted = True
+        with _request_context(session_id="sess-1", user_id="user-1"):
+            response = await server._handle_invoke(_make_request({"message": "Hi"}))  # pyright: ignore[reportPrivateUsage]
+        assert response.status_code == 500
+        assert agent.calls == []
 
     async def test_non_streaming_returns_agent_text(self) -> None:
         agent = _make_agent(response_text="Hello!")
