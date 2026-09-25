@@ -10077,3 +10077,89 @@ async def test_header_provider_reading_contextvar_keeps_credential_out_of_argume
 
 
 # endregion
+
+
+# region: lifecycle owner cleanup after a failed connect
+
+
+def _unauthorized_http_client() -> Any:
+    """An HTTP client whose every response is 401, so `initialize` always fails."""
+    import httpx
+
+    return httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(401, request=request)))
+
+
+async def _pending_lifecycle_task_names() -> list[str]:
+    """Names of MCP lifecycle owner tasks still running, after letting finished ones retire."""
+    for _ in range(50):
+        names = [task.get_name() for task in asyncio.all_tasks() if task.get_name().startswith("mcp-lifecycle:")]
+        if not names:
+            return names
+        await asyncio.sleep(0)
+    return names
+
+
+async def test_failed_connect_stops_the_lifecycle_owner():
+    """A connect that fails must not leave its owner task blocked on the queue forever."""
+    client = _unauthorized_http_client()
+    tool = MCPStreamableHTTPTool(name="leak-check", url="https://mcp.example/mcp", http_client=client)
+    try:
+        with pytest.raises(ToolException):
+            async with tool:
+                pass
+
+        assert await _pending_lifecycle_task_names() == []
+        assert tool._lifecycle_owner_task is None
+        assert tool._lifecycle_queue is None
+    finally:
+        await client.aclose()
+
+
+async def test_tool_stays_usable_after_a_failed_connect():
+    """Stopping the owner must not wedge the tool: a later connect gets a fresh owner."""
+    client = _unauthorized_http_client()
+    tool = MCPStreamableHTTPTool(name="retry-check", url="https://mcp.example/mcp", http_client=client)
+    try:
+        with pytest.raises(ToolException):
+            await tool.connect()
+        # The second attempt must fail the same way rather than reporting a stopped owner.
+        with pytest.raises(ToolException):
+            await tool.connect()
+
+        assert await _pending_lifecycle_task_names() == []
+    finally:
+        await client.aclose()
+
+
+async def test_failed_connect_keeps_the_owner_when_a_session_is_live():
+    """`is_connected` is set before tools load, so a load failure must not retire the owner."""
+    client = _unauthorized_http_client()
+    tool = MCPStreamableHTTPTool(name="live-session-check", url="https://mcp.example/mcp", http_client=client)
+
+    async def connect_then_fail_loading(**_: Any) -> None:
+        # Mirrors _connect_on_owner: the session comes up and is_connected is set, and only
+        # then does loading raise, so the owner is left holding a live session.
+        tool.is_connected = True
+        raise RuntimeError("loading tools failed")
+
+    try:
+        await tool._ensure_lifecycle_owner()
+        owner_task = tool._lifecycle_owner_task
+        assert owner_task is not None
+
+        with (
+            patch.object(MCPTool, "_connect_on_owner", side_effect=connect_then_fail_loading),
+            pytest.raises(RuntimeError),
+        ):
+            await tool.connect()
+
+        await asyncio.sleep(0)
+        assert not owner_task.done(), "the owner still owns a live session and must not stop"
+    finally:
+        tool.is_connected = False
+        await tool.close()
+        assert await _pending_lifecycle_task_names() == []
+        await client.aclose()
+
+
+# endregion
