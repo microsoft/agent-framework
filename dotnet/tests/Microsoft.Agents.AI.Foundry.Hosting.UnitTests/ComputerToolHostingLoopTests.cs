@@ -21,7 +21,7 @@ using OpenAIClient = OpenAI.OpenAIClient;
 using OpenAIClientOptions = OpenAI.OpenAIClientOptions;
 
 #pragma warning disable OPENAI001 // Experimental Responses API surfaces
-#pragma warning disable OPENAICUA001 // Experimental OpenAI computer use surfaces
+#pragma warning disable OPENAICUA001 // FoundryAITool.CreateComputerTool is experimental.
 
 namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 

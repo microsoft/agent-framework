@@ -13,7 +13,6 @@ using OpenAIComputerCallOutputResponseItem = OpenAI.Responses.ComputerCallOutput
 using OpenAIComputerCallResponseItem = OpenAI.Responses.ComputerCallResponseItem;
 
 #pragma warning disable OPENAI001 // Experimental Responses API surfaces
-#pragma warning disable OPENAICUA001 // Experimental OpenAI computer use surfaces
 
 namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 

@@ -26,8 +26,6 @@ using OpenAIStreamingResponseOutputItemDoneUpdate = OpenAI.Responses.StreamingRe
 using OpenAIStreamingResponseOutputTextAnnotationAddedUpdate = OpenAI.Responses.StreamingResponseOutputTextAnnotationAddedUpdate;
 using OpenAIStreamingResponseOutputTextDeltaUpdate = OpenAI.Responses.StreamingResponseOutputTextDeltaUpdate;
 
-#pragma warning disable OPENAICUA001 // OpenAI .NET marks its computer use types as experimental.
-
 namespace Microsoft.Agents.AI.Foundry.Hosting;
 
 internal abstract record OutputConverterItem

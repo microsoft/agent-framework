@@ -14,8 +14,6 @@ using OpenAIComputerCallResponseItem = OpenAI.Responses.ComputerCallResponseItem
 using OpenAIContext = OpenAI.OpenAIContext;
 using OpenAIResponseItem = OpenAI.Responses.ResponseItem;
 
-#pragma warning disable OPENAICUA001 // OpenAI .NET marks its computer use types as experimental.
-
 namespace Microsoft.Agents.AI.Foundry.Hosting;
 
 /// <summary>

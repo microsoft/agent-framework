@@ -23,7 +23,6 @@ using OpenAIStreamingResponseOutputTextAnnotationAddedUpdate = OpenAI.Responses.
 using OpenAIStreamingResponseOutputTextDeltaUpdate = OpenAI.Responses.StreamingResponseOutputTextDeltaUpdate;
 
 #pragma warning disable OPENAI001 // Experimental Responses API surfaces
-#pragma warning disable OPENAICUA001 // Experimental OpenAI computer use surfaces
 
 namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 
