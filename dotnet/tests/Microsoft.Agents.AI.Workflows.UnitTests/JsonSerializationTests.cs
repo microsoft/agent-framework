@@ -33,6 +33,24 @@ public class JsonSerializationTests
 
     private static EdgeId TakeEdgeId() => new(Interlocked.Increment(ref s_nextEdgeId));
 
+    [Fact]
+    public void Test_JsonWireSerializedValue_EqualValuesHaveEqualHashCodes()
+    {
+        // Arrange
+        JsonMarshaller marshaller = new();
+        using JsonDocument firstDocument = JsonDocument.Parse("""{"a":1,"b":[true,null]}""");
+        using JsonDocument secondDocument = JsonDocument.Parse("""{"a":1,"b":[true,null]}""");
+        JsonWireSerializedValue first = new(marshaller, firstDocument.RootElement);
+        JsonWireSerializedValue second = new(marshaller, secondDocument.RootElement);
+
+        // Act
+        bool areEqual = first.Equals(second);
+
+        // Assert
+        areEqual.Should().BeTrue();
+        first.GetHashCode().Should().Be(second.GetHashCode());
+    }
+
     internal static T RunJsonRoundtrip<T>(T value, JsonSerializerOptions? externalOptions = null, Expression<Func<T, bool>>? predicate = null)
     {
         JsonMarshaller marshaller = new(externalOptions);
