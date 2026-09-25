@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-import os
 
 from agent_framework import Agent
 from agent_framework.amazon import BedrockChatClient, BedrockKnowledgeBaseProvider
@@ -31,12 +30,12 @@ Required IAM permissions: `bedrock:Retrieve`
 
 async def main() -> None:
     """Run a Bedrock-backed agent that always has KB context injected automatically."""
-    # 1. Create the Knowledge Base context provider — subclasses ContextProvider.
-    #    Use the same region as BedrockChatClient (BEDROCK_REGION), so the KB and the model
-    #    are queried in the same region.
+    # 1. Create the provider in inject mode — KB context is retrieved and injected
+    #    automatically before every run (via before_run()). Region/credentials resolve
+    #    from BEDROCK_* (same as BedrockChatClient), so no explicit region is needed.
     kb_provider = BedrockKnowledgeBaseProvider(
         knowledge_base_id="YOUR_KB_ID",  # Replace with your managed KB ID
-        region_name=os.environ.get("BEDROCK_REGION", "us-east-1"),
+        mode="inject",
         number_of_results=3,
         min_score=0.3,  # Only include results above this relevance threshold
         source_id="company-docs",  # Unique ID for this context source

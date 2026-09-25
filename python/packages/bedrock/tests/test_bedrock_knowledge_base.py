@@ -5,6 +5,7 @@
 import asyncio
 from unittest.mock import MagicMock, patch
 
+import pytest
 from agent_framework import ContextProvider, FunctionTool
 
 
@@ -229,138 +230,182 @@ class TestExtractContentText:
 
 
 class TestBedrockKnowledgeBaseProvider:
-    def test_is_context_provider_subclass(self):
-        from agent_framework_bedrock._knowledge_base_provider import BedrockKnowledgeBaseProvider
+    """Tests for the unified public provider (modes, tool exposure, injection, multimodal)."""
 
-        mock_client = MagicMock()
-        provider = BedrockKnowledgeBaseProvider(knowledge_base_id="TEST_KB", client=mock_client)
+    @staticmethod
+    def _standard_client(results):
+        client = MagicMock()
+        client.retrieve.return_value = {"retrievalResults": results}
+        return client
+
+    def test_is_context_provider_subclass(self):
+        from agent_framework_bedrock import BedrockKnowledgeBaseProvider
+
+        provider = BedrockKnowledgeBaseProvider(knowledge_base_id="TEST_KB", client=MagicMock())
         assert isinstance(provider, ContextProvider)
 
     def test_has_source_id(self):
-        from agent_framework_bedrock._knowledge_base_provider import BedrockKnowledgeBaseProvider
+        from agent_framework_bedrock import BedrockKnowledgeBaseProvider
 
-        mock_client = MagicMock()
-        provider = BedrockKnowledgeBaseProvider(knowledge_base_id="TEST_KB", source_id="my-kb", client=mock_client)
+        provider = BedrockKnowledgeBaseProvider(knowledge_base_id="TEST_KB", source_id="my-kb", client=MagicMock())
         assert provider.source_id == "my-kb"
 
-    def test_retrieve_returns_formatted_context(self):
-        from agent_framework_bedrock._knowledge_base_provider import BedrockKnowledgeBaseProvider
+    def test_invalid_mode_raises(self):
+        from agent_framework_bedrock import BedrockKnowledgeBaseProvider
 
-        mock_client = MagicMock()
-        mock_client.retrieve.return_value = {
-            "retrievalResults": [
-                {"content": {"text": "Passage 1"}, "score": 0.9, "location": {"s3Location": {"uri": "s3://b/doc.pdf"}}},
-                {"content": {"text": "Passage 2"}, "score": 0.5, "location": {}},
-            ]
-        }
+        with pytest.raises(ValueError, match="mode must be"):
+            BedrockKnowledgeBaseProvider(knowledge_base_id="TEST_KB", mode="bogus", client=MagicMock())
 
-        provider = BedrockKnowledgeBaseProvider(
-            knowledge_base_id="TEST_KB",
-            client=mock_client,
-        )
+    def test_default_mode_is_both(self):
+        from agent_framework_bedrock import BedrockKnowledgeBaseProvider
 
-        context = asyncio.run(provider._retrieve("test query"))
-        assert "Passage 1" in context
-        assert "s3://b/doc.pdf" in context
+        provider = BedrockKnowledgeBaseProvider(knowledge_base_id="TEST_KB", client=MagicMock())
+        assert provider.mode == "both"
 
-    def test_min_score_filtering(self):
-        from agent_framework_bedrock._knowledge_base_provider import BedrockKnowledgeBaseProvider
+    def test_settings_public_export(self):
+        # Comment 1: the settings type is public and exported.
+        from agent_framework_bedrock import BedrockKnowledgeBaseSettings
 
-        mock_client = MagicMock()
-        mock_client.retrieve.return_value = {
-            "retrievalResults": [
-                {"content": {"text": "High"}, "score": 0.9, "location": {}},
-                {"content": {"text": "Low"}, "score": 0.2, "location": {}},
-            ]
-        }
+        assert BedrockKnowledgeBaseSettings.__name__ == "BedrockKnowledgeBaseSettings"
 
-        provider = BedrockKnowledgeBaseProvider(
-            knowledge_base_id="TEST_KB",
-            min_score=0.5,
-            client=mock_client,
-        )
+    def test_tool_not_public(self):
+        # Comment 5: only the provider is public; the tool is internal.
+        import agent_framework_bedrock as pkg
 
-        context = asyncio.run(provider._retrieve("test"))
-        assert "High" in context
-        assert "Low" not in context
+        assert "BedrockKnowledgeBaseTool" not in pkg.__all__
 
-    def test_has_before_run_method(self):
-        from agent_framework_bedrock._knowledge_base_provider import BedrockKnowledgeBaseProvider
-
-        mock_client = MagicMock()
-        provider = BedrockKnowledgeBaseProvider(knowledge_base_id="TEST_KB", client=mock_client)
-        assert hasattr(provider, "before_run")
-        assert asyncio.iscoroutinefunction(provider.before_run)
-
-    def test_before_run_injects_context(self):
+    def test_inject_mode_injects_context_message(self):
         from agent_framework import Message, SessionContext
 
-        from agent_framework_bedrock._knowledge_base_provider import BedrockKnowledgeBaseProvider
+        from agent_framework_bedrock import BedrockKnowledgeBaseProvider
 
-        mock_client = MagicMock()
-        mock_client.retrieve.return_value = {
-            "retrievalResults": [
-                {
-                    "content": {"text": "Relevant passage"},
-                    "score": 0.9,
-                    "location": {"s3Location": {"uri": "s3://b/doc"}},
-                },
-            ]
-        }
-
+        client = self._standard_client([
+            {"content": {"text": "Relevant passage"}, "score": 0.9, "location": {"s3Location": {"uri": "s3://b/doc"}}}
+        ])
         provider = BedrockKnowledgeBaseProvider(
-            knowledge_base_id="TEST_KB",
-            client=mock_client,
+            knowledge_base_id="TEST_KB", mode="inject", use_agentic_retrieval=False, client=client
         )
+        context = SessionContext(input_messages=[Message(role="user", contents=["What is our policy?"])])
 
-        # Create a SessionContext with an input message
-        context = SessionContext(
-            input_messages=[Message(role="user", contents=["What is our policy?"])],
-        )
+        asyncio.run(provider.before_run(agent=MagicMock(), session=MagicMock(), context=context, state={}))
 
-        # Verify context_messages is empty before
-        assert len(context.context_messages) == 0
-
-        # Run before_run
-        asyncio.run(
-            provider.before_run(
-                agent=MagicMock(),
-                session=MagicMock(),
-                context=context,
-                state={},
-            )
-        )
-
-        # Verify context injected as an untrusted user-role message (matches repo
-        # convention, e.g. azure-cosmos-memory; retrieved content stays in the
-        # untrusted user channel rather than being elevated to system instructions)
         assert "bedrock-kb" in context.context_messages
         injected = context.context_messages["bedrock-kb"]
-        assert len(injected) == 1
         assert injected[0].role == "user"
         assert "Relevant passage" in injected[0].text
         assert "s3://b/doc" in injected[0].text
+        # inject-only mode adds no tools
+        assert not context.tools
+
+    def test_tool_mode_exposes_tool_and_injects_nothing(self):
+        from agent_framework import Message, SessionContext
+
+        from agent_framework_bedrock import BedrockKnowledgeBaseProvider
+
+        client = self._standard_client([{"content": {"text": "X"}, "score": 0.9, "location": {}}])
+        provider = BedrockKnowledgeBaseProvider(
+            knowledge_base_id="TEST_KB", mode="tool", use_agentic_retrieval=False, client=client
+        )
+        context = SessionContext(input_messages=[Message(role="user", contents=["question"])])
+
+        asyncio.run(provider.before_run(agent=MagicMock(), session=MagicMock(), context=context, state={}))
+
+        # tool mode adds a tool, injects no context, and does not retrieve during before_run
+        assert len(context.tools) == 1
+        assert "bedrock-kb" not in context.context_messages
+        client.retrieve.assert_not_called()
+
+    def test_both_mode_exposes_tool_and_injects(self):
+        from agent_framework import Message, SessionContext
+
+        from agent_framework_bedrock import BedrockKnowledgeBaseProvider
+
+        client = self._standard_client([
+            {"content": {"text": "Passage"}, "score": 0.9, "location": {"s3Location": {"uri": "s3://b/d"}}}
+        ])
+        provider = BedrockKnowledgeBaseProvider(
+            knowledge_base_id="TEST_KB", mode="both", use_agentic_retrieval=False, client=client
+        )
+        context = SessionContext(input_messages=[Message(role="user", contents=["question"])])
+
+        asyncio.run(provider.before_run(agent=MagicMock(), session=MagicMock(), context=context, state={}))
+
+        assert len(context.tools) == 1
+        assert "bedrock-kb" in context.context_messages
+        assert "Passage" in context.context_messages["bedrock-kb"][0].text
+
+    def test_min_score_filtering(self):
+        from agent_framework_bedrock import BedrockKnowledgeBaseProvider
+
+        client = self._standard_client([
+            {"content": {"text": "High"}, "score": 0.9, "location": {}},
+            {"content": {"text": "Low"}, "score": 0.2, "location": {}},
+        ])
+        provider = BedrockKnowledgeBaseProvider(
+            knowledge_base_id="TEST_KB", mode="inject", min_score=0.5, use_agentic_retrieval=False, client=client
+        )
+        items = provider._retrieve_context_items("test")
+        joined = "\n".join(str(i) for i in items)
+        assert "High" in joined
+        assert "Low" not in joined
 
     def test_before_run_skips_empty_input(self):
         from agent_framework import SessionContext
 
-        from agent_framework_bedrock._knowledge_base_provider import BedrockKnowledgeBaseProvider
+        from agent_framework_bedrock import BedrockKnowledgeBaseProvider
 
-        mock_client = MagicMock()
-        provider = BedrockKnowledgeBaseProvider(knowledge_base_id="TEST_KB", client=mock_client)
-
-        # Empty input messages
+        client = self._standard_client([])
+        provider = BedrockKnowledgeBaseProvider(
+            knowledge_base_id="TEST_KB", mode="inject", use_agentic_retrieval=False, client=client
+        )
         context = SessionContext(input_messages=[])
 
-        asyncio.run(
-            provider.before_run(
-                agent=MagicMock(),
-                session=MagicMock(),
-                context=context,
-                state={},
-            )
-        )
+        asyncio.run(provider.before_run(agent=MagicMock(), session=MagicMock(), context=context, state={}))
 
-        # Should not call retrieve
-        mock_client.retrieve.assert_not_called()
+        client.retrieve.assert_not_called()
         assert len(context.context_messages) == 0
+
+    def test_multimodal_image_injected_as_content(self):
+        # Comment 2: image/audio/video passages become multi-modal Content, not placeholders.
+        from agent_framework import Content
+
+        from agent_framework_bedrock import BedrockKnowledgeBaseProvider
+
+        client = self._standard_client([
+            {
+                "content": {"type": "IMAGE", "byteContent": "bytes"},
+                "score": 0.9,
+                "location": {"s3Location": {"uri": "s3://b/pic.png"}},
+            }
+        ])
+        provider = BedrockKnowledgeBaseProvider(
+            knowledge_base_id="TEST_KB", mode="inject", use_agentic_retrieval=False, client=client
+        )
+        items = provider._retrieve_context_items("show me the diagram")
+        media = [i for i in items if isinstance(i, Content)]
+        assert media, "expected a multi-modal Content item for the image passage"
+        assert media[0].uri == "s3://b/pic.png"
+        assert media[0].media_type == "image/*"
+
+    def test_agentic_retrieval_used_by_default(self):
+        # Comment 4: the provider uses agentic retrieval (with fallback) on the inject path.
+        from agent_framework_bedrock import BedrockKnowledgeBaseProvider
+
+        client = MagicMock()
+        client.agentic_retrieve_stream.return_value = {
+            "stream": [
+                {
+                    "result": {
+                        "results": [{"content": {"text": "Agentic passage"}, "metadata": {"_source_uri": "s3://b/a"}}]
+                    }
+                }
+            ]
+        }
+        provider = BedrockKnowledgeBaseProvider(
+            knowledge_base_id="TEST_KB", mode="inject", use_agentic_retrieval=True, client=client
+        )
+        items = provider._retrieve_context_items("compare a and b")
+        joined = "\n".join(str(i) for i in items)
+        assert "Agentic passage" in joined
+        client.agentic_retrieve_stream.assert_called_once()
+        client.retrieve.assert_not_called()

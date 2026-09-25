@@ -1,7 +1,12 @@
 # Copyright (c) Microsoft. All rights reserved.
-# Copyright (c) Microsoft. All rights reserved.
 
-"""Amazon Bedrock Knowledge Base retrieval tool for Agent Framework."""
+"""Amazon Bedrock Knowledge Base retrieval (internal tool + shared helpers).
+
+The public entry point is ``BedrockKnowledgeBaseProvider`` (see
+``_knowledge_base_provider.py``). ``BedrockKnowledgeBaseTool`` here is an internal
+``FunctionTool`` the provider exposes when its ``mode`` includes tool use; it is not
+part of the public API.
+"""
 
 from __future__ import annotations
 
@@ -211,17 +216,86 @@ def _retrieve_standard_passages(
     ]
 
 
+def _retrieve_agentic_passages(
+    client: BaseClient,
+    knowledge_base_id: str,
+    query: str,
+    number_of_results: int,
+) -> list[_KnowledgeBasePassage]:
+    """Run ``AgenticRetrieveStream`` (query decomposition + managed reranking) and normalize.
+
+    Agentic results use a different schema than standard ``Retrieve``: they expose
+    ``content``/``metadata``/``sourceRetriever`` and carry no ``score`` or ``location``,
+    so the source URI comes from ``metadata._source_uri`` and ``score`` is ``0`` (managed
+    reranking orders results without exposing a numeric score). ``generateResponse`` is
+    disabled: callers want passages, not a service-generated answer.
+    """
+    response: dict[str, Any] = client.agentic_retrieve_stream(  # pyright: ignore[reportUnknownMemberType]
+        messages=[{"content": {"text": query}, "role": "user"}],
+        generateResponse=False,
+        retrievers=[
+            {
+                "configuration": {
+                    "knowledgeBase": {
+                        "knowledgeBaseId": knowledge_base_id,
+                        "retrievalOverrides": {"maxNumberOfResults": number_of_results},
+                    }
+                }
+            }
+        ],
+        agenticRetrieveConfiguration={
+            "foundationModelType": "MANAGED",
+            "rerankingModelType": "MANAGED",
+        },
+    )
+    passages: list[_KnowledgeBasePassage] = []
+    for event in response.get("stream", []):
+        result = event.get("result") if isinstance(event, dict) else None
+        if not result or "results" not in result:
+            continue
+        for r in result["results"]:
+            metadata = r.get("metadata", {}) or {}
+            passages.append(
+                _KnowledgeBasePassage(
+                    content=r.get("content", {}).get("text", ""),
+                    source=metadata.get("_source_uri", ""),
+                    score=0,
+                )
+            )
+    return passages
+
+
+def _retrieve_passages(
+    client: BaseClient,
+    knowledge_base_id: str,
+    query: str,
+    number_of_results: int,
+    *,
+    use_agentic_retrieval: bool,
+) -> list[_KnowledgeBasePassage]:
+    """Retrieve passages, using agentic retrieval when enabled and falling back to standard.
+
+    Shared by the tool and the provider so both consume the KB the same way. When
+    ``use_agentic_retrieval`` is set, ``AgenticRetrieveStream`` is tried first (query
+    decomposition + managed reranking); if it fails or returns nothing, this falls back
+    to the standard ``Retrieve`` API.
+    """
+    if use_agentic_retrieval:
+        try:
+            passages = _retrieve_agentic_passages(client, knowledge_base_id, query, number_of_results)
+            if passages:
+                return passages
+        except Exception as e:
+            logger.debug("Agentic retrieval failed, falling back to standard Retrieve: %s", e)
+    return _retrieve_standard_passages(client, knowledge_base_id, query, number_of_results)
+
+
 class BedrockKnowledgeBaseTool(FunctionTool):
-    """Tool that retrieves documents from Amazon Bedrock Knowledge Bases.
+    """Internal ``FunctionTool`` that retrieves documents from an Amazon Bedrock Knowledge Base.
 
-    Subclasses FunctionTool so it can be passed directly to any Agent or ChatClient.
-
-    Usage:
-        from agent_framework_bedrock import BedrockKnowledgeBaseTool, BedrockChatClient
-        from agent_framework import Agent
-
-        tool = BedrockKnowledgeBaseTool(knowledge_base_id="YOUR_KB_ID")
-        agent = Agent(client=BedrockChatClient(model="..."), tools=[tool])
+    Not part of the public API. ``BedrockKnowledgeBaseProvider`` constructs and exposes
+    this tool when its ``mode`` includes tool use (``"tool"`` or ``"both"``); it can also
+    be passed directly to an Agent's ``tools`` list internally.
     """
 
     def __init__(
@@ -300,7 +374,7 @@ class BedrockKnowledgeBaseTool(FunctionTool):
         )
 
     async def _retrieve(self, query: str) -> str:
-        """Retrieve documents from the knowledge base.
+        """Retrieve documents from the knowledge base and format them as text.
 
         Args:
             query: The search query.
@@ -309,77 +383,25 @@ class BedrockKnowledgeBaseTool(FunctionTool):
             Formatted string of retrieval results.
         """
         mark_feature_used(FeatureIndex.BEDROCK)
-
-        if self.use_agentic_retrieval:
-            try:
-                results = await asyncio.to_thread(self._agentic_retrieve, query)
-                if results:
-                    return self._format_results(results)
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:
-                logger.debug("Agentic retrieval failed, falling back: %s", e)
-
-        results = await asyncio.to_thread(self._standard_retrieve, query)
-        return self._format_results(results)
-
-    def _agentic_retrieve(self, query: str) -> list[dict[str, Any]]:
-        """Use AgenticRetrieveStream for query decomposition + managed reranking."""
-        response: dict[str, Any] = self._client.agentic_retrieve_stream(  # pyright: ignore[reportUnknownMemberType]
-            messages=[{"content": {"text": query}, "role": "user"}],
-            # This tool returns retrieval passages only; the agent's own model
-            # generates the final answer. AgenticRetrieveStream defaults to
-            # generating a response (streamed responseEvents we would discard),
-            # so disable it explicitly to avoid unnecessary generation latency/cost.
-            generateResponse=False,
-            retrievers=[
-                {
-                    "configuration": {
-                        "knowledgeBase": {
-                            "knowledgeBaseId": self.knowledge_base_id,
-                            "retrievalOverrides": {"maxNumberOfResults": self.number_of_results},
-                        }
-                    }
-                }
-            ],
-            agenticRetrieveConfiguration={
-                "foundationModelType": "MANAGED",
-                "rerankingModelType": "MANAGED",
-            },
+        passages = await asyncio.to_thread(
+            _retrieve_passages,
+            self._client,
+            self.knowledge_base_id,
+            query,
+            self.number_of_results,
+            use_agentic_retrieval=self.use_agentic_retrieval,
         )
-        results: list[dict[str, Any]] = []
-        for event in response.get("stream", []):
-            if "result" in event and "results" in event["result"]:
-                for r in event["result"]["results"]:
-                    # AgenticRetrieveStream results use a different schema than standard
-                    # Retrieve: they expose `content`/`metadata`/`sourceRetriever` and do
-                    # NOT include `score` or `location`. The source URI lives in metadata,
-                    # and managed reranking orders results without exposing a numeric score.
-                    metadata = r.get("metadata", {}) or {}
-                    results.append({
-                        "content": r.get("content", {}).get("text", ""),
-                        "source": metadata.get("_source_uri", ""),
-                        "score": None,
-                    })
-        return results
-
-    def _standard_retrieve(self, query: str) -> list[dict[str, Any]]:
-        """Use standard Retrieve API with managed search configuration."""
-        passages = _retrieve_standard_passages(self._client, self.knowledge_base_id, query, self.number_of_results)
-        return [{"content": p.content, "source": p.source, "score": p.score} for p in passages]
+        return self._format_results(passages)
 
     @staticmethod
-    def _format_results(results: list[dict[str, Any]]) -> str:
-        """Format retrieval results as a readable string."""
-        if not results:
+    def _format_results(passages: list[_KnowledgeBasePassage]) -> str:
+        """Format retrieval passages as a readable string."""
+        if not passages:
             return "No relevant documents found."
         parts = []
-        for i, r in enumerate(results, 1):
-            source = r.get("source", "")
-            content = r.get("content", "")
-            score = r.get("score")
+        for i, p in enumerate(passages, 1):
             # Standard Retrieve results carry a numeric relevance score; agentic
-            # (managed reranking) results do not, so only render it when present.
-            header = f"[{i}] (score: {score:.3f})" if isinstance(score, (int, float)) else f"[{i}]"
-            parts.append(f"{header} {content}\n    Source: {source}")
+            # (managed reranking) results do not, so only render it when present (> 0).
+            header = f"[{i}] (score: {p.score:.3f})" if p.score else f"[{i}]"
+            parts.append(f"{header} {p.content}\n    Source: {p.source}")
         return "\n\n".join(parts)

@@ -1,21 +1,21 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-import os
 
 from agent_framework import Agent
-from agent_framework.amazon import BedrockChatClient, BedrockChatOptions, BedrockKnowledgeBaseTool
+from agent_framework.amazon import BedrockChatClient, BedrockChatOptions, BedrockKnowledgeBaseProvider
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv()
 
 """
-Bedrock Knowledge Base Tool Example
+Bedrock Knowledge Base — tool mode
 
-This sample demonstrates using `BedrockKnowledgeBaseTool` with an `Agent`. The tool subclasses
-`FunctionTool` and can be passed directly to any Agent or ChatClient; the agent decides when to
-call it to retrieve context from an Amazon Bedrock managed Knowledge Base.
+`BedrockKnowledgeBaseProvider` is the single entry point for using an Amazon Bedrock managed
+Knowledge Base with an agent. With `mode="tool"`, it exposes a Knowledge Base *search tool* the
+model can call on demand (rather than injecting context on every turn). The same provider also
+supports `mode="inject"` and `mode="both"` (the default).
 
 Environment variables used:
 - `BEDROCK_CHAT_MODEL`
@@ -32,27 +32,26 @@ README for the exact policy.
 
 
 async def main() -> None:
-    """Run a Bedrock-backed agent that can query a managed Knowledge Base on demand."""
-    # 1. Create the Knowledge Base tool — subclasses FunctionTool, pass directly to Agent.
-    #    Use the same region as BedrockChatClient (BEDROCK_REGION), so the KB and the model
-    #    are queried in the same region.
-    kb_tool = BedrockKnowledgeBaseTool(
+    """Run a Bedrock-backed agent that can query a managed Knowledge Base on demand (tool mode)."""
+    # 1. Create the provider in tool mode — it exposes a KB search tool the model calls when
+    #    it needs context. Region/credentials resolve from BEDROCK_* (same as BedrockChatClient).
+    kb_provider = BedrockKnowledgeBaseProvider(
         knowledge_base_id="YOUR_KB_ID",  # Replace with your managed KB ID
-        region_name=os.environ.get("BEDROCK_REGION", "us-east-1"),
+        mode="tool",
         number_of_results=5,
-        use_agentic_retrieval=True,  # Uses query decomposition + managed reranking
+        use_agentic_retrieval=True,  # Query decomposition + managed reranking, with fallback
     )
 
-    # 2. Create an agent with the KB tool — the agent calls it when it needs context.
+    # 2. Attach the provider — in tool mode it adds the KB search tool for each run.
     agent = Agent(
         client=BedrockChatClient(),
         name="KnowledgeAssistant",
         instructions="You are a helpful assistant. Use the knowledge base tool to answer questions about the company.",
-        tools=[kb_tool],  # FunctionTool subclass, works with any ChatClient
+        context_providers=[kb_provider],
         default_options=BedrockChatOptions(tool_choice="auto"),
     )
 
-    # 3. Run a query that uses the KB tool.
+    # 3. Run a query — the model calls the KB search tool when it needs context.
     query = "What is our return policy for electronics?"
     print(f"User: {query}")
     response = await agent.run(query)
@@ -69,12 +68,12 @@ packaging and undamaged. Opened software and consumables are non-refundable.
 ============================================================
 
 Notes:
-- With use_agentic_retrieval=True, the tool calls AgenticRetrieveStream, which
-  decomposes the query, retrieves per sub-query, and applies managed reranking;
-  results carry no numeric relevance score.
-- If the agentic call is not authorized (see the IAM policy in README.md), the
-  tool logs a debug message and falls back to a single-pass Retrieve, whose
-  results do carry a numeric score.
+- mode="tool" exposes a KB search tool rather than injecting context every turn;
+  the model decides when to call it. Use mode="inject" for always-on context, or
+  mode="both" (the default) for both.
+- With use_agentic_retrieval=True the search uses AgenticRetrieveStream (query
+  decomposition + managed reranking) and falls back to single-pass Retrieve if the
+  agentic call is unavailable.
 """
 
 

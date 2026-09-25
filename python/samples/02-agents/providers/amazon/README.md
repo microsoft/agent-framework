@@ -9,13 +9,16 @@ uses `BEDROCK_CHAT_MODEL`, `BEDROCK_REGION`, and AWS credentials (`AWS_ACCESS_KE
 | File | Description |
 |------|-------------|
 | [`bedrock_chat_client.py`](bedrock_chat_client.py) | Uses `BedrockChatClient` with a simple tool-enabled `Agent` to demonstrate direct Bedrock chat integration. |
-| [`bedrock_kb_tool.py`](bedrock_kb_tool.py) | Uses `BedrockKnowledgeBaseTool` as a `FunctionTool` — the agent calls it on demand to retrieve context from an Amazon Bedrock managed Knowledge Base. |
-| [`bedrock_kb_context_provider.py`](bedrock_kb_context_provider.py) | Uses `BedrockKnowledgeBaseProvider` as a `ContextProvider` — automatically injects KB context before every agent invocation. |
+| [`bedrock_kb_tool.py`](bedrock_kb_tool.py) | `BedrockKnowledgeBaseProvider` in **tool mode** (`mode="tool"`) — exposes a KB search tool the model calls on demand. |
+| [`bedrock_kb_context_provider.py`](bedrock_kb_context_provider.py) | `BedrockKnowledgeBaseProvider` in **inject mode** (`mode="inject"`) — automatically injects KB context before every agent invocation. |
 
-### When to use the KB tool vs. the KB context provider
+### Choosing a mode
 
-- **Tool pattern** (`BedrockKnowledgeBaseTool`): when the agent should decide *when* to search the KB. Best for multi-tool agents where KB retrieval is one of several capabilities.
-- **Provider pattern** (`BedrockKnowledgeBaseProvider`): when KB context should *always* be available. Best for single-purpose assistants that always need domain knowledge.
+`BedrockKnowledgeBaseProvider` is the single entry point for using an Amazon Bedrock managed Knowledge Base with an agent. Pick a `mode`:
+
+- **`"inject"`**: KB context is retrieved and injected before every run. Best for single-purpose assistants that always need domain knowledge.
+- **`"tool"`**: a KB search tool is exposed and the model decides *when* to search. Best for multi-tool agents where KB retrieval is one of several capabilities.
+- **`"both"`** (default): does both.
 
 ## Environment Variables
 
