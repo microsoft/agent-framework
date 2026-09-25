@@ -11,6 +11,7 @@ import logging
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, overload
 
 import pytest
@@ -20,6 +21,7 @@ from agent_framework import (
     CheckpointStorage,
     Content,
     ExperimentalFeature,
+    FileCheckpointStorage,
     FunctionalWorkflow,
     FunctionalWorkflowAgent,
     FunctionalWorkflowDefinition,
@@ -27,6 +29,7 @@ from agent_framework import (
     RunContext,
     StepWrapper,
     SupportsAgentRun,
+    WorkflowCheckpoint,
     WorkflowEvent,
     WorkflowEventSource,
     WorkflowRunResult,
@@ -70,6 +73,103 @@ def built_workflow(
         return workflow(name=name, description=description)(fn).build(checkpoint_storage=checkpoint_storage)
 
     return decorate(func) if func is not None else decorate
+
+
+class _YieldingCheckpointStorage(InMemoryCheckpointStorage):
+    """Checkpoint storage whose ``save()`` yields to the event loop.
+
+    Real backends (files, databases) suspend while persisting, which lets two concurrent
+    checkpoint saves interleave.  The plain in-memory implementation never suspends, so it
+    cannot exercise the race the parallel-checkpoint lineage tests guard against.  Yielding
+    here reproduces that interleaving deterministically.
+    """
+
+    async def save(self, checkpoint: WorkflowCheckpoint) -> str:
+        await asyncio.sleep(0)
+        return await super().save(checkpoint)
+
+
+def _assert_single_checkpoint_chain(checkpoints: list[WorkflowCheckpoint]) -> None:
+    """Assert ``checkpoints`` form one unbranched chain.
+
+    Reachability is walked from the tip rather than from ``get_latest()``: that call picks
+    by timestamp, and platforms with a coarser clock (Windows) give consecutive saves the
+    same timestamp, where it returns an arbitrary member of the chain instead of the tip.
+    """
+    by_id = {checkpoint.checkpoint_id: checkpoint for checkpoint in checkpoints}
+
+    roots = [checkpoint for checkpoint in checkpoints if checkpoint.previous_checkpoint_id is None]
+    assert len(roots) == 1
+
+    for checkpoint in checkpoints:
+        if checkpoint.previous_checkpoint_id is not None:
+            assert checkpoint.previous_checkpoint_id in by_id
+
+    linked_parents = {
+        checkpoint.previous_checkpoint_id for checkpoint in checkpoints if checkpoint.previous_checkpoint_id
+    }
+    tips = [checkpoint for checkpoint in checkpoints if checkpoint.checkpoint_id not in linked_parents]
+    assert len(tips) == 1
+
+    reachable: set[str] = set()
+    cursor: WorkflowCheckpoint | None = tips[0]
+    while cursor is not None:
+        reachable.add(cursor.checkpoint_id)
+        cursor = by_id.get(cursor.previous_checkpoint_id) if cursor.previous_checkpoint_id else None
+    assert reachable == set(by_id)
+
+
+def _checkpoint_tip(checkpoints: list[WorkflowCheckpoint]) -> WorkflowCheckpoint:
+    """Return the checkpoint no other checkpoint links to."""
+    linked_parents = {
+        checkpoint.previous_checkpoint_id for checkpoint in checkpoints if checkpoint.previous_checkpoint_id
+    }
+    tips = [checkpoint for checkpoint in checkpoints if checkpoint.checkpoint_id not in linked_parents]
+    assert len(tips) == 1
+    return tips[0]
+
+
+class _GatedCheckpointStorage(InMemoryCheckpointStorage):
+    """Checkpoint storage that can hold one ``save()`` open until it is released.
+
+    Models a backend that suspends inside ``save()`` long enough for the run to unwind
+    while the save is still in flight.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.gate = asyncio.Event()
+        self.in_flight = asyncio.Event()
+        self.hold_at: int | None = None
+        self._saves = 0
+
+    async def save(self, checkpoint: WorkflowCheckpoint) -> str:
+        self._saves += 1
+        if self.hold_at is not None and self._saves == self.hold_at:
+            self.in_flight.set()
+            await self.gate.wait()
+        return await super().save(checkpoint)
+
+
+class _GatedLoadCheckpointStorage(InMemoryCheckpointStorage):
+    """Checkpoint storage that can hold the next ``load()`` open until it is released.
+
+    Models a backend that suspends while reading a checkpoint, which is what the run
+    preamble awaits before the run itself starts.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.hold_next_load = False
+        self.load_started = asyncio.Event()
+        self.load_gate = asyncio.Event()
+
+    async def load(self, checkpoint_id: str) -> WorkflowCheckpoint:
+        if self.hold_next_load:
+            self.hold_next_load = False
+            self.load_started.set()
+            await self.load_gate.wait()
+        return await super().load(checkpoint_id)
 
 
 @step
@@ -903,6 +1003,367 @@ class TestCheckpointing:
         # 3 per-step checkpoints + 1 final = 4
         checkpoints = await storage.list_checkpoints(workflow_name="multi_step_wf")
         assert len(checkpoints) == 4
+
+    async def test_parallel_steps_keep_single_checkpoint_lineage(self):
+        """Concurrent step completions must not fork the checkpoint chain.
+
+        ``asyncio.gather`` lets two steps complete around the same time.  Each completion
+        saves a checkpoint, so both can read the same ``previous_checkpoint_id`` before
+        either writes the updated chain head back.  That creates sibling root checkpoints
+        and leaves part of the history unreachable from the latest checkpoint.
+        """
+        storage = _YieldingCheckpointStorage()
+
+        @step
+        async def left(value: int) -> int:
+            return value + 1
+
+        @step
+        async def right(value: int) -> int:
+            return value + 2
+
+        @built_workflow(checkpoint_storage=storage)
+        async def parallel(value: int) -> list[int]:
+            left_result, right_result = await asyncio.gather(left(value), right(value))
+            return [left_result, right_result]
+
+        result = await parallel.run(1)
+        assert result.get_outputs() == [[2, 3]]
+
+        checkpoints = await storage.list_checkpoints(workflow_name="parallel")
+        # Two per-step saves plus the final save.
+        assert len(checkpoints) == 3
+
+        # One unbranched chain: the head is read and updated under the lineage lock.
+        _assert_single_checkpoint_chain(checkpoints)
+
+    async def test_request_info_retires_orphaned_step_checkpoints(self):
+        """A step left running by a HITL interruption must not checkpoint after the run.
+
+        ``asyncio.gather`` does not cancel its remaining awaitables when one of them raises,
+        so a sibling step keeps running after ``request_info()`` interrupts the run.  That
+        step belongs to a run whose closing checkpoint has already been written, and its
+        result is never delivered anywhere, so it must not add another checkpoint.
+        """
+        storage = _YieldingCheckpointStorage()
+        gate = asyncio.Event()
+        peer_done = asyncio.Event()
+
+        @step
+        async def ask_human(doc: str, ctx: RunContext) -> str:
+            return await ctx.request_info({"draft": doc}, response_type=str, request_id="req1")
+
+        @step
+        async def slow_peer(doc: str) -> str:
+            await gate.wait()
+            peer_done.set()
+            return doc.upper()
+
+        @built_workflow(checkpoint_storage=storage)
+        async def hitl_parallel(doc: str) -> list[str]:
+            answer, peer = await asyncio.gather(ask_human(doc), slow_peer(doc))
+            return [answer, peer]
+
+        result = await hitl_parallel.run("hello")
+        assert result.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
+        # Only the HITL checkpoint exists while the sibling step is still gated.
+        assert len(await storage.list_checkpoints(workflow_name="hitl_parallel")) == 1
+
+        # Release the sibling step and let its completion path run to the end.
+        gate.set()
+        await peer_done.wait()
+        for _ in range(20):
+            await asyncio.sleep(0)
+
+        checkpoints = await storage.list_checkpoints(workflow_name="hitl_parallel")
+        assert len(checkpoints) == 1
+        _assert_single_checkpoint_chain(checkpoints)
+
+    async def test_resume_after_request_info_keeps_single_checkpoint_lineage(self):
+        """Resuming from a HITL checkpoint must not race a still-running sibling step.
+
+        The interrupted run leaves an ``asyncio.gather`` sibling alive.  If that orphan is
+        allowed to save after a resumed run has already chained new checkpoints onto the
+        HITL checkpoint, both link to the same parent and the lineage forks even though the
+        number of roots stays at one.
+        """
+        storage = _YieldingCheckpointStorage()
+        gate = asyncio.Event()
+        peer_done = asyncio.Event()
+        peer_calls = 0
+
+        @step
+        async def ask_human(doc: str, ctx: RunContext) -> str:
+            return await ctx.request_info({"draft": doc}, response_type=str, request_id="req1")
+
+        @step
+        async def slow_peer(doc: str) -> str:
+            nonlocal peer_calls
+            peer_calls += 1
+            if peer_calls == 1:
+                # Only the interrupted run's invocation blocks, so it is still alive when
+                # the resumed run starts.
+                await gate.wait()
+                peer_done.set()
+            return doc.upper()
+
+        @built_workflow(checkpoint_storage=storage)
+        async def hitl_parallel(doc: str) -> list[str]:
+            answer, peer = await asyncio.gather(ask_human(doc), slow_peer(doc))
+            return [answer, peer]
+
+        paused = await hitl_parallel.run("hello")
+        assert paused.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
+        checkpoints = await storage.list_checkpoints(workflow_name="hitl_parallel")
+        assert len(checkpoints) == 1
+        hitl_checkpoint_id = checkpoints[0].checkpoint_id
+
+        # Resume from the HITL checkpoint while the orphan from the first run is blocked.
+        resumed = await hitl_parallel.run(checkpoint_id=hitl_checkpoint_id, responses={"req1": "answer"})
+        assert resumed.get_outputs() == [["answer", "HELLO"]]
+        assert peer_calls == 2
+
+        # Release the orphan, then let its completion path run to the end.
+        gate.set()
+        await peer_done.wait()
+        for _ in range(20):
+            await asyncio.sleep(0)
+
+        checkpoints = await storage.list_checkpoints(workflow_name="hitl_parallel")
+        # One unbranched chain: the orphan did not link to the HITL checkpoint alongside
+        # the chain the resumed run built on top of it.
+        _assert_single_checkpoint_chain(checkpoints)
+
+    @pytest.mark.parametrize("cancel_count", [0, 1, 2])
+    async def test_run_guard_waits_for_in_flight_checkpoint_save(self, cancel_count: int) -> None:
+        """A restore must not start while a checkpoint save from the previous run is in flight.
+
+        A per-step callback can already be inside ``storage.save()`` when the run fails.
+        Retiring the callback only stops saves that have not started yet, so the run guard
+        must not be released until that save has drained.  Otherwise the restored run chains
+        onto the same parent and the lineage forks a second child off it.
+        """
+        storage = _GatedCheckpointStorage()
+        storage.hold_at = 2  # hold the save for the step that completes alongside the failure
+        attempts: list[int] = []
+
+        @step
+        async def first(x: int) -> int:
+            return x + 1
+
+        @step
+        async def ok(x: int) -> int:
+            return x * 2
+
+        @step
+        async def boom(x: int) -> int:
+            attempts.append(x)
+            if len(attempts) == 1:
+                raise RuntimeError("boom")
+            return x + 100
+
+        @built_workflow(checkpoint_storage=storage)
+        async def failing_wf(x: int) -> int:
+            a = await first(x)
+            results = await asyncio.gather(ok(a), boom(a))
+            return sum(results)
+
+        async def drive_failing_run() -> None:
+            await failing_wf.run(1)
+
+        run = asyncio.create_task(drive_failing_run())
+        try:
+            await asyncio.wait_for(storage.in_flight.wait(), timeout=5)
+            for _ in range(20):
+                await asyncio.sleep(0)
+
+            # The run cannot have finished while its save is still in flight, so the guard
+            # is still held and a restore must be rejected.
+            assert not run.done()
+            checkpoints = await storage.list_checkpoints(workflow_name="failing_wf")
+            with pytest.raises(RuntimeError, match="already running"):
+                failing_wf.run(checkpoint_id=checkpoints[0].checkpoint_id)
+            for _ in range(cancel_count):
+                run.cancel()
+                for _ in range(20):
+                    await asyncio.sleep(0)
+                assert not run.done()
+                with pytest.raises(RuntimeError, match="already running"):
+                    failing_wf.run(checkpoint_id=checkpoints[0].checkpoint_id)
+        finally:
+            storage.gate.set()
+            # Always retrieve the exception, including when an assertion fails.
+            outcome = (await asyncio.gather(run, return_exceptions=True))[0]
+
+        if cancel_count:
+            assert isinstance(outcome, asyncio.CancelledError)
+        else:
+            assert isinstance(outcome, RuntimeError)
+            assert str(outcome) == "boom"
+
+        # Resuming from the run's tip extends one chain instead of forking off the parent.
+        checkpoints = await storage.list_checkpoints(workflow_name="failing_wf")
+        resumed = await failing_wf.run(checkpoint_id=_checkpoint_tip(checkpoints).checkpoint_id)
+        assert resumed.get_outputs() == [106]
+
+        checkpoints = await storage.list_checkpoints(workflow_name="failing_wf")
+        _assert_single_checkpoint_chain(checkpoints)
+
+    async def test_response_only_resume_keeps_single_checkpoint_lineage(self):
+        """Resuming with responses only must continue the chain, not start a second root.
+
+        ``run(responses=...)`` without ``checkpoint_id`` rebuilds the run from the replay
+        cache rather than from a checkpoint, so the resumed run has to seed its chain from
+        the checkpoint the paused cycle wrote.  Otherwise the resumed checkpoints form a
+        second root and the paused checkpoint is unreachable from the resumed tip.
+        """
+        storage = InMemoryCheckpointStorage()
+
+        @step
+        async def ask_human(doc: str, ctx: RunContext) -> str:
+            return await ctx.request_info({"draft": doc}, response_type=str, request_id="req1")
+
+        @step
+        async def polish(doc: str) -> str:
+            return doc.upper()
+
+        @built_workflow(checkpoint_storage=storage)
+        async def review_wf(doc: str) -> str:
+            answer = await ask_human(doc)
+            polished = await polish(doc)
+            return f"{answer}:{polished}"
+
+        paused = await review_wf.run("hello")
+        assert paused.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
+        assert len(await storage.list_checkpoints(workflow_name="review_wf")) == 1
+
+        # Response-only replay: no checkpoint_id is passed.
+        resumed = await review_wf.run(responses={"req1": "answer"})
+        assert resumed.get_outputs() == ["answer:HELLO"]
+
+        checkpoints = await storage.list_checkpoints(workflow_name="review_wf")
+        _assert_single_checkpoint_chain(checkpoints)
+
+    @pytest.mark.parametrize("delete_parent", [False, True])
+    async def test_response_only_resume_without_parent_starts_new_lineage(self, delete_parent: bool) -> None:
+        """Resuming must not link to a checkpoint the target storage no longer holds.
+
+        ``checkpoint_storage`` can be overridden per run, so the checkpoint a cycle paused at
+        may live in a backend the resumed run does not write to.  Linking across them would
+        leave a ``previous_checkpoint_id`` that never resolves in the storage that holds it.
+        """
+        storage_a = InMemoryCheckpointStorage()
+        storage_b = storage_a if delete_parent else InMemoryCheckpointStorage()
+
+        @step
+        async def ask_human(doc: str, ctx: RunContext) -> str:
+            return await ctx.request_info({"draft": doc}, response_type=str, request_id="req1")
+
+        @step
+        async def polish(doc: str) -> str:
+            return doc.upper()
+
+        @built_workflow(checkpoint_storage=storage_a)
+        async def review_wf(doc: str) -> str:
+            answer = await ask_human(doc)
+            polished = await polish(doc)
+            return f"{answer}:{polished}"
+
+        paused = await review_wf.run("hello")
+        assert paused.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
+        assert len(await storage_a.list_checkpoints(workflow_name="review_wf")) == 1
+        if delete_parent:
+            checkpoints = await storage_a.list_checkpoints(workflow_name="review_wf")
+            assert await storage_a.delete(checkpoints[0].checkpoint_id)
+
+        # The target storage either never held the paused checkpoint or has deleted it.
+        resumed = await review_wf.run(responses={"req1": "answer"}, checkpoint_storage=storage_b)
+        assert resumed.get_outputs() == ["answer:HELLO"]
+
+        # Every parent of every checkpoint in B resolves inside B, so the lineage is sound.
+        _assert_single_checkpoint_chain(await storage_b.list_checkpoints(workflow_name="review_wf"))
+        if not delete_parent:
+            # A is untouched by the resumed run into B.
+            assert len(await storage_a.list_checkpoints(workflow_name="review_wf")) == 1
+
+    async def test_response_only_resume_links_across_storage_instances(self, tmp_path: Path) -> None:
+        """Two instances of one backend still share a lineage; only the object differs.
+
+        The storage association is validated by reading the checkpoint back rather than by
+        object identity, so a fresh handle on the same backend keeps the chain intact.
+        """
+        builder = FileCheckpointStorage(tmp_path)
+
+        @step
+        async def ask_human(doc: str, ctx: RunContext) -> str:
+            return await ctx.request_info({"draft": doc}, response_type=str, request_id="req1")
+
+        @step
+        async def polish(doc: str) -> str:
+            return doc.upper()
+
+        @built_workflow(checkpoint_storage=builder)
+        async def review_wf(doc: str) -> str:
+            answer = await ask_human(doc)
+            polished = await polish(doc)
+            return f"{answer}:{polished}"
+
+        paused = await review_wf.run("hello")
+        assert paused.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
+
+        # A different instance pointed at the same directory holds the paused checkpoint.
+        resumed = await review_wf.run(responses={"req1": "answer"}, checkpoint_storage=FileCheckpointStorage(tmp_path))
+        assert resumed.get_outputs() == ["answer:HELLO"]
+
+        checkpoints = await FileCheckpointStorage(tmp_path).list_checkpoints(workflow_name="review_wf")
+        # A single root proves the resumed run linked to the paused checkpoint: had the
+        # fresh instance been treated as a different backend, the resume would start a root.
+        assert len(checkpoints) == 4
+        _assert_single_checkpoint_chain(checkpoints)
+
+    async def test_cancelled_resume_releases_the_run_guard(self):
+        """A resume cancelled while validating lineage must not latch the run guard.
+
+        The guard is taken before the run starts, and the preamble awaits checkpoint
+        storage to validate that the paused checkpoint belongs to the storage being
+        written to.  A cancellation inside that await used to skip the run guard
+        release entirely, so the workflow rejected every later run as already running.
+        """
+        storage = _GatedLoadCheckpointStorage()
+
+        @step
+        async def ask_human(doc: str, ctx: RunContext) -> str:
+            return await ctx.request_info({"draft": doc}, response_type=str, request_id="req1")
+
+        @built_workflow(checkpoint_storage=storage)
+        async def review_wf(doc: str) -> str:
+            return (await ask_human(doc)).upper()
+
+        paused = await review_wf.run("hello")
+        assert paused.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
+
+        # Validation also re-reads a checkpoint held by the same storage object.
+        storage.hold_next_load = True
+
+        async def drive_resume() -> None:
+            await review_wf.run(responses={"req1": "answer"})
+
+        resume = asyncio.create_task(drive_resume())
+        try:
+            await asyncio.wait_for(storage.load_started.wait(), timeout=5)
+            resume.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await resume
+        finally:
+            storage.load_gate.set()
+
+        # Before the fix the guard outlived the cancelled run and the next run was
+        # rejected as already running, so the workflow was unusable.
+        resumed = await review_wf.run(responses={"req1": "answer"})
+        assert resumed.get_outputs() == ["ANSWER"]
+
+        checkpoints = await storage.list_checkpoints(workflow_name="review_wf")
+        _assert_single_checkpoint_chain(checkpoints)
 
     async def test_no_checkpoint_on_cache_hit(self):
         """During replay, cached steps should NOT create additional checkpoints."""
