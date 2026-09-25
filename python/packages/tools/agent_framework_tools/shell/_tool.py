@@ -108,8 +108,9 @@ class LocalShellTool:
             ``cd``-wandering in one call does not leak to the next. This is
             a **re-anchor**, not a hard confinement — a command that does
             ``cd /tmp && rm -rf .`` in one call can still touch ``/tmp``.
-            Use :class:`ShellPolicy` or a sandboxed executor for true
-            confinement.
+            :class:`ShellPolicy` only filters command text; it does not
+            restrict file access. Use an executor with separately enforced
+            isolation and restricted permissions to limit access.
         env: Seed environment. In stateless mode this replaces the child's
             environment unless ``clean_env=False``. In persistent mode the
             variables are exported before the session is used.
