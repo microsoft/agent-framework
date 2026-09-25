@@ -2603,7 +2603,8 @@ class TestWorkflowAgentToolApproval:
 
         @executor
         async def mixed_agent_response_executor(
-            messages: list[Message], ctx: WorkflowContext[Never, AgentResponse]
+            messages: list[Message],
+            ctx: WorkflowContext[Never, AgentResponse],  # type: ignore[valid-type]
         ) -> None:
             response = AgentResponse(
                 messages=[
@@ -2639,7 +2640,10 @@ class TestWorkflowAgentToolApproval:
         """Verify WorkflowAgent filters user, system, and tool messages from list[Message]."""
 
         @executor
-        async def mixed_list_executor(messages: list[Message], ctx: WorkflowContext[Never, list[Message]]) -> None:
+        async def mixed_list_executor(
+            messages: list[Message],
+            ctx: WorkflowContext[Never, list[Message]],  # type: ignore[valid-type]
+        ) -> None:
             await ctx.yield_output([
                 Message(role="user", contents=["what is 2+2?"]),
                 Message(role="assistant", contents=["4"], author_name="Maths"),
@@ -2677,7 +2681,10 @@ class TestWorkflowAgentToolApproval:
         """Verify WorkflowAgent filters a single Message when role is not assistant."""
 
         @executor
-        async def user_message_executor(messages: list[Message], ctx: WorkflowContext[Never, Message]) -> None:
+        async def user_message_executor(
+            messages: list[Message],
+            ctx: WorkflowContext[Never, Message],  # type: ignore[valid-type]
+        ) -> None:
             await ctx.yield_output(Message(role="user", contents=["echoed user message"]))
 
         workflow = WorkflowBuilder(start_executor=user_message_executor).build()
@@ -2698,7 +2705,8 @@ class TestWorkflowAgentToolApproval:
 
         @executor
         async def update_yielding_executor(
-            messages: list[Message], ctx: WorkflowContext[Never, AgentResponseUpdate]
+            messages: list[Message],
+            ctx: WorkflowContext[Never, AgentResponseUpdate],  # type: ignore[valid-type]
         ) -> None:
             await ctx.yield_output(AgentResponseUpdate(contents=[Content.from_text(text="echo")], role="user"))
             await ctx.yield_output(AgentResponseUpdate(contents=[Content.from_text(text="answer")], role="assistant"))
@@ -2719,7 +2727,8 @@ class TestWorkflowAgentToolApproval:
 
         @executor
         async def non_assistant_only_executor(
-            messages: list[Message], ctx: WorkflowContext[Never, AgentResponse]
+            messages: list[Message],
+            ctx: WorkflowContext[Never, AgentResponse],  # type: ignore[valid-type]
         ) -> None:
             response = AgentResponse(
                 messages=[
@@ -2735,7 +2744,7 @@ class TestWorkflowAgentToolApproval:
 
         result = await agent.run("test")
         assert len(result.messages) == 0
-        assert len(result.raw_representation) == 0
+        assert not result.raw_representation
 
     async def test_workflow_as_agent_multi_turn_user_input_not_compounded(self) -> None:
         """Verify user messages in conversation history do not compound into responses across turns."""
@@ -2745,7 +2754,7 @@ class TestWorkflowAgentToolApproval:
             async def handle_messages(
                 self,
                 messages: list[Message],
-                ctx: WorkflowContext[Never, AgentResponse],
+                ctx: WorkflowContext[Never, AgentResponse],  # type: ignore[valid-type]
             ) -> None:
                 user_text = messages[-1].text or ""
                 # Simulates orchestrators that include full conversation history in output
