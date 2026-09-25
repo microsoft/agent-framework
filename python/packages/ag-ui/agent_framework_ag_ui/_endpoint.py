@@ -354,19 +354,15 @@ def add_agent_framework_fastapi_endpoint(
 
                 async def produce_events() -> None:
                     try:
+                        try:
+                            await asyncio.wait_for(
+                                reader_started.wait(),
+                                timeout=_DETACHED_READER_START_TIMEOUT_SECONDS,
+                            )
+                        except asyncio.TimeoutError:
+                            reader_abandoned.set()
                         async for frame in event_generator():
                             if reader_abandoned.is_set():
-                                continue
-                            if not reader_started.is_set():
-                                try:
-                                    queue.put_nowait(frame)
-                                except asyncio.QueueFull:
-                                    reader_abandoned.set()
-                                    while True:
-                                        try:
-                                            queue.get_nowait()
-                                        except asyncio.QueueEmpty:
-                                            break
                                 continue
                             await queue.put(frame)
                     except asyncio.CancelledError:
@@ -376,7 +372,7 @@ def add_agent_framework_fastapi_endpoint(
                         current_task = asyncio.current_task()
                         if active_run_key is not None and active_runs.get(active_run_key) is current_task:
                             active_runs.pop(active_run_key, None)
-                        if reader_started.is_set() or not reader_abandoned.is_set():
+                        if reader_started.is_set():
                             await queue.put(None)
 
                 producer_task = asyncio.create_task(
@@ -390,14 +386,6 @@ def add_agent_framework_fastapi_endpoint(
                 retain_background_task(producer_task)
 
                 async def expire_abandoned_run() -> None:
-                    if not reader_started.is_set():
-                        try:
-                            await asyncio.wait_for(
-                                reader_started.wait(),
-                                timeout=_DETACHED_READER_START_TIMEOUT_SECONDS,
-                            )
-                        except asyncio.TimeoutError:
-                            reader_abandoned.set()
                     if producer_task.done():
                         return
                     if not reader_abandoned.is_set():

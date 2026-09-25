@@ -389,12 +389,12 @@ add_agent_framework_fastapi_endpoint(
 )
 ```
 
-Configured stateless agent snapshot stores are updated after finalized model roundtrips, function/MCP tool-result
-batches, and approval safe points, then written once more with the terminal run state. This limits progress loss during
-long agent runs without persisting every streaming text delta. Service-session snapshots retain terminal-save cadence
-so replayable messages cannot advance without their matching provider continuation state. Workflow Thread Snapshots
-also keep their terminal-save cadence; workflow checkpointing remains the mechanism for incremental workflow runtime
-state.
+Configured stateless agent snapshot stores are updated after function/MCP tool-result batches and approval safe points,
+then written once more with the terminal run state. These boundaries capture completed model/tool rounds without
+persisting model output whose stream finalizer may still reject it. Service-session snapshots retain terminal-save
+cadence so replayable messages cannot advance without their matching provider continuation state. Workflow Thread
+Snapshots also keep their terminal-save cadence; workflow checkpointing remains the mechanism for incremental workflow
+runtime state.
 
 A frontend can then hydrate the latest stored snapshot for the scoped thread:
 

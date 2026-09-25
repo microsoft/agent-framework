@@ -22,7 +22,7 @@ from ag_ui.core import (
     ToolCallStartEvent,
 )
 from agent_framework import AgentResponse, AgentResponseUpdate, Content, Message, ResponseStream
-from agent_framework.exceptions import AgentInvalidResponseException
+from agent_framework.exceptions import AgentInvalidResponseException, ResponseInvalidatedException
 from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
 
 from agent_framework_ag_ui._agent import AgentConfig
@@ -2900,79 +2900,81 @@ async def test_service_session_rejects_disabled_provider_storage():
         ]
 
 
-async def test_snapshot_is_saved_at_model_roundtrip_safe_point_before_run_completion():
-    """Model output is saved only after the stream advances through turn finalization."""
-    from agent_framework_ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
+@pytest.mark.parametrize("failure_mode", ["stream", "result_hook"])
+async def test_finish_reason_and_trailing_usage_do_not_persist_invalidated_model_output(
+    failure_mode: str,
+) -> None:
+    """A yielded finish reason is not durable until the run reaches a successful safe point."""
+    from agent_framework_ag_ui import AgentFrameworkAgent, AGUIThreadSnapshot, InMemoryAGUIThreadSnapshotStore
 
-    emit_next_update = asyncio.Event()
-    safe_point_saved = asyncio.Event()
-    finish_run = asyncio.Event()
-    turn_finalized = asyncio.Event()
-
-    class RecordingStore(InMemoryAGUIThreadSnapshotStore):
-        async def save(self, **kwargs: Any) -> None:
-            await super().save(**kwargs)
-            snapshot = kwargs["snapshot"]
-            if "round-one" in str(snapshot.messages):
-                safe_point_saved.set()
-
+    invalidated = ResponseInvalidatedException("provider invalidated partial response output")
+    function_call = Content.from_function_call(call_id="c1", name="lookup", arguments={})
     stub = StubAgent()
     original_run = stub.run
 
-    def blocking_run(*args: Any, **kwargs: Any) -> Any:
+    def invalidating_run(*args: Any, **kwargs: Any) -> Any:
         if not kwargs.get("stream", False):
             return original_run(*args, **kwargs)
-        session = kwargs["session"]
 
         async def updates():
             yield AgentResponseUpdate(
-                contents=[Content.from_text(text="round-one")],
+                contents=[function_call],
                 role="assistant",
-                finish_reason="stop",
+                finish_reason="tool_calls",
             )
-            session.state["turn_finalized"] = True
-            turn_finalized.set()
-            await emit_next_update.wait()
             yield AgentResponseUpdate(
-                contents=[Content.from_text(text="-round-two")],
+                contents=[
+                    Content.from_usage(
+                        {
+                            "input_token_count": 1,
+                            "output_token_count": 1,
+                            "total_token_count": 2,
+                        }
+                    )
+                ],
                 role="assistant",
             )
-            await finish_run.wait()
+            if failure_mode == "stream":
+                raise invalidated
 
-        return ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+        stream = ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+        if failure_mode == "result_hook":
 
-    stub.run = blocking_run  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
-    store = RecordingStore()
+            def invalidate_result(response: AgentResponse[Any]) -> None:
+                del response
+                raise invalidated
+
+            stream.with_result_hook(invalidate_result)
+        return stream
+
+    stub.run = invalidating_run  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+    store = InMemoryAGUIThreadSnapshotStore()
+    await store.save(
+        scope="tenant-a",
+        thread_id="invalidated-thread",
+        snapshot=AGUIThreadSnapshot(
+            messages=[{"id": "baseline", "role": "user", "content": "Persisted baseline"}],
+        ),
+    )
     agent = AgentFrameworkAgent(agent=stub, snapshot_store=store)
-    payload = {
-        "thread_id": "incremental-thread",
-        "run_id": "incremental-run",
-        "__ag_ui_snapshot_scope": "tenant-a",
-        "messages": [{"role": "user", "content": "Start"}],
-    }
 
-    async def collect_events() -> list[Any]:
-        return [event async for event in agent.run(payload)]
+    with pytest.raises(ResponseInvalidatedException, match="provider invalidated"):
+        _ = [
+            event
+            async for event in agent.run(
+                {
+                    "thread_id": "invalidated-thread",
+                    "run_id": f"invalidated-{failure_mode}",
+                    "__ag_ui_snapshot_scope": "tenant-a",
+                    "messages": [{"role": "user", "content": "Start"}],
+                }
+            )
+        ]
 
-    run_task = asyncio.create_task(collect_events())
-    await asyncio.wait_for(turn_finalized.wait(), timeout=5)
-    assert await store.get(scope="tenant-a", thread_id="incremental-thread") is None
-
-    emit_next_update.set()
-    await asyncio.wait_for(safe_point_saved.wait(), timeout=5)
-
-    safe_snapshot = await store.get(scope="tenant-a", thread_id="incremental-thread")
-    assert safe_snapshot is not None
-    assert "round-one" in str(safe_snapshot.messages)
-    assert "round-two" not in str(safe_snapshot.messages)
-    assert safe_snapshot.session_state == {"turn_finalized": True}
-
-    finish_run.set()
-    await asyncio.wait_for(run_task, timeout=5)
-
-    final_snapshot = await store.get(scope="tenant-a", thread_id="incremental-thread")
-    assert final_snapshot is not None
-    assert "round-one-round-two" in str(final_snapshot.messages)
+    snapshot = await store.get(scope="tenant-a", thread_id="invalidated-thread")
+    assert snapshot is not None
+    assert snapshot.messages == [{"id": "baseline", "role": "user", "content": "Persisted baseline"}]
+    assert "c1" not in str(snapshot.messages)
 
 
 async def test_snapshot_is_saved_after_tool_result_without_finish_reason():

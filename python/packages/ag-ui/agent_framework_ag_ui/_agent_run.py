@@ -3375,7 +3375,6 @@ async def _run_agent_stream(
     telemetry_context = partial(_use_telemetry_conversation_id, telemetry_conversation_id)
     stream_completed = False
     native_approval_flow_result_ids: set[int] = set()
-    pending_model_safe_point = False
     try:
         with telemetry_context():
             for queued_executions in forwarded_executions.values():
@@ -3387,13 +3386,6 @@ async def _run_agent_stream(
             stream = await _normalize_response_stream(response_stream)
 
         async for update in _iterate_with_context(stream, telemetry_context):
-            if snapshot_session.enabled and pending_model_safe_point and not config.use_service_session:
-                # Pulling the next update finalizes the preceding model turn and
-                # completes provider/context side effects before this snapshot.
-                await save_flow_snapshot()
-                pending_model_safe_point = False
-
-            model_safe_point = update.finish_reason is not None
             result_safe_point = False
 
             # Collect updates for structured output processing
@@ -3561,13 +3553,10 @@ async def _run_agent_stream(
             if (
                 snapshot_session.enabled
                 and result_safe_point
-                and not model_safe_point
                 and not flow.waiting_for_approval
                 and not config.use_service_session
             ):
                 await save_flow_snapshot()
-            if model_safe_point and not flow.waiting_for_approval and not config.use_service_session:
-                pending_model_safe_point = True
 
             # Stop if waiting for approval
             if flow.waiting_for_approval:

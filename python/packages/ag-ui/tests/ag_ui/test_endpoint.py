@@ -1453,6 +1453,52 @@ async def test_endpoint_keepalive_disabled_preserves_streaming_response_shape(st
     assert "RUN_FINISHED" in event_types
 
 
+@pytest.mark.parametrize("keepalive_seconds", [None, 15])
+async def test_endpoint_detached_fast_connected_producer_preserves_all_events(
+    keepalive_seconds: float | None,
+) -> None:
+    """A connected reader applies queue backpressure instead of being mistaken for a disconnect."""
+
+    class FastWorkflowRunner(AgentFrameworkWorkflow):
+        def __init__(self) -> None:
+            self.snapshot_store = None
+            self.checkpoint_storage = None
+
+        async def run(self, input_data: dict[str, Any]) -> AsyncGenerator[BaseEvent]:
+            run_id = str(input_data["run_id"])
+            thread_id = str(input_data["thread_id"])
+            yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+            for index in range(32):
+                yield StateSnapshotEvent(snapshot={"index": index})
+            yield RunFinishedEvent(run_id=run_id, thread_id=thread_id)
+
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        FastWorkflowRunner(),
+        path="/detached-fast-connected",
+        keepalive_seconds=keepalive_seconds,
+        detached_runs=True,
+    )
+
+    status_code, body = await _post_asgi_request(
+        app,
+        "/detached-fast-connected",
+        {
+            "runId": "fast-run",
+            "threadId": "fast-thread",
+            "messages": [{"role": "user", "content": "Start"}],
+        },
+    )
+
+    assert status_code == 200
+    events = [json.loads(line[6:]) for line in body.decode().splitlines() if line.startswith("data: ")]
+    assert len(events) == 34
+    assert events[0]["type"] == "RUN_STARTED"
+    assert [event["snapshot"]["index"] for event in events[1:-1]] == list(range(32))
+    assert events[-1]["type"] == "RUN_FINISHED"
+
+
 @pytest.mark.parametrize("keepalive_seconds", [None, 0.01])
 async def test_endpoint_detached_run_completes_and_saves_after_client_disconnect(
     streaming_chat_client_stub: Any,
@@ -1591,6 +1637,77 @@ async def test_endpoint_detached_run_completes_when_response_stream_never_starts
 
     assert snapshot is not None
     assert "chunk-31" in json.dumps(snapshot.messages)
+
+
+async def test_endpoint_exactly_full_unstarted_stream_releases_detached_capacity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Completion cannot block on a full queue when the response body never starts."""
+    import agent_framework_ag_ui._endpoint as endpoint_module
+
+    monkeypatch.setattr(endpoint_module, "_DETACHED_READER_START_TIMEOUT_SECONDS", 0.01)
+    first_completed = asyncio.Event()
+
+    class ExactCapacityWorkflowRunner(AgentFrameworkWorkflow):
+        def __init__(self) -> None:
+            self.snapshot_store = None
+            self.checkpoint_storage = None
+            self.run_count = 0
+
+        async def run(self, input_data: dict[str, Any]) -> AsyncGenerator[BaseEvent]:
+            self.run_count += 1
+            if self.run_count == 1:
+                for index in range(16):
+                    yield StateSnapshotEvent(snapshot={"index": index})
+                first_completed.set()
+                return
+            run_id = str(input_data["run_id"])
+            thread_id = str(input_data["thread_id"])
+            yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+            yield RunFinishedEvent(run_id=run_id, thread_id=thread_id)
+
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        ExactCapacityWorkflowRunner(),
+        path="/exact-capacity",
+        keepalive_seconds=None,
+        detached_runs=True,
+        max_detached_runs=1,
+    )
+    route = next(route for route in app.routes if getattr(route, "path", None) == "/exact-capacity")
+    assert isinstance(route, APIRoute)
+
+    response = await route.endpoint(
+        AGUIRequest.model_validate(
+            {
+                "runId": "unstarted-run",
+                "threadId": "unstarted-thread",
+                "messages": [{"role": "user", "content": "Start"}],
+            }
+        )
+    )
+    assert isinstance(response, StreamingResponse)
+    await asyncio.wait_for(first_completed.wait(), timeout=5)
+
+    retry_status = 503
+    retry_body = b""
+    for _ in range(100):
+        retry_status, retry_body = await _post_asgi_request(
+            app,
+            "/exact-capacity",
+            {
+                "runId": "retry-run",
+                "threadId": "retry-thread",
+                "messages": [{"role": "user", "content": "Retry"}],
+            },
+        )
+        if retry_status != 503:
+            break
+        await asyncio.sleep(0.01)
+
+    assert retry_status == 200
+    assert b'"type":"RUN_FINISHED"' in retry_body
 
 
 async def test_endpoint_disconnect_still_cancels_run_by_default(
