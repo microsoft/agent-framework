@@ -636,28 +636,35 @@ class RawOpenAIChatCompletionClient(
                 if extra_headers is not None:
                     request_options["extra_headers"] = dict(extra_headers)
                 try:
-                    async for chunk in await client.chat.completions.create(stream=True, **request_options):
-                        if len(chunk.choices) == 0 and chunk.usage is None:
-                            continue
-                        update = self._parse_response_update_from_openai(chunk)
-                        for content in update.contents:
-                            if content.type != "function_call":
+                    # The SDK stream owns the HTTP response; a bare `async for`
+                    # leaves it suspended (and the response open until GC) when
+                    # the consumer stops early, so bind it with `async with`
+                    # like the Responses path does.
+                    async with await client.chat.completions.create(
+                        stream=True, **request_options
+                    ) as completion_stream:
+                        async for chunk in completion_stream:
+                            if len(chunk.choices) == 0 and chunk.usage is None:
                                 continue
-                            choice_index = content.additional_properties.get("tool_call_choice_index")
-                            tool_index = content.additional_properties.get("tool_call_index")
-                            if not isinstance(choice_index, int) or not isinstance(tool_index, int):
-                                continue
-                            index_key = (choice_index, tool_index)
-                            identity = tool_call_identities.get(index_key)
-                            if identity is None:
-                                identity = (f"af-call-{uuid4().hex}", content.call_id or "")
-                            occurrence_id, provider_call_id = identity
-                            if content.call_id:
-                                provider_call_id = content.call_id
-                            tool_call_identities[index_key] = (occurrence_id, provider_call_id)
-                            content.id = occurrence_id
-                            content.call_id = provider_call_id
-                        yield update
+                            update = self._parse_response_update_from_openai(chunk)
+                            for content in update.contents:
+                                if content.type != "function_call":
+                                    continue
+                                choice_index = content.additional_properties.get("tool_call_choice_index")
+                                tool_index = content.additional_properties.get("tool_call_index")
+                                if not isinstance(choice_index, int) or not isinstance(tool_index, int):
+                                    continue
+                                index_key = (choice_index, tool_index)
+                                identity = tool_call_identities.get(index_key)
+                                if identity is None:
+                                    identity = (f"af-call-{uuid4().hex}", content.call_id or "")
+                                occurrence_id, provider_call_id = identity
+                                if content.call_id:
+                                    provider_call_id = content.call_id
+                                tool_call_identities[index_key] = (occurrence_id, provider_call_id)
+                                content.id = occurrence_id
+                                content.call_id = provider_call_id
+                            yield update
                 except BadRequestError as ex:
                     if ex.code == "content_filter":
                         raise OpenAIContentFilterException(
