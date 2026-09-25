@@ -51,6 +51,24 @@ Skills can include executable scripts. How a script runs depends on how it was d
 
 The `script_runner` parameter on `SkillsProvider` is only applicable to **file-based** scripts. Code-defined scripts are always executed in-process regardless of this setting. See [file_based_skill](file_based_skill/) for an example using a `SkillScriptRunner` callable with a subprocess runner, and [code_defined_skill](code_defined_skill/) for in-process scripts that need no runner.
 
+### Host Runtime Context
+
+Pass host values with `agent.run(..., function_invocation_kwargs={...})`. Scripts
+should accept `FunctionInvocationContext` to read those values from
+`ctx.kwargs`, separately from model-supplied script arguments.
+
+- [Code-defined skills](code_defined_skill/) and [class-based skills](class_based_skill/)
+  declare `*, ctx: FunctionInvocationContext` on their conversion callbacks to read
+  host-controlled rounding precision. The context parameter is hidden from the
+  script schema and cannot be supplied through script arguments.
+- File-based runners that need host context declare
+  `*, ctx: FunctionInvocationContext | None = None`.
+  The runner's context parameter must have a default value.
+  Only model arguments are forwarded to the subprocess; context is not
+  automatically added to CLI arguments or environment variables.
+
+`SkillsProvider` injects the enclosing tool invocation through `run_with_context(...)`.
+
 ## Prerequisites
 
 All samples require:
