@@ -65,9 +65,9 @@ class InvocationsHostServer(InvocationAgentServerHost):
         context = get_request_context()
 
         if self.config.is_hosted:
-            if not context.session_id or not context.user_id:
+            if not context.user_id:
                 raise RuntimeError(
-                    "The hosted environment is missing session_id or user_id in the request context. "
+                    "The hosted environment is missing user_id in the request context. "
                     "Please ensure that the request is coming from a valid Foundry platform service."
                 )
             scope = FoundryRequestScope.from_context(self.config, context)

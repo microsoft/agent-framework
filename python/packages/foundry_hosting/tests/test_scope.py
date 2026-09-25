@@ -12,29 +12,46 @@ from azure.ai.agentserver.core import AgentConfig, FoundryAgentRequestContext
 from agent_framework_foundry_hosting import FoundryRequestScope
 
 
-def _config(*, is_hosted: bool) -> AgentConfig:
+def _config(*, is_hosted: bool, session_id: str = "sandbox") -> AgentConfig:
     config = MagicMock(spec=AgentConfig)
     config.is_hosted = is_hosted
+    config.session_id = session_id
     return config
 
 
 @pytest.mark.parametrize(
-    ("session_id", "user_id", "call_id", "error"),
+    ("platform_session_id", "request_session_id", "user_id", "call_id", "error"),
     [
-        (None, "user", "call", "session ID"),
-        ("", "user", "call", "session ID"),
-        ("sandbox", None, "call", "user ID and call ID"),
-        ("sandbox", "", "call", "user ID and call ID"),
-        ("sandbox", "user", None, "user ID and call ID"),
-        ("sandbox", "user", "", "user ID and call ID"),
+        ("", "sandbox", "user", "call", "FOUNDRY_AGENT_SESSION_ID"),
+        ("  ", "sandbox", "user", "call", "FOUNDRY_AGENT_SESSION_ID"),
+        ("sandbox", "other-sandbox", "user", "call", "does not match"),
+        ("sandbox", "sandbox", None, "call", "user ID and call ID"),
+        ("sandbox", "sandbox", "", "call", "user ID and call ID"),
+        ("sandbox", "sandbox", "user", None, "user ID and call ID"),
+        ("sandbox", "sandbox", "user", "", "user ID and call ID"),
     ],
 )
 def test_hosted_scope_requires_platform_identity(
-    session_id: str | None, user_id: str | None, call_id: str | None, error: str
+    platform_session_id: str,
+    request_session_id: str,
+    user_id: str | None,
+    call_id: str | None,
+    error: str,
 ) -> None:
-    context = FoundryAgentRequestContext(session_id=session_id, user_id=user_id, call_id=call_id)
+    context = FoundryAgentRequestContext(session_id=request_session_id, user_id=user_id, call_id=call_id)
     with pytest.raises(RuntimeError, match=error):
-        FoundryRequestScope.from_context(_config(is_hosted=True), context, local_session_id="caller-supplied")
+        FoundryRequestScope.from_context(
+            _config(is_hosted=True, session_id=platform_session_id), context, local_session_id="caller-supplied"
+        )
+
+
+def test_hosted_scope_uses_platform_session_when_request_omits_it() -> None:
+    scope = FoundryRequestScope.from_context(
+        _config(is_hosted=True),
+        FoundryAgentRequestContext(user_id="user", call_id="call"),
+    )
+    assert scope.session_id == "sandbox"
+    assert scope.is_hosted is True
 
 
 def test_local_scope_can_use_a_local_session_without_hosted_identity() -> None:
@@ -49,11 +66,10 @@ def test_local_scope_can_use_a_local_session_without_hosted_identity() -> None:
 
 
 def test_store_key_frames_user_and_sandbox_but_not_call_id() -> None:
-    config = _config(is_hosted=True)
-
     def scope(user: str, sandbox: str, call: str) -> FoundryRequestScope:
         return FoundryRequestScope.from_context(
-            config, FoundryAgentRequestContext(user_id=user, session_id=sandbox, call_id=call)
+            _config(is_hosted=True, session_id=sandbox),
+            FoundryAgentRequestContext(user_id=user, session_id=sandbox, call_id=call),
         )
 
     first = scope("user/a", "b", "call-1")

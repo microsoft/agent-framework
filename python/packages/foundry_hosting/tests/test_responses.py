@@ -1086,16 +1086,27 @@ class TestResponsesHostServerInit:
 
 
 class TestAgentSessionPersistence:
-    async def test_hosted_missing_call_id_fails_without_running_agent(self) -> None:
+    @pytest.mark.parametrize(
+        ("platform_session_id", "request_session_id", "call_id", "expected_error"),
+        [
+            ("sandbox-1", "sandbox-1", None, "trusted user ID and call ID"),
+            ("", "caller-session", "call-1", "FOUNDRY_AGENT_SESSION_ID"),
+            ("sandbox-1", "caller-session", "call-1", "does not match"),
+        ],
+    )
+    async def test_hosted_invalid_identity_fails_without_running_agent(
+        self, platform_session_id: str, request_session_id: str, call_id: str | None, expected_error: str
+    ) -> None:
         agent = _make_agent()
         server = _make_server(agent, session_store=SessionStore())
         server.config.is_hosted = True
+        server.config.session_id = platform_session_id
         request = CreateResponse(model="m", input="hi")
         context = ResponseContext(response_id="response-1", mode_flags=MagicMock())
 
         with patch(
             "agent_framework_foundry_hosting._responses.get_request_context",
-            return_value=FoundryAgentRequestContext(session_id="sandbox-1", user_id="user-1"),
+            return_value=FoundryAgentRequestContext(session_id=request_session_id, user_id="user-1", call_id=call_id),
         ):
             events = [
                 event
@@ -1114,7 +1125,7 @@ class TestAgentSessionPersistence:
         failed_event = cast(Mapping[str, Any], failed_events[0])
         response = cast(Mapping[str, Any], failed_event["response"])
         error = cast(Mapping[str, Any], response["error"])
-        assert "trusted user ID and call ID" in error["message"]
+        assert expected_error in error["message"]
         agent.run.assert_not_called()
         agent.create_session.assert_not_called()
 

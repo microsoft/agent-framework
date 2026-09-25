@@ -96,12 +96,18 @@ encoding of the store name. For example:
 
 ### User isolation
 
-Hosted requests take their sandbox session ID, user ID, and call ID from the trusted
-AgentServer request context. All three are required; IDs in a caller's Responses or
-Invocations payload cannot stand in for missing platform identity. The exported
-`FoundryRequestScope.from_context(config, platform_context)` validates this identity.
+Hosted requests take their sandbox session ID from the platform-configured
+`FOUNDRY_AGENT_SESSION_ID` (`AgentConfig.session_id`), and their user and call IDs
+from the AgentServer request context. All three are required. AgentServer can also
+resolve its request-context session ID from a caller's `agent_session_id` body field
+or query parameter; hosted requests reject that value when it differs from the
+platform-configured ID. The exported
+`FoundryRequestScope.from_context(config, platform_context)` validates this boundary.
 Its `storage_key` is a bounded hash of the framed user and sandbox IDs, not a caller
-conversation or response ID.
+conversation or response ID. If a hosted deployment does not provide
+`FOUNDRY_AGENT_SESSION_ID`, default hosted state access fails closed rather than
+using the caller's ID. Platform injection of this setting has not been verified in
+every hosted deployment; do not bypass this check without another verified identity.
 
 | Identifier | Purpose |
 | --- | --- |

@@ -54,7 +54,7 @@ def _store() -> MagicMock:
     return store
 
 
-def _config(*, is_hosted: bool) -> AgentConfig:
+def _config(*, is_hosted: bool, session_id: str | None = None) -> AgentConfig:
     return AgentConfig(
         agent_name="",
         agent_version="",
@@ -62,7 +62,7 @@ def _config(*, is_hosted: bool) -> AgentConfig:
         is_hosted=is_hosted,
         project_endpoint="",
         project_id="",
-        session_id="",
+        session_id=session_id if session_id is not None else ("sandbox-1" if is_hosted else ""),
         port=8088,
         appinsights_connection_string="",
         otlp_endpoint="",
@@ -496,6 +496,24 @@ async def test_delete_agent_session_is_idempotent() -> None:
     store.delete_item.assert_awaited_once_with("storage-session-1", call_id="call-1")
 
 
+async def test_deleted_hosted_agent_session_can_be_recreated_with_the_same_store() -> None:
+    config = _config(is_hosted=True)
+    context = _platform_context()
+    sessions = AgentSessionStoreProvider().get_store(config=config, platform_context=context)
+    first = AgentSession()
+    first.state["turn"] = 1
+    await sessions.set("conversation-1", first)
+    assert await sessions.get("conversation-1") is not None
+    await sessions.delete("conversation-1")
+
+    replacement = AgentSession()
+    replacement.state["turn"] = 2
+    await sessions.set("conversation-1", replacement)
+
+    current = await AgentSessionStoreProvider().get_store(config=config, platform_context=context).get("conversation-1")
+    assert current is not None and current.state["turn"] == 2
+
+
 @pytest.mark.parametrize("is_hosted", [True, False])
 def test_agent_session_storage_provider_uses_foundry_store(is_hosted: bool) -> None:
     provider = AgentSessionStoreProvider()
@@ -523,19 +541,20 @@ def test_agent_session_storage_provider_creates_request_scoped_storage() -> None
 
 @pytest.mark.parametrize("provider", ["agent", "checkpoint", "approval"])
 @pytest.mark.parametrize(
-    ("session_id", "user_id", "call_id"),
+    ("platform_session_id", "request_session_id", "user_id", "call_id"),
     [
-        (None, "user", "call"),
-        ("sandbox", None, "call"),
-        ("sandbox", "user", None),
+        ("", "sandbox-1", "user", "call"),
+        ("sandbox-1", "other-sandbox", "user", "call"),
+        ("sandbox-1", "sandbox-1", None, "call"),
+        ("sandbox-1", "sandbox-1", "user", None),
     ],
 )
 def test_hosted_store_providers_reject_missing_platform_identity(
-    provider: str, session_id: str | None, user_id: str | None, call_id: str | None
+    provider: str, platform_session_id: str, request_session_id: str, user_id: str | None, call_id: str | None
 ) -> None:
-    context = FoundryAgentRequestContext(session_id=session_id, user_id=user_id, call_id=call_id)
-    config = _config(is_hosted=True)
-    with pytest.raises(RuntimeError, match="session ID|user ID and call ID"):
+    context = FoundryAgentRequestContext(session_id=request_session_id, user_id=user_id, call_id=call_id)
+    config = _config(is_hosted=True, session_id=platform_session_id)
+    with pytest.raises(RuntimeError, match="FOUNDRY_AGENT_SESSION_ID|does not match|user ID and call ID"):
         if provider == "agent":
             AgentSessionStoreProvider().get_store(config=config, platform_context=context)
         elif provider == "checkpoint":
@@ -553,7 +572,6 @@ async def test_hosted_store_names_partition_sandbox_and_forward_call_id() -> Non
         names.append(name)
         return store
 
-    config = _config(is_hosted=True)
     contexts = [
         _platform_context(call_id="call-1", session_id="../sandbox/" * 100),
         _platform_context(call_id="call-2", session_id="other-sandbox"),
@@ -561,6 +579,7 @@ async def test_hosted_store_names_partition_sandbox_and_forward_call_id() -> Non
 
     with patch("agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create", new=get_store):
         for context in contexts:
+            config = _config(is_hosted=True, session_id=context.session_id)
             sessions = AgentSessionStoreProvider().get_store(config=config, platform_context=context)
             await sessions.set("response-1", AgentSession())
             checkpoints = CheckpointStoreProvider().get_store(
@@ -623,13 +642,14 @@ async def test_hosted_session_checkpoint_and_approval_data_stay_in_one_sandbox()
     config = _config(is_hosted=True)
     first_context = _platform_context(session_id="sandbox-1")
     second_context = _platform_context(session_id="sandbox-2")
+    second_config = _config(is_hosted=True, session_id="sandbox-2")
     sessions = AgentSessionStoreProvider()
     checkpoints = CheckpointStoreProvider()
     approvals = FunctionApprovalStoreProvider()
 
     first_session_store = sessions.get_store(config=config, platform_context=first_context)
     await first_session_store.set("response-1", AgentSession())
-    second_session_store = sessions.get_store(config=config, platform_context=second_context)
+    second_session_store = sessions.get_store(config=second_config, platform_context=second_context)
     assert await second_session_store.get("response-1") is None
     continued_context = _platform_context(call_id="call-2", session_id="sandbox-1")
     continued_session_store = sessions.get_store(config=config, platform_context=continued_context)
@@ -644,7 +664,7 @@ async def test_hosted_session_checkpoint_and_approval_data_stay_in_one_sandbox()
     )
     assert await continued_checkpoint_store.load("checkpoint-1") == _checkpoint("checkpoint-1")
     second_checkpoint_store = checkpoints.get_store(
-        config=config, context_id="conversation-1", platform_context=second_context
+        config=second_config, context_id="conversation-1", platform_context=second_context
     )
     with pytest.raises(WorkflowCheckpointException, match="No checkpoint found"):
         await second_checkpoint_store.load("checkpoint-1")
@@ -653,7 +673,7 @@ async def test_hosted_session_checkpoint_and_approval_data_stay_in_one_sandbox()
     await first_approval_store.save_approval_request("approval-1", _approval_request("approval-1"))
     continued_approval_store = approvals.get_store(config=config, platform_context=continued_context)
     assert await continued_approval_store.load_approval_request("approval-1") == _approval_request("approval-1")
-    second_approval_store = approvals.get_store(config=config, platform_context=second_context)
+    second_approval_store = approvals.get_store(config=second_config, platform_context=second_context)
     with pytest.raises(KeyError, match="does not exist"):
         await second_approval_store.load_approval_request("approval-1")
     assert await first_approval_store.load_approval_request("approval-1") == _approval_request("approval-1")

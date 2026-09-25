@@ -391,6 +391,7 @@ class FoundryAgentSessionStore(SessionStore):
         store = await self._get_store()
         async with store:
             await store.delete_item(session_id, call_id=self.platform_context.call_id)
+        self._etags.pop(session_id, None)
 
 
 class AgentSessionStoreProvider(StoreProvider[SessionStore]):
