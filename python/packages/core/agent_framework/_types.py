@@ -4160,6 +4160,13 @@ def _append_instructions(
     return combined
 
 
+def _as_tool_list(tools: Any) -> list[Any]:
+    """Tools as a list, treating a single mapping (e.g. {"type": "web_search"}) as one tool."""
+    if isinstance(tools, Mapping) or not isinstance(tools, Iterable):
+        return [tools]
+    return list(tools)  # type: ignore[reportUnknownArgumentType]
+
+
 def merge_chat_options(
     base: dict[str, Any] | None,
     override: dict[str, Any] | None,
@@ -4216,8 +4223,8 @@ def merge_chat_options(
             base_tools = result.get("tools")
             if base_tools and value:
                 # Add tools that aren't already present
-                merged_tools = list(base_tools)
-                for tool in value if isinstance(value, Iterable) else [value]:  # type: ignore[reportUnknownVariableType]
+                merged_tools = _as_tool_list(base_tools)
+                for tool in _as_tool_list(value):
                     if tool not in merged_tools:
                         merged_tools.append(tool)
                 result["tools"] = merged_tools

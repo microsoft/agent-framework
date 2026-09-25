@@ -5327,3 +5327,18 @@ def test_agent_response_update_serialization_includes_finish_reason() -> None:
 
 
 # endregion
+
+
+def test_merge_chat_options_single_mapping_tool_is_not_spread_into_keys():
+    """A single tool given as a mapping is one tool, on either side of the merge."""
+
+    def my_tool() -> None:
+        pass
+
+    hosted = {"type": "web_search", "name": "ws"}
+
+    merged = merge_chat_options({"tools": [my_tool]}, {"tools": hosted})  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    assert merged["tools"] == [my_tool, hosted]
+
+    merged = merge_chat_options({"tools": hosted}, {"tools": [my_tool]})  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    assert merged["tools"] == [hosted, my_tool]
