@@ -72,7 +72,7 @@ internal sealed class Program
                     ResponseTool.CreateMcpTool(
                         serverLabel: "microsoft_docs",
                         serverUri: new Uri("https://learn.microsoft.com/api/mcp"),
-                        toolCallApprovalPolicy: new McpToolCallApprovalPolicy(GlobalMcpToolCallApprovalPolicy.AlwaysRequireApproval))
+                        toolCallApprovalPolicy: new McpToolCallApprovalPolicy(DefaultMcpToolCallApprovalPolicy.AlwaysRequireApproval))
                 }
         };
 }

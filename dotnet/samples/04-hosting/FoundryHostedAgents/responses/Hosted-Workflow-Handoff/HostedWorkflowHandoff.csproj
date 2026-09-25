@@ -15,19 +15,15 @@
     <RootNamespace>HostedWorkflowHandoff</RootNamespace>
     <AssemblyName>HostedWorkflowHandoff</AssemblyName>
     <UserSecretsId>92fa9432-1e9c-4f74-a2c2-7423f2042504</UserSecretsId>
-    <NoWarn>$(NoWarn);NU1605;MAAIW001;OPENAI001</NoWarn>
-    <AgentFrameworkVersion>1.20.0-preview.260831.1</AgentFrameworkVersion>
+    <NoWarn>$(NoWarn);MAAIW001;OPENAI001</NoWarn>
+    <AgentFrameworkVersion>1.22.0-preview.260918.1</AgentFrameworkVersion>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Agents.AI.Foundry" Version="$(AgentFrameworkVersion)" />
     <PackageReference Include="Microsoft.Agents.AI.Foundry.Hosting" Version="$(AgentFrameworkVersion)" />
     <PackageReference Include="Microsoft.Agents.AI.Hosting" Version="$(AgentFrameworkVersion)" />
-    <PackageReference Include="Azure.Identity" Version="1.21.0" />
     <PackageReference Include="DotNetEnv" Version="3.2.0" />
-    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.10.0" />
-    <PackageReference Include="ModelContextProtocol" Version="2.2.0" />
-    <PackageReference Include="OpenAI" Version="2.13.0" />
   </ItemGroup>
 
   <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk.Web" />

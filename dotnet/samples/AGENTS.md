@@ -117,12 +117,44 @@ code here
 
 ## Building and running
 
-All samples use project references to the framework source. To build and run:
+Most samples use project references to the framework source. To build and run:
 
 ```bash
 cd dotnet/samples/01-get-started/01_hello_agent
 dotnet run
 ```
+
+### Samples that reference published Agent Framework packages
+
+Foundry hosted agent samples under `04-hosting/FoundryHostedAgents/` that set
+`ImportDirectoryPackagesProps` to `false` are deployed from source: `azd` uploads only the sample
+folder as a ZIP, and Foundry runs `dotnet restore` and `dotnet publish` on it remotely. The
+repository's `src/` folder and `Directory.Packages.props` are not part of that upload, so these
+projects reference published Agent Framework packages through an `AgentFrameworkVersion` property
+instead of project references.
+
+- List only Agent Framework packages and packages the framework does not already bring. Do not pin
+  the framework's own dependencies, such as `Azure.AI.Projects`, `Azure.Identity`, `OpenAI`,
+  `Microsoft.Extensions.AI*`, or `ModelContextProtocol`. They flow transitively at the versions
+  the referenced framework release was built against. A pin overrides that pairing and becomes a
+  restore failure (NU1605 package downgrade) once a newer framework release needs a higher version.
+- A dependency bump in `dotnet/Directory.Packages.props` does not change these samples. Move them
+  forward by updating `AgentFrameworkVersion` to the latest published release. Stable and alpha
+  Agent Framework packages, such as `Microsoft.Agents.AI.Workflows` and `Microsoft.Agents.AI.Mcp`,
+  keep a literal version because they have no build matching the preview version.
+- `Hosted-Steering`, `Hosted-Workflow-Resilient`, and `Hosted-Workflow-Resilient-Long-Running`
+  switch to project references when built inside the repository (`UseLocalAgentFramework`), and
+  use the published packages otherwise. Keep them free of dependency pins, because one project file
+  describes both dependency graphs.
+- To deploy a sample against local framework changes, use
+  `04-hosting/FoundryHostedAgents/scripts/Add-LocalFrameworkFeed.ps1`
+  (or `add-local-framework-feed.sh`) on the scaffolded copy.
+- Validate a change the way Foundry builds it: copy the sample folder outside the repository and
+  run `dotnet build` there.
+
+`02-agents/AgentWithMemory/AgentWithMemory_Step06_MemoryUsingAgentMemory` and
+`02-agents/AgentWithRAG/AgentWithRAG_Step05_Neo4jGraphRAG` also reference published Agent Framework
+packages, because the third-party packages they demonstrate target a specific framework release.
 
 ## Current API notes
 

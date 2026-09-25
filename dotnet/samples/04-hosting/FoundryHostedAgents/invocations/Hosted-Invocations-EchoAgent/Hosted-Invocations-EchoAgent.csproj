@@ -6,6 +6,12 @@
     versions. Foundry runs `dotnet restore` + `dotnet publish` on it during provisioning
     (dependencyResolution: remote_build in azure.yaml).
 
+    Only Agent Framework packages and packages the framework does not already bring are listed. The
+    framework's own dependencies (for example Azure.AI.Projects, Azure.Identity, OpenAI, and
+    Microsoft.Extensions.AI) flow transitively at the versions its release was built against. Pinning
+    them here overrides that pairing, and the pin turns into a restore failure (NU1605 downgrade) as
+    soon as a newer framework release depends on a higher version. Bump AgentFrameworkVersion instead.
+
     ImportDirectoryPackagesProps has to be set before the SDK props are imported, hence the explicit
     Sdk imports below instead of the usual Sdk attribute on the Project element. It stops MSBuild
     from walking up to the repository's dotnet/Directory.Packages.props, which would turn on central
@@ -27,7 +33,7 @@
     <RootNamespace>HostedInvocationsEchoAgent</RootNamespace>
     <AssemblyName>HostedInvocationsEchoAgent</AssemblyName>
     <UserSecretsId>27e5c7df-546c-477b-ab05-d1e070a1b78a</UserSecretsId>
-    <AgentFrameworkVersion>1.20.0</AgentFrameworkVersion>
+    <AgentFrameworkVersion>1.22.0</AgentFrameworkVersion>
   </PropertyGroup>
 
   <ItemGroup>
