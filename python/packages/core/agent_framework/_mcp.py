@@ -529,10 +529,11 @@ def _get_input_model_from_mcp_prompt(prompt: types.Prompt) -> dict[str, Any]:
 
     for prompt_argument in prompt.arguments:
         # For prompts, all arguments are typically string type unless specified otherwise
-        properties[prompt_argument.name] = {
-            "type": "string",
-            "description": prompt_argument.description if hasattr(prompt_argument, "description") else "",
-        }
+        # `description` is optional on PromptArgument and None when absent, which is not
+        # a valid JSON Schema description, so leave the key out instead.
+        properties[prompt_argument.name] = {"type": "string"}
+        if prompt_argument.description is not None:
+            properties[prompt_argument.name]["description"] = prompt_argument.description
         if prompt_argument.required:
             required.append(prompt_argument.name)
 
