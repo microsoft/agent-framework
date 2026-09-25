@@ -3504,10 +3504,10 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
 
     async def __anext__(self) -> UpdateT:
         while True:
-            if self._pending_mapped_updates:
-                return await self._record_update(self._pending_mapped_updates.pop(0))
-
             try:
+                if self._pending_mapped_updates:
+                    return await self._record_update(self._pending_mapped_updates.pop(0))
+
                 with contextlib.ExitStack() as stack:
                     for factory in self._pull_context_manager_factories:
                         stack.enter_context(factory())
@@ -3519,6 +3519,18 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
                         stream = await self._get_stream()
                         self._iterator = stream.__aiter__()
                     update: UpdateT = await self._iterator.__anext__()
+
+                if self._flat_map_update is not None:
+                    mapped_updates = self._flat_map_update(update)
+                    if isawaitable(mapped_updates):
+                        mapped_updates = await mapped_updates
+                    self._pending_mapped_updates.extend(mapped_updates)
+                    continue
+                if self._map_update is not None:
+                    update = self._map_update(update)  # type: ignore[assignment]
+                    if isawaitable(update):
+                        update = await update
+                return await self._record_update(update)
             except StopAsyncIteration:
                 self._consumed = True
                 await self._run_cleanup_hooks()
@@ -3531,17 +3543,6 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
                 finally:
                     self._stream_error = None
                 raise
-            if self._flat_map_update is not None:
-                mapped_updates = self._flat_map_update(update)
-                if isawaitable(mapped_updates):
-                    mapped_updates = await mapped_updates
-                self._pending_mapped_updates.extend(mapped_updates)
-                continue
-            if self._map_update is not None:
-                update = self._map_update(update)  # type: ignore[assignment]
-                if isawaitable(update):
-                    update = await update
-            return await self._record_update(update)
 
     async def close(self) -> None:
         """Close the active iterator and run cleanup hooks.
