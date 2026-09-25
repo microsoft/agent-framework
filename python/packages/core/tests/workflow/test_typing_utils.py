@@ -441,6 +441,21 @@ def test_type_compatibility_basic() -> None:
     assert not is_type_compatible(Animal, Dog)
 
 
+def test_type_compatibility_bare_container() -> None:
+    """A bare container class accepts any parameterization of it, in either direction."""
+    from collections.abc import Sequence
+
+    assert is_type_compatible(list[str], list)
+    assert is_type_compatible(dict[str, int], dict)
+    assert is_type_compatible(tuple[int, int], tuple)
+    assert is_type_compatible(list[int], Sequence)
+    assert is_type_compatible(list, list[str])
+
+    assert not is_type_compatible(list[str], dict)
+    assert not is_type_compatible(dict, list[str])
+    assert not is_type_compatible(list[str], str)
+
+
 def test_type_compatibility_unions() -> None:
     """Test type compatibility with Union types."""
     # Source matches target union member

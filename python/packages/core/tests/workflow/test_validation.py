@@ -98,6 +98,25 @@ def test_edge_duplication_validation_fails():
     assert exc_info.value.validation_type == ValidationTypeEnum.EDGE_DUPLICATION
 
 
+def test_parameterized_output_to_bare_container_input_builds():
+    # A list[str] output going to a handler typed with plain `list` used to fail
+    # validation, although the message is a list at runtime.
+    class ListProducer(Executor):
+        @handler
+        async def produce(self, message: str, ctx: WorkflowContext[list[str]]) -> None:
+            await ctx.send_message([message])
+
+    class ListConsumer(Executor):
+        @handler
+        async def consume(self, messages: list, ctx: WorkflowContext[None, list]) -> None:  # type: ignore[type-arg]
+            await ctx.yield_output(messages)
+
+    producer = ListProducer(id="producer")
+    consumer = ListConsumer(id="consumer")
+
+    WorkflowBuilder(start_executor=producer).add_edge(producer, consumer).build()
+
+
 def test_type_compatibility_validation_fails():
     string_executor = StringExecutor(id="string_executor")
     int_executor = IntExecutor(id="int_executor")
