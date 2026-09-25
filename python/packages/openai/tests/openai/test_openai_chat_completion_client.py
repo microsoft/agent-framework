@@ -45,6 +45,27 @@ skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
 )
 
 
+class _FakeAsyncStream:
+    """Test double for the SDK's AsyncStream: an async context manager over chunks."""
+
+    def __init__(self, chunks: Any) -> None:
+        self._chunks = chunks
+        self.closed = False
+
+    async def __aenter__(self) -> "_FakeAsyncStream":
+        return self
+
+    async def __aexit__(self, *exc_info: Any) -> None:
+        self.closed = True
+
+    def __aiter__(self) -> Any:
+        async def generate() -> Any:
+            for chunk in self._chunks:
+                yield chunk
+
+        return generate()
+
+
 def test_init(openai_unit_test_env: dict[str, str]) -> None:
     # Test successful initialization
     open_ai_chat_completion = OpenAIChatCompletionClient()
@@ -2163,6 +2184,63 @@ async def test_streaming_exception_handling(
             pass
 
 
+def _make_content_chunk(text: str) -> Any:
+    from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
+
+    return ChatCompletionChunk.model_validate({
+        "object": "chat.completion.chunk",
+        "created": 1234567890,
+        "model": "test-model",
+        "id": "stream-close",
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"role": "assistant", "content": text},
+                "finish_reason": None,
+            }
+        ],
+    })
+
+
+async def test_streaming_closes_provider_stream_when_consumer_stops_early(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """An early consumer exit must close the SDK stream, not leave it to GC (#8762)."""
+    client = OpenAIChatCompletionClient()
+    sdk_stream = _FakeAsyncStream([_make_content_chunk("hello"), _make_content_chunk("world")])
+
+    async def create(**kwargs: Any) -> Any:
+        return sdk_stream
+
+    with patch.object(client.client.chat.completions, "create", side_effect=create):
+        stream = client._inner_get_response(messages=[Message(role="user", contents=["test"])], stream=True, options={})
+        assert isinstance(stream, ResponseStream)
+        async for _ in stream:
+            break
+        await stream.close()
+
+    assert sdk_stream.closed
+
+
+async def test_streaming_closes_provider_stream_on_completion(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Full consumption closes the SDK stream too, not just early exits."""
+    client = OpenAIChatCompletionClient()
+    sdk_stream = _FakeAsyncStream([_make_content_chunk("done")])
+
+    async def create(**kwargs: Any) -> Any:
+        return sdk_stream
+
+    with patch.object(client.client.chat.completions, "create", side_effect=create):
+        stream = client._inner_get_response(messages=[Message(role="user", contents=["test"])], stream=True, options={})
+        assert isinstance(stream, ResponseStream)
+        async for _ in stream:
+            pass
+
+    assert sdk_stream.closed
+
+
 async def test_streaming_feature_is_marked_when_request_is_sent(
     openai_unit_test_env: dict[str, str],
 ) -> None:
@@ -2171,11 +2249,7 @@ async def test_streaming_feature_is_marked_when_request_is_sent(
         telemetry._feature_mask = 0
 
     async def create(**kwargs: Any) -> Any:
-        async def chunks() -> Any:
-            if False:
-                yield None
-
-        return chunks()
+        return _FakeAsyncStream([])
 
     with patch.object(client.client.chat.completions, "create", side_effect=create):
         stream = client._inner_get_response(
@@ -2729,11 +2803,7 @@ async def test_streaming_tool_call_identity_is_request_local_and_scoped_by_choic
         ]
 
     async def create(**kwargs: Any) -> Any:
-        async def stream_chunks() -> Any:
-            for chunk in chunks():
-                yield chunk
-
-        return stream_chunks()
+        return _FakeAsyncStream(chunks())
 
     request_occurrence_ids: list[dict[tuple[int, int], str | None]] = []
     with patch.object(client.client.chat.completions, "create", side_effect=create):
@@ -2836,11 +2906,7 @@ async def test_streaming_tool_call_adopts_late_provider_id_without_changing_occu
     ]
 
     async def create(**kwargs: Any) -> Any:
-        async def stream_chunks() -> Any:
-            for chunk in chunks:
-                yield chunk
-
-        return stream_chunks()
+        return _FakeAsyncStream(chunks)
 
     with patch.object(client.client.chat.completions, "create", side_effect=create):
         response_stream = client._inner_get_response(
