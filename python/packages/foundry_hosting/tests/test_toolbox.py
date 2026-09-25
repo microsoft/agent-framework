@@ -217,6 +217,38 @@ async def test_auth_flow_omits_call_id_when_absent() -> None:
     assert "x-agent-foundry-call-id" not in prepared.headers
 
 
+async def test_async_auth_flow_removes_call_id_from_reused_request_when_context_absent() -> None:
+    auth = _ToolboxAuth(_FakeCredential(), "scope")  # type: ignore
+    request = httpx.Request("POST", "https://h/toolboxes/tb/mcp")
+
+    token = set_request_context(FoundryAgentRequestContext(call_id="canary-call-id"))
+    try:
+        prepared = await anext(auth.async_auth_flow(request))
+        assert prepared.headers["x-agent-foundry-call-id"] == "canary-call-id"
+    finally:
+        reset_request_context(token)
+
+    prepared = await anext(auth.async_auth_flow(request))
+
+    assert "x-agent-foundry-call-id" not in prepared.headers
+
+
+def test_sync_auth_flow_removes_call_id_from_reused_request_when_context_absent() -> None:
+    auth = _ToolboxAuth(_FakeCredential(), "scope")  # type: ignore
+    request = httpx.Request("POST", "https://h/toolboxes/tb/mcp")
+
+    token = set_request_context(FoundryAgentRequestContext(call_id="canary-call-id"))
+    try:
+        prepared = next(auth.sync_auth_flow(request))
+        assert prepared.headers["x-agent-foundry-call-id"] == "canary-call-id"
+    finally:
+        reset_request_context(token)
+
+    prepared = next(auth.sync_auth_flow(request))
+
+    assert "x-agent-foundry-call-id" not in prepared.headers
+
+
 async def test_close_closes_owned_http_client() -> None:
     toolbox = FoundryToolbox(
         _FakeCredential(),  # type: ignore

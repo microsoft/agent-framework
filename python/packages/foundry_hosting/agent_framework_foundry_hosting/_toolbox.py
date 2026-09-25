@@ -22,6 +22,7 @@ from agent_framework import (
 )
 from agent_framework._telemetry import mark_feature_used
 from azure.ai.agentserver.core import get_request_context
+from azure.ai.agentserver.core.platform_headers import FOUNDRY_CALL_ID
 from typing_extensions import override
 
 from ._feature_usage import FeatureIndex
@@ -103,6 +104,8 @@ class _ToolboxAuth(httpx.Auth):
 
     def _apply_headers(self, request: httpx.Request, token: AccessToken) -> None:
         request.headers["Authorization"] = f"Bearer {token.token}"
+        # A Request may be retried or reused after an earlier auth flow, so absence must clear prior caller context.
+        request.headers.pop(FOUNDRY_CALL_ID, None)
         for key, value in get_request_context().platform_headers().items():
             request.headers[key] = value
 
