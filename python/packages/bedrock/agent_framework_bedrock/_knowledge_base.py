@@ -8,12 +8,11 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Annotated, Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from agent_framework import FunctionTool
 from agent_framework._settings import SecretString, load_settings
 from agent_framework._telemetry import get_user_agent, mark_feature_used
-from pydantic import BaseModel, Field
 
 from ._feature_usage import FeatureIndex
 
@@ -38,7 +37,7 @@ DEFAULT_REGION = "us-east-1"
 _BINARY_MEDIA_CONTENT_TYPES = frozenset({"IMAGE", "AUDIO", "VIDEO"})
 
 
-class _KnowledgeBaseSettings(TypedDict, total=False):
+class BedrockKnowledgeBaseSettings(TypedDict, total=False):
     """Bedrock KB settings resolved from constructor args, env vars, or .env files.
 
     Mirrors ``BedrockSettings`` / ``BedrockEmbeddingSettings`` so the KB tool and
@@ -75,7 +74,7 @@ def _build_kb_client(
         return client
 
     settings = load_settings(
-        _KnowledgeBaseSettings,
+        BedrockKnowledgeBaseSettings,
         env_prefix="BEDROCK_",
         region=region,
         access_key=access_key,
@@ -212,12 +211,6 @@ def _retrieve_standard_passages(
     ]
 
 
-class _BedrockKBQueryInput(BaseModel):
-    """Input schema for the Bedrock Knowledge Base tool."""
-
-    query: Annotated[str, Field(description="The search query to find relevant documents in the knowledge base.")]
-
-
 class BedrockKnowledgeBaseTool(FunctionTool):
     """Tool that retrieves documents from Amazon Bedrock Knowledge Bases.
 
@@ -294,7 +287,16 @@ class BedrockKnowledgeBaseTool(FunctionTool):
             name=name,
             description=description,
             func=self._retrieve,
-            input_model=_BedrockKBQueryInput,
+            input_model={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search query to find relevant documents in the knowledge base.",
+                    }
+                },
+                "required": ["query"],
+            },
         )
 
     async def _retrieve(self, query: str) -> str:
