@@ -223,6 +223,9 @@ def _apply_option_translations(options: dict[str, Any]) -> None:
         if old_key not in options or old_key == new_key:
             continue
         old_value = options.pop(old_key)
+        if old_key == "stop" and isinstance(old_value, str):
+            # ChatOptions allows a single stop string; stop_sequences takes a list.
+            old_value = [old_value]
         options.setdefault(new_key, old_value)
 
 

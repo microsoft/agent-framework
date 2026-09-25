@@ -948,6 +948,9 @@ class RawGeminiChatClient(
         for key, value in options.items():
             if key in _OPTION_EXCLUDE_KEYS or value is None:
                 continue
+            if key == "stop" and isinstance(value, str):
+                # ChatOptions allows a single stop string; stop_sequences takes a list.
+                value = [value]
             kwargs[_OPTION_TRANSLATIONS.get(key, key)] = value
 
         response_format = options.get("response_format")

@@ -4192,3 +4192,16 @@ async def test_anthropic_client_integration_tool_rich_content_image() -> None:
     assert len(response.text) > 0
     # sample_image.jpg contains a photo of a house; the model should mention it.
     assert "house" in response.text.lower(), f"Model did not describe the house image. Response: {response.text}"
+
+
+def test_option_translations_single_stop_string_becomes_list() -> None:
+    """stop_sequences is an array in the Anthropic API, so a single stop string is wrapped."""
+    from agent_framework_anthropic._chat_client import _apply_option_translations
+
+    options: dict[str, Any] = {"stop": "END"}
+    _apply_option_translations(options)
+    assert options == {"stop_sequences": ["END"]}
+
+    options = {"stop": ["END", "STOP"]}
+    _apply_option_translations(options)
+    assert options == {"stop_sequences": ["END", "STOP"]}
