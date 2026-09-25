@@ -142,6 +142,10 @@ class _FunctionArgumentValidationError(TypeError):
         self.redacted_message = redacted_message or message
 
 
+class _UnknownFunctionCallError(KeyError):
+    """A configured fatal unknown function call."""
+
+
 class _FunctionArgumentsChangedAfterApproval(Exception):
     """Signal that middleware changed an approval-bound invocation."""
 
@@ -2440,7 +2444,7 @@ async def _try_execute_function_call_groups(
             unknown_call_found = True
             unknown_call_name = function_name
     if unknown_call_found:
-        raise KeyError(f'Error: Requested function "{unknown_call_name}" not found.')
+        raise _UnknownFunctionCallError(f'Error: Requested function "{unknown_call_name}" not found.')
     if requires_approval:
         # Surface approval and Host-owned pauses in model order. Session-backed
         # executable siblings remain hidden until the approval batch resumes.
@@ -4821,30 +4825,33 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         tokenizer: TokenizerProtocol | None,
         invocation_session: AgentSession | None,
         response_conversation_id: str | None = None,
+        error_result: str = "Error: Tool execution was aborted by middleware before a result was produced.",
+        error_exception: str = "MiddlewareFailure",
     ) -> None:
         """Resolve an aborted batch's function calls on a service-managed conversation.
 
-        When ``MiddlewareFailure`` aborts a tool batch, the local run raises before
-        any result exists — but on a service-managed conversation the continuation
-        state (``session.service_session_id``) was already persisted, so the hosted
-        thread ends with unresolved ``function_call`` items and OpenAI-style
-        continuations reject the session's next request (missing tool output). Settle
-        the thread by submitting one error ``function_result`` per dangling call
-        (approval-response wrappers are unwrapped to their underlying calls;
-        hosted-tool approvals are left to their own provider protocol) with
-        ``tool_choice="none"`` so no new calls are requested, then advance the
-        persisted continuation to the settlement response: for response-ID
-        continuations the settlement response is the first endpoint whose chain
-        includes the synthetic outputs, so the next run must start from it (for
-        conversation-object ids the advance is a no-op). The settlement response is
-        otherwise discarded and the run still fails with the original
-        ``MiddlewareFailure``. Everything here is best-effort — a settlement failure
-        is logged and never masks the abort. Costs one extra request, only on the
-        failure path and only when a service-managed conversation is in play.
+        When a fail-closed error aborts a tool batch, the local run raises before any
+        result exists — but on a service-managed conversation the continuation state
+        (``session.service_session_id``) was already persisted, so the hosted thread
+        ends with unresolved ``function_call`` items and OpenAI-style continuations
+        reject the session's next request (missing tool output). Settle the thread by
+        submitting one error ``function_result`` per dangling call (approval-response
+        wrappers are unwrapped to their underlying calls; hosted-tool approvals are
+        left to their own provider protocol) with ``tool_choice="none"`` so no new
+        calls are requested, then advance the persisted continuation to the settlement
+        response: for response-ID continuations the settlement response is the first
+        endpoint whose chain includes the synthetic outputs, so the next run must
+        start from it (for conversation-object ids the advance is a no-op). The
+        settlement response is otherwise discarded and the run still fails with the
+        original error. Everything here is best-effort — a settlement failure is
+        logged and never masks the abort. Costs one extra request, only on the failure
+        path and only when a service-managed conversation is in play.
         """
+        from ._sessions import is_local_history_conversation_id
         from ._types import ChatResponse, Content, Message
 
-        if response_conversation_id is None and not options.get("conversation_id"):
+        continuation_id = response_conversation_id or cast("str | None", options.get("conversation_id"))
+        if continuation_id is None or is_local_history_conversation_id(continuation_id):
             return
         try:
             error_results: list[Content] = []
@@ -4857,8 +4864,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 error_results.append(
                     Content.from_function_result(
                         call_id=underlying_call.call_id,
-                        result="Error: Tool execution was aborted by middleware before a result was produced.",
-                        exception="MiddlewareFailure",
+                        result=error_result,
+                        exception=error_exception,
                         additional_properties=underlying_call.additional_properties,
                     )
                 )
@@ -5039,11 +5046,10 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     invocation_session=invocation_session,
                     approval_session_is_authoritative=approval_session_is_authoritative,
                 )
-            except MiddlewareFailure:
-                # Fail-closed abort: before propagating, settle the batch's calls on a
-                # service-managed conversation and advance the persisted continuation
-                # to the settled endpoint (best-effort — a settlement failure never
-                # masks the abort).
+            except (MiddlewareFailure, _UnknownFunctionCallError) as exc:
+                # Before propagating a fail-closed abort, settle the batch's calls on a
+                # service-managed conversation and advance the persisted continuation.
+                is_unknown_call = isinstance(exc, _UnknownFunctionCallError)
                 await self._settle_dangling_service_function_calls(
                     super_get_response=super_get_response,
                     function_calls=_extract_function_calls(response),
@@ -5053,6 +5059,12 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     tokenizer=tokenizer,
                     invocation_session=invocation_session,
                     response_conversation_id=response.conversation_id,
+                    error_result=(
+                        f"Error: Tool execution was aborted before a result was produced. {exc.args[0]}"
+                        if is_unknown_call
+                        else "Error: Tool execution was aborted by middleware before a result was produced."
+                    ),
+                    error_exception="KeyError" if is_unknown_call else "MiddlewareFailure",
                 )
                 raise
             total_function_calls = _record_function_calls(
@@ -5312,10 +5324,9 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     invocation_session=invocation_session,
                     approval_session_is_authoritative=approval_session_is_authoritative,
                 )
-            except MiddlewareFailure:
-                # See the non-streaming loop: settle a service-managed conversation's
-                # dangling calls and advance the persisted continuation before
-                # propagating the fail-closed abort (best-effort).
+            except (MiddlewareFailure, _UnknownFunctionCallError) as exc:
+                # See the non-streaming loop: settle and advance before propagating.
+                is_unknown_call = isinstance(exc, _UnknownFunctionCallError)
                 await self._settle_dangling_service_function_calls(
                     super_get_response=super_get_response,
                     function_calls=_extract_function_calls(response),
@@ -5325,6 +5336,12 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     tokenizer=tokenizer,
                     invocation_session=invocation_session,
                     response_conversation_id=response.conversation_id,
+                    error_result=(
+                        f"Error: Tool execution was aborted before a result was produced. {exc.args[0]}"
+                        if is_unknown_call
+                        else "Error: Tool execution was aborted by middleware before a result was produced."
+                    ),
+                    error_exception="KeyError" if is_unknown_call else "MiddlewareFailure",
                 )
                 raise
             errors_in_a_row = function_processing.errors_in_a_row
