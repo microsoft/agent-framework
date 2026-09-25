@@ -923,6 +923,38 @@ async def test_streaming_survives_telemetry_wrapped_raw_response() -> None:
     assert all(update.model == "test-model" for update in updates)
 
 
+async def test_streaming_failure_preserves_raw_response_headers() -> None:
+    """Headers received before an SSE error remain available on the wrapped exception."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    class _FailingStream(_FakeAsyncEventStream):
+        async def __anext__(self) -> object:
+            raise RuntimeError("budget exceeded")
+
+    raw_stream = _FailingStream(
+        [],
+        headers={
+            "x-ms-budget-cause": "budget_exceeded",
+            "x-ms-remaining-budget": "0.00",
+        },
+    )
+
+    with (
+        patch.object(client, "_prepare_request", new=AsyncMock(return_value=(client.client, {}, {}))),
+        patch.object(client.client.responses.with_raw_response, "create", new=AsyncMock(return_value=raw_stream)),
+        pytest.raises(ChatClientException) as exc_info,
+    ):
+        stream = _as_chat_response_stream(
+            client._inner_get_response(messages=[Message(role="user", contents=["Hi"])], options={}, stream=True)
+        )
+        _ = [update async for update in stream]
+
+    assert getattr(exc_info.value, "response_headers", {}) == {
+        "x-ms-budget-cause": "budget_exceeded",
+        "x-ms-remaining-budget": "0.00",
+    }
+
+
 async def test_streaming_accepts_raw_response_that_is_already_an_event_stream() -> None:
     """An object with no ``parse`` and no wrapped raw response is iterated directly."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")

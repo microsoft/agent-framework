@@ -100,6 +100,59 @@ logger = logging.getLogger(__name__)
 _MODEL_OUTPUT_KIND_KEY = "model_output_kind"
 _MODEL_OUTPUT_REFUSAL = "refusal"
 _HOSTED_RESPONSES_HISTORY_SOURCE_ID = "_foundry_responses_history"
+_COST_CONTROL_HEADER_NAMES = (
+    "x-ms-budget-cause",
+    "x-ms-budget-state",
+    "x-ms-remaining-budget",
+    "x-ms-consumed-budget",
+    "x-ms-budget-counter-key",
+    "x-ms-budget-window-reset",
+    "retry-after",
+    "x-ms-budget-consumed",
+    "x-ms-budget-remaining",
+)
+_COST_CONTROL_METADATA_KEY = "costControl"
+
+
+def _cost_control_failure(ex: BaseException) -> tuple[str, dict[str, str] | None]:
+    """Extract allowlisted CostControl headers from an exception chain."""
+    pending: list[BaseException] = [ex]
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+
+        response_headers = getattr(current, "response_headers", None)
+        if isinstance(response_headers, Mapping):
+            available = {str(key).lower(): str(value) for key, value in response_headers.items()}
+            normalized: dict[str, str] = {}
+            for header_name in _COST_CONTROL_HEADER_NAMES:
+                value = available.get(header_name)
+                if value is None:
+                    continue
+                candidate = {**normalized, header_name: value}
+                encoded = json.dumps(candidate, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+                if len(encoded) <= 512:
+                    normalized = candidate
+            if normalized.get("x-ms-budget-cause", "").lower() == "budget_exceeded":
+                return "budget_exceeded", {
+                    _COST_CONTROL_METADATA_KEY: json.dumps(
+                        normalized,
+                        ensure_ascii=True,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    )
+                }
+
+        if isinstance(current.__cause__, BaseException):
+            pending.append(current.__cause__)
+        if isinstance(current.__context__, BaseException):
+            pending.append(current.__context__)
+        pending.extend(arg for arg in current.args if isinstance(arg, BaseException))
+
+    return "server_error", None
 
 
 def _is_refusal_text_content(content: Content) -> bool:
@@ -1309,7 +1362,19 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             except Exception:
                 logger.exception("Error while closing streaming tracker after failure")
         message = str(ex) or type(ex).__name__
-        yield response_event_stream.emit_failed(message=message, usage=tracker.usage if tracker is not None else None)
+        code, metadata = _cost_control_failure(ex)
+        if metadata is not None:
+            response_metadata = response_event_stream.response.get("metadata")
+            if not isinstance(response_metadata, dict):
+                response_metadata = {}
+                response_event_stream.response["metadata"] = response_metadata
+            if _COST_CONTROL_METADATA_KEY in response_metadata or len(response_metadata) < 16:
+                response_metadata.update(metadata)
+        yield response_event_stream.emit_failed(
+            code=code,
+            message=message,
+            usage=tracker.usage if tracker is not None else None,
+        )
 
 
 # endregion ResponsesHostServer
