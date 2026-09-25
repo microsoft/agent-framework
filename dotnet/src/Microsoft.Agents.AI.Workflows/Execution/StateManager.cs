@@ -245,13 +245,14 @@ internal sealed class StateManager
 
     public async ValueTask PublishUpdatesAsync(IStepTracer? tracer)
     {
-        // Take the queued updates out under the lock, then publish the snapshot without holding it:
-        // StateScope.WriteStateAsync awaits, and a lock cannot span an await.
+        // Snapshot the queued updates under the lock, then publish the snapshot without holding it:
+        // StateScope.WriteStateAsync awaits, and a lock cannot span an await. The snapshot is only
+        // removed from the queue once publication has succeeded (below), so a publish that throws —
+        // a conflicting shared-scope update, say — leaves every update queued, as it always has.
         List<KeyValuePair<UpdateKey, StateUpdate>> queued;
         lock (this._syncRoot)
         {
             queued = this._queuedUpdates.ToList();
-            this._queuedUpdates.Clear();
         }
 
         Dictionary<ScopeId, Dictionary<string, List<StateUpdate>>> updatesByScope = [];
@@ -282,6 +283,21 @@ internal sealed class StateManager
         {
             StateScope stateScope = this.GetOrCreateScope(scope);
             await stateScope.WriteStateAsync(updatesByScope[scope]).ConfigureAwait(false);
+        }
+
+        // Remove only what was published. An entry whose update was replaced while the snapshot was
+        // being written (a newer write queued concurrently for the same key) is kept for the next
+        // publish: the instance check tells the two apart without comparing values.
+        lock (this._syncRoot)
+        {
+            foreach (KeyValuePair<UpdateKey, StateUpdate> entry in queued)
+            {
+                if (this._queuedUpdates.TryGetValue(entry.Key, out StateUpdate? current)
+                    && ReferenceEquals(current, entry.Value))
+                {
+                    this._queuedUpdates.Remove(entry.Key);
+                }
+            }
         }
     }
 

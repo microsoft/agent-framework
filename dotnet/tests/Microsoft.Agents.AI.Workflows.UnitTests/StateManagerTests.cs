@@ -341,6 +341,38 @@ public class StateManagerTests
         await RunConflictingUpdatesTest_WriteVsClearAsync(ScopeName, isSharedScope: false);
     }
 
+    [Fact]
+    public async Task Test_FailedPublish_LeavesUpdatesQueuedAsync()
+    {
+        // A conflicting write to a shared scope makes PublishUpdatesAsync throw. The queued updates
+        // must survive that: the next publish sees the same conflict rather than silently finding an
+        // empty queue, and nothing half-published is dropped.
+        StateManager manager = new();
+        ScopeId selfView = new("executor1", "shared");
+        ScopeId otherView = new("executor2", "shared");
+
+        await manager.WriteStateAsync(selfView, "key1", "value1");
+        await manager.WriteStateAsync(otherView, "key1", "value2");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await manager.PublishUpdatesAsync(tracer: null));
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await manager.PublishUpdatesAsync(tracer: null));
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await manager.ExportStateAsync());
+    }
+
+    [Fact]
+    public async Task Test_SuccessfulPublish_EmptiesTheQueueAsync()
+    {
+        StateManager manager = new();
+        ScopeId scope = new("executor1", "shared");
+
+        await manager.WriteStateAsync(scope, "key1", "value1");
+        await manager.PublishUpdatesAsync(tracer: null);
+
+        Dictionary<ScopeKey, PortableValue> exported = await manager.ExportStateAsync();
+        Assert.Single(exported);
+        Assert.Equal("value1", await manager.ReadStateAsync<string>(scope, "key1"));
+    }
+
     private static async Task RunConflictingUpdatesTest_WriteVsWriteAsync(string? scopeName, bool isSharedScope)
     {
         const string SelfExecutorId = "executor1";
