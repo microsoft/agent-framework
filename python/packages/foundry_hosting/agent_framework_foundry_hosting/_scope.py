@@ -28,21 +28,28 @@ class FoundryRequestScope:
         *,
         local_session_id: str | None = None,
     ) -> FoundryRequestScope:
-        """Resolve identity from the platform context, never from a hosted caller's request.
+        """Resolve hosted identity from platform configuration, not caller-controlled session IDs.
 
         Args:
             config: AgentServer's configuration for this host.
-            context: Trusted platform request context.
+            context: Request context with platform user/call IDs and a potentially caller-supplied session ID.
             local_session_id: Fallback session ID for local, non-hosted requests only.
 
         Raises:
             RuntimeError: If a required platform identity is missing.
         """
-        session_id = context.session_id or (local_session_id if not config.is_hosted else None)
-        if not session_id:
-            raise RuntimeError("A Foundry agent session ID is required to handle the request.")
-        if config.is_hosted and (not context.user_id or not context.call_id):
-            raise RuntimeError("Foundry hosted requests require a trusted user ID and call ID.")
+        if config.is_hosted:
+            if not config.session_id.strip():
+                raise RuntimeError("Foundry hosted requests require a platform FOUNDRY_AGENT_SESSION_ID.")
+            if context.session_id and context.session_id != config.session_id:
+                raise RuntimeError("The request agent_session_id does not match the platform session ID.")
+            if not context.user_id or not context.call_id:
+                raise RuntimeError("Foundry hosted requests require a trusted user ID and call ID.")
+            session_id = config.session_id
+        else:
+            session_id = context.session_id or local_session_id
+            if not session_id:
+                raise RuntimeError("A Foundry agent session ID is required to handle the request.")
         return cls(
             session_id=session_id,
             user_id=context.user_id,

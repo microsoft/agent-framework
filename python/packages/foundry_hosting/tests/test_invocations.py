@@ -551,28 +551,45 @@ class TestPartitionKey:
         with _request_context(session_id="sess-1", user_id="user-1"):
             assert server._partition_key() == "sess-1"  # pyright: ignore[reportPrivateUsage]
 
-    @pytest.mark.parametrize(
-        ("session_id", "user_id"),
-        [(None, "user-1"), ("", "user-1"), ("sess-1", None), ("sess-1", ""), (None, None)],
-    )
-    def test_hosted_requires_both_identifiers(self, session_id: str | None, user_id: str | None) -> None:
+    @pytest.mark.parametrize("user_id", [None, ""])
+    def test_hosted_requires_user_id(self, user_id: str | None) -> None:
         server = InvocationsHostServer(_make_agent(response_text="hi"))
         server.config.is_hosted = True
+        server.config.session_id = "sess-1"
         with (
-            _request_context(call_id="call-1", session_id=session_id, user_id=user_id),
-            pytest.raises(RuntimeError, match="missing session_id or user_id"),
+            _request_context(call_id="call-1", session_id="sess-1", user_id=user_id),
+            pytest.raises(RuntimeError, match="missing user_id"),
         ):
             server._partition_key()  # pyright: ignore[reportPrivateUsage]
 
     def test_hosted_returns_composite_key(self) -> None:
         server = InvocationsHostServer(_make_agent(response_text="hi"))
         server.config.is_hosted = True
+        server.config.session_id = "sess-1"
         with _request_context(call_id="call-1", session_id="sess-1", user_id="user-1"):
             assert server._partition_key() == ("sess-1", "user-1")  # pyright: ignore[reportPrivateUsage]
+
+    def test_hosted_uses_platform_session_when_context_omits_it(self) -> None:
+        server = InvocationsHostServer(_make_agent(response_text="hi"))
+        server.config.is_hosted = True
+        server.config.session_id = "sess-1"
+        with _request_context(call_id="call-1", user_id="user-1"):
+            assert server._partition_key() == ("sess-1", "user-1")  # pyright: ignore[reportPrivateUsage]
+
+    def test_hosted_rejects_a_different_request_session(self) -> None:
+        server = InvocationsHostServer(_make_agent(response_text="hi"))
+        server.config.is_hosted = True
+        server.config.session_id = "sess-1"
+        with (
+            _request_context(call_id="call-1", session_id="caller-session", user_id="user-1"),
+            pytest.raises(RuntimeError, match="does not match"),
+        ):
+            server._partition_key()  # pyright: ignore[reportPrivateUsage]
 
     def test_hosted_requires_platform_call_id(self) -> None:
         server = InvocationsHostServer(_make_agent(response_text="hi"))
         server.config.is_hosted = True
+        server.config.session_id = "sess-1"
         with (
             _request_context(session_id="sess-1", user_id="user-1"),
             pytest.raises(RuntimeError, match="trusted user ID and call ID"),
@@ -588,6 +605,7 @@ class TestPartitionKey:
         request = _make_request({"message": "Hi"})
 
         for session_id, user_id in product(identifiers, repeat=2):
+            server.config.session_id = session_id
             with _request_context(call_id="call-1", session_id=session_id, user_id=user_id):
                 key = server._partition_key()  # pyright: ignore[reportPrivateUsage]
                 response = await server._handle_invoke(request)  # pyright: ignore[reportPrivateUsage]
@@ -715,6 +733,8 @@ class TestHandleInvoke:
         agent = _make_agent(response_text="ok", stream_texts=["ok"])
         server = InvocationsHostServer(agent)
         server.config.is_hosted = hosted
+        if hosted:
+            server.config.session_id = "sess-1"
         request = _make_request({"message": "Hi", "stream": stream})
         expected_id = '["sess-1","user-1"]' if hosted else "sess-1"
 
@@ -762,7 +782,18 @@ class TestHandleInvoke:
         agent = _make_agent(response_text="hi")
         server = InvocationsHostServer(agent)
         server.config.is_hosted = True
+        server.config.session_id = "sess-1"
         with _request_context(session_id="sess-1", user_id="user-1"):
+            response = await server._handle_invoke(_make_request({"message": "Hi"}))  # pyright: ignore[reportPrivateUsage]
+        assert response.status_code == 500
+        assert agent.calls == []
+
+    async def test_hosted_different_caller_session_rejects_before_running_agent(self) -> None:
+        agent = _make_agent(response_text="hi")
+        server = InvocationsHostServer(agent)
+        server.config.is_hosted = True
+        server.config.session_id = "sess-1"
+        with _request_context(call_id="call-1", session_id="caller-session", user_id="user-1"):
             response = await server._handle_invoke(_make_request({"message": "Hi"}))  # pyright: ignore[reportPrivateUsage]
         assert response.status_code == 500
         assert agent.calls == []
@@ -841,6 +872,7 @@ class TestHandleInvoke:
         sessions: list[AgentSession] = []
 
         for session_id, user_id in identifiers:
+            server.config.session_id = session_id
             with _request_context(call_id="call-1", session_id=session_id, user_id=user_id):
                 response = await server._handle_invoke(  # pyright: ignore[reportPrivateUsage]
                     _make_request({"message": "Hi", "stream": stream})
@@ -860,6 +892,7 @@ class TestHandleInvoke:
         assert sessions[0].session_id != sessions[1].session_id
 
         for (session_id, user_id), session in zip(identifiers, sessions):
+            server.config.session_id = session_id
             with _request_context(call_id="call-2", session_id=session_id, user_id=user_id):
                 response = await server._handle_invoke(  # pyright: ignore[reportPrivateUsage]
                     _make_request({"message": "Continue", "stream": stream})
