@@ -9,7 +9,7 @@ import inspect
 import os
 import shutil
 from abc import ABC
-from collections.abc import MutableSequence, Sequence
+from collections.abc import Callable, MutableSequence, Sequence
 from datetime import timedelta
 from functools import partial, wraps
 from pathlib import Path
@@ -4222,10 +4222,8 @@ class TestInlineSkillScriptContext:
         [
             FunctionInvocationContext,
             FunctionInvocationContext | None,
-            Annotated[FunctionInvocationContext, "runtime context"],
             "FunctionInvocationContext",
             "FunctionInvocationContext | None",
-            "Annotated[FunctionInvocationContext, 'runtime context']",
         ],
     )
     async def test_context_annotations_are_injected_and_hidden_from_schema(self, annotation: Any) -> None:
@@ -4246,7 +4244,6 @@ class TestInlineSkillScriptContext:
         [
             "FunctionInvocationContext",
             "FunctionInvocationContext | None",
-            "Annotated[FunctionInvocationContext, 'runtime']",
         ],
     )
     async def test_context_only_callback_has_no_model_parameters(self, annotation: str) -> None:
@@ -4258,6 +4255,25 @@ class TestInlineSkillScriptContext:
 
         assert InlineSkillScript(name="analyze", function=callback).parameters_schema is None
         assert await _run_with_context(callback, context=context) is context
+
+    @pytest.mark.parametrize(
+        "annotation",
+        [
+            list[FunctionInvocationContext],
+            Callable[..., FunctionInvocationContext],
+            Annotated[FunctionInvocationContext, "runtime"],
+            "list[FunctionInvocationContext]",
+            "Annotated[FunctionInvocationContext, 'runtime']",
+        ],
+    )
+    async def test_non_context_annotations_are_not_injected(self, annotation: Any) -> None:
+        def callback(value: Any) -> Any:
+            return value
+
+        callback.__annotations__["value"] = annotation
+
+        assert InlineSkillScript(name="analyze", function=callback)._context_parameter_name is None  # pyright: ignore[reportPrivateUsage]
+        assert await _run_with_context(callback, {"value": "model"}) == "model"
 
     @pytest.mark.parametrize("use_parser", [False, True])
     async def test_script_arguments_cannot_supply_context(self, use_parser: bool) -> None:
@@ -4870,7 +4886,6 @@ class TestFileSkillScriptContext:
         "annotation",
         [
             FunctionInvocationContext,
-            Annotated[FunctionInvocationContext, "runtime"],
             "FunctionInvocationContext | None",
         ],
     )
@@ -4884,6 +4899,23 @@ class TestFileSkillScriptContext:
         context = _script_context()
         assert await script.run(skill) is None
         assert await script.run_with_context(skill, context=context) is context
+
+    @pytest.mark.parametrize(
+        "annotation",
+        [
+            list[FunctionInvocationContext],
+            Callable[..., FunctionInvocationContext],
+            Annotated[FunctionInvocationContext, "runtime"],
+        ],
+    )
+    async def test_runner_non_context_annotations_are_not_injected(self, annotation: Any) -> None:
+        def runner(skill: FileSkill, script: FileSkillScript, args: Any = None, *, invocation: Any = None) -> Any:
+            return invocation
+
+        runner.__annotations__["invocation"] = annotation
+        script = FileSkillScript(name="run.py", full_path=f"{_ABS}/run.py", runner=runner)
+        skill = FileSkill(frontmatter=SkillFrontmatter(name="s", description="d"), content="Body", path=_ABS)
+        assert await script.run_with_context(skill, context=_script_context()) is None
 
     async def test_unannotated_runner_kwargs_do_not_opt_in(self) -> None:
         def runner(

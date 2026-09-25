@@ -63,6 +63,7 @@ from enum import Enum
 from functools import lru_cache, partial
 from html import escape as xml_escape
 from pathlib import Path, PurePosixPath
+from types import UnionType
 from typing import (
     IO,
     TYPE_CHECKING,
@@ -72,8 +73,10 @@ from typing import (
     Protocol,
     TypeAlias,
     TypeVar,
+    Union,
     cast,
     get_args,
+    get_origin,
     get_type_hints,
     runtime_checkable,
 )
@@ -442,7 +445,7 @@ def _find_context_parameter(
     from ._middleware import FunctionInvocationContext
 
     try:
-        type_hints = get_type_hints(function)
+        type_hints = get_type_hints(function, include_extras=True)
     except (AttributeError, NameError, TypeError):
         logger.debug("Could not resolve annotations for script '%s'; using signature annotations.", script_name)
         type_hints = {}
@@ -450,7 +453,9 @@ def _find_context_parameter(
     context_params: list[inspect.Parameter] = []
     for param in signature.parameters.values():
         annotation = type_hints.get(param.name, param.annotation)
-        candidates = get_args(annotation) or (annotation,)
+
+        # Only unwrap unions such as ``FunctionInvocationContext | None``, not containers like ``list[...]``.
+        candidates = get_args(annotation) if get_origin(annotation) in (Union, UnionType) else (annotation,)
 
         # Recognize context types and simple forward references.
         if any(
