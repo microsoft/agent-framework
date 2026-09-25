@@ -1219,6 +1219,7 @@ class FileSystemAgentFileStore(AgentFileStore):
     hostile process that shares the root directory.
     """
 
+    # Case aliases can identify the same file while having different Path hashes.
     _DELETE_LOCK: ClassVar[threading.Lock] = threading.Lock()
 
     def __init__(self, root_directory: str | os.PathLike[str]) -> None:
