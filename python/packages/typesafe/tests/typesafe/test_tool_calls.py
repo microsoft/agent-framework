@@ -8,7 +8,7 @@ import pytest
 from agent_framework import FunctionTool, ToolMode
 from agent_framework.exceptions import ChatClientInvalidRequestException, ChatClientInvalidResponseException
 from pydantic import BaseModel
-from typesafe_sdk import SystemOneResponse
+from typesafe_sdk import Choice, SystemOneResponse
 
 import agent_framework_typesafe._tool_calls as tool_calls
 from agent_framework_typesafe._tool_calls import (
@@ -78,6 +78,24 @@ def test_previous_calls_are_included_in_routing_and_argument_questions() -> None
     assert "Seattle" in str(route)
     assert "Seattle" in str(argument)
     assert "different value" in str(argument)
+
+
+def test_routing_criteria_include_function_names_with_identical_descriptions() -> None:
+    tools = [
+        FunctionTool(name="start_worker", description="Manage worker lifecycle.", func=lambda: None, input_model={}),
+        FunctionTool(name="stop_worker", description="Manage worker lifecycle.", func=lambda: None, input_model={}),
+    ]
+
+    plan = compile_tool_call_plan(tools, tool_mode=None, user_question_ids=set())
+
+    assert plan is not None
+    route = plan.questions["__af_tool__.route"]
+    assert isinstance(route, Choice)
+    criteria = cast(dict[str, str], route.criteria)
+    assert "start_worker" in criteria["t0"]
+    assert "stop_worker" in criteria["t1"]
+    assert "Manage worker lifecycle." in criteria["t0"]
+    assert "Manage worker lifecycle." in criteria["t1"]
 
 
 def test_required_tool_modes_validate_availability() -> None:
@@ -192,6 +210,57 @@ def test_nested_schema_constraints_exclude_entire_tool(property_schema: dict[str
 
     assert compile_tool_call_plan([constrained], tool_mode=None, user_question_ids=set()) is None
     with pytest.raises(ChatClientInvalidRequestException, match="allOf"):
+        compile_tool_call_plan(
+            [constrained],
+            tool_mode={"mode": "required"},
+            user_question_ids=set(),
+        )
+
+
+@pytest.mark.parametrize(
+    ("property_schema", "message"),
+    [
+        (
+            {
+                "$ref": "#/$defs/scope",
+                "enum": ["one", "all"],
+            },
+            r"\$ref sibling.*enum",
+        ),
+        (
+            {
+                "anyOf": [
+                    {"type": "string", "enum": ["one"]},
+                    {"type": "null"},
+                ],
+                "enum": ["one", "all"],
+            },
+            "anyOf sibling.*enum",
+        ),
+    ],
+    ids=["ref", "nullable-anyof"],
+)
+def test_schema_composition_sibling_constraints_are_rejected(
+    property_schema: dict[str, Any],
+    message: str,
+) -> None:
+    constrained = function(
+        "delete_records",
+        {
+            "$defs": {
+                "scope": {
+                    "type": "string",
+                    "enum": ["one"],
+                }
+            },
+            "type": "object",
+            "properties": {"scope": property_schema},
+            "required": ["scope"],
+        },
+    )
+
+    assert compile_tool_call_plan([constrained], tool_mode=None, user_question_ids=set()) is None
+    with pytest.raises(ChatClientInvalidRequestException, match=message):
         compile_tool_call_plan(
             [constrained],
             tool_mode={"mode": "required"},

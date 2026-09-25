@@ -122,10 +122,12 @@ Supported input-schema shapes:
 Required free-form strings, numbers, nested objects, general arrays, and required
 nullable arguments are not supported. Schema constraints that the connector
 cannot preserve, such as `allOf` on the root object, an argument, or an array
-item, also exclude the entire tool. A tool is excluded when any declared argument
-is unsupported, including optional arguments, so invocation never falls back to
-an unintended default. In automatic tool mode, unsupported tools are excluded
-with a warning. Required unsupported tools fail the request.
+item, also exclude the entire tool. Assertion siblings beside `$ref` or nullable
+`anyOf` are rejected rather than merged in a way that could broaden the schema.
+A tool is excluded when any declared argument is unsupported, including optional
+arguments, so invocation never falls back to an unintended default. In automatic
+tool mode, unsupported tools are excluded with a warning. Required unsupported
+tools fail the request.
 
 Local tools can use inferred schemas or Pydantic input models:
 
@@ -175,7 +177,8 @@ checked after tool-choice filtering and before any tool schemas are compiled. An
 exact cumulative question budget is reserved before question objects are
 constructed, so schemas that would exceed 128 questions fail without
 materializing the excess. An explicitly empty `allowed_tools` list denies every
-tool.
+tool. Routing criteria always include the exact function name and its optional
+description so identically described tools remain distinguishable.
 
 ## Configuration and lifecycle
 

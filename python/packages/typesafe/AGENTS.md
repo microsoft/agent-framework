@@ -23,12 +23,15 @@ Integration with TypeSafe AI System One models, including Jev.
 - A tool is excluded if any declared argument or object/argument/array-item schema constraint is unsupported. Tool,
   property, enum, and cumulative question counts are bounded before question materialization, and constrained arrays
   or array enum members that do not match the declared item type are rejected.
+- Assertion siblings beside `$ref` or nullable `anyOf` are rejected, and routing criteria always include the exact
+  function name plus its optional description.
 - The connector forwards `response_format` as the TypeSafe SDK `questions` argument and internally uses
   `SystemOneResponse` as the response model.
 - An injected `AsyncTypeSafeClient` is caller-owned. A client created by `TypeSafeChatClient` is closed by
   `close()` or the async context manager.
-- Connector-owned clients restore the configured API key at the HTTP transport boundary because TypeSafe SDK 0.7.1
-  keeps the prepared authorization header redacted; transport-level tests must verify the outgoing header.
+- Connector-owned clients restore the configured `Bearer` API-key header at the HTTP transport boundary because
+  TypeSafe SDK 0.7.1 keeps the prepared authorization header redacted; transport-level tests must verify the outgoing
+  header.
 - Settings use `load_settings`; the API key is required only when the connector creates the SDK client.
 - Injected SDK clients remain authoritative: ambient model and endpoint settings are not applied to them.
 

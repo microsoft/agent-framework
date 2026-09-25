@@ -276,7 +276,7 @@ async def test_owned_client_sends_configured_api_key_on_wire(monkeypatch: pytest
             options={"response_format": questions()},
         )
 
-    assert authorization_headers == ["configured-api-key"]
+    assert authorization_headers == ["Bearer configured-api-key"]
 
 
 async def test_streaming_is_rejected_on_consumption() -> None:

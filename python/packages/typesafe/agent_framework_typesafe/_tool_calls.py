@@ -222,7 +222,11 @@ def compile_tool_call_plan(
         route_question_id = TOOL_ROUTE_QUESTION_ID
         criteria: dict[str, str] = {}
         for tool in compiled:
-            description = tool.function.description or f"Call the {tool.function.name} tool."
+            description = (
+                f"Tool {tool.function.name!r}: {tool.function.description}"
+                if tool.function.description
+                else f"Call the {tool.function.name!r} tool."
+            )
             prior = list((previous_calls or {}).get(tool.function.name, ()))
             if prior:
                 description += (
@@ -523,6 +527,7 @@ def _compile_argument(
 def _resolve_schema(schema: dict[str, Any], root_schema: dict[str, Any]) -> tuple[dict[str, Any], bool]:
     resolved = dict(schema)
     if "$ref" in resolved:
+        _reject_composition_sibling_constraints(resolved, keyword="$ref")
         ref = resolved.pop("$ref")
         if not isinstance(ref, str) or not ref.startswith("#/$defs/"):
             raise _UnsupportedToolSchema("only local $defs references are supported")
@@ -537,6 +542,7 @@ def _resolve_schema(schema: dict[str, Any], root_schema: dict[str, Any]) -> tupl
 
     nullable = False
     if "anyOf" in resolved:
+        _reject_composition_sibling_constraints(resolved, keyword="anyOf")
         any_of_raw = resolved.pop("anyOf")
         if not isinstance(any_of_raw, list):
             raise _UnsupportedToolSchema("anyOf must be an array")
@@ -550,6 +556,14 @@ def _resolve_schema(schema: dict[str, Any], root_schema: dict[str, Any]) -> tupl
         resolved = {**nested, **resolved}
         nullable = True
     return resolved, nullable
+
+
+def _reject_composition_sibling_constraints(schema: dict[str, Any], *, keyword: str) -> None:
+    unsupported_siblings = sorted(schema.keys() - _SCHEMA_ANNOTATION_KEYS - {keyword})
+    if unsupported_siblings:
+        raise _UnsupportedToolSchema(
+            f"{keyword} sibling constraints are not supported: {', '.join(unsupported_siblings)}"
+        )
 
 
 def _add_presence_question(
