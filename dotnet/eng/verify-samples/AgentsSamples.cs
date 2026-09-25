@@ -1188,8 +1188,8 @@ internal static class AgentsSamples
 
         new SampleDefinition
         {
-            Name = "FoundryAgent_Step15_ComputerUse",
-            ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step15_ComputerUse",
+            Name = "FoundryAgent_Step15_ComputerUsePreview",
+            ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step15_ComputerUsePreview",
             RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT", "AZURE_AI_COMPUTER_USE_DEPLOYMENT_NAME"],
             OptionalEnvironmentVariables = [],
             ExpectedOutputDescription = ["The output should show a computer automation session processing simulated browser screenshots with iteration steps and a final response describing search results."],
@@ -1197,8 +1197,8 @@ internal static class AgentsSamples
 
         new SampleDefinition
         {
-            Name = "FoundryAgent_Step27_ComputerUseGA",
-            ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step27_ComputerUseGA",
+            Name = "FoundryAgent_Step27_ComputerUse",
+            ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step27_ComputerUse",
             RequiredEnvironmentVariables = ["OPENAI_API_KEY"],
             OptionalEnvironmentVariables = ["OPENAI_CHAT_MODEL_NAME"],
             ExpectedOutputDescription =

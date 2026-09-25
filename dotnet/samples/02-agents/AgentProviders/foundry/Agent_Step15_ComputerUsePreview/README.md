@@ -1,6 +1,6 @@
-﻿# Computer Use with the Responses API
+﻿# Computer Use (preview) with the Responses API
 
-This sample shows how to use the Computer Use tool with `AIProjectClient.AsAIAgent(...)`.
+This sample shows how to use the preview Computer Use tool with `AIProjectClient.AsAIAgent(...)`.
 
 ## What this sample demonstrates
 
@@ -8,7 +8,7 @@ This sample shows how to use the Computer Use tool with `AIProjectClient.AsAIAge
 - Processing computer call actions (click, type, key press)
 - Managing the computer use interaction loop with screenshots
 
-For the generally available (GA) `computer` tool, created with the parameterless `FoundryAITool.CreateComputerTool()` and returning batched actions, see [Agent_Step27_ComputerUseGA](../Agent_Step27_ComputerUseGA/).
+For the generally available (GA) `computer` tool, created with the parameterless `FoundryAITool.CreateComputerTool()` and returning batched actions, see [Agent_Step27_ComputerUse](../Agent_Step27_ComputerUse/).
 
 For more information, see [Use the computer tool](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/computer-use?pivots=csharp).
 

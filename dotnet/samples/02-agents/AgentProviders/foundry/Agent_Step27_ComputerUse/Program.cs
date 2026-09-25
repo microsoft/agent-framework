@@ -8,7 +8,7 @@
 // OpenAI Responses API. The Foundry setup is kept below, commented out: once Foundry supports the GA tool, swap the
 // two agent setups and the rest of the sample works unchanged.
 
-using Demo.ComputerUseGA;
+using Demo.ComputerUse;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Foundry;
 using Microsoft.Extensions.AI;

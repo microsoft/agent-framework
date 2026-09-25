@@ -20,7 +20,7 @@
 
   <ItemGroup>
     <!-- Reuses the simulated browser screenshots of the preview computer use sample. -->
-    <None Include="..\Agent_Step15_ComputerUse\Assets\*.jpg" Link="Assets\%(Filename)%(Extension)" CopyToOutputDirectory="Always" />
+    <None Include="..\Agent_Step15_ComputerUsePreview\Assets\*.jpg" Link="Assets\%(Filename)%(Extension)" CopyToOutputDirectory="Always" />
   </ItemGroup>
 
 </Project>

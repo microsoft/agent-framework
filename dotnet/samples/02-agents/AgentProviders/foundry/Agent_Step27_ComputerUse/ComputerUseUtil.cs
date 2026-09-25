@@ -4,7 +4,7 @@ using System.ClientModel.Primitives;
 using System.Text.Json;
 using OpenAI.Responses;
 
-namespace Demo.ComputerUseGA;
+namespace Demo.ComputerUse;
 
 /// <summary>
 /// Enum for tracking the state of the simulated web search flow.

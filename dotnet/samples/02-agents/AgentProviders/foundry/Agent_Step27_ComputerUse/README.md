@@ -9,7 +9,7 @@ This sample shows how to use the generally available (GA) computer tool with an 
 - Returning screenshots as inline image data, so no file upload or cleanup is needed
 - Acknowledging pending safety checks in the `computer_call_output`
 
-For the preview `computer_use_preview` tool, which takes an environment and display size and returns a single `action` per call, see [Agent_Step15_ComputerUse](../Agent_Step15_ComputerUse/).
+For the preview `computer_use_preview` tool, which takes an environment and display size and returns a single `action` per call, see [Agent_Step15_ComputerUsePreview](../Agent_Step15_ComputerUsePreview/).
 
 | | GA tool (this sample) | Preview tool (Step15) |
 | --- | --- | --- |
