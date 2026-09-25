@@ -946,7 +946,7 @@ requires-dist = [{ name = "agent-framework-core", editable = "packages/core" }]
 
 [[package]]
 name = "agent-framework-postgres"
-version = "1.0.0a260910"
+version = "1.0.0a260914"
 source = { editable = "packages/postgres" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },

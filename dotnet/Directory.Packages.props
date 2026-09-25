@@ -140,6 +140,9 @@
     <PackageVersion Include="Microsoft.PowerFx.Interpreter" Version="1.8.1" />
     <!-- Valkey -->
     <PackageVersion Include="Valkey.Glide" Version="1.1.0" />
+    <!-- PostgreSQL -->
+    <PackageVersion Include="Npgsql" Version="10.0.3" />
+    <PackageVersion Include="Pgvector" Version="0.3.2" />
     <!-- Console UX -->
     <PackageVersion Include="Spectre.Console" Version="0.49.1" />
     <!-- AWS -->

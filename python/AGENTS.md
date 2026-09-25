@@ -126,6 +126,7 @@ Durable Task and Azure Functions integrations are maintained in the [Durable Age
 
 ### Storage & Memory
 - [mem0](packages/mem0/AGENTS.md) - Mem0 memory integration
+- [postgres](packages/postgres/README.md) - PostgreSQL vector storage, durable memory, and workflow checkpoints
 - [redis](packages/redis/AGENTS.md) - Redis storage
 
 ### Infrastructure
