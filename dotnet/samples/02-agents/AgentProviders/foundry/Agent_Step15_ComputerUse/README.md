@@ -4,9 +4,11 @@ This sample shows how to use the Computer Use tool with `AIProjectClient.AsAIAge
 
 ## What this sample demonstrates
 
-- Using `FoundryAITool.CreateComputerTool()` to add computer use capabilities
+- Using `FoundryAITool.CreateComputerTool(environment, width, height)` to add the preview `computer_use_preview` tool
 - Processing computer call actions (click, type, key press)
 - Managing the computer use interaction loop with screenshots
+
+For the generally available (GA) `computer` tool, created with the parameterless `FoundryAITool.CreateComputerTool()` and returning batched actions, see [Agent_Step27_ComputerUseGA](../Agent_Step27_ComputerUseGA/).
 
 For more information, see [Use the computer tool](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/computer-use?pivots=csharp).
 

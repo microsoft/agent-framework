@@ -1197,6 +1197,19 @@ internal static class AgentsSamples
 
         new SampleDefinition
         {
+            Name = "FoundryAgent_Step27_ComputerUseGA",
+            ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step27_ComputerUseGA",
+            RequiredEnvironmentVariables = ["OPENAI_API_KEY"],
+            OptionalEnvironmentVariables = ["OPENAI_CHAT_MODEL_NAME"],
+            ExpectedOutputDescription =
+            [
+                "The output should show a computer automation session running batched actions (such as click, type or keypress) against simulated browser screenshots, followed by a final response describing search results.",
+                "The output should not contain error messages or stack traces.",
+            ],
+        },
+
+        new SampleDefinition
+        {
             Name = "FoundryAgent_Step18_BingCustomSearch",
             ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step18_BingCustomSearch",
             RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT", "FOUNDRY_MODEL", "AZURE_AI_CUSTOM_SEARCH_CONNECTION_ID", "AZURE_AI_CUSTOM_SEARCH_INSTANCE_NAME"],
