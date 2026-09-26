@@ -183,6 +183,22 @@ class _WorkflowAgentMock(_AgentProtocolMock, WorkflowAgent):
         self._workflow_value = value
 
 
+def _make_valid_response_id() -> str:
+    """Generate a valid ``caresp_`` formatted response ID for test seeding.
+
+    The Responses server validates ``previous_response_id`` (and
+    ``conversation_id``) values against the ``caresp`` format via
+    ``IdGenerator.is_valid``. This helper produces IDs that pass that
+    validation so we can pre-seed the session store and reference them
+    in requests.
+    """
+    import secrets
+
+    partition_key = secrets.token_hex(9)  # 18 hex chars
+    entropy = secrets.token_hex(16)  # 32 hex chars
+    return f"caresp_{partition_key}{entropy}"
+
+
 def _make_agent(
     *,
     response: AgentResponse | None = None,
@@ -1133,6 +1149,129 @@ class TestAgentSessionPersistence:
         assert second_session.state["turn_count"] == 2
         assert third_session.state["turn_count"] == 2
         assert first_session.session_id == second_session.session_id == third_session.session_id
+
+    async def test_conversation_branching_forks_state_from_branch_point(self) -> None:
+        """`conversation` + `previous_response_id` forks the conversation: state loads from the branch
+        point response's own snapshot, and the conversation's mainline state is never overwritten."""
+        seen_counts: list[int] = []
+        seen_session_ids: list[str | None] = []
+
+        def run_with_state(*args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+            del args
+            session = kwargs["session"]
+            assert isinstance(session, AgentSession)
+            count = int(session.state.get("turn_count", 0)) + 1
+            session.state["turn_count"] = count
+            seen_counts.append(count)
+            seen_session_ids.append(session.session_id)
+
+            async def updates() -> AsyncIterator[AgentResponseUpdate]:
+                yield AgentResponseUpdate(contents=[Content.from_text(f"turn {count}")], role="assistant")
+
+            return ResponseStream(updates())
+
+        agent = _make_agent()
+        agent.run = MagicMock(side_effect=run_with_state)
+        server = _make_server(agent)
+
+        first = await _post(server, input_text="first", conversation_id="conv_branch")
+        second = await _post(server, input_text="second", conversation_id="conv_branch")
+        branch = await _post(
+            server, input_text="branch", conversation_id="conv_branch", previous_response_id=first.json()["id"]
+        )
+        mainline = await _post(server, input_text="continue", conversation_id="conv_branch")
+        branch_of_branch = await _post(
+            server, input_text="fork", conversation_id="conv_branch", previous_response_id=branch.json()["id"]
+        )
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert branch.status_code == 200
+        assert mainline.status_code == 200
+        assert branch_of_branch.status_code == 200
+        # The branch turns replay the branch point's state, not the newer mainline state:
+        # turn 3 branches off `first` (turn_count 1 -> 2) while the mainline is at 2, and the
+        # branch-of-branch continues the branch (2 -> 3). The mainline turn after the branch
+        # still sees the mainline state (2 -> 3).
+        assert seen_counts == [1, 2, 2, 3, 3]
+        # Every turn operates on the same logical session; forks share the branch point's identity.
+        assert len(set(seen_session_ids)) == 1
+
+        provider = server._session_storage_provider  # pyright: ignore[reportPrivateUsage]
+        assert provider is not None
+        session_store = provider.get_store(config=server.config, platform_context=get_request_context())
+        assert session_store is not None
+
+        conversation_state = await session_store.get("conv_branch")
+        assert conversation_state is not None
+        assert conversation_state.state["turn_count"] == 3
+
+        # Mainline turns snapshot under both the conversation ID and their own response ID, so any
+        # earlier response can serve as a branch point; forks snapshot under their response ID only.
+        first_snapshot = await session_store.get(first.json()["id"])
+        second_snapshot = await session_store.get(second.json()["id"])
+        branch_snapshot = await session_store.get(branch.json()["id"])
+        mainline_snapshot = await session_store.get(mainline.json()["id"])
+        branch_of_branch_snapshot = await session_store.get(branch_of_branch.json()["id"])
+        assert first_snapshot is not None and first_snapshot.state["turn_count"] == 1
+        assert second_snapshot is not None and second_snapshot.state["turn_count"] == 2
+        assert branch_snapshot is not None and branch_snapshot.state["turn_count"] == 2
+        assert mainline_snapshot is not None and mainline_snapshot.state["turn_count"] == 3
+        assert branch_of_branch_snapshot is not None and branch_of_branch_snapshot.state["turn_count"] == 3
+
+    async def test_branching_requires_existing_branch_point_session(self) -> None:
+        agent = _make_agent()
+        server = _make_server(agent, session_store=SessionStore())
+        request = CreateResponse(model="m", input="hi", previous_response_id="response-missing")
+        context = ResponseContext(response_id="response-current", mode_flags=MagicMock(), conversation_id="conv_x")
+
+        handler = server._handle_response(request, context, asyncio.Event())  # pyright: ignore[reportPrivateUsage]
+        events = [event async for event in handler]
+
+        failed_events = [
+            event for event in events if isinstance(event, Mapping) and event.get("type") == "response.failed"
+        ]
+        assert len(failed_events) == 1
+        failed_event = cast(Mapping[str, Any], failed_events[0])
+        response = cast(Mapping[str, Any], failed_event["response"])
+        error = cast(Mapping[str, Any], response["error"])
+        assert "Cannot find an existing agent session for previous_response_id=response-missing." in error["message"]
+        agent.run.assert_not_called()
+        agent.create_session.assert_not_called()
+
+    async def test_branching_rejected_for_service_managed_downstream_conversation(self) -> None:
+        """A branch whose snapshot resumes a service-managed downstream conversation is rejected.
+
+        That downstream thread has already advanced past the branch point with mainline turns, so a
+        branch run would replay stale context and append to the mainline's downstream history."""
+        client = _ServiceStorageRecordingClient()
+        agent = Agent(
+            client=client,
+            name="Svc Storage Agent",
+            default_options={"store": True},  # pyrefly: ignore[bad-argument-type]
+        )
+        store = SessionStore()
+        server = _make_server(agent, session_store=store, history_source="agent")
+
+        first = await _post(server, input_text="first", conversation_id="conv_svc")
+        second = await _post(server, input_text="second", conversation_id="conv_svc")
+        assert first.json()["status"] == "completed"
+        assert second.json()["status"] == "completed"
+
+        branch = await _post(
+            server, input_text="branch", conversation_id="conv_svc", previous_response_id=first.json()["id"]
+        )
+        assert branch.status_code == 200
+        assert branch.json()["status"] == "failed"
+        # The downstream client was never invoked for the rejected branch.
+        assert len(client.calls) == 2
+
+        # The mainline conversation snapshot is untouched, and no snapshot is persisted for the
+        # rejected branch response.
+        mainline = await store.get("conv_svc")
+        assert mainline is not None
+        assert mainline.service_session_id == "service-thread-1"
+        assert await store.get(branch.json()["id"]) is None
 
     async def test_responses_history_is_not_duplicated_by_default_local_history(self) -> None:
         client = _RecordingHistoryClient()
@@ -5197,6 +5336,124 @@ class TestOAuthConsentSurfacing:
         preserved = await session_store.get(consent.json()["id"])
         assert preserved is not None
         assert preserved.state["marker"] == "preserved"
+
+    async def test_branch_consent_loads_branch_point_snapshot_and_preserves_mainline(self) -> None:
+        """A consent failure on a branching request loads the branch point's own snapshot and
+        persists it under the branch response's ID only; the conversation mainline is untouched."""
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hello!")])])
+        )
+        agent.__aenter__.side_effect = _make_consent_error()
+        session_store = SessionStore()
+
+        conv_id = _make_valid_response_id()
+        branch_point_id = _make_valid_response_id()
+
+        mainline_session = AgentSession()
+        mainline_session.state["turn_count"] = 2
+        mainline_session.state["marker"] = "mainline"
+        await session_store.set(conv_id, mainline_session)
+        branch_point_session = AgentSession()
+        branch_point_session.state["turn_count"] = 1
+        branch_point_session.state["marker"] = "branch-point"
+        await session_store.set(branch_point_id, branch_point_session)
+
+        server = _make_server(agent, session_store=session_store)
+
+        consent = await _post(
+            server,
+            input_text="branch",
+            stream=False,
+            conversation_id=conv_id,
+            previous_response_id=branch_point_id,
+        )
+        assert consent.status_code == 200
+        body = consent.json()
+        assert body["status"] == "incomplete"
+        assert any(item["type"] == "oauth_consent_request" for item in body["output"])
+        agent.run.assert_not_called()
+
+        # The consent snapshot is written under the branch response's own ID and carries the
+        # branch point's state -- not the newer conversation mainline state.
+        branch_snapshot = await session_store.get(consent.json()["id"])
+        assert branch_snapshot is not None
+        assert branch_snapshot.state["marker"] == "branch-point"
+        assert branch_snapshot.state["turn_count"] == 1
+
+        # The conversation mainline snapshot is untouched by the consent persistence.
+        mainline = await session_store.get(conv_id)
+        assert mainline is not None
+        assert mainline.state["marker"] == "mainline"
+        assert mainline.state["turn_count"] == 2
+
+    async def test_branch_consent_with_missing_branch_point_fails_without_creating_session(self) -> None:
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hello!")])])
+        )
+        agent.__aenter__.side_effect = _make_consent_error()
+        server = _make_server(agent, session_store=SessionStore())
+
+        missing_branch_id = _make_valid_response_id()
+
+        consent = await _post(
+            server,
+            input_text="branch",
+            stream=False,
+            conversation_id=_make_valid_response_id(),
+            previous_response_id=missing_branch_id,
+        )
+        assert consent.status_code == 200
+        body = consent.json()
+        assert body["status"] == "failed"
+        # The failure happens while resolving the branch point, before consent items are emitted.
+        assert not any(item["type"] == "oauth_consent_request" for item in body.get("output", []))
+        agent.create_session.assert_not_called()
+        agent.run.assert_not_called()
+
+    async def test_branch_consent_rejected_for_service_managed_downstream_conversation(self) -> None:
+        """A consent failure on a branching request whose snapshot resumes a service-managed
+        downstream conversation is rejected before persisting -- the stale service thread ID
+        cannot be forked into an isolated branch."""
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hello!")])])
+        )
+        agent.__aenter__.side_effect = _make_consent_error()
+        session_store = SessionStore()
+
+        # Seed a branch-point session with a service-managed ID, mimicking what a
+        # mainline turn would have stored when the downstream client stores history.
+        branch_point_id = _make_valid_response_id()
+        service_session = AgentSession()
+        service_session.service_session_id = "service-thread-1"
+        service_session.state["marker"] = "branch-point"
+        await session_store.set(branch_point_id, service_session)
+
+        conv_id = _make_valid_response_id()
+        mainline_session = AgentSession()
+        mainline_session.state["marker"] = "mainline"
+        await session_store.set(conv_id, mainline_session)
+
+        server = _make_server(agent, session_store=session_store, history_source="agent")
+
+        branch = await _post(
+            server,
+            input_text="branch",
+            stream=False,
+            conversation_id=conv_id,
+            previous_response_id=branch_point_id,
+        )
+        assert branch.status_code == 200
+        body = branch.json()
+        assert body["status"] == "failed"
+        # Consent items are never emitted because the branch was rejected before
+        # consent handling proceeds.
+        assert not any(item["type"] == "oauth_consent_request" for item in body.get("output", []))
+        # No snapshot is persisted for the rejected branch response.
+        assert await session_store.get(branch.json()["id"]) is None
+        # The conversation mainline snapshot is untouched.
+        mainline = await session_store.get(conv_id)
+        assert mainline is not None
+        assert mainline.state["marker"] == "mainline"
 
     async def test_recovered_consent_is_tracked_and_not_emitted_twice(self) -> None:
         from azure.ai.agentserver.responses._id_generator import IdGenerator
