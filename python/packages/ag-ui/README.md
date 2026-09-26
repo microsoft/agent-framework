@@ -389,6 +389,13 @@ add_agent_framework_fastapi_endpoint(
 )
 ```
 
+Configured stateless agent snapshot stores are updated after function/MCP tool-result batches and approval safe points,
+then written once more with the terminal run state. These boundaries capture completed model/tool rounds without
+persisting model output whose stream finalizer may still reject it. Service-session snapshots retain terminal-save
+cadence so replayable messages cannot advance without their matching provider continuation state. Workflow Thread
+Snapshots also keep their terminal-save cadence; workflow checkpointing remains the mechanism for incremental workflow
+runtime state.
+
 A frontend can then hydrate the latest stored snapshot for the scoped thread:
 
 ```json
@@ -397,6 +404,42 @@ A frontend can then hydrate the latest stored snapshot for the scoped thread:
   "messages": []
 }
 ```
+
+### Disconnect-safe runs
+
+By default, AG-UI execution remains attached to the SSE response: disconnecting the client cancels the response
+generator and can stop the run. Set `detached_runs=True` when a finite agent or workflow run must continue through
+snapshot, checkpoint, and approval-state finalization after the HTTP reader disconnects:
+
+```python
+add_agent_framework_fastapi_endpoint(
+    app,
+    agent,
+    "/",
+    snapshot_store=snapshot_store,
+    snapshot_scope_resolver=resolve_snapshot_scope,
+    detached_runs=True,
+    max_detached_runs=32,
+    detached_run_timeout_seconds=3600,
+)
+```
+
+Detached execution uses a bounded endpoint-owned producer queue. While a detached mutating request is active, another
+mutating request for the same `(Snapshot Scope, threadId)` returns HTTP 409; an empty snapshot Hydrate Request remains
+allowed, bypasses detached producer capacity, and returns the latest committed safe point. Equal Thread ids in
+different Snapshot Scopes remain independent.
+Each endpoint registration retains at most `max_detached_runs` producers (32 by default); requests beyond that limit
+receive HTTP 503. After a reader disconnects or never starts, `detached_run_timeout_seconds` cancels a stalled producer
+and releases its capacity (one hour by default).
+
+This option does not add resumable event replay. Events emitted while no client is attached are consumed and discarded,
+so a reconnecting client recovers from Thread Snapshots rather than resuming the original SSE position. Applications
+that require replay of every in-flight event must provide their own authenticated event log and resume route with
+retention and cross-replica semantics appropriate to their deployment.
+
+FastAPI dependencies and other request-scoped resources may be released after the disconnected response ends. Resolve
+authorization, Snapshot Scope, and other durable values before the run starts; detached tools and providers must not
+retain request-owned clients or sessions that are expected to close with the HTTP request.
 
 Endpoint configuration requires `snapshot_scope_resolver` whenever a snapshot store is configured, including when
 the store is already set on a pre-wrapped `AgentFrameworkAgent` or `AgentFrameworkWorkflow`. The resolver returns
@@ -468,9 +511,11 @@ encryption, integrity protection, access control, retention, audit, data residen
 custom stores remain source-compatible because `session_state` is optional, but they provide Session State Continuity
 only when they round-trip that field unchanged with the rest of the snapshot.
 
-The supported consistency model is one active run per `(Snapshot Scope, threadId)`. Concurrent writes to the same
-scoped thread remain last-writer-wins. Applications that require stronger consistency must serialize those runs using
-coordination appropriate to their deployment; a process-local lock does not provide distributed consistency.
+The supported consistency model is one active run per `(Snapshot Scope, threadId)`. With `detached_runs=True`, one
+registered endpoint enforces that rule in-process by rejecting concurrent mutations while allowing hydration.
+Coordination is not shared across endpoint registrations, workers, or replicas; applications that require distributed
+serialization must provide it using infrastructure appropriate to their deployment. Without detached execution,
+concurrent writes to the same scoped thread remain last-writer-wins.
 
 ## Architecture
 

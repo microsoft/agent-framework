@@ -112,6 +112,24 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
   `state` entry, so conversation continuation is unreachable from client input by construction; keep it that way.
 - `confirm_changes` snapshot cleanup resolves the synthetic confirmation back to its original `function_call_id`;
   it must never concatenate unrelated tool results or record accepted changes without a matching real result.
+- Configured stateless agent Thread Snapshot stores persist after function/MCP tool-result and approval safe points,
+  then persist the terminal state. Never treat a yielded `finish_reason` or a following metadata update as successful
+  model-turn finalization: inner finalizers and result hooks may still reject that output. Save only after the complete
+  result/approval update and lifecycle side effects are applied; do not write every text delta or schedule unordered
+  background snapshot writes. Service-session and workflow Thread Snapshots retain terminal-save cadence so replayable
+  messages cannot advance without matching provider continuation state; workflow checkpoints own incremental workflow
+  runtime state.
+- Disconnect-safe execution is endpoint-owned and opt-in through
+  `add_agent_framework_fastapi_endpoint(detached_runs=True)`. Keep its producer queue bounded, retain and observe
+  producer/drainer tasks, and let the producer own final snapshot/checkpoint/approval persistence after the SSE reader
+  disconnects. Bound endpoint-wide producer admission and cancel abandoned producers after the configured timeout.
+  This mode discards unread events; it is not a resumable event log.
+- While a detached mutation is active, the endpoint may serve an empty Snapshot Hydrate Request but must reject another
+  mutation for the same `(Snapshot Scope, threadId)` with HTTP 409. Classify hydration once and keep it on the direct
+  response path so it bypasses detached admission and producer wrapping. The guard is process-local and does not
+  replace cross-replica coordination.
+- Detached runs may outlive FastAPI request-scoped disposable resources. Resolve authorization and Snapshot Scope before
+  spawning the producer, and do not rely on request-owned clients or sessions remaining open after disconnect.
 - SSE keepalive is endpoint-owned transport behavior configured through
   `add_agent_framework_fastapi_endpoint(keepalive_seconds=...)`. It emits SSE comments only; do not add `PING`,
   `HEARTBEAT`, or `KEEPALIVE` AG-UI events, and do not add runner-level keepalive settings.

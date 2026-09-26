@@ -4,9 +4,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import logging
 from collections.abc import AsyncGenerator, Sequence
+from contextlib import suppress
 from inspect import isawaitable
 from typing import Any, cast
 
@@ -15,10 +17,11 @@ from ag_ui.encoder import EventEncoder
 from agent_framework import CheckpointStorage, SupportsAgentRun, Workflow
 from fastapi import FastAPI, HTTPException
 from fastapi.params import Depends
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from ._agent import AgentFrameworkAgent
 from ._approval_state import _APPROVAL_SCOPE_INPUT_KEY
+from ._run_common import _extract_resume_payload
 from ._snapshots import (
     _DEFAULT_STATE_INPUT_KEY,
     _SNAPSHOT_SCOPE_INPUT_KEY,
@@ -30,6 +33,8 @@ from ._workflow import AgentFrameworkWorkflow
 
 logger = logging.getLogger(__name__)
 
+_DETACHED_READER_START_TIMEOUT_SECONDS = 1.0
+_DETACHED_STREAM_QUEUE_SIZE = 16
 _KEEPALIVE_COMMENT = "keepalive"
 
 
@@ -78,6 +83,26 @@ def _validate_keepalive_seconds(keepalive_seconds: float | None) -> None:
         raise ValueError("keepalive_seconds must be positive or None.")
 
 
+def _validate_detached_run_options(max_detached_runs: int, detached_run_timeout_seconds: float) -> None:
+    if max_detached_runs < 1:
+        raise ValueError("max_detached_runs must be greater than 0.")
+    if detached_run_timeout_seconds <= 0:
+        raise ValueError("detached_run_timeout_seconds must be positive.")
+
+
+def _is_snapshot_hydration_request(
+    request: AGUIRequest,
+    input_data: dict[str, Any],
+    *,
+    snapshot_persistence_active: bool,
+) -> bool:
+    """Return whether a request only replays the latest stored snapshot."""
+    if not snapshot_persistence_active or request.messages or _extract_resume_payload(input_data) is not None:
+        return False
+    forwarded_props = request.forwarded_props or {}
+    return not (forwarded_props.get("checkpoint_id") or forwarded_props.get("checkpointId"))
+
+
 def add_agent_framework_fastapi_endpoint(
     app: FastAPI,
     agent: SupportsAgentRun | AgentFrameworkAgent | Workflow | AgentFrameworkWorkflow,
@@ -93,6 +118,9 @@ def add_agent_framework_fastapi_endpoint(
     checkpoint_storage: CheckpointStorage | None = None,
     keepalive_seconds: float | None = 15,
     a2ui_config: dict[str, Any] | None = None,
+    detached_runs: bool = False,
+    max_detached_runs: int = 32,
+    detached_run_timeout_seconds: float = 3600,
 ) -> None:
     """Add an AG-UI endpoint to a FastAPI app.
 
@@ -128,8 +156,18 @@ def add_agent_framework_fastapi_endpoint(
             the surface-generation tool (``forwardedProps.injectA2UITool``). Keys:
             ``inject_a2ui_tool`` (backend opt-in override), ``default_catalog_id``,
             ``catalog``, ``guidelines``, ``recovery``, ``default_surface_id``.
+        detached_runs: Whether agent/workflow execution continues after the SSE client disconnects. Defaults to False.
+            When enabled, the endpoint owns a bounded background producer and completes runner persistence even if the
+            HTTP reader is cancelled. Request-scoped disposable resources may be released after disconnect, so detached
+            work must use values resolved before streaming rather than retaining request-owned clients or sessions.
+            This option does not provide resumable event replay.
+        max_detached_runs: Maximum number of detached producers retained by this endpoint registration. Defaults to 32.
+            Additional requests receive HTTP 503 until capacity is released.
+        detached_run_timeout_seconds: Maximum time a producer may remain active after its SSE reader disconnects or
+            never starts. Defaults to 3600 seconds. Expired producers are cancelled and release endpoint capacity.
     """
     _validate_keepalive_seconds(keepalive_seconds)
+    _validate_detached_run_options(max_detached_runs, detached_run_timeout_seconds)
 
     protocol_runner: AgentFrameworkAgent | AgentFrameworkWorkflow
     if isinstance(agent, AgentFrameworkWorkflow):
@@ -167,6 +205,27 @@ def add_agent_framework_fastapi_endpoint(
         snapshot_scope_resolver=snapshot_scope_resolver,
     )
 
+    background_tasks: set[asyncio.Task[Any]] = set()
+    producer_tasks: set[asyncio.Task[None]] = set()
+    active_runs: dict[tuple[str | None, str], asyncio.Task[None]] = {}
+
+    def retain_background_task(task: asyncio.Task[Any]) -> None:
+        background_tasks.add(task)
+
+        def task_done(completed: asyncio.Task[Any]) -> None:
+            background_tasks.discard(completed)
+            if completed.cancelled():
+                return
+            exception = completed.exception()
+            if exception is not None:
+                logger.error(
+                    "[%s] Detached stream task failed",
+                    path,
+                    exc_info=(type(exception), exception, exception.__traceback__),
+                )
+
+        task.add_done_callback(task_done)
+
     @app.post(path, tags=tags or ["AG-UI"], dependencies=dependencies, response_model=None)  # type: ignore[arg-type]
     async def agent_endpoint(request_body: AGUIRequest) -> Response:
         """Handle AG-UI agent requests.
@@ -177,12 +236,14 @@ def add_agent_framework_fastapi_endpoint(
         try:
             input_data = request_body.model_dump(exclude_none=True)
             snapshot_persistence_active = _get_snapshot_store(protocol_runner) is not None
+            snapshot_scope: str | None = None
             if snapshot_scope_resolver is not None:
-                snapshot_scope = snapshot_scope_resolver(request_body)
-                if isawaitable(snapshot_scope):
-                    snapshot_scope = await snapshot_scope
-                if not isinstance(snapshot_scope, str) or not snapshot_scope:
+                resolved_scope = snapshot_scope_resolver(request_body)
+                if isawaitable(resolved_scope):
+                    resolved_scope = await resolved_scope
+                if not isinstance(resolved_scope, str) or not resolved_scope:
                     raise ValueError("snapshot_scope_resolver must return a non-empty string.")
+                snapshot_scope = resolved_scope
                 input_data[_APPROVAL_SCOPE_INPUT_KEY] = snapshot_scope
                 input_data[_SNAPSHOT_SCOPE_INPUT_KEY] = snapshot_scope
             if default_state:
@@ -203,6 +264,30 @@ def add_agent_framework_fastapi_endpoint(
             logger.info(f"Received request at {path}: {input_data.get('run_id', 'no-run-id')}")
 
             keepalive_enabled = keepalive_seconds is not None
+            snapshot_hydration_request = _is_snapshot_hydration_request(
+                request_body,
+                input_data,
+                snapshot_persistence_active=snapshot_persistence_active,
+            )
+            active_run_key: tuple[str | None, str] | None = None
+            if detached_runs and request_body.thread_id is not None and not snapshot_hydration_request:
+                active_run_key = (snapshot_scope, request_body.thread_id)
+                active_task = active_runs.get(active_run_key)
+                if active_task is not None and not active_task.done():
+                    return JSONResponse(
+                        status_code=409,
+                        content={"detail": "An AG-UI run is already active for this scoped thread."},
+                    )
+                active_runs.pop(active_run_key, None)
+            if detached_runs and not snapshot_hydration_request:
+                for completed_task in tuple(producer_tasks):
+                    if completed_task.done():
+                        producer_tasks.discard(completed_task)
+                if len(producer_tasks) >= max_detached_runs:
+                    return JSONResponse(
+                        status_code=503,
+                        content={"detail": "AG-UI detached run capacity is exhausted."},
+                    )
 
             def prepare_frame(encoded: str) -> str | bytes:
                 if keepalive_enabled:
@@ -257,6 +342,112 @@ def add_agent_framework_fastapi_endpoint(
                     except Exception:
                         logger.exception("[%s] Failed to encode RUN_ERROR event", path)
 
+            async def drain_detached_stream(queue: asyncio.Queue[str | bytes | None]) -> None:
+                while await queue.get() is not None:
+                    pass
+
+            stream: AsyncGenerator[str | bytes]
+            if detached_runs and not snapshot_hydration_request:
+                queue: asyncio.Queue[str | bytes | None] = asyncio.Queue(maxsize=_DETACHED_STREAM_QUEUE_SIZE)
+                reader_started = asyncio.Event()
+                reader_abandoned = asyncio.Event()
+
+                async def produce_events() -> None:
+                    try:
+                        try:
+                            await asyncio.wait_for(
+                                reader_started.wait(),
+                                timeout=_DETACHED_READER_START_TIMEOUT_SECONDS,
+                            )
+                        except asyncio.TimeoutError:
+                            reader_abandoned.set()
+                        async for frame in event_generator():
+                            if reader_abandoned.is_set():
+                                continue
+                            await queue.put(frame)
+                    except asyncio.CancelledError:
+                        reader_abandoned.set()
+                        raise
+                    finally:
+                        current_task = asyncio.current_task()
+                        if active_run_key is not None and active_runs.get(active_run_key) is current_task:
+                            active_runs.pop(active_run_key, None)
+                        if reader_started.is_set():
+                            await queue.put(None)
+
+                producer_task = asyncio.create_task(
+                    produce_events(),
+                    name=f"ag-ui-run-{input_data.get('run_id', 'generated')}",
+                )
+                if active_run_key is not None:
+                    active_runs[active_run_key] = producer_task
+                producer_tasks.add(producer_task)
+                producer_task.add_done_callback(producer_tasks.discard)
+                retain_background_task(producer_task)
+
+                async def expire_abandoned_run() -> None:
+                    if producer_task.done():
+                        return
+                    if not reader_abandoned.is_set():
+                        abandoned_wait = asyncio.create_task(reader_abandoned.wait())
+                        done, _ = await asyncio.wait(
+                            {producer_task, abandoned_wait},
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        if producer_task in done:
+                            abandoned_wait.cancel()
+                            with suppress(asyncio.CancelledError):
+                                await abandoned_wait
+                            return
+                    if producer_task.done():
+                        return
+                    try:
+                        await asyncio.wait_for(
+                            asyncio.shield(producer_task),
+                            timeout=detached_run_timeout_seconds,
+                        )
+                    except asyncio.TimeoutError:
+                        logger.error(
+                            "[%s] Detached run exceeded %.1f seconds after reader disconnect; cancelling",
+                            path,
+                            detached_run_timeout_seconds,
+                        )
+                        reader_abandoned.set()
+                        producer_task.cancel()
+                        with suppress(asyncio.CancelledError):
+                            await producer_task
+
+                expiry_task = asyncio.create_task(
+                    expire_abandoned_run(),
+                    name=f"ag-ui-expiry-{input_data.get('run_id', 'generated')}",
+                )
+                retain_background_task(expiry_task)
+
+                async def detached_event_generator() -> AsyncGenerator[str | bytes]:
+                    completed = False
+                    try:
+                        reader_started.set()
+                        if reader_abandoned.is_set():
+                            return
+                        while True:
+                            item = await queue.get()
+                            if item is None:
+                                completed = True
+                                return
+                            yield item
+                    finally:
+                        if not completed and not producer_task.done():
+                            reader_abandoned.set()
+                            drain_task = asyncio.create_task(
+                                drain_detached_stream(queue),
+                                name=f"ag-ui-drain-{input_data.get('run_id', 'generated')}",
+                            )
+                            retain_background_task(drain_task)
+
+                stream = detached_event_generator()
+            else:
+                stream = event_generator()
+
             headers = {
                 "Cache-Control": "no-cache",
                 "Connection": "keep-alive",
@@ -267,14 +458,14 @@ def add_agent_framework_fastapi_endpoint(
                 from sse_starlette.sse import EventSourceResponse
 
                 return EventSourceResponse(
-                    event_generator(),
+                    stream,
                     ping=cast(int, keepalive_seconds),
                     ping_message_factory=lambda: ServerSentEvent(comment=_KEEPALIVE_COMMENT),
                     headers=headers,
                     media_type="text/event-stream",
                 )
             return StreamingResponse(
-                event_generator(),
+                stream,
                 media_type="text/event-stream",
                 headers=headers,
             )

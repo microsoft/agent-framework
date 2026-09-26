@@ -4,8 +4,8 @@
 
 A ThreadSnapshotSession is opened once per run and owns every interaction
 with the AG-UI Thread Snapshot store: the load-once read, hydration replay,
-the effective-state overlay, resume message seeding, and the save whose
-storage failures must never surface on an already-streamed run.
+the effective-state overlay, resume message seeding, and ordered safe-point
+and terminal saves whose storage failures must never replace streamed events.
 """
 
 from __future__ import annotations
@@ -155,11 +155,11 @@ class ThreadSnapshotSession:
         interrupt: list[dict[str, Any]] | None,
         session_state: dict[str, Any] | None,
     ) -> None:
-        """Commit the latest thread snapshot in one write when persistence is configured.
+        """Commit the latest thread snapshot when persistence is configured.
 
-        The run has already streamed by the time this is called, so a store
-        failure is logged and swallowed; the previous snapshot stays
-        authoritative for hydration.
+        Calls may follow already-emitted stream events, so a store failure is
+        logged and swallowed rather than changing the stream into a late
+        ``RUN_ERROR``. The previous snapshot stays authoritative for hydration.
         """
         if self._store is None or self._scope is None:
             return
