@@ -272,6 +272,7 @@ class AgentExecutor(Executor):
         id: str | None = None,
         context_mode: Literal["full", "last_agent", "custom"] | None = None,
         context_filter: Callable[[list[Message]], list[Message]] | None = None,
+        ensure_trailing_user_turn: bool = False,
     ):
         """Initialize the executor with a unique identifier.
 
@@ -290,7 +291,12 @@ class AgentExecutor(Executor):
             context_filter: A function that takes the full conversation (list of Messages) as input and returns
                 a filtered list of Messages to be used as context for the agent run. This is required
                 if context_mode is set to "custom".
+            ensure_trailing_user_turn: If True, appends a synthetic user continuation message
+                ("please continue.") when the cache ends on an assistant message. Some
+                chat-completions providers return empty text when the prompt ends on
+                ``assistant``. Defaults to False to preserve existing behavior.
         """
+        self._ensure_trailing_user_turn = ensure_trailing_user_turn
         # Prefer provided id; else use agent.name if present; else generate deterministic prefix
         exec_id = id or resolve_agent_id(agent)
         if not exec_id:
@@ -554,6 +560,7 @@ class AgentExecutor(Executor):
         containing incremental updates (streaming mode) or a single output event (type='output')
         containing the complete response (non-streaming mode).
         """
+        self._ensure_cache_not_assistant_ending()
         if ctx.is_streaming():
             # Streaming mode: emit incremental updates
             response = await self._run_agent_streaming(cast(WorkflowContext[Never, AgentResponseUpdate], ctx))
@@ -574,6 +581,17 @@ class AgentExecutor(Executor):
         agent_response = AgentExecutorResponse(self.id, response, full_conversation=self._full_conversation)
         await ctx.send_message(agent_response)
         self._cache.clear()
+
+    def _ensure_cache_not_assistant_ending(self) -> None:
+        """Append a synthetic user turn if the cache ends on an assistant message."""
+        if self._ensure_trailing_user_turn and self._cache and self._cache[-1].role == "assistant":
+            logger.debug(
+                "AgentExecutor %s: cache ends on an assistant message; appending a synthetic"
+                "continuation turn to avoid empty completions from providers that require"
+                "a trailing user message.",
+                self.id,
+            )
+            self._cache.append(Message(role="user", contents=["please continue."]))
 
     async def _run_agent(self, ctx: WorkflowContext[Never, AgentResponse]) -> AgentResponse | None:
         """Execute the underlying agent in non-streaming mode.

@@ -256,3 +256,45 @@ class TestAgentApprovalExecutor:
         executor = AgentApprovalExecutor(cast(SupportsAgentRun, agent))
 
         assert executor._propagate_request is True  # type: ignore
+
+    def test_ensure_trailing_user_turn_defaults_to_false(self):
+        """ensure_trailing_user_turn should default to False, preserving existing behavior"""
+
+        agent = _TestAgent(id="test_id", name="test_agent", description="test description")
+
+        executor = AgentApprovalExecutor(cast(SupportsAgentRun, agent))
+
+        assert executor._ensure_trailing_user_turn is False  # type: ignore
+
+    def test_ensure_trailing_user_turn_stored_on_executor(self):
+        """ensure_trailing_user_turn=True should be stored on the AgentApprovalExecutor instance."""
+
+        agent = _TestAgent(id="test_id", name="test_name", description="test description")
+
+        executor = AgentApprovalExecutor(cast(SupportsAgentRun, agent), ensure_trailing_user_turn=True)
+
+        assert executor._ensure_trailing_user_turn is True  # type: ignore
+
+    def test_ensure_trailing_user_turn_propagated_to_inner_agent_executor(self):
+        """ensure_trailing_user_turn must be threaded through to the inner AgentExecutor
+        built by _build_workflow, since that inner executor is what actually runs the agent.
+
+        without this propagation, the flag would be accepted
+        by AgentApprovalExecutor but silently dropped, so request-info-wrapped agents
+        would never get the synthetic trailing user turn.
+        """
+        agent = _TestAgent(id="test_id", name="test_agent", description="Test description")
+
+        executor = AgentApprovalExecutor(cast(SupportsAgentRun, agent), ensure_trailing_user_turn=True)
+
+        inner_agent_executor = executor.workflow.get_start_executor()
+        assert inner_agent_executor._ensure_trailing_user_turn is True  # type: ignore
+
+    def test_ensure_trailing_user_turn_false_propagated_to_inner_agent_executor(self):
+        """When left at the default, the inner AgentExecutor must also default to False."""
+        agent = _TestAgent(id="test_id", name="test_agent", description="Test description")
+
+        executor = AgentApprovalExecutor(cast(SupportsAgentRun, agent))
+
+        inner_agent_executor = executor.workflow.get_start_executor()
+        assert inner_agent_executor._ensure_trailing_user_turn is False  # type: ignore
