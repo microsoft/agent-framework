@@ -300,12 +300,21 @@ class FoundryAgentSessionStore(SessionStore):
 
     DEFAULT_ROOT_SCOPE = "agent_sessions"
 
-    def __init__(self, platform_context: FoundryAgentRequestContext) -> None:
+    def __init__(self, platform_context: FoundryAgentRequestContext, *, store_name: str | None = None) -> None:
+        """Initialize session storage.
+
+        Args:
+            platform_context: The request-scoped platform context.
+            store_name: Logical state-store name. Defaults to `agent_sessions`.
+        """
+        if store_name is not None and (not isinstance(store_name, str) or not store_name.strip()):
+            raise ValueError("store_name must be a non-empty string")
         self.platform_context = platform_context
+        self._store_name = self.DEFAULT_ROOT_SCOPE if store_name is None else store_name
 
     async def _get_store(self) -> FoundryStateStore:
         return await FoundryStateStore.get_or_create(
-            f"{self.DEFAULT_ROOT_SCOPE}",
+            self._store_name,
             user_isolation=True,
         )
 
@@ -334,9 +343,19 @@ class AgentSessionStoreProvider(StoreProvider[SessionStore]):
     This defaults to using the `FoundryAgentSessionStore` in all environments.
     """
 
+    def __init__(self, *, store_name: str | None = None) -> None:
+        """Initialize the provider.
+
+        Args:
+            store_name: Logical state-store name. Defaults to `agent_sessions`.
+        """
+        if store_name is not None and (not isinstance(store_name, str) or not store_name.strip()):
+            raise ValueError("store_name must be a non-empty string")
+        self._store_name = store_name
+
     def get_store(self, *, config: AgentConfig, platform_context: FoundryAgentRequestContext) -> SessionStore:
         """Get agent session store for the requested hosting environment."""
-        return FoundryAgentSessionStore(platform_context)
+        return FoundryAgentSessionStore(platform_context, store_name=self._store_name)
 
 
 # endregion Agent session persistence
