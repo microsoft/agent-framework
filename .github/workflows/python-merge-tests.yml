@@ -39,6 +39,7 @@ jobs:
       foundryChanged: ${{ steps.filter.outputs.foundry }}
       foundryHostingChanged: ${{ steps.filter.outputs.foundry_hosting }}
       cosmosChanged: ${{ steps.filter.outputs.cosmos }}
+      duckdbChanged: ${{ steps.filter.outputs.duckdb }}
       qdrantChanged: ${{ steps.filter.outputs.qdrant }}
       mongodbChanged: ${{ steps.filter.outputs.mongodb }}
       redisChanged: ${{ steps.filter.outputs.redis }}
@@ -89,6 +90,9 @@ jobs:
               - 'python/packages/foundry_hosting/**'
             cosmos:
               - 'python/packages/azure-cosmos/**'
+            duckdb:
+              - 'python/packages/duckdb/**'
+              - '.github/workflows/python-merge-tests.yml'
             qdrant:
               - 'python/packages/qdrant/**'
               - '.github/workflows/python-merge-tests.yml'
@@ -116,6 +120,29 @@ jobs:
       - name: not python tests
         if: steps.filter.outputs.python != 'true'
         run: echo "NOT python file"
+
+  # The aggregate unit-test job is skipped for pull requests, so run DuckDB tests directly.
+  python-tests-duckdb:
+    name: Python Tests - DuckDB
+    needs: paths-filter
+    if: >
+      github.event_name == 'pull_request' &&
+      (needs.paths-filter.outputs.duckdbChanged == 'true' ||
+       needs.paths-filter.outputs.coreChanged == 'true')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up python and install the project
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: ${{ env.UV_PYTHON }}
+          os: ${{ runner.os }}
+      - name: Test DuckDB package
+        run: uv run poe test -P duckdb
+
   python-tests-qdrant:
     name: Python Integration Tests - Qdrant
     needs: paths-filter
@@ -950,6 +977,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       [
+        python-tests-duckdb,
         python-tests-unit,
         python-tests-openai,
         python-tests-azure-openai,

@@ -60,9 +60,11 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import timedelta
 from enum import Enum
+from functools import lru_cache
 from html import escape as xml_escape
 from pathlib import Path, PurePosixPath
 from typing import IO, TYPE_CHECKING, Any, ClassVar, Final, Protocol, TypeAlias, TypeVar, cast, runtime_checkable
+from urllib.parse import unquote
 
 import yaml
 from yaml.nodes import MappingNode, Node, ScalarNode
@@ -4407,6 +4409,33 @@ class MCPSkillResource(SkillResource):
         return text if text else None
 
 
+_RESOURCE_CONTROL_CHARS: Final = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+_MAX_RESOURCE_NAME_DECODING_DEPTH: Final[int] = 32
+
+
+@lru_cache(maxsize=128)
+def _fully_unquote(value: str, *, remaining_depth: int = _MAX_RESOURCE_NAME_DECODING_DEPTH) -> str | None:
+    """Percent-decode *value* until stable, normalizing backslashes to forward slashes.
+
+    Decoding never removes a literal ``.``, ``/``, ``:``, or control character, so
+    checking the final form also covers every nested encoding layer (e.g. ``%252e``).
+    Each layer is cached, keyed by the remaining depth so reuse cannot bypass the limit.
+
+    Args:
+        value: The value to decode.
+
+    Keyword Args:
+        remaining_depth: The number of further decoding layers allowed.
+
+    Returns:
+        The decoded value, or ``None`` if the decoding depth exceeds the limit.
+    """
+    decoded = unquote(value).replace("\\", "/")
+    if decoded == value:
+        return value
+    return _fully_unquote(decoded, remaining_depth=remaining_depth - 1) if remaining_depth > 0 else None
+
+
 @experimental(feature_id=ExperimentalFeature.MCP_SKILLS)
 class MCPSkill(Skill):
     """A :class:`Skill` discovered from an MCP server exposing the Agent Skills convention.
@@ -4502,7 +4531,7 @@ class MCPSkill(Skill):
 
         Returns:
             An :class:`MCPSkillResource`, or ``None`` when the name is empty
-            or the resource does not exist on the server.
+            or unsafe, or the resource does not exist on the server.
         """
         if not name or not name.strip():
             return None
@@ -4527,7 +4556,9 @@ class MCPSkill(Skill):
         """Validate a resource name and return the normalized form.
 
         Defense in depth: refuses names that could escape the skill root
-        (absolute paths, embedded URI schemes, parent-traversal segments).
+        (absolute paths, embedded URI schemes, parent-traversal segments,
+        or control characters), including percent-encoded forms.
+        Names requiring more than 32 percent-decoding passes are also refused.
         The MCP server is the authority on URI resolution, but rejecting
         obviously unsafe shapes client-side avoids leaking escape attempts
         upstream.
@@ -4539,8 +4570,26 @@ class MCPSkill(Skill):
             The normalized name with backslashes replaced by forward slashes,
             or ``None`` if the name is unsafe.
         """
+        # Treat backslashes as separators, e.g. "..\x" is checked as "../x".
         normalized = name.replace("\\", "/")
-        if normalized.startswith("/") or "://" in normalized or any(seg == ".." for seg in normalized.split("/")):
+        # Split at the first literal "?"/"#" before decoding, so "a%3f/%2e%2e/x" stays one path while
+        # "a/b.md?q=/../x" leaves "/../x" in the query; then decode each part once.
+        raw_path, *raw_suffix = re.split(r"[?#]", normalized, maxsplit=1)
+        path, suffix = _fully_unquote(raw_path), _fully_unquote("".join(raw_suffix))
+        if (
+            # Excessive encoding depth, e.g. a name requiring more than 32 decoding passes.
+            path is None
+            or suffix is None
+            # Absolute path, e.g. "/etc/passwd" or "%2fetc/passwd".
+            or path.startswith("/")
+            # Embedded URI, e.g. "http://example.com/other" or "%68ttp%3a%2f%2fexample.com".
+            or "://" in path
+            # Parent traversal, e.g. "../x", "%2e%2e/x", "%252e%252e/x", "a%3f/../../x", or ".. "
+            # (URI parsers can trim trailing spaces).
+            or any(segment.rstrip(" ") == ".." for segment in re.split(r"[/?#]", path))
+            # Control characters anywhere, e.g. "a/\0/b.md", ".\t./x", or ".%09./x".
+            or _RESOURCE_CONTROL_CHARS.search(path + suffix)
+        ):
             logger.debug("Rejecting resource name with unsafe path components: %r", name)
             return None
         return normalized
@@ -5050,6 +5099,12 @@ class MCPSkillsSource(SkillsSource):
         entries or their supporting resources.
 
     Security considerations:
+        Supporting resource names are checked for absolute paths, parent
+        traversal (including percent-encoded forms), and control characters
+        before an MCP request is sent. Index URLs retain their MCP resource
+        schemes: they are sent to the connected server, not opened locally.
+        This client-side guard does not replace server-side authorization.
+
         Discovering skills over MCP means an *external* MCP server controls
         what skill content (including instructions and, for script-capable
         skills, the scripts the agent may run) reaches the agent. This source
