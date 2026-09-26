@@ -45,13 +45,18 @@ agent_framework/
   display a mask. String-only APIs such as `str.join()` and JSON encoding reject it unless callers explicitly
   convert it. Use `get_secret_value()` when passing credentials to provider SDKs; `str(secret)` returns the mask.
 - **`load_settings`** accepts plain string overrides for `SecretString` fields and wraps them, as it does for
-  environment and `.env` values. Existing `SecretString` overrides are preserved.
+  environment and `.env` values. Existing `SecretString` overrides are preserved. Invalid supplied numeric and
+  boolean environment or `.env` values raise `ValueError` identifying the field and source instead of falling back
+  to raw strings.
 
 ### Agents (`_agents.py`)
 
 - **`SupportsAgentRun`** - Protocol defining the agent interface
 - **`BaseAgent`** - Abstract base class for agents
 - **`Agent`** - Main agent class wrapping a chat client with tools, instructions, and middleware
+- **`RawAgent.open()` / `close()`** (inherited by `Agent`) - Explicitly enter the client's and configured MCP tools'
+  async contexts, then release them along with lazily connected MCP tools. `async with agent` delegates to these
+  methods; a partially failed `open()` closes resources already entered.
 
 ### Chat Clients (`_clients.py`)
 
@@ -141,7 +146,7 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
 - **`AgentMiddleware`** - Intercepts agent `run()` calls
 - **`ChatMiddleware`** - Intercepts chat client `get_response()` calls
 - **`FunctionMiddleware`** - Intercepts function/tool invocations
-- **`AgentContext`** / **`ChatContext`** / **`FunctionInvocationContext`** - Context objects passed through middleware. A tool can declare a `FunctionInvocationContext` parameter to receive it; `context.tools` is the live, mutable tools list for the run, and `context.add_tools(...)` / `context.remove_tools(...)` enable progressive tool exposure (changes apply on the next function-calling iteration).
+- **`AgentContext`** / **`ChatContext`** / **`FunctionInvocationContext`** - Context objects passed through middleware. A tool can declare a `FunctionInvocationContext` parameter to receive it; `context.tools` is the live, mutable tools list for the run, and `context.add_tools(...)` / `context.remove_tools(...)` enable progressive tool exposure (changes apply on the next function-calling iteration). Chat middleware that constructs provider-local replacement messages must call `context.record_message_replacement(...)` for every replacement before downstream compaction so complete summaries can reconcile to caller-owned messages without persisting the replacements themselves.
 - **`MessageInjectionMiddleware`** - Session-scoped chat middleware that lets tools or other code enqueue messages for the next model call in the current `AgentSession`; it drains queued messages into the next call and loops only when no function calls need to be handled by the function invocation layer.
 
 ### Sessions (`_sessions.py`)
@@ -243,6 +248,17 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
   A `call_id` may be reused after a completed round, so approval normalization matches ordered call occurrences and
   consumes approved results per occurrence rather than using one global result per `call_id`. All contents produced by
   one execution remain one result group and are consumed together, including multiple user-input requests.
+- A local (non-hosted) `function_approval_response` authorizes execution only when it binds to an approval request
+  recorded in an authoritative `AgentSession`. Runs without one drop inbound local approval responses with a warning
+  and execute nothing, so callers must pass the session that issued the request back on the resuming run. An approval
+  request that merely appears in the caller-supplied history is not proof the framework asked for approval. Hosted
+  provider-issued approvals still pass through untouched, and a response already settled by a terminal result is
+  replayed history rather than an authorization, so replaying a completed transcript keeps working without a session.
+  That settled exemption is an allow-list evaluated per response object, not per approval id, because several
+  responses can share one approval id and only the first is eligible to execute. Filtering runs before stateless
+  mixed-batch completeness is enforced, so a dropped response is never counted as an answer.
+  Set the `disable_approval_response_binding` function invocation configuration option to restore the previous
+  unbound behavior.
 - Approval resume keeps terminal `function_result` contents in tool-role messages and follow-up user-input requests
   in assistant-role messages, including mixed sibling batches.
 - Function-call budget accounting counts one unit per executed result group, not per emitted `function_result`, so

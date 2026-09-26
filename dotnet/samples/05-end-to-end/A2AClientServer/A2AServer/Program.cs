@@ -53,6 +53,11 @@ AgentCard policyAgentCard = PolicyAgentCard.Create(agentUrl);
 // Without this, contextId/taskId alone are the lookup keys — any caller who knows them can access another caller's data.
 // Example using claims-based identity:
 // builder.Services.UseClaimsBasedAgentIsolation(new() { ClaimType = ClaimTypes.NameIdentifier });
+//
+// This sample does not authenticate A2A callers. Configure authentication and enforce authorization
+// on both enabled protocol bindings, for example with RequireAuthorization() on each mapping.
+// For claims-based isolation, also call AddHttpContextAccessor() and use a unique caller claim.
+// Task isolation is needed even without session persistence. See the sample README and shared hosting guide.
 
 // By default, NoopAgentSessionStore is used — sessions are not persisted across requests.
 // To enable multi-turn conversations, register a session store explicitly, e.g.:

@@ -1535,8 +1535,17 @@ class Content:
 
         # Special handling for DataContent with data and media_type
         if content_type == "data" and "data" in remaining and "media_type" in remaining:
-            # Use from_data() to properly create the DataContent with URI
-            return cls.from_data(remaining["data"], remaining["media_type"])
+            # Use from_data() to properly create the DataContent with URI. The three
+            # fields popped above are passed on explicitly: this branch returns before
+            # the constructor below, so leaving them out dropped on a data content what
+            # every other content type keeps.
+            return cls.from_data(
+                remaining["data"],
+                remaining["media_type"],
+                annotations=annotations,
+                additional_properties=additional_properties,
+                raw_representation=raw_representation,
+            )
 
         # Handle nested Content objects (e.g., function_call in function_approval_request)
         if (function_call := remaining.get("function_call")) and isinstance(function_call, dict):

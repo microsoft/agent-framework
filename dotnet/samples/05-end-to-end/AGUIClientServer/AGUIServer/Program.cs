@@ -37,6 +37,12 @@ IChatClient chatClient = new OpenAIClient(
 // make sure to also register an AgentIsolationKeyProvider to scope sessions by principal in multi-user
 // deployments, e.g.:
 // builder.Services.UseClaimsBasedAgentIsolation(new() { ClaimType = ClaimTypes.NameIdentifier });
+//
+// This sample does not authenticate AG-UI callers. Multi-user hosts must configure authentication
+// and enforce endpoint authorization, for example with MapAGUIServer(...).RequireAuthorization().
+// For claims-based isolation of persisted sessions, call builder.Services.AddHttpContextAccessor()
+// and builder.Services.UseClaimsBasedAgentIsolation(), using a claim that uniquely identifies each caller.
+// See the AG-UI samples README's "Security considerations" for configuration and client requirements.
 
 // Register the agent with the host and configure it to use an in-memory session store
 // so that conversation state is maintained across requests. In production, you may want to use a persistent session store.
@@ -80,7 +86,10 @@ builder
             name: "get_server_weather_forecast",
             description: "Gets the forecast for a specific location and date",
             AGUIServerSerializerContext.Default.Options))
-    .WithInMemorySessionStore();
+    // This sample is a single-user local demo with no isolation provider, so the builder's default strict
+    // isolation wrapper would reject every request. Skipping it here lets MapAGUIServer add its own isolation
+    // wrapper, which is strict only when an AgentIsolationKeyProvider is registered (see the warning above).
+    .WithInMemorySessionStore(withIsolation: false);
 
 WebApplication app = builder.Build();
 

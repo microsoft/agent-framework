@@ -65,7 +65,7 @@ internal sealed partial class SkillMdEntryLoader : IMcpSkillEntryLoader
             return false;
         }
 
-        skill = new AgentMcpSkill(frontmatter, entry.Url!, this._client);
+        skill = new AgentMcpSkill(frontmatter, entry.Url!, this._client, this._logger);
 
         LogSkillLoaded(this._logger, frontmatter.Name);
 

@@ -241,6 +241,7 @@ class HandoffAgentExecutor(AgentExecutor):
         *,
         agent_session: AgentSession | None = None,
         is_start_agent: bool = False,
+        user_response_target_id: str | None = None,
         termination_condition: TerminationCondition | None = None,
         autonomous_mode: bool = False,
         autonomous_mode_prompt: str | None = None,
@@ -254,6 +255,8 @@ class HandoffAgentExecutor(AgentExecutor):
             agent_session: Optional AgentSession that manages the agent's execution context
             is_start_agent: Whether this agent is the starting agent in the handoff workflow.
                             There can only be one starting agent in a handoff workflow.
+            user_response_target_id: Optional executor ID that should handle user responses.
+                                     Defaults to this executor.
             termination_condition: Optional callable that determines when to terminate the workflow
             autonomous_mode: Whether the agent should operate involve external systems after
                              a response that does not trigger a handoff or before the turn
@@ -271,6 +274,7 @@ class HandoffAgentExecutor(AgentExecutor):
         self._handoff_targets = {handoff.target_id for handoff in handoffs}
         self._termination_condition = termination_condition
         self._is_start_agent = is_start_agent
+        self._user_response_target_id = user_response_target_id
 
         # Autonomous mode members
         self._autonomous_mode = autonomous_mode
@@ -510,8 +514,15 @@ class HandoffAgentExecutor(AgentExecutor):
         # Broadcast the user response to all other agents
         await self._broadcast_messages(response, ctx)
 
-        # Append the user response messages to the cache
+        # Keep this executor synchronized even when another agent handles the response.
         self._cache.extend(response)
+        if self._user_response_target_id is not None and self._user_response_target_id != self.id:
+            await ctx.send_message(
+                AgentExecutorRequest(messages=[], should_respond=True),
+                target_id=self._user_response_target_id,
+            )
+            return
+
         await self._run_agent_and_emit(ctx)
 
     async def _broadcast_messages(
@@ -623,6 +634,8 @@ class HandoffBuilder:
     Agents can hand off to other agents using `.add_handoff()`. This provides a decentralized
     approach to multi-agent collaboration. Handoffs can be configured using `.add_handoff`. If
     none are specified, all agents can hand off to all others by default (making a mesh topology).
+    By default, user responses return to the agent that requested them. Use
+    `.enable_return_to_previous(False)` to route user responses through the start agent instead.
 
     Participants must be ``Agent`` instances. ``SupportsAgentRun`` protocol implementors that
     are not ``Agent`` subclasses are not supported because handoff workflows require cloning,
@@ -690,6 +703,7 @@ class HandoffBuilder:
 
         # Handoff related members
         self._handoff_config: dict[str, set[HandoffConfiguration]] = {}
+        self._return_to_previous: bool = True
 
         # Checkpoint related members
         self._checkpoint_storage: CheckpointStorage | None = checkpoint_storage
@@ -862,6 +876,33 @@ class HandoffBuilder:
             raise ValueError("Call participants(...) before with_start_agent(...)")
         self._start_id = resolved_id
 
+        return self
+
+    def enable_return_to_previous(self, enabled: bool = True) -> "HandoffBuilder":
+        """Configure whether user responses return to the agent that requested them.
+
+        Return-to-previous routing is enabled by default. Disable it to route each user response
+        through the configured start agent so that agent can re-evaluate the conversation before
+        handing off again.
+
+        Args:
+            enabled: Whether user responses should return to the agent that requested them.
+
+        Returns:
+            Self for method chaining.
+
+        Example:
+
+        .. code-block:: python
+
+            workflow = (
+                HandoffBuilder(participants=[triage, billing, support])
+                .with_start_agent(triage)
+                .enable_return_to_previous(False)
+                .build()
+            )
+        """
+        self._return_to_previous = enabled
         return self
 
     def with_autonomous_mode(
@@ -1155,6 +1196,7 @@ class HandoffBuilder:
                 agent=agent,
                 handoffs=handoffs.get(resolved_id, []),
                 is_start_agent=(id == self._start_id),
+                user_response_target_id=None if self._return_to_previous else self._start_id,
                 termination_condition=self._termination_condition,
                 autonomous_mode=autonomous_mode,
                 autonomous_mode_prompt=self._autonomous_mode_prompts.get(id, None),

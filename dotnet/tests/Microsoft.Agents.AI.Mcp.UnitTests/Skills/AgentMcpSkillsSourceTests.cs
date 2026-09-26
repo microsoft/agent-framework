@@ -1,5 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Collections.Generic;
+using System.Linq;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
@@ -141,21 +144,173 @@ public sealed class AgentMcpSkillsSourceTests
     [InlineData("../escape.md")]
     [InlineData("references/../../escape.md")]
     [InlineData("..")]
+    [InlineData("..\\escape.md")]
+    [InlineData("/etc/passwd")]
+    [InlineData("http://example.com/other")]
+    [InlineData("%2e%2e/escape.md")]
+    [InlineData("%2E./escape.md")]
+    [InlineData(".%2e/escape.md")]
+    [InlineData("references/%2e%2e/escape.md")]
+    [InlineData("references%2f..%2f..%2fescape.md")]
+    [InlineData("%2e%2e%5cescape.md")]
+    [InlineData("%252e%252e%252fescape.md")]
+    [InlineData("%25252e%25252e/escape.md")]
+    [InlineData("%2fescape.md")]
+    [InlineData("%5cescape.md")]
+    [InlineData("%68ttp%3a%2f%2fexample.com/other")]
+    [InlineData("..?download=1")]
+    [InlineData("..#fragment")]
+    [InlineData("%2e%2e%3fdownload=1")]
+    [InlineData("references%3f/../../escape.md")]
+    [InlineData("references%3f/%2e%2e/%2e%2e/escape.md")]
+    [InlineData("references%23/%2e%2e/%2e%2e/escape.md")]
+    [InlineData("references%3f%2f%2e%2e%2f%2e%2e%2fescape.md")]
+    [InlineData("references%23%5c%2e%2e%5c%2e%2e%5cescape.md")]
+    [InlineData("references%253f%252f%252e%252e%252f%252e%252e%252fescape.md")]
+    [InlineData("references%2523%252f%252e%252e%252f%252e%252e%252fescape.md")]
+    [InlineData("references%3f/%252e%252e/%252e%252e/escape.md")]
+    [InlineData("references%3f/%2e%2e/%2e%2e/escape.md?version=1")]
+    [InlineData("references%23/%2e%2e/%2e%2e/escape.md#section")]
+    [InlineData("references%3f%2f%2e%2e%20")]
+    [InlineData(".\t./escape.md")]
+    [InlineData(".%09./escape.md")]
+    [InlineData("references/\0/guide.md")]
+    [InlineData(".. ")]
+    [InlineData(".%2e ")]
+    [InlineData("%2e%2e ")]
+    [InlineData("..%20")]
+    [InlineData("%252e%252e%2520")]
+    [InlineData("references/.. ")]
+    [InlineData("references/.. ?version=1")]
+    [InlineData("references/guide.md?value=%00")]
+    [InlineData("references/guide.md#value=%2509")]
+    [InlineData("references/guide.md?value=%C2%85")]
+    [InlineData("references/%2500guide.md?version=1")]
+    [InlineData("references/guide.md?version=1#value=%2509")]
+    [InlineData("references/guide.md#section?value=%2509")]
     public async Task GetResourceAsync_PathTraversalName_ReturnsNullAsync(string name)
     {
-        // Arrange - '..' segments result in URIs that don't match any server resource.
-        // The MCP server returns an error for unknown URIs, so GetResourceAsync returns null.
-        await using var server = new InMemoryMcpServer(builder =>
-            builder.WithResources<IndexAndSkill>());
+        foreach (string root in new[]
+        {
+            "skill://unit-converter/",
+            "skill://unit-converter/private/",
+            "https://example.com/skills/private/",
+            "file:///skills/private/",
+            "custom:skills/private/"
+        })
+        {
+            // Arrange - accept every URI so rejection must happen before the MCP request.
+            List<string> reads = [];
+            await using var server = CreatePermissiveSkillServer(root + "SKILL.md", reads);
+            await using var client = await server.CreateClientAsync();
+            var source = new AgentMcpSkillsSource(client);
+            var skill = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+            reads.Clear();
+
+            // Act
+            var resource = await skill.GetResourceAsync(name);
+
+            // Assert
+            Assert.Null(resource);
+            Assert.Empty(reads);
+        }
+    }
+
+    [Theory]
+    [InlineData("skill://unit-converter/")]
+    [InlineData("skill://unit-converter/private/")]
+    [InlineData("https://example.com/skills/private/")]
+    [InlineData("file:///skills/private/")]
+    [InlineData("custom:skills/private/")]
+    public async Task GetResourceAsync_SafeNamesAndSchemes_ArePreservedAsync(string root)
+    {
+        // Arrange
+        List<string> reads = [];
+        await using var server = CreatePermissiveSkillServer(root + "SKILL.md", reads);
         await using var client = await server.CreateClientAsync();
         var source = new AgentMcpSkillsSource(client);
+        var skill = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
 
         // Act
-        var skill = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
-        var resource = await skill.GetResourceAsync(name);
+        Assert.Equal(SampleSkillMd, await skill.GetContentAsync());
 
-        // Assert - resource does not exist on the server, so null is returned
-        Assert.Null(resource);
+        // Assert
+        Assert.Equal(root + "SKILL.md", reads[1]);
+        foreach (string name in new[]
+        {
+            "references/guide.md",
+            "references\\guide.md",
+            "references/guide%20one.md",
+            "references/v1.2/guide.md",
+            "references/%2520.md",
+            "references/100%.md",
+            "references/guide.md?version=1#section",
+            "references/guide%3fname.md",
+            "references/guide%23name.md",
+            "references/guide%253fname.md",
+            "references/guide.md?example=/../../other.md",
+            "references/guide.md#example=/../../other.md",
+            "references/guide.md?example=%2e%2e%2f%2e%2e%2fother.md",
+            "references/guide.md?src=https://example.com/other",
+            "references/guide%2520one.md?value=%2520#section%2520",
+            "references/guide%253fname.md#section?value=%2520",
+            "references/guide.md?",
+            "references/guide.md#",
+            "references/guide.md "
+        })
+        {
+            reads.Clear();
+            var resource = await skill.GetResourceAsync(name);
+            Assert.NotNull(resource);
+            Assert.Equal(name, resource.Name);
+            Assert.Equal("safe content", await resource.ReadAsync());
+            Assert.Equal(root + name.Replace('\\', '/'), Assert.Single(reads));
+        }
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(31)]
+    [InlineData(32)]
+    [InlineData(33)]
+    [InlineData(4096)]
+    public async Task GetResourceAsync_DecodingDepthIsBoundedAsync(int depth)
+    {
+        // Arrange
+        const string Root = "skill://unit-converter/private/";
+        List<string> reads = [];
+        await using var server = CreatePermissiveSkillServer(Root + "SKILL.md", reads);
+        await using var client = await server.CreateClientAsync();
+        var source = new AgentMcpSkillsSource(client);
+        var skill = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+        string encoded = "%" + string.Concat(Enumerable.Repeat("25", depth - 1)) + "41";
+
+        foreach (string name in new[]
+        {
+            $"references/{encoded}.md",
+            $"references/guide.md?value={encoded}",
+            $"references/guide.md#value={encoded}",
+            $"../{encoded}.md"
+        })
+        {
+            reads.Clear();
+
+            // Act
+            var resource = await skill.GetResourceAsync(name);
+
+            // Assert
+            if (depth <= 32 && !name.StartsWith("../", System.StringComparison.Ordinal))
+            {
+                Assert.NotNull(resource);
+                Assert.Equal(name, resource.Name);
+                Assert.Equal(Root + name, Assert.Single(reads));
+            }
+            else
+            {
+                Assert.Null(resource);
+                Assert.Empty(reads);
+            }
+        }
     }
 
     [Fact]
@@ -240,6 +395,31 @@ public sealed class AgentMcpSkillsSourceTests
 
         // Assert
         Assert.Empty(skills);
+    }
+
+    private static InMemoryMcpServer CreatePermissiveSkillServer(string skillMdUri, List<string> reads)
+    {
+        string index = JsonSerializer.Serialize(new
+        {
+            skills = new[]
+            {
+                new { name = "unit-converter", type = "skill-md", description = "Convert between common units.", url = skillMdUri }
+            }
+        });
+        return new InMemoryMcpServer(builder => builder.WithReadResourceHandler((request, cancellationToken) =>
+        {
+            string uri = request.Params!.Uri;
+            reads.Add(uri);
+            return ValueTask.FromResult(new ReadResourceResult
+            {
+                Contents = [new TextResourceContents
+                {
+                    Uri = uri,
+                    Text = uri == "skill://index.json" ? index : uri == skillMdUri ? SampleSkillMd : "safe content",
+                    MimeType = "text/plain"
+                }]
+            });
+        }));
     }
 
     #region Resource classes (registered with the MCP server via WithResources<T>)

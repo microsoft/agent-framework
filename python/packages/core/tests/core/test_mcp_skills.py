@@ -9,8 +9,10 @@ import hashlib
 import io
 import json
 import zipfile
+from collections.abc import Iterator
 from datetime import timedelta
 from unittest.mock import AsyncMock, patch
+from urllib.parse import unquote
 
 import pytest
 from mcp.shared.exceptions import McpError
@@ -23,7 +25,7 @@ from mcp.types import (
 from pydantic import AnyUrl
 
 from agent_framework import CachingSkillsSource, MCPSkill, MCPSkillResource, MCPSkillsSource, SkillsSourceContext
-from agent_framework._skills import _parse_mcp_skill_index
+from agent_framework._skills import _fully_unquote, _parse_mcp_skill_index
 
 from .conftest import MockAgent
 
@@ -97,6 +99,43 @@ def _make_client(**read_resource_responses: ReadResourceResult) -> AsyncMock:
 
     client.read_resource = AsyncMock(side_effect=_read_resource)
     return client
+
+
+@pytest.fixture(autouse=True)
+def _clear_resource_name_decode_cache() -> Iterator[None]:
+    _fully_unquote.cache_clear()
+    yield
+    _fully_unquote.cache_clear()
+
+
+def _encode(depth: int) -> str:
+    """Return ``"A"`` percent-encoded *depth* times, e.g. ``%2541`` for depth 2."""
+    return "%" + "25" * (depth - 1) + "41"
+
+
+# ---------------------------------------------------------------------------
+# _fully_unquote tests
+# ---------------------------------------------------------------------------
+
+
+class TestFullyUnquote:
+    """Tests for recursive, cached resource-name decoding."""
+
+    def test_reuses_cached_layers(self) -> None:
+        assert _fully_unquote("guide%2520one.md") == "guide one.md"
+
+        with patch("agent_framework._skills.unquote", wraps=unquote) as decode:
+            # A repeated name is served entirely from the cache.
+            assert _fully_unquote("guide%2520one.md") == "guide one.md"
+            decode.assert_not_called()
+            # A different name reaching a cached layer ("guide%20one.md") decodes only its first layer.
+            assert _fully_unquote("guide%25%32%30one.md") == "guide one.md"
+            decode.assert_called_once_with("guide%25%32%30one.md")
+
+    @pytest.mark.parametrize("depths", [(32, 33), (33, 32)])
+    def test_cached_layers_preserve_depth_limit(self, depths: tuple[int, int]) -> None:
+        for depth in depths:
+            assert _fully_unquote(_encode(depth)) == ("A" if depth <= 32 else None)
 
 
 # ---------------------------------------------------------------------------
@@ -295,9 +334,60 @@ class TestMCPSkill:
             "..\\escape.md",
             "/etc/passwd",
             "http://attacker.example.com/payload",
+            "%2e%2e/escape.md",
+            "%2E./escape.md",
+            ".%2e/escape.md",
+            "references/%2e%2e/escape.md",
+            "references%2f..%2f..%2fescape.md",
+            "%2e%2e%5cescape.md",
+            "%252e%252e%252fescape.md",
+            "%25252e%25252e/escape.md",
+            "%2fescape.md",
+            "%5cescape.md",
+            "%68ttp%3a%2f%2fexample.com/other",
+            "..?download=1",
+            "..#fragment",
+            "%2e%2e%3fdownload=1",
+            "references%3f/../../escape.md",
+            "references%3f/%2e%2e/%2e%2e/escape.md",
+            "references%23/%2e%2e/%2e%2e/escape.md",
+            "references%3f%2f%2e%2e%2f%2e%2e%2fescape.md",
+            "references%23%5c%2e%2e%5c%2e%2e%5cescape.md",
+            "references%253f%252f%252e%252e%252f%252e%252e%252fescape.md",
+            "references%2523%252f%252e%252e%252f%252e%252e%252fescape.md",
+            "references%3f/%252e%252e/%252e%252e/escape.md",
+            "references%3f/%2e%2e/%2e%2e/escape.md?version=1",
+            "references%23/%2e%2e/%2e%2e/escape.md#section",
+            "references%3f%2f%2e%2e%20",
+            ".\t./escape.md",
+            ".%09./escape.md",
+            "references/\x00/guide.md",
+            ".. ",
+            ".%2e ",
+            "%2e%2e ",
+            "..%20",
+            "%252e%252e%2520",
+            "references/.. ",
+            "references/.. ?version=1",
+            "references/guide.md?value=%00",
+            "references/guide.md#value=%2509",
+            "references/guide.md?value=%C2%85",
+            "references/%2500guide.md?version=1",
+            "references/guide.md?version=1#value=%2509",
+            "references/guide.md#section?value=%2509",
         ],
     )
-    async def test_get_resource_path_traversal_returns_none(self, name: str) -> None:
+    @pytest.mark.parametrize(
+        "skill_md_uri",
+        [
+            "skill://unit-converter/SKILL.md",
+            "skill://unit-converter/private/SKILL.md",
+            "https://example.com/skills/private/SKILL.md",
+            "file:///skills/private/SKILL.md",
+            "custom:skills/private/SKILL.md",
+        ],
+    )
+    async def test_get_resource_path_traversal_returns_none(self, name: str, skill_md_uri: str) -> None:
         # Register a permissive mock that would happily return content for any URI,
         # so the test fails unless the client-side validation rejects the name
         # before issuing the read.
@@ -307,11 +397,88 @@ class TestMCPSkill:
         from agent_framework import SkillFrontmatter
 
         fm = SkillFrontmatter(name="unit-converter", description="Convert between common units.")
-        skill = MCPSkill(frontmatter=fm, skill_md_uri="skill://unit-converter/SKILL.md", client=client)
+        skill = MCPSkill(frontmatter=fm, skill_md_uri=skill_md_uri, client=client)
 
         resource = await skill.get_resource(name)
         assert resource is None
         client.read_resource.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "references/guide.md",
+            "references\\guide.md",
+            "references/guide%20one.md",
+            "references/v1.2/guide.md",
+            "references/%2520.md",
+            "references/100%.md",
+            "references/guide.md?version=1#section",
+            "references/guide%3fname.md",
+            "references/guide%23name.md",
+            "references/guide%253fname.md",
+            "references/guide.md?example=/../../other.md",
+            "references/guide.md#example=/../../other.md",
+            "references/guide.md?example=%2e%2e%2f%2e%2e%2fother.md",
+            "references/guide.md?src=https://example.com/other",
+            "references/guide%2520one.md?value=%2520#section%2520",
+            "references/guide%253fname.md#section?value=%2520",
+            "references/guide.md?",
+            "references/guide.md#",
+            "references/guide.md ",
+        ],
+    )
+    @pytest.mark.parametrize(
+        "root",
+        [
+            "skill://unit-converter/",
+            "skill://unit-converter/private/",
+            "https://example.com/skills/private/",
+            "file:///skills/private/",
+            "custom:skills/private/",
+        ],
+    )
+    async def test_get_resource_preserves_safe_names_and_schemes(self, name: str, root: str) -> None:
+        from agent_framework import SkillFrontmatter
+
+        client = AsyncMock()
+        client.read_resource.return_value = _make_text_result("safe content")
+        fm = SkillFrontmatter(name="unit-converter", description="Convert between common units.")
+        skill = MCPSkill(frontmatter=fm, skill_md_uri=root + "SKILL.md", client=client)
+
+        resource = await skill.get_resource(name)
+
+        assert resource is not None
+        assert resource.name == name
+        assert await resource.read() == "safe content"
+        client.read_resource.assert_awaited_once_with(AnyUrl(root + name.replace("\\", "/")))
+
+    @pytest.mark.parametrize("depth", [1, 31, 32, 33, 4096])
+    @pytest.mark.parametrize(
+        "template",
+        ["references/{}.md", "references/guide.md?value={}", "references/guide.md#value={}", "../{}.md"],
+    )
+    async def test_get_resource_decoding_depth_is_bounded(self, depth: int, template: str) -> None:
+        from agent_framework import SkillFrontmatter
+
+        root = "skill://unit-converter/private/"
+        client = AsyncMock()
+        client.read_resource.return_value = _make_text_result("safe content")
+        fm = SkillFrontmatter(name="unit-converter", description="Convert between common units.")
+        skill = MCPSkill(frontmatter=fm, skill_md_uri=root + "SKILL.md", client=client)
+        name = template.format(_encode(depth))
+
+        with patch("agent_framework._skills.unquote", wraps=unquote) as decode:
+            resource = await skill.get_resource(name)
+
+        # One pass decodes the unencoded part; the encoded part takes depth + 1 passes, capped at 33.
+        assert decode.call_count == min(depth + 1, 33) + 1
+        if depth <= 32 and not name.startswith("../"):
+            assert resource is not None
+            assert resource.name == name
+            client.read_resource.assert_awaited_once_with(AnyUrl(root + name))
+        else:
+            assert resource is None
+            client.read_resource.assert_not_called()
 
     async def test_get_resource_empty_name_returns_none(self) -> None:
         client = _make_client()
@@ -389,6 +556,29 @@ class TestMCPSkill:
 
 class TestMCPSkillsSource:
     """Tests for MCPSkillsSource."""
+
+    @pytest.mark.parametrize(
+        "uri",
+        [
+            "https://example.com/skills/SKILL.md",
+            "file:///skills/SKILL.md",
+            "custom:skills/SKILL.md",
+        ],
+    )
+    async def test_index_preserves_mcp_resource_schemes(self, uri: str) -> None:
+        index = json.loads(SAMPLE_SKILL_INDEX)
+        index["skills"][0]["url"] = uri
+        client = _make_client(**{
+            "skill://index.json": _make_text_result(json.dumps(index)),
+            uri: _make_text_result(SAMPLE_SKILL_MD),
+        })
+        source = MCPSkillsSource(client=client)
+
+        skills = await source.get_skills(_SOURCE_CTX)
+
+        assert len(skills) == 1
+        assert await skills[0].get_content() == SAMPLE_SKILL_MD
+        assert str(client.read_resource.call_args.args[0]) == uri
 
     async def test_index_based_discovery_returns_skill(self) -> None:
         client = _make_client(**{
