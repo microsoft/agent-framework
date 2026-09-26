@@ -586,8 +586,8 @@ class AgentExecutor(Executor):
         """Append a synthetic user turn if the cache ends on an assistant message."""
         if self._ensure_trailing_user_turn and self._cache and self._cache[-1].role == "assistant":
             logger.debug(
-                "AgentExecutor %s: cache ends on an assistant message; appending a synthetic"
-                "continuation turn to avoid empty completions from providers that require"
+                "AgentExecutor %s: cache ends on an assistant message; appending a synthetic "
+                "continuation turn to avoid empty completions from providers that require "
                 "a trailing user message.",
                 self.id,
             )
