@@ -587,23 +587,32 @@ class WorkflowAgent(BaseAgent):
                     )
 
                 if isinstance(data, AgentResponse):
-                    messages.extend(data.messages)
-                    raw_representations.append(data.raw_representation)
-                    merged_usage = add_usage_details(merged_usage, data.usage_details)
-                    latest_created_at = (
-                        data.created_at
-                        if not latest_created_at
-                        else max(latest_created_at, data.created_at)
-                        if data.created_at
-                        else latest_created_at
-                    )
+                    # Filter to only assistant messages — system, tool, and user messages
+                    # are intentionally excluded. System prompts and tool results are
+                    # internal workflow artifacts; user messages would be re-emitted
+                    # (e.g., from GroupChat orchestrators that include full conversation history).
+                    assistant_messages = [msg for msg in data.messages if msg.role == "assistant"]
+                    if assistant_messages:
+                        messages.extend(assistant_messages)
+                        raw_representations.append(data.raw_representation)
+                        merged_usage = add_usage_details(merged_usage, data.usage_details)
+                        latest_created_at = (
+                            data.created_at
+                            if not latest_created_at
+                            else max(latest_created_at, data.created_at)
+                            if data.created_at
+                            else latest_created_at
+                        )
                 elif isinstance(data, Message):
-                    messages.append(data)
-                    raw_representations.append(data.raw_representation)
+                    if data.role == "assistant":
+                        messages.append(data)
+                        raw_representations.append(data.raw_representation)
                 elif is_instance_of(data, list[Message]):
                     chat_messages = cast(list[Message], data)
-                    messages.extend(chat_messages)
-                    raw_representations.append(data)
+                    assistant_messages = [msg for msg in chat_messages if msg.role == "assistant"]
+                    if assistant_messages:
+                        messages.extend(assistant_messages)
+                        raw_representations.append(data)
                 else:
                     contents = self._extract_contents(data)
                     if not contents:
@@ -654,6 +663,9 @@ class WorkflowAgent(BaseAgent):
             executor_id = event.executor_id
 
             if isinstance(data, AgentResponseUpdate):
+                # Filter out non-assistant updates (e.g. user input echoed back)
+                if data.role is not None and data.role != "assistant":
+                    return []
                 # Construct a fresh AgentResponseUpdate so we don't mutate a payload
                 # that AgentExecutor still holds a reference to in its `updates` list.
                 return [
@@ -676,9 +688,11 @@ class WorkflowAgent(BaseAgent):
                     )
                 ]
             if isinstance(data, AgentResponse):
-                # Convert each message in AgentResponse to an AgentResponseUpdate
+                # Convert each assistant message in AgentResponse to an AgentResponseUpdate
                 updates: list[AgentResponseUpdate] = []
                 for msg in data.messages:
+                    if msg.role != "assistant":
+                        continue
                     updates.append(
                         AgentResponseUpdate(
                             contents=list(msg.contents),
@@ -698,6 +712,8 @@ class WorkflowAgent(BaseAgent):
                     updates[-1].additional_properties = dict(data.additional_properties)
                 return updates
             if isinstance(data, Message):
+                if data.role != "assistant":
+                    return []
                 return [
                     AgentResponseUpdate(
                         contents=list(data.contents),
@@ -710,10 +726,12 @@ class WorkflowAgent(BaseAgent):
                     )
                 ]
             if is_instance_of(data, list[Message]):
-                # Convert each Message to an AgentResponseUpdate
+                # Convert each assistant Message to an AgentResponseUpdate
                 chat_messages = cast(list[Message], data)
                 updates = []
                 for msg in chat_messages:
+                    if msg.role != "assistant":
+                        continue
                     updates.append(
                         AgentResponseUpdate(
                             contents=list(msg.contents),
