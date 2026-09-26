@@ -1335,6 +1335,130 @@ async def _prepare_access_tools(
     return tools
 
 
+async def test_file_access_write_reports_actionable_path_collision_errors(
+    chat_client_base: SupportsChatGetResponse,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Directory/file collisions should guide the model to a valid path."""
+    store = InMemoryAgentFileStore()
+    tools = await _prepare_access_tools(chat_client_base, store=store)
+    save = _tool_by_name(tools, "file_access_write")
+
+    await store.write("Reports", "keep")
+    await store.write("Archive/q1.txt", "keep")
+    original_write = store.write
+
+    async def collision_aware_write(path: str, content: str, *, overwrite: bool = True) -> None:
+        if path.lower() == "reports/q1.txt":
+            raise NotADirectoryError("Reports is a file")
+        if path.lower() == "archive":
+            raise IsADirectoryError("Archive is a directory")
+        await original_write(path, content, overwrite=overwrite)
+
+    monkeypatch.setattr(store, "write", collision_aware_write)
+
+    parent_collision = await save.invoke(arguments={"file_name": "reports/q1.txt", "content": "nested"})
+    parent_message = _text(parent_collision[0])
+    assert "parent path is already a file" in parent_message
+    assert "Choose a different path" in parent_message
+    assert await store.read("reports") == "keep"
+    assert await store.read("reports/q1.txt") is None
+
+    directory_collision = await save.invoke(arguments={"file_name": "ARCHIVE", "content": "replace"})
+    directory_message = _text(directory_collision[0])
+    assert "already a directory" in directory_message
+    assert "Choose a different file name" in directory_message
+    assert await store.read("archive/q1.txt") == "keep"
+    assert await store.read("archive") is None
+
+
+@pytest.mark.parametrize("overwrite", [False, True])
+async def test_file_access_write_reports_filesystem_path_collision_errors(
+    chat_client_base: SupportsChatGetResponse,
+    tmp_path: Path,
+    overwrite: bool,
+) -> None:
+    """The real filesystem store should distinguish path collisions from existing files."""
+    store = FileSystemAgentFileStore(tmp_path)
+    tools = await _prepare_access_tools(chat_client_base, store=store)
+    save = _tool_by_name(tools, "file_access_write")
+
+    await store.write("Reports", "keep")
+    await store.write("Archive/q1.txt", "keep")
+    await store.write("notes.md", "keep")
+
+    parent_collision = await save.invoke(arguments={"file_name": "Reports/q1.txt", "content": "nested"})
+    parent_message = _text(parent_collision[0])
+    assert "parent path is already a file" in parent_message
+    assert "Choose a different path" in parent_message
+    assert await store.read("Reports") == "keep"
+
+    directory_collision = await save.invoke(
+        arguments={"file_name": "Archive", "content": "replace", "overwrite": overwrite}
+    )
+    directory_message = _text(directory_collision[0])
+    assert "already a directory" in directory_message
+    assert "Choose a different file name" in directory_message
+    assert await store.read("Archive/q1.txt") == "keep"
+
+    existing_file = await save.invoke(arguments={"file_name": "notes.md", "content": "replace"})
+    existing_file_message = _text(existing_file[0])
+    assert "already exists" in existing_file_message
+    assert "overwrite set to true" in existing_file_message
+    assert await store.read("notes.md") == "keep"
+
+
+@pytest.mark.parametrize("overwrite", [False, True])
+@pytest.mark.parametrize("is_directory", [False, True])
+async def test_filesystem_store_write_classifies_permission_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, overwrite: bool, is_directory: bool
+) -> None:
+    """Windows directory-open errors are normalized without masking file permission failures."""
+    store = FileSystemAgentFileStore(tmp_path)
+    target = tmp_path / "target"
+    if is_directory:
+        target.mkdir()
+    else:
+        target.write_text("keep", encoding="utf-8")
+    denied = PermissionError("access denied")
+
+    def deny_open(path: str | os.PathLike[str], flags: int, mode: int = 0o777) -> int:
+        raise denied
+
+    with monkeypatch.context() as patch:
+        patch.setattr(_file_access_module.os, "open", deny_open)
+        if is_directory:
+            with pytest.raises(IsADirectoryError) as caught:
+                await store.write("target", "replace", overwrite=overwrite)
+            assert caught.value.__cause__ is denied
+        else:
+            with pytest.raises(PermissionError) as caught_permission:
+                await store.write("target", "replace", overwrite=overwrite)
+            assert caught_permission.value is denied
+
+    if is_directory:
+        assert target.is_dir()
+    else:
+        assert target.read_text(encoding="utf-8") == "keep"
+
+
+async def test_file_access_write_preserves_exclusive_create_guidance(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """An existing file with overwrite disabled should retain its overwrite guidance."""
+    store = InMemoryAgentFileStore()
+    tools = await _prepare_access_tools(chat_client_base, store=store)
+    save = _tool_by_name(tools, "file_access_write")
+
+    await save.invoke(arguments={"file_name": "notes.md", "content": "keep"})
+    collision = await save.invoke(arguments={"file_name": "NOTES.md", "content": "replace"})
+    message = _text(collision[0])
+
+    assert "already exists" in message
+    assert "overwrite set to true" in message
+    assert await store.read("notes.md") == "keep"
+
+
 async def test_file_access_replace(chat_client_base: SupportsChatGetResponse) -> None:
     """``file_access_replace`` should substitute text and enforce match-count rules."""
     tools = await _prepare_access_tools(chat_client_base)
