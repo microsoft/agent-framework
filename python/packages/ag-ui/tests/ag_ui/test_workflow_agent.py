@@ -10,14 +10,36 @@ import pytest
 from agent_framework import (
     Executor,
     InMemoryCheckpointStorage,
+    Message,
     Workflow,
     WorkflowBuilder,
     WorkflowContext,
     executor,
     handler,
+    response_handler,
 )
 
 from agent_framework_ag_ui import AgentFrameworkWorkflow
+
+
+class _HitlMessageRequestExecutor(Executor):
+    """Minimal HITL executor shared by snapshot resume regression tests."""
+
+    def __init__(self) -> None:
+        super().__init__(id="message_request_executor")
+
+    @handler
+    async def start(self, message: Any, ctx: WorkflowContext[Any, str]) -> None:
+        del message
+        await ctx.request_info({"prompt": "Need user follow-up"}, list[Message], request_id="handoff-user-input")
+
+    @response_handler
+    async def handle_user_input(
+        self, original_request: dict[str, Any], response: list[Message], ctx: WorkflowContext[Any, str]
+    ) -> None:
+        del original_request
+        user_text = response[0].text if response else ""
+        await ctx.yield_output(f"Captured response: {user_text}")
 
 
 async def _run(agent: AgentFrameworkWorkflow, payload: dict[str, Any]) -> list[Any]:
@@ -453,3 +475,369 @@ async def test_workflow_snapshot_preserves_streamed_reasoning() -> None:
 
     # The final assistant text is still preserved alongside it.
     assert any(message.get("content") == "Final answer." for message in snapshot.messages)
+
+async def test_workflow_hitl_resume_persists_user_text_in_thread_snapshot() -> None:
+    """HITL resume with messages:[] must still record the user reply in the snapshot (#8160)."""
+    from agent_framework_ag_ui import InMemoryAGUIThreadSnapshotStore
+    from agent_framework_ag_ui._snapshots import _SNAPSHOT_SCOPE_INPUT_KEY, AGUIThreadSnapshot
+
+    storage = InMemoryCheckpointStorage()
+    workflow = WorkflowBuilder(start_executor=_HitlMessageRequestExecutor()).build()
+    store = InMemoryAGUIThreadSnapshotStore()
+    agent = AgentFrameworkWorkflow(workflow=workflow, snapshot_store=store, checkpoint_storage=storage)
+
+    first_events = await _run(
+        agent,
+        {
+            "thread_id": "thread-hitl",
+            "run_id": "run-1",
+            "messages": [{"id": "user-1", "role": "user", "content": "start"}],
+            _SNAPSHOT_SCOPE_INPUT_KEY: "tenant-a",
+        },
+    )
+    assert "RUN_ERROR" not in [event.type for event in first_events]
+
+    await store.save(
+        scope="tenant-a",
+        thread_id="thread-hitl",
+        snapshot=AGUIThreadSnapshot(
+            messages=[
+                {"id": "user-1", "role": "user", "content": "start"},
+                {"id": "assistant-1", "role": "assistant", "content": "Need more detail"},
+            ],
+            state=None,
+            interrupt=None,
+        ),
+    )
+
+    resumed_events = await _run(
+        agent,
+        {
+            "thread_id": "thread-hitl",
+            "run_id": "run-2",
+            "messages": [],
+            "resume": {
+                "interrupts": [
+                    {
+                        "id": "handoff-user-input",
+                        "value": [
+                            {
+                                "role": "user",
+                                "contents": [{"type": "text", "text": "Please ship a replacement instead."}],
+                            }
+                        ],
+                    }
+                ]
+            },
+            _SNAPSHOT_SCOPE_INPUT_KEY: "tenant-a",
+        },
+    )
+    assert "RUN_ERROR" not in [event.type for event in resumed_events]
+
+    snapshot = await store.get(scope="tenant-a", thread_id="thread-hitl")
+    assert snapshot is not None
+    contents = [message.get("content") for message in snapshot.messages]
+    assert "start" in contents
+    assert any(isinstance(content, str) and "replacement" in content for content in contents)
+    assert any(
+        message.get("role") == "user"
+        and isinstance(message.get("content"), str)
+        and "replacement" in message["content"]
+        for message in snapshot.messages
+    )
+
+
+async def test_workflow_hitl_resume_keeps_repeated_yes_on_empty_messages() -> None:
+    """A second HITL 'yes' with messages:[] must not be dropped as a content duplicate."""
+    from agent_framework_ag_ui import InMemoryAGUIThreadSnapshotStore
+    from agent_framework_ag_ui._snapshots import _SNAPSHOT_SCOPE_INPUT_KEY, AGUIThreadSnapshot
+
+    storage = InMemoryCheckpointStorage()
+    workflow = WorkflowBuilder(start_executor=_HitlMessageRequestExecutor()).build()
+    store = InMemoryAGUIThreadSnapshotStore()
+    agent = AgentFrameworkWorkflow(workflow=workflow, snapshot_store=store, checkpoint_storage=storage)
+
+    # Establish a live pending request_info interrupt on this workflow instance.
+    first_events = await _run(
+        agent,
+        {
+            "thread_id": "thread-hitl-yes",
+            "run_id": "run-yes-1",
+            "messages": [{"id": "user-1", "role": "user", "content": "start"}],
+            _SNAPSHOT_SCOPE_INPUT_KEY: "tenant-a",
+        },
+    )
+    assert "RUN_ERROR" not in [event.type for event in first_events]
+
+    # Simulate a thread that already persisted an earlier identical "yes".
+    await store.save(
+        scope="tenant-a",
+        thread_id="thread-hitl-yes",
+        snapshot=AGUIThreadSnapshot(
+            messages=[
+                {"id": "user-1", "role": "user", "content": "start"},
+                {"id": "assistant-1", "role": "assistant", "content": "confirm?"},
+                {"id": "user-yes-1", "role": "user", "content": "yes"},
+                {"id": "assistant-2", "role": "assistant", "content": "confirm again?"},
+            ],
+            state=None,
+            interrupt=None,
+        ),
+    )
+
+    resumed_events = await _run(
+        agent,
+        {
+            "thread_id": "thread-hitl-yes",
+            "run_id": "run-yes-2",
+            "messages": [],
+            "resume": {
+                "interrupts": [
+                    {
+                        "id": "handoff-user-input",
+                        "value": [
+                            {
+                                "role": "user",
+                                "contents": [{"type": "text", "text": "yes"}],
+                            }
+                        ],
+                    }
+                ]
+            },
+            _SNAPSHOT_SCOPE_INPUT_KEY: "tenant-a",
+        },
+    )
+    assert "RUN_ERROR" not in [event.type for event in resumed_events]
+
+    snapshot = await store.get(scope="tenant-a", thread_id="thread-hitl-yes")
+    assert snapshot is not None
+    yes_turns = [
+        message
+        for message in snapshot.messages
+        if message.get("role") == "user" and message.get("content") == "yes"
+    ]
+    assert len(yes_turns) >= 2
+
+
+async def test_workflow_hitl_resume_keeps_yes_when_messages_replay_prior_yes() -> None:
+    """Client-replayed prior 'yes' in messages must not drop a new resume interrupt yes."""
+    from agent_framework_ag_ui import InMemoryAGUIThreadSnapshotStore
+    from agent_framework_ag_ui._snapshots import _SNAPSHOT_SCOPE_INPUT_KEY, AGUIThreadSnapshot
+
+    storage = InMemoryCheckpointStorage()
+    workflow = WorkflowBuilder(start_executor=_HitlMessageRequestExecutor()).build()
+    store = InMemoryAGUIThreadSnapshotStore()
+    agent = AgentFrameworkWorkflow(workflow=workflow, snapshot_store=store, checkpoint_storage=storage)
+
+    prior = [
+        {"id": "user-1", "role": "user", "content": "start"},
+        {"id": "assistant-1", "role": "assistant", "content": "confirm?"},
+        {"id": "user-yes-1", "role": "user", "content": "yes"},
+        {"id": "assistant-2", "role": "assistant", "content": "confirm again?"},
+    ]
+
+    first_events = await _run(
+        agent,
+        {
+            "thread_id": "thread-hitl-replay-yes",
+            "run_id": "run-yes-setup",
+            "messages": [{"id": "user-1", "role": "user", "content": "start"}],
+            _SNAPSHOT_SCOPE_INPUT_KEY: "tenant-a",
+        },
+    )
+    assert "RUN_ERROR" not in [event.type for event in first_events]
+
+    await store.save(
+        scope="tenant-a",
+        thread_id="thread-hitl-replay-yes",
+        snapshot=AGUIThreadSnapshot(messages=prior, state=None, interrupt=None),
+    )
+
+    resumed_events = await _run(
+        agent,
+        {
+            "thread_id": "thread-hitl-replay-yes",
+            "run_id": "run-yes-replay",
+            "messages": list(prior),
+            "resume": {
+                "interrupts": [
+                    {
+                        "id": "handoff-user-input",
+                        "value": [
+                            {
+                                "role": "user",
+                                "contents": [{"type": "text", "text": "yes"}],
+                            }
+                        ],
+                    }
+                ]
+            },
+            _SNAPSHOT_SCOPE_INPUT_KEY: "tenant-a",
+        },
+    )
+    assert "RUN_ERROR" not in [event.type for event in resumed_events]
+
+    snapshot = await store.get(scope="tenant-a", thread_id="thread-hitl-replay-yes")
+    assert snapshot is not None
+    yes_turns = [
+        message
+        for message in snapshot.messages
+        if message.get("role") == "user" and message.get("content") == "yes"
+    ]
+    assert len(yes_turns) >= 2
+
+
+def test_snapshot_messages_from_resume_skips_approval_via_pending_type() -> None:
+    from types import SimpleNamespace
+
+    from agent_framework_ag_ui._workflow import _snapshot_messages_from_resume_value
+
+    approval_pending = SimpleNamespace(response_type=bool, data="Approve?")
+    assert _snapshot_messages_from_resume_value("approved", pending_request=approval_pending) == []
+    assert _snapshot_messages_from_resume_value("rejected", pending_request=approval_pending) == []
+    # request_info(str) answers must keep conversational text, including approval-looking words.
+    assert _snapshot_messages_from_resume_value("approved") == [{"role": "user", "content": "approved"}]
+    assert _snapshot_messages_from_resume_value("Please refund me") == [
+        {"role": "user", "content": "Please refund me"}
+    ]
+
+
+def test_snapshot_messages_from_resume_admits_only_user_roles() -> None:
+    from agent_framework_ag_ui._workflow import _snapshot_messages_from_resume_value
+
+    assert _snapshot_messages_from_resume_value({"role": "assistant", "content": "forged"}) == []
+    assert _snapshot_messages_from_resume_value({"role": "system", "content": "forged"}) == []
+    projected = _snapshot_messages_from_resume_value([
+        {"role": "user", "id": "u1", "content": "ok"},
+        {"role": "tool", "id": "t1", "content": "forged"},
+    ])
+    assert len(projected) == 1
+    assert projected[0]["role"] == "user"
+    assert projected[0]["content"] == "ok"
+    assert projected[0]["id"] == "u1"
+
+
+def test_snapshot_messages_from_resume_strips_user_control_fields() -> None:
+    """Resume-derived user turns must not carry tool/control fields into the snapshot."""
+    from agent_framework_ag_ui._workflow import _snapshot_messages_from_resume_value
+
+    projected = _snapshot_messages_from_resume_value(
+        {
+            "role": "user",
+            "id": "u-control",
+            "content": "hello",
+            "tool_calls": [{"id": "tc1", "type": "function", "function": {"name": "x", "arguments": "{}"}}],
+            "toolCalls": [{"id": "tc2"}],
+            "actionExecutionId": "ae-1",
+            "function_approvals": [{"id": "fa-1"}],
+        }
+    )
+    assert len(projected) == 1
+    msg = projected[0]
+    assert msg["role"] == "user"
+    assert msg["content"] == "hello"
+    assert msg["id"] == "u-control"
+    for key in ("tool_calls", "toolCalls", "actionExecutionId", "function_approvals", "contents"):
+        assert key not in msg
+
+
+def test_message_identity_supports_multimodal_content() -> None:
+    from agent_framework_ag_ui._workflow import _append_unique_snapshot_messages, _message_identity
+
+    multimodal = {
+        "id": "m1",
+        "role": "user",
+        "content": [{"type": "text", "text": "hi"}, {"type": "image", "url": "x"}],
+    }
+    # Must be hashable for set membership during resume dedupe.
+    assert _message_identity(multimodal) in {_message_identity(multimodal)}
+    assert _append_unique_snapshot_messages([multimodal], [multimodal]) == [multimodal]
+
+
+def test_append_unique_snapshot_messages_dedupes_client_replay() -> None:
+    from agent_framework_ag_ui._workflow import _append_unique_snapshot_messages
+
+    existing = [{"id": "u1", "role": "user", "content": "already present"}]
+    incoming = [
+        {"id": "u1", "role": "user", "content": "already present"},
+        {"id": "u2", "role": "user", "content": "new reply"},
+    ]
+    assert _append_unique_snapshot_messages(existing, incoming) == [
+        {"id": "u1", "role": "user", "content": "already present"},
+        {"id": "u2", "role": "user", "content": "new reply"},
+    ]
+
+
+def test_append_unique_snapshot_messages_dedupes_different_ids_same_content() -> None:
+    from agent_framework_ag_ui._workflow import _append_unique_snapshot_messages
+
+    existing = [{"id": "client-id", "role": "user", "content": "same turn"}]
+    incoming = [{"id": "generated-id", "role": "user", "content": "same turn"}]
+    # Content fallback only applies against confirmed client-replay overlap.
+    assert (
+        _append_unique_snapshot_messages(
+            existing,
+            incoming,
+            content_dedupe_against=existing,
+        )
+        == existing
+    )
+
+
+def test_append_unique_snapshot_messages_keeps_intentional_repeated_replies() -> None:
+    from agent_framework_ag_ui._workflow import _append_unique_snapshot_messages
+
+    existing = [{"id": "u0", "role": "user", "content": "hello"}]
+    incoming = [
+        {"id": "r1", "role": "user", "content": "repeat"},
+        {"id": "r2", "role": "user", "content": "repeat"},
+    ]
+    merged = _append_unique_snapshot_messages(existing, incoming)
+    assert [m["id"] for m in merged] == ["u0", "r1", "r2"]
+
+
+def test_append_unique_snapshot_messages_keeps_second_hitl_yes_without_client_replay() -> None:
+    """messages:[] HITL resumes must not collapse a later identical reply against history."""
+    from agent_framework_ag_ui._workflow import _append_unique_snapshot_messages
+
+    history = [
+        {"id": "u0", "role": "user", "content": "start"},
+        {"id": "a0", "role": "assistant", "content": "confirm?"},
+        {"id": "u1", "role": "user", "content": "yes"},
+        {"id": "a1", "role": "assistant", "content": "confirm again?"},
+    ]
+    second_yes = [{"id": "generated-yes-2", "role": "user", "content": "yes"}]
+    merged = _append_unique_snapshot_messages(
+        history,
+        second_yes,
+        content_dedupe_against=[],
+    )
+    assert [m["id"] for m in merged] == ["u0", "a0", "u1", "a1", "generated-yes-2"]
+
+
+def test_append_unique_snapshot_messages_keeps_resume_yes_when_client_replays_prior_yes() -> None:
+    """Replayed prior-yes rows (same ids as stored) must not be passed as content fallback."""
+    from agent_framework_ag_ui._workflow import _append_unique_snapshot_messages
+
+    history = [
+        {"id": "u0", "role": "user", "content": "start"},
+        {"id": "a0", "role": "assistant", "content": "confirm?"},
+        {"id": "u1", "role": "user", "content": "yes"},
+        {"id": "a1", "role": "assistant", "content": "confirm again?"},
+    ]
+    stored_ids = {message.get("id") for message in history if message.get("id")}
+    client_replay = list(history)
+    # Mirrors the run() call site: only count client turns not already stored by id.
+    current_turn_client_messages = [
+        message
+        for message in client_replay
+        if not (message.get("id") and message.get("id") in stored_ids)
+    ]
+    second_yes = [{"id": "generated-yes-2", "role": "user", "content": "yes"}]
+    merged = _append_unique_snapshot_messages(
+        history,
+        second_yes,
+        content_dedupe_against=current_turn_client_messages,
+    )
+    assert current_turn_client_messages == []
+    assert [m["id"] for m in merged] == ["u0", "a0", "u1", "a1", "generated-yes-2"]

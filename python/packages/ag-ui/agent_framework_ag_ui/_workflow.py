@@ -4,9 +4,11 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
-from collections.abc import AsyncGenerator, Callable
+from collections import Counter
+from collections.abc import AsyncGenerator, Callable, Mapping
 from typing import Any, cast
 
 from ag_ui.core import (
@@ -65,6 +67,163 @@ WorkflowRequestOwner = tuple[str | None, str | None]
 
 _REQUEST_OWNER_ATTRIBUTE = "_ag_ui_request_owner"
 _CHECKPOINT_REQUEST_OWNER_KEY = "ag_ui_workflow_request_owner"
+
+
+def _hashable_message_content(content: Any) -> Any:
+    """Return a hashable, order-stable form of snapshot message content."""
+    if isinstance(content, (str, int, float, bool)) or content is None:
+        return content
+    try:
+        return json.dumps(content, sort_keys=True, default=str)
+    except TypeError:
+        return repr(content)
+
+
+def _pending_request_is_approval(pending_request: Any | None) -> bool:
+    """Whether a pending request_info event is an approval gate (not conversational HITL)."""
+    if pending_request is None:
+        return False
+    response_type: Any | None
+    try:
+        response_type = pending_request.response_type
+    except Exception:
+        response_type = getattr(pending_request, "_response_type", None)
+    if response_type is bool:
+        return True
+    type_name = getattr(response_type, "__name__", "") or str(response_type or "")
+    if "Approval" in type_name:
+        return True
+    data = getattr(pending_request, "data", None)
+    if isinstance(data, dict) and any(key in data for key in ("functionCall", "function_call")):
+        return True
+    return False
+
+
+def _snapshot_messages_from_resume_value(
+    value: Any,
+    *,
+    pending_request: Any | None = None,
+) -> list[dict[str, Any]]:
+    """Convert a resolved workflow resume value into snapshot chat messages when user-visible.
+
+    Approval / structured tool payloads are skipped based on the matched pending request's
+    type/data (not the response text). Only ``user`` turns are projected so resume cannot
+    forge assistant/system/tool history into the backend-owned snapshot.
+    """
+    if isinstance(value, bool) or value is None:
+        return []
+    if _pending_request_is_approval(pending_request):
+        return []
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return []
+        return [{"role": "user", "content": text}]
+    if isinstance(value, dict):
+        # Function-approval style payloads are not chat turns.
+        if any(key in value for key in ("approved", "accepted", "functionCall", "function_call")):
+            return []
+        if value.get("role") == "user":
+            return agui_messages_to_snapshot_format([_resume_message_to_agui_dict(value)])
+        return []
+    if isinstance(value, list):
+        message_like = [
+            _resume_message_to_agui_dict(item)
+            for item in value
+            if isinstance(item, dict) and item.get("role") == "user"
+        ]
+        if message_like:
+            return agui_messages_to_snapshot_format(message_like)
+    return []
+
+
+_RESUME_USER_ALLOWED_KEYS = frozenset({"id", "role", "content", "contents", "name"})
+
+
+def _resume_message_to_agui_dict(message: dict[str, Any]) -> dict[str, Any]:
+    """Normalize resume user turns for snapshot encoding.
+
+    Only chat-safe user fields are retained. Control fields such as ``tool_calls`` /
+    ``toolCalls``, ``actionExecutionId``, or ``function_approvals`` must not enter the
+    backend-owned thread snapshot — later hydrate/replay can otherwise reinterpret a
+    user turn as assistant/tool-control history.
+    """
+    normalized = {key: value for key, value in message.items() if key in _RESUME_USER_ALLOWED_KEYS}
+    normalized["role"] = "user"
+    if normalized.get("content") not in (None, ""):
+        normalized.pop("contents", None)
+        return normalized
+    contents = normalized.get("contents")
+    if isinstance(contents, list):
+        texts: list[str] = []
+        for part in contents:
+            if isinstance(part, dict) and part.get("type") in {"text", "input_text"}:
+                texts.append(str(part.get("text") or ""))
+        if texts:
+            normalized["content"] = "".join(texts)
+    normalized.pop("contents", None)
+    return normalized
+
+
+def _snapshot_messages_from_workflow_resume(
+    resume_payload: Any,
+    pending_events: Mapping[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Collect user-visible snapshot messages from a workflow resume payload."""
+    messages: list[dict[str, Any]] = []
+    pending = pending_events or {}
+    for interrupt in _normalize_resume_interrupts(resume_payload):
+        if interrupt.get("status") not in {None, "resolved"}:
+            continue
+        interrupt_id = interrupt.get("id")
+        pending_request = pending.get(str(interrupt_id)) if interrupt_id is not None else None
+        messages.extend(
+            _snapshot_messages_from_resume_value(interrupt.get("value"), pending_request=pending_request)
+        )
+    return messages
+
+
+def _message_identity(message: dict[str, Any]) -> tuple[Any, ...]:
+    """Stable identity for deduping resume-synthesized turns against request messages."""
+    return (message.get("role"), message.get("id"), _hashable_message_content(message.get("content")))
+
+
+def _message_content_identity(message: dict[str, Any]) -> tuple[Any, ...]:
+    """Role+content identity used when message IDs differ across messages vs resume."""
+    return (message.get("role"), _hashable_message_content(message.get("content")))
+
+
+def _append_unique_snapshot_messages(
+    existing: list[dict[str, Any]],
+    incoming: list[dict[str, Any]],
+    *,
+    content_dedupe_against: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Append resume-derived turns that are not already present in the seed.
+
+    Prefer id equality against ``existing``. Role/content fallback is limited to
+    ``content_dedupe_against`` (current-turn client overlap / id remaps). Callers
+    must not pass replayed prior transcript rows here — those keep their ids and
+    would otherwise let an earlier user ``"yes"`` consume a later resume interrupt
+    with the same text. When the list is empty or omitted, identical replies across
+    separate HITL turns on ``messages: []`` resumes are kept.
+    """
+    seen_ids = {message.get("id") for message in existing if message.get("id")}
+    content_source = content_dedupe_against if content_dedupe_against is not None else []
+    remaining_content = Counter(_message_content_identity(message) for message in content_source)
+    merged = list(existing)
+    for message in incoming:
+        message_id = message.get("id")
+        if message_id and message_id in seen_ids:
+            continue
+        content_key = _message_content_identity(message)
+        if remaining_content[content_key] > 0:
+            remaining_content[content_key] -= 1
+            continue
+        if message_id:
+            seen_ids.add(message_id)
+        merged.append(message)
+    return merged
 
 
 def _checkpoint_id_from_input(input_data: dict[str, Any]) -> str | None:
@@ -543,6 +702,9 @@ class AgentFrameworkWorkflow:
         run_id = str(input_data.get("run_id") or input_data.get("runId") or uuid.uuid4())
         snapshot_scope = cast(str | None, input_data.get(_SNAPSHOT_SCOPE_INPUT_KEY))
         raw_messages = list(cast(list[dict[str, Any]], input_data.get("messages", []) or []))
+        # Preserve the client-supplied transcript for content-only dedupe of HITL
+        # resume turns. Stored history is not a confirmed client-replay overlap.
+        client_request_messages = list(raw_messages)
         resume_payload = _extract_resume_payload(input_data)
         snapshot_session = await ThreadSnapshotSession.open(
             store=self.snapshot_store,
@@ -656,6 +818,34 @@ class AgentFrameworkWorkflow:
                 )
             else:
                 builder_seed_messages = snapshot_session.resume_seeded_messages(builder_seed_messages)
+        if resume_payload is not None and snapshot_session.enabled:
+            # Conversational HITL resumes put the user reply in interrupt.value with
+            # messages:[]; fold that text into the snapshot so hydrate keeps it (#8160).
+            # Skip when the client already included the same turn in `messages`.
+            hitl_messages = _snapshot_messages_from_workflow_resume(
+                resume_payload,
+                pending_events=live_pending_events,
+            )
+            if hitl_messages:
+                # Content fallback is only for the current request's newly supplied
+                # turns (e.g. client id remap of the resume reply). Rows already in
+                # the stored snapshot keep their ids when replayed in ``messages`` and
+                # must not starve a later identical resume interrupt.
+                stored_ids = {
+                    message.get("id")
+                    for message in (stored_snapshot.messages if stored_snapshot is not None else [])
+                    if message.get("id")
+                }
+                current_turn_client_messages = [
+                    message
+                    for message in client_request_messages
+                    if not (message.get("id") and message.get("id") in stored_ids)
+                ]
+                builder_seed_messages = _append_unique_snapshot_messages(
+                    builder_seed_messages,
+                    hitl_messages,
+                    content_dedupe_against=current_turn_client_messages,
+                )
         snapshot_builder = _WorkflowSnapshotBuilder(builder_seed_messages) if snapshot_session.enabled else None
         if snapshot_builder is not None and effective_state:
             # Seed builder state so a run that emits no StateSnapshotEvent still
