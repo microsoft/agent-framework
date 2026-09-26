@@ -1,11 +1,14 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.ClientModel.Primitives;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using Azure.AI.Projects.Agents;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.DiagnosticIds;
 using OpenAI.Responses;
+using OpenAIContext = OpenAI.OpenAIContext;
 
 #pragma warning disable OPENAI001
 
@@ -28,6 +31,8 @@ namespace Microsoft.Agents.AI.Foundry;
 /// </remarks>
 public static class FoundryAITool
 {
+    private static readonly BinaryData s_gaComputerToolJson = BinaryData.FromString("{\"type\":\"computer\"}");
+
     /// <summary>
     /// Converts an existing <see cref="ResponseTool"/> into an <see cref="AITool"/>.
     /// </summary>
@@ -123,13 +128,55 @@ public static class FoundryAITool
     // --- OpenAI SDK ResponseTool factories ---
 
     /// <summary>
-    /// Creates an <see cref="AITool"/> for computer use (screen interaction).
+    /// Creates an <see cref="AITool"/> for the generally available (GA) OpenAI computer tool (<c>{"type":"computer"}</c>).
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The GA tool has no environment or display settings: the model infers the screen from the screenshots it receives.
+    /// Each <c>computer_call</c> it returns carries an ordered <c>actions</c> batch that the caller runs in order before
+    /// sending back a single <c>computer_call_output</c> screenshot.
+    /// </para>
+    /// <para>
+    /// To use the preview <c>computer_use_preview</c> tool, whose <c>computer_call</c> items carry a single <c>action</c>,
+    /// use the <see cref="CreateComputerTool(ComputerToolEnvironment, int, int)"/> overload instead.
+    /// </para>
+    /// <para>
+    /// Known limitation: the OpenAI .NET SDK models only the preview <c>computer_call</c> item, so an agent that keeps its
+    /// history locally and sends a GA <c>computer_call</c> back to the model (for example with stored responses disabled)
+    /// adds <c>"action": null</c>, which the Responses API rejects for the GA tool. Continuing the conversation from the
+    /// stored response (the default for a Responses agent session) only sends the new <c>computer_call_output</c> and is
+    /// not affected, and Foundry hosting sends computer calls back in the GA shape.
+    /// </para>
+    /// </remarks>
+    /// <returns>An <see cref="AITool"/> for the GA computer tool.</returns>
+    [Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
+    public static AITool CreateComputerTool()
+    {
+        // OpenAI .NET (2.13.0 and 2.14.0) has no factory for the GA tool: ResponseTool.CreateComputerTool always emits
+        // computer_use_preview. Reading the GA wire shape yields an unknown-type ResponseTool that serializes back
+        // exactly as {"type":"computer"}, so it can be sent today. Switch to the typed OpenAI API once it ships.
+        ResponseTool tool = ModelReaderWriter.Read<ResponseTool>(s_gaComputerToolJson, ModelReaderWriterOptions.Json, OpenAIContext.Default)!;
+        return tool.AsAITool();
+    }
+
+    /// <summary>
+    /// Creates an <see cref="AITool"/> for the preview OpenAI computer use tool (<c>computer_use_preview</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The preview tool is used with the <c>computer-use-preview</c> model and declares the environment and display size.
+    /// Each <c>computer_call</c> it returns carries a single <c>action</c>.
+    /// </para>
+    /// <para>
+    /// To use the generally available (GA) <c>computer</c> tool, which takes no settings and returns batched <c>actions</c>,
+    /// use the parameterless <see cref="CreateComputerTool()"/> overload instead.
+    /// </para>
+    /// </remarks>
     /// <param name="environment">The computer tool environment type.</param>
     /// <param name="displayWidth">The display width in pixels.</param>
     /// <param name="displayHeight">The display height in pixels.</param>
-    /// <returns>An <see cref="AITool"/> for computer use.</returns>
-    [Experimental("OPENAICUA001")]
+    /// <returns>An <see cref="AITool"/> for the preview computer use tool.</returns>
+    [Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
     public static AITool CreateComputerTool(ComputerToolEnvironment environment, int displayWidth, int displayHeight)
         => ResponseTool.CreateComputerTool(environment, displayWidth, displayHeight).AsAITool();
 

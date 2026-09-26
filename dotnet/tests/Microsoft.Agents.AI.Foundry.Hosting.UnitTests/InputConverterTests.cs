@@ -1,10 +1,19 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.ClientModel.Primitives;
 using System.Linq;
+using System.Text.Json;
+using Azure.AI.AgentServer.Responses;
 using Azure.AI.AgentServer.Responses.Models;
 using Microsoft.Extensions.AI;
 using MeaiTextContent = Microsoft.Extensions.AI.TextContent;
+using OpenAIComputerCallActionKind = OpenAI.Responses.ComputerCallActionKind;
+using OpenAIComputerCallOutputResponseItem = OpenAI.Responses.ComputerCallOutputResponseItem;
+using OpenAIComputerCallResponseItem = OpenAI.Responses.ComputerCallResponseItem;
+using OpenAIComputerCallStatus = OpenAI.Responses.ComputerCallStatus;
+
+#pragma warning disable OPENAI001 // Experimental Responses API surfaces
 
 namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 
@@ -872,7 +881,7 @@ public class InputConverterTests
         Assert.Equal("call_xyz", fcc.CallId);
         Assert.Equal("issue_refund", fcc.Name);
         Assert.NotNull(fcc.Arguments);
-        Assert.Equal(123, ((System.Text.Json.JsonElement)fcc.Arguments!["order_id"]!).GetInt32());
+        Assert.Equal(123, ((JsonElement)fcc.Arguments!["order_id"]!).GetInt32());
     }
 
     [Fact]
@@ -1318,4 +1327,175 @@ public class InputConverterTests
         // Should have fallen back to DataContent (carrying the original opaque blob).
         Assert.Contains(messages[0].Contents, c => c is DataContent);
     }
+
+    // --- Computer tool items (GA batched actions and preview single action) ---
+
+    // Shape the service returns for the GA tool: an ordered actions batch, and neither "action" nor "pending_safety_checks".
+    private const string GaComputerCallJson =
+        "{\"type\":\"computer_call\",\"id\":\"cu_input_1\",\"call_id\":\"call_cu_1\"," +
+        "\"actions\":[{\"type\":\"click\",\"button\":\"left\",\"x\":10,\"y\":20},{\"type\":\"type\",\"text\":\"penguin\"}]," +
+        "\"status\":\"completed\"}";
+
+    private const string ComputerCallOutputJson =
+        "{\"type\":\"computer_call_output\",\"call_id\":\"call_cu_1\"," +
+        "\"output\":{\"type\":\"computer_screenshot\",\"image_url\":\"data:image/png;base64,iVBORw0KGgo=\",\"detail\":\"original\"}}";
+
+    [Fact]
+    public void ConvertInputToMessages_GaComputerCall_ProducesAssistantToolCallCarryingOpenAIItem()
+    {
+        // Arrange
+        var request = new CreateResponse { Input = BinaryData.FromString("[" + GaComputerCallJson + "]") };
+
+        // Act
+        var messages = InputConverter.ConvertInputToMessages(request);
+
+        // Assert
+        var message = Assert.Single(messages);
+        Assert.Equal(ChatRole.Assistant, message.Role);
+        var toolCall = Assert.Single(message.Contents);
+        Assert.Equal(typeof(ToolCallContent), toolCall.GetType());
+        Assert.Equal("call_cu_1", ((ToolCallContent)toolCall).CallId);
+
+        var item = Assert.IsAssignableFrom<OpenAIComputerCallResponseItem>(toolCall.RawRepresentation);
+        Assert.Equal("cu_input_1", item.Id);
+        Assert.Equal("call_cu_1", item.CallId);
+
+        using var json = JsonDocument.Parse(ModelReaderWriter.Write(item, ModelReaderWriterOptions.Json).ToString());
+        var actions = json.RootElement.GetProperty("actions").EnumerateArray().ToList();
+        Assert.Equal(2, actions.Count);
+        Assert.Equal("click", actions[0].GetProperty("type").GetString());
+        Assert.Equal("penguin", actions[1].GetProperty("text").GetString());
+    }
+
+    [Fact]
+    public void ConvertInputToMessages_ComputerCallOutput_ProducesToolResultCarryingOpenAIItem()
+    {
+        // Arrange
+        var request = new CreateResponse { Input = BinaryData.FromString("[" + ComputerCallOutputJson + "]") };
+
+        // Act
+        var messages = InputConverter.ConvertInputToMessages(request);
+
+        // Assert
+        var message = Assert.Single(messages);
+        Assert.Equal(ChatRole.Tool, message.Role);
+        var toolResult = Assert.Single(message.Contents);
+        Assert.Equal(typeof(ToolResultContent), toolResult.GetType());
+        Assert.Equal("call_cu_1", ((ToolResultContent)toolResult).CallId);
+
+        var item = Assert.IsType<OpenAIComputerCallOutputResponseItem>(toolResult.RawRepresentation);
+        Assert.Equal("call_cu_1", item.CallId);
+
+        using var json = JsonDocument.Parse(ModelReaderWriter.Write(item, ModelReaderWriterOptions.Json).ToString());
+        var screenshot = json.RootElement.GetProperty("output");
+        Assert.Equal("computer_screenshot", screenshot.GetProperty("type").GetString());
+        Assert.Equal("data:image/png;base64,iVBORw0KGgo=", screenshot.GetProperty("image_url").GetString());
+
+        // "detail" is not typed by either SDK yet; it must still survive as additional data.
+        Assert.Equal("original", screenshot.GetProperty("detail").GetString());
+    }
+
+    [Fact]
+    public void ConvertInputToMessages_PreviewComputerCall_KeepsSingleAction()
+    {
+        // Arrange
+        var request = new CreateResponse
+        {
+            Input = BinaryData.FromString(
+                "[{\"type\":\"computer_call\",\"id\":\"cu_preview_1\",\"call_id\":\"call_preview_1\"," +
+                "\"action\":{\"type\":\"click\",\"button\":\"left\",\"x\":10,\"y\":20}," +
+                "\"pending_safety_checks\":[],\"status\":\"completed\"}]"),
+        };
+
+        // Act
+        var messages = InputConverter.ConvertInputToMessages(request);
+
+        // Assert
+        var toolCall = Assert.Single(Assert.Single(messages).Contents);
+        var item = Assert.IsAssignableFrom<OpenAIComputerCallResponseItem>(toolCall.RawRepresentation);
+        Assert.Equal("call_preview_1", item.CallId);
+        Assert.Equal(OpenAIComputerCallActionKind.Click, item.Action.Kind);
+
+        // A preview call is resent with its single action, not rewritten to the GA shape.
+        string json = ModelReaderWriter.Write(item, ModelReaderWriterOptions.Json).ToString();
+        Assert.Contains("\"action\":{\"type\":\"click\"", json);
+        Assert.DoesNotContain("\"actions\"", json);
+    }
+
+    [Fact]
+    public void ConvertOutputItemsToMessages_HistoryComputerCall_DropsAgentServerEnvelopeFields()
+    {
+        // Arrange: AgentServer adds response_id and agent_reference to stored output items. They are not part of the
+        // model's item schema, and the model API rejects unknown input parameters.
+        var history = ReadOutputItem(
+            GaComputerCallJson.Replace(
+                "\"status\":\"completed\"",
+                "\"status\":\"completed\",\"response_id\":\"resp_previous\",\"agent_reference\":{\"type\":\"agent_reference\",\"name\":\"computer-agent\"}"));
+        Assert.IsType<OutputItemComputerToolCall>(history);
+
+        // Act
+        var messages = InputConverter.ConvertOutputItemsToMessages([history]);
+
+        // Assert
+        var message = Assert.Single(messages);
+        Assert.Equal(ChatRole.Assistant, message.Role);
+        var item = Assert.IsAssignableFrom<OpenAIComputerCallResponseItem>(Assert.Single(message.Contents).RawRepresentation);
+        Assert.Equal("cu_input_1", item.Id);
+
+        string json = ModelReaderWriter.Write(item, ModelReaderWriterOptions.Json).ToString();
+        Assert.DoesNotContain("response_id", json);
+        Assert.DoesNotContain("agent_reference", json);
+        Assert.Contains("\"actions\":[{\"type\":\"click\"", json);
+    }
+
+    [Fact]
+    public void ConvertOutputItemsToMessages_HistoryComputerCallOutput_ProducesToolResultWithoutEnvelopeFields()
+    {
+        // Arrange
+        var history = ReadOutputItem(
+            ComputerCallOutputJson.Replace(
+                "\"type\":\"computer_call_output\",",
+                "\"type\":\"computer_call_output\",\"id\":\"cuo_history_1\",\"response_id\":\"resp_previous\","));
+        Assert.IsType<OutputItemComputerToolCallOutput>(history);
+
+        // Act
+        var messages = InputConverter.ConvertOutputItemsToMessages([history]);
+
+        // Assert
+        var message = Assert.Single(messages);
+        Assert.Equal(ChatRole.Tool, message.Role);
+        var toolResult = Assert.Single(message.Contents);
+        Assert.Equal("call_cu_1", Assert.IsType<ToolResultContent>(toolResult).CallId);
+        var item = Assert.IsType<OpenAIComputerCallOutputResponseItem>(toolResult.RawRepresentation);
+
+        string json = ModelReaderWriter.Write(item, ModelReaderWriterOptions.Json).ToString();
+        Assert.DoesNotContain("response_id", json);
+        Assert.Contains("\"detail\":\"original\"", json);
+    }
+
+    [Fact]
+    public void ConvertOutputItemsToMessages_GaComputerCall_ReplaysWithoutNullAction()
+    {
+        // Arrange
+        var history = ReadOutputItem(GaComputerCallJson);
+
+        // Act
+        var messages = InputConverter.ConvertOutputItemsToMessages([history]);
+
+        // Assert: OpenAI .NET 2.13.0 models only the preview item and would write "action": null next to "actions",
+        // which the Responses API rejects ("Computer call input must include exactly one of `action` or `actions`.").
+        // The resent item keeps the typed surface of the SDK item but writes the GA shape.
+        var item = Assert.IsAssignableFrom<OpenAIComputerCallResponseItem>(Assert.Single(Assert.Single(messages).Contents).RawRepresentation);
+        Assert.Equal("cu_input_1", item.Id);
+        Assert.Equal("call_cu_1", item.CallId);
+        Assert.Equal(OpenAIComputerCallStatus.Completed, item.Status);
+        Assert.Null(item.Action);
+
+        string json = ModelReaderWriter.Write(item, ModelReaderWriterOptions.Json).ToString();
+        Assert.DoesNotContain("\"action\"", json);
+        Assert.Contains("\"actions\":[{\"type\":\"click\"", json);
+    }
+
+    private static OutputItem ReadOutputItem(string json) =>
+        ModelReaderWriter.Read<OutputItem>(BinaryData.FromString(json), ModelReaderWriterOptions.Json, AzureAIAgentServerResponsesContext.Default)!;
 }

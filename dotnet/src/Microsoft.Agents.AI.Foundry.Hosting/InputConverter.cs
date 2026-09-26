@@ -231,6 +231,8 @@ internal static class InputConverter
             ItemFunctionToolCall funcCall => ConvertItemFunctionToolCall(funcCall),
             ItemMcpApprovalRequest approvalRequest => ConvertMcpApprovalRequest(approvalRequest.Id, approvalRequest.Name, approvalRequest.Arguments),
             MCPApprovalResponse approvalResponse => ConvertMcpApprovalResponse(approvalResponse.ApprovalRequestId, approvalResponse.Approve, stateBag),
+            ItemComputerToolCall computerCall => ComputerToolItemConverter.ToChatMessage(computerCall),
+            ComputerCallOutputItemParam computerCallOutput => ComputerToolItemConverter.ToChatMessage(computerCallOutput),
             ItemReferenceParam => null,
             _ => null
         };
@@ -374,6 +376,8 @@ internal static class InputConverter
             OutputItemFunctionToolCallOutput funcOutput => ConvertFunctionToolCallOutput(funcOutput),
             OutputItemMcpApprovalRequest approvalRequest => ConvertMcpApprovalRequest(approvalRequest.Id, approvalRequest.Name, approvalRequest.Arguments),
             OutputItemMcpApprovalResponseResource approvalResponse => ConvertMcpApprovalResponse(approvalResponse.ApprovalRequestId, approvalResponse.Approve, stateBag),
+            OutputItemComputerToolCall computerCall => ComputerToolItemConverter.ToChatMessage(computerCall),
+            OutputItemComputerToolCallOutput computerCallOutput => ComputerToolItemConverter.ToChatMessage(computerCallOutput),
             OutputItemReasoningItem => null,
             _ => null
         };
