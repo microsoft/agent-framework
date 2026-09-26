@@ -61,7 +61,9 @@ internal class DelegateActionExecutor<TMessage> : Executor<TMessage>, IResettabl
     {
         if (this._action is not null)
         {
-            await this._action.Invoke(new DeclarativeWorkflowContext(context, this._state), message, cancellationToken).ConfigureAwait(false);
+            DeclarativeWorkflowContext declarativeContext =
+                await DeclarativeWorkflowContext.CreateAsync(context, this._state, cancellationToken).ConfigureAwait(false);
+            await this._action.Invoke(declarativeContext, message, cancellationToken).ConfigureAwait(false);
         }
 
         if (this._emitResult)

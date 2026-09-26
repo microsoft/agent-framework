@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
@@ -125,6 +126,86 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
 
         // Act and Assert
         await this.ExecuteTestAsync(model);
+    }
+
+    [Fact]
+    public async Task InvokeMcpToolSeparateWorkflowSessionsUseSeparateSessionScopesAsync()
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        RecordingScopedMcpToolHandler handler = new();
+        InvokeMcpTool model = this.CreateModel(
+            displayName: nameof(InvokeMcpToolSeparateWorkflowSessionsUseSeparateSessionScopesAsync),
+            serverUrl: TestServerUrl,
+            toolName: TestToolName,
+            requireApproval: false);
+        MockAgentProvider agentProvider = new();
+        InvokeMcpToolExecutor action = new(model, handler, agentProvider.Object, this.State);
+        Mock<IWorkflowContext> firstContext = CreateMockWorkflowContext();
+        Mock<IWorkflowContext> secondContext = CreateMockWorkflowContext();
+        firstContext.As<IWorkflowSessionContext>().SetupGet(context => context.SessionId).Returns("workflow-a");
+        secondContext.As<IWorkflowSessionContext>().SetupGet(context => context.SessionId).Returns("workflow-b");
+
+        // Act
+        await action.HandleAsync(new ActionExecutorResult("first"), firstContext.Object, CancellationToken.None);
+        await action.HandleAsync(new ActionExecutorResult("second"), secondContext.Object, CancellationToken.None);
+
+        // Assert
+        Assert.Equal(2, handler.WorkflowSessionIds.Count);
+        Assert.NotEqual(handler.WorkflowSessionIds[0], handler.WorkflowSessionIds[1]);
+    }
+
+    [Fact]
+    public async Task InvokeMcpToolSameWorkflowSessionReusesSessionScopeAsync()
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        RecordingScopedMcpToolHandler handler = new();
+        InvokeMcpTool model = this.CreateModel(
+            displayName: nameof(InvokeMcpToolSameWorkflowSessionReusesSessionScopeAsync),
+            serverUrl: TestServerUrl,
+            toolName: TestToolName,
+            requireApproval: false);
+        MockAgentProvider agentProvider = new();
+        InvokeMcpToolExecutor action = new(model, handler, agentProvider.Object, this.State);
+        Mock<IWorkflowContext> context = CreateMockWorkflowContext();
+        context.As<IWorkflowSessionContext>().SetupGet(current => current.SessionId).Returns("workflow-a");
+
+        // Act
+        await action.HandleAsync(new ActionExecutorResult("first"), context.Object, CancellationToken.None);
+        await action.HandleAsync(new ActionExecutorResult("second"), context.Object, CancellationToken.None);
+
+        // Assert
+        Assert.Equal(2, handler.WorkflowSessionIds.Count);
+        Assert.Equal(handler.WorkflowSessionIds[0], handler.WorkflowSessionIds[1]);
+    }
+
+    [Fact]
+    public async Task InvokeMcpToolLegacyContextsPersistSeparateSessionScopesAsync()
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        RecordingScopedMcpToolHandler handler = new();
+        InvokeMcpTool model = this.CreateModel(
+            displayName: nameof(InvokeMcpToolLegacyContextsPersistSeparateSessionScopesAsync),
+            serverUrl: TestServerUrl,
+            toolName: TestToolName,
+            requireApproval: false);
+        MockAgentProvider agentProvider = new();
+        InvokeMcpToolExecutor action = new(model, handler, agentProvider.Object, this.State);
+        InvokeMcpToolExecutor reconstructedAction = new(model, handler, agentProvider.Object, this.State);
+        Mock<IWorkflowContext> firstContext = CreateMockWorkflowContextWithSessionState();
+        Mock<IWorkflowContext> secondContext = CreateMockWorkflowContextWithSessionState();
+
+        // Act
+        await action.HandleAsync(new ActionExecutorResult("first"), firstContext.Object, CancellationToken.None);
+        await action.HandleAsync(new ActionExecutorResult("second"), secondContext.Object, CancellationToken.None);
+        await reconstructedAction.HandleAsync(new ActionExecutorResult("continued"), firstContext.Object, CancellationToken.None);
+
+        // Assert
+        Assert.Equal(3, handler.WorkflowSessionIds.Count);
+        Assert.NotEqual(handler.WorkflowSessionIds[0], handler.WorkflowSessionIds[1]);
+        Assert.Equal(handler.WorkflowSessionIds[0], handler.WorkflowSessionIds[2]);
     }
 
     [Fact]
@@ -1550,6 +1631,28 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
         return mockContext;
     }
 
+    private static Mock<IWorkflowContext> CreateMockWorkflowContextWithSessionState()
+    {
+        Mock<IWorkflowContext> context = CreateMockWorkflowContext();
+        Dictionary<(string? Scope, string Key), string> state = [];
+        context.Setup(current => current.ReadOrInitStateAsync(
+                It.IsAny<string>(),
+                It.IsAny<Func<string>>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .Returns((string key, Func<string> initialStateFactory, string? scopeName, CancellationToken _) =>
+            {
+                if (!state.TryGetValue((scopeName, key), out string? value))
+                {
+                    value = initialStateFactory();
+                    state[(scopeName, key)] = value;
+                }
+
+                return new ValueTask<string>(value);
+            });
+        return context;
+    }
+
     /// <summary>
     /// Creates a mock workflow context that actually stores state values (for checkpoint/restore tests).
     /// Optionally accepts an externally-owned state store so callers can drive multi-step
@@ -1777,6 +1880,35 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
     #endregion
 
     #region Mock MCP Tool Provider
+
+    private sealed class RecordingScopedMcpToolHandler : IWorkflowScopedMcpToolHandler
+    {
+        public List<string> WorkflowSessionIds { get; } = [];
+
+        public Task<McpServerToolResultContent> InvokeToolAsync(
+            string serverUrl,
+            string? serverLabel,
+            string toolName,
+            IDictionary<string, object?>? arguments,
+            IDictionary<string, string>? headers,
+            string? connectionName,
+            CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException("The workflow-scoped overload must be used.");
+
+        public Task<McpServerToolResultContent> InvokeToolInWorkflowSessionAsync(
+            string serverUrl,
+            string? serverLabel,
+            string toolName,
+            IDictionary<string, object?>? arguments,
+            IDictionary<string, string>? headers,
+            string? connectionName,
+            string workflowSessionId,
+            CancellationToken cancellationToken = default)
+        {
+            this.WorkflowSessionIds.Add(workflowSessionId);
+            return Task.FromResult(new McpServerToolResultContent("mock-call-id") { Outputs = [] });
+        }
+    }
 
     /// <summary>
     /// Mock implementation of <see cref="IMcpToolHandler"/> for unit testing purposes.

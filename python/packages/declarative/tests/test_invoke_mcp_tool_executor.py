@@ -164,6 +164,52 @@ class TestFieldForwarding:
         assert inv.headers == {}
         assert inv.arguments == {}
         assert inv.connection_name is None
+        assert inv.workflow_session_id
+
+    @pytest.mark.asyncio
+    async def test_separate_workflows_receive_separate_session_ids(self) -> None:
+        handler = StubMcpHandler(_ok())
+        factory = WorkflowFactory(mcp_tool_handler=handler)
+        first = factory.create_workflow_from_definition(_yaml(_action()))
+        second = factory.create_workflow_from_definition(_yaml(_action()))
+
+        await first.run({})
+        await second.run({})
+
+        assert len(handler.invocations) == 2
+        assert handler.invocations[0].workflow_session_id
+        assert handler.invocations[1].workflow_session_id
+        assert handler.invocations[0].workflow_session_id != handler.invocations[1].workflow_session_id
+
+    @pytest.mark.asyncio
+    async def test_fresh_runs_on_same_workflow_receive_separate_session_ids(self) -> None:
+        handler = StubMcpHandler(_ok())
+        factory = WorkflowFactory(mcp_tool_handler=handler)
+        workflow = factory.create_workflow_from_definition(_yaml(_action()))
+
+        await workflow.run({})
+        await workflow.run({})
+
+        assert len(handler.invocations) == 2
+        assert handler.invocations[0].workflow_session_id
+        assert handler.invocations[0].workflow_session_id != handler.invocations[1].workflow_session_id
+
+    @pytest.mark.asyncio
+    async def test_continuation_reuses_workflow_session_id(self) -> None:
+        from agent_framework_declarative._workflows import ToolApprovalResponse
+        from agent_framework_declarative._workflows._mcp_handler import get_or_create_workflow_session_id
+
+        handler = StubMcpHandler(_ok())
+        factory = WorkflowFactory(mcp_tool_handler=handler)
+        workflow = factory.create_workflow_from_definition(_yaml(_action(require_approval=True)))
+
+        paused = await workflow.run({})
+        [approval] = paused.get_request_info_events()
+        workflow_session_id = get_or_create_workflow_session_id(workflow._runner.state)  # pyright: ignore[reportPrivateUsage]
+        await workflow.run(responses={approval.request_id: ToolApprovalResponse(approved=True)})
+
+        assert handler.last_invocation is not None
+        assert handler.last_invocation.workflow_session_id == workflow_session_id
 
     @pytest.mark.asyncio
     async def test_arguments_evaluated_and_preserves_none(self) -> None:

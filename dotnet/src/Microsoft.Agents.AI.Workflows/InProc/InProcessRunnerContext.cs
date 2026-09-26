@@ -349,8 +349,10 @@ internal sealed class InProcessRunnerContext : IRunnerContext
     private sealed class BoundWorkflowContext(
         InProcessRunnerContext RunnerContext,
         string ExecutorId,
-        Dictionary<string, string>? traceContext) : IWorkflowContext
+        Dictionary<string, string>? traceContext) : IWorkflowContext, IWorkflowSessionContext
     {
+        public string SessionId => RunnerContext._sessionId;
+
         public ValueTask AddEventAsync(WorkflowEvent workflowEvent, CancellationToken cancellationToken = default) => RunnerContext.AddEventAsync(workflowEvent, cancellationToken);
 
         public ValueTask SendMessageAsync(object message, string? targetId = null, CancellationToken cancellationToken = default)

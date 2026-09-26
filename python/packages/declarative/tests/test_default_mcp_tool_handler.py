@@ -23,11 +23,13 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 from agent_framework import Content
+from agent_framework._workflows._state import State
 from agent_framework.exceptions import ToolExecutionException
 
 from agent_framework_declarative._workflows._mcp_handler import (
     DefaultMCPToolHandler,
     MCPToolInvocation,
+    get_or_create_workflow_session_id,
 )
 
 pytestmark = pytest.mark.skipif(
@@ -827,6 +829,22 @@ class TestConstruction:
             DefaultMCPToolHandler(cache_max_size=-3)
 
 
+class TestWorkflowSessionId:
+    def test_separate_workflow_states_get_separate_ids(self) -> None:
+        first = get_or_create_workflow_session_id(State())
+        second = get_or_create_workflow_session_id(State())
+
+        assert first != second
+
+    def test_same_workflow_state_reuses_id(self) -> None:
+        state = State()
+
+        first = get_or_create_workflow_session_id(state)
+        second = get_or_create_workflow_session_id(state)
+
+        assert first == second
+
+
 # ---------- Tool kwargs ----------------------------------------------------
 
 
@@ -879,11 +897,19 @@ class TestCache:
     async def test_same_url_and_headers_hit_cache(self) -> None:
         handler = DefaultMCPToolHandler()
         with _patch_tool():
-            await handler.invoke_tool(_invocation(headers={"X": "1"}))
-            await handler.invoke_tool(_invocation(headers={"X": "1"}))
+            await handler.invoke_tool(_invocation(headers={"X": "1"}, workflow_session_id="workflow-a"))
+            await handler.invoke_tool(_invocation(headers={"X": "1"}, workflow_session_id="workflow-a"))
         # One tool created, connect called once.
         assert len(FakeTool.instances) == 1
         assert FakeTool.instances[0].connect_count == 1
+
+    @pytest.mark.asyncio
+    async def test_separate_workflow_sessions_use_separate_entries(self) -> None:
+        handler = DefaultMCPToolHandler()
+        with _patch_tool():
+            await handler.invoke_tool(_invocation(workflow_session_id="workflow-a"))
+            await handler.invoke_tool(_invocation(workflow_session_id="workflow-b"))
+        assert len(FakeTool.instances) == 2
 
     @pytest.mark.asyncio
     async def test_different_headers_create_separate_entries(self) -> None:
@@ -918,6 +944,132 @@ class TestCache:
         assert FakeTool.instances[2].close_count == 0
 
     @pytest.mark.asyncio
+    async def test_lru_eviction_defers_close_until_active_invocation_finishes(self) -> None:
+        handler = DefaultMCPToolHandler(cache_max_size=1)
+        first_started = asyncio.Event()
+        release_first = asyncio.Event()
+
+        async def gated_call(tool: FakeTool, tool_name: str, **arguments: Any) -> Any:
+            if tool.kwargs["url"] == "https://a/":
+                first_started.set()
+                await release_first.wait()
+            return [Content.from_text("ok")]
+
+        with _patch_tool(), patch.object(FakeTool, "call_tool", gated_call):
+            first = asyncio.create_task(handler.invoke_tool(_invocation(server_url="https://a/")))
+            await first_started.wait()
+            second = await handler.invoke_tool(_invocation(server_url="https://b/"))
+
+            assert not second.is_error
+            assert FakeTool.instances[0].close_count == 0
+            close_task = asyncio.create_task(handler.aclose())
+            await asyncio.sleep(0)
+            assert not close_task.done()
+
+            release_first.set()
+            first_result = await first
+            close_result = await close_task
+
+        assert not first_result.is_error
+        assert close_result is None
+        assert FakeTool.instances[0].close_count == 1
+        assert FakeTool.instances[1].close_count == 1
+
+    @pytest.mark.asyncio
+    async def test_lru_eviction_cleanup_cancellation_releases_new_entry(self) -> None:
+        handler = DefaultMCPToolHandler(cache_max_size=1)
+        cancel_first_close = True
+        original_close = FakeTool.close
+
+        async def close(tool: FakeTool) -> None:
+            if cancel_first_close and tool.kwargs["url"] == "https://a/":
+                tool.close_count += 1
+                raise asyncio.CancelledError
+            await original_close(tool)
+
+        with _patch_tool(), patch.object(FakeTool, "close", close):
+            await handler.invoke_tool(_invocation(server_url="https://a/"))
+            with pytest.raises(asyncio.CancelledError):
+                await handler.invoke_tool(_invocation(server_url="https://b/"))
+
+            assert all(entry.active_users == 0 for entry in handler._cache.values())
+            cancel_first_close = False
+            await asyncio.wait_for(handler.aclose(), timeout=1)
+
+    @pytest.mark.asyncio
+    async def test_entry_creation_is_bounded_and_cancelled_waiter_is_cleaned_up(self) -> None:
+        handler = DefaultMCPToolHandler(cache_max_size=2)
+        connecting = 0
+        max_connecting = 0
+        capacity_reached = asyncio.Event()
+        release = asyncio.Event()
+        original_connect = FakeTool.connect
+
+        async def gated_connect(tool: FakeTool) -> None:
+            nonlocal connecting, max_connecting
+            connecting += 1
+            max_connecting = max(max_connecting, connecting)
+            if connecting == 2:
+                capacity_reached.set()
+            try:
+                await release.wait()
+                await original_connect(tool)
+            finally:
+                connecting -= 1
+
+        with _patch_tool(), patch.object(FakeTool, "connect", gated_connect):
+            first = asyncio.create_task(handler.invoke_tool(_invocation(workflow_session_id="workflow-a")))
+            second = asyncio.create_task(handler.invoke_tool(_invocation(workflow_session_id="workflow-b")))
+            await capacity_reached.wait()
+            cancelled = asyncio.create_task(handler.invoke_tool(_invocation(workflow_session_id="workflow-c")))
+            await asyncio.sleep(0)
+
+            assert len(FakeTool.instances) == 2
+            cancelled.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                cancelled_result = await cancelled
+                assert cancelled_result is None
+
+            release.set()
+            results = await asyncio.gather(first, second)
+
+        assert all(not result.is_error for result in results)
+        assert max_connecting == 2
+        assert not handler._inflight
+
+    @pytest.mark.asyncio
+    async def test_cancelled_waiter_does_not_cancel_shared_inflight_creation(self) -> None:
+        handler = DefaultMCPToolHandler()
+        connect_started = asyncio.Event()
+        release_connect = asyncio.Event()
+        original_connect = FakeTool.connect
+
+        async def gated_connect(tool: FakeTool) -> None:
+            connect_started.set()
+            await release_connect.wait()
+            await original_connect(tool)
+
+        with _patch_tool(), patch.object(FakeTool, "connect", gated_connect):
+            creator = asyncio.create_task(handler.invoke_tool(_invocation(workflow_session_id="workflow-a")))
+            await connect_started.wait()
+            waiter = asyncio.create_task(handler.invoke_tool(_invocation(workflow_session_id="workflow-a")))
+            await asyncio.sleep(0)
+
+            waiter.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                waiter_result = await waiter
+                assert waiter_result is None
+
+            release_connect.set()
+            creator_result = await creator
+            follow_up_result = await handler.invoke_tool(_invocation(workflow_session_id="workflow-a"))
+
+        assert not creator_result.is_error
+        assert not follow_up_result.is_error
+        assert len(FakeTool.instances) == 1
+        assert FakeTool.instances[0].connect_count == 1
+
+    @pytest.mark.asyncio
     async def test_repeated_use_keeps_lru_alive(self) -> None:
         handler = DefaultMCPToolHandler(cache_max_size=2)
         with _patch_tool():
@@ -950,10 +1102,10 @@ class TestCache:
 
         with _patch_tool(), patch.object(FakeTool, "connect", slow_connect):
             results = await asyncio.gather(
-                handler.invoke_tool(_invocation(headers={"X": "1"})),
-                handler.invoke_tool(_invocation(headers={"X": "1"})),
-                handler.invoke_tool(_invocation(headers={"X": "1"})),
-                handler.invoke_tool(_invocation(headers={"X": "1"})),
+                handler.invoke_tool(_invocation(headers={"X": "1"}, workflow_session_id="workflow-a")),
+                handler.invoke_tool(_invocation(headers={"X": "1"}, workflow_session_id="workflow-a")),
+                handler.invoke_tool(_invocation(headers={"X": "1"}, workflow_session_id="workflow-a")),
+                handler.invoke_tool(_invocation(headers={"X": "1"}, workflow_session_id="workflow-a")),
             )
         assert all(not r.is_error for r in results)
         # Only one tool was created and connected, despite 4 concurrent calls.
@@ -1111,6 +1263,75 @@ class TestAclose:
         assert result.is_error is True
         assert "closed" in (result.error_message or "").lower()
 
+    @pytest.mark.asyncio
+    async def test_cancelled_creator_does_not_block_aclose(self) -> None:
+        handler = DefaultMCPToolHandler()
+        connect_started = asyncio.Event()
+        release_connect = asyncio.Event()
+        close_started = asyncio.Event()
+        release_close = asyncio.Event()
+        original_connect = FakeTool.connect
+        original_close_entry = handler._close_entry
+
+        async def gated_connect(self: FakeTool) -> None:
+            connect_started.set()
+            await release_connect.wait()
+            await original_connect(self)
+
+        async def gated_close_entry(entry: Any) -> None:
+            close_started.set()
+            await release_close.wait()
+            await original_close_entry(entry)
+
+        with (
+            _patch_tool(),
+            patch.object(FakeTool, "connect", gated_connect),
+            patch.object(handler, "_close_entry", gated_close_entry),
+        ):
+            invoke_task = asyncio.create_task(handler.invoke_tool(_invocation(headers={"X": "1"})))
+            await connect_started.wait()
+            close_task = asyncio.create_task(handler.aclose())
+            await asyncio.sleep(0)
+            release_connect.set()
+            await close_started.wait()
+            invoke_task.cancel()
+            release_close.set()
+
+            with pytest.raises(asyncio.CancelledError):
+                await invoke_task
+            await asyncio.wait_for(close_task, timeout=1)
+
+        assert FakeTool.instances[0].close_count == 1
+        assert not handler._inflight
+
+    @pytest.mark.asyncio
+    async def test_cancellation_while_waiting_for_phase_three_lock_cleans_up(self) -> None:
+        handler = DefaultMCPToolHandler()
+        entry_created = asyncio.Event()
+        release_creation = asyncio.Event()
+        original_create_entry = handler._create_entry
+
+        async def gated_create_entry(invocation: MCPToolInvocation) -> Any:
+            entry = await original_create_entry(invocation)
+            entry_created.set()
+            await release_creation.wait()
+            return entry
+
+        with _patch_tool(), patch.object(handler, "_create_entry", gated_create_entry):
+            invocation = asyncio.create_task(handler.invoke_tool(_invocation(headers={"X": "1"})))
+            await entry_created.wait()
+            await handler._cache_lock.acquire()
+            release_creation.set()
+            await asyncio.sleep(0)
+            invocation.cancel()
+            handler._cache_lock.release()
+
+            with pytest.raises(asyncio.CancelledError):
+                await invocation
+
+        assert FakeTool.instances[0].close_count == 1
+        assert not handler._inflight
+
 
 # ---------- Result normalisation ------------------------------------------
 
@@ -1235,38 +1456,43 @@ class TestErrorMapping:
 
 class TestCacheKey:
     def test_key_order_independent(self) -> None:
-        k1 = DefaultMCPToolHandler._cache_key("https://x/", None, None, {"A": "1", "B": "2"})
-        k2 = DefaultMCPToolHandler._cache_key("https://x/", None, None, {"B": "2", "A": "1"})
+        k1 = DefaultMCPToolHandler._cache_key("workflow", "https://x/", None, None, {"A": "1", "B": "2"})
+        k2 = DefaultMCPToolHandler._cache_key("workflow", "https://x/", None, None, {"B": "2", "A": "1"})
         assert k1 == k2
 
     def test_key_distinguishes_values(self) -> None:
-        k1 = DefaultMCPToolHandler._cache_key("https://x/", None, None, {"A": "1"})
-        k2 = DefaultMCPToolHandler._cache_key("https://x/", None, None, {"A": "2"})
+        k1 = DefaultMCPToolHandler._cache_key("workflow", "https://x/", None, None, {"A": "1"})
+        k2 = DefaultMCPToolHandler._cache_key("workflow", "https://x/", None, None, {"A": "2"})
         assert k1 != k2
 
     def test_empty_headers_use_fixed_hash(self) -> None:
-        k1 = DefaultMCPToolHandler._cache_key("https://x/", None, None, None)
-        k2 = DefaultMCPToolHandler._cache_key("https://x/", None, None, {})
+        k1 = DefaultMCPToolHandler._cache_key("workflow", "https://x/", None, None, None)
+        k2 = DefaultMCPToolHandler._cache_key("workflow", "https://x/", None, None, {})
         assert k1 == k2
 
+    def test_key_distinguishes_workflow_session(self) -> None:
+        k1 = DefaultMCPToolHandler._cache_key("workflow-a", "https://x/", None, None, None)
+        k2 = DefaultMCPToolHandler._cache_key("workflow-b", "https://x/", None, None, None)
+        assert k1 != k2
+
     def test_key_distinguishes_connection_name(self) -> None:
-        k1 = DefaultMCPToolHandler._cache_key("https://x/", None, "conn-A", None)
-        k2 = DefaultMCPToolHandler._cache_key("https://x/", None, "conn-B", None)
+        k1 = DefaultMCPToolHandler._cache_key("workflow", "https://x/", None, "conn-A", None)
+        k2 = DefaultMCPToolHandler._cache_key("workflow", "https://x/", None, "conn-B", None)
         assert k1 != k2
 
     def test_key_distinguishes_server_label(self) -> None:
-        k1 = DefaultMCPToolHandler._cache_key("https://x/", "Lbl-A", None, None)
-        k2 = DefaultMCPToolHandler._cache_key("https://x/", "Lbl-B", None, None)
+        k1 = DefaultMCPToolHandler._cache_key("workflow", "https://x/", "Lbl-A", None, None)
+        k2 = DefaultMCPToolHandler._cache_key("workflow", "https://x/", "Lbl-B", None, None)
         assert k1 != k2
 
     def test_key_collapses_header_name_case(self) -> None:
-        k1 = DefaultMCPToolHandler._cache_key("https://x/", None, None, {"Authorization": "tk"})
-        k2 = DefaultMCPToolHandler._cache_key("https://x/", None, None, {"authorization": "tk"})
+        k1 = DefaultMCPToolHandler._cache_key("workflow", "https://x/", None, None, {"Authorization": "tk"})
+        k2 = DefaultMCPToolHandler._cache_key("workflow", "https://x/", None, None, {"authorization": "tk"})
         assert k1 == k2
 
     def test_key_keeps_header_value_case(self) -> None:
-        k1 = DefaultMCPToolHandler._cache_key("https://x/", None, None, {"X": "Bearer-A"})
-        k2 = DefaultMCPToolHandler._cache_key("https://x/", None, None, {"X": "bearer-a"})
+        k1 = DefaultMCPToolHandler._cache_key("workflow", "https://x/", None, None, {"X": "Bearer-A"})
+        k2 = DefaultMCPToolHandler._cache_key("workflow", "https://x/", None, None, {"X": "bearer-a"})
         assert k1 != k2
 
 

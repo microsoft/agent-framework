@@ -1,8 +1,10 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.ObjectModel;
 using Microsoft.PowerFx.Types;
@@ -87,6 +89,34 @@ public class WorkflowFormulaStateTests
     }
 
     [Fact]
+    public async Task DeclarativeContextFallbackSessionId_IsScopedToPersistedRunStateAsync()
+    {
+        // Arrange
+        Dictionary<(string? ScopeName, string Key), string> firstRunState = [];
+        Dictionary<(string? ScopeName, string Key), string> secondRunState = [];
+        IWorkflowContext firstContext = CreateContext(firstRunState);
+        IWorkflowContext restoredContext = CreateContext(firstRunState);
+        IWorkflowContext secondContext = CreateContext(secondRunState);
+
+        // Act
+        DeclarativeWorkflowContext first =
+            await DeclarativeWorkflowContext.CreateAsync(firstContext, this.State);
+        DeclarativeWorkflowContext continued =
+            await DeclarativeWorkflowContext.CreateAsync(firstContext, this.State);
+        DeclarativeWorkflowContext restored =
+            await DeclarativeWorkflowContext.CreateAsync(restoredContext, this.State);
+        DeclarativeWorkflowContext second =
+            await DeclarativeWorkflowContext.CreateAsync(secondContext, this.State);
+
+        // Assert
+        Assert.Equal(first.SessionId, continued.SessionId);
+        Assert.Equal(first.SessionId, restored.SessionId);
+        Assert.NotEqual(first.SessionId, second.SessionId);
+        Assert.True(firstRunState.ContainsKey((VariableScopeNames.System, "__declarative_mcp_workflow_session_id")));
+        Assert.False(firstRunState.ContainsKey((null, "__declarative_mcp_workflow_session_id")));
+    }
+
+    [Fact]
     public async Task RestoreAsync_RestoresPersistedSensitivityAsync()
     {
         // Arrange
@@ -103,5 +133,28 @@ public class WorkflowFormulaStateTests
 
         // Assert
         Assert.Equal(SensitivityLevel.Sensitive, this.State.GetSensitivity("secret"));
+    }
+
+    private static IWorkflowContext CreateContext(Dictionary<(string? ScopeName, string Key), string> state)
+    {
+        Mock<IWorkflowContext> context = new();
+        context
+            .Setup(current => current.ReadOrInitStateAsync(
+                It.IsAny<string>(),
+                It.IsAny<Func<string>>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .Returns((string key, Func<string> factory, string? scopeName, CancellationToken cancellationToken) =>
+            {
+                var scopedKey = (scopeName, key);
+                if (!state.TryGetValue(scopedKey, out string? value))
+                {
+                    value = factory();
+                    state[scopedKey] = value;
+                }
+
+                return new ValueTask<string>(value);
+            });
+        return context.Object;
     }
 }

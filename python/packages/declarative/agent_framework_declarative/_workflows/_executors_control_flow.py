@@ -410,6 +410,10 @@ class JoinExecutor(DeclarativeActionExecutor):
     ) -> None:
         """Simply pass through to continue the workflow."""
         await self._ensure_state_initialized(ctx, trigger)
+        if self._action_def.get("kind") == "Entry":
+            from ._mcp_handler import reset_workflow_session_id
+
+            reset_workflow_session_id(ctx.state)
         await ctx.send_message(ActionComplete())
 
 

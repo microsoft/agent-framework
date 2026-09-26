@@ -39,3 +39,34 @@ public interface IMcpToolHandler
         string? connectionName,
         CancellationToken cancellationToken = default);
 }
+
+/// <summary>
+/// Defines the contract for MCP handlers that isolate stateful protocol sessions by workflow session.
+/// </summary>
+public interface IWorkflowScopedMcpToolHandler : IMcpToolHandler
+{
+    /// <summary>
+    /// Invokes an MCP tool within the framework-owned workflow session scope.
+    /// </summary>
+    /// <param name="serverUrl">The URL of the MCP server.</param>
+    /// <param name="serverLabel">An optional label identifying the server connection.</param>
+    /// <param name="toolName">The name of the tool to invoke.</param>
+    /// <param name="arguments">Optional arguments to pass to the tool.</param>
+    /// <param name="headers">Optional headers to include in the request.</param>
+    /// <param name="connectionName">An optional connection name for managed connections.</param>
+    /// <param name="workflowSessionId">The framework-owned identifier for the current workflow session.</param>
+    /// <param name="cancellationToken">A token to observe cancellation.</param>
+    /// <returns>
+    /// A task representing the asynchronous operation. The result contains a <see cref="McpServerToolResultContent"/>
+    /// with the tool invocation output.
+    /// </returns>
+    Task<McpServerToolResultContent> InvokeToolInWorkflowSessionAsync(
+        string serverUrl,
+        string? serverLabel,
+        string toolName,
+        IDictionary<string, object?>? arguments,
+        IDictionary<string, string>? headers,
+        string? connectionName,
+        string workflowSessionId,
+        CancellationToken cancellationToken = default);
+}
