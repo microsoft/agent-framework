@@ -248,6 +248,17 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
   A `call_id` may be reused after a completed round, so approval normalization matches ordered call occurrences and
   consumes approved results per occurrence rather than using one global result per `call_id`. All contents produced by
   one execution remain one result group and are consumed together, including multiple user-input requests.
+- A local (non-hosted) `function_approval_response` authorizes execution only when it binds to an approval request
+  recorded in an authoritative `AgentSession`. Runs without one drop inbound local approval responses with a warning
+  and execute nothing, so callers must pass the session that issued the request back on the resuming run. An approval
+  request that merely appears in the caller-supplied history is not proof the framework asked for approval. Hosted
+  provider-issued approvals still pass through untouched, and a response already settled by a terminal result is
+  replayed history rather than an authorization, so replaying a completed transcript keeps working without a session.
+  That settled exemption is an allow-list evaluated per response object, not per approval id, because several
+  responses can share one approval id and only the first is eligible to execute. Filtering runs before stateless
+  mixed-batch completeness is enforced, so a dropped response is never counted as an answer.
+  Set the `disable_approval_response_binding` function invocation configuration option to restore the previous
+  unbound behavior.
 - Approval resume keeps terminal `function_result` contents in tool-role messages and follow-up user-input requests
   in assistant-role messages, including mixed sibling batches.
 - Function-call budget accounting counts one unit per executed result group, not per emitted `function_result`, so

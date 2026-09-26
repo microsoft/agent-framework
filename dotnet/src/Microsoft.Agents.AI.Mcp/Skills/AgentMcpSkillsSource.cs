@@ -71,6 +71,12 @@ namespace Microsoft.Agents.AI;
 /// </list>
 /// </para>
 /// <para>
+/// Supporting resource names are checked for absolute paths, parent traversal (including
+/// percent-encoded forms), and control characters before an MCP request is sent. Index URLs
+/// retain their MCP resource schemes: they are sent to the connected server, not opened locally.
+/// This client-side guard does not replace server-side authorization.
+/// </para>
+/// <para>
 /// <strong>Security considerations:</strong> This source discovers and loads skills — including full
 /// skill instructions and, for <c>archive</c>-type entries, files extracted to local disk — from a
 /// remote MCP server that the caller connects to explicitly (via <c>UseMcpSkills</c>); it is never

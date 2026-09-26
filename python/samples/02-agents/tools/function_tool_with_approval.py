@@ -16,6 +16,10 @@ Demonstration of a tool with approvals.
 
 This sample demonstrates using AI functions with user approval workflows.
 It shows how to handle function call approvals without using threads.
+
+Because there is no session to bind approvals against, this sample disables approval
+response binding (see the warning in run_weather_agent_with_approval). For production use
+prefer function_tool_with_approval_and_sessions.py, which keeps binding enabled.
 """
 
 # Load environment variables from .env file
@@ -137,8 +141,22 @@ async def run_weather_agent_with_approval(stream: bool) -> None:
     """Example showing AI function with approval requirement."""
     print(f"\n=== Weather Agent with Approval Required ({'Streaming' if stream else 'Non-Streaming'}) ===\n")
 
+    client = OpenAIChatClient()
+
+    # WARNING: this sample resumes approvals without a session, so it turns off approval
+    # response binding. By default an approval response only authorizes a tool call when it
+    # matches an approval request the framework itself recorded in an AgentSession. Turning
+    # that off means any approval response present in the inbound messages is honored as-is,
+    # so whatever can put messages into the conversation can approve a privileged tool call
+    # -- including one the model never requested. Only do this when the messages are fully
+    # under your control, or when you enforce equivalent checks yourself.
+    #
+    # Prefer function_tool_with_approval_and_sessions.py, which keeps binding enabled by
+    # passing the issuing session back on the run that resumes the approval.
+    client.function_invocation_configuration["disable_approval_response_binding"] = True
+
     async with Agent(
-        client=OpenAIChatClient(),
+        client=client,
         name="WeatherAgent",
         instructions=("You are a helpful weather assistant. Use the get_weather tool to provide weather information."),
         tools=[get_weather, get_weather_detail],
