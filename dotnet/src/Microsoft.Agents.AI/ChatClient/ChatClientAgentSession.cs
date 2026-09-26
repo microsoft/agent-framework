@@ -48,6 +48,11 @@ public sealed class ChatClientAgentSession : AgentSession
     /// agent service managed chat history, and the default behavior of a service is
     /// to fork the chat history with each iteration.
     /// </para>
+    /// <para>
+    /// Per-service-call chat history persistence uses an internal marker here to keep the
+    /// function-invocation loop in sync with locally managed history. That marker is not
+    /// an identifier for a conversation stored by the underlying service.
+    /// </para>
     /// </remarks>
     [JsonPropertyName("conversationId")]
     public string? ConversationId

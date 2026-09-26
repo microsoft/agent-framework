@@ -52,6 +52,7 @@
 
     <InternalsVisibleTo Include="Microsoft.Agents.AI.UnitTests" />
     <InternalsVisibleTo Include="Microsoft.Agents.AI.Declarative.UnitTests" />
+    <InternalsVisibleTo Include="Microsoft.Agents.AI.Foundry.Hosting" />
     <InternalsVisibleTo Include="Microsoft.Agents.AI.Hosting.UnitTests" />
   </ItemGroup>
 

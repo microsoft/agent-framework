@@ -760,11 +760,15 @@ public class AgentFrameworkResponseHandler : ResponseHandler
             return stream.EmitInProgress();
         }
 
-        // Check whenever the agent is storing messages when it should not.
+        // A per-service-call history provider uses a local marker in ConversationId to keep
+        // function invocation working; only a real service conversation indicates stored output.
         bool CheckNotAllowedStoreUsage() =>
-            // For IChatClients implementations when the backend is set to not store (store = false) the returned responseMessage.ConversationId comes null.
-            // If for any reason this property is set it means that the storage setting was enabled when it shouldn't.
-            !allowStoredOutputEnabled && session is ChatClientAgentSession { ConversationId: not null };
+            !allowStoredOutputEnabled
+            && session is ChatClientAgentSession { ConversationId: not null } chatSession
+            && !string.Equals(
+                chatSession.ConversationId,
+                PerServiceCallChatHistoryPersistingChatClient.LocalHistoryConversationId,
+                StringComparison.Ordinal);
     }
 
     /// <summary>
