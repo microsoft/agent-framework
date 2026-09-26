@@ -308,6 +308,115 @@ async def test_in_memory_store_normalizes_paths() -> None:
             await store.write(bad, "boom")
 
 
+async def test_in_memory_store_rejects_file_ancestor_collision() -> None:
+    """Writing a file whose ancestor is already a file must raise NotADirectoryError."""
+    store = InMemoryAgentFileStore()
+    await store.write("Reports", "file content")
+
+    with pytest.raises(NotADirectoryError):
+        await store.write("Reports/q1.txt", "nested content")
+
+    with pytest.raises(NotADirectoryError):
+        await store.write("reports/deep/q2.txt", "deep nested content")
+
+    assert await store.read("Reports") == "file content"
+    children = await store.list_children("")
+    assert len(children) == 1
+    assert children[0].name == "Reports"
+    assert children[0].type == FileStoreEntry.FILE
+
+
+async def test_in_memory_store_rejects_descendant_directory_collision() -> None:
+    """Writing a file whose path is already a directory must raise IsADirectoryError."""
+    store = InMemoryAgentFileStore()
+    await store.write("Reports/q1.txt", "nested content")
+
+    with pytest.raises(IsADirectoryError):
+        await store.write("Reports", "file content")
+
+    with pytest.raises(IsADirectoryError):
+        await store.write("reports", "case insensitive collision")
+
+    assert await store.read("Reports/q1.txt") == "nested content"
+    assert await store.read("Reports") is None
+    children = await store.list_children("")
+    assert len(children) == 1
+    assert children[0].name == "Reports"
+    assert children[0].type == FileStoreEntry.DIRECTORY
+
+
+async def test_in_memory_store_create_directory_rejects_existing_file() -> None:
+    """Creating a directory that collides with an existing file must raise FileExistsError."""
+    store = InMemoryAgentFileStore()
+    await store.write("Reports", "file content")
+
+    with pytest.raises(FileExistsError):
+        await store.create_directory("Reports")
+
+    with pytest.raises(FileExistsError):
+        await store.create_directory("reports/nested")
+
+
+async def test_in_memory_store_explicit_directory_reserves_path_against_write() -> None:
+    """Explicitly created directory must reserve the path and reject file writes."""
+    store = InMemoryAgentFileStore()
+    await store.create_directory("Reports")
+
+    with pytest.raises(IsADirectoryError):
+        await store.write("Reports", "file content")
+
+    with pytest.raises(IsADirectoryError):
+        await store.write("reports", "case insensitive collision")
+
+    children = await store.list_children("")
+    assert len(children) == 1
+    assert children[0].name == "Reports"
+    assert children[0].type == FileStoreEntry.DIRECTORY
+
+    nested_children = await store.list_children("Reports")
+    assert len(nested_children) == 0
+
+
+async def test_in_memory_store_explicit_nested_directory_creation() -> None:
+    """Explicit nested directory creation registers intermediate directories and preserves casing."""
+    store = InMemoryAgentFileStore()
+    await store.create_directory("Reports/2026/Q1")
+
+    root_children = await store.list_children("")
+    assert len(root_children) == 1
+    assert root_children[0].name == "Reports"
+    assert root_children[0].type == FileStoreEntry.DIRECTORY
+
+    reports_children = await store.list_children("Reports")
+    assert len(reports_children) == 1
+    assert reports_children[0].name == "2026"
+    assert reports_children[0].type == FileStoreEntry.DIRECTORY
+
+    q1_children = await store.list_children("Reports/2026")
+    assert len(q1_children) == 1
+    assert q1_children[0].name == "Q1"
+    assert q1_children[0].type == FileStoreEntry.DIRECTORY
+
+    with pytest.raises(IsADirectoryError):
+        await store.write("reports/2026", "collision")
+
+
+async def test_in_memory_store_delete_file_cleans_up_implicit_directory_counts() -> None:
+    """Deleting a file unreserves implicit parent directories when no other files remain."""
+    store = InMemoryAgentFileStore()
+    await store.write("data/temp/file.txt", "file content")
+
+    with pytest.raises(IsADirectoryError):
+        await store.write("data/temp", "should fail while file exists")
+
+    deleted = await store.delete("data/temp/file.txt")
+    assert deleted is True
+
+    # Now that the implicit descendant is gone and temp was never explicitly created, writing succeeds
+    await store.write("data/temp", "now a file")
+    assert await store.read("data/temp") == "now a file"
+
+
 async def test_filesystem_store_round_trips_files(tmp_path: Path) -> None:
     """The filesystem store should round-trip files on disk and create parents on write."""
     store = FileSystemAgentFileStore(tmp_path)

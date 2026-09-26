@@ -1064,11 +1064,23 @@ class InMemoryAgentFileStore(AgentFileStore):
         # wrote, mirroring how :class:`FileSystemAgentFileStore` preserves the
         # on-disk casing.
         self._files: dict[str, tuple[str, str]] = {}
+        self._dir_counts: dict[str, int] = {}
+        self._explicit_dirs: dict[str, str] = {}
         self._lock = asyncio.Lock()
 
     @staticmethod
     def _key(path: str) -> str:
         return _normalize_relative_path(path).lower()
+
+    @staticmethod
+    def _ancestor_keys(key: str) -> list[str]:
+        """Return all strict ancestor directory keys in top-down order in linear time."""
+        ancestors: list[str] = []
+        idx = key.find("/")
+        while idx != -1:
+            ancestors.append(key[:idx])
+            idx = key.find("/", idx + 1)
+        return ancestors
 
     async def write(self, path: str, content: str, *, overwrite: bool = True) -> None:
         """Write ``content`` to the file at ``path``.
@@ -1080,9 +1092,19 @@ class InMemoryAgentFileStore(AgentFileStore):
         display = _normalize_relative_path(path)
         key = display.lower()
         async with self._lock:
+            ancestors = self._ancestor_keys(key)
+            for ancestor in ancestors:
+                if ancestor in self._files:
+                    raise NotADirectoryError(f"Not a directory: {path!r}")
+            if self._dir_counts.get(key, 0) > 0 or key in self._explicit_dirs:
+                raise IsADirectoryError(f"Is a directory: {path!r}")
             if not overwrite and key in self._files:
                 raise FileExistsError(f"File already exists: {path!r}")
+            is_new_file = key not in self._files
             self._files[key] = (display, content)
+            if is_new_file:
+                for ancestor in ancestors:
+                    self._dir_counts[ancestor] = self._dir_counts.get(ancestor, 0) + 1
 
     async def read(self, path: str) -> str | None:
         """Return the file content, or ``None`` if the file does not exist."""
@@ -1095,7 +1117,16 @@ class InMemoryAgentFileStore(AgentFileStore):
         """Delete the file and return whether anything was removed."""
         key = self._key(path)
         async with self._lock:
-            return self._files.pop(key, None) is not None
+            removed = self._files.pop(key, None)
+            if removed is not None:
+                for ancestor in self._ancestor_keys(key):
+                    new_count = self._dir_counts[ancestor] - 1
+                    if new_count <= 0:
+                        del self._dir_counts[ancestor]
+                    else:
+                        self._dir_counts[ancestor] = new_count
+                return True
+            return False
 
     async def list_children(self, directory: str = "") -> list[FileStoreEntry]:
         """Return the direct child files and subdirectories of ``directory``.
@@ -1115,11 +1146,12 @@ class InMemoryAgentFileStore(AgentFileStore):
             prefix += "/"
         prefix_depth = prefix.count("/")
         async with self._lock:
-            entries = [(key, display) for key, (display, _) in self._files.items()]
+            file_entries = [(key, display) for key, (display, _) in self._files.items()]
+            dir_entries = list(self._explicit_dirs.items())
         files: list[str] = []
         directories: list[str] = []
         seen_dirs: set[str] = set()
-        for key, display in entries:
+        for key, display in file_entries:
             if not key.startswith(prefix):
                 continue
             # Unicode lowercasing can change character counts, so key offsets
@@ -1129,6 +1161,17 @@ class InMemoryAgentFileStore(AgentFileStore):
             if not separator:
                 files.append(remainder)
             elif segment:
+                segment_key = segment.lower()
+                if segment_key in seen_dirs:
+                    continue
+                seen_dirs.add(segment_key)
+                directories.append(segment)
+        for key, display in dir_entries:
+            if not key.startswith(prefix) or key == prefix.rstrip("/"):
+                continue
+            remainder = display.split("/", prefix_depth)[-1]
+            segment, _, _ = remainder.partition("/")
+            if segment:
                 segment_key = segment.lower()
                 if segment_key in seen_dirs:
                     continue
@@ -1191,8 +1234,30 @@ class InMemoryAgentFileStore(AgentFileStore):
         return await _run_search_with_timeout(asyncio.to_thread(scan))
 
     async def create_directory(self, path: str) -> None:
-        """No-op: directories are implicit from file paths in the in-memory store."""
-        del path
+        """Ensure the directory at ``path`` exists."""
+        display = _normalize_relative_path(path, is_directory=True)
+        key = display.lower()
+        if not key:
+            return
+        async with self._lock:
+            ancestors = self._ancestor_keys(key)
+            for ancestor in ancestors:
+                if ancestor in self._files:
+                    raise FileExistsError(f"File already exists: {ancestor!r}")
+            if key in self._files:
+                raise FileExistsError(f"File already exists: {key!r}")
+            if key not in self._explicit_dirs:
+                idx_display = 0
+                for ancestor in ancestors:
+                    next_slash = display.find("/", idx_display)
+                    if next_slash != -1:
+                        ancestor_display = display[:next_slash]
+                        idx_display = next_slash + 1
+                    else:
+                        ancestor_display = display
+                    if ancestor not in self._explicit_dirs:
+                        self._explicit_dirs[ancestor] = ancestor_display
+                self._explicit_dirs[key] = display
 
 
 @experimental(feature_id=ExperimentalFeature.HARNESS)
