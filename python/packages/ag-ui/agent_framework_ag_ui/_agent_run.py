@@ -36,6 +36,7 @@ from agent_framework import (
     MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY,
     Message,
     SupportsAgentRun,
+    ToolApprovalMiddleware,
     WorkflowAgent,
 )
 from agent_framework._middleware import (
@@ -2449,12 +2450,14 @@ def _a2ui_existing_tool_names(agent: SupportsAgentRun, tools: list[Any] | None) 
 def _request_state_protected_keys(agent: SupportsAgentRun) -> set[str]:
     """Return session-state namespaces that client Shared State cannot own."""
     context_providers = cast(list[Any], getattr(agent, "context_providers", []))
+    agent_middleware = categorize_middleware(getattr(agent, "middleware", None))["agent"]
     return {
         _TOOL_APPROVAL_STATE_KEY,
         InMemoryHistoryProvider.DEFAULT_SOURCE_ID,
         MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY,
         *(provider.source_id for provider in context_providers),
         *_provider_service_session_state_keys(agent),
+        *(middleware.source_id for middleware in agent_middleware if isinstance(middleware, ToolApprovalMiddleware)),
     }
 
 
