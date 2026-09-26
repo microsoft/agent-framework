@@ -2896,7 +2896,7 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
                 violations=violations,
                 binding=binding,
             )
-        elif self.block_on_violation:
+        elif self.block_on_violation or self.approval_on_violation:
             self._block_policy_violation(context, context_label=context_label, violations=violations)
         else:
             logger.warning("WARNING: Tool '%s' policy violation(s) [%s] (allowed)", function_name, disclosed)
