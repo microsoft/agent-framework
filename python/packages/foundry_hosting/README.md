@@ -96,16 +96,57 @@ encoding of the store name. For example:
 
 ### User isolation
 
-When hosted on Foundry, the default state stores automatically isolate data by the
-platform user ID supplied with each request. Sessions, workflow checkpoints, and
-function approvals written for one user cannot be read or modified by another user.
-No additional partitioning configuration is required when using the default stores.
+Hosted requests take their sandbox session ID from the platform-configured
+`FOUNDRY_AGENT_SESSION_ID` (`AgentConfig.session_id`), and their user and call IDs
+from the AgentServer request context. All three are required. AgentServer can also
+resolve its request-context session ID from a caller's `agent_session_id` body field
+or query parameter; hosted requests reject that value when it differs from the
+platform-configured ID. The exported
+`FoundryRequestScope.from_context(config, platform_context)` validates this boundary.
+Its `storage_key` is a bounded hash of the framed user and sandbox IDs, not a caller
+conversation or response ID. If a hosted deployment does not provide
+`FOUNDRY_AGENT_SESSION_ID`, default hosted state access fails closed rather than
+using the caller's ID. Platform injection of this setting has not been verified in
+every hosted deployment; do not bypass this check without another verified identity.
+
+| Identifier | Purpose |
+| --- | --- |
+| Foundry session ID | Platform sandbox for the hosted request and its MAF state. |
+| Platform user ID / call ID | User isolation and per-request storage authorization/correlation. A call ID is **not** a conversation ID. |
+| Responses `response.id`, `previous_response_id`, `conversation` | Caller-visible continuation and conversation IDs, used as item keys *within* the sandbox. |
+| MAF `AgentSession.session_id` / `service_session_id` | Inner agent state and optional downstream service continuation; neither identifies the Foundry sandbox. |
+| Workflow checkpoint ID | Inner workflow state within a checkpoint context, not a Foundry session ID. |
+
+The default hosted MAF session, checkpoint, and approval stores use a `v2` namespace
+derived from the hashed platform identity, with `user_isolation=True` and an explicit
+platform `call_id` on each item operation. Checkpoint context IDs are hashed as well.
+The same user in two hosted sandboxes cannot read the other's default MAF state.
+Locally, the existing single-user store names and file-based fallback remain unchanged;
+direct store constructors without a trusted `scope` also retain their existing local
+behavior. Applications that supply custom store providers must implement equivalent
+hosted user and sandbox isolation.
+
+**Existing hosted state is not migrated.** The default stores never fall back to
+legacy unscoped `agent_sessions`, `checkpoints/<context_id>`, or
+`function_approvals` data: an old MAF session, workflow checkpoint, or pending approval
+cannot be resumed through the new default hosted stores. Start a fresh Responses
+conversation rather than reusing an old `previous_response_id` or conversation ID;
+the separate AgentServer response store is not migrated by this change. Recovering
+old state requires a separately designed migration that verifies the original user's
+and sandbox's ownership; reading unscoped data by user alone is not safe.
 
 ### Agent Sessions
 
 `ResponsesHostServer` persists the Agent Framework `AgentSession` durably. By default it
 uses the `FoundryAgentSessionStore`, backed by Foundry storage when hosted and file-based
 storage locally. Stored sessions are scoped under `agent_sessions`.
+
+Loaded MAF sessions are saved with an ETag condition. A competing turn that has
+already advanced the same conversation causes a visible persistence failure instead
+of silently overwriting its state. New hosted session keys are created only if absent;
+turns using `previous_response_id` write their own new response ID, without applying
+the predecessor's ETag to a different key. Local callers can still upsert directly
+without first loading a session.
 
 See the [custom storage provider sample](../../samples/04-hosting/foundry-hosted-agents/responses/custom_storage/)
 for an example that uses an in-memory session store locally and Azure Cosmos DB when hosted.

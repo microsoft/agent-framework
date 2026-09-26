@@ -14,6 +14,7 @@ def test_package_import_is_lazy() -> None:
 
         assert "agent_framework_foundry_hosting._invocations" not in sys.modules
         assert "agent_framework_foundry_hosting._responses" not in sys.modules
+        assert "agent_framework_foundry_hosting._scope" not in sys.modules
         assert "agent_framework_foundry_hosting._state_store" not in sys.modules
         assert "agent_framework_foundry_hosting._toolbox" not in sys.modules
         """

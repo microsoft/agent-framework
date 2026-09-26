@@ -86,6 +86,7 @@ from typing_extensions import Any
 
 from ._agent_source import is_agent, resolve_agent, validate_agent_source
 from ._feature_usage import FeatureIndex
+from ._scope import FoundryRequestScope
 from ._state_store import (
     AgentSessionStoreProvider,
     CheckpointStoreProvider,
@@ -667,6 +668,15 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             logger.debug("Serving steered turn (pending_input_count=%d)", context.pending_input_count)
         yield response_event_stream.emit_created()
         yield response_event_stream.emit_in_progress()
+
+        if self.config.is_hosted:
+            try:
+                FoundryRequestScope.from_context(self.config, get_request_context())
+            except RuntimeError as exc:
+                logger.error("Invalid Foundry hosted request context: %s", exc)
+                for event in self._emit_failure(response_event_stream, None, exc):
+                    yield event
+                return
 
         terminal_event: ResponseStreamEvent | None = None
         agent = await resolve_agent(self._agent_source)
