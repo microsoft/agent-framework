@@ -137,10 +137,21 @@ def _snapshot_messages_from_resume_value(
     return []
 
 
+_RESUME_USER_ALLOWED_KEYS = frozenset({"id", "role", "content", "contents", "name"})
+
+
 def _resume_message_to_agui_dict(message: dict[str, Any]) -> dict[str, Any]:
-    """Normalize resume message shapes (``contents`` or ``content``) for snapshot encoding."""
-    normalized = dict(message)
+    """Normalize resume user turns for snapshot encoding.
+
+    Only chat-safe user fields are retained. Control fields such as ``tool_calls`` /
+    ``toolCalls``, ``actionExecutionId``, or ``function_approvals`` must not enter the
+    backend-owned thread snapshot — later hydrate/replay can otherwise reinterpret a
+    user turn as assistant/tool-control history.
+    """
+    normalized = {key: value for key, value in message.items() if key in _RESUME_USER_ALLOWED_KEYS}
+    normalized["role"] = "user"
     if normalized.get("content") not in (None, ""):
+        normalized.pop("contents", None)
         return normalized
     contents = normalized.get("contents")
     if isinstance(contents, list):
@@ -150,6 +161,7 @@ def _resume_message_to_agui_dict(message: dict[str, Any]) -> dict[str, Any]:
                 texts.append(str(part.get("text") or ""))
         if texts:
             normalized["content"] = "".join(texts)
+    normalized.pop("contents", None)
     return normalized
 
 

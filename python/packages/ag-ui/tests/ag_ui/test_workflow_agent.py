@@ -717,6 +717,30 @@ def test_snapshot_messages_from_resume_admits_only_user_roles() -> None:
     assert projected[0]["id"] == "u1"
 
 
+def test_snapshot_messages_from_resume_strips_user_control_fields() -> None:
+    """Resume-derived user turns must not carry tool/control fields into the snapshot."""
+    from agent_framework_ag_ui._workflow import _snapshot_messages_from_resume_value
+
+    projected = _snapshot_messages_from_resume_value(
+        {
+            "role": "user",
+            "id": "u-control",
+            "content": "hello",
+            "tool_calls": [{"id": "tc1", "type": "function", "function": {"name": "x", "arguments": "{}"}}],
+            "toolCalls": [{"id": "tc2"}],
+            "actionExecutionId": "ae-1",
+            "function_approvals": [{"id": "fa-1"}],
+        }
+    )
+    assert len(projected) == 1
+    msg = projected[0]
+    assert msg["role"] == "user"
+    assert msg["content"] == "hello"
+    assert msg["id"] == "u-control"
+    for key in ("tool_calls", "toolCalls", "actionExecutionId", "function_approvals", "contents"):
+        assert key not in msg
+
+
 def test_message_identity_supports_multimodal_content() -> None:
     from agent_framework_ag_ui._workflow import _append_unique_snapshot_messages, _message_identity
 
