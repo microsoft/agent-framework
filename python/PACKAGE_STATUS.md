@@ -30,6 +30,7 @@ Status is grouped into these buckets:
 | `agent-framework-core` | `python/packages/core` | `released` |
 | `agent-framework-declarative` | `python/packages/declarative` | `released` |
 | `agent-framework-devui` | `python/packages/devui` | `beta` |
+| `agent-framework-duckdb` | `python/packages/duckdb` | `alpha` |
 | `agent-framework-foundry` | `python/packages/foundry` | `released` |
 | `agent-framework-foundry-hosting` | `python/packages/foundry_hosting` | `beta` |
 | `agent-framework-foundry-local` | `python/packages/foundry_local` | `beta` |

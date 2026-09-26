@@ -74,7 +74,7 @@ class _MarkUntrusted(FunctionMiddleware):
         await call_next()
 
 
-async def test_manual_fides_no_session_preserves_standard_tool_approval(
+async def test_manual_fides_no_session_does_not_make_approval_authoritative(
     chat_client_base: MockBaseChatClient,
 ) -> None:
     """Run-local FIDES state must not make ordinary no-session approval authoritative."""
@@ -130,14 +130,13 @@ async def test_manual_fides_no_session_preserves_standard_tool_approval(
         )
     )
 
-    assert calls == ["approved", "safe"]
+    assert calls == []
     assert [(message.role, [content.type for content in message.contents]) for message in resumed.messages] == [
-        ("tool", ["function_result", "function_result"]),
         ("assistant", ["text"]),
     ]
 
 
-async def test_sessionless_approval_resume_with_context_provider_uses_message_authority(
+async def test_sessionless_approval_resume_with_context_provider_is_not_authoritative(
     chat_client_base: MockBaseChatClient,
 ) -> None:
     """A framework-created context-provider session must not become approval authority."""
@@ -181,9 +180,8 @@ async def test_sessionless_approval_resume_with_context_provider_uses_message_au
         Message(role="user", contents=[approval_request.to_function_approval_response(True)]),
     ])
 
-    assert calls == ["approved"]
+    assert calls == []
     assert [(message.role, [content.type for content in message.contents]) for message in resumed.messages] == [
-        ("tool", ["function_result"]),
         ("assistant", ["text"]),
     ]
 
