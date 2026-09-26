@@ -74,7 +74,7 @@ class _MarkUntrusted(FunctionMiddleware):
         await call_next()
 
 
-async def test_manual_fides_no_session_preserves_standard_tool_approval(
+async def test_manual_fides_no_session_does_not_make_approval_authoritative(
     chat_client_base: MockBaseChatClient,
 ) -> None:
     """Run-local FIDES state must not make ordinary no-session approval authoritative."""
@@ -130,14 +130,13 @@ async def test_manual_fides_no_session_preserves_standard_tool_approval(
         )
     )
 
-    assert calls == ["approved", "safe"]
+    assert calls == []
     assert [(message.role, [content.type for content in message.contents]) for message in resumed.messages] == [
-        ("tool", ["function_result", "function_result"]),
         ("assistant", ["text"]),
     ]
 
 
-async def test_sessionless_approval_resume_with_context_provider_uses_message_authority(
+async def test_sessionless_approval_resume_with_context_provider_is_not_authoritative(
     chat_client_base: MockBaseChatClient,
 ) -> None:
     """A framework-created context-provider session must not become approval authority."""
@@ -181,9 +180,8 @@ async def test_sessionless_approval_resume_with_context_provider_uses_message_au
         Message(role="user", contents=[approval_request.to_function_approval_response(True)]),
     ])
 
-    assert calls == ["approved"]
+    assert calls == []
     assert [(message.role, [content.type for content in message.contents]) for message in resumed.messages] == [
-        ("tool", ["function_result"]),
         ("assistant", ["text"]),
     ]
 
@@ -1502,20 +1500,24 @@ async def test_mixed_batch_hides_already_approved_request_until_approval_replay(
     """Mixed batches should only show real approval requests when a session can store hidden requests."""
     no_approval_calls = 0
     approval_calls = 0
+    execution_order: list[str] = []
 
     @tool(name="lookup_work_items", approval_mode="never_require")
     def lookup_work_items(query: str) -> str:
         nonlocal no_approval_calls
         no_approval_calls += 1
+        execution_order.append("lookup_work_items")
         return f"found {query}"
 
     @tool(name="add_comment", approval_mode="always_require")
     def add_comment(comment: str) -> str:
         nonlocal approval_calls
         approval_calls += 1
+        execution_order.append("add_comment")
         return f"added {comment}"
 
     agent = Agent(client=chat_client_base, tools=[lookup_work_items, add_comment])
+    chat_client_base.function_invocation_configuration["allow_concurrent_invocation"] = False
     session = AgentSession(session_id="approval-session")
     chat_client_base.run_responses = [
         ChatResponse(
@@ -1550,6 +1552,241 @@ async def test_mixed_batch_hides_already_approved_request_until_approval_replay(
     assert second_response.text == "complete"
     assert no_approval_calls == 1
     assert approval_calls == 1
+    assert execution_order == ["lookup_work_items", "add_comment"]
+
+
+async def test_sequential_approval_replay_preserves_model_order_when_responses_are_reversed(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    """Sequential approval replay should follow model order rather than caller response order."""
+    execution_order: list[str] = []
+
+    @tool(name="first_write", approval_mode="always_require")
+    def first_write() -> str:
+        execution_order.append("first_write")
+        return "first"
+
+    @tool(name="second_write", approval_mode="always_require")
+    def second_write() -> str:
+        execution_order.append("second_write")
+        return "second"
+
+    agent = Agent(client=chat_client_base, tools=[first_write, second_write])
+    chat_client_base.function_invocation_configuration["allow_concurrent_invocation"] = False
+    session = AgentSession(session_id="reversed-approval-order")
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="call_first", name="first_write", arguments="{}"),
+                    Content.from_function_call(call_id="call_second", name="second_write", arguments="{}"),
+                ],
+            )
+        )
+    ]
+
+    first_response = await agent.run("write in order", session=session)
+    requests = _approval_requests(first_response.messages)
+    assert [_function_call(request).name for request in requests] == ["first_write", "second_write"]
+
+    chat_client_base.run_responses = [ChatResponse(messages=Message(role="assistant", contents=["complete"]))]
+    final_response = await agent.run(
+        Message(
+            role="user",
+            contents=[
+                requests[1].to_function_approval_response(approved=True),
+                requests[0].to_function_approval_response(approved=True),
+            ],
+        ),
+        session=session,
+    )
+
+    assert final_response.text == "complete"
+    assert execution_order == ["first_write", "second_write"]
+
+
+@pytest.mark.parametrize(
+    ("first_approved", "expected_execution_order"),
+    [
+        (True, ["first_write", "second_read"]),
+        (False, ["second_read"]),
+    ],
+)
+async def test_sequential_approval_replay_waits_for_the_complete_batch(
+    chat_client_base: MockBaseChatClient,
+    first_approved: bool,
+    expected_execution_order: list[str],
+) -> None:
+    """A partial approval batch must not execute tools or advance the model."""
+    execution_order: list[str] = []
+
+    @tool(name="first_write", approval_mode="always_require")
+    def first_write() -> str:
+        execution_order.append("first_write")
+        return "first"
+
+    @tool(name="second_read", approval_mode="always_require")
+    def second_read() -> str:
+        execution_order.append("second_read")
+        return "second"
+
+    agent = Agent(client=chat_client_base, tools=[first_write, second_read])
+    chat_client_base.function_invocation_configuration["allow_concurrent_invocation"] = False
+    session = AgentSession(session_id=f"partial-approval-order-{first_approved}")
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="call_first", name="first_write", arguments="{}"),
+                    Content.from_function_call(call_id="call_second", name="second_read", arguments="{}"),
+                ],
+            )
+        )
+    ]
+
+    first_response = await agent.run("write then read", session=session)
+    requests = _approval_requests(first_response.messages)
+    assert [_function_call(request).name for request in requests] == ["first_write", "second_read"]
+
+    partial_response = await agent.run(
+        requests[1].to_function_approval_response(approved=True),
+        session=session,
+    )
+
+    assert execution_order == []
+    assert [_function_call(request).name for request in _approval_requests(partial_response.messages)] == [
+        "first_write"
+    ]
+
+    repeated_partial_response = await agent.run(
+        requests[1].to_function_approval_response(approved=True),
+        session=session,
+    )
+
+    assert execution_order == []
+    assert [_function_call(request).name for request in _approval_requests(repeated_partial_response.messages)] == [
+        "first_write"
+    ]
+
+    chat_client_base.run_responses = [ChatResponse(messages=Message(role="assistant", contents=["complete"]))]
+    final_response = await agent.run(
+        requests[0].to_function_approval_response(approved=first_approved),
+        session=session,
+    )
+
+    assert final_response.text == "complete"
+    assert execution_order == expected_execution_order
+
+
+async def test_approval_batch_uses_the_first_decision_for_duplicate_responses(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    """A conflicting duplicate must not replace the first decision for an approval."""
+    execution_order: list[str] = []
+
+    @tool(name="first_write", approval_mode="always_require")
+    def first_write() -> str:
+        execution_order.append("first_write")
+        return "first"
+
+    @tool(name="second_write", approval_mode="always_require")
+    def second_write() -> str:
+        execution_order.append("second_write")
+        return "second"
+
+    agent = Agent(client=chat_client_base, tools=[first_write, second_write])
+    session = AgentSession(session_id="duplicate-approval-decisions")
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="call_first", name="first_write", arguments="{}"),
+                    Content.from_function_call(call_id="call_second", name="second_write", arguments="{}"),
+                ],
+            )
+        )
+    ]
+
+    first_response = await agent.run("write twice", session=session)
+    requests = _approval_requests(first_response.messages)
+    assert [_function_call(request).name for request in requests] == ["first_write", "second_write"]
+
+    chat_client_base.run_responses = [ChatResponse(messages=Message(role="assistant", contents=["complete"]))]
+    final_response = await agent.run(
+        Message(
+            role="user",
+            contents=[
+                requests[0].to_function_approval_response(approved=False),
+                requests[0].to_function_approval_response(approved=True),
+                requests[1].to_function_approval_response(approved=True),
+            ],
+        ),
+        session=session,
+    )
+
+    assert final_response.text == "complete"
+    assert execution_order == ["second_write"]
+
+
+async def test_approval_batch_preserves_first_decision_across_partial_retries(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    """A later retry must not replace a decision staged by an earlier partial response."""
+    execution_order: list[str] = []
+
+    @tool(name="first_write", approval_mode="always_require")
+    def first_write() -> str:
+        execution_order.append("first_write")
+        return "first"
+
+    @tool(name="second_write", approval_mode="always_require")
+    def second_write() -> str:
+        execution_order.append("second_write")
+        return "second"
+
+    agent = Agent(client=chat_client_base, tools=[first_write, second_write])
+    session = AgentSession(session_id="partial-retry-conflicting-decision")
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="call_first", name="first_write", arguments="{}"),
+                    Content.from_function_call(call_id="call_second", name="second_write", arguments="{}"),
+                ],
+            )
+        )
+    ]
+
+    first_response = await agent.run("write twice", session=session)
+    requests = _approval_requests(first_response.messages)
+    partial_response = await agent.run(
+        requests[1].to_function_approval_response(approved=False),
+        session=session,
+    )
+
+    assert execution_order == []
+    assert [_function_call(request).name for request in _approval_requests(partial_response.messages)] == [
+        "first_write"
+    ]
+
+    chat_client_base.run_responses = [ChatResponse(messages=Message(role="assistant", contents=["complete"]))]
+    final_response = await agent.run(
+        Message(
+            role="user",
+            contents=[
+                requests[0].to_function_approval_response(approved=True),
+                requests[1].to_function_approval_response(approved=True),
+            ],
+        ),
+        session=session,
+    )
+
+    assert final_response.text == "complete"
+    assert execution_order == ["first_write"]
 
 
 async def test_mixed_batch_accepts_restored_tool_approval_state(
@@ -2853,3 +3090,242 @@ async def test_tool_approval_middleware_empty_arguments_rule_is_not_tool_wide(
     requests = _approval_requests(second_response.messages)
     assert [_function_call(request).arguments for request in requests] == ['{"value": "custom"}']
     assert calls == 1
+
+
+@pytest.mark.parametrize("via", ["run_options", "default_options"], ids=["run-options", "default-options"])
+async def test_streaming_tool_approval_preserves_structured_value(
+    chat_client_base: MockBaseChatClient,
+    via: str,
+) -> None:
+    """Streaming ToolApprovalMiddleware must forward response_format to the outer finalizer.
+
+    Regression for https://github.com/microsoft/agent-framework/issues/7418:
+    re-wrapping with ``AgentResponse.from_updates`` dropped ``output_format_type``,
+    so ``response.value`` was None even when the inner stream had parsed it.
+    """
+    from pydantic import BaseModel
+
+    class Answer(BaseModel):
+        answer: str
+
+    json_text = '{"answer": "42"}'
+
+    @tool(name="echo", approval_mode="always_require")
+    def echo(text: str) -> str:
+        return text
+
+    # ``Any`` keeps the parametrized options out of ``Agent``'s generic client/options
+    # inference: the plain response-format dicts cannot be unified with the fixture's
+    # ``MockBaseChatClient[ChatOptions[None]]`` client type.
+    default_options: Any = {"response_format": Answer} if via == "default_options" else None
+    run_options: Any = {"response_format": Answer} if via == "run_options" else None
+    agent = Agent(
+        client=chat_client_base,
+        tools=[echo],
+        middleware=[ToolApprovalMiddleware()],
+        default_options=default_options,
+    )
+    session = AgentSession(session_id=f"structured-stream-{via}")
+    chat_client_base.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                role="assistant",
+                contents=[Content.from_text(json_text)],
+                finish_reason="stop",
+            )
+        ]
+    ]
+
+    stream = agent.run("return an Answer", stream=True, session=session, options=run_options)
+    async for _update in stream:
+        pass
+    response = await stream.get_final_response()
+
+    assert response.text == json_text
+    assert isinstance(response.value, Answer)
+    assert response.value.answer == "42"
+
+
+async def test_streaming_auto_approved_tool_preserves_structured_value(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    """Auto-approved tool calls must still parse structured output on the streaming path."""
+    from pydantic import BaseModel
+
+    class Answer(BaseModel):
+        answer: str
+
+    json_text = '{"answer": "42"}'
+    calls = 0
+
+    @tool(name="echo", approval_mode="always_require")
+    def echo(text: str) -> str:
+        nonlocal calls
+        calls += 1
+        return text
+
+    agent = Agent(
+        client=chat_client_base,
+        tools=[echo],
+        middleware=[ToolApprovalMiddleware(auto_approval_rules=[lambda function_call: True])],
+    )
+    session = AgentSession(session_id="structured-stream-auto-approve")
+    function_call = Content.from_function_call(call_id="call_echo", name="echo", arguments='{"text": "hi"}')
+    chat_client_base.streaming_responses = [
+        [ChatResponseUpdate(role="assistant", contents=[function_call])],
+        [
+            ChatResponseUpdate(
+                role="assistant",
+                contents=[Content.from_text(json_text)],
+                finish_reason="stop",
+            )
+        ],
+    ]
+
+    stream = agent.run(
+        "Call echo and return an Answer.",
+        stream=True,
+        session=session,
+        options={"response_format": Answer},
+    )
+    async for _update in stream:
+        pass
+    response = await stream.get_final_response()
+
+    assert calls == 1
+    assert isinstance(response.value, Answer)
+    assert response.value.answer == "42"
+
+
+async def test_streaming_auto_approved_tool_preserves_value_when_preamble_text_coalesces(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    """Preamble assistant text plus a tool call must not clobber the parsed structured value.
+
+    Updates without ``message_id`` are coalesced by ``AgentResponse.from_updates``. If the
+    outer finalizer rebuilt from every yielded update, ``Calling echo…{"answer":"42"}``
+    would fail to parse. The terminal inner response's value must be kept instead.
+    """
+    from pydantic import BaseModel
+
+    class Answer(BaseModel):
+        answer: str
+
+    json_text = '{"answer": "42"}'
+    calls = 0
+
+    @tool(name="echo", approval_mode="always_require")
+    def echo(text: str) -> str:
+        nonlocal calls
+        calls += 1
+        return text
+
+    agent = Agent(
+        client=chat_client_base,
+        tools=[echo],
+        middleware=[ToolApprovalMiddleware(auto_approval_rules=[lambda function_call: True])],
+    )
+    session = AgentSession(session_id="structured-stream-auto-approve-preamble")
+    function_call = Content.from_function_call(call_id="call_echo", name="echo", arguments='{"text": "hi"}')
+    chat_client_base.streaming_responses = [
+        [
+            ChatResponseUpdate(role="assistant", contents=[Content.from_text("Calling echo…")]),
+            ChatResponseUpdate(role="assistant", contents=[function_call]),
+        ],
+        [
+            ChatResponseUpdate(
+                role="assistant",
+                contents=[Content.from_text(json_text)],
+                finish_reason="stop",
+            )
+        ],
+    ]
+
+    stream = agent.run(
+        "Call echo and return an Answer.",
+        stream=True,
+        session=session,
+        options={"response_format": Answer},
+    )
+    updates = [update async for update in stream]
+    response = await stream.get_final_response()
+
+    assert any("Calling echo" in (content.text or "") for update in updates for content in update.contents)
+    assert calls == 1
+    assert isinstance(response.value, Answer)
+    assert response.value.answer == "42"
+
+
+async def test_non_streaming_tool_approval_preserves_structured_value(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    """Non-streaming ToolApprovalMiddleware already returns the inner AgentResponse."""
+    from pydantic import BaseModel
+
+    class Answer(BaseModel):
+        answer: str
+
+    json_text = '{"answer": "42"}'
+
+    @tool(name="echo", approval_mode="always_require")
+    def echo(text: str) -> str:
+        return text
+
+    agent = Agent(
+        client=chat_client_base,
+        tools=[echo],
+        middleware=[ToolApprovalMiddleware()],
+    )
+    session = AgentSession(session_id="structured-non-stream")
+    chat_client_base.run_responses = [ChatResponse(messages=Message(role="assistant", contents=[json_text]))]
+
+    response = await agent.run(
+        "return an Answer",
+        session=session,
+        options={"response_format": Answer},
+    )
+
+    assert isinstance(response.value, Answer)
+    assert response.value.answer == "42"
+
+
+async def test_streaming_tool_approval_defers_structured_parse_error_to_value_access(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    """A structured-output parse failure must surface on ``value`` access, not while streaming.
+
+    The outer finalizer resolves the terminal inner response's value eagerly so a coalesced
+    preamble cannot mask it (#7418). When that resolution fails, the value is left unset so
+    the outer response still parses lazily on ``value`` access — streaming iteration and
+    finalization succeed, matching the error timing of a middleware-free streaming run.
+    """
+    from pydantic import BaseModel
+
+    class Answer(BaseModel):
+        answer: str
+
+    bad_text = "not json"
+
+    agent = Agent(
+        client=chat_client_base,
+        middleware=[ToolApprovalMiddleware()],
+    )
+    session = AgentSession(session_id="structured-stream-parse-error")
+    chat_client_base.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                role="assistant",
+                contents=[Content.from_text(bad_text)],
+                finish_reason="stop",
+            )
+        ]
+    ]
+
+    stream = agent.run("return an Answer", stream=True, session=session, options={"response_format": Answer})
+    async for _ in stream:
+        pass  # must not raise
+    response = await stream.get_final_response()
+
+    assert response.text == bad_text
+    with pytest.raises(ValueError):
+        _ = response.value

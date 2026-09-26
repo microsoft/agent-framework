@@ -191,12 +191,20 @@ Before acting on a model function-call batch, the loop classifies every actionab
 call aborts the complete batch before approval state changes or execution. Otherwise approval-required and Host-owned
 calls are returned together in model order, while session-backed executable siblings remain deferred. An incomplete
 session-backed mixed approval/Host response remains pending without executing a deferred call; a stateless incomplete
-response is rejected, including when no response is supplied, message roles vary within the model output, or a newer
-standalone request follows the incomplete batch. Stateless discovery selects the latest unresolved mixed batch, so a
-completed batch remains inert on later turns. Correlation is scoped to the active mixed batch so completed or abandoned
-historical Host calls remain unchanged.
+response is rejected, including when no response is supplied, non-user message roles vary within the model output, or
+a newer standalone request follows the incomplete batch. Stateless discovery selects the latest unresolved mixed batch
+across non-user output messages. An unrelated user turn delimits standalone batches, so pauses from separate turns are
+not synthesized into one mixed batch; a completed batch remains inert on later turns. Correlation is scoped to the
+active mixed batch so completed or abandoned historical Host calls remain unchanged. Session-backed approval-only
+batches likewise remain atomic across resume calls: decisions may be accumulated, but no call executes and the model
+is not resumed until every approval in the original batch has a decision.
 `ToolApprovalMiddleware` may resolve approval requests through standing or automatic policies, but it preserves
 non-approval user-input requests and does not split or reorder manual approvals relative to their Host-owned siblings.
+
+Fully executable calls run concurrently by default. When
+`FunctionInvocationConfiguration["allow_concurrent_invocation"]` is `False`, the layer instead starts each call only
+after the preceding call has completed, preserving model order across approval pause and replay. Middleware termination
+stops the loop after the accepted batch finishes; it does not skip later calls in that batch.
 
 ### Reasoning-bound function-call groups
 
@@ -375,24 +383,25 @@ that manually replay messages own the equivalent rule: do not resend an approval
   must treat the exception as an explicit instruction to discard those calls and never execute them. Caller
   cancellation remains cancellation rather than becoming this provider signal.
 - Every actionable local `function_call` produces exactly one terminal `function_result`, unless execution pauses
-  for a new user-input request or the run is aborted by `MiddlewareFailure`.
+  for a new user-input request or the run is aborted by a fail-closed error.
 - An ordinary exception raised by function middleware or a tool body becomes one terminal error `function_result`
-  and the loop continues; `MiddlewareFailure` is the loop's only fail-closed escape: it is never converted into a
+  and the loop continues. `MiddlewareFailure` is the execution-time fail-closed escape: it is never converted into a
   tool result, the in-flight parallel batch is cancelled, no further tool call starts, no further model turn is
-  consumed, and the exception propagates to the caller (for streaming runs, when the stream is consumed). On a
-  service-managed conversation the loop first settles the aborted batch — one error `function_result` per dangling
-  call (approval-response wrappers unwrap to their underlying calls; hosted-tool approvals are left to their own
-  provider protocol), submitted with `tool_choice="none"` in a single extra request — so the hosted thread is not
-  left ending in unresolved function calls that the service would reject on the session's next request; the
-  persisted continuation then advances to the settlement response (for response-ID continuations the settled
-  endpoint is the new handle; for conversation-object ids the advance is a no-op) and the settlement response is
-  otherwise discarded. Settlement covers the approval-resolution phase too: a fatal abort while an approved tool is
-  replayed settles the original, already-persisted calls. Without a service-managed conversation no extra request
-  is made. Batch
-  cancellation is cooperative: an async sibling stops at its next suspension point, while a synchronous tool body
-  already executing in a worker thread cannot be interrupted and may complete its side effects — its result is
-  discarded either way and never reaches the transcript, the model, or history. Middleware must not catch
-  `MiddlewareFailure` — swallowing it converts a fail-closed abort back into a running, possibly unguarded loop.
+  consumed, and the exception propagates to the caller (for streaming runs, when the stream is consumed). A
+  configured fatal unknown call likewise raises `KeyError` and propagates, but complete-batch classification detects
+  it before any call executes. On a service-managed conversation the loop first settles either aborted batch — one
+  error `function_result` per dangling call (approval-response wrappers unwrap to their underlying calls; hosted-tool
+  approvals are left to their own provider protocol), submitted with `tool_choice="none"` in a single extra request —
+  so the hosted thread is not left ending in unresolved function calls that the service would reject on the session's
+  next request; the persisted continuation then advances to the settlement response (for response-ID continuations
+  the settled endpoint is the new handle; for conversation-object ids the advance is a no-op) and the settlement
+  response is otherwise discarded. Settlement covers the approval-resolution phase too: a fatal abort while an
+  approved tool is replayed settles the original, already-persisted calls. Without a service-managed conversation no
+  extra request is made. Batch cancellation is cooperative: an async sibling stops at its next suspension point,
+  while a synchronous tool body already executing in a worker thread cannot be interrupted and may complete its side
+  effects — its result is discarded either way and never reaches the transcript, the model, or history. Middleware
+  must not catch `MiddlewareFailure` — swallowing it converts a fail-closed abort back into a running, possibly
+  unguarded loop.
 - `Content.exception` is host-internal diagnostic state. Default `Content.to_dict()` and nested response serialization replace it with a fixed non-sensitive failure marker,
   while the original field remains directly available to trusted local code. Remote protocol serializers use the
   marker only for status and use the channel-visible `result` or `items` for output text. `include_detailed_errors=False` keeps the channel-visible
@@ -479,8 +488,22 @@ that manually replay messages own the equivalent rule: do not resend an approval
 - Tool lookup uses the recorded name against the current registry. A same-name implementation upgrade is allowed;
   removing the name prevents local execution.
 - Only the strict boolean `True` grants approval. Missing decisions and non-boolean values are rejection, not consent.
-- Direct chat-client invocation without an `AgentSession` preserves pass-through compatibility, matching .NET;
-  authorization sinks still require strict `True`.
+- A local (non-hosted) approval response authorizes execution only when it binds to an approval request recorded in
+  an authoritative `AgentSession`. Direct chat-client or agent invocation without one drops inbound local approval
+  responses with an observable warning and authorizes nothing: an approval request that merely appears in the
+  caller-supplied message history is never by itself proof that the framework asked a human to approve it, so a
+  caller-assembled request plus its own response cannot authorize an arbitrary call. Provider-issued (hosted)
+  approvals are protocol data and continue to pass through untouched. A response whose occurrence is already settled
+  by a terminal result is replayed history rather than a pending authorization: it can no longer execute anything, so
+  it is left in place and does not warn, keeping full-transcript replay of completed conversations (including
+  completed mixed batches) working without a session. Settlement uses the same occurrence-aware correlation that
+  drives execution, so fabricating a result to reach this exemption also guarantees the call will not run. The
+  exemption is an allow-list evaluated per response object rather than per approval id, because several responses can
+  share one approval id and only the first is eligible to execute; filtering by id would leave the remaining
+  duplicates behind for a later collection to honor. Filtering runs before stateless mixed-batch completeness is
+  enforced, so a dropped response is never counted as an answer and the remaining history is validated on its own
+  merits. The `disable_approval_response_binding` function invocation configuration option restores the previous
+  unbound pass-through. Authorization sinks still require strict `True`.
 - An approved tool executes exactly once.
 - A rejected tool executes zero times and produces one synthetic rejection `function_result` using the original
   function `call_id`.
@@ -492,6 +515,15 @@ that manually replay messages own the equivalent rule: do not resend an approval
   approval `Message`, approval `Content`, or an earlier returned response.
 - Approval-time `UserInputRequiredException` and `MiddlewareTermination` return immediately without another model
   call.
+- `Agent.as_tool()` keeps child function approvals inside the delegated invocation. A child
+  `ToolApprovalMiddleware` may resolve them through runtime `auto_approval_rules`; any unresolved child function
+  approval does not enter the caller's approval state or model transcript. An approval-only response fails the
+  agent-tool invocation; a mixed response preserves its non-approval user-input requests while discarding the child
+  approval continuation. Interactive, delayed, or durable approval belongs in a workflow. When
+  `propagate_session=True`, child application-state changes merge back into the parent while framework approval and
+  invocation-budget state remain isolated, including approval queues stored under custom child middleware
+  `source_id` values. Parent and child `ToolApprovalMiddleware` instances must use distinct `source_id` values; an
+  overlap fails before the child runs.
 
 ### Approval control content
 
@@ -530,6 +562,11 @@ that manually replay messages own the equivalent rule: do not resend an approval
   same turn.
 - A trusted terminal result consumes the corresponding approval authority in explicit stateless replay; a result in a
   server-registered pending occurrence cannot consume that authority before local execution.
+- A matched `function_result` is terminal regardless of its text, including an exact or embedded
+  `[APPROVAL_PENDING]`. Legacy textual placeholder results are no longer supported. Applications that persisted
+  those placeholders must migrate genuine pending occurrences using authoritative pending state and typed
+  `function_approval_request` controls, without synthetic `function_result` contents. Actual completed results must
+  remain in history; their text must not be used to infer pending approval state.
 - Non-streaming runs that exclude tool groups through in-run compaction return the inserted summary messages in the
   final response transcript, each positioned before the group it replaces, so history loaded with `skip_excluded`
   keeps the summarized content; summaries of caller-owned input messages stay out of the returned transcript.
@@ -549,6 +586,7 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Reasoning-bound call | Finalized output retains reasoning, function call, function result, and final text. | `test_streaming_function_calling_response_includes_reasoning_and_tool_results` |
 | Calls across response messages | Every actionable call is executed once. | `test_base_client_executes_function_calls_across_multiple_response_messages` |
 | Parallel calls | Results retain the corresponding call ids and execution count. | `test_max_function_calls_limits_parallel_invocations`, `test_streaming_multiple_function_calls_parallel_execution` |
+| Sequential calls | Calls execute one at a time in model order, including after approval replay; mixed local/Host-owned siblings retain that order, approval-only batches wait for every decision before executing, each call has isolated context, and middleware termination takes effect after the accepted batch finishes. | `packages/core/tests/core/test_tools.py::test_sequential_function_invocation_runs_calls_in_model_order`, `test_sequential_function_invocation_isolates_context`, `test_sequential_function_invocation_finishes_batch_after_termination`, `packages/core/tests/core/test_harness_tool_approval.py::test_mixed_batch_hides_already_approved_request_until_approval_replay`, `test_sequential_approval_replay_preserves_model_order_when_responses_are_reversed`, `test_sequential_approval_replay_waits_for_the_complete_batch`, `packages/core/tests/core/test_function_invocation_logic.py::test_sequential_mixed_batch_preserves_approval_and_host_model_order`, `packages/core/tests/workflow/test_agent_executor_tool_calls.py::test_workflow_cancels_host_member_of_mixed_batch_with_terminal_result`, `test_workflow_host_cancellation_preserves_occurrence_with_reused_call_id` |
 | Informational-only call | The call is returned but not executed or approved. | `test_informational_only_function_call_is_not_invoked`, `test_informational_only_function_call_does_not_request_approval`, `test_streaming_informational_only_function_call_is_not_invoked` |
 | OpenAI hosted/local shell boundary | Hosted shell calls remain informational in streaming and non-streaming responses even when a local executor is configured; only valid explicit local-shell items or shell calls marked with a local environment can execute, local execution preserves its configured approval mode, stateless loops preserve the complete provider shell transcript or fail explicitly, and locally generated shell outputs are sent in every continuation mode. | `packages/openai/tests/openai/test_openai_chat_client.py::test_response_content_creation_with_shell_call_remains_hosted_with_local_tool`, `test_parse_chunk_from_openai_shell_call_done_remains_hosted`, `test_parse_chunk_from_openai_local_environment_shell_call_done_emits_command`, `test_mixed_shell_calls_only_invoke_explicit_local_shell_call`, `test_stateless_shell_transcript_without_provider_item_fails`, `test_prepare_messages_keeps_local_shell_output_under_storage`, `test_malformed_local_environment_shell_call_is_not_executable`, `test_response_content_creation_with_local_shell_call_maps_to_function_call`, `test_malformed_local_shell_call_is_not_executable`, `test_response_function_call_named_local_shell_is_informational`, `test_parse_chunk_function_call_named_local_shell_is_informational`, `test_local_shell_tool_requires_approval_before_function_loop_execution` |
 | Declaration-only call | The call is surfaced as user input and is not executed; streaming arguments appear once while finalized request metadata remains available. | `test_declaration_only_tool`, `test_streaming_declaration_only_tool_preserves_metadata_without_duplicate_arguments` |
@@ -569,6 +607,7 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Mixed approved/rejected batch | Every call gets one correctly correlated terminal result. | `packages/core/tests/core/test_function_invocation_logic.py::test_rejected_approval` |
 | Persisted approval replay | Resume executes with the prior call available. | `test_persisted_approval_messages_replay_correctly` |
 | Hosted approval pass-through | Hosted requests/responses are bound to the recorded provider request and are not processed as local calls. | `test_hosted_tool_approval_response`, `test_hosted_mcp_approval_response_passthrough`, `test_session_approval_binding_reconstructs_hosted_response`, `test_mixed_local_and_hosted_approval_flow` |
+| Agent-tool child approval | A child `ToolApprovalMiddleware` can auto-approve runtime tool requests inside one delegated invocation; unresolved child approvals execute nothing and do not enter the caller's approval state or dispatch a same-named parent tool, including with propagated application state. Mixed batches preserve non-approval user-input requests. Shared parent and child state rejects overlapping `ToolApprovalMiddleware.source_id` values before running the child; parent approval state is neither visible nor mutable inside the child, and custom child approval queues do not leak into later delegations. | `packages/core/tests/core/test_agents.py::test_chat_agent_as_tool_auto_approves_child_tool_with_middleware`, `test_chat_agent_as_tool_fails_closed_for_unresolved_child_approval`, `test_chat_agent_as_tool_child_approval_does_not_dispatch_same_named_parent_tool`, `test_chat_agent_as_tool_preserves_non_approval_requests_from_mixed_child_batch`, `test_chat_agent_as_tool_shared_session_requires_distinct_tool_approval_source_ids`, `test_chat_agent_as_tool_isolates_custom_parent_approval_state`, `test_chat_agent_as_tool_approved_delegation_does_not_confuse_framework_approval_state`, `test_chat_agent_as_tool_does_not_restore_custom_approval_queue_on_fresh_delegation` |
 | Approval-time user input | Every user-input request from one approved execution returns in order with assistant role and no extra model call; the execution consumes one call-budget unit. | `packages/core/tests/core/test_harness_tool_approval.py::test_approval_resume_returns_all_user_input_requests_without_another_model_call`, `packages/core/tests/core/test_function_invocation_logic.py::test_approval_resume_user_input_counts_toward_function_call_budget` |
 | Mixed terminal result and follow-up input | Completed siblings remain tool-role while only follow-up input requests use assistant-role messages/updates. | `packages/core/tests/core/test_function_invocation_logic.py::test_approval_resume_separates_terminal_results_from_follow_up_requests`, `packages/openai/tests/openai/test_openai_chat_completion_client.py::test_mixed_approval_resume_roles_serialize_function_result_as_tool`, `packages/core/tests/core/test_harness_tool_approval.py::test_dynamic_policy_approval_partitions_safe_sibling_result_roles` |
 | Approval-time middleware termination | Terminal result returns with no extra model call in either response mode. | `packages/core/tests/core/test_function_invocation_logic.py::test_approval_resume_honors_middleware_termination` |
@@ -577,7 +616,7 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Changed resolved policy invocation | The stale decision executes nothing; a same-occurrence replacement request is visible and persisted in both modes, and the second approval executes exactly once. | `packages/core/tests/core/test_harness_tool_approval.py::test_changed_hidden_snapshot_requires_visible_second_approval` |
 | Expired or evicted policy authority | The old response executes nothing, surfaces and persists a same-occurrence replacement with a fresh request generation in both modes, and executes exactly once only after the replacement is approved; restored model history remains balanced and stale prior-generation replay is inert. | `packages/core/tests/core/test_harness_tool_approval.py::test_policy_reapproval_is_visible_persisted_and_executes_once`, `packages/core/tests/test_security.py::TestPolicyEnforcementMiddleware::test_pending_policy_approval_ttl_is_deterministic_and_durable` |
 | Session-bound policy cleanup | FIFO/TTL lifecycle and authenticated rejection/cancellation cleanup use occurrence identity within only the owning session, including fixed provider scopes. | `packages/core/tests/test_security.py::TestPolicyEnforcementMiddleware::test_pending_policy_approvals_are_fifo_bounded_by_occurrence`, `test_pending_policy_approval_ttl_is_deterministic_and_durable`, `test_non_grant_cleanup_is_authenticated_session_and_occurrence_bound`, `test_fixed_scope_non_grant_cleanup_keeps_unrelated_occurrence` |
-| Session-bound substituted response | A response is rebound to the immutable recorded call and cannot replace its call id, tool name, or arguments. | `packages/core/tests/core/test_function_invocation_logic.py::test_session_approval_binding_rebinds_consumes_and_rejects_duplicates` |
+| Session-bound substituted response | A response is rebound to the immutable recorded call and cannot replace its call id, tool name, arguments, or first decision through a conflicting duplicate in the same request or a later retry. | `packages/core/tests/core/test_function_invocation_logic.py::test_session_approval_binding_rebinds_consumes_and_rejects_duplicates`, `packages/core/tests/core/test_harness_tool_approval.py::test_approval_batch_uses_the_first_decision_for_duplicate_responses`, `test_approval_batch_preserves_first_decision_across_partial_retries` |
 | Occurrence-aware local binding | New local requests use `function_call.id`; missing, mismatched, or stale occurrence ids do not execute or consume pending state, while the canonical occurrence id binds without an embedded call. | `test_occurrence_aware_approval_rejects_stale_reused_call_id_response`, `test_occurrence_aware_approval_mismatched_identity_does_not_consume_pending`, `test_occurrence_aware_approval_binds_without_embedded_function_call` |
 | Legacy stored approval | A serialized pending request without `function_call.id` retains exact request-id binding once and warns only when resumed. | `test_legacy_serialized_pending_approval_resumes_once_with_migration_warning`, `packages/core/tests/core/test_types.py::test_legacy_function_call_deserialization_does_not_generate_an_occurrence_id` |
 | Hosted approval identity | Provider-issued hosted approval request ids are unchanged by local occurrence correlation. | `test_hosted_approval_keeps_provider_issued_request_id` |
@@ -598,14 +637,22 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Multiple reused-id rounds | Approved and rejected rounds retain separate call/result occurrences. | `test_replace_approval_contents_with_results_correlates_reused_call_id_occurrences` |
 | Multi-content result with reused id | Every content produced by one execution stays with that approval occurrence and cannot bleed into the next reused-id round. | `test_replace_approval_contents_with_results_keeps_multi_content_group_with_reused_call_id` |
 | Follow-up request closes one occurrence | A user-input follow-up consumes only the preceding approval authority and leaves a later reused-id response pending. | `test_collect_approval_responses_consumes_matching_follow_up_request_occurrence` |
-| Reused-id placeholders | Placeholder results consume approved results by occurrence. | `test_replace_approval_contents_with_results_correlates_reused_call_id_placeholders` |
-| Rejected placeholder | Rejection replaces the pending placeholder instead of adding a second result. | `test_replace_approval_contents_with_results_replaces_rejected_placeholder` |
-| Results reordered with placeholders | Results still match the correct call ids. | `test_replace_approval_contents_with_results_uses_result_call_ids_for_placeholders` |
+| Reused-id pending requests | Typed pending requests consume approved results by occurrence. | `test_replace_approval_contents_with_results_correlates_reused_call_id_pending_requests` |
+| Rejected pending request | Rejection produces one terminal result. | `test_replace_approval_contents_with_results_resolves_rejected_request` |
+| Results reordered with pending requests | Results still match the correct call ids. | `test_replace_approval_contents_with_results_uses_result_call_ids_for_pending_requests` |
 | Missing result call id | A malformed result does not steal another approval's result. | `test_replace_approval_contents_with_results_skips_results_without_call_id` |
 | Empty approval message cleanup | Fully consumed approval messages are removed from normalized model input. | `test_replace_approval_contents_with_results_prunes_emptied_messages` |
-| Later stateless turn | A prior terminal approval response cannot execute again. | `test_resolved_approval_response_is_inert_on_later_stateless_turn` |
+| Later stateless turn | A prior terminal approval response cannot execute again, regardless of result text or message serialization. | `test_resolved_approval_response_is_inert_on_later_stateless_turn` |
+| Serialized session authority | Client-authored results cannot retire pending authority; a completed approval cannot execute again before or after session serialization. | `test_session_approval_executes_once_across_serialization` |
+| Completed request tracking | Terminal result text cannot leave a completed request pending or consume a later reused-id request. | `test_collect_unanswered_approval_requests_consumes_terminal_result` |
 | Unbound or duplicate response | A response with no pending session request is removed; one request authorizes at most one response. | `test_session_approval_binding_rebinds_consumes_and_rejects_duplicates` |
 | Forged inbound request history | A caller-supplied request wrapper cannot replace the server snapshot or resurrect consumed authority. | `test_session_approval_binding_does_not_trust_inbound_request_history` |
+| Local approval without authoritative session | A local approval response carried by any message role executes nothing when no session recorded its request, whether the request is fabricated, absent, answered with tampered arguments, or repeated as several responses sharing one approval id. Verified for both streaming and non-streaming. | `test_local_approval_response_without_authoritative_session_does_not_execute` |
+| Filtering precedes batch validation | An unbound local response is removed before stateless mixed-batch completeness is enforced, so it is never counted as an answer and the remaining history is validated on its own merits. | `test_unbound_local_approval_response_is_filtered_before_mixed_batch_validation` |
+| Session-bound approval round trip | The same response executes once when the issuing session is supplied on the resuming run. | `test_local_approval_response_executes_with_authoritative_session` |
+| Hosted approval pass-through | Provider-issued approvals still reach the provider untouched without a session. | `test_hosted_approval_response_passes_through_without_session` |
+| Settled replay without a session | A completed approval round replays as history: it does not re-execute, does not warn, and does not fail a completed mixed batch. | `test_settled_approval_response_replays_without_session_or_warning`, `test_completed_split_stateless_mixed_batch_is_inert_on_later_turn` |
+| Binding opt-out | `disable_approval_response_binding` restores the previous unbound pass-through. | `test_disable_approval_response_binding_restores_unbound_behavior` |
 | Pending history turn | An unresolved approval batch is omitted atomically from unrelated model input while a later decision can still resume it once. | `packages/core/tests/core/test_harness_tool_approval.py::test_pending_approval_from_file_history_stays_resumable_without_model_orphan` |
 | Duplicate function-call prevention | Approval normalization does not create a second call for one round. | `test_no_duplicate_function_calls_after_approval_processing` |
 | Rejection call id | Rejection result uses the function call id, not only the approval id. | `test_rejection_result_uses_function_call_id` |
@@ -615,7 +662,7 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Scenario | Required invariant | Primary regression test |
 |---|---|---|
 | Fatal call mixed with pauses | Complete-batch classification raises before approval or execution, independent of call order. | `packages/core/tests/core/test_function_invocation_logic.py::test_mixed_batch_fatal_unknown_precedes_every_pause` |
-| Approval and Host-owned calls | Both pause types are returned in model order; a session-backed partial response remains pending across serialization; a stateless zero-response or partial response fails closed across message roles and cannot be hidden by a newer standalone request; completed mixed batches remain inert; historical Host calls do not participate; a complete response executes the exact approved arguments once. | `test_mixed_batch_returns_approval_and_host_pause_in_model_order`, `test_mixed_batch_requires_complete_responses_before_execution`, `test_stateless_split_mixed_batch_rejects_incomplete_replay_before_execution`, `test_stateless_mixed_batch_across_message_roles_requires_complete_responses`, `test_later_standalone_request_does_not_hide_incomplete_stateless_mixed_batch`, `test_completed_split_stateless_mixed_batch_is_inert_on_later_turn`, `test_active_mixed_pause_ignores_historical_host_requests` |
+| Approval and Host-owned calls | Both pause types are returned in model order; a session-backed partial response remains pending across serialization; occurrence-identified Host results reserve their slots before id-less results use the unique unanswered occurrence, while authoritative session state recognizes equivalent duplicates and conflicting duplicates fail closed; stateless replay does not treat an ambiguous id-less result as a Host duplicate without occurrence provenance; a stateless zero-response or partial response fails closed across non-user message roles and cannot be hidden by a newer standalone request; standalone pauses separated by an unrelated user turn remain independent and response-order invariant when call IDs are reused; exact Host occurrence identity outranks newer call-ID-only candidates; each stateless response belongs to the nearest compatible request batch even when it cannot be assigned to one item, response ownership is discovered in linear time, and Host-result exclusions close only their Host occurrences without keeping historical completed calls open or reinterpreting later local terminal results during approval normalization; completed mixed batches remain inert even when approval and Host requests reuse a call ID; historical Host calls do not participate; a complete response executes the exact approved arguments once. Stateless scenarios in this row that resume a still-pending approval are exercised through the `disable_approval_response_binding` opt-out, since binding is required by default; the completed/inert scenarios run on the default path because settled occurrences are exempt. | `test_mixed_batch_returns_approval_and_host_pause_in_model_order`, `test_mixed_batch_requires_complete_responses_before_execution`, `test_stateful_mixed_batch_accepts_equivalent_idless_host_result_replay`, `test_stateful_mixed_batch_assigns_idless_equal_result_to_unanswered_occurrence`, `test_stateless_mixed_batch_rejects_conflicting_identified_host_results`, `test_stateless_split_mixed_batch_rejects_incomplete_replay_before_execution`, `test_stateless_mixed_batch_across_non_user_message_roles_requires_complete_responses`, `test_stateless_abandoned_approval_does_not_join_later_host_request`, `test_stateless_separated_pauses_with_reused_call_id_are_order_independent`, `test_exact_older_host_result_does_not_consume_newer_reused_call_approval`, `test_later_standalone_request_does_not_hide_incomplete_stateless_mixed_batch`, `test_later_idless_host_result_does_not_complete_older_stateless_mixed_batch`, `test_completed_approval_result_is_not_claimed_by_older_stateless_host_request`, `test_historical_stateless_host_result_does_not_capture_later_reused_call_approval`, `test_excluded_host_result_closes_own_occurrence_before_reused_call_approval`, `test_ambiguous_later_host_result_does_not_complete_older_stateless_mixed_batch`, `test_id_bearing_result_for_idless_host_request_does_not_consume_approval`, `test_stateless_pause_response_ownership_scans_contents_linearly`, `test_completed_split_stateless_mixed_batch_is_inert_on_later_turn`, `test_completed_stateless_mixed_batch_with_reused_call_id_is_inert`, `test_equal_idless_terminal_result_does_not_reexecute_completed_stateless_mixed_approval`, `test_active_mixed_pause_ignores_historical_host_requests` |
 | Safe and approval-required calls in one batch | Hidden safe calls replay only with the matching visible approval. | `packages/core/tests/core/test_harness_tool_approval.py::test_mixed_batch_hides_already_approved_request_until_approval_replay` |
 | Restored approval state | Serialized `ToolApprovalState` restores mixed-batch behavior. | `test_mixed_batch_accepts_restored_tool_approval_state` |
 | Unrelated turn before approval | Hidden calls do not execute on an unrelated turn. | `test_hidden_mixed_batch_requests_do_not_replay_on_unrelated_turn` |
@@ -651,7 +698,7 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Approved middleware repair | Approval binds to the normalized middleware-entry representation, so ordinary Pydantic coercion still completes in one approval round. A changed approval-bound call executes zero times under the old grant, returns a persisted occurrence-bound replacement request in both response modes, and executes once only after the replacement is approved. Recursive type-aware, float-bit-exact comparison treats booleans and numbers, and positive and negative zero, as distinct while keeping unchanged NaNs stable. Opaque mutable normalized values fail closed before approval authority is established. The same replacement rule applies when middleware short-circuits instead of calling the tool. Security expansion preserves approval-visible placeholders. | `test_approved_coercing_arguments_execute_without_replacement`, `test_approved_argument_repair_requires_replacement_approval`, `test_approved_argument_repair_short_circuit_requires_replacement_approval`, `test_approval_snapshot_distinguishes_exact_values`, `test_approval_rejects_opaque_mutable_validator_output`, `packages/core/tests/test_security.py::TestVariableArgumentPolicy::test_hidden_argument_resolution_does_not_require_reapproval` |
 | Approved success | Successful approved execution returns one result. | `test_approved_function_call_successful_execution` |
 | Consecutive error cap | Error threshold stops repeated failures, submits collected results, and makes only the required final no-tool model call. | `test_function_invocation_config_max_consecutive_errors`, `test_streaming_function_invocation_config_max_consecutive_errors`, `test_approval_resume_error_limit_forces_final_no_tool_response` |
-| Unknown call handling | Configured false returns an error result; configured true raises. | `test_function_invocation_config_terminate_on_unknown_calls_false`, `test_function_invocation_config_terminate_on_unknown_calls_true`, streaming equivalents |
+| Unknown call handling | Configured false returns an error result; configured true raises before any call executes. A service-managed continuation settles every call in the aborted batch and advances to the settlement response before the `KeyError` propagates; without one, including local per-service-call history persistence, no extra request is made. | `test_function_invocation_config_terminate_on_unknown_calls_false`, `test_function_invocation_config_terminate_on_unknown_calls_true`, streaming equivalents, `test_fatal_unknown_settles_service_conversation`, `test_fatal_unknown_with_local_history_makes_no_settlement_request` |
 | Middleware termination | Normal non-approval loop stops without a second model call. | `test_terminate_loop_single_function_call`, `test_terminate_loop_multiple_function_calls_one_terminates`, `test_terminate_loop_streaming_single_function_call` |
 | Middleware failure (fatal) | `MiddlewareFailure` from function middleware or a tool body propagates to the caller without becoming a tool result; the tool does not execute (pre-invocation) or its result never feeds another model call (post-invocation); the cause chain is preserved; ordinary exceptions still become tool-error results and the loop continues. | `packages/core/tests/core/test_middleware_with_agent.py::TestMiddlewareFailure::test_failure_before_tool_aborts_run`, `test_failure_after_tool_aborts_run_before_next_model_turn`, `test_failure_cause_chain_reaches_caller`, `test_failure_from_tool_escapes_without_middleware`, `test_failure_streaming_reaches_stream_consumer`, `test_ordinary_exception_still_becomes_tool_error` |
 | Middleware failure batch cancellation | A fatal signal fails the whole parallel batch: in-flight sibling tool invocations are cancelled and awaited before the failure propagates. Cancellation is cooperative — an async sibling stops at its next suspension point; a synchronous tool body already executing in a worker thread cannot be interrupted and may complete its side effects, but its result is discarded and never reaches the transcript, the model, or history, and failure propagation is not delayed behind it. | `TestMiddlewareFailure::test_failure_cancels_concurrent_sibling_tool`, `test_failure_with_sync_sibling_discards_late_result` |
@@ -668,7 +715,8 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Scenario | Required invariant | Primary regression test |
 |---|---|---|
 | Append-only history replay | Resolved approval wrappers do not reach a later model call; one call/result pair remains. | `packages/core/tests/core/test_harness_tool_approval.py::test_approval_resume_filters_resolved_control_items_from_file_history` |
-| Pending placeholder history | An approval response remains replayable while its only result is `[APPROVAL_PENDING]`. | `packages/core/tests/core/test_sessions.py::test_filter_approval_controls_keeps_response_for_pending_placeholder` |
+| Typed pending history | An approval response remains replayable until its occurrence completes, without synthetic results. | `packages/core/tests/core/test_sessions.py::test_filter_approval_controls_keeps_response_without_terminal_result` |
+| Terminal result history | Every matched function result consumes completed approval controls regardless of its text. | `packages/core/tests/core/test_sessions.py::test_filter_approval_controls_consumes_terminal_result_regardless_of_text`, `packages/ag-ui/tests/ag_ui/test_run.py::test_filter_local_approval_responses_for_provider_removes_only_completed_local_controls` |
 | Pending hosted history replay | Stateless hosted approval requests remain replayable until a response is recorded, then both controls become inert. | `packages/openai/tests/openai/test_openai_chat_client.py::test_stateless_history_preserves_pending_hosted_approval_request_until_response` |
 | Non-history provider plus session | Local history is still auto-injected for approval resume. | `packages/core/tests/core/test_agents.py::test_non_history_context_provider_still_injects_inmemory` |
 | Hosted per-service-call persistence | A host-managed transcript remains available throughout a local function-call loop without being persisted into the framework session and replayed on the next hosted request. | `packages/foundry_hosting/tests/test_responses.py::TestAgentSessionPersistence::test_per_service_call_persistence_preserves_function_loop_history` |

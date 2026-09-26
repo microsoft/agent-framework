@@ -2,24 +2,55 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 
 from agent_framework import FunctionTool
+from agent_framework._tools import (
+    _format_tool_parameters,  # pyright: ignore[reportPrivateUsage]
+    _NormalizedToolDescriptionFormat,  # pyright: ignore[reportPrivateUsage]
+)
 
 from ._types import AllowedDomain
 
 
-def _format_tool_summaries(tools: Sequence[FunctionTool]) -> str:
+def _format_tool_summaries(
+    tools: Sequence[FunctionTool],
+    *,
+    tool_description_format: _NormalizedToolDescriptionFormat = "compact",
+) -> str:
     if not tools:
         return "- No tools are currently registered inside the sandbox."
 
     lines: list[str] = []
     for tool_obj in tools:
-        parameters = tool_obj.parameters().get("properties", {})
-        parameter_names = [name for name in parameters if isinstance(name, str)]
-        parameter_summary = ", ".join(parameter_names) if parameter_names else "none"
+        requested_format = (
+            tool_description_format
+            if isinstance(tool_description_format, str)
+            else tool_description_format.get(tool_obj.name, "compact")
+        )
+        effective_format, parameters = _format_tool_parameters(tool_obj.parameters(), parameter_format=requested_format)
         description = str(tool_obj.description or "").strip() or "No description provided."
-        lines.append(f"- `{tool_obj.name}`: {description} Parameters: {parameter_summary}.")
+        lines.append(f"- `{tool_obj.name}`: {description}")
+        if effective_format == "json":
+            if requested_format == "compact":
+                lines.append(
+                    "  Using JSON Schema because the parameter schema cannot be represented faithfully in compact form."
+                )
+            lines.extend(["  Parameters (JSON Schema):", "```json", json.dumps(parameters, indent=2), "```"])
+        elif not parameters:
+            lines.append("  Parameters: none.")
+        else:
+            for name, parameter in parameters.items():
+                requirement = "required" if parameter["required"] else "optional"
+                line = f"  - `{name}` ({parameter['type']}, {requirement})"
+                if parameter.get("description"):
+                    line += f": {parameter['description']}"
+                if "enum" in parameter:
+                    line += f" Allowed values: {json.dumps(parameter['enum'])}."
+                if "default" in parameter:
+                    line += f" Default: {json.dumps(parameter['default'])}."
+                lines.append(line)
     return "\n".join(lines)
 
 
@@ -107,6 +138,7 @@ def build_execute_code_description(
     workspace_enabled: bool,
     mounted_paths: Sequence[str],
     allowed_domains: Sequence[AllowedDomain],
+    tool_description_format: _NormalizedToolDescriptionFormat = "compact",
 ) -> str:
     """Build the dynamic execute_code tool description for standalone usage."""
     filesystem_text = _format_filesystem_capabilities(
@@ -126,7 +158,7 @@ arguments only. Do not pass a dict or any other positional arguments after the
 tool name.
 
 Registered sandbox tools:
-{_format_tool_summaries(tools)}
+{_format_tool_summaries(tools, tool_description_format=tool_description_format)}
 
 Filesystem capabilities:
 {filesystem_text}

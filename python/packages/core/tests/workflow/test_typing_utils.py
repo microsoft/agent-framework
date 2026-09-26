@@ -425,6 +425,10 @@ def test_type_compatibility_basic() -> None:
     # Any compatibility
     assert is_type_compatible(str, Any)
     assert is_type_compatible(list[int], Any)
+    assert is_type_compatible(Any, str)
+    assert is_type_compatible(Any, list[int])
+    assert is_type_compatible(Any, Union[str, int])
+    assert is_type_compatible(list[Any], list[str])
 
     # Subclass compatibility
     class Animal:

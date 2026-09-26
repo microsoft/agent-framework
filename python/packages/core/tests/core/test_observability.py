@@ -1914,6 +1914,137 @@ def test_enable_instrumentation_explicit_param_overrides_env(monkeypatch):
     assert observability.OBSERVABILITY_SETTINGS.enable_sensitive_data is False
 
 
+@pytest.mark.parametrize("message_events", [False, True])
+def test_enable_instrumentation_message_events_overrides_env(monkeypatch, message_events: bool) -> None:
+    import agent_framework.observability as observability
+
+    monkeypatch.setenv("ENABLE_MESSAGE_EVENTS", str(not message_events))
+    monkeypatch.setenv("ENABLE_SENSITIVE_DATA", "false")
+    settings = observability.ObservabilitySettings(enable_instrumentation=False)
+    monkeypatch.setattr(observability, "OBSERVABILITY_SETTINGS", settings)
+    assert settings.enable_message_events is not message_events
+
+    observability.enable_instrumentation(enable_message_events=message_events)
+
+    assert settings.enable_instrumentation is True
+    assert settings.enable_message_events is message_events
+    assert settings.enable_sensitive_data is False
+
+
+@pytest.mark.parametrize("message_events", [False, True])
+@pytest.mark.parametrize("source", ["environment", "providers", "instrumentation"])
+def test_enable_instrumentation_preserves_message_events(monkeypatch, message_events: bool, source: str) -> None:
+    import agent_framework.observability as observability
+
+    monkeypatch.setenv("ENABLE_MESSAGE_EVENTS", str(message_events if source == "environment" else not message_events))
+    settings = observability.ObservabilitySettings()
+    monkeypatch.setattr(observability, "OBSERVABILITY_SETTINGS", settings)
+    if source == "providers":
+        with patch.object(settings, "_configure"):
+            observability.configure_otel_providers(enable_message_events=message_events)
+    elif source == "instrumentation":
+        observability.enable_instrumentation(enable_message_events=message_events)
+
+    for env_value in [str(not message_events), None]:
+        if env_value is None:
+            monkeypatch.delenv("ENABLE_MESSAGE_EVENTS")
+        else:
+            monkeypatch.setenv("ENABLE_MESSAGE_EVENTS", env_value)
+        observability.enable_instrumentation()
+        assert settings.enable_message_events is message_events
+        observability.enable_instrumentation(enable_message_events=None)
+        assert settings.enable_message_events is message_events
+
+
+@pytest.mark.parametrize("current_value", [False, True])
+@pytest.mark.parametrize("message_events", [False, True, None])
+@pytest.mark.parametrize("force", [False, True])
+def test_enable_instrumentation_message_events_respects_sticky_disable(
+    monkeypatch, current_value: bool, message_events: bool | None, force: bool
+) -> None:
+    import agent_framework.observability as observability
+
+    settings = observability.ObservabilitySettings(enable_message_events=current_value)
+    monkeypatch.setattr(observability, "OBSERVABILITY_SETTINGS", settings)
+    observability.disable_instrumentation()
+
+    observability.enable_instrumentation(enable_message_events=message_events, enable_sensitive_data=True, force=force)
+
+    assert settings.enable_instrumentation is force
+    assert settings.enable_sensitive_data is force
+    assert settings.is_user_disabled is not force
+    expected = message_events if force and message_events is not None else current_value
+    assert settings.enable_message_events is expected
+
+
+@pytest.mark.parametrize("is_setup", [False, True])
+def test_enable_instrumentation_message_events_preserves_providers(
+    monkeypatch, span_exporter, log_record_exporter, is_setup: bool
+) -> None:
+    from opentelemetry import metrics, trace
+    from opentelemetry._logs import get_logger_provider
+
+    import agent_framework.observability as observability
+
+    settings = observability.OBSERVABILITY_SETTINGS
+    monkeypatch.setattr(settings, "enable_console_exporters", True)
+    monkeypatch.setattr(settings, "_executed_setup", is_setup)
+    providers = (trace.get_tracer_provider(), get_logger_provider(), metrics.get_meter_provider())
+    with patch.object(settings, "_configure") as configure:
+        for message_events in [False, True, None]:
+            observability.enable_instrumentation(enable_message_events=message_events)
+            assert settings.is_setup is is_setup
+            assert settings.enable_console_exporters is True
+            assert trace.get_tracer_provider() is providers[0]
+            assert get_logger_provider() is providers[1]
+            assert metrics.get_meter_provider() is providers[2]
+        configure.assert_not_called()
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("message_events", [False, True])
+@pytest.mark.parametrize("enable_sensitive_data", [False, True], indirect=True)
+@pytest.mark.parametrize("semconv", ["", "gen_ai_latest_experimental"])
+async def test_enable_instrumentation_controls_message_event_emission(
+    mock_chat_client,
+    span_exporter: InMemorySpanExporter,
+    log_record_exporter,
+    enable_sensitive_data: bool,
+    stream: bool,
+    message_events: bool,
+    semconv: str,
+) -> None:
+    import agent_framework.observability as observability
+
+    observability.OBSERVABILITY_SETTINGS.otel_semconv_stability_opt_in = semconv
+    observability.enable_instrumentation(enable_message_events=message_events)
+    client = mock_chat_client()
+    messages = [Message("user", ["Test message"])]
+    if stream:
+        response_stream = client.get_response(messages=messages, options={"model": "Test"}, stream=True)
+        async for _ in response_stream:
+            pass
+        await response_stream.get_final_response()
+    else:
+        await client.get_response(messages=messages, options={"model": "Test"})
+
+    records = [record.log_record for record in log_record_exporter.get_finished_logs()]
+    expected_events = []
+    if message_events and enable_sensitive_data:
+        expected_events = [OtelAttr.USER_MESSAGE.value]
+        if stream:
+            expected_events.append(OtelAttr.CHOICE.value)
+    assert [record.event_name for record in records] == expected_events
+    if records:
+        assert records[0].body == {"content": "Test message"}
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    attributes = spans[0].attributes or {}
+    assert (OtelAttr.INPUT_MESSAGES in attributes) is (enable_sensitive_data and bool(semconv))
+    assert (OtelAttr.OUTPUT_MESSAGES in attributes) is (enable_sensitive_data and bool(semconv))
+
+
 def test_enable_instrumentation_does_not_touch_console_exporters(monkeypatch):
     """Test enable_instrumentation does not modify enable_console_exporters (it is an exporter concern)."""
     import importlib

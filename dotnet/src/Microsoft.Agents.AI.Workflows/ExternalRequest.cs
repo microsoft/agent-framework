@@ -77,7 +77,8 @@ public record ExternalRequest(RequestPortInfo PortInfo, string RequestId, Portab
     /// <exception cref="InvalidOperationException">Thrown when the input data object does not match the expected response type.</exception>
     public ExternalResponse CreateResponse(object data)
     {
-        if (!Throw.IfNull(this.PortInfo).ResponseType.IsMatchPolymorphic(Throw.IfNull(data).GetType()))
+        data = Throw.IfNull(data);
+        if (!Throw.IfNull(this.PortInfo).ResponseType.IsMatchPolymorphic(data.GetType()))
         {
             throw new InvalidOperationException(
                 $"Message type {data.GetType().Name} does not match expected response type {this.PortInfo.ResponseType.TypeName} of input port {this.PortInfo.PortId}.");

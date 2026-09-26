@@ -88,6 +88,18 @@ from microsoft.opentelemetry import use_microsoft_opentelemetry
 use_microsoft_opentelemetry(enable_azure_monitor=True)
 ```
 
+To disable Agent Framework's baseline GenAI message events without changing providers or exporters configured by a third party, use the instrumentation-only API:
+
+```python
+from agent_framework.observability import enable_instrumentation
+
+enable_instrumentation(enable_message_events=False)
+```
+
+An explicit `True` or `False` overrides the current message-event setting, including a value read from `ENABLE_MESSAGE_EVENTS`. Omitting the argument or passing `None` preserves the current setting without re-reading the environment, including settings established by `configure_otel_providers()` or an earlier explicit call.
+
+This flag controls baseline v1.36.0 events such as `gen_ai.user.message` and `gen_ai.choice`; it does not disable experimental message span attributes, spans, or metrics. Message events still require sensitive-data capture to be enabled separately. Existing `enable_sensitive_data` behavior is unchanged, and [sticky disable](#disabling-instrumentation) still requires `force=True` to re-enable instrumentation.
+
 ```python
 from azure.monitor.opentelemetry import configure_azure_monitor
 from agent_framework.observability import create_resource, enable_sensitive_telemetry
@@ -103,7 +115,8 @@ configure_azure_monitor(
 enable_sensitive_telemetry()
 ```
 
-For Microsoft Foundry projects, use `client.configure_azure_monitor()` which retrieves the connection string from the project and configures everything:
+For model calls through `FoundryChatClient`, use `client.configure_azure_monitor()`
+to retrieve the connection string and configure Azure Monitor:
 
 ```python
 from agent_framework.foundry import FoundryChatClient
@@ -118,6 +131,29 @@ client = FoundryChatClient(
 # Automatically configures Azure Monitor with connection string from project
 await client.configure_azure_monitor(enable_sensitive_data=True)
 ```
+
+For calls to an **existing prompt or hosted agent**, use
+[`foundry_agent_tracing.py`](foundry_agent_tracing.py) and
+`await agent.configure_azure_monitor()`.
+
+Install Azure Monitor 1.8.10 or later to connect client and service traces:
+
+```shell
+pip install --upgrade "azure-monitor-opentelemetry>=1.8.10,<2"
+```
+
+Connect Application Insights to your project and set `FOUNDRY_PROJECT_ENDPOINT`
+and `FOUNDRY_AGENT_NAME`. `FOUNDRY_AGENT_VERSION` is required for PromptAgents
+and optional for HostedAgents. Run from `python/` using the workspace packages:
+
+```powershell
+uv run --group test python samples\02-agents\observability\foundry_agent_tracing.py
+uv run --group test python samples\02-agents\observability\foundry_agent_tracing.py --stream
+```
+
+View the connected trace under **Build > Agents > your agent > Traces** in
+Foundry. Select the agent version and a time range covering the run, then open
+the printed trace ID.
 
 Or with [Langfuse](https://langfuse.com/integrations/frameworks/microsoft-agent-framework):
 

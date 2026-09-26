@@ -38,17 +38,38 @@ internal static class IWorkflowContextExtensions
     public static ValueTask QueueStateUpdateAsync<TValue>(this IWorkflowContext context, PropertyPath variablePath, TValue? value, CancellationToken cancellationToken = default) =>
         context.QueueStateUpdateAsync(Throw.IfNull(variablePath.VariableName), value, Throw.IfNull(variablePath.NamespaceAlias), cancellationToken);
 
+    public static ValueTask QueueStateUpdateAsync<TValue>(
+        this IWorkflowContext context,
+        PropertyPath variablePath,
+        TValue? value,
+        SensitivityLevel sensitivity,
+        CancellationToken cancellationToken = default)
+    {
+        string variableName = Throw.IfNull(variablePath.VariableName);
+        string namespaceAlias = Throw.IfNull(variablePath.NamespaceAlias);
+
+        return context is DeclarativeWorkflowContext declarativeContext
+            ? declarativeContext.QueueStateUpdateAsync(variableName, value, namespaceAlias, sensitivity, cancellationToken)
+            : context.QueueStateUpdateAsync(variableName, value, namespaceAlias, cancellationToken);
+    }
+
     public static async ValueTask QueueEnvironmentUpdateAsync<TValue>(this IWorkflowContext context, string key, TValue? value, CancellationToken cancellationToken = default)
     {
         DeclarativeWorkflowContext declarativeContext = DeclarativeContext(context);
-        await declarativeContext.UpdateStateAsync(key, value, VariableScopeNames.Environment, allowSystem: true, cancellationToken).ConfigureAwait(false);
+        await declarativeContext.UpdateStateAsync(
+            key,
+            value,
+            VariableScopeNames.Environment,
+            allowSystem: true,
+            sensitivity: SensitivityLevel.Sensitive,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
         declarativeContext.State.Bind();
     }
 
     public static async ValueTask QueueSystemUpdateAsync<TValue>(this IWorkflowContext context, string key, TValue? value, CancellationToken cancellationToken = default)
     {
         DeclarativeWorkflowContext declarativeContext = DeclarativeContext(context);
-        await declarativeContext.UpdateStateAsync(key, value, VariableScopeNames.System, allowSystem: true, cancellationToken).ConfigureAwait(false);
+        await declarativeContext.UpdateStateAsync(key, value, VariableScopeNames.System, allowSystem: true, cancellationToken: cancellationToken).ConfigureAwait(false);
         declarativeContext.State.Bind();
     }
 

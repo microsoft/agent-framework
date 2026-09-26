@@ -41,7 +41,7 @@ def content_to_process_factory():
         protected_app = ProtectedAppMetadata(name="Protected", version="1.0", application_location=location)
 
         return ContentToProcess(
-            content_entries=[metadata],
+            content_entry=metadata,
             activity_metadata=activity_meta,
             device_metadata=device_meta,
             integrated_app_metadata=integrated_app,
