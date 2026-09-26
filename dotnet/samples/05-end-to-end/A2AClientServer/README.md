@@ -5,6 +5,9 @@ This sample demonstrates a minimal end-to-end A2A flow:
 1. `A2AServer` hosts a policy agent and publishes its agent card.
 2. `A2AClient` discovers the policy agent and sends it messages over A2A.
 
+> [!WARNING]
+> This sample does not authenticate A2A callers. Multi-user hosts must configure authentication and authorize both enabled protocol bindings, for example with `MapA2AHttpJson(...).RequireAuthorization()` and `MapA2AJsonRpc(...).RequireAuthorization()`. Configure caller isolation for tasks as well as persisted sessions; disabling session persistence does not disable task storage. See the [shared hosting guide](../../04-hosting/README.md), including the client credential requirements. Azure credentials used by the agent do not authenticate callers to this server.
+
 ## Prerequisites
 
 - .NET 10 SDK
