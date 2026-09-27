@@ -8,6 +8,52 @@ This package supports `azure-ai-projects>=2.2.0,<2.7.0`. Projects 2.5 and later 
 `openai>=3.0.0`, so `agent-framework-foundry` requires `agent-framework-openai>=1.14.2`,
 which supports both OpenAI 2.x and 3.x.
 
+## Tracing an existing Foundry agent
+
+Install Azure Monitor to connect client and service traces:
+
+```shell
+pip install --upgrade agent-framework-foundry "azure-monitor-opentelemetry>=1.8.10,<2"
+```
+
+With Application Insights connected to your project, call
+`await agent.configure_azure_monitor()` before invoking a `FoundryAgent`.
+See [the tracing sample](../../samples/02-agents/observability/foundry_agent_tracing.py)
+for streaming and non-streaming examples.
+
+## Embeddings
+
+`FoundryEmbeddingClient` supports OpenAI text embedding deployments exposed through a Microsoft Foundry project.
+Pass an existing `AIProjectClient`, or provide the project endpoint and an async Azure credential:
+
+```python
+import os
+
+from agent_framework.foundry import FoundryEmbeddingClient
+from azure.identity.aio import AzureCliCredential
+
+async with AzureCliCredential() as credential:
+    async with FoundryEmbeddingClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_EMBEDDING_MODEL"],
+        credential=credential,
+    ) as client:
+        result = await client.get_embeddings(["Hello, world!"])
+        print(result[0].dimensions)
+```
+
+Set `FOUNDRY_PROJECT_ENDPOINT` to the project endpoint and `FOUNDRY_EMBEDDING_MODEL` to the embedding deployment
+name. When an `AIProjectClient` is already available, pass it as `project_client` and omit the endpoint and
+credential.
+
+The client uses the project for authentication and converts a
+`https://<resource>.services.ai.azure.com/api/projects/<project>` endpoint to the documented resource-scoped
+`https://<resource>.openai.azure.com/openai/v1/` model route. The existing `FOUNDRY_MODELS_ENDPOINT` and
+`FOUNDRY_MODELS_API_KEY` configuration remains available for Foundry Models inference endpoints. A Models endpoint is
+required for image embedding models. If both project and Models endpoints are configured only through environment
+variables, the Models endpoint is retained for backward compatibility; pass `project_endpoint` explicitly to select
+the project OpenAI deployment.
+
 ## Evaluations
 
 `FoundryEvals` implements the provider-neutral `Evaluator` protocol with

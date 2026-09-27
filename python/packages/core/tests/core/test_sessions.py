@@ -426,19 +426,35 @@ def test_filter_approval_controls_deduplicates_pending_request_replay() -> None:
     assert requests == [request]
 
 
-def test_filter_approval_controls_keeps_response_for_pending_placeholder() -> None:
+def test_filter_approval_controls_keeps_response_without_terminal_result() -> None:
+    """Pending state is represented by typed controls, not a textual tool result."""
     function_call = Content.from_function_call(call_id="call_pending", name="guarded", arguments="{}")
     request = Content.from_function_approval_request(id="approval_pending", function_call=function_call)
     response = request.to_function_approval_response(approved=True)
-    placeholder = Content.from_function_result(
+    messages = [
+        Message(role="assistant", contents=[function_call, request]),
+        Message(role="user", contents=[response]),
+    ]
+
+    filtered = _filter_approval_control_messages(messages)
+
+    assert [content for message in filtered for content in message.contents] == [function_call, response]
+
+
+@pytest.mark.parametrize("result", ["done", "before [APPROVAL_PENDING] after", "[APPROVAL_PENDING]"])
+def test_filter_approval_controls_consumes_terminal_result_regardless_of_text(result: str) -> None:
+    function_call = Content.from_function_call(call_id="call_pending", name="guarded", arguments="{}")
+    request = Content.from_function_approval_request(id="approval_pending", function_call=function_call)
+    response = request.to_function_approval_response(approved=True)
+    terminal_result = Content.from_function_result(
         call_id="call_pending",
-        result="[APPROVAL_PENDING] waiting for execution",
+        result=result,
     )
 
     filtered = _filter_approval_control_messages([
         Message(role="assistant", contents=[function_call, request]),
         Message(role="user", contents=[response]),
-        Message(role="tool", contents=[placeholder]),
+        Message(role="tool", contents=[terminal_result]),
     ])
 
     controls = [
@@ -447,8 +463,33 @@ def test_filter_approval_controls_keeps_response_for_pending_placeholder() -> No
         for content in message.contents
         if content.type in {"function_approval_request", "function_approval_response"}
     ]
-    assert controls == [response]
-    assert any(placeholder in message.contents for message in filtered)
+    assert controls == []
+    assert any(terminal_result in message.contents for message in filtered)
+
+
+@pytest.mark.parametrize("result", ["done", "before [APPROVAL_PENDING] after", "[APPROVAL_PENDING]"])
+def test_filter_approval_controls_discards_response_after_terminal_result(result: str) -> None:
+    """A late response belongs to the closed occurrence, not a reused-call-id sibling."""
+    first_call = Content.from_function_call(call_id="reused", name="guarded", arguments="{}")
+    first_request = Content.from_function_approval_request(id="approval_1", function_call=first_call)
+    stale_response = first_request.to_function_approval_response(approved=True)
+    second_call = Content.from_function_call(call_id="reused", name="guarded", arguments="{}")
+    second_request = Content.from_function_approval_request(id="approval_2", function_call=second_call)
+
+    filtered = _filter_approval_control_messages([
+        Message(role="assistant", contents=[first_call, first_request]),
+        Message(role="tool", contents=[Content.from_function_result(call_id="reused", result=result)]),
+        Message(role="user", contents=[stale_response]),
+        Message(role="assistant", contents=[second_call, second_request]),
+    ])
+
+    controls = [
+        content
+        for message in filtered
+        for content in message.contents
+        if content.type in {"function_approval_request", "function_approval_response"}
+    ]
+    assert controls == [second_request]
 
 
 def _replacement_approval_round(

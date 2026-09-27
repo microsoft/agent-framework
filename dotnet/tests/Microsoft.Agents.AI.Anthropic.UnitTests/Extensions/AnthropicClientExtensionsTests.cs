@@ -284,11 +284,11 @@ public sealed class AnthropicClientExtensionsTests
         // When tools are provided, ChatOptions is created but instructions remain null
         Assert.Null(agent.Instructions);
 
-        // Verify that tools are registered in the FunctionInvokingChatClient
-        var functionInvokingClient = agent.GetService<FunctionInvokingChatClient>();
-        Assert.NotNull(functionInvokingClient);
-        Assert.NotNull(functionInvokingClient.AdditionalTools);
-        Assert.Contains(functionInvokingClient.AdditionalTools, t => t is AIFunction func && func.Name == "TestFunction");
+        // Verify that tools are registered on the agent's ChatOptions, which are merged into the
+        // invocation-scoped ChatOptions on every call (see ChatClientAgent.CreateConfiguredChatOptions).
+        var agentTools = agent.GetService<ChatOptions>()?.Tools;
+        Assert.NotNull(agentTools);
+        Assert.Contains(agentTools, t => t is AIFunction func && func.Name == "TestFunction");
     }
 
     /// <summary>
@@ -384,11 +384,11 @@ public sealed class AnthropicClientExtensionsTests
         Assert.Equal("Test Agent", agent.Name);
         Assert.Equal("Test instructions", agent.Instructions);
 
-        // Verify that tools are registered in the FunctionInvokingChatClient
-        var functionInvokingClient = agent.GetService<FunctionInvokingChatClient>();
-        Assert.NotNull(functionInvokingClient);
-        Assert.NotNull(functionInvokingClient.AdditionalTools);
-        Assert.Contains(functionInvokingClient.AdditionalTools, t => t is AIFunction func && func.Name == "TestFunction");
+        // Verify that tools are registered on the agent's ChatOptions, which are merged into the
+        // invocation-scoped ChatOptions on every call (see ChatClientAgent.CreateConfiguredChatOptions).
+        var agentTools = agent.GetService<ChatOptions>()?.Tools;
+        Assert.NotNull(agentTools);
+        Assert.Contains(agentTools, t => t is AIFunction func && func.Name == "TestFunction");
     }
 
     /// <summary>
@@ -413,7 +413,7 @@ public sealed class AnthropicClientExtensionsTests
         // With empty tools and no instructions, agent instructions remain null
         Assert.Null(agent.Instructions);
 
-        // Verify that FunctionInvokingChatClient has no additional tools assigned
+        // Verify that the FunctionInvokingChatClient is not used as a fallback tool store.
         var functionInvokingClient = agent.GetService<FunctionInvokingChatClient>();
         Assert.NotNull(functionInvokingClient);
         Assert.True(functionInvokingClient.AdditionalTools is null or { Count: 0 });

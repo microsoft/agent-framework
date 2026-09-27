@@ -18,6 +18,10 @@ namespace Microsoft.Agents.AI;
 /// serializing with the session.
 /// </para>
 /// <para>
+/// The delegated user identity is stored in the same state bag. A session created for one user must
+/// not be reused for another user, even when both sessions share the same hosted-agent session id.
+/// </para>
+/// <para>
 /// This is not <see cref="Extensions.AI.ChatOptions.AdditionalProperties"/>. Per-call
 /// overrides use
 /// <see cref="Extensions.AI.FoundryChatOptionsExtensions.WithFoundryHostedAgentSessionId(Extensions.AI.ChatOptions, string)"/>.
@@ -30,6 +34,8 @@ public static class FoundryAgentSessionExtensions
     /// Well-known <see cref="AgentSessionStateBag"/> key for the sticky hosted-agent session id.
     /// </summary>
     public const string FoundryHostedAgentSessionIdKey = "Microsoft.Agents.AI.Foundry.HostedAgentSessionId";
+
+    private const string FoundryHostedAgentUserIdentityKey = "Microsoft.Agents.AI.Foundry.UserIdentity";
 
     extension(AgentSession session)
     {
@@ -50,7 +56,7 @@ public static class FoundryAgentSessionExtensions
         /// </para>
         /// <para>
         /// Prefer creating or pinning through
-        /// <see cref="FoundryAgent.CreateFoundryHostedAgentSessionAsync(string?, string?, System.Threading.CancellationToken)"/>.
+        /// <see cref="FoundryAgent.CreateFoundryHostedAgentSessionAsync(string?, string?, string?, System.Threading.CancellationToken)"/>.
         /// The property is populated automatically when Foundry creates a sandbox on first use.
         /// See
         /// <see href="https://learn.microsoft.com/azure/foundry/agents/how-to/manage-hosted-sessions#sessions-versus-conversations">Manage hosted agent sessions</see>.
@@ -71,6 +77,38 @@ public static class FoundryAgentSessionExtensions
                 _ = Throw.IfNull(session);
                 _ = Throw.IfNullOrWhitespace(value);
                 session.StateBag.SetValue(FoundryHostedAgentSessionIdKey, value);
+            }
+        }
+
+        /// <summary>
+        /// Gets the delegated application user identity associated with this Agent Framework session.
+        /// </summary>
+        /// <value>
+        /// The opaque application user identifier sent as <c>x-ms-user-identity</c>, or
+        /// <see langword="null"/> when the session has no delegated identity.
+        /// </value>
+        /// <remarks>
+        /// The identity is fixed when the session is created through
+        /// <see cref="FoundryAgent.CreateFoundryHostedAgentSessionAsync(string?, string?, string?, System.Threading.CancellationToken)"/>.
+        /// Reusing this session automatically sends the same identity on every run. Create a separate
+        /// <see cref="AgentSession"/> for each user; separate sessions may share the same
+        /// <c>FoundryHostedAgentSessionId</c>.
+        /// </remarks>
+        public string? FoundryHostedAgentUserIdentity
+        {
+            get
+            {
+                _ = Throw.IfNull(session);
+                return session.StateBag.TryGetValue<string>(FoundryHostedAgentUserIdentityKey, out var value)
+                    ? value
+                    : null;
+            }
+
+            internal set
+            {
+                _ = Throw.IfNull(session);
+                _ = Throw.IfNullOrWhitespace(value);
+                session.StateBag.SetValue(FoundryHostedAgentUserIdentityKey, value);
             }
         }
     }

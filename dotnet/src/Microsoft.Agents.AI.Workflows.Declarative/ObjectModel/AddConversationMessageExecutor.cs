@@ -7,6 +7,7 @@ using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.ObjectModel;
+using Microsoft.Agents.ObjectModel.Abstractions;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
@@ -42,7 +43,13 @@ internal sealed class AddConversationMessageExecutor(AddConversationMessage mode
     {
         foreach (AddConversationMessageContent content in this.Model.Content)
         {
-            AIContent? messageContent = content.Type.Value.ToContent(this.Engine.Format(content.Value), content.MediaType);
+            EvaluationResult<string> contentResult = this.Evaluator.Format(content.Value);
+            if (contentResult.Sensitivity == SensitivityLevel.Sensitive)
+            {
+                throw new DeclarativeActionException($"Cannot send sensitive conversation message content: {this.Id}.");
+            }
+
+            AIContent? messageContent = content.Type.Value.ToContent(contentResult.Value, content.MediaType);
             if (messageContent is not null)
             {
                 yield return messageContent;
@@ -57,8 +64,12 @@ internal sealed class AddConversationMessageExecutor(AddConversationMessage mode
             return null;
         }
 
-        RecordDataValue? metadataValue = this.Evaluator.GetValue(this.Model.Metadata).Value;
+        EvaluationResult<RecordDataValue?> metadataResult = this.Evaluator.GetValue(this.Model.Metadata);
+        if (metadataResult.Sensitivity == SensitivityLevel.Sensitive)
+        {
+            throw new DeclarativeActionException($"Cannot send sensitive conversation message metadata: {this.Id}.");
+        }
 
-        return metadataValue.ToMetadata();
+        return metadataResult.Value.ToMetadata();
     }
 }

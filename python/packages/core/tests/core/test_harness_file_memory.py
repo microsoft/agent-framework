@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import json
-import re
 
 import pytest
+import regex
 
 from agent_framework import (
     AgentFileStore,
@@ -388,7 +388,7 @@ async def test_search_propagates_invalid_regex() -> None:
     provider = FileMemoryProvider(store=InMemoryAgentFileStore())
     _, tools = await _prepare(provider)
 
-    with pytest.raises(re.error):
+    with pytest.raises(regex.error):
         await tools["file_memory_grep"].invoke(arguments={"regex_pattern": "[unclosed"})
 
 

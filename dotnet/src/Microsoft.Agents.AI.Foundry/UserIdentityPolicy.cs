@@ -7,8 +7,8 @@ using System.Threading.Tasks;
 namespace Microsoft.Agents.AI.Foundry;
 
 /// <summary>
-/// Pipeline policy that stamps <c>x-ms-user-identity</c> from <see cref="UserIdentityScope"/>
-/// onto outbound OpenAI Responses requests.
+/// Pipeline policy that stamps the current session's <c>x-ms-user-identity</c> from
+/// <see cref="UserIdentityScope"/> onto outbound OpenAI Responses requests.
 /// </summary>
 internal sealed class UserIdentityPolicy : PipelinePolicy
 {

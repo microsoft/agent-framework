@@ -33,5 +33,5 @@ public abstract class AgentExecutor(string id, FormulaSession session, ResponseA
         bool autoSend,
         IEnumerable<ChatMessage>? inputMessages = null,
         CancellationToken cancellationToken = default)
-        => agentProvider.InvokeAgentAsync(this.Id, context, agentName, conversationId, autoSend, inputMessages, inputArguments: null, cancellationToken);
+        => agentProvider.InvokeAgentAsync(this.Id, context, agentName, agentVersion: null, conversationId, autoSend, inputMessages, inputArguments: null, cancellationToken);
 }

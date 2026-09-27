@@ -11,7 +11,6 @@ using Azure.Identity;
 using DotNetEnv;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Foundry;
-using Microsoft.Extensions.AI;
 
 Env.TraversePath().Load();
 
@@ -96,13 +95,11 @@ try
         if (!userSessions.TryGetValue(userId, out ChatClientAgentSession? userSession))
         {
             userSession = await agent.CreateFoundryHostedAgentSessionAsync(
-                hostedSessionId: hostedSessionId);
+                hostedSessionId: hostedSessionId,
+                userIdentity: userId);
             userSessions.Add(userId, userSession);
             Console.WriteLine($"Created an independent conversation for '{userId}'.");
         }
-
-        var runOptions = new ChatClientAgentRunOptions(
-            new ChatOptions().WithFoundryHostedAgentUserIdentity(userId));
 
         Console.ForegroundColor = ConsoleColor.Yellow;
         Console.Write($"Agent for {userId}> ");
@@ -110,8 +107,7 @@ try
 
         await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(
             input,
-            userSession,
-            runOptions))
+            userSession))
         {
             Console.Write(update);
         }
