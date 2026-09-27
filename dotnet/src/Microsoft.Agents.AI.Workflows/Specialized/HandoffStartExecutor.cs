@@ -69,6 +69,15 @@ internal sealed class HandoffStartExecutor(bool returnToPrevious) : ChatProtocol
 
     protected override ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, bool? emitEvents, CancellationToken cancellationToken = default)
     {
+        // A turn token without messages does not start a turn. WorkflowSession sends one on every resume,
+        // including a resume that only answers a request held by an agent executor: that executor continues
+        // its own turn, and a second, empty turn started here would run alongside it and write the shared
+        // state in the same superstep.
+        if (messages.Count == 0)
+        {
+            return default;
+        }
+
         return context.InvokeWithStateAsync(
             async (HandoffSharedState? sharedState, IWorkflowContext context, CancellationToken cancellationToken) =>
             {
