@@ -910,6 +910,36 @@ public class HandoffOrchestrationTests
     }
 
     [Fact]
+    public async Task Handoffs_AsAgent_RunWithoutMessages_InvokesTheInitialAgentAsync()
+    {
+        int coordinatorCallCount = 0;
+        var coordinator = new ChatClientAgent(new MockChatClient((messages, options) =>
+        {
+            Interlocked.Increment(ref coordinatorCallCount);
+            return new(new ChatMessage(ChatRole.Assistant, "coordinator responded"));
+        }), name: "coordinator");
+
+        var specialist = new ChatClientAgent(new MockChatClient((messages, options) =>
+            new(new ChatMessage(ChatRole.Assistant, "specialist responded"))),
+            name: "specialist", description: "The specialist agent");
+
+        var workflow = AgentWorkflowBuilder.CreateHandoffBuilderWith(coordinator)
+            .WithHandoff(coordinator, specialist)
+            .Build();
+
+        AIAgent workflowAgent = workflow.AsAIAgent(name: "Workflow", includeExceptionDetails: true);
+        AgentSession session = await workflowAgent.CreateSessionAsync();
+
+        AgentResponse first = await workflowAgent.RunAsync(session);
+        AgentResponse second = await workflowAgent.RunAsync(session);
+
+        Assert.Equal(2, coordinatorCallCount);
+        Assert.Equal("coordinator responded", first.Text);
+        Assert.Equal("coordinator responded", second.Text);
+        Assert.Empty(second.Messages.SelectMany(m => m.Contents).OfType<ErrorContent>());
+    }
+
+    [Fact]
     public async Task Handoffs_ReturnToPrevious_DisabledByDefault_SecondTurnRoutesViaCoordinatorAsync()
     {
         int coordinatorCallCount = 0;
