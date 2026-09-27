@@ -1278,6 +1278,12 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
     - (not set): Inherits integrity from resolved, owned variable references, or uses
       default_integrity (UNTRUSTED by default). Argument labels may only restrict this baseline.
 
+    Tools may also declare additional_properties["standing_guidance"]: list[str] —
+    sentences the middleware appends to the result as trusted Content, explaining
+    what a hidden or labeled result means. Declared at the tool level, so it cannot
+    vary with arguments or runtime data; the tool body never sees or returns it.
+
+
     This middleware:
     1. Extracts labels from tool input arguments (tier 3 input)
     2. Checks tool's source_integrity declaration (tier 2)
@@ -1287,6 +1293,9 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
     6. Accepts complete labels only from identity-stamped framework producers
     7. Maintains confidentiality labels based on tool declarations
     8. Automatically hides untrusted content using variable indirection
+    9. Appends a tool's declared standing_guidance as framework-stamped, trusted
+       Content — fixed at declaration time, never produced by the tool body.
+
 
     Attributes:
         default_integrity: Default integrity for tools without source_integrity declaration.
@@ -1864,11 +1873,18 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
             function_name: Name of the function that produced the result.
             fallback_label: Tiered fallback label (tier 2 or tier 3).
         """
-        if context.result is None:
-            context.metadata["result_label"] = fallback_label
-            return
+        standing_guidance_items = self._standing_guidance_items(
+            _get_additional_properties(context.function).get("standing_guidance"),
+            fallback_label.confidentiality,
+        )
 
-        original_items = self._ensure_content_list(context.result)
+        if context.result is None:
+            if not standing_guidance_items:
+                context.metadata["result_label"] = fallback_label
+                return
+            original_items = standing_guidance_items
+        else:
+            original_items = [*self._ensure_content_list(context.result), *standing_guidance_items]
 
         # Process items — apply per-item labels + hide untrusted items
         processed, result_label, visible_result_label = self._process_result_with_embedded_labels(
@@ -2021,6 +2037,58 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         combined = combine_labels(*item_labels) if item_labels else fallback_label
         visible_combined = combine_labels(*visible_item_labels) if visible_item_labels else None
         return processed, combined, visible_combined
+
+    @staticmethod
+    def _standing_guidance_items(
+        standing_guidance: Any,
+        confidentiality: ConfidentialityLabel,
+    ) -> list[Content]:
+        """Build framework-owned Content items for a tool's declared standing guidance.
+
+        The guidance text is fixed at tool-declaration time and never passes through
+        the tool body — the middleware constructs these items itself, after
+        ``call_next()`` returns, from ``additional_properties["standing_guidance"]``
+        on the tool. Each item is identity-stamped authoritative TRUSTED, the same
+        mechanism ``quarantined_llm``'s primary response and ``inspect_variable``
+        errors use, because the framework — not a third party — is the producer.
+
+        Args:
+            standing_guidance: The tool's declared ``standing_guidance`` value.
+                Expected to be a list of non-empty strings; anything else is
+                ignored with a warning rather than raised, so a malformed
+                declaration degrades to "no guidance" instead of failing the call.
+            confidentiality: Confidentiality to stamp the guidance with — the
+                tool's own resolved confidentiality, so guidance about a
+                private-confidentiality tool doesn't leak at a lower level.
+
+        Returns:
+            A list of Content items, one per valid guidance sentence. Empty if
+            ``standing_guidance`` is ``None`` or not a list of strings.
+        """
+        if not standing_guidance:
+            return []
+        if not isinstance(standing_guidance, list):
+            logger.warning("Ignoring non-list standing_guidance: %r", standing_guidance)
+            return []
+
+        items: list[Content] = []
+        for sentence in cast(list[Any], standing_guidance):
+            if not isinstance(sentence, str) or not sentence:
+                logger.warning("Ignoring non-string/empty standing_guidance entry: %r", sentence)
+                continue
+            items.append(
+                Content.from_text(
+                    sentence,
+                    additional_properties={
+                        "security_label": ContentLabel(
+                            integrity=IntegrityLabel.TRUSTED,
+                            confidentiality=confidentiality,
+                        ).to_dict(),
+                        _AUTHORITATIVE_SECURITY_LABEL: _INTERNAL_RESULT_MARKER,
+                    },
+                )
+            )
+        return items
 
     def _extract_content_label(
         self,
