@@ -1779,6 +1779,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
             input_labels = self._get_input_labels(context)
             declared_source_integrity = self._get_source_integrity(context)
             confidentiality = self._get_function_confidentiality(context)
+            standing_guidance_snapshot = deepcopy(_get_additional_properties(context.function).get("standing_guidance"))
 
             # Expand hidden references before execution and retain their stored labels.
             resolved_labels = self._expand_variable_references_in_context(context)
@@ -1846,7 +1847,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
             await call_next()
             if isinstance(context.result, Content) and context.result.type == "function_approval_request":
                 return
-            self._label_result(context, function_name, fallback_label)
+            self._label_result(context, function_name, fallback_label, standing_guidance_snapshot)
         finally:
             _current_middleware.reset(middleware_token)
             self._active_security_scope.reset(scope_token)
@@ -1856,6 +1857,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         context: FunctionInvocationContext,
         function_name: str,
         fallback_label: ContentLabel,
+        standing_guidance: Any = None,
     ) -> None:
         """Label, optionally hide, and update context label for a tool result.
 
@@ -1872,11 +1874,11 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
             context: The function invocation context (result is read/written).
             function_name: Name of the function that produced the result.
             fallback_label: Tiered fallback label (tier 2 or tier 3).
+            standing_guidance: Snapshot of the tool's declared standing_guidance,
+                captured before call_next() so a tool body cannot inject or alter
+                it at runtime. None if the tool declared none.
         """
-        standing_guidance_items = self._standing_guidance_items(
-            _get_additional_properties(context.function).get("standing_guidance"),
-            fallback_label.confidentiality,
-        )
+        standing_guidance_items = self._standing_guidance_items(standing_guidance, fallback_label)
 
         if context.result is None:
             if not standing_guidance_items:
@@ -2041,7 +2043,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
     @staticmethod
     def _standing_guidance_items(
         standing_guidance: Any,
-        confidentiality: ConfidentialityLabel,
+        resolved_label: ContentLabel,
     ) -> list[Content]:
         """Build framework-owned Content items for a tool's declared standing guidance.
 
@@ -2057,9 +2059,14 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
                 Expected to be a list of non-empty strings; anything else is
                 ignored with a warning rather than raised, so a malformed
                 declaration degrades to "no guidance" instead of failing the call.
-            confidentiality: Confidentiality to stamp the guidance with — the
-                tool's own resolved confidentiality, so guidance about a
-                private-confidentiality tool doesn't leak at a lower level.
+            resolved_label: The invocation's resolved fallback label. Its
+                confidentiality stamps the guidance so it doesn't leak at a
+                lower level than the tool's own result, and its metadata is
+                carried through so a USER_IDENTITY confidentiality keeps its
+                principal set — an authoritative label missing principals
+                fails validation and falls back to restrict-only, which would
+                silently hide the guidance instead of surfacing it.
+
 
         Returns:
             A list of Content items, one per valid guidance sentence. Empty if
@@ -2082,7 +2089,8 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
                     additional_properties={
                         "security_label": ContentLabel(
                             integrity=IntegrityLabel.TRUSTED,
-                            confidentiality=confidentiality,
+                            confidentiality=resolved_label.confidentiality,
+                            metadata=resolved_label.metadata,
                         ).to_dict(),
                         _AUTHORITATIVE_SECURITY_LABEL: _INTERNAL_RESULT_MARKER,
                     },

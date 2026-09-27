@@ -591,6 +591,44 @@ class TestLabelTrackingMiddleware:
         assert context.result[0].text == "Nothing was returned, which is expected."
 
     @pytest.mark.asyncio
+    async def test_standing_guidance_preserves_user_identity_principal(self, middleware) -> None:
+        """standing_guidance on a USER_IDENTITY-confidentiality tool keeps its principal set."""
+
+        class IdentityArgs(BaseModel):
+            pass
+
+        async def identity_source() -> str:
+            return "identity data"
+
+        function = FunctionTool(
+            fn=identity_source,
+            name="identity_source_with_guidance",
+            description="Locally declared identity source with guidance",
+            args_schema=IdentityArgs,
+            additional_properties={
+                "source_integrity": "trusted",
+                "confidentiality": "user_identity",
+                _PRINCIPALS_KEY: _principal_metadata("user-a")[_PRINCIPALS_KEY],
+                "standing_guidance": ["This result is scoped to a single user."],
+            },
+        )
+        context = FunctionInvocationContext(function=function, arguments={})
+
+        async def next_fn() -> None:
+            context.result = [Content.from_text("identity data")]
+
+        await middleware.process(context, next_fn)
+
+        assert isinstance(context.result, list)
+        assert len(context.result) == 2
+        guidance_item = context.result[1]
+        guidance_label = guidance_item.additional_properties["security_label"]
+
+        assert guidance_label["integrity"] == IntegrityLabel.TRUSTED.value
+        assert guidance_label["confidentiality"] == "user_identity"
+        assert guidance_label["metadata"][_PRINCIPALS_KEY] == [{"tenant_id": "tenant-a", "user_id": "user-a"}]
+
+    @pytest.mark.asyncio
     async def test_input_labels_propagate_to_output(self, middleware):
         """Test that source_integrity overrides input labels (tier 2 > tier 3).
 
