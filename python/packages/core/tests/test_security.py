@@ -2215,6 +2215,11 @@ class TestPolicyEnforcementMiddleware:
         middleware = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
         monkeypatch.setattr(middleware, "_block_unsafe_approval_binding", lambda *args, **kwargs: None)
 
+        def fail_pending_record(*_args: object, **_kwargs: object) -> None:
+            raise ValueError("simulated pending approval binding failure")
+
+        monkeypatch.setattr(middleware, "_pending_record", fail_pending_record)
+
         class DestinationArgs(BaseModel):
             value: str = "value"
 

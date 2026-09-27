@@ -2880,7 +2880,8 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
                 binding = self._pending_record(context, violations)
             except (TypeError, ValueError, OverflowError):
                 self._block_unsafe_approval_binding(context, context_label=context_label)
-            approved = self._matches_pending_approval(context, binding)
+            else:
+                approved = self._matches_pending_approval(context, binding)
 
         disclosed = ", ".join(item["violation_type"] for item in violations)
         if approved:
