@@ -1,1 +1,6 @@
 ﻿#nullable enable
+*REMOVED*Microsoft.Agents.AI.Workflows.TurnToken.TurnToken(bool? emitEvents = null) -> void
+Microsoft.Agents.AI.Workflows.TurnToken.RunOptions.get -> Microsoft.Agents.AI.AgentRunOptions?
+Microsoft.Agents.AI.Workflows.TurnToken.TurnToken(bool? emitEvents) -> void
+Microsoft.Agents.AI.Workflows.TurnToken.TurnToken(bool? emitEvents = null, Microsoft.Agents.AI.AgentRunOptions? runOptions = null) -> void
+virtual Microsoft.Agents.AI.Workflows.ChatProtocolExecutor.TakeTurnWithTokenAsync(System.Collections.Generic.List<Microsoft.Extensions.AI.ChatMessage!>! messages, Microsoft.Agents.AI.Workflows.IWorkflowContext! context, Microsoft.Agents.AI.Workflows.TurnToken! turnToken, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask

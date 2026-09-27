@@ -16,6 +16,7 @@ internal sealed class RecordingReplayAgent(List<List<ChatMessage>> messages, str
     : TestReplayAgent(messages, id, name)
 {
     public List<List<ChatMessage>> RecordedInputs { get; } = [];
+    public List<AgentRunOptions?> RecordedRunOptions { get; } = [];
 
     protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
@@ -24,6 +25,7 @@ internal sealed class RecordingReplayAgent(List<List<ChatMessage>> messages, str
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         this.RecordedInputs.Add(messages.ToList());
+        this.RecordedRunOptions.Add(options);
         await foreach (AgentResponseUpdate update in base.RunCoreStreamingAsync(messages, session, options, cancellationToken))
         {
             yield return update;

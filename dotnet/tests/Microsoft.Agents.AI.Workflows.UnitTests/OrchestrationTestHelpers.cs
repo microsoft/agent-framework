@@ -75,6 +75,31 @@ public static class OrchestrationTestHelpers
 
     internal sealed record WorkflowRunResult(string UpdateText, List<ChatMessage>? Result, CheckpointInfo? LastCheckpoint, List<RequestInfoEvent> PendingRequests);
 
+    internal static async Task<CheckpointInfo> RunWorkflowAgentUntilCheckpointAsync(
+        AIAgent workflowAgent,
+        AgentSession session,
+        AgentRunOptions runOptions,
+        int checkpointNumber)
+    {
+        int observedCheckpoints = 0;
+        await foreach (AgentResponseUpdate update in workflowAgent.RunStreamingAsync(
+            new ChatMessage(ChatRole.User, "Start"),
+            session,
+            runOptions))
+        {
+            if (update.RawRepresentation is SuperStepCompletedEvent
+                {
+                    CompletionInfo.Checkpoint: { } checkpoint
+                }
+                && ++observedCheckpoints == checkpointNumber)
+            {
+                return checkpoint;
+            }
+        }
+
+        throw new InvalidOperationException($"The workflow completed before checkpoint {checkpointNumber} was observed.");
+    }
+
     internal static async Task<WorkflowRunResult> RunWorkflowCheckpointedAsync(
         Workflow workflow, List<ChatMessage> input, InProcessExecutionEnvironment environment, CheckpointInfo? fromCheckpoint = null)
     {

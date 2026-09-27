@@ -18,6 +18,204 @@ namespace Microsoft.Agents.AI.Workflows.UnitTests;
 public class MagenticOrchestrationTests
 {
     [Fact]
+    public async Task Magentic_AsAgent_PropagatesRunOptionsToManagerAndParticipantsAsync()
+    {
+        // Arrange
+        RecordingReplayAgent manager = new(
+            [
+                CreatePlanResponse("Facts about the task"),
+                CreatePlanResponse("Ask Worker to complete the task"),
+                CreateProgressLedgerResponse(
+                    isRequestSatisfied: false,
+                    isInLoop: false,
+                    isProgressBeingMade: true,
+                    nextSpeaker: "Worker",
+                    instructionOrQuestion: "Complete the task"),
+                CreateProgressLedgerResponse(
+                    isRequestSatisfied: true,
+                    isInLoop: false,
+                    isProgressBeingMade: true,
+                    nextSpeaker: "Worker",
+                    instructionOrQuestion: "The task is complete"),
+                CreateFinalAnswerResponse("Task completed successfully!"),
+            ],
+            name: "Manager");
+        RecordingEchoAgent worker = new(name: "Worker");
+        AIAgent workflowAgent = new MagenticWorkflowBuilder(manager)
+            .AddParticipants(worker)
+            .RequirePlanSignoff(false)
+            .Build()
+            .AsAIAgent();
+        AgentRunOptions runOptions = new() { AdditionalProperties = new() { ["test-property"] = "test-value" } };
+
+        // Act
+        _ = await workflowAgent.RunAsync("Do the task", options: runOptions);
+
+        // Assert
+        Assert.NotEmpty(manager.RecordedRunOptions);
+        Assert.All(manager.RecordedRunOptions, options => Assert.Same(runOptions, options));
+        Assert.NotEmpty(worker.RecordedRunOptions);
+        Assert.All(worker.RecordedRunOptions, options => Assert.Same(runOptions, options));
+    }
+
+    [Fact]
+    public async Task Magentic_AsAgent_CheckpointRecoveryUsesCurrentRunOptionsAsync()
+    {
+        // Arrange
+        RecordingReplayAgent manager = new(
+            [
+                CreatePlanResponse("Facts about the task"),
+                CreatePlanResponse("Ask Worker to complete the task"),
+                CreateProgressLedgerResponse(
+                    isRequestSatisfied: false,
+                    isInLoop: false,
+                    isProgressBeingMade: true,
+                    nextSpeaker: "Worker",
+                    instructionOrQuestion: "Complete the task"),
+                CreateProgressLedgerResponse(
+                    isRequestSatisfied: true,
+                    isInLoop: false,
+                    isProgressBeingMade: true,
+                    nextSpeaker: "Worker",
+                    instructionOrQuestion: "The task is complete"),
+                CreateFinalAnswerResponse("Task completed successfully!"),
+            ],
+            name: "Manager");
+        RecordingEchoAgent worker = new(name: "Worker");
+        Workflow workflow = new MagenticWorkflowBuilder(manager)
+            .AddParticipants(worker)
+            .RequirePlanSignoff(false)
+            .Build();
+        InProcessExecutionEnvironment environment =
+            InProcessExecution.Lockstep.WithCheckpointing(CheckpointManager.CreateInMemory());
+        AIAgent workflowAgent = workflow.AsAIAgent(executionEnvironment: environment);
+        AgentSession session = await workflowAgent.CreateSessionAsync();
+        AgentRunOptions firstRunOptions = new() { AdditionalProperties = new() { ["invocation"] = "first" } };
+        AgentRunOptions recoveryRunOptions = new() { AdditionalProperties = new() { ["invocation"] = "recovery" } };
+
+        CheckpointInfo checkpoint = await OrchestrationTestHelpers.RunWorkflowAgentUntilCheckpointAsync(
+            workflowAgent,
+            session,
+            firstRunOptions,
+            checkpointNumber: 2);
+        int managerCallsBeforeRecovery = manager.RecordedRunOptions.Count;
+        WorkflowSessionCheckpointRecovery recovery = session.GetService<WorkflowSessionCheckpointRecovery>()
+            ?? throw new InvalidOperationException("Workflow checkpoint recovery was not available.");
+        Assert.True(recovery.TryPrepare(checkpoint.CheckpointId));
+
+        // Act
+        List<AgentResponseUpdate> recoveryUpdates = await workflowAgent
+            .RunStreamingAsync([], session, recoveryRunOptions)
+            .ToListAsync();
+
+        // Assert
+        Assert.Empty(recoveryUpdates.SelectMany(update => update.Contents.OfType<ErrorContent>()));
+        Assert.NotEmpty(manager.RecordedRunOptions.Take(managerCallsBeforeRecovery));
+        Assert.All(manager.RecordedRunOptions.Take(managerCallsBeforeRecovery), options => Assert.Same(firstRunOptions, options));
+        Assert.NotEmpty(manager.RecordedRunOptions.Skip(managerCallsBeforeRecovery));
+        Assert.All(manager.RecordedRunOptions.Skip(managerCallsBeforeRecovery), options => Assert.Same(recoveryRunOptions, options));
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    public async Task Magentic_AsAgent_PlanReviewContinuationUsesCurrentRunOptionsAsync(bool approvePlan, bool serializeSession)
+    {
+        // Arrange
+        List<List<ChatMessage>> managerResponses =
+        [
+            CreatePlanResponse("Initial facts"),
+            CreatePlanResponse("Initial plan"),
+        ];
+        if (approvePlan)
+        {
+            managerResponses.Add(CreateProgressLedgerResponse(
+                isRequestSatisfied: false,
+                isInLoop: false,
+                isProgressBeingMade: true,
+                nextSpeaker: "Worker",
+                instructionOrQuestion: "Complete the task"));
+            managerResponses.Add(CreateProgressLedgerResponse(
+                isRequestSatisfied: true,
+                isInLoop: false,
+                isProgressBeingMade: true,
+                nextSpeaker: "Worker",
+                instructionOrQuestion: "The task is complete"));
+            managerResponses.Add(CreateFinalAnswerResponse("Task completed successfully!"));
+        }
+        else
+        {
+            managerResponses.Add(CreatePlanResponse("Revised facts"));
+            managerResponses.Add(CreatePlanResponse("Revised plan"));
+        }
+
+        RecordingReplayAgent manager = new(managerResponses, name: "Manager");
+        RecordingEchoAgent worker = new(name: "Worker");
+        InProcessExecutionEnvironment environment =
+            InProcessExecution.Lockstep.WithCheckpointing(CheckpointManager.CreateInMemory());
+        AIAgent workflowAgent = new MagenticWorkflowBuilder(manager)
+            .AddParticipants(worker)
+            .RequirePlanSignoff(true)
+            .Build()
+            .AsAIAgent(executionEnvironment: environment);
+        AgentSession session = await workflowAgent.CreateSessionAsync();
+        AgentRunOptions firstRunOptions = new() { AdditionalProperties = new() { ["invocation"] = "first" } };
+        AgentRunOptions continuationRunOptions = new() { AdditionalProperties = new() { ["invocation"] = "continuation" } };
+
+        List<AgentResponseUpdate> firstUpdates = await workflowAgent
+            .RunStreamingAsync("Do the task", session, firstRunOptions)
+            .ToListAsync();
+        RequestInfoEvent requestEvent = Assert.Single(firstUpdates
+            .Select(update => update.RawRepresentation)
+            .OfType<RequestInfoEvent>());
+        MagenticPlanReviewRequest reviewRequest = requestEvent.Request.Data.As<MagenticPlanReviewRequest>()
+            ?? throw new InvalidOperationException("The plan review request was not available.");
+        FunctionCallContent functionCall = Assert.Single(firstUpdates
+            .SelectMany(update => update.Contents)
+            .OfType<FunctionCallContent>());
+        int managerCallsBeforeContinuation = manager.RecordedRunOptions.Count;
+
+        if (serializeSession)
+        {
+            JsonElement serializedSession = await workflowAgent.SerializeSessionAsync(session);
+            session = await workflowAgent.DeserializeSessionAsync(serializedSession);
+        }
+
+        MagenticPlanReviewResponse reviewResponse = approvePlan
+            ? reviewRequest.Approve()
+            : reviewRequest.Revise("Please revise the plan");
+        ChatMessage responseMessage = new(
+            ChatRole.Tool,
+            [new FunctionResultContent(functionCall.CallId, reviewResponse)]);
+
+        // Act
+        List<AgentResponseUpdate> continuationUpdates = await workflowAgent
+            .RunStreamingAsync(responseMessage, session, continuationRunOptions)
+            .ToListAsync();
+
+        // Assert
+        Assert.Empty(continuationUpdates.SelectMany(update => update.Contents.OfType<ErrorContent>()));
+        Assert.NotEmpty(manager.RecordedRunOptions.Take(managerCallsBeforeContinuation));
+        Assert.All(manager.RecordedRunOptions.Take(managerCallsBeforeContinuation), options => Assert.Same(firstRunOptions, options));
+        Assert.NotEmpty(manager.RecordedRunOptions.Skip(managerCallsBeforeContinuation));
+        Assert.All(manager.RecordedRunOptions.Skip(managerCallsBeforeContinuation), options => Assert.Same(continuationRunOptions, options));
+
+        if (approvePlan)
+        {
+            Assert.NotEmpty(worker.RecordedRunOptions);
+            Assert.All(worker.RecordedRunOptions, options => Assert.Same(continuationRunOptions, options));
+        }
+        else
+        {
+            Assert.Single(continuationUpdates
+                .Select(update => update.RawRepresentation)
+                .OfType<RequestInfoEvent>());
+        }
+    }
+
+    [Fact]
     public async Task Task_Completes_When_RequestSatisfiedAsync()
     {
         // Arrange: Manager reports task satisfied on first coordination round

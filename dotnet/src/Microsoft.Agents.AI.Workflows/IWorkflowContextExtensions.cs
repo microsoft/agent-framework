@@ -11,6 +11,14 @@ namespace Microsoft.Agents.AI.Workflows;
 /// </summary>
 public static class IWorkflowContextExtensions
 {
+    internal static AgentRunOptions? GetAgentRunOptions(this IWorkflowContext context, AgentRunOptions? fallback)
+    {
+        return context is IWorkflowAgentRunOptionsContext invocationContext
+            && invocationContext.TryGetAgentRunOptions(out AgentRunOptions? runOptions)
+                ? runOptions
+                : fallback;
+    }
+
     /// <summary>
     /// Invokes an asynchronous operation that reads, updates, and persists workflow state associated with the specified
     /// key.
