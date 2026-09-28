@@ -1468,6 +1468,20 @@ async def test_prepare_config_stop_sequences() -> None:
     assert config.stop_sequences == ["END", "STOP"]
 
 
+async def test_prepare_config_stop_single_string() -> None:
+    """A single stop string is sent as a one-item stop_sequences list."""
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Hi")]))
+
+    await client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Hi")])],
+        options={"stop": "END"},
+    )
+
+    config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
+    assert config.stop_sequences == ["END"]
+
+
 async def test_prepare_config_seed() -> None:
     """Forwards the seed option to GenerateContentConfig.seed for reproducible outputs."""
     client, mock = _make_gemini_client()

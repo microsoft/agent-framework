@@ -892,8 +892,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 name="weather-agent",
                 instructions="You are a weather assistant.",
                 tools=get_weather,
-                temperature=0.7,
-                max_tokens=500,
+                default_options={"temperature": 0.7, "max_tokens": 500},
             )
 
             # Use streaming responses
@@ -912,20 +911,30 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             client = OpenAIChatClient(model="gpt-4o")
             agent: Agent[OpenAIChatOptions] = Agent(
                 client=client,
-                name="reasoning-agent",
-                instructions="You are a reasoning assistant.",
-                options={
+                name="typed-agent",
+                instructions="You are a helpful assistant.",
+                default_options={
                     "temperature": 0.7,
                     "max_tokens": 500,
-                    "reasoning_effort": "high",  # OpenAI-specific, IDE will autocomplete!
+                    "include": ["message.output_text.logprobs"],  # OpenAI-specific option
                 },
             )
 
-            # Or pass options at runtime
+            # Or override default options at runtime
             response = await agent.run(
                 "What is 25 * 47?",
-                options={"temperature": 0.0, "logprobs": True},
+                options={"temperature": 0.0},
             )
+
+        Explicit resource management (equivalent to ``async with agent``):
+
+        .. code-block:: python
+
+            await agent.open()
+            try:
+                response = await agent.run("Hello")
+            finally:
+                await agent.close()
     """
 
     AGENT_PROVIDER_NAME: ClassVar[str] = "microsoft.agent_framework"
@@ -1049,22 +1058,28 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         self._async_exit_stack = AsyncExitStack()
         self._update_agent_name_and_description()
 
-    async def __aenter__(self) -> Self:
-        """Enter the async context manager.
+    async def open(self) -> Self:
+        """Open the client's and configured MCP tools' async contexts.
 
-        If any of the client or local_mcp_tools are context managers,
-        they will be entered into the async exit stack to ensure proper cleanup.
-
-        Note:
-            This list might be extended in the future.
+        Call ``await agent.close()`` when finished, or use ``async with agent``
+        to open and close automatically. Already-entered contexts are closed if
+        a later context fails to open.
 
         Returns:
-            The Agent instance.
+            The agent instance.
         """
-        for context_manager in chain([self.client], self.mcp_tools):
-            if isinstance(context_manager, AbstractAsyncContextManager):
-                await self._async_exit_stack.enter_async_context(context_manager)
+        try:
+            for context_manager in chain([self.client], self.mcp_tools):
+                if isinstance(context_manager, AbstractAsyncContextManager):
+                    await self._async_exit_stack.enter_async_context(context_manager)
+        except BaseException:
+            await self.close()
+            raise
         return self
+
+    async def __aenter__(self) -> Self:
+        """Enter the async context manager by opening managed resources."""
+        return await self.open()
 
     def _get_history_providers(self) -> list[HistoryProvider]:
         return [provider for provider in self.context_providers if isinstance(provider, HistoryProvider)]
@@ -1095,22 +1110,18 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             )
         return history_providers
 
+    async def close(self) -> None:
+        """Close managed client and MCP contexts, including lazily opened MCP tools."""
+        await self._async_exit_stack.aclose()
+
     async def __aexit__(
         self,
         exc_type: type[BaseException] | None,
         exc_val: BaseException | None,
         exc_tb: Any,
     ) -> None:
-        """Exit the async context manager.
-
-        Close the async exit stack to ensure all context managers are exited properly.
-
-        Args:
-            exc_type: The exception type if an exception was raised, None otherwise.
-            exc_val: The exception value if an exception was raised, None otherwise.
-            exc_tb: The exception traceback if an exception was raised, None otherwise.
-        """
-        await self._async_exit_stack.aclose()
+        """Exit the async context manager by closing managed resources."""
+        await self.close()
 
     def _update_agent_name_and_description(self) -> None:
         """Update the agent name in the chat client.
@@ -1944,6 +1955,9 @@ class Agent(
     - OpenTelemetry-based telemetry for observability
 
     For a minimal implementation without these features, use :class:`RawAgent`.
+
+    Use ``await agent.open()`` and ``await agent.close()`` for explicit resource
+    management, or ``async with agent`` to close managed resources automatically.
     """
 
     @overload

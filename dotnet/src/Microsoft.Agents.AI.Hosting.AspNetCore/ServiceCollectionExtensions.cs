@@ -25,6 +25,17 @@ public static class ServiceCollectionExtensions
     /// Ensure that <c>services.AddHttpContextAccessor()</c> has been called before using this method.
     /// </para>
     /// <para>
+    /// This method does not configure authentication or require authorization on endpoints. Hosts must
+    /// separately configure an ASP.NET Core authentication scheme and authorization, and protect the
+    /// mapped endpoints, for example with <c>RequireAuthorization()</c>. The provider reads the configured
+    /// claim only from the caller's authenticated identities and ignores claims on unauthenticated identities
+    /// attached to the same principal. Code that adds claims to an authenticated identity, such as claims
+    /// transformation, must not copy client-supplied values into the configured claim type.
+    /// An unauthenticated caller or a caller without the configured claim
+    /// produces no isolation key, which causes strict-mode stores to fail rather than use shared storage.
+    /// AG-UI, A2A, and OpenAI hosting consume the registered provider to scope their stored resources.
+    /// </para>
+    /// <para>
     /// When <paramref name="options"/> is not supplied, the isolation key is derived from the
     /// <see cref="ClaimTypes.NameIdentifier"/> claim, a stable unique subject identifier. For OpenID
     /// Connect tokens (including Microsoft Entra ID), this is typically mapped from the <c>sub</c> claim

@@ -32,6 +32,7 @@ from agent_framework import (
 )
 from agent_framework._settings import SecretString, load_settings
 from agent_framework._telemetry import get_user_agent, mark_feature_used
+from agent_framework._types import _get_data_bytes
 from agent_framework.exceptions import ChatClientInvalidResponseException
 from agent_framework.observability import ChatTelemetryLayer
 from boto3.session import Session as Boto3Session
@@ -337,10 +338,11 @@ class BedrockChatClient(
             session_kwargs["aws_session_token"] = session_token.get_secret_value()
         return Boto3Session(**session_kwargs)
 
-    def _invoke_converse(self, request: Mapping[str, Any]) -> dict[str, Any]:
+    def _invoke_converse(self, request: Mapping[str, Any], stream: bool = False) -> dict[str, Any]:
         mark_feature_used(FeatureIndex.BEDROCK)
         try:
-            response = self._bedrock_client.converse(**request)
+            invoke = self._bedrock_client.converse_stream if stream else self._bedrock_client.converse
+            response = invoke(**request)
             if not isinstance(response, Mapping):
                 raise ChatClientInvalidResponseException("Bedrock converse response must be a mapping.")
             return response
@@ -374,24 +376,18 @@ class BedrockChatClient(
         request = self._prepare_options(messages, options, **kwargs)
 
         if stream:
-            # Streaming mode - simulate streaming by yielding a single update
+            # Streaming mode - yield an update per ConverseStream event
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
-                response = await asyncio.to_thread(self._invoke_converse, request)
-                parsed_response = self._process_converse_response(response, options)
-                contents = list(parsed_response.messages[0].contents if parsed_response.messages else [])
-                if parsed_response.usage_details:
-                    contents.append(Content.from_usage(usage_details=parsed_response.usage_details))
-                raw_finish_reason = (
-                    parsed_response.finish_reason if isinstance(parsed_response.finish_reason, str) else None
-                )
-                finish_reason = self._map_finish_reason(raw_finish_reason)
-                yield ChatResponseUpdate(
-                    response_id=parsed_response.response_id,
-                    contents=contents,
-                    model=parsed_response.model,
-                    finish_reason=finish_reason,
-                    raw_representation=parsed_response.raw_representation,
-                )
+                response = await asyncio.to_thread(self._invoke_converse, request, True)
+                events = response["stream"]
+                event_iterator = iter(events)
+                tool_call_ids: dict[int, str] = {}
+                try:
+                    while (event := await asyncio.to_thread(next, event_iterator, None)) is not None:
+                        if update := self._process_converse_stream_event(event, request["modelId"], tool_call_ids):
+                            yield update
+                finally:
+                    events.close()
 
             return self._build_response_stream(_stream(), response_format=options.get("response_format"))
 
@@ -434,7 +430,8 @@ class BedrockChatClient(
         if (top_p := options.get("top_p")) is not None:
             run_options["inferenceConfig"]["topP"] = top_p
         if (stop := options.get("stop")) is not None:
-            run_options["inferenceConfig"]["stopSequences"] = stop
+            # ChatOptions allows a single stop string; stopSequences takes a list.
+            run_options["inferenceConfig"]["stopSequences"] = [stop] if isinstance(stop, str) else stop
 
         tool_config = self._prepare_tools(options.get("tools"))
         if tool_mode := validate_tool_mode(options.get("tool_choice")):
@@ -572,7 +569,7 @@ class BedrockChatClient(
         blocks: list[dict[str, Any]] = []
         for content in message.contents:
             block = self._convert_content_to_bedrock_block(content)
-            if block is None:
+            if block is None or ("image" in block and message.role != "user"):
                 logger.debug("Skipping unsupported content type for Bedrock: %s", type(content))
                 continue
             blocks.append(block)
@@ -582,6 +579,13 @@ class BedrockChatClient(
         match content.type:
             case "text":
                 return {"text": content.text}
+            case "data" if content.has_top_level_media_type("image"):
+                image_format = content.media_type.partition("/")[2].lower()
+                image_format = "jpeg" if image_format == "jpg" else image_format
+                if image_format not in ("gif", "jpeg", "png", "webp"):
+                    logger.warning("Skipping %s image: Bedrock accepts gif, jpeg, png or webp.", content.media_type)
+                    return None
+                return {"image": {"format": image_format, "source": {"bytes": _get_data_bytes(content)}}}
             case "function_call":
                 arguments = content.parse_arguments() or {}
                 return {
@@ -702,6 +706,40 @@ class BedrockChatClient(
             finish_reason=finish_reason,
             response_format=options.get("response_format") if options else None,
             raw_representation=response,
+        )
+
+    def _process_converse_stream_event(
+        self, event: Mapping[str, Any], model: str, tool_call_ids: dict[int, str]
+    ) -> ChatResponseUpdate | None:
+        """Convert a single Bedrock ConverseStream event to a ChatResponseUpdate."""
+        contents: list[Content] = []
+        finish_reason = None
+        if block_start := event.get("contentBlockStart"):
+            if tool_use := block_start.get("start", {}).get("toolUse"):
+                tool_call_ids[block_start.get("contentBlockIndex", 0)] = tool_use["toolUseId"]
+                contents.append(
+                    Content.from_function_call(call_id=tool_use["toolUseId"], name=tool_use["name"], arguments="")
+                )
+        elif block_delta := event.get("contentBlockDelta"):
+            delta = block_delta.get("delta", {})
+            if text_value := delta.get("text"):
+                contents.append(Content.from_text(text=text_value, raw_representation=delta))
+            elif tool_use_delta := delta.get("toolUse"):
+                contents.append(
+                    Content.from_function_call(
+                        call_id=tool_call_ids.get(block_delta.get("contentBlockIndex", 0), ""),
+                        name="",
+                        arguments=tool_use_delta.get("input", ""),
+                    )
+                )
+        elif message_stop := event.get("messageStop"):
+            finish_reason = self._map_finish_reason(message_stop.get("stopReason"))
+        elif (metadata := event.get("metadata")) and (usage_details := self._parse_usage(metadata.get("usage"))):
+            contents.append(Content.from_usage(usage_details=usage_details))
+        if not contents and finish_reason is None:
+            return None
+        return ChatResponseUpdate(
+            role="assistant", contents=contents, model=model, finish_reason=finish_reason, raw_representation=event
         )
 
     def _parse_usage(self, usage: dict[str, Any] | None) -> UsageDetails | None:
