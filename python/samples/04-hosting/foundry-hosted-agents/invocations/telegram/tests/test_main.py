@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import logging
 import sys
@@ -213,11 +214,16 @@ async def test_command_addressed_to_this_bot_is_handled(monkeypatch: pytest.Monk
 
 
 async def test_bot_username_is_cached(monkeypatch: pytest.MonkeyPatch) -> None:
-    runtime = cast(Any, SimpleNamespace(bot_username=None))
-    execute = AsyncMock(return_value={"username": "mybot"})
+    runtime = cast(Any, SimpleNamespace(bot_username=None, bot_username_lock=asyncio.Lock()))
+
+    async def execute_get_me(*_: Any) -> dict[str, str]:
+        await asyncio.sleep(0)
+        return {"username": "mybot"}
+
+    execute = AsyncMock(side_effect=execute_get_me)
     monkeypatch.setattr(main, "execute_telegram_operation", execute)
 
-    assert await main.get_bot_username(runtime) == "mybot"
+    assert await asyncio.gather(main.get_bot_username(runtime), main.get_bot_username(runtime)) == ["mybot", "mybot"]
     assert await main.get_bot_username(runtime) == "mybot"
     execute.assert_awaited_once_with(runtime, {"method": "getMe", "payload": {}})
 

@@ -17,7 +17,7 @@ import logging
 import os
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -85,6 +85,7 @@ class Runtime:
     http: httpx.AsyncClient
     bot_token: str | None = None
     bot_username: str | None = None
+    bot_username_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 _runtime: Runtime | None = None
@@ -151,12 +152,15 @@ async def get_bot_username(runtime: Runtime) -> str:
     """Return this bot's Telegram username, fetching it once from getMe."""
     if runtime.bot_username is not None:
         return runtime.bot_username
-    me = await execute_telegram_operation(runtime, TelegramOperation(method="getMe", payload={}))
-    username = me.get("username")
-    if not isinstance(username, str) or not username:
-        raise RuntimeError("Telegram getMe did not return a bot username")
-    runtime.bot_username = username
-    return username
+    async with runtime.bot_username_lock:
+        if runtime.bot_username is not None:
+            return runtime.bot_username
+        me = await execute_telegram_operation(runtime, TelegramOperation(method="getMe", payload={}))
+        username = me.get("username")
+        if not isinstance(username, str) or not username:
+            raise RuntimeError("Telegram getMe did not return a bot username")
+        runtime.bot_username = username
+        return username
 
 
 async def authenticate_ingress(request: Request, runtime: Runtime) -> bool:
