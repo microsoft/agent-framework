@@ -455,6 +455,16 @@ def test_prepare_options_adds_instructions_and_sampling_settings() -> None:
     }
 
 
+def test_prepare_options_single_stop_string_becomes_list() -> None:
+    """stopSequences only accepts a list, so a single stop string is wrapped."""
+    client = _make_client()
+    messages = [Message(role="user", contents=[Content.from_text(text="hello")])]
+
+    request = client._prepare_options(messages, {"stop": "DONE"})
+
+    assert request["inferenceConfig"]["stopSequences"] == ["DONE"]
+
+
 def test_prepare_options_unsupported_tool_mode_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     """Unexpected tool modes should raise a clear error."""
     from agent_framework_bedrock import _chat_client as chat_client_module

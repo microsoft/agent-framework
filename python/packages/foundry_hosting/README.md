@@ -88,7 +88,7 @@ subdirectory instead.
 Each logical store is saved as one JSON file whose name is a URL-safe Base64
 encoding of the store name. For example:
 
-- Agent sessions: `YWdlbnRfc2Vzc2lvbnM.json`
+- Responses agent sessions: `YWdlbnRfc2Vzc2lvbnM.json`
 - Function approvals: `ZnVuY3Rpb25fYXBwcm92YWxz.json`
 - Workflow checkpoints: one file per context, encoded from `checkpoints/<context_id>`
 
@@ -103,9 +103,10 @@ No additional partitioning configuration is required when using the default stor
 
 ### Agent Sessions
 
-`ResponsesHostServer` persists the Agent Framework `AgentSession` durably. By default it
-uses the `FoundryAgentSessionStore`, backed by Foundry storage when hosted and file-based
-storage locally. Stored sessions are scoped under `agent_sessions`.
+`ResponsesHostServer` and `InvocationsHostServer` persist the Agent Framework `AgentSession`
+durably. By default they use `FoundryAgentSessionStore`, backed by Foundry storage when hosted
+and file-based storage locally. Responses sessions use the `agent_sessions` logical store;
+Invocations sessions use the separate `invocation_sessions` store.
 
 See the [custom storage provider sample](../../samples/04-hosting/foundry-hosted-agents/responses/custom_storage/)
 for an example that uses an in-memory session store locally and Azure Cosmos DB when hosted.
@@ -114,11 +115,23 @@ Native Responses refusal parts are stored as text carrying
 `additional_properties["model_output_kind"] == "refusal"` and emitted as
 `response.refusal.*` events when streamed back to clients.
 
-`InvocationsHostServer` keeps sessions in memory. When hosted, `AgentSession.session_id` is an
+`InvocationsHostServer` restores sessions from its configured store. When hosted, `AgentSession.session_id` is an
 opaque composite identifier that preserves the boundaries between the platform session ID
 and user ID. Consumers must use it as a whole and must not parse it or depend on its internal
-representation. Repeated requests for the same identifier pair reuse the session. Locally,
-the platform session ID is used unchanged.
+representation. Repeated requests for the same identifier pair restore the saved session.
+Locally, the platform session ID is used unchanged.
+
+Both hosts accept `agent_session_store_provider` to select a `StoreProvider[SessionStore]`.
+Session state must support `AgentSession` serialization. Use `register_state_type()` codecs for
+custom types; unsupported live objects fail during persistence. Restored sessions preserve
+state, not Python object identity. New default stores expire saved sessions 30 days after
+their last write; an invocation after expiry starts a fresh session.
+Existing stores retain their creation-time settings, and custom providers own their retention
+policies.
+
+Applications must coordinate overlapping requests for the same session; the store does not
+provide transactions or exactly-once execution. Independent local applications should use
+separate state roots or store providers.
 
 ### Workflow checkpoints
 

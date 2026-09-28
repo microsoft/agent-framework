@@ -450,6 +450,28 @@ async def test_set_agent_session_uses_scoped_store() -> None:
     store.set_item.assert_awaited_once_with("storage-session-1", session.to_dict(), call_id="call-1")
 
 
+async def test_agent_session_provider_selects_a_separate_logical_store() -> None:
+    store = _store()
+    with patch(
+        "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+        new=AsyncMock(return_value=store),
+    ) as get_or_create:
+        provider = AgentSessionStoreProvider(store_name="invocation_sessions")
+        storage = provider.get_store(config=_config(is_hosted=False), platform_context=_platform_context())
+        await storage.set("storage-key", AgentSession(session_id="runtime-id"))
+
+    get_or_create.assert_awaited_once_with("invocation_sessions", user_isolation=True)
+    assert store.set_item.call_args.args[1]["session_id"] == "runtime-id"
+
+
+@pytest.mark.parametrize("store_name", ["", " \t", 123])
+def test_session_store_name_must_be_nonempty(store_name: Any) -> None:
+    with pytest.raises(ValueError, match="store_name must be a non-empty string"):
+        FoundryAgentSessionStore(_platform_context(), store_name=store_name)
+    with pytest.raises(ValueError, match="store_name must be a non-empty string"):
+        AgentSessionStoreProvider(store_name=store_name)
+
+
 async def test_get_agent_session_returns_deserialized_session() -> None:
     store = _store()
     session = AgentSession(session_id="agent-session-1")
