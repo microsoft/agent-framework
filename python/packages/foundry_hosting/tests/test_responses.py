@@ -1086,6 +1086,36 @@ class TestResponsesHostServerInit:
 
 
 class TestAgentSessionPersistence:
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_default_store_reuses_one_client_per_response(self, stream: bool) -> None:
+        from azure.ai.agentserver.core.storage import FoundryStateStore
+
+        clients: list[FoundryStateStore] = []
+        get_or_create = FoundryStateStore.get_or_create
+
+        async def create(*args: Any, **kwargs: Any) -> FoundryStateStore:
+            client = await get_or_create(*args, **kwargs)
+            client.aclose = AsyncMock(wraps=client.aclose)
+            clients.append(client)
+            return client
+
+        server = _make_server(
+            _make_agent(stream_updates=[AgentResponseUpdate(contents=[Content.from_text("hello")], role="assistant")])
+        )
+        with patch(
+            "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+            new=AsyncMock(side_effect=create),
+        ) as create_mock:
+            first = await _post(server)
+            second = await _post(server, previous_response_id=first.json()["id"], stream=stream)
+
+        second_body = _parse_sse_events(second.text)[-1]["data"]["response"] if stream else second.json()
+        assert first.json()["status"] == second_body["status"] == "completed"
+        assert create_mock.await_count == 2
+        assert clients[0] is not clients[1]
+        for client in clients:
+            cast(AsyncMock, client.aclose).assert_awaited_once()
+
     async def test_previous_response_chain_restores_session_state(self) -> None:
         seen_counts: list[int] = []
         seen_session_ids: list[str] = []

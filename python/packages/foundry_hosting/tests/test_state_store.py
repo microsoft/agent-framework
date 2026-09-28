@@ -1,4 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
+import asyncio
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -492,6 +493,135 @@ async def test_delete_agent_session_is_idempotent() -> None:
         await FoundryAgentSessionStore(_platform_context()).delete("storage-session-1")
 
     store.delete_item.assert_awaited_once_with("storage-session-1", call_id="call-1")
+
+
+async def test_request_scope_reuses_client_without_caching_session_contents() -> None:
+    store = _store()
+    session = AgentSession(session_id="session-1")
+    store.get_item.return_value = SimpleNamespace(value=session.to_dict())
+    storage = FoundryAgentSessionStore(_platform_context())
+
+    with patch(
+        "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+        new=AsyncMock(return_value=store),
+    ) as get_or_create:
+        async with storage._request_scope():
+            get_or_create.assert_not_awaited()
+            await storage.get("session-1")
+            await storage.set("session-1", session)
+            await storage.get("session-1")
+            store.__aexit__.assert_not_awaited()
+        get_or_create.assert_awaited_once_with("agent_sessions", user_isolation=True)
+
+    assert store.get_item.await_count == 2
+    store.set_item.assert_awaited_once_with("session-1", session.to_dict(), call_id="call-1")
+    store.__aenter__.assert_awaited_once()
+    store.__aexit__.assert_awaited_once()
+
+
+async def test_request_scope_does_not_open_unused_client() -> None:
+    storage = FoundryAgentSessionStore(_platform_context())
+    with patch(
+        "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+        new_callable=AsyncMock,
+    ) as get_or_create:
+        async with storage._request_scope():
+            pass
+    get_or_create.assert_not_awaited()
+
+
+@pytest.mark.parametrize("failure", [OSError("read failed"), asyncio.CancelledError(), GeneratorExit()])
+async def test_request_scope_closes_client_on_failure(failure: BaseException) -> None:
+    store = _store()
+    store.get_item.side_effect = failure
+    storage = FoundryAgentSessionStore(_platform_context())
+    with (
+        patch(
+            "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+            new=AsyncMock(return_value=store),
+        ),
+        pytest.raises(type(failure)),
+    ):
+        async with storage._request_scope():
+            await storage.get("session-1")
+    store.__aexit__.assert_awaited_once()
+    assert storage._request_store is None
+    assert storage._request_resources is None
+
+
+async def test_request_scope_retries_failed_initialization() -> None:
+    store = _store()
+    store.get_item.return_value = None
+    storage = FoundryAgentSessionStore(_platform_context())
+    with patch(
+        "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+        new=AsyncMock(side_effect=[OSError("initialization failed"), store]),
+    ) as get_or_create:
+        async with storage._request_scope():
+            with pytest.raises(OSError, match="initialization failed"):
+                await storage.get("session-1")
+            assert await storage.get("session-1") is None
+    assert get_or_create.await_count == 2
+    store.__aexit__.assert_awaited_once()
+
+
+async def test_request_scope_initializes_once_for_concurrent_reads() -> None:
+    store = _store()
+    store.get_item.return_value = None
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def create(*args: Any, **kwargs: Any) -> MagicMock:
+        started.set()
+        await release.wait()
+        return store
+
+    storage = FoundryAgentSessionStore(_platform_context())
+    with patch(
+        "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+        new=AsyncMock(side_effect=create),
+    ) as get_or_create:
+        async with storage._request_scope():
+            first = asyncio.create_task(storage.get("first"))
+            await started.wait()
+            second = asyncio.create_task(storage.get("second"))
+            release.set()
+            await asyncio.gather(first, second)
+    get_or_create.assert_awaited_once()
+    assert store.get_item.await_count == 2
+    store.__aexit__.assert_awaited_once()
+
+
+async def test_request_scopes_keep_clients_and_call_ids_separate() -> None:
+    first, second = _store(), _store()
+    first.get_item.return_value = second.get_item.return_value = None
+    with patch(
+        "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+        new=AsyncMock(side_effect=[first, second]),
+    ) as get_or_create:
+        for call_id in ("call-1", "call-2"):
+            storage = FoundryAgentSessionStore(_platform_context(call_id))
+            async with storage._request_scope():
+                await storage.get("session-1")
+    assert get_or_create.await_count == 2
+    first.get_item.assert_awaited_once_with("session-1", call_id="call-1")
+    second.get_item.assert_awaited_once_with("session-1", call_id="call-2")
+    first.__aexit__.assert_awaited_once()
+    second.__aexit__.assert_awaited_once()
+
+
+async def test_standalone_operations_still_close_each_client() -> None:
+    store = _store()
+    store.get_item.return_value = None
+    storage = FoundryAgentSessionStore(_platform_context())
+    with patch(
+        "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+        new=AsyncMock(return_value=store),
+    ) as get_or_create:
+        await storage.get("session-1")
+        await storage.set("session-1", AgentSession())
+    assert get_or_create.await_count == 2
+    assert store.__aexit__.await_count == 2
 
 
 @pytest.mark.parametrize("is_hosted", [True, False])

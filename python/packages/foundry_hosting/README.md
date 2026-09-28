@@ -107,6 +107,12 @@ No additional partitioning configuration is required when using the default stor
 uses the `FoundryAgentSessionStore`, backed by Foundry storage when hosted and file-based
 storage locally. Stored sessions are scoped under `agent_sessions`.
 
+Within one Responses request, the default session store lazily opens and reuses
+one Foundry client for session load and save, then closes it before the terminal
+response event. This avoids a second store-metadata lookup without caching session
+contents or sharing clients across requests. Other session-store implementations
+retain their existing lifecycle.
+
 See the [custom storage provider sample](../../samples/04-hosting/foundry-hosted-agents/responses/custom_storage/)
 for an example that uses an in-memory session store locally and Azure Cosmos DB when hosted.
 

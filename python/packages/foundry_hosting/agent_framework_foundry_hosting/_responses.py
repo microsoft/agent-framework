@@ -90,6 +90,7 @@ from ._state_store import (
     AgentSessionStoreProvider,
     CheckpointStoreProvider,
     ContextScopedStoreProvider,
+    FoundryAgentSessionStore,
     FunctionApprovalStore,
     FunctionApprovalStoreProvider,
     StoreProvider,
@@ -752,6 +753,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     session_storage = self._session_storage_provider.get_store(
                         config=self.config, platform_context=request_context
                     )
+                    if isinstance(session_storage, FoundryAgentSessionStore):
+                        await resources.enter_async_context(
+                            session_storage._request_scope()  # pyright: ignore[reportPrivateUsage]
+                        )
                     previous_response_id = request.get("previous_response_id")
                     session_load_id = context.conversation_id or previous_response_id
                     session = await session_storage.get(session_load_id) if session_load_id is not None else None
@@ -808,6 +813,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     cancellation_signal,
                     agent,
                     configuration,
+                    resources,
                 )
 
             try:
@@ -911,6 +917,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         cancellation_signal: asyncio.Event,
         agent: SupportsAgentRun,
         configuration: _AgentConfiguration,
+        resources: AsyncExitStack,
     ) -> AsyncGenerator[ResponseStreamEvent]:
         """Handle a regular (non-workflow) agent.
 
@@ -934,6 +941,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             session_storage = self._session_storage_provider.get_store(
                 config=self.config, platform_context=request_context
             )
+            if isinstance(session_storage, FoundryAgentSessionStore):
+                await resources.enter_async_context(
+                    session_storage._request_scope()  # pyright: ignore[reportPrivateUsage]
+                )
 
             # Load the caller's input items and prior conversation history concurrently with the
             # session load below. These are independent storage round-trips with no data dependency
