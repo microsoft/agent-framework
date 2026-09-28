@@ -38,11 +38,12 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext, IWorkflowSe
         WorkflowFormulaState state,
         CancellationToken cancellationToken = default)
     {
+        string generatedSessionId = Guid.NewGuid().ToString("N");
         string sessionId = source is IWorkflowSessionContext sessionContext
             ? sessionContext.SessionId
             : await source.ReadOrInitStateAsync(
                 WorkflowSessionIdStateKey,
-                static () => Guid.NewGuid().ToString("N"),
+                () => generatedSessionId,
                 VariableScopeNames.System,
                 cancellationToken: cancellationToken).ConfigureAwait(false);
 
