@@ -608,9 +608,7 @@ async def test_hosted_store_names_partition_sandbox_and_forward_call_id() -> Non
                 config=config, context_id="../../conversation", platform_context=context
             )
             await checkpoints.save(_checkpoint("checkpoint-1"))
-            approvals = FunctionApprovalStoreProvider().get_store(
-                config=config, platform_context=context, context_id="workflow"
-            )
+            approvals = FunctionApprovalStoreProvider().get_store(config=config, platform_context=context)
             await approvals.save_approval_request("approval-1", _approval_request("approval-1"))
 
     assert len(names) == len(set(names)) == 6
@@ -699,18 +697,6 @@ async def test_hosted_session_checkpoint_and_approval_data_stay_in_one_sandbox()
     with pytest.raises(KeyError, match="does not exist"):
         await second_approval_store.load_approval_request("approval-1")
     assert await first_approval_store.load_approval_request("approval-1") == _approval_request("approval-1")
-
-
-async def test_hosted_approval_context_separates_workflows_in_one_sandbox() -> None:
-    config = _config(is_hosted=True)
-    context = _platform_context()
-    approvals = FunctionApprovalStoreProvider()
-    first = approvals.get_store(config=config, platform_context=context, context_id="workflow-1")
-    second = approvals.get_store(config=config, platform_context=context, context_id="workflow-2")
-
-    await first.save_approval_request("approval-1", _approval_request("approval-1"))
-    with pytest.raises(KeyError, match="does not exist"):
-        await second.load_approval_request("approval-1")
 
 
 async def test_hosted_session_rejects_a_stale_etag_without_overwriting_the_winner() -> None:

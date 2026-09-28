@@ -278,15 +278,13 @@ class FoundryFunctionApprovalStore:
         platform_context: FoundryAgentRequestContext,
         *,
         scope: FoundryRequestScope | None = None,
-        context_id: str | None = None,
     ) -> None:
         self.platform_context = platform_context
         self._scope = scope
-        self._context_id = context_id
 
     async def _get_store(self) -> FoundryStateStore:
         return await FoundryStateStore.get_or_create(
-            _store_name(self.DEFAULT_ROOT_SCOPE, self._scope, self._context_id),
+            _store_name(self.DEFAULT_ROOT_SCOPE, self._scope),
             user_isolation=True,
         )
 
@@ -318,13 +316,11 @@ class FunctionApprovalStoreProvider(StoreProvider[FunctionApprovalStore]):
         *,
         config: AgentConfig,
         platform_context: FoundryAgentRequestContext,
-        context_id: str | None = None,
     ) -> FunctionApprovalStore:
         """Get function approval store for the requested hosting environment."""
         return FoundryFunctionApprovalStore(
             platform_context,
             scope=_store_scope(config, platform_context),
-            context_id=context_id,
         )
 
 
