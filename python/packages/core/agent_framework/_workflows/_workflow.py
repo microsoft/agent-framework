@@ -966,6 +966,9 @@ class Workflow(DictConvertible):
                         ),
                     )
 
+            if responses is not None and checkpoint_id is None:
+                await self._validate_responses_internal(responses)
+
             initial_executor_fn = self._resolve_execution_mode(message, responses, checkpoint_id, checkpoint_storage)
 
             async for event in self._run_workflow_with_tracing(
@@ -1105,8 +1108,10 @@ class Workflow(DictConvertible):
         await self._runner.restore_from_checkpoint(checkpoint_id, checkpoint_storage)
         await self._send_responses_internal(responses)
 
-    async def _send_responses_internal(self, responses: Mapping[str, Any]) -> None:
-        """Internal method to validate and send responses to the executors."""
+    async def _validate_responses_internal(self, responses: Mapping[str, Any]) -> dict[str, Any]:
+        """Validate responses before a run can consume pending requests."""
+        from ._agent_executor import _validate_computer_tool_result  # pyright: ignore[reportPrivateUsage]
+
         pending_requests = await self._runner.context.get_pending_request_info_events()
         if not pending_requests:
             raise RuntimeError("No pending requests found in workflow context.")
@@ -1118,8 +1123,14 @@ class Workflow(DictConvertible):
                 raise ValueError(f"Response provided for unknown request ID: {request_id}")
             pending_request = pending_requests[request_id]
             response = _coerce_request_info_response(response, pending_request.response_type, request_id)
+            if isinstance(pending_request.data, Content) and pending_request.data.type == "computer_tool_call":
+                _validate_computer_tool_result(pending_request.data, response)
             coerced_responses[request_id] = response
+        return coerced_responses
 
+    async def _send_responses_internal(self, responses: Mapping[str, Any]) -> None:
+        """Send validated responses to the executors."""
+        coerced_responses = await self._validate_responses_internal(responses)
         # Cancelling siblings on error, like every other concurrent write into runner state. Each
         # coroutine pops its own request id, so a sibling of a failing one still finds its own event
         # pending and would go on to write a RESPONSE message into the queue after the caller had
@@ -1423,6 +1434,21 @@ class Workflow(DictConvertible):
             raise ValueError("Pending workflow request IDs must be non-empty strings.")
 
         async def apply_cancellations() -> None:
+            pending = await self._runner.context.get_pending_request_info_events()
+            computer_executor_ids = {
+                event.source_executor_id
+                for request_id, event in pending.items()
+                if request_id in selected_ids
+                and event.source_executor_id
+                and isinstance(event.data, Content)
+                and event.data.type == "computer_tool_call"
+            }
+            if computer_executor_ids:
+                selected_ids.update(
+                    request_id
+                    for request_id, event in pending.items()
+                    if event.source_executor_id in computer_executor_ids
+                )
             cancelled_events = await self._runner.context.cancel_request_info_events(selected_ids)
             for request_id, request_event in cancelled_events.items():
                 source_executor_id = request_event.source_executor_id

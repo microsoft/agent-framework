@@ -667,6 +667,23 @@ async def test_agent_executor_restores_legacy_pending_request_order() -> None:
     assert executor._pending_request_order == ["request-1"]  # pyright: ignore[reportPrivateUsage]
 
 
+@pytest.mark.parametrize(("pending", "responses"), [(1, 1), (0, 2)])
+async def test_agent_executor_rejects_ambiguous_legacy_partial_checkpoint(pending: int, responses: int) -> None:
+    """Old checkpoints cannot reconstruct call order once multiple outcomes are in flight."""
+    from agent_framework import WorkflowCheckpointException
+
+    request = Content.from_function_call(id="request-1", call_id="call-1", name="tool", arguments={})
+    result = Content.from_function_result(call_id="call-2", result="done")
+    executor = AgentExecutor(_CountingAgent(id="legacy_agent", name="LegacyAgent"))
+    state = {
+        "pending_agent_requests": {"request-1": request} if pending else {},
+        "pending_responses_to_agent": [result] * responses,
+    }
+
+    with pytest.raises(WorkflowCheckpointException, match="pending_request_order"):
+        await executor.on_checkpoint_restore(state)
+
+
 async def test_agent_executor_checkpoint_restore_rejects_malformed_fields() -> None:
     """Restore raises WorkflowCheckpointException for wrong field types."""
     from agent_framework import Content, WorkflowCheckpointException

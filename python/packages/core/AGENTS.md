@@ -68,6 +68,7 @@ agent_framework/
 - **Computer use** - `ComputerSafetyCheck` and the `Content.from_computer_tool_call` / `from_computer_tool_result`
   constructors are experimental under `COMPUTER_USE`; the rest of `Content` retains its existing stage. Computer
   results can omit screenshots in core; OpenAI-based connectors require them when converting to Responses items.
+  Completed call/result pairs remain in the transcript but are not user-input requests.
 - **`ChatOptions`** - TypedDict for chat request options
 
 ### Tools (`_tools.py`)
@@ -283,7 +284,8 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
   requests without synthesizing responses, recursively releases nested executor correlation, resumes executors whose
   remaining requests were already answered, accepts the same request-scoped tools and invocation/client kwargs needed
   by that continuation, can atomically restore a supplied checkpoint before cancellation, and returns the resulting
-  `WorkflowRunResult`.
+  `WorkflowRunResult`. Cancelling a computer request also cancels the other pending requests in that agent's batch,
+  retains already resolved sibling evidence in terminal output, and resets its session before new input.
 - **`WorkflowBuilder`** - Fluent API for building workflows, including explicit
   `output_from` / `intermediate_output_from` selection for caller-facing emissions. `output_from`
   is an allow-list for **Workflow Output**; unselected executor payloads are hidden unless

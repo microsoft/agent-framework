@@ -4,7 +4,7 @@ import base64
 import inspect
 import json
 import os
-from collections.abc import AsyncGenerator, Iterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Iterator, Mapping, Sequence
 from datetime import datetime, timezone
 from importlib import import_module
 from pathlib import Path
@@ -29,6 +29,7 @@ from agent_framework import (
     SupportsImageGenerationTool,
     SupportsMCPTool,
     SupportsWebSearchTool,
+    WorkflowBuilder,
     tool,
 )
 from agent_framework._sessions import (
@@ -3390,6 +3391,61 @@ def test_parse_computer_call_preserves_batched_actions_ids_and_safety_checks() -
     assert "pending_safety_checks" not in call.additional_properties
 
 
+def test_parse_completed_computer_pair_keeps_audit_items_without_requesting_input() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    call = ResponseComputerToolCall.model_validate({
+        "type": "computer_call",
+        "id": "cu_1",
+        "call_id": "call_1",
+        "actions": [{"type": "screenshot"}],
+        "pending_safety_checks": [],
+        "status": "completed",
+    })
+    result = ResponseComputerToolCallOutputItem.model_validate({
+        "type": "computer_call_output",
+        "id": "cco_1",
+        "call_id": "call_1",
+        "output": {"type": "computer_screenshot", "file_id": "file_1"},
+        "status": "completed",
+    })
+    unmatched = ResponseComputerToolCall.model_validate({
+        "type": "computer_call",
+        "id": "cu_2",
+        "call_id": "call_2",
+        "actions": [{"type": "screenshot"}],
+        "pending_safety_checks": [],
+        "status": "completed",
+    })
+    response = MagicMock(
+        output=[call, result, unmatched],
+        output_parsed=None,
+        id="resp_1",
+        status="completed",
+        model="test-model",
+        metadata={},
+        usage=None,
+        created_at=1,
+    )
+
+    parsed = client._parse_response_from_openai(response, options={})
+
+    completed_call, completed_result, pending_call = parsed.messages[0].contents
+    assert (completed_call.type, completed_result.type, pending_call.type) == (
+        "computer_tool_call",
+        "computer_tool_result",
+        "computer_tool_call",
+    )
+    assert completed_call.informational_only is True
+    assert completed_call.user_input_request is False
+    assert completed_result.call_id == completed_call.call_id
+    assert [(item.id, item.call_id) for item in parsed.messages[0].contents if item.user_input_request] == [
+        ("cu_2", "call_2")
+    ]
+    restored = Content.from_dict(completed_call.to_dict())
+    assert restored.informational_only is True
+    assert restored.user_input_request is False
+
+
 def test_preview_computer_action_normalizes_to_ordered_actions() -> None:
     client = OpenAIChatClient(model="test-model", api_key="test-key")
     item = ResponseComputerToolCall.model_validate({
@@ -3503,6 +3559,204 @@ def test_streamed_computer_call_and_screenshot_emit_only_once_on_done() -> None:
     assert updates[1].contents[0].actions[1]["type"] == "click"
     assert updates[3].contents[0].screenshot is not None
     assert updates[3].contents[0].screenshot.file_id == "file_1"
+    final = client._finalize_response_updates(updates)
+    assert [item.type for item in final.messages[0].contents] == ["computer_tool_call", "computer_tool_result"]
+    assert not any(item.user_input_request for msg in final.messages for item in msg.contents)
+    assert updates[1].contents[0].informational_only is True
+    assert updates[1].contents[0].user_input_request is False
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_completed_computer_pair_does_not_pause_workflow(monkeypatch: pytest.MonkeyPatch, stream: bool) -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    call = ResponseComputerToolCall.model_validate({
+        "type": "computer_call",
+        "id": "cu_1",
+        "call_id": "call_1",
+        "actions": [{"type": "screenshot"}],
+        "pending_safety_checks": [],
+        "status": "completed",
+    })
+    output = ResponseComputerToolCallOutputItem.model_validate({
+        "type": "computer_call_output",
+        "id": "cco_1",
+        "call_id": "call_1",
+        "output": {"type": "computer_screenshot", "file_id": "file_1"},
+        "status": "completed",
+    })
+
+    def inner_get_response(
+        *,
+        messages: Sequence[Message],
+        stream: bool,
+        options: Mapping[str, Any],
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        if stream:
+
+            async def updates() -> AsyncIterable[ChatResponseUpdate]:
+                for item in (call, output):
+                    event = MagicMock(type="response.output_item.done", item=item)
+                    yield client._parse_chunk_from_openai(event, options={}, function_call_ids={})
+
+            return client._build_response_stream(updates())
+
+        async def response() -> ChatResponse:
+            raw = MagicMock(
+                output=[call, output],
+                output_parsed=None,
+                id="response-1",
+                status="completed",
+                model="test-model",
+                metadata={},
+                usage=None,
+                created_at=1,
+            )
+            return client._parse_response_from_openai(raw, options=dict(options))
+
+        return response()
+
+    monkeypatch.setattr(client, "_inner_get_response", inner_get_response)
+    workflow = WorkflowBuilder(
+        start_executor=Agent(client=client, name="ComputerAgent", default_options={"store": False})
+    ).build()
+    if stream:
+        events = [event async for event in workflow.run("Use the computer", stream=True)]
+        outputs = [event.data for event in events if event.type == "output"]
+        assert not any(event.type == "request_info" for event in events)
+        contents = [content for update in outputs for content in update.contents]
+    else:
+        result = await workflow.run("Use the computer")
+        assert not result.get_request_info_events()
+        contents = [
+            content
+            for output_response in result.get_outputs()
+            for msg in output_response.messages
+            for content in msg.contents
+        ]
+
+    assert [(content.type, content.call_id) for content in contents] == [
+        ("computer_tool_call", "call_1"),
+        ("computer_tool_result", "call_1"),
+    ]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("function_first", [False, True])
+async def test_openai_mixed_computer_and_function_waits_for_screenshot(
+    monkeypatch: pytest.MonkeyPatch, stream: bool, function_first: bool
+) -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    computer = ResponseComputerToolCall.model_validate({
+        "type": "computer_call",
+        "id": "cu_1",
+        "call_id": "computer_1",
+        "actions": [{"type": "screenshot"}],
+        "pending_safety_checks": [],
+        "status": "completed",
+    })
+    function = SimpleNamespace(
+        type="function_call", id="fc_1", call_id="function_1", name="local_compute", arguments="{}", status="completed"
+    )
+    provider_messages: list[list[Message]] = []
+    executions: list[int] = []
+
+    @tool
+    def local_compute() -> str:
+        """Return a local tool result."""
+        executions.append(1)
+        return "local result"
+
+    def inner_get_response(
+        *,
+        messages: Sequence[Message],
+        stream: bool,
+        options: Mapping[str, Any],
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        provider_messages.append([Message(role=msg.role, contents=list(msg.contents)) for msg in messages])
+        if len(provider_messages) == 1:
+            if stream:
+
+                async def updates() -> AsyncIterable[ChatResponseUpdate]:
+                    function_added = MagicMock(type="response.output_item.added", item=function, output_index=1)
+                    function_delta = MagicMock(
+                        type="response.function_call_arguments.delta",
+                        output_index=1,
+                        item_id="fc_1",
+                        delta="{}",
+                    )
+                    computer_done = MagicMock(type="response.output_item.done", item=computer)
+                    events = (
+                        (function_added, function_delta, computer_done)
+                        if function_first
+                        else (computer_done, function_added, function_delta)
+                    )
+                    function_ids: dict[int, tuple[str, str]] = {}
+                    for event in events:
+                        yield client._parse_chunk_from_openai(event, options={}, function_call_ids=function_ids)
+
+                return client._build_response_stream(updates())
+
+            async def response() -> ChatResponse:
+                raw = MagicMock(
+                    output=[function, computer] if function_first else [computer, function],
+                    output_parsed=None,
+                    id="response-1",
+                    status="completed",
+                    model="test-model",
+                    metadata={},
+                    usage=None,
+                    created_at=1,
+                )
+                return client._parse_response_from_openai(raw, options=dict(options))
+
+            return response()
+
+        if stream:
+
+            async def done_updates() -> AsyncIterable[ChatResponseUpdate]:
+                yield ChatResponseUpdate(role="assistant", contents=[Content.from_text("Done.")])
+
+            return client._build_response_stream(done_updates())
+
+        async def done_response() -> ChatResponse:
+            return ChatResponse(messages=Message(role="assistant", contents=[Content.from_text("Done.")]))
+
+        return done_response()
+
+    monkeypatch.setattr(client, "_inner_get_response", inner_get_response)
+    workflow = WorkflowBuilder(
+        start_executor=Agent(
+            client=client, name="ComputerAgent", tools=[local_compute], default_options={"store": False}
+        )
+    ).build()
+    if stream:
+        initial = [event async for event in workflow.run("Use both", stream=True)]
+        requests = [event for event in initial if event.type == "request_info"]
+    else:
+        requests = (await workflow.run("Use both")).get_request_info_events()
+
+    [request] = requests
+    assert request.data.call_id == "computer_1"
+    assert len(executions) == len(provider_messages) == 1
+
+    screenshot = Content.from_computer_tool_result(
+        call_id="computer_1", screenshot=Content.from_data(b"png", "image/png")
+    )
+    if stream:
+        resumed = [event async for event in workflow.run(responses={request.request_id: screenshot}, stream=True)]
+        assert not any(event.type == "request_info" for event in resumed)
+    else:
+        assert (await workflow.run(responses={request.request_id: screenshot})).get_outputs()
+    assert len(executions) == 1
+    assert len(provider_messages) == 2
+    prepared = client._prepare_messages_for_openai(provider_messages[-1], request_uses_service_side_storage=False)
+    assert [item["type"] for item in prepared if item["type"] in ("computer_call_output", "function_call_output")] == (
+        ["function_call_output", "computer_call_output"]
+        if function_first
+        else ["computer_call_output", "function_call_output"]
+    )
 
 
 def test_computer_stateless_replay_and_service_continuation() -> None:

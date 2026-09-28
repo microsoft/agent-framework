@@ -1588,7 +1588,9 @@ class Content:
                 continue
             if field == "exception" and value is not None and redact_exception:
                 value = _SERIALIZED_EXCEPTION_MARKER
-            if field == "informational_only" and (self.type != "function_call" or not value):
+            if field == "informational_only" and (
+                self.type not in ("function_call", "computer_tool_call") or not value
+            ):
                 continue
             if exclude_none and value is None:
                 continue

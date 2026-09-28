@@ -9,6 +9,7 @@ import logging
 import mimetypes
 import shlex
 import sys
+from collections import deque
 from collections.abc import (
     AsyncGenerator,
     AsyncIterable,
@@ -994,6 +995,7 @@ class RawOpenAIChatClient(
         self._enrich_streamed_azure_ai_search_citations(updates)
         self._enrich_mcp_search_citations([content for update in updates for content in update.contents])
         response = super()._finalize_response_updates(updates, response_format=response_format)
+        self._mark_completed_computer_calls([content for message in response.messages for content in message.contents])
         logprobs = [
             logprob
             for update in updates
@@ -2868,6 +2870,23 @@ class RawOpenAIChatClient(
         )
 
     @staticmethod
+    def _mark_completed_computer_calls(contents: Sequence[Content]) -> None:
+        """Pair completed outputs with preceding calls without hiding either transcript item."""
+        open_calls: dict[str, deque[Content]] = {}
+        for content in contents:
+            if content.type == "computer_tool_call" and content.user_input_request and content.call_id:
+                open_calls.setdefault(content.call_id, deque()).append(content)
+            elif (
+                content.type == "computer_tool_result"
+                and content.call_id
+                and content.status in (None, "completed")
+                and (calls := open_calls.get(content.call_id))
+            ):
+                call = calls.popleft()
+                call.user_input_request = False
+                call.informational_only = True
+
+    @staticmethod
     def _parse_azure_ai_search_output_payload(output: Any) -> Mapping[str, Any] | None:
         """Parse an Azure AI Search tool output payload from a streamed Responses event."""
         if isinstance(output, str):
@@ -3433,6 +3452,7 @@ class RawOpenAIChatClient(
                     contents.extend(self._shell_item_to_contents(item, local_shell_tool_name))
                 case _:
                     logger.debug("Unparsed output of type: %s: %s", item.type, item)
+        self._mark_completed_computer_calls(contents)
         response_message = Message(role="assistant", contents=contents)
         args: dict[str, Any] = {
             "response_id": response.id,

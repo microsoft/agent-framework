@@ -23,6 +23,7 @@ from agent_framework import (
     Content,
     FunctionTool,
     InMemoryCheckpointStorage,
+    InMemoryHistoryProvider,
     Message,
     ResponseStream,
     WorkflowBuilder,
@@ -638,9 +639,19 @@ class DeclarationOnlyMockChatClient(FunctionInvocationLayer[Any], BaseChatClient
 class ComputerUseMockChatClient(BaseChatClient[Any]):
     """Emit a computer request, then record the result used to resume it."""
 
-    def __init__(self, *, parallel_requests: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        parallel_requests: bool = False,
+        duplicate_request_id: bool = False,
+        missing_request_id: bool = False,
+        separate_streamed_requests: bool = False,
+    ) -> None:
         super().__init__()
         self.parallel_requests = parallel_requests
+        self.duplicate_request_id = duplicate_request_id
+        self.missing_request_id = missing_request_id
+        self.separate_streamed_requests = separate_streamed_requests
         self.received_messages: list[list[Message]] = []
 
     def _inner_get_response(
@@ -661,10 +672,12 @@ class ComputerUseMockChatClient(BaseChatClient[Any]):
                     pending_safety_checks=[{"id": "safety-1", "message": "Review before clicking."}],
                 )
             ]
+            if self.missing_request_id:
+                contents[0].id = None
             if self.parallel_requests:
                 contents.append(
                     Content.from_computer_tool_call(
-                        id="computer-item-2",
+                        id="computer-item-1" if self.duplicate_request_id else "computer-item-2",
                         call_id="computer-call-2",
                         actions=[{"type": "click", "x": 3, "y": 4}],
                         pending_safety_checks=[{"id": "safety-2", "message": "Review before clicking."}],
@@ -676,7 +689,11 @@ class ComputerUseMockChatClient(BaseChatClient[Any]):
         if stream:
 
             async def updates() -> AsyncIterable[ChatResponseUpdate]:
-                yield ChatResponseUpdate(contents=contents, role="assistant")
+                if self.separate_streamed_requests:
+                    for content in contents:
+                        yield ChatResponseUpdate(contents=[content], role="assistant")
+                else:
+                    yield ChatResponseUpdate(contents=contents, role="assistant")
 
             return self._build_response_stream(updates())
 
@@ -684,6 +701,156 @@ class ComputerUseMockChatClient(BaseChatClient[Any]):
             return ChatResponse(messages=Message(role="assistant", contents=contents))
 
         return response()
+
+
+class MixedComputerFunctionClient(FunctionInvocationLayer[Any], BaseChatClient[Any]):
+    """Return a computer call and a locally executable function in one model turn."""
+
+    def __init__(self, *, function_first: bool, service_storage: bool) -> None:
+        FunctionInvocationLayer.__init__(self)
+        BaseChatClient.__init__(self)
+        self.function_first = function_first
+        self.service_storage = service_storage
+        self.received_messages: list[list[Message]] = []
+
+    def _inner_get_response(
+        self,
+        *,
+        messages: Sequence[Message],
+        stream: bool,
+        options: Mapping[str, Any],
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        self.received_messages.append([
+            Message(role=message.role, contents=list(message.contents)) for message in messages
+        ])
+        if len(self.received_messages) == 1:
+            computer = Content.from_computer_tool_call(
+                id="computer-item-1",
+                call_id="computer-call-1",
+                actions=[{"type": "screenshot"}],
+            )
+            function = Content.from_function_call(
+                id="function-item-1", call_id="function-call-1", name="local_compute", arguments="{}"
+            )
+            contents = [function, computer] if self.function_first else [computer, function]
+        else:
+            contents = [Content.from_text("Mixed batch complete.")]
+
+        if stream:
+
+            async def updates() -> AsyncIterable[ChatResponseUpdate]:
+                yield ChatResponseUpdate(
+                    contents=contents,
+                    role="assistant",
+                    conversation_id="conversation-1" if self.service_storage else None,
+                )
+
+            return self._build_response_stream(updates())
+
+        async def response() -> ChatResponse:
+            return ChatResponse(
+                messages=Message(role="assistant", contents=contents),
+                conversation_id="conversation-1" if self.service_storage else None,
+            )
+
+        return response()
+
+
+@pytest.mark.parametrize("function_first", [False, True])
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize(
+    ("service_storage", "history_source"), [(False, None), (False, "workflow_history"), (True, None)]
+)
+@pytest.mark.parametrize("restore_checkpoint", [False, True])
+async def test_workflow_mixed_computer_and_local_function_pauses_and_resumes_in_call_order(
+    function_first: bool,
+    stream: bool,
+    service_storage: bool,
+    history_source: str | None,
+    restore_checkpoint: bool,
+) -> None:
+    client = MixedComputerFunctionClient(function_first=function_first, service_storage=service_storage)
+    executions: list[int] = []
+
+    @tool
+    def local_compute() -> str:
+        """Perform the local function once."""
+        executions.append(1)
+        return "local result"
+
+    agent = Agent(
+        client=client,
+        name="MixedAgent",
+        tools=[local_compute],
+        default_options={"store": service_storage},
+        context_providers=[InMemoryHistoryProvider(source_id=history_source)] if history_source else None,
+    )
+    storage = InMemoryCheckpointStorage() if restore_checkpoint else None
+    workflow = WorkflowBuilder(start_executor=agent, checkpoint_storage=storage).build()
+    if stream:
+        requests = [
+            event
+            for event in [event async for event in workflow.run("Use both", stream=True)]
+            if event.type == "request_info"
+        ]
+    else:
+        requests = (await workflow.run("Use both")).get_request_info_events()
+
+    [request] = requests
+    assert request.data.type == "computer_tool_call"
+    assert len(client.received_messages) == 1
+    assert len(executions) == 1
+    executor = workflow.executors["MixedAgent"]
+    assert isinstance(executor, AgentExecutor)
+    snapshot = await executor.on_checkpoint_save()
+    assert [(item.type, item.call_id) for item in snapshot["pending_responses_to_agent"]] == [
+        ("function_result", "function-call-1")
+    ]
+    result = Content.from_computer_tool_result(
+        call_id="computer-call-1", screenshot=Content.from_data(b"png", "image/png")
+    )
+    run_kwargs: dict[str, Any] = {}
+    if storage is not None:
+        checkpoints = await storage.list_checkpoints(workflow_name=workflow.name)
+        checkpoint = next(
+            checkpoint
+            for checkpoint in reversed(checkpoints)
+            if request.request_id in checkpoint.pending_request_info_events
+            and checkpoint.state.get("_executor_state", {}).get("MixedAgent", {}).get("pending_responses_to_agent")
+        )
+        workflow = WorkflowBuilder(
+            name=workflow.name,
+            start_executor=Agent(
+                client=client,
+                name="MixedAgent",
+                tools=[local_compute],
+                default_options={"store": service_storage},
+                context_providers=[InMemoryHistoryProvider(source_id=history_source)] if history_source else None,
+            ),
+            checkpoint_storage=storage,
+        ).build()
+        run_kwargs["checkpoint_id"] = checkpoint.checkpoint_id
+    if stream:
+        resumed = [
+            event async for event in workflow.run(responses={request.request_id: result}, stream=True, **run_kwargs)
+        ]
+        assert any(event.type == "output" for event in resumed)
+    else:
+        resumed = await workflow.run(responses={request.request_id: result}, **run_kwargs)
+        assert resumed.get_outputs()
+
+    assert len(client.received_messages) == 2
+    assert len(executions) == 1
+    results = [
+        content
+        for message in client.received_messages[-1]
+        for content in message.contents
+        if content.type in ("function_result", "computer_tool_result")
+    ]
+    assert [content.call_id for content in results] == (
+        ["function-call-1", "computer-call-1"] if function_first else ["computer-call-1", "function-call-1"]
+    )
 
 
 async def test_workflow_agent_computer_call_resumes_with_explicit_safety_acknowledgment() -> None:
@@ -747,28 +914,94 @@ async def test_workflow_agent_computer_call_resumes_without_screenshot() -> None
         ("other-call", [{"id": "safety-1"}], "must match exactly one pending request"),
     ],
 )
+@pytest.mark.parametrize("stream", [False, True])
 async def test_workflow_agent_computer_call_rejects_unmatched_safety_or_call_id(
-    call_id: str, acknowledged_checks: list[ComputerSafetyCheck] | None, message: str
+    call_id: str, acknowledged_checks: list[ComputerSafetyCheck] | None, message: str, stream: bool
 ) -> None:
     client = ComputerUseMockChatClient()
     workflow_agent = WorkflowBuilder(start_executor=Agent(client=client, name="ComputerAgent")).build().as_agent()
-    paused = await workflow_agent.run("Use the computer")
-    assert len(paused.user_input_requests) == 1
+    if stream:
+        paused = [update async for update in workflow_agent.run("Use the computer", stream=True)]
+        assert len([request for update in paused for request in update.user_input_requests]) == 1
+    else:
+        paused_response = await workflow_agent.run("Use the computer")
+        assert len(paused_response.user_input_requests) == 1
 
+    invalid = Message(
+        role="tool",
+        contents=[
+            Content.from_computer_tool_result(
+                call_id=call_id,
+                screenshot=Content.from_data(b"png", "image/png"),
+                acknowledged_safety_checks=acknowledged_checks,
+            )
+        ],
+    )
     with pytest.raises(AgentInvalidResponseException, match=message):
-        await workflow_agent.run(
-            Message(
-                role="tool",
-                contents=[
-                    Content.from_computer_tool_result(
-                        call_id=call_id,
-                        screenshot=Content.from_data(b"png", "image/png"),
-                        acknowledged_safety_checks=acknowledged_checks,
-                    )
-                ],
+        if stream:
+            _ = [update async for update in workflow_agent.run(invalid, stream=True)]
+        else:
+            await workflow_agent.run(invalid)
+    assert len(client.received_messages) == 1
+    corrected = Message(
+        role="tool",
+        contents=[
+            Content.from_computer_tool_result(
+                call_id="computer-call-1",
+                screenshot=Content.from_data(b"png", "image/png"),
+                acknowledged_safety_checks=[{"id": "safety-1"}],
+            )
+        ],
+    )
+    if stream:
+        resumed_updates = [update async for update in workflow_agent.run(corrected, stream=True)]
+        assert any(update.text == "Computer task complete." for update in resumed_updates)
+    else:
+        resumed = await workflow_agent.run(corrected)
+        assert resumed.text == "Computer task complete."
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_workflow_rejects_duplicate_or_missing_computer_request_ids_before_emitting(
+    stream: bool,
+) -> None:
+    clients = [
+        ComputerUseMockChatClient(parallel_requests=True, duplicate_request_id=True),
+        ComputerUseMockChatClient(missing_request_id=True),
+    ]
+    if stream:
+        clients.append(
+            ComputerUseMockChatClient(
+                parallel_requests=True, duplicate_request_id=True, separate_streamed_requests=True
             )
         )
-    assert len(client.received_messages) == 1
+    for client in clients:
+        workflow = WorkflowBuilder(start_executor=Agent(client=client, name="ComputerAgent")).build()
+        with pytest.raises(AgentInvalidResponseException, match="(Duplicate|non-empty)"):
+            if stream:
+                _ = [event async for event in workflow.run("Use the computer", stream=True)]
+            else:
+                await workflow.run("Use the computer")
+
+
+async def test_workflow_computer_response_batch_prevalidates_before_consuming_requests() -> None:
+    client = ComputerUseMockChatClient(parallel_requests=True)
+    workflow = WorkflowBuilder(start_executor=Agent(client=client, name="ComputerAgent")).build()
+    first, second = (await workflow.run("Use the computer")).get_request_info_events()
+    first_result = Content.from_computer_tool_result(
+        call_id="computer-call-1", acknowledged_safety_checks=[{"id": "safety-1"}]
+    )
+    invalid_result = Content.from_computer_tool_result(call_id="computer-call-2")
+
+    with pytest.raises(AgentInvalidResponseException, match="explicitly acknowledge exactly"):
+        await workflow.run(responses={first.request_id: first_result, second.request_id: invalid_result})
+
+    valid_result = Content.from_computer_tool_result(
+        call_id="computer-call-2", acknowledged_safety_checks=[{"id": "safety-2"}]
+    )
+    resumed = await workflow.run(responses={first.request_id: first_result, second.request_id: valid_result})
+    assert resumed.get_outputs()
+    assert len(client.received_messages) == 2
 
 
 async def test_workflow_agent_streams_computer_request_and_resume() -> None:
@@ -897,15 +1130,12 @@ async def test_workflow_agent_parallel_computer_results_follow_call_order() -> N
     assert [content.call_id for content in tool_message.contents] == ["computer-call-1", "computer-call-2"]
 
 
-async def test_workflow_reverse_computer_cancellations_keep_request_order() -> None:
+async def test_workflow_cancelling_one_computer_call_cancels_the_entire_batch_in_request_order() -> None:
     client = ComputerUseMockChatClient(parallel_requests=True)
     workflow = WorkflowBuilder(start_executor=Agent(client=client, name="ComputerAgent")).build()
-    first, second = (await workflow.run("Use the computer")).get_request_info_events()
+    _, second = (await workflow.run("Use the computer")).get_request_info_events()
 
-    partial = await workflow.cancel_pending_requests([second.request_id])
-    assert partial.get_outputs() == []
-
-    cancelled = await workflow.cancel_pending_requests([first.request_id])
+    cancelled = await workflow.cancel_pending_requests([second.request_id])
     errors = [
         content.message
         for output in cancelled.get_outputs()
@@ -917,7 +1147,83 @@ async def test_workflow_reverse_computer_cancellations_keep_request_order() -> N
         "Computer call computer-call-1 was cancelled without a result.",
         "Computer call computer-call-2 was cancelled without a result.",
     ]
+    assert not await workflow._runner_context.get_pending_request_info_events()
     assert len(client.received_messages) == 1
+
+
+async def test_workflow_computer_cancellation_keeps_resolved_screenshot_and_starts_fresh() -> None:
+    client = ComputerUseMockChatClient(parallel_requests=True)
+    workflow = WorkflowBuilder(start_executor=Agent(client=client, name="ComputerAgent")).build()
+    first, second = (await workflow.run("Use the computer")).get_request_info_events()
+    screenshot = Content.from_computer_tool_result(
+        call_id="computer-call-2",
+        screenshot=Content.from_data(b"resolved", "image/png"),
+        acknowledged_safety_checks=[{"id": "safety-2"}],
+    )
+    partial = await workflow.run(responses={second.request_id: screenshot})
+    assert not partial.get_outputs()
+
+    cancelled = await workflow.cancel_pending_requests([first.request_id])
+    terminal_contents = [
+        content for output in cancelled.get_outputs() for msg in output.messages for content in msg.contents
+    ]
+    assert [(content.type, content.call_id) for content in terminal_contents] == [
+        ("error", None),
+        ("computer_tool_result", "computer-call-2"),
+    ]
+    assert terminal_contents[1].screenshot is not None
+    assert not await workflow._runner_context.get_pending_request_info_events()
+    assert len(client.received_messages) == 1
+
+    fresh = await workflow.run("Start a new task")
+    assert fresh.get_outputs()
+    assert len(client.received_messages) == 2
+    assert not any(
+        item.type in ("computer_tool_call", "computer_tool_result")
+        for message in client.received_messages[-1]
+        for item in message.contents
+    )
+
+
+async def test_workflow_cancelling_mixed_computer_batch_keeps_function_evidence_and_resets_service() -> None:
+    client = MixedComputerFunctionClient(function_first=True, service_storage=True)
+    executions: list[int] = []
+
+    @tool
+    def local_compute() -> str:
+        """Perform the local function once."""
+        executions.append(1)
+        return "local result"
+
+    workflow = WorkflowBuilder(
+        start_executor=Agent(client=client, name="MixedAgent", tools=[local_compute], default_options={"store": True})
+    ).build()
+    [request] = (await workflow.run("Use both")).get_request_info_events()
+    executor = workflow.executors["MixedAgent"]
+    assert isinstance(executor, AgentExecutor)
+    assert (await executor.on_checkpoint_save())["agent_session"]["service_session_id"] == "conversation-1"
+
+    cancelled = await workflow.cancel_pending_requests([request.request_id])
+    assert [
+        (item.type, item.call_id)
+        for output in cancelled.get_outputs()
+        for msg in output.messages
+        for item in msg.contents
+    ] == [
+        ("function_result", "function-call-1"),
+        ("error", None),
+    ]
+    assert (await executor.on_checkpoint_save())["agent_session"]["service_session_id"] is None
+    assert len(client.received_messages) == 1
+    assert len(executions) == 1
+
+    await workflow.run("Start a new task")
+    assert len(client.received_messages) == 2
+    assert not any(
+        item.type in ("computer_tool_call", "function_call", "function_result")
+        for msg in client.received_messages[-1]
+        for item in msg.contents
+    )
 
 
 async def test_workflow_cancellation_does_not_fabricate_computer_result() -> None:

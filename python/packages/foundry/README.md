@@ -166,7 +166,7 @@ even though Foundry's `ComputerTool` is a non-preview SDK model.
 
 Computer calls arrive as `Content` with `type="computer_tool_call"`, a
 provider item `id`, a distinct `call_id`, ordered `actions`, and optional
-`pending_safety_checks`. Every call requires application input: inspect
+`pending_safety_checks`. Unanswered calls require application input: inspect
 `AgentResponse.user_input_requests` (or `ChatResponse.messages[*].contents`),
 show the actions and warnings to the user, and execute actions only after
 approval. To continue, return `Content.from_computer_tool_result(call_id=...,
@@ -178,6 +178,14 @@ explicitly pass *only* those the
 application has confirmed as `acknowledged_safety_checks=[{"id": "..."}]`.
 The framework never acknowledges warnings on your behalf. Calls and results
 can be persisted as `Content.to_dict()` and restored with `Content.from_dict()`.
+A call already paired with a completed screenshot result stays in the transcript
+for audit (`informational_only=True`), but does not appear in
+`AgentResponse.user_input_requests`. When a workflow pauses on a computer call
+alongside locally executable functions, it sends their completed results with
+the screenshot in the original call order after the application responds. If
+any computer request in a workflow batch is cancelled, the remaining requests
+in that agent's batch are cancelled too; the terminal output retains already
+resolved results, and the next turn starts with a fresh agent session.
 
 > **Choosing a web grounding tool.** `get_web_search_tool` is the recommended
 > default — it requires no separate Bing resource and works with Azure OpenAI
