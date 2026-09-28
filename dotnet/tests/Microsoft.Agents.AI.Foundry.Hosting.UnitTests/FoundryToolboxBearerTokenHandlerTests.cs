@@ -172,7 +172,7 @@ public class FoundryToolboxBearerTokenHandlerTests
         // receives no Foundry credentials.
         Assert.Equal(
             expectedSameOrigin,
-            FoundryToolboxOriginPinningHandler.IsSameOrigin(new Uri(requestUri), new Uri(pinnedEndpoint)));
+        OriginPinningHandler.IsSameOrigin(new Uri(requestUri), new Uri(pinnedEndpoint)));
         Assert.Equal(expectedSameOrigin, capture.SawAuthorization);
         Assert.Equal(expectedSameOrigin, capture.SawFoundryFeatures);
     }

@@ -566,7 +566,7 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
         _ = Throw.IfNull(credential);
 
         primaryHandler ??= CreateToolboxPrimaryHttpMessageHandler();
-        var originPinningHandler = new FoundryToolboxOriginPinningHandler(endpoint)
+        var originPinningHandler = new OriginPinningHandler(endpoint)
         {
             InnerHandler = primaryHandler
         };

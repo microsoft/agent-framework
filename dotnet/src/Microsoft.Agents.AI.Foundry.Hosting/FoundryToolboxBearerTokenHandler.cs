@@ -62,7 +62,7 @@ internal sealed class FoundryToolboxBearerTokenHandler : DelegatingHandler
         // A transport-created request can target a server-selected URI. Do not acquire or
         // attach Foundry credentials or platform context unless it remains on the configured
         // toolbox origin; the inner pinning handler still strips any pre-existing credentials.
-        if (!FoundryToolboxOriginPinningHandler.IsSameOrigin(request.RequestUri, this._pinnedEndpoint))
+        if (!OriginPinningHandler.IsSameOrigin(request.RequestUri, this._pinnedEndpoint))
         {
             return await base.SendAsync(request, cancellationToken).ConfigureAwait(false);
         }
@@ -211,61 +211,5 @@ internal sealed class FoundryToolboxBearerTokenHandler : DelegatingHandler
         }
 
         return clone;
-    }
-}
-
-/// <summary>
-/// Removes credential-bearing headers before a request can leave the configured toolbox origin.
-/// </summary>
-internal sealed class FoundryToolboxOriginPinningHandler : DelegatingHandler
-{
-    private static readonly string[] s_credentialHeaderNames =
-    [
-        "Authorization",
-        "Proxy-Authorization",
-        "Cookie",
-    ];
-
-    private readonly Uri _pinnedEndpoint;
-
-    internal FoundryToolboxOriginPinningHandler(Uri pinnedEndpoint)
-    {
-        _ = Throw.IfNull(pinnedEndpoint);
-        if (!pinnedEndpoint.IsAbsoluteUri)
-        {
-            throw new ArgumentException("The pinned endpoint must be an absolute URI.", nameof(pinnedEndpoint));
-        }
-
-        this._pinnedEndpoint = pinnedEndpoint;
-    }
-
-    protected override Task<HttpResponseMessage> SendAsync(
-        HttpRequestMessage request,
-        CancellationToken cancellationToken)
-    {
-        if (!IsSameOrigin(request.RequestUri, this._pinnedEndpoint))
-        {
-            foreach (string headerName in s_credentialHeaderNames)
-            {
-                request.Headers.Remove(headerName);
-            }
-        }
-
-        return base.SendAsync(request, cancellationToken);
-    }
-
-    internal static bool IsSameOrigin(Uri? requestUri, Uri pinnedEndpoint)
-    {
-        _ = Throw.IfNull(pinnedEndpoint);
-
-        // HttpClient resolves relative URIs against its configured base address, so a relative
-        // request cannot independently select a different origin.
-        return requestUri is not { IsAbsoluteUri: true }
-            || Uri.Compare(
-                requestUri,
-                pinnedEndpoint,
-                UriComponents.SchemeAndServer,
-                UriFormat.Unescaped,
-                StringComparison.OrdinalIgnoreCase) == 0;
     }
 }
