@@ -277,6 +277,7 @@ class DefaultMCPToolHandler:
         # Set by ``aclose`` to prevent post-close cache insertions and to
         # reject new ``invoke_tool`` calls. Once set, never cleared.
         self._closed = False
+        self._shutdown_task: asyncio.Task[None] | None = None
 
     async def invoke_tool(self, invocation: MCPToolInvocation) -> MCPToolResult:
         """Invoke ``invocation.tool_name`` on an MCP client for the server.
@@ -461,7 +462,7 @@ class DefaultMCPToolHandler:
         are rejected after connecting and cleaned up by their invocation.
         Concurrent shutdown calls wait for those invocations as well.
 
-        Idempotent. In no-provider mode, a second call returns immediately.
+        Idempotent. Concurrent and subsequent calls await the same shutdown task.
         Drains any in-flight ``_create_entry`` tasks before returning so their resources are
         cleaned up; the in-flight tasks see ``self._closed`` in phase 3 of
         :meth:`_get_or_create_entry`, close their own entry, and resolve
@@ -477,26 +478,37 @@ class DefaultMCPToolHandler:
                 "DefaultMCPToolHandler.aclose() cannot be called from an active provider-backed invocation"
             )
         async with self._cache_lock:
-            if self._closed and self._client_provider is None:
-                return
-            self._closed = True
-            entries = list(self._cache.values())
-            entry_ids = {id(entry) for entry in entries}
-            entries.extend(entry for entry in self._retired.values() if id(entry) not in entry_ids)
-            self._cache.clear()
-            entries_to_close: list[_CacheEntry] = []
-            for entry in entries:
-                entry.evicted = True
-                self._retired[id(entry)] = entry
-                if entry.active_users == 0 and not entry.disposal_claimed:
-                    entry.disposal_claimed = True
-                    entries_to_close.append(entry)
-            inflight_futures = list(self._inflight.values())
-            active_invocations = list(self._active_invocations)
+            if self._shutdown_task is None:
+                self._closed = True
+                entries = list(self._cache.values())
+                entry_ids = {id(entry) for entry in entries}
+                entries.extend(entry for entry in self._retired.values() if id(entry) not in entry_ids)
+                self._cache.clear()
+                entries_to_close: list[_CacheEntry] = []
+                for entry in entries:
+                    entry.evicted = True
+                    self._retired[id(entry)] = entry
+                    if entry.active_users == 0 and not entry.disposal_claimed:
+                        entry.disposal_claimed = True
+                        entries_to_close.append(entry)
+                inflight_futures = list(self._inflight.values())
+                active_invocations = list(self._active_invocations)
+                self._shutdown_task = asyncio.create_task(
+                    self._drain_shutdown(entries, entries_to_close, inflight_futures, active_invocations)
+                )
+            shutdown_task = self._shutdown_task
 
+        await asyncio.shield(shutdown_task)
+
+    async def _drain_shutdown(
+        self,
+        entries: list[_CacheEntry],
+        entries_to_close: list[_CacheEntry],
+        inflight_futures: list[asyncio.Future[_CacheEntry]],
+        active_invocations: list[asyncio.Future[None]],
+    ) -> None:
         for completion in active_invocations:
-            # Cancelling shutdown must not cancel an invocation's completion signal.
-            await asyncio.shield(completion)
+            await completion
 
         # Wait for in-flight creations to finish their self-cleanup. Each
         # in-flight task self-closes its entry under the closed-flag branch

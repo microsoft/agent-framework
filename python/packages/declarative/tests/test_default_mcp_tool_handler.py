@@ -1247,6 +1247,35 @@ class TestAclose:
         assert FakeTool.instances[0].close_count == 1
 
     @pytest.mark.asyncio
+    async def test_cancelled_aclose_continues_draining_cached_entries(self) -> None:
+        handler = DefaultMCPToolHandler()
+        first_close_started = asyncio.Event()
+        release_first_close = asyncio.Event()
+        original_close = FakeTool.close
+
+        async def gated_close(tool: FakeTool) -> None:
+            if tool.kwargs["url"] == "https://a/":
+                first_close_started.set()
+                await release_first_close.wait()
+            await original_close(tool)
+
+        with _patch_tool(), patch.object(FakeTool, "close", gated_close):
+            await handler.invoke_tool(_invocation(server_url="https://a/", headers={"X": "1"}))
+            await handler.invoke_tool(_invocation(server_url="https://b/", headers={"X": "1"}))
+
+            shutdown = asyncio.create_task(handler.aclose())
+            await first_close_started.wait()
+            shutdown.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                _ = await shutdown
+
+            release_first_close.set()
+            await asyncio.wait_for(handler.aclose(), timeout=1)
+
+        assert [tool.close_count for tool in FakeTool.instances] == [1, 1]
+        assert all(tool._httpx_client is not None and tool._httpx_client.is_closed for tool in FakeTool.instances)
+
+    @pytest.mark.asyncio
     async def test_invoke_after_close_returns_error_result(self) -> None:
         """Post-close ``invoke_tool`` surfaces a tool error rather than crashing."""
         handler = DefaultMCPToolHandler()
