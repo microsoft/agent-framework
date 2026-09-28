@@ -1,13 +1,12 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 // This sample shows how to use the generally available (GA) computer tool, created with the parameterless
-// FoundryAITool.CreateComputerTool(), with an AIAgent. Each computer call returned by the model carries an ordered
-// batch of actions; the application runs all of them and then sends back a single screenshot.
-//
-// Microsoft Foundry does not accept the GA "computer" tool type yet, so the sample currently runs against the public
-// OpenAI Responses API. The Foundry setup is kept below, commented out: once Foundry supports the GA tool, swap the
-// two agent setups and the rest of the sample works unchanged.
+// FoundryAITool.CreateComputerTool(), with an AIAgent backed by Azure OpenAI Responses. Each computer call returned by
+// the model carries an ordered batch of actions; the application runs all of them and then sends back a single
+// screenshot.
 
+using System.ClientModel.Primitives;
+using Azure.Identity;
 using Demo.ComputerUse;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Foundry;
@@ -15,38 +14,23 @@ using Microsoft.Extensions.AI;
 using OpenAI;
 using OpenAI.Responses;
 
-// Microsoft Foundry setup (see below): uncomment once Foundry supports the GA computer tool.
-// using Azure.AI.Projects;
-// using Azure.Identity;
+Uri endpoint = AzureOpenAIEndpoint.From(
+    Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT"))
+    ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4";
 
-// Public OpenAI Responses API (active until Microsoft Foundry supports the GA computer tool).
-string apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? throw new InvalidOperationException("OPENAI_API_KEY is not set.");
-string model = Environment.GetEnvironmentVariable("OPENAI_CHAT_MODEL_NAME") ?? "gpt-5.4";
-
-AIAgent agent = new OpenAIClient(apiKey)
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
+AIAgent agent = new OpenAIClient(
+    new BearerTokenPolicy(new DefaultAzureCredential(), "https://ai.azure.com/.default"),
+    new OpenAIClientOptions { Endpoint = endpoint })
     .GetResponsesClient()
-    .AsIChatClient(model)
+    .AsIChatClient(deploymentName)
     .AsAIAgent(
         name: "ComputerAgent",
         instructions: "You are a computer automation assistant.",
         tools: [FoundryAITool.CreateComputerTool()]);
-
-// Microsoft Foundry: uncomment this block (and the Azure usings at the top) once Foundry supports the GA computer
-// tool, then remove the OpenAI block above.
-//
-// string endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
-// string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_COMPUTER_USE_DEPLOYMENT_NAME") ?? "gpt-5.4";
-//
-// // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
-// // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
-// // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-// AIProjectClient projectClient = new(new Uri(endpoint), new DefaultAzureCredential());
-//
-// AIAgent agent = projectClient.AsAIAgent(
-//     model: deploymentName,
-//     name: "ComputerAgent",
-//     instructions: "You are a computer automation assistant.",
-//     tools: [FoundryAITool.CreateComputerTool()]);
 
 Dictionary<string, BinaryData> screenshots = ComputerUseUtil.LoadScreenshots();
 

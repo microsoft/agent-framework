@@ -10,17 +10,17 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Used by the commented-out Microsoft Foundry setup in Program.cs. -->
     <PackageReference Include="Azure.Identity" />
   </ItemGroup>
 
   <ItemGroup>
+    <!-- FoundryAITool.CreateComputerTool() provides the GA computer tool. -->
     <ProjectReference Include="..\..\..\..\..\src\Microsoft.Agents.AI.Foundry\Microsoft.Agents.AI.Foundry.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <!-- Reuses the simulated browser screenshots of the preview computer use sample. -->
-    <None Include="..\Agent_Step15_ComputerUsePreview\Assets\*.jpg" Link="Assets\%(Filename)%(Extension)" CopyToOutputDirectory="Always" />
+    <None Include="..\..\foundry\Agent_Step15_ComputerUsePreview\Assets\*.jpg" Link="Assets\%(Filename)%(Extension)" CopyToOutputDirectory="Always" />
   </ItemGroup>
 
 </Project>
