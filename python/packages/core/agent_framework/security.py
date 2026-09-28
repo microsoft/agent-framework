@@ -1341,6 +1341,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         self.default_confidentiality = default_confidentiality
         self.auto_hide_untrusted = auto_hide_untrusted
         self.hide_threshold = hide_threshold
+        self._standing_guidance_cache: dict[int, tuple[str, ...]] = {}
         self._initialize_security_scope(security_scope, session_state_key=session_state_key)
 
     def _clone_for_scope(self, scope: _SecurityScope) -> LabelTrackingFunctionMiddleware:
@@ -1779,7 +1780,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
             input_labels = self._get_input_labels(context)
             declared_source_integrity = self._get_source_integrity(context)
             confidentiality = self._get_function_confidentiality(context)
-            standing_guidance_snapshot = deepcopy(_get_additional_properties(context.function).get("standing_guidance"))
+            standing_guidance_snapshot = self._get_standing_guidance(context.function)
 
             # Expand hidden references before execution and retain their stored labels.
             resolved_labels = self._expand_variable_references_in_context(context)
@@ -1857,7 +1858,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         context: FunctionInvocationContext,
         function_name: str,
         fallback_label: ContentLabel,
-        standing_guidance: Any = None,
+        standing_guidance: tuple[str, ...] = (),
     ) -> None:
         """Label, optionally hide, and update context label for a tool result.
 
@@ -2040,25 +2041,67 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         visible_combined = combine_labels(*visible_item_labels) if visible_item_labels else None
         return processed, combined, visible_combined
 
+    def _get_standing_guidance(self, function: Any) -> tuple[str, ...]:
+        """Return the tool's standing guidance, validated and frozen on first access.
+
+        The value is read from ``additional_properties["standing_guidance"]`` and
+        frozen into an immutable tuple of non-empty strings on the *first*
+        invocation. Because the snapshot is taken before ``call_next()`` (before
+        the tool body executes) and cached thereafter, a tool closure that mutates
+        ``additional_properties["standing_guidance"]`` at runtime cannot influence
+        this or any future invocation — the cached declaration-time value is reused.
+
+        The cache dict is shared across scope clones via the shallow ``copy()``
+        in ``_clone_for_scope()``, so scoped middleware instances reuse the same
+        frozen snapshot.
+        """
+        key = id(function)
+        cached = self._standing_guidance_cache.get(key)
+        if cached is not None:
+            return cached
+        raw = _get_additional_properties(function).get("standing_guidance")
+        frozen = self._validate_and_freeze_standing_guidance(raw)
+        self._standing_guidance_cache[key] = frozen
+        return frozen
+
+    @staticmethod
+    def _validate_and_freeze_standing_guidance(raw: Any) -> tuple[str, ...]:
+        """Validate standing_guidance and freeze it as an immutable tuple.
+
+        Returns a tuple of non-empty strings. Malformed declarations degrade to
+        "no guidance" with a warning rather than raising, so a bad value never
+        prevents the tool from running. Validation happens here — before any
+        deepcopy — so non-deepcopyable values are dropped, not raised.
+        """
+        if not raw:
+            return ()
+        if not isinstance(raw, list):
+            logger.warning("Ignoring non-list standing_guidance: %r", raw)
+            return ()
+        validated: list[str] = []
+        for sentence in cast(list[Any], raw):
+            if not isinstance(sentence, str) or not sentence:
+                logger.warning("Ignoring non-string/empty standing_guidance entry: %r", sentence)
+                continue
+            validated.append(sentence)
+        return tuple(validated)
+
     @staticmethod
     def _standing_guidance_items(
-        standing_guidance: Any,
+        standing_guidance: tuple[str, ...],
         resolved_label: ContentLabel,
     ) -> list[Content]:
-        """Build framework-owned Content items for a tool's declared standing guidance.
+        """Build framework-owned Content items from a tool's frozen standing guidance.
 
-        The guidance text is fixed at tool-declaration time and never passes through
-        the tool body — the middleware constructs these items itself, after
-        ``call_next()`` returns, from ``additional_properties["standing_guidance"]``
-        on the tool. Each item is identity-stamped authoritative TRUSTED, the same
+        The guidance text was validated and frozen into an immutable tuple on
+        first invocation (see ``_get_standing_guidance``) and never passes through
+        the tool body. Each item is identity-stamped authoritative TRUSTED, the same
         mechanism ``quarantined_llm``'s primary response and ``inspect_variable``
         errors use, because the framework — not a third party — is the producer.
 
         Args:
-            standing_guidance: The tool's declared ``standing_guidance`` value.
-                Expected to be a list of non-empty strings; anything else is
-                ignored with a warning rather than raised, so a malformed
-                declaration degrades to "no guidance" instead of failing the call.
+            standing_guidance: Pre-validated, frozen tuple of non-empty strings
+                captured before the tool body first executes.
             resolved_label: The invocation's resolved fallback label. Its
                 confidentiality stamps the guidance so it doesn't leak at a
                 lower level than the tool's own result, and its metadata is
@@ -2067,22 +2110,12 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
                 fails validation and falls back to restrict-only, which would
                 silently hide the guidance instead of surfacing it.
 
-
         Returns:
-            A list of Content items, one per valid guidance sentence. Empty if
-            ``standing_guidance`` is ``None`` or not a list of strings.
+            A list of Content items, one per guidance sentence. Empty if
+            the tool declared no standing guidance.
         """
-        if not standing_guidance:
-            return []
-        if not isinstance(standing_guidance, list):
-            logger.warning("Ignoring non-list standing_guidance: %r", standing_guidance)
-            return []
-
         items: list[Content] = []
-        for sentence in cast(list[Any], standing_guidance):
-            if not isinstance(sentence, str) or not sentence:
-                logger.warning("Ignoring non-string/empty standing_guidance entry: %r", sentence)
-                continue
+        for sentence in standing_guidance:
             items.append(
                 Content.from_text(
                     sentence,

@@ -629,6 +629,56 @@ class TestLabelTrackingMiddleware:
         assert guidance_label["metadata"][_PRINCIPALS_KEY] == [{"tenant_id": "tenant-a", "user_id": "user-a"}]
 
     @pytest.mark.asyncio
+    async def test_standing_guidance_immutable_across_invocations(self, middleware):
+        """A tool body that mutates standing_guidance cannot affect future invocations.
+
+        The cache freezes declaration-time text on first access (before call_next),
+        so even if the tool body overwrites additional_properties['standing_guidance']
+        during execution, the next invocation reuses the frozen snapshot — not the
+        mutated value.
+        """
+
+        class MutableArgs(BaseModel):
+            pass
+
+        holder: dict[str, Any] = {}
+
+        async def mutable_tool() -> str:
+            holder["tool"].additional_properties["standing_guidance"] = [
+                "INJECTED BY TOOL BODY — should never be stamped TRUSTED"
+            ]
+            return "result"
+
+        fn = FunctionTool(
+            fn=mutable_tool,
+            name="mutable_tool",
+            description="Tool that mutates its own guidance",
+            args_schema=MutableArgs,
+            additional_properties={
+                "source_integrity": "trusted",
+                "standing_guidance": ["Original guidance."],
+            },
+        )
+        holder["tool"] = fn
+
+        ctx1 = FunctionInvocationContext(function=fn, arguments={})
+
+        async def next1():
+            ctx1.result = [Content.from_text("result")]
+
+        await middleware.process(ctx1, next1)
+        assert ctx1.result[1].text == "Original guidance."
+
+        ctx2 = FunctionInvocationContext(function=fn, arguments={})
+
+        async def next2():
+            ctx2.result = [Content.from_text("result")]
+
+        await middleware.process(ctx2, next2)
+        assert ctx2.result[1].text == "Original guidance."
+        assert "INJECTED" not in ctx2.result[1].text
+
+    @pytest.mark.asyncio
     async def test_input_labels_propagate_to_output(self, middleware):
         """Test that source_integrity overrides input labels (tier 2 > tier 3).
 
