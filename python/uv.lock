@@ -705,7 +705,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-gemini"
-version = "1.0.0b260910"
+version = "1.0.0b260923"
 source = { editable = "packages/gemini" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -715,7 +715,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "google-genai", specifier = ">=1.69.0,<3.0.0" },
+    { name = "google-genai", specifier = ">=2.25.0,<3.0.0" },
 ]
 
 [[package]]
@@ -2418,7 +2418,7 @@ requests = [
 
 [[package]]
 name = "google-genai"
-version = "2.24.0"
+version = "2.25.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -2432,9 +2432,9 @@ dependencies = [
     { name = "typing-extensions", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "websockets", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/35/26/176d04f442e82d60cadc74cfaf81f01017062ce274a790455a57aec48c8f/google_genai-2.24.0.tar.gz", hash = "sha256:814b63d05dca4776c5a322699eb30c565040cf8d5fd77c38714076535fb2e019", size = 705409, upload-time = "2026-09-16T22:38:37.367Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/62/0a/a3b7856ca840031d4393dbdd97b67fe811b20061315ed68b67b5c85ca80d/google_genai-2.25.0.tar.gz", hash = "sha256:ab603baa5eee0205926ad0f8d7f93e0400df6d67650e99c33e01ab228ea16ad6", size = 699564, upload-time = "2026-09-22T17:23:01.238Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/84/5b/87913fe392ba7b6402577259289ed3740c577956554a674b191a2971d33e/google_genai-2.24.0-py3-none-any.whl", hash = "sha256:59e5f2d88bc2d6ed04aa1aa14cb5629090cfe9458401745e620b24d1fe9893d7", size = 1142675, upload-time = "2026-09-16T22:38:35.332Z" },
+    { url = "https://files.pythonhosted.org/packages/5d/a8/178dbb9d1d6cac721b01592e291146a024bae5ee3224e36569348921dd6c/google_genai-2.25.0-py3-none-any.whl", hash = "sha256:2e8f3a5f76ed00d5ffc3153f6089bc7d3511054eed53ad9cfc6095a7dc59b028", size = 1159631, upload-time = "2026-09-22T17:22:59.291Z" },
 ]
 
 [[package]]

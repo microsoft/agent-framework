@@ -125,6 +125,14 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
   deserializes results without interpreting thresholds or re-filtering returned scores. Connectors own scoring,
   filter execution, score thresholds (including provider-defined/default metrics), and paging. Use native backend
   execution where available, otherwise an explicit connector-local fallback or reject unsupported options
+- **Embedding request options** - `upsert` accepts either flat `embeddings_options` for
+  all generated vector fields or `embeddings_options_by_field` keyed by logical field name,
+  never both. `search` and `create_vector_search_tool` accept flat `embeddings_options`
+  for local query generation. Core supplies declared field dimensions and rejects
+  conflicting values before embedding; search ignores these options when a
+  precomputed vector is supplied. `create_upsert_tool` and
+  `VectorCollectionContextProvider` forward the same operation-specific settings
+  to their generated tools.
 - **`create_vector_search_tool`** - Creates an agent tool from any `SupportsVectorSearch` implementation
 - **`create_upsert_tool` / `create_get_tool` / `create_delete_tool`** - Create agent tools for collection CRUD;
   upsert and delete require approval by default, while get does not. Auto-generated keys are omitted from upsert

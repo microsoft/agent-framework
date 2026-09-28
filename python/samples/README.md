@@ -156,6 +156,13 @@ variable.
 | `agent-framework-foundry` | `FoundryChatClient` | `FOUNDRY_MODEL` | `gpt-4o` |
 | `agent-framework-foundry` | `FoundryAgent` | `FOUNDRY_AGENT_NAME` | `travel-planner` |
 | `agent-framework-foundry` | `FoundryAgent` | `FOUNDRY_AGENT_VERSION` | `v1` |
+| `agent-framework-gemini` | `GeminiChatClient / GeminiEmbeddingClient` | `GOOGLE_API_KEY` | `your-api-key` |
+| `agent-framework-gemini` | `GeminiChatClient` | `GOOGLE_MODEL` | `gemini-2.5-flash-lite` |
+| `agent-framework-gemini` | `GeminiEmbeddingClient` | `GOOGLE_EMBEDDING_MODEL` | `gemini-embedding-2` |
+| `agent-framework-gemini` | `GeminiEmbeddingClient` | `GOOGLE_GENAI_USE_ENTERPRISE` | `true` |
+| `agent-framework-gemini` | `GeminiChatClient / GeminiEmbeddingClient` | `GOOGLE_GENAI_USE_VERTEXAI` | `true` |
+| `agent-framework-gemini` | `GeminiChatClient / GeminiEmbeddingClient` | `GOOGLE_CLOUD_PROJECT` | `your-project-id` |
+| `agent-framework-gemini` | `GeminiChatClient / GeminiEmbeddingClient` | `GOOGLE_CLOUD_LOCATION` | `global` |
 | `agent-framework-github-copilot` | `GitHubCopilotAgent` | `GITHUB_COPILOT_CLI_PATH` | `copilot` |
 | `agent-framework-github-copilot` | `GitHubCopilotAgent` | `GITHUB_COPILOT_MODEL` | `gpt-5` |
 | `agent-framework-github-copilot` | `GitHubCopilotAgent` | `GITHUB_COPILOT_TIMEOUT` | `60` |
