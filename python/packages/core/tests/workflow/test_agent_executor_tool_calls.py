@@ -3,6 +3,7 @@
 """Tests for AgentExecutor handling of tool calls and results in streaming mode."""
 
 from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
+from pathlib import Path
 from typing import Any, Literal, overload
 
 import pytest
@@ -17,10 +18,12 @@ from agent_framework import (
     AgentRunInputs,
     AgentSession,
     BaseAgent,
+    ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     ComputerSafetyCheck,
     Content,
+    FileHistoryProvider,
     FunctionTool,
     InMemoryCheckpointStorage,
     InMemoryHistoryProvider,
@@ -783,7 +786,7 @@ async def test_workflow_mixed_computer_and_local_function_pauses_and_resumes_in_
         client=client,
         name="MixedAgent",
         tools=[local_compute],
-        default_options={"store": service_storage},
+        default_options=ChatOptions(store=service_storage),
         context_providers=[InMemoryHistoryProvider(source_id=history_source)] if history_source else None,
     )
     storage = InMemoryCheckpointStorage() if restore_checkpoint else None
@@ -825,7 +828,7 @@ async def test_workflow_mixed_computer_and_local_function_pauses_and_resumes_in_
                 client=client,
                 name="MixedAgent",
                 tools=[local_compute],
-                default_options={"store": service_storage},
+                default_options=ChatOptions(store=service_storage),
                 context_providers=[InMemoryHistoryProvider(source_id=history_source)] if history_source else None,
             ),
             checkpoint_storage=storage,
@@ -851,6 +854,114 @@ async def test_workflow_mixed_computer_and_local_function_pauses_and_resumes_in_
     assert [content.call_id for content in results] == (
         ["function-call-1", "computer-call-1"] if function_first else ["computer-call-1", "function-call-1"]
     )
+
+
+@pytest.mark.parametrize("function_first", [False, True])
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("restore_checkpoint", [False, True])
+async def test_workflow_mixed_computer_and_local_function_file_history(
+    tmp_path: Path, function_first: bool, stream: bool, restore_checkpoint: bool
+) -> None:
+    client = MixedComputerFunctionClient(function_first=function_first, service_storage=False)
+    executions: list[int] = []
+
+    @tool
+    def local_compute() -> str:
+        """Run a local function once."""
+        executions.append(1)
+        return "local result"
+
+    provider = FileHistoryProvider(tmp_path)
+    agent = Agent(
+        client=client,
+        name="MixedAgent",
+        tools=[local_compute],
+        context_providers=[provider],
+    )
+    storage = InMemoryCheckpointStorage() if restore_checkpoint else None
+    workflow = WorkflowBuilder(start_executor=agent, checkpoint_storage=storage).build()
+    if stream:
+        [request] = [
+            event
+            for event in [event async for event in workflow.run("Use both", stream=True)]
+            if event.type == "request_info"
+        ]
+    else:
+        [request] = (await workflow.run("Use both")).get_request_info_events()
+    result = Content.from_computer_tool_result(
+        call_id="computer-call-1", screenshot=Content.from_data(b"png", "image/png")
+    )
+    executor = workflow.executors["MixedAgent"]
+    assert isinstance(executor, AgentExecutor)
+    session_id = (await executor.on_checkpoint_save())["agent_session"]["session_id"]
+    assert not any(
+        content.type == "function_result"
+        for message in await provider.get_messages(session_id)
+        for content in message.contents
+    )
+
+    run_kwargs: dict[str, Any] = {}
+    if storage is not None:
+        checkpoints = await storage.list_checkpoints(workflow_name=workflow.name)
+        checkpoint = next(
+            checkpoint
+            for checkpoint in reversed(checkpoints)
+            if request.request_id in checkpoint.pending_request_info_events
+        )
+        workflow = WorkflowBuilder(
+            name=workflow.name,
+            start_executor=Agent(
+                client=client,
+                name="MixedAgent",
+                tools=[local_compute],
+                context_providers=[FileHistoryProvider(tmp_path)],
+            ),
+            checkpoint_storage=storage,
+        ).build()
+        run_kwargs["checkpoint_id"] = checkpoint.checkpoint_id
+
+    if stream:
+        _ = [event async for event in workflow.run(responses={request.request_id: result}, stream=True, **run_kwargs)]
+    else:
+        await workflow.run(responses={request.request_id: result}, **run_kwargs)
+
+    assert len(executions) == 1
+    results = [
+        content
+        for message in client.received_messages[-1]
+        for content in message.contents
+        if content.type in ("function_result", "computer_tool_result")
+    ]
+    expected_ids = ["function-call-1", "computer-call-1"] if function_first else ["computer-call-1", "function-call-1"]
+    assert [content.call_id for content in results] == expected_ids
+
+    await workflow.run("Start a new task")
+    history_results = [
+        content
+        for message in client.received_messages[-1]
+        for content in message.contents
+        if content.type in ("function_result", "computer_tool_result")
+    ]
+    assert [content.call_id for content in history_results] == expected_ids
+    assert len(executions) == 1
+
+
+async def test_direct_agent_mixed_computer_turn_keeps_function_result_in_file_history(tmp_path: Path) -> None:
+    client = MixedComputerFunctionClient(function_first=False, service_storage=False)
+    provider = FileHistoryProvider(tmp_path)
+
+    @tool
+    def local_compute() -> str:
+        """Run a local function."""
+        return "local result"
+
+    agent = Agent(client=client, tools=[local_compute], context_providers=[provider])
+    session = agent.create_session()
+    response = await agent.run("Use both", session=session)
+
+    assert len(response.user_input_requests) == 1
+    history = await provider.get_messages(session.session_id)
+    assert any(content.type == "function_result" for message in history for content in message.contents)
 
 
 async def test_workflow_agent_computer_call_resumes_with_explicit_safety_acknowledgment() -> None:
@@ -1196,7 +1307,9 @@ async def test_workflow_cancelling_mixed_computer_batch_keeps_function_evidence_
         return "local result"
 
     workflow = WorkflowBuilder(
-        start_executor=Agent(client=client, name="MixedAgent", tools=[local_compute], default_options={"store": True})
+        start_executor=Agent(
+            client=client, name="MixedAgent", tools=[local_compute], default_options=ChatOptions(store=True)
+        )
     ).build()
     [request] = (await workflow.run("Use both")).get_request_info_events()
     executor = workflow.executors["MixedAgent"]

@@ -4,7 +4,6 @@ import copy
 import inspect
 import logging
 import sys
-from collections import deque
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, cast
@@ -14,7 +13,13 @@ from typing_extensions import Never, TypedDict
 from agent_framework import Content
 
 from .._agents import SupportsAgentRun
-from .._sessions import AgentSession, AgentSessionDict, InMemoryHistoryProvider
+from .._sessions import (
+    _WORKFLOW_DEFER_COMPUTER_FUNCTION_RESULTS_KEY,  # pyright: ignore[reportPrivateUsage]
+    AgentSession,
+    AgentSessionDict,
+    InMemoryHistoryProvider,
+    _paired_local_function_results,  # pyright: ignore[reportPrivateUsage]
+)
 from .._types import AgentResponse, AgentResponseUpdate, Message, ResponseStream
 from ..exceptions import AgentInvalidResponseException, WorkflowCheckpointException
 from ._agent_utils import prepare_agent_run_args, resolve_agent_id, resolve_executor_kwargs
@@ -741,12 +746,16 @@ class AgentExecutor(Executor):
         containing incremental updates (streaming mode) or a single output event (type='output')
         containing the complete response (non-streaming mode).
         """
-        if ctx.is_streaming():
-            # Streaming mode: emit incremental updates
-            response = await self._run_agent_streaming(cast(WorkflowContext[Never, AgentResponseUpdate], ctx))
-        else:
-            # Non-streaming mode: use run() and emit single event
-            response = await self._run_agent(cast(WorkflowContext[Never, AgentResponse], ctx))
+        self._session.state[_WORKFLOW_DEFER_COMPUTER_FUNCTION_RESULTS_KEY] = True
+        try:
+            if ctx.is_streaming():
+                # Streaming mode: emit incremental updates
+                response = await self._run_agent_streaming(cast(WorkflowContext[Never, AgentResponseUpdate], ctx))
+            else:
+                # Non-streaming mode: use run() and emit single event
+                response = await self._run_agent(cast(WorkflowContext[Never, AgentResponse], ctx))
+        finally:
+            self._session.state.pop(_WORKFLOW_DEFER_COMPUTER_FUNCTION_RESULTS_KEY, None)
 
         # Snapshot current conversation as cache + latest agent outputs.
         # Do not append to prior snapshots: callers may provide full-history messages
@@ -962,10 +971,7 @@ class AgentExecutor(Executor):
             if start is None:
                 raise AgentInvalidResponseException("Pending computer call is absent from the final response.")
             contents = [content for message in response.messages[start:] for content in message.contents]
-            results_by_call_id: dict[str, deque[Content]] = {}
-            for content in contents:
-                if content.type == "function_result" and content.call_id:
-                    results_by_call_id.setdefault(content.call_id, deque()).append(content)
+            paired_results = _paired_local_function_results(contents)
             order = []
             for content in contents:
                 if content.user_input_request and isinstance(content.id, str) and content.id in request_ids:
@@ -975,10 +981,10 @@ class AgentExecutor(Executor):
                     and not content.informational_only
                     and content.id
                     and content.call_id
-                    and (results := results_by_call_id.get(content.call_id))
+                    and (result := paired_results.get(id(content))) is not None
                 ):
                     order.append(content.id)
-                    completed_results.append(results.popleft())
+                    completed_results.append(result)
             if len(order) != len(set(order)) or not request_ids.issubset(order):
                 raise AgentInvalidResponseException("Computer batch has missing or duplicate call occurrence IDs.")
 

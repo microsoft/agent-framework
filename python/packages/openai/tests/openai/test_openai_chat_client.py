@@ -3618,7 +3618,7 @@ async def test_completed_computer_pair_does_not_pause_workflow(monkeypatch: pyte
 
     monkeypatch.setattr(client, "_inner_get_response", inner_get_response)
     workflow = WorkflowBuilder(
-        start_executor=Agent(client=client, name="ComputerAgent", default_options={"store": False})
+        start_executor=Agent(client=client, name="ComputerAgent", default_options=ChatOptions(store=False))
     ).build()
     if stream:
         events = [event async for event in workflow.run("Use the computer", stream=True)]
@@ -3728,7 +3728,7 @@ async def test_openai_mixed_computer_and_function_waits_for_screenshot(
     monkeypatch.setattr(client, "_inner_get_response", inner_get_response)
     workflow = WorkflowBuilder(
         start_executor=Agent(
-            client=client, name="ComputerAgent", tools=[local_compute], default_options={"store": False}
+            client=client, name="ComputerAgent", tools=[local_compute], default_options=ChatOptions(store=False)
         )
     ).build()
     if stream:

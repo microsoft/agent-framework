@@ -162,6 +162,9 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
 - **`HistoryProvider`** - Base class for conversation history storage
 - **`InMemoryHistoryProvider`** - Built-in session-state history provider for local runs
 - **`FileHistoryProvider`** - Experimental append-only file-backed history provider; msgspec JSON Lines is the default and `serialization_format="msgpack"` uses length-prefixed binary MessagePack records. Custom `dumps`/`loads` remain as deprecated JSON-only compatibility hooks and emit `DeprecationWarning` when supplied.
+- **Mixed computer/function workflow history** - The default `HistoryProvider.after_run` defers completed local
+  function results for loadable providers that store inputs until the computer reply arrives, so history records
+  them once in call order. Custom `after_run` implementations must handle this themselves.
 
 ### Skills (`_skills.py`)
 
