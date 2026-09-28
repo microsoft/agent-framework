@@ -202,9 +202,67 @@ public sealed class ForwardedPropertiesTests : IAsyncDisposable
         Assert.True(firstResponse.IsSuccessStatusCode);
         Assert.True(secondResponse.IsSuccessStatusCode);
         Assert.Equal(1, fakeAgent.ReceivedRuns[0].Count(message => message.Text.Contains("Preference", StringComparison.Ordinal)));
-        Assert.Single(fakeAgent.ReceivedRuns[1], message => message.Text.Contains("Preference", StringComparison.Ordinal));
+        Assert.Single(fakeAgent.ReceivedRuns[1], message =>
+            message.GetAgentRequestMessageSourceType() == new AgentRequestMessageSourceType("AGUIContext"));
         Assert.Single(fakeAgent.ReceivedRuns[1], message => message.Text.Contains("Second turn", StringComparison.Ordinal));
     }
+
+    [Fact]
+    public async Task Context_RevertedToOlderValue_IsAppendedAfterMostRecentGeneratedContextAsync()
+    {
+        FakeForwardedPropsAgent fakeAgent = new();
+        await this.SetupTestServerAsync(fakeAgent);
+
+        const string Run1 = """
+            {"threadId":"context-revert","runId":"run-1","messages":[{"id":"msg-1","role":"user","content":"First"}],"context":[{"description":"Preference","value":"A"}]}
+            """;
+        using (HttpResponseMessage run1Response = await this.PostRunAsync(Run1))
+        {
+            Assert.True(run1Response.IsSuccessStatusCode);
+        }
+
+        const string Run2 = """
+            {"threadId":"context-revert","runId":"run-2","parentRunId":"run-1","messages":[{"id":"msg-1","role":"user","content":"First"},{"id":"context-a","role":"user","content":"AG-UI context (client-provided data):\n{\"description\":\"Preference\",\"value\":\"A\"}"},{"id":"assistant-1","role":"assistant","content":"Response A"}],"context":[{"description":"Preference","value":"B"}]}
+            """;
+        using (HttpResponseMessage run2Response = await this.PostRunAsync(Run2))
+        {
+            Assert.True(run2Response.IsSuccessStatusCode);
+        }
+
+        const string Run3 = """
+            {"threadId":"context-revert","runId":"run-3","parentRunId":"run-2","messages":[{"id":"msg-1","role":"user","content":"First"},{"id":"context-a","role":"user","content":"AG-UI context (client-provided data):\n{\"description\":\"Preference\",\"value\":\"A\"}"},{"id":"assistant-1","role":"assistant","content":"Response A"},{"id":"context-b","role":"user","content":"AG-UI context (client-provided data):\n{\"description\":\"Preference\",\"value\":\"B\"}"},{"id":"assistant-2","role":"assistant","content":"Response B"}],"context":[{"description":"Preference","value":"A"}]}
+            """;
+        using HttpResponseMessage response = await this.PostRunAsync(Run3);
+
+        Assert.True(response.IsSuccessStatusCode);
+        ChatMessage newestGenerated = Assert.Single(fakeAgent.ReceivedRuns[2], m => IsAGUIContextMessage(m));
+        Assert.Contains("\"value\":\"A\"", newestGenerated.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"value\":\"B\"", newestGenerated.Text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Context_OrdinaryUserMessageWithSameText_DoesNotSuppressInjectionAsync()
+    {
+        FakeForwardedPropsAgent fakeAgent = new();
+        await this.SetupTestServerAsync(fakeAgent);
+        const string Request = """
+            {"threadId":"context-user-collision","runId":"run-1","messages":[{"id":"ordinary-user","role":"user","content":"AG-UI context (client-provided data):\n{\"description\":\"Preference\",\"value\":\"A\"}"}],"context":[{"description":"Preference","value":"A"}]}
+            """;
+        using HttpResponseMessage response = await this.PostRunAsync(Request);
+
+        Assert.True(response.IsSuccessStatusCode);
+        Assert.Equal(2, fakeAgent.ReceivedRuns[0].Count(m => m.Text.Contains("\"value\":\"A\"", StringComparison.Ordinal)));
+        Assert.Single(fakeAgent.ReceivedRuns[0], m => IsAGUIContextMessage(m));
+    }
+
+    private async Task<HttpResponseMessage> PostRunAsync(string requestJson)
+    {
+        using StringContent content = new(requestJson, Encoding.UTF8, "application/json");
+        return await this._client!.PostAsync(new Uri("/agent", UriKind.Relative), content);
+    }
+
+    private static bool IsAGUIContextMessage(ChatMessage message) =>
+        message.GetAgentRequestMessageSourceType() == new AgentRequestMessageSourceType("AGUIContext");
 
     [Fact]
     public async Task ChatClient_ForwardsContextAndForwardedPropsFromRawRepresentationFactoryAsync()
@@ -223,14 +281,11 @@ public sealed class ForwardedPropertiesTests : IAsyncDisposable
             },
         };
 
-        // Act
         await foreach (ChatResponseUpdate _ in chatClient.GetStreamingResponseAsync(
-            [new ChatMessage(ChatRole.User, "test client forwarding")],
-            options))
+            [new ChatMessage(ChatRole.User, "test client forwarding")], options))
         {
         }
 
-        // Assert
         Assert.Single(fakeAgent.ReceivedContext ?? []);
         Assert.Equal("Current user", fakeAgent.ReceivedContext![0].Description);
         Assert.Equal("Ada Lovelace", fakeAgent.ReceivedContext[0].Value);

@@ -92,6 +92,15 @@ public static class AGUIEndpointRouteBuilderExtensions
     /// conversation identifier. If no session store is registered, sessions are ephemeral (not persisted).
     /// </para>
     /// <para>
+    /// <strong>AG-UI context.</strong> Each non-empty <c>RunAgentInput.Context</c> collection is forwarded
+    /// as one additional trailing <see cref="ChatRole.User"/> message. The message starts with
+    /// <c>AG-UI context (client-provided data):</c>; each context entry follows as a JSON object with
+    /// <c>description</c> and <c>value</c> string properties, one entry per line (newline-delimited JSON).
+    /// This client-provided grounding data is not promoted to system instructions and must be treated as
+    /// untrusted input. If a continuation request already contains the same most-recent AG-UI context
+    /// message, the endpoint does not append a duplicate.
+    /// </para>
+    /// <para>
     /// <strong>Trust model.</strong> The AG-UI <c>RunAgentInput.ThreadId</c> arrives
     /// from the wire and is treated as a chain-resume identifier, not as an authorization
     /// token. Multi-user hosts must register an <see cref="AgentIsolationKeyProvider"/> that
@@ -161,16 +170,20 @@ public static class AGUIEndpointRouteBuilderExtensions
             // a separate user message so agents that accept arbitrary AIAgent inputs can consume it.
             if (ctx.Input.Context is { Count: > 0 } contextItems)
             {
-                List<string> contextLines = ["AG-UI context (client-provided data):"];
+                var contextLines = new List<string> { "AG-UI context (client-provided data):" };
                 foreach (AGUIContext item in contextItems)
                 {
                     contextLines.Add($"{{\"description\":\"{JsonEncodedText.Encode(item.Description ?? string.Empty)}\",\"value\":\"{JsonEncodedText.Encode(item.Value ?? string.Empty)}\"}}");
                 }
 
                 ChatMessage contextMessage = new(ChatRole.User, string.Join("\n", contextLines));
-                if (!ctx.Messages.Any(message => message.Role == ChatRole.User && message.Text == contextMessage.Text))
+                ChatMessage markedContextMessage = contextMessage.WithAgentRequestMessageSource(
+                    new AgentRequestMessageSourceType("AGUIContext"),
+                    "AGUIContext");
+                ChatMessage? mostRecentGeneratedContext = ctx.Messages.LastOrDefault(IsAGUIContextMessage);
+                if (mostRecentGeneratedContext?.Text != contextMessage.Text)
                 {
-                    modelMessages = [.. ctx.Messages, contextMessage];
+                    modelMessages = [.. ctx.Messages, markedContextMessage];
                 }
             }
 
@@ -209,6 +222,10 @@ public static class AGUIEndpointRouteBuilderExtensions
         MarkFeatureUsed();
         return endpoint;
     }
+
+    private static bool IsAGUIContextMessage(ChatMessage message) =>
+        message.GetAgentRequestMessageSourceType() == new AgentRequestMessageSourceType("AGUIContext") &&
+        message.GetAgentRequestMessageSourceId() == "AGUIContext";
 
     private static void MarkFeatureUsed()
     {
