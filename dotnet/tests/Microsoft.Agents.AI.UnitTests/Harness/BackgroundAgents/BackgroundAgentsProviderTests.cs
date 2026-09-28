@@ -456,7 +456,9 @@ public class BackgroundAgentsProviderTests
         {
             Assert.False(wait.IsCompleted);
             cancellation.Cancel();
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => wait.WaitAsync(TimeSpan.FromSeconds(5)));
+            Task completedWait = await Task.WhenAny(wait, Task.Delay(TimeSpan.FromSeconds(5)));
+            Assert.Same(wait, completedWait);
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => wait);
 
             BackgroundAgentRuntimeState runtimeState = GetRuntimeState(provider, session);
             Assert.False(runtimeState.InFlightTasks[1].IsCompleted);
