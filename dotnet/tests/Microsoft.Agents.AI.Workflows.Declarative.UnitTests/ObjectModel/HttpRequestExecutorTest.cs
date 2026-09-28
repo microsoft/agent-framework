@@ -410,6 +410,35 @@ public sealed class HttpRequestExecutorTest(ITestOutputHelper output) : Workflow
             info.QueryParameters["includeDeleted"] == "false");
     }
 
+    [Theory]
+    [InlineData(RequestValueLocation.Url)]
+    [InlineData(RequestValueLocation.Header)]
+    [InlineData(RequestValueLocation.QueryParameter)]
+    [InlineData(RequestValueLocation.JsonBody)]
+    [InlineData(RequestValueLocation.RawBody)]
+    [InlineData(RequestValueLocation.ContentType)]
+    public async Task HttpRequestWithProtectedEnvironmentValueThrowsAsync(RequestValueLocation location)
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        this.State.Set(
+            "PROTECTED_SETTING",
+            FormulaValue.New("protected-value"),
+            VariableScopeNames.Environment,
+            SensitivityLevel.Sensitive);
+
+        HttpRequestAction model = this.CreateModelWithEnvironmentExpression(location);
+        MockHttpRequestHandler handler = new(HttpRequestResult("{}"));
+        HttpRequestExecutor action = new(model, handler.Object, this._agentProvider.Object, this.State);
+
+        // Act
+        Task ExecuteAsync() => this.ExecuteAsync(action);
+
+        // Assert
+        await Assert.ThrowsAsync<DeclarativeActionException>(ExecuteAsync);
+        handler.VerifyNotSent();
+    }
+
     [Fact]
     public async Task HttpRequestAddsResponseToConversationAsync()
     {
@@ -732,6 +761,64 @@ public sealed class HttpRequestExecutorTest(ITestOutputHelper output) : Workflow
         return AssignParent<HttpRequestAction>(builder);
     }
 
+    private HttpRequestAction CreateModelWithEnvironmentExpression(RequestValueLocation location)
+    {
+        const string EnvironmentExpression = "Env.PROTECTED_SETTING";
+
+        HttpRequestAction.Builder builder = new()
+        {
+            Id = this.CreateActionId(),
+            DisplayName = this.FormatDisplayName($"{nameof(HttpRequestWithProtectedEnvironmentValueThrowsAsync)}_{location}"),
+            Url = new StringExpression.Builder(
+                location == RequestValueLocation.Url
+                    ? StringExpression.Expression(EnvironmentExpression)
+                    : StringExpression.Literal(TestUrl)),
+            Method = new EnumExpression<HttpMethodTypeWrapper>.Builder(
+                EnumExpression<HttpMethodTypeWrapper>.Literal(HttpMethodTypeWrapper.Get(HttpMethodType.Post))),
+        };
+
+        switch (location)
+        {
+            case RequestValueLocation.Header:
+                builder.Headers.Add("X-Value", new StringExpression.Builder(StringExpression.Expression(EnvironmentExpression)));
+                break;
+            case RequestValueLocation.QueryParameter:
+                builder.QueryParameters.Add("value", new ValueExpression.Builder(ValueExpression.Expression(EnvironmentExpression)));
+                break;
+            case RequestValueLocation.JsonBody:
+                builder.Body = new JsonRequestContent.Builder
+                {
+                    Content = new ValueExpression.Builder(ValueExpression.Expression(EnvironmentExpression)),
+                };
+                break;
+            case RequestValueLocation.RawBody:
+                builder.Body = new RawRequestContent.Builder
+                {
+                    Content = new StringExpression.Builder(StringExpression.Expression(EnvironmentExpression)),
+                };
+                break;
+            case RequestValueLocation.ContentType:
+                builder.Body = new RawRequestContent.Builder
+                {
+                    Content = new StringExpression.Builder(StringExpression.Literal("body")),
+                    ContentType = new StringExpression.Builder(StringExpression.Expression(EnvironmentExpression)),
+                };
+                break;
+        }
+
+        return AssignParent<HttpRequestAction>(builder);
+    }
+
+    public enum RequestValueLocation
+    {
+        Url,
+        Header,
+        QueryParameter,
+        JsonBody,
+        RawBody,
+        ContentType,
+    }
+
     private sealed class MockHttpRequestHandler : Mock<IHttpRequestHandler>
     {
         private HttpRequestInfo? _lastRequest;
@@ -755,5 +842,7 @@ public sealed class HttpRequestExecutorTest(ITestOutputHelper output) : Workflow
             Assert.NotNull(this._lastRequest);
             Assert.True(predicate(this._lastRequest!), "Sent HTTP request did not match expected predicate.");
         }
+
+        public void VerifyNotSent() => Assert.Null(this._lastRequest);
     }
 }
