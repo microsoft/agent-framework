@@ -1,7 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 
+import asyncio
 from abc import ABC, abstractmethod
+from collections.abc import AsyncGenerator
+from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import datetime
 from typing import Generic, Protocol, TypeVar
 
@@ -302,6 +305,22 @@ class FoundryAgentSessionStore(SessionStore):
 
     def __init__(self, platform_context: FoundryAgentRequestContext) -> None:
         self.platform_context = platform_context
+        self._request_resources: AsyncExitStack | None = None
+        self._request_store: FoundryStateStore | None = None
+        self._store_lock = asyncio.Lock()
+
+    @asynccontextmanager
+    async def _request_scope(self) -> AsyncGenerator[None, None]:
+        """Reuse a lazily opened client until the hosting request finishes."""
+        if self._request_resources is not None:
+            raise RuntimeError("The session store already belongs to an active request scope.")
+        try:
+            async with AsyncExitStack() as resources:
+                self._request_resources = resources
+                yield
+        finally:
+            self._request_resources = None
+            self._request_store = None
 
     async def _get_store(self) -> FoundryStateStore:
         return await FoundryStateStore.get_or_create(
@@ -309,22 +328,34 @@ class FoundryAgentSessionStore(SessionStore):
             user_isolation=True,
         )
 
+    @asynccontextmanager
+    async def _open_store(self) -> AsyncGenerator[FoundryStateStore, None]:
+        if self._request_resources is None:
+            store = await self._get_store()
+            async with store:
+                yield store
+            return
+        async with self._store_lock:
+            if self._request_store is None:
+                store = await self._get_store()
+                await self._request_resources.enter_async_context(store)
+                self._request_store = store
+            store = self._request_store
+        yield store
+
     async def get(self, session_id: str) -> AgentSession | None:
-        store = await self._get_store()
-        async with store:
+        async with self._open_store() as store:
             item = await store.get_item(session_id, call_id=self.platform_context.call_id)
         if item is None:
             return None
         return AgentSession.from_dict(item.value)
 
     async def set(self, session_id: str, session: AgentSession) -> None:
-        store = await self._get_store()
-        async with store:
+        async with self._open_store() as store:
             await store.set_item(session_id, session.to_dict(), call_id=self.platform_context.call_id)
 
     async def delete(self, session_id: str) -> None:
-        store = await self._get_store()
-        async with store:
+        async with self._open_store() as store:
             await store.delete_item(session_id, call_id=self.platform_context.call_id)
 
 
