@@ -18,6 +18,7 @@ import os
 import threading
 import time
 import uuid
+import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import aclosing, asynccontextmanager
@@ -1106,15 +1107,16 @@ class TestResponsesHostServerInit:
     def test_legacy_aliases_warn_once_per_host(self) -> None:
         agent = Agent(client=_ServiceStorageRecordingClient(), default_options=OpenAIChatOptions(store=True))
         with pytest.warns(DeprecationWarning) as recorded:
+            warnings.warn("unrelated SDK deprecation", DeprecationWarning, stacklevel=2)
             server = ResponsesHostServer(
                 agent,
                 history_source="agent",
                 store=InMemoryResponseProvider(),
             )
         assert server is not None
-        assert len(recorded) == 2
-        assert any("history_source" in str(warning.message) for warning in recorded)
-        assert any("response_store" in str(warning.message) for warning in recorded)
+        messages = [str(warning.message) for warning in recorded]
+        assert sum(message.startswith("history_source is deprecated;") for message in messages) == 1
+        assert sum(message.startswith("store= is deprecated;") for message in messages) == 1
 
     def test_explicit_history_rejects_legacy_alias_and_invalid_policy(self) -> None:
         agent = _make_agent()

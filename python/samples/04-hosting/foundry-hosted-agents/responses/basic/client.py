@@ -21,7 +21,9 @@ def main() -> None:
             allow_preview=True,
         ) as project,
     ):
-        openai = project.get_openai_client(agent_name=os.environ["FOUNDRY_AGENT_NAME"])
+        openai = project.get_openai_client(  # ty: ignore[unresolved-attribute]  # pyrefly: ignore
+            agent_name=os.environ["FOUNDRY_AGENT_NAME"]
+        )
         conversation = openai.conversations.create()
         first = openai.responses.create(input="Introduce yourself.", conversation=conversation.id, store=True)
         second = openai.responses.create(
