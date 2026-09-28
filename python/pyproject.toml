@@ -28,7 +28,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "uv==0.12.16",
+    "uv==0.12.17",
     "flit==4.1.0",
     "ruff==0.16.7",
     "pytest==9.1.1",
