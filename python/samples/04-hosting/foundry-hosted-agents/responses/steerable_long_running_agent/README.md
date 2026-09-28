@@ -10,7 +10,7 @@ that rejected turns leave no pending futures. Do not enable steering using a pri
 queue-length precheck.
 
 [main.py](main.py) remains **runnable** as a regular non-steerable countdown agent. It uses
-`inner_history="host"` with a `FoundryChatClient` and returns the caller's **outer** `response.id` for
+`history_source="agent_server"` with a `FoundryChatClient` and returns the caller's **outer** `response.id` for
 background polling. Running a second turn concurrently does not steer the first. Start it using the
 [parent hosting guide](../../README.md), then send one stored background request. The deployment
 manifests keep their existing agent name for identity compatibility, not because steering is enabled:

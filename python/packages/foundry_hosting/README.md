@@ -32,26 +32,27 @@ requests must remain in the supported stores.
 ## Responses agent history and storage
 
 The caller's `POST /responses` **`store` flag** controls whether the *outer* response is retrievable and whether
-MAF session and approval state is saved. It does not choose the *inner* history source:
+MAF session and approval state is saved. The host's `history_source` independently selects who supplies model history:
 
-| `inner_history` | What the model receives | Inner storage on `store=True` |
+| `history_source` | What the model receives | Inner storage on caller `store=True` |
 | --- | --- | --- |
-| `"host"` (default) | Prior outer Responses transcript plus new input | Disabled. Storing clients run with `store=False`; non-storing clients receive no storage option. |
+| `"agent_server"` (default) | Prior outer Responses transcript plus new input | Disabled. Storing clients run with `store=False`; non-storing clients receive no storage option. |
 | `"service"` | New input only | Enabled. The service-issued `AgentSession.service_session_id` is saved privately under the outer response ID or conversation. |
-| `"agent"` | New input plus the agent's `HistoryProvider` | Disabled. Agent history in `AgentSession.state` is saved by the host, without duplicating service history. |
+| `"agent"` | New input only; the agent chooses how to load history | Developer-owned: `HistoryProvider` with `default_options={"store": False}` loads from host-persisted `AgentSession.state`, **or** a storing client with `default_options={"store": True}` uses downstream service history. The existing behavior is unchanged. |
 
 For example, suppose the first stored response answers **"My name is Ada"**, then the caller sends
 **"What is my name?"** with `previous_response_id` set to that response's **outer** `response.id`:
 
-- **`"host"`:** The model receives the first user input, the first assistant output, and the new
+- **`"agent_server"`:** The model receives the first user input, the first assistant output, and the new
   question. The host reconstructs that transcript from the Responses store; the inner service
   does not retain it.
 - **`"service"`:** The model receives only the new question as *request input*, along with the
   private `AgentSession.service_session_id` from the first turn. The downstream service retrieves
   its own transcript. A second branch from the first response cannot safely reuse that service
   thread and is rejected.
-- **`"agent"`:** The model receives the new question plus earlier messages loaded by the agent's
-  `HistoryProvider` from its stored MAF session. The downstream service does not store either turn.
+- **`"agent"`:** The model receives the new question. With `InMemoryHistoryProvider` and agent
+  default `store=False`, the provider adds earlier messages from the saved MAF session; with agent
+  default `store=True`, the downstream service owns the prior transcript instead.
 
 All three still return **outer** Responses IDs for retrieval and background polling. `store=False`
 requests are one-shot: they do not write host-managed state or ask the inner client to store, so
@@ -62,37 +63,37 @@ Choose **one** mode when constructing each host; do not reuse the same `Agent` i
 For example, to use downstream service history:
 
 ```python
-server = ResponsesHostServer(agent=agent, inner_history="service")
+server = ResponsesHostServer(agent=agent, history_source="service")
 ```
 
-Omitting `inner_history` instead selects `"host"`. For `"agent"`, construct the agent with a
-`HistoryProvider`, as shown in [agent_history.py](../../samples/04-hosting/foundry-hosted-agents/responses/basic/agent_history.py).
+Omitting `history_source` selects `"agent_server"`. To use a provider in `"agent"` mode,
+configure that agent with `store=False` as shown in
+[agent_history.py](../../samples/04-hosting/foundry-hosted-agents/responses/basic/agent_history.py).
 
-`"host"` and `"service"` reject a load-enabled `HistoryProvider` alongside their own history source; `"host"`
-also rejects default downstream continuation IDs. Explicit modes require a `RawAgent` with a client declaring
+`"agent_server"` and `"service"` reject a load-enabled `HistoryProvider` alongside their own history source;
+`"agent_server"` also rejects default downstream continuation IDs. Those modes require a `RawAgent` with a client declaring
 `STORES_BY_DEFAULT`; `"service"` requires a storing client that returns a private continuation ID. Hosting may
 add a transient in-memory provider to support function-call loops, but **never edits `agent.default_options`**.
 The host owns the provided agent instance and any providers it adds; do not reuse it with another host. A factory
 creates an independent agent for each request.
 
-The deprecated `history_source="agent_server"` still selects `"host"`. **Deprecated `history_source="agent"` is
-not an alias for `inner_history="agent"`**: on stored requests, it preserves the old behavior of sending only new
-input while the developer's defaults choose *either* a HistoryProvider *or* downstream service storage (including
-`default_options={"store": True}`). Existing custom `SupportsAgentRun` implementations can continue using this
-stored-request compatibility path. Each use of `history_source=` emits one deprecation warning per host; new code
-should choose its explicit history mode. The outer storage-backend constructor argument is now `response_store=`.
-The old `store=` backend argument remains an alias with its own once-per-host deprecation warning; supplying both
-is an error. Neither constructor argument sets the caller's per-request `store` flag.
+The existing `history_source="agent"` still preserves the agent's own provider **or** service storage defaults
+on stored requests, including `default_options={"store": True}`. Custom `SupportsAgentRun`
+implementations can continue using that mode for stored requests; it is not a forced-provider mode.
+The outer storage-backend constructor argument is now `response_store=`. The old `store=` backend
+argument remains an alias with its own once-per-host deprecation warning; supplying both is an error.
+Neither constructor argument sets the caller's per-request `store` flag.
 
 `store=False` returns a one-shot response without **writing** host-managed session, conversation, or approval state;
-it also disables inner service storage regardless of the developer's defaults. Unsafe custom agents, external
+it also disables downstream service storage regardless of the developer's defaults. Unsafe custom agents, external
 history providers that store messages, and fixed downstream continuation defaults fail with an actionable error
-instead of silently persisting. An unstored service-mode request cannot resume a private service thread. The legacy
-agent mode also rejects an unstored continuation if its restored session uses downstream storage. Application-owned
+instead of silently persisting. An unstored service-mode request cannot resume a private service thread.
+`history_source="agent"` also rejects an unstored continuation if its restored session uses downstream storage. Application-owned
 tools and external services may still have their own side effects. `background=True` requires outer `store=True`.
 
 Outer background work always uses the caller-visible `response.id` for polling; it does not enable provider-native
-background automatically. `inner_background="provider"` is a separate opt-in for `"service"` with a storing
+background automatically. `background_source="agent_server"` (default) uses only the outer background worker.
+`background_source="provider"` is a separate opt-in for `history_source="service"` with a storing
 Responses client. Its private continuation token is saved under the outer ID and never returned to the caller.
 Use `ResponsesServerOptions(resilient_background=True)` to permit recovery from a **saved** token; a crash before
 the token is saved cannot safely restart the inner job. A final provider poll retains that token in the private

@@ -1,22 +1,24 @@
 # Responses agents: history, storage, and options
 
 The **outer** Responses request decides whether the hosted response is stored. The developer separately selects
-where the **inner** agent gets its conversation history:
+who supplies the agent's model history:
 
-| Entry point | `inner_history` | Model history |
+| Entry point | `history_source` | Model history |
 | --- | --- | --- |
-| [main.py](main.py) | `"host"` | The outer Responses transcript; the inner client runs with `store=False`. |
+| [main.py](main.py) | `"agent_server"` | The outer Responses transcript; the inner client runs with `store=False`. |
 | [service_history.py](service_history.py) | `"service"` | Only new input goes to the model; its private `service_session_id` persists for later turns. |
-| [agent_history.py](agent_history.py) | `"agent"` | `InMemoryHistoryProvider` loads from `AgentSession.state`; inner client storage is off. |
-| [options.py](options.py) | `"host"` | The hook removes the caller's token limit so the agent default is used. |
-| [provider_background.py](provider_background.py) | `"service"` | Opt-in provider background with a private recovery token. |
+| [agent_history.py](agent_history.py) | `"agent"` | This agent opts into `InMemoryHistoryProvider` with `default_options={"store": False}`; another `"agent"` configuration with `store=True` can use service history instead. |
+| [options.py](options.py) | `"agent_server"` | The hook removes the caller's token limit so the agent default is used. |
+| [provider_background.py](provider_background.py) | `"service"` | `background_source="provider"` opts into provider background with a private recovery token. |
 
 For the same two stored requests—first **"My name is Ada"**, then **"What is my name?"** with the first
 response's `previous_response_id`—the modes differ at the *model* boundary. `main.py` replays both
 the first user message and the first assistant output before the follow-up. `service_history.py`
 sends only the follow-up and privately resumes the service thread returned by the first call.
 `agent_history.py` sends the follow-up plus earlier messages loaded from `InMemoryHistoryProvider`
-inside the persisted MAF session. In none of these cases is the caller's `response.id` the
+inside the persisted MAF session. With `history_source="agent"`, the agent's storage default determines
+whether it uses that provider or downstream service storage; the host does not force either one on
+stored requests. In none of these cases is the caller's `response.id` the
 downstream service ID.
 
 Run one entry point at a time. The deployment manifest targets `main.py`; select another script to deploy a different
@@ -73,8 +75,9 @@ removing one exposes the agent's own unchanged `default_options`. In [options.py
 the model receives the agent's `max_tokens=256` default instead. Platform IDs, storage flags, and private
 continuation tokens are never caller model options; the hook cannot add them back.
 
-`history_source="agent_server"` and `history_source="agent"` remain available with a per-host deprecation warning.
-For **stored** requests, the latter preserves the former behavior: only new input goes to the agent, and its
-developer-owned defaults may choose either a HistoryProvider **or downstream service storage**. It does **not**
-silently become `inner_history="agent"`. Prefer the explicit mode in new code. `store=` as a constructor parameter
-is a deprecated alias for `response_store=` (the outer storage *backend*, not the caller's `store` flag).
+`history_source="agent_server"` and `history_source="agent"` retain their existing meaning without a
+deprecation warning. For **stored** requests, `"agent"` passes only new input to the agent, whose
+developer-owned defaults may choose either a HistoryProvider **or downstream service storage**.
+`history_source="service"` explicitly requires service-managed history and overrides the agent's
+`store` default on stored requests. `store=` as a constructor parameter remains a deprecated alias
+for `response_store=` (the outer storage *backend*, not the caller's `store` flag).

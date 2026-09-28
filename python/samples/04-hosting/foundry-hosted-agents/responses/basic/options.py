@@ -33,7 +33,7 @@ def main() -> None:
     )
     ResponsesHostServer(
         agent=agent,
-        inner_history="host",
+        history_source="agent_server",
         prepare_options=prepare_options,
         unsupported_options="warn",
     ).run()

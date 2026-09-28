@@ -24,7 +24,7 @@ def main() -> None:
         context_providers=[InMemoryHistoryProvider()],
         default_options={"store": False},
     )
-    ResponsesHostServer(agent=agent, inner_history="agent").run()
+    ResponsesHostServer(agent=agent, history_source="agent").run()
 
 
 if __name__ == "__main__":

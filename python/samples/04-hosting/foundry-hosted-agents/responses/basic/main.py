@@ -25,7 +25,7 @@ def main() -> None:
         instructions="You are a friendly assistant. Keep your answers brief.",
     )
 
-    server = ResponsesHostServer(agent=agent, inner_history="host")
+    server = ResponsesHostServer(agent=agent, history_source="agent_server")
     server.run()
 
 

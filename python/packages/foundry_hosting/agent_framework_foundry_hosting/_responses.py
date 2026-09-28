@@ -120,7 +120,7 @@ _HOSTED_PROVIDER_STATE_KEY = "_foundry_provider_background"
 _HOSTED_SOURCE_CONVERSATION_KEY = "_foundry_source_conversation"
 _HOSTED_SERVICE_CHILD_KEY = "_foundry_service_child"
 
-_HistoryMode = Literal["host", "service", "agent", "legacy"]
+_HistorySource = Literal["agent_server", "agent", "service"]
 
 
 def _is_refusal_text_content(content: Content) -> bool:
@@ -490,10 +490,10 @@ class _AgentConfiguration:
 
 def _validate_agent_configuration(
     agent: SupportsAgentRun,
-    inner_history: _HistoryMode,
+    history_source: _HistorySource,
     options: ResponsesServerOptions | None,
     *,
-    inner_background: Literal["host", "provider"] = "host",
+    background_source: Literal["agent_server", "provider"] = "agent_server",
 ) -> _AgentConfiguration:
     is_workflow_agent = isinstance(agent, WorkflowAgent)
     if is_workflow_agent and agent.workflow._runner_context.has_checkpointing():  # pyright: ignore[reportPrivateUsage]
@@ -503,12 +503,12 @@ def _validate_agent_configuration(
         )
 
     resilient_background = bool(options and options.resilient_background)
-    if resilient_background and not is_workflow_agent and inner_background != "provider":
+    if resilient_background and not is_workflow_agent and background_source != "provider":
         raise RuntimeError(
             "resilient_background=True is only supported for workflow agents. "
             "Crash recovery cannot be provided for non-workflow agents."
         )
-    if inner_background == "provider" and (
+    if background_source == "provider" and (
         not isinstance(agent, RawAgent) or getattr(cast(Any, agent).client, "STORES_BY_DEFAULT", None) is not True
     ):
         raise RuntimeError("Provider background requires a RawAgent with a storing, resumable Responses client.")
@@ -518,35 +518,34 @@ def _validate_agent_configuration(
             "Steering cannot be provided reliably for workflow agents."
         )
 
-    if is_workflow_agent and inner_history not in ("host", "legacy"):
-        raise ValueError("inner_history='service' and 'agent' are only supported for regular agents.")
+    if is_workflow_agent and history_source == "service":
+        raise ValueError("history_source='service' is only supported for regular agents.")
 
     if not is_workflow_agent and isinstance(agent, RawAgent):
         identity_defaults = ("session_id", "agent_session_id", "user_id", "call_id", "service_session_id")
         if conflicting := [name for name in identity_defaults if agent.default_options.get(name) is not None]:
             raise RuntimeError(f"Model defaults cannot supply Foundry platform identity: {', '.join(conflicting)}.")
 
-    uses_agent_server_history = inner_history == "host"
+    uses_agent_server_history = history_source == "agent_server"
     client_stores_by_default = False
-    if not is_workflow_agent and inner_history != "legacy":
+    if not is_workflow_agent and history_source != "agent":
         if not isinstance(agent, RawAgent):
             raise RuntimeError(
-                "Explicit inner_history requires a RawAgent so hosting can enforce downstream storage. "
-                "For a custom SupportsAgentRun implementation, use the deprecated history_source='agent' "
-                "only for stored requests."
+                "history_source='agent_server' and 'service' require a RawAgent so hosting can enforce downstream "
+                "storage. Use history_source='agent' for a custom SupportsAgentRun implementation on stored requests."
             )
 
         stores_by_default = getattr(cast(Any, agent).client, "STORES_BY_DEFAULT", None)
         if not isinstance(stores_by_default, bool):
             raise RuntimeError(
-                "Explicit inner_history requires the chat client to declare STORES_BY_DEFAULT "
+                "history_source='agent_server' or 'service' requires the chat client to declare STORES_BY_DEFAULT "
                 "so hosting can enforce downstream storage behavior."
             )
         client_stores_by_default = stores_by_default
 
-        if inner_history == "service" and not stores_by_default:
+        if history_source == "service" and not stores_by_default:
             raise RuntimeError(
-                "inner_history='service' requires a storing client that declares STORES_BY_DEFAULT=True."
+                "history_source='service' requires a storing client that declares STORES_BY_DEFAULT=True."
             )
 
         service_continuation_options = [
@@ -556,20 +555,21 @@ def _validate_agent_configuration(
         ]
         if service_continuation_options:
             raise RuntimeError(
-                f"Explicit inner_history cannot use developer defaults for downstream continuation: "
-                f"{', '.join(service_continuation_options)}. Use history_source='agent' for legacy continuation."
+                f"history_source='agent_server' or 'service' cannot use developer defaults for downstream "
+                f"continuation: {', '.join(service_continuation_options)}. "
+                "Use history_source='agent' to retain developer-controlled continuation."
             )
 
-        if inner_history in ("host", "service"):
+        if history_source in ("agent_server", "service"):
             for provider in agent.context_providers:
                 if isinstance(provider, HistoryProvider) and provider.load_messages:
-                    if inner_history == "host" and _is_hosted_responses_history_sentinel(provider):
+                    if history_source == "agent_server" and _is_hosted_responses_history_sentinel(provider):
                         continue
                     raise RuntimeError(
-                        "The selected inner_history conflicts with a load-enabled HistoryProvider. "
-                        "Remove that provider or select inner_history='agent'."
+                        "The selected history_source conflicts with a load-enabled HistoryProvider. "
+                        "Remove that provider or select history_source='agent'."
                     )
-        if inner_history != "service" and not stores_by_default and agent.default_options.get("store") is True:
+        if history_source == "agent_server" and not stores_by_default and agent.default_options.get("store") is True:
             raise RuntimeError(
                 "The chat client does not store by default, but the agent sets a downstream store option. "
                 "Remove that developer-owned default rather than letting hosting change it."
@@ -608,9 +608,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         agent_session_store_provider: StoreProvider[SessionStore] | None = None,
         checkpoint_store_provider: ContextScopedStoreProvider[CheckpointStorage] | None = None,
         function_approval_store_provider: StoreProvider[FunctionApprovalStore] | None = None,
-        inner_history: Literal["host", "service", "agent"] | None = None,
-        history_source: Literal["agent_server", "agent"] | None = None,
-        inner_background: Literal["host", "provider"] = "host",
+        history_source: Literal["agent_server", "agent", "service"] = "agent_server",
+        background_source: Literal["agent_server", "provider"] = "agent_server",
         prepare_options: OptionsHook | None = None,
         unsupported_options: UnsupportedOptions = "warn",
         **kwargs: Any,
@@ -630,10 +629,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 If not provided, a default `CheckpointStoreProvider` will be used.
             function_approval_store_provider: Optional provider for function approval storage.
                 If not provided, a default `FunctionApprovalStoreProvider` will be used.
-            inner_history: Who supplies prior messages to the *model*, independently of the caller's
-                Responses `store` flag. Omitted means `"host"`:
+            history_source: Who supplies prior messages to the *model*, independently of the caller's
+                Responses `store` flag. Defaults to `"agent_server"`:
 
-                - `"host"`: Send the prior outer Responses transcript followed by this request's input.
+                - `"agent_server"`: Send the prior outer Responses transcript followed by this request's input.
                   For a storing chat client, force its per-run `store=False` and clear any restored
                   `service_session_id` to avoid replaying that transcript twice. A load-enabled
                   `HistoryProvider` or fixed downstream continuation default conflicts with this mode.
@@ -641,20 +640,19 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                   client with `store=True` and save its issued `service_session_id` in the host's
                   private MAF session store. The next stored request resumes that provider thread;
                   it must not branch an already-used provider conversation.
-                - `"agent"`: Send only this request's input; run a storing client with `store=False`.
-                  The agent's `HistoryProvider` loads prior messages from its MAF `AgentSession`,
-                  which the host saves for stored requests. Do not also use downstream service history.
+                - `"agent"`: Send only this request's input and preserve the agent's developer-owned
+                  storage choice on stored requests. With an `InMemoryHistoryProvider` and
+                  `default_options={"store": False}`, the provider loads prior messages from
+                  the host-persisted MAF `AgentSession`. With `default_options={"store": True}`,
+                  the downstream service retains history instead (the previous meaning of `"agent"`).
 
                 For example, after a stored response to "My name is Ada", a stored follow-up
-                "What is my name?" sends both turns to the model in `"host"` mode, but sends
-                only the follow-up in `"service"` mode (with a private service continuation).
-                In `"agent"` mode the provider supplies the earlier messages instead.
-            history_source: Deprecated compatibility setting. `"agent_server"` selects `"host"`;
-                `"agent"` sends only current input but preserves developer-controlled downstream
-                `store=True` *or* a `HistoryProvider` on stored requests. It is not equivalent to
-                `inner_history="agent"`, which disables downstream storage.
-            inner_background: `"provider"` explicitly opts a storing, resumable client into its
-                background API; `"host"` (default) leaves provider background disabled.
+                "What is my name?" sends both turns to the model with `"agent_server"`, but
+                sends only the follow-up with `"service"` (plus a private service continuation).
+                With `"agent"`, the developer chooses either of those agent-owned history sources.
+            background_source: `"agent_server"` (default) runs background work in the Responses host
+                without invoking provider-native background APIs; `"provider"` opts a storing, resumable
+                client into provider background polling and requires `history_source="service"`.
             prepare_options: Developer hook to remove or replace caller model options for an agent.
             unsupported_options: `"warn"` (default), `"error"`, or `"ignore"` when a custom agent
                 cannot accept runtime model options.
@@ -663,12 +661,12 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         Note:
             The *caller* controls outer persistence with `POST /responses` `store=True/False`.
             `store=False` writes no host-managed session or approval state and forces supported
-            inner clients not to store, regardless of `inner_history`. The constructor's
+            inner clients not to store, regardless of `history_source`. The constructor's
             deprecated `store=` argument instead selects the outer response-store backend
             (use `response_store=`). Outer `response.id` is the polling/continuation handle;
             any inner `service_session_id` is private and never replaces it.
 
-            1. With `inner_history="host"` (or the deprecated `history_source="agent_server"`),
+            1. With `history_source="agent_server"`,
                the agent must not have a load-enabled history provider: the host supplies the transcript.
             2. Context providers must not keep required state only on their Python instances,
                because the hosting environment may get deactivated between requests. Provider
@@ -678,7 +676,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                Do not reuse the same agent with another host or invoke it directly after construction.
                An agent returned by a callable belongs to that request.
             4. `resilient_background=True` supports legacy workflows and regular agents configured with
-               `inner_history="service", inner_background="provider"`. For provider background, only
+               `history_source="service", background_source="provider"`. For provider background, only
                a saved private continuation token can be polled after a crash; a crash before the token
                is saved cannot be replayed safely. Other regular-agent runs are not crash-recoverable.
                Legacy workflow background responses retain their checkpoint-based recovery behavior.
@@ -701,32 +699,22 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 "retains futures for rejected steering turns. Wait for the official fix in "
                 "Azure/azure-sdk-for-python#49233, then update the dependency and verify queue overflow."
             )
-        if history_source is not None and history_source not in ("agent_server", "agent"):
-            raise ValueError("history_source must be either 'agent_server' or 'agent'.")
-        if inner_history is not None and inner_history not in ("host", "service", "agent"):
-            raise ValueError("inner_history must be 'host', 'service', or 'agent'.")
-        if inner_history is not None and history_source is not None:
-            raise ValueError("inner_history and history_source cannot be combined.")
-        if inner_background not in ("host", "provider"):
-            raise ValueError("inner_background must be 'host' or 'provider'.")
+        if history_source not in ("agent_server", "agent", "service"):
+            raise ValueError("history_source must be 'agent_server', 'agent', or 'service'.")
+        if background_source not in ("agent_server", "provider"):
+            raise ValueError("background_source must be 'agent_server' or 'provider'.")
         if store is not None and response_store is not None:
             raise ValueError("Pass response_store instead of store; they cannot be combined.")
 
-        if inner_history is not None:
-            resolved_history: _HistoryMode = inner_history
-        elif history_source == "agent":
-            resolved_history = "legacy"
-        else:
-            resolved_history = "host"
-        if inner_background == "provider" and resolved_history != "service":
-            raise ValueError("Provider background requires inner_history='service'.")
-        if inner_background == "provider" and options and options.steerable_conversations:
+        if background_source == "provider" and history_source != "service":
+            raise ValueError("Provider background requires history_source='service'.")
+        if background_source == "provider" and options and options.steerable_conversations:
             raise ValueError("Provider background and steerable_conversations cannot be combined.")
         validate_agent_source(agent)
 
         resolved_agent = agent if is_agent(agent) else None
         configuration = (
-            _validate_agent_configuration(resolved_agent, resolved_history, options, inner_background=inner_background)
+            _validate_agent_configuration(resolved_agent, history_source, options, background_source=background_source)
             if resolved_agent is not None
             else None
         )
@@ -746,25 +734,18 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         self._agent_source = agent
         self._agent = resolved_agent
         self._configuration = configuration
-        self._inner_history: _HistoryMode = resolved_history
-        self._inner_background: Literal["host", "provider"] = inner_background
+        self._history_source: _HistorySource = history_source
+        self._background_source: Literal["agent_server", "provider"] = background_source
         self._prepare_options = prepare_options
         self._unsupported_options = validate_unsupported_options(unsupported_options)
         self._host_options = options
         self._uses_agent_server_history = (
-            configuration.agent_server_history if configuration is not None else resolved_history == "host"
+            configuration.agent_server_history if configuration is not None else history_source == "agent_server"
         )
         self._resilient_background = bool(options and options.resilient_background)
         if resolved_agent is not None and configuration is not None:
             _initialize_agent_history(resolved_agent, configuration)
 
-        if history_source is not None:
-            warnings.warn(
-                "history_source is deprecated; use inner_history='host', 'service', or 'agent'. "
-                "history_source='agent' retains developer-controlled downstream storage for stored requests.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
         if store is not None:
             warnings.warn("store= is deprecated; use response_store=.", DeprecationWarning, stacklevel=2)
 
@@ -844,7 +825,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             )
             agent = await resolve_agent(self._agent_source)
             configuration = self._configuration or _validate_agent_configuration(
-                agent, self._inner_history, self._host_options, inner_background=self._inner_background
+                agent, self._history_source, self._host_options, background_source=self._background_source
             )
             if self._configuration is None:
                 _initialize_agent_history(agent, configuration)
@@ -1128,7 +1109,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         into a terminal ``response.failed`` event (draining the tracker so the
         SSE stream stays well-formed).
         """
-        provider_background = self._inner_background == "provider" and request.get("background") is True
+        provider_background = self._background_source == "provider" and request.get("background") is True
         if context.is_recovery and not provider_background:
             raise RuntimeError("A non-resumable agent cannot be replayed after a process crash.")
 
@@ -1139,7 +1120,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             if isinstance(agent, RawAgent):
                 validate_default_transport_options(
                     agent.default_options,
-                    allow_legacy_store=self._inner_history == "legacy" and stored,
+                    allow_agent_store=self._history_source == "agent" and stored,
                 )
             if not stored:
                 if not isinstance(agent, RawAgent):
@@ -1173,12 +1154,12 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         "store=false cannot prevent an external HistoryProvider from persisting responses. "
                         "Use an InMemoryHistoryProvider or store=true."
                     )
-                if self._inner_history == "legacy":
+                if self._history_source == "agent":
                     stores_by_default = getattr(cast(Any, agent).client, "STORES_BY_DEFAULT", None)
                     if not isinstance(stores_by_default, bool):
                         raise RuntimeError(
                             "store=false with history_source='agent' requires a client declaring STORES_BY_DEFAULT; "
-                            "select an explicit inner_history mode or use store=true."
+                            "select history_source='agent_server' or 'service', or use store=true."
                         )
                     if not stores_by_default and agent.default_options.get("store") is True:
                         raise RuntimeError(
@@ -1198,14 +1179,14 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 if context.is_recovery and provider_background
                 else context.conversation_id or previous_response_id
             )
-            if not stored and session_load_id is not None and self._inner_history == "service":
+            if not stored and session_load_id is not None and self._history_source == "service":
                 raise ValueError(
                     "store=false cannot resume service-managed history; start a new one-shot request "
-                    "or use inner_history='host' or 'agent'."
+                    "or use history_source='agent_server' or 'agent'."
                 )
             session_storage = (
                 self._session_storage_provider.get_store(config=self.config, platform_context=request_context)
-                if stored or (session_load_id is not None and self._inner_history in ("agent", "legacy"))
+                if stored or (session_load_id is not None and self._history_source == "agent")
                 else None
             )
 
@@ -1233,10 +1214,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         f"Cannot find an existing agent session for previous_response_id={previous_response_id}."
                     )
                 session = agent.create_session()
-            if not stored and self._inner_history == "legacy" and session.service_session_id is not None:
+            if not stored and self._history_source == "agent" and session.service_session_id is not None:
                 raise ValueError(
-                    "store=false cannot continue legacy downstream service history; start a new one-shot request "
-                    "or select an explicit inner_history mode."
+                    "store=false cannot continue agent-managed downstream service history; "
+                    "start a new one-shot request or use store=true."
                 )
             provider_state = session.state.get(_HOSTED_PROVIDER_STATE_KEY)
             if (
@@ -1251,7 +1232,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             if previous_response_id is not None and context.conversation_id is None and not context.is_recovery:
                 if session.service_session_id is not None and session.state.get(_HOSTED_SOURCE_CONVERSATION_KEY):
                     raise ValueError("A service-managed downstream conversation cannot be forked.")
-                if stored and self._inner_history in ("service", "legacy") and session.service_session_id is not None:
+                if stored and self._history_source in ("service", "agent") and session.service_session_id is not None:
                     if session.state.get(_HOSTED_SERVICE_CHILD_KEY):
                         raise ValueError("A service-managed downstream response cannot be forked.")
                     if session_storage is None:
@@ -1301,14 +1282,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 else:
                     # Do not pass a storage option to clients that do not advertise support for it.
                     chat_options.pop("store", None)
-            elif self._inner_history == "service":
+            elif self._history_source == "service":
                 chat_options["store"] = stored
                 if not stored:
                     session.service_session_id = None
-            elif self._inner_history == "agent":
-                if configuration.client_stores_by_default:
-                    chat_options["store"] = False
-                session.service_session_id = None
             elif (
                 not stored
                 and isinstance(agent, RawAgent)
@@ -1358,7 +1335,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 if final.continuation_token is not None and final.finish_reason is None:
                     raise RuntimeError(
                         "The inner agent returned an unfinished provider response; "
-                        "configure inner_background='provider' to resume it."
+                        "configure background_source='provider' with history_source='service' to resume it."
                     )
         except (asyncio.CancelledError, GeneratorExit):
             request_interrupted = True
@@ -1376,18 +1353,18 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             # Never persist a session that could resume an inner response contrary to the
             # history mode or the caller's explicit storage decision.
             stored_output_violation = (
-                self._inner_history in ("host", "agent") or not stored
+                self._history_source == "agent_server" or not stored
             ) and session.service_session_id is not None
             if stored_output_violation:
                 misconfigured = RuntimeError(
                     "The agent's chat client stored this turn server-side despite store=False for the inner model. "
-                    "Configure the client to honor store=False, or use inner_history='service' with store=true."
+                    "Configure the client to honor store=False, or use history_source='service' with store=true."
                 )
                 logger.error("%s", misconfigured)
                 if request_failure is None and not request_interrupted:
                     request_failure = misconfigured
             if (
-                self._inner_history == "service"
+                self._history_source == "service"
                 and stored
                 and _HOSTED_PROVIDER_STATE_KEY not in session.state
                 and session.service_session_id is None
@@ -1396,7 +1373,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 and not (cancellation_signal.is_set() and context.client_cancelled)
             ):
                 request_failure = RuntimeError(
-                    "inner_history='service' requires the chat client to return a service continuation ID."
+                    "history_source='service' requires the chat client to return a service continuation ID."
                 )
             try:
                 provider_state = session.state.get(_HOSTED_PROVIDER_STATE_KEY)

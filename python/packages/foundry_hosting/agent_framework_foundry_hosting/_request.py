@@ -130,7 +130,7 @@ def validate_request_options(options: Mapping[str, Any]) -> None:
         raise ValueError(f"prepare_options cannot set host-controlled fields: {', '.join(sorted(reserved))}.")
 
 
-def validate_default_transport_options(defaults: Mapping[str, Any], *, allow_legacy_store: bool) -> None:
+def validate_default_transport_options(defaults: Mapping[str, Any], *, allow_agent_store: bool) -> None:
     """Reject transport overrides that would bypass the host's inner storage and identity decisions."""
     extra_body = defaults.get("extra_body")
     if extra_body is None:
@@ -140,12 +140,12 @@ def validate_default_transport_options(defaults: Mapping[str, Any], *, allow_leg
     ):
         raise TypeError("Agent default extra_body must be a mapping of model options.")
     reserved = _HOST_CONTROLLED_FIELDS.intersection(cast(Mapping[str, Any], extra_body))
-    if allow_legacy_store:
+    if allow_agent_store:
         reserved -= {"store"}
     if reserved:
         raise ValueError(
             "Agent default extra_body cannot set host-controlled fields: "
-            f"{', '.join(sorted(reserved))}. Use explicit agent defaults or inner_history='service'."
+            f"{', '.join(sorted(reserved))}. Use explicit agent defaults or history_source='service'."
         )
 
 

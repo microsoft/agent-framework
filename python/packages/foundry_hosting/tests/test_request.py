@@ -118,11 +118,11 @@ async def test_hook_rejects_reserved_fields_and_non_mapping_result() -> None:
 
 def test_default_transport_cannot_override_host_storage_or_identity() -> None:
     with pytest.raises(ValueError, match="store"):
-        validate_default_transport_options({"extra_body": {"store": True}}, allow_legacy_store=False)
+        validate_default_transport_options({"extra_body": {"store": True}}, allow_agent_store=False)
     with pytest.raises(ValueError, match="extra_body"):
-        validate_default_transport_options({"extra_body": {"extra_body": {"store": True}}}, allow_legacy_store=True)
-    validate_default_transport_options({"extra_body": {"store": True}}, allow_legacy_store=True)
-    validate_default_transport_options({"extra_body": {"temperature": 0.5}}, allow_legacy_store=False)
+        validate_default_transport_options({"extra_body": {"extra_body": {"store": True}}}, allow_agent_store=True)
+    validate_default_transport_options({"extra_body": {"store": True}}, allow_agent_store=True)
+    validate_default_transport_options({"extra_body": {"temperature": 0.5}}, allow_agent_store=False)
 
 
 @pytest.mark.parametrize("mode", ["ignore", "warn", "error"])

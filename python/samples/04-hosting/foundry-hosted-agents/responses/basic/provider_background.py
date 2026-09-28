@@ -29,8 +29,8 @@ def create_agent() -> Agent:
 def main() -> None:
     ResponsesHostServer(
         agent=create_agent,
-        inner_history="service",
-        inner_background="provider",
+        history_source="service",
+        background_source="provider",
         options=ResponsesServerOptions(resilient_background=True),
     ).run()
 
