@@ -222,6 +222,43 @@ public sealed class AzureBlobAgentSessionStoreTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task DeleteSessionAsync_RemovesStoredSessionAndIgnoresMissingSessionAsync()
+    {
+        // Arrange
+        AIAgent agent = new ChatClientAgent(new NotInvokedChatClient(), name: "assistant");
+        var store = new AzureBlobAgentSessionStore(this._containerClient, "assistant");
+        var key = new AgentSessionStoreKey("session-to-delete").WithPartition("user", "user-1");
+        var otherKey = new AgentSessionStoreKey("session-to-delete").WithPartition("user", "user-2");
+        await store.SaveSessionAsync(agent, key, await agent.CreateSessionAsync());
+        await store.SaveSessionAsync(agent, otherKey, await agent.CreateSessionAsync());
+
+        // Act
+        await store.DeleteSessionAsync(agent, key);
+        AgentSession? deleted = await store.GetSessionAsync(agent, key);
+        AgentSession? retained = await store.GetSessionAsync(agent, otherKey);
+        await store.DeleteSessionAsync(agent, key);
+
+        // Assert
+        Assert.Null(deleted);
+        Assert.NotNull(retained);
+    }
+
+    [Fact]
+    public async Task DeleteSessionAsync_MissingContainer_DoesNotThrowAsync()
+    {
+        // Arrange
+        AIAgent agent = new ChatClientAgent(new NotInvokedChatClient(), name: "assistant");
+        BlobContainerClient missingContainer = s_blobServiceClient.GetBlobContainerClient($"missing-{Guid.NewGuid():N}");
+        var store = new AzureBlobAgentSessionStore(
+            missingContainer,
+            "assistant",
+            new AzureBlobAgentSessionStoreOptions { CreateContainerIfNotExists = false });
+
+        // Act and assert
+        await store.DeleteSessionAsync(agent, new AgentSessionStoreKey("session-1"));
+    }
+
+    [Fact]
     public async Task GetSessionAsync_MissingContainerWithoutAutoCreatePropagatesErrorAsync()
     {
         // Arrange

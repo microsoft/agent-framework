@@ -236,6 +236,25 @@ public sealed class FileSystemAgentSessionStore : AgentSessionStore
         return await agent.DeserializeSessionAsync(element, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
+    /// <inheritdoc/>
+    public override ValueTask DeleteSessionAsync(
+        AIAgent agent,
+        AgentSessionStoreKey key,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(agent);
+        ArgumentNullException.ThrowIfNull(key);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        string path = this.GetSessionPath(agent, key);
+        if (File.Exists(path))
+        {
+            File.Delete(path);
+        }
+
+        return default;
+    }
+
     private string GetSessionPath(AIAgent agent, AgentSessionStoreKey key)
     {
         // The stable key incorporates the session identifier and every partition without exposing

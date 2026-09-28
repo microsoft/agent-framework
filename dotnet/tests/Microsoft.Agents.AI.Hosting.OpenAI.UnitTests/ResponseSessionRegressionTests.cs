@@ -592,6 +592,15 @@ public sealed class ResponseSessionRegressionTests
             return this._inner.SaveSessionAsync(agent, key, session, cancellationToken);
         }
 
+        public override ValueTask DeleteSessionAsync(
+            AIAgent agent,
+            AgentSessionStoreKey key,
+            CancellationToken cancellationToken = default)
+        {
+            ObjectDisposedException.ThrowIf(this.IsDisposed, this);
+            return this._inner.DeleteSessionAsync(agent, key, cancellationToken);
+        }
+
         public void Dispose()
         {
             this.IsDisposed = true;

@@ -177,6 +177,32 @@ public sealed class FoundryAgentSessionStore : AgentSessionStore
         return await agent.DeserializeSessionAsync(element, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
+    /// <inheritdoc/>
+    public override async ValueTask DeleteSessionAsync(
+        AIAgent agent,
+        AgentSessionStoreKey key,
+        CancellationToken cancellationToken = default)
+    {
+        _ = Throw.IfNull(agent);
+        _ = Throw.IfNull(key);
+
+        string logicalKey = FoundryAgentSessionKeyEncoder.BuildLogicalKey(
+            FoundryHostingAgent.GetSessionStorageIdentity(agent),
+            key);
+        FoundryStateStore store = await this.GetStoreAsync(cancellationToken).ConfigureAwait(false);
+
+        try
+        {
+            await store.DeleteItemAsync(
+                FoundryAgentSessionKeyEncoder.BuildStorageKey(logicalKey),
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+        catch (FoundryStorageNotFoundException)
+        {
+            // Nothing stored for this key, so deletion remains idempotent.
+        }
+    }
+
     /// <summary>
     /// Resolves the bound state store, creating it on the platform the first time. See
     /// <see cref="FoundryStateStoreBinding"/> for the caching and failure behaviour.

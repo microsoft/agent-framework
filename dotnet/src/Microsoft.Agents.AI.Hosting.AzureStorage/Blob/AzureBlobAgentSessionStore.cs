@@ -117,6 +117,29 @@ public sealed class AzureBlobAgentSessionStore : AgentSessionStore
             cancellationToken).ConfigureAwait(false);
     }
 
+    /// <inheritdoc />
+    public override async ValueTask DeleteSessionAsync(
+        AIAgent agent,
+        AgentSessionStoreKey key,
+        CancellationToken cancellationToken = default)
+    {
+        Throw.IfNull(agent);
+        Throw.IfNull(key);
+
+        BlobClient blobClient = this._containerClient.GetBlobClient(this.GetBlobName(key));
+
+        try
+        {
+            await blobClient.DeleteIfExistsAsync(
+                DeleteSnapshotsOption.IncludeSnapshots,
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+        catch (RequestFailedException ex) when (ex.ErrorCode == BlobErrorCode.ContainerNotFound.ToString())
+        {
+            // A missing container cannot contain the requested session, so deletion remains idempotent.
+        }
+    }
+
     private async ValueTask<AgentSession?> TryGetSessionAsync(
         AIAgent agent,
         string blobName,

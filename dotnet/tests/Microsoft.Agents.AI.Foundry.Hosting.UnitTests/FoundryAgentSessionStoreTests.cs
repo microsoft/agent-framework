@@ -193,6 +193,39 @@ public sealed class FoundryAgentSessionStoreTests
     }
 
     [Fact]
+    public async Task DeleteSessionAsync_RemovesOnlyTheTargetedSessionAsync()
+    {
+        // Arrange
+        var backing = new FakeStateStore();
+        var store = NewStore(backing);
+        var agent = new TestAgent(name: "Concierge");
+        var aliceKey = Key("shared-conv", "user", "alice");
+        var bobKey = Key("shared-conv", "user", "bob");
+        await store.SaveSessionAsync(agent, aliceKey, new TestSession());
+        await store.SaveSessionAsync(agent, bobKey, new TestSession());
+
+        // Act
+        await store.DeleteSessionAsync(agent, aliceKey);
+
+        // Assert
+        Assert.Null(await store.GetSessionAsync(agent, aliceKey));
+        Assert.NotNull(await store.GetSessionAsync(agent, bobKey));
+        var item = Assert.Single(backing.Items);
+        Assert.Equal("\"a14:name:Concierge|s11:shared-conv|n4:user|v3:bob\"", item["key"].ToString());
+    }
+
+    [Fact]
+    public async Task DeleteSessionAsync_NothingStored_DoesNotThrowAsync()
+    {
+        // Arrange
+        var store = NewStore(new FakeStateStore());
+        var agent = new TestAgent(name: "Concierge");
+
+        // Act and assert
+        await store.DeleteSessionAsync(agent, Key("conv-1"));
+    }
+
+    [Fact]
     public async Task GetStoreAsync_ResolvesTheStoreOnceAcrossManyCallsAsync()
     {
         // Arrange: binding the store costs a round trip, so it must not happen per request.
@@ -436,6 +469,16 @@ public sealed class FoundryAgentSessionStoreTests
             => Task.FromResult(this._items.TryGetValue(key, out var value)
                 ? AzureAIAgentServerCoreStorageModelFactory.StateStoreItem(id: key, key: key, value: value, etag: "etag")
                 : null);
+
+        public override Task<DeletedStateStoreItem> DeleteItemAsync(string key, string? ifMatch = null, CancellationToken cancellationToken = default)
+        {
+            if (!this._items.TryRemove(key, out _))
+            {
+                throw new FoundryStorageNotFoundException("not found");
+            }
+
+            return Task.FromResult(AzureAIAgentServerCoreStorageModelFactory.DeletedStateStoreItem(id: key, deleted: true));
+        }
     }
 
     private sealed class TestSession : AgentSession

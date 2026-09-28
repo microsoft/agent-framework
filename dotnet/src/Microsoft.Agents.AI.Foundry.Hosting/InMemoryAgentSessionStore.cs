@@ -65,6 +65,19 @@ public sealed class InMemoryAgentSessionStore : AgentSessionStore
         return await agent.DeserializeSessionAsync(existingSession, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
+    /// <inheritdoc/>
+    public override ValueTask DeleteSessionAsync(
+        AIAgent agent,
+        AgentSessionStoreKey key,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(agent);
+        ArgumentNullException.ThrowIfNull(key);
+
+        this._sessions.TryRemove(GetKey(agent, key), out _);
+        return default;
+    }
+
     private static (string AgentIdentity, AgentSessionStoreKey Key) GetKey(
         AIAgent agent,
         AgentSessionStoreKey key)
