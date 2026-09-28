@@ -96,6 +96,7 @@ from ._request import (
     UnsupportedOptions,
     prepare_response_options,
     response_run_options,
+    validate_default_transport_options,
     validate_request_options,
     validate_unsupported_options,
 )
@@ -182,6 +183,30 @@ def _agent_response_updates(response: AgentResponse[Any], response_id: str) -> l
 
 
 _T = TypeVar("_T")
+
+
+async def _await_before_signal(
+    operation: Callable[[], Awaitable[_T]], *signals: asyncio.Event
+) -> tuple[bool, _T | None]:
+    """Race a provider await against lifecycle signals without discarding a completed continuation token."""
+    if any(signal.is_set() for signal in signals):
+        return False, None
+    task = asyncio.ensure_future(operation())
+    waiters = [asyncio.ensure_future(signal.wait()) for signal in signals]
+    try:
+        finished, _ = await asyncio.wait([task, *waiters], return_when=asyncio.FIRST_COMPLETED)
+        if task in finished:
+            return True, await task
+        return False, None
+    finally:
+        if not task.done():
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+        for waiter in waiters:
+            waiter.cancel()
+        await asyncio.gather(*waiters, return_exceptions=True)
+
 
 # Sentinel put on the internal queue by _SignalledIterator's driver task to signal that the
 # wrapped iterator is exhausted (distinct from `None`, which is a valid item value).
@@ -1080,6 +1105,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
         request_messages_task: asyncio.Task[list[Message]] | None = None
         try:
+            if isinstance(agent, RawAgent):
+                validate_default_transport_options(
+                    agent.default_options,
+                    allow_legacy_store=self._inner_history == "legacy" and stored,
+                )
             if not stored:
                 if not isinstance(agent, RawAgent):
                     raise RuntimeError(
@@ -1177,6 +1207,16 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     "store=false cannot continue legacy downstream service history; start a new one-shot request "
                     "or select an explicit inner_history mode."
                 )
+            provider_state = session.state.get(_HOSTED_PROVIDER_STATE_KEY)
+            if (
+                not context.is_recovery
+                and provider_state is not None
+                and (
+                    not isinstance(provider_state, Mapping)
+                    or cast(Mapping[str, Any], provider_state).get("completed") is not True
+                )
+            ):
+                raise ValueError("A provider background response must complete before the next turn.")
             if previous_response_id is not None and context.conversation_id is None and not context.is_recovery:
                 if session.service_session_id is not None and session.state.get(_HOSTED_SOURCE_CONVERSATION_KEY):
                     raise ValueError("A service-managed downstream conversation cannot be forked.")
@@ -1189,6 +1229,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     await session_storage.set(previous_response_id, session)
                     session.state.pop(_HOSTED_SERVICE_CHILD_KEY)
                 session.state.pop(_HOSTED_SOURCE_CONVERSATION_KEY, None)
+            if not context.is_recovery:
+                session.state.pop(_HOSTED_PROVIDER_STATE_KEY, None)
         except BaseException as ex:
             # Session preparation failed (or the request was cancelled / the stream closed —
             # neither of which is an Exception). Cancel and drain the in-flight message-loading
@@ -1320,15 +1362,24 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 and session.service_session_id is None
                 and request_failure is None
                 and not request_interrupted
+                and not (cancellation_signal.is_set() and context.client_cancelled)
             ):
                 request_failure = RuntimeError(
                     "inner_history='service' requires the chat client to return a service continuation ID."
                 )
             try:
+                provider_state = session.state.get(_HOSTED_PROVIDER_STATE_KEY)
                 final_provider_state = not provider_background or (
                     request_failure is None
                     and not request_interrupted
-                    and _HOSTED_PROVIDER_STATE_KEY not in session.state
+                    and not (cancellation_signal.is_set() and context.client_cancelled)
+                    and (
+                        provider_state is None
+                        or (
+                            isinstance(provider_state, Mapping)
+                            and cast(Mapping[str, Any], provider_state).get("completed") is True
+                        )
+                    )
                 )
                 superseded_by_steering = bool(self._host_options and self._host_options.steerable_conversations) and (
                     cancellation_signal.is_set() and not context.client_cancelled and not context.shutdown.is_set()
@@ -1343,6 +1394,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         and not request_interrupted
                         and request_failure is None
                     ):
+                        if provider_background:
+                            session.state.pop(_HOSTED_PROVIDER_STATE_KEY, None)
                         await session_storage.set(context.conversation_id, session)
             except Exception as save_error:
                 save_failure = save_error
@@ -1377,19 +1430,43 @@ class ResponsesHostServer(ResponsesAgentServerHost):
     ) -> AsyncGenerator[AgentResponseUpdate]:
         """Keep the inner provider token private while the outer response ID is polled."""
 
+        async def proceed(*, has_token: bool) -> bool:
+            if cancellation_signal.is_set() and context.client_cancelled:
+                if not has_token:
+                    logger.warning(
+                        "Provider background submission was cancelled before a token was saved; "
+                        "remote work may continue."
+                    )
+                return False
+            if context.shutdown.is_set():
+                if has_token and self._resilient_background:
+                    await context.exit_for_recovery()
+                if has_token:
+                    raise RuntimeError("Provider background recovery requires resilient_background=True.")
+                raise RuntimeError(
+                    "Provider background submission stopped before its token was saved; cannot safely retry it."
+                )
+            if cancellation_signal.is_set():
+                raise RuntimeError("Provider background was interrupted without a client cancellation.")
+            return True
+
         async def run_provider(
-            options: ChatOptions[Any], *, input_messages: list[Message] | None
+            options: ChatOptions[Any], *, input_messages: list[Message] | None, phase: Literal["submit", "poll"]
         ) -> AgentResponse[Any]:
             try:
                 return await agent.run(input_messages, session=session, options=options)
             except Exception as exc:
-                raise RuntimeError("Inner provider background execution failed; inspect the host logs.") from exc
+                logger.warning("Inner provider background %s failed (%s).", phase, type(exc).__name__)
+            raise RuntimeError(f"Inner provider background {phase} failed; inspect the host logs.")
 
         async def save_private_state() -> None:
             try:
                 await session_storage.set(context.response_id, session)
             except Exception as exc:
-                raise RuntimeError("Could not save private provider background state; inspect the host logs.") from exc
+                logger.warning("Private provider background state save failed (%s).", type(exc).__name__)
+            else:
+                return
+            raise RuntimeError("Could not save private provider background state; inspect the host logs.")
 
         if context.is_recovery:
             saved = session.state.get(_HOSTED_PROVIDER_STATE_KEY)
@@ -1403,8 +1480,26 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 raise RuntimeError("The stored provider continuation token is invalid.")
             continuation_token: Mapping[str, Any] = cast(Mapping[str, Any], token)
         else:
-            first = await run_provider(cast(ChatOptions[Any], {**options, "background": True}), input_messages=messages)
+            if not await proceed(has_token=False):
+                return
+            completed, first = await _await_before_signal(
+                lambda: run_provider(
+                    cast(ChatOptions[Any], {**options, "background": True}),
+                    input_messages=messages,
+                    phase="submit",
+                ),
+                context.shutdown,
+                cancellation_signal,
+            )
+            if not completed:
+                if not await proceed(has_token=False):
+                    return
+                raise RuntimeError("Provider background submission was interrupted before its token was saved.")
+            if first is None:
+                raise RuntimeError("The provider did not return a background response.")
             if first.continuation_token is None:
+                if not await proceed(has_token=False):
+                    return
                 for update in _agent_response_updates(first, context.response_id):
                     yield update
                 return
@@ -1418,20 +1513,43 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             await save_private_state()
 
         while True:
-            if context.shutdown.is_set() and self._resilient_background:
-                await context.exit_for_recovery()
-            if cancellation_signal.is_set() and context.client_cancelled:
+            if not await proceed(has_token=True):
                 return
-            await asyncio.sleep(2)
-            current = await run_provider(
-                cast(ChatOptions[Any], {"continuation_token": continuation_token, "store": True}),
-                input_messages=None,
+            slept, _ = await _await_before_signal(lambda: asyncio.sleep(2), context.shutdown, cancellation_signal)
+            if not slept:
+                if not await proceed(has_token=True):
+                    return
+                raise RuntimeError("Provider background polling was interrupted.")
+            if not await proceed(has_token=True):
+                return
+            completed, current = await _await_before_signal(
+                lambda token=continuation_token: run_provider(
+                    cast(ChatOptions[Any], {"continuation_token": token, "store": True}),
+                    input_messages=None,
+                    phase="poll",
+                ),
+                context.shutdown,
+                cancellation_signal,
             )
+            if not completed:
+                if not await proceed(has_token=True):
+                    return
+                raise RuntimeError("Provider background polling was interrupted.")
+            if current is None:
+                raise RuntimeError("The provider did not return a background response.")
             if current.continuation_token is None:
-                session.state.pop(_HOSTED_PROVIDER_STATE_KEY, None)
+                # Until AgentServer commits the outer terminal event, recovery may need to re-poll this ID.
+                session.state[_HOSTED_PROVIDER_STATE_KEY] = {
+                    "outer_response_id": context.response_id,
+                    "continuation_token": dict(continuation_token),
+                    "completed": True,
+                }
                 await save_private_state()
                 for update in _agent_response_updates(current, context.response_id):
+                    if not await proceed(has_token=True):
+                        return
                     yield update
+                await proceed(has_token=True)
                 return
             if not isinstance(current.continuation_token, Mapping):
                 raise RuntimeError("The provider returned a continuation token that cannot be persisted.")

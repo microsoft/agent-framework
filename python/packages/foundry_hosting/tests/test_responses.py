@@ -21,7 +21,7 @@ import uuid
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import aclosing, asynccontextmanager
+from contextlib import aclosing, asynccontextmanager, suppress
 from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
@@ -83,6 +83,8 @@ from agent_framework_foundry_hosting._responses import (
     _LATEST_CHECKPOINT_ID_KEY,  # pyright: ignore[reportPrivateUsage]
     CONSENT_ERROR_CODE,
     ConsentError,
+    _agent_response_updates,  # pyright: ignore[reportPrivateUsage]
+    _await_before_signal,  # pyright: ignore[reportPrivateUsage]
     _item_to_message,  # pyright: ignore[reportPrivateUsage]
     _json_safe_to_str,  # pyright: ignore[reportPrivateUsage]
     _output_item_to_message,  # pyright: ignore[reportPrivateUsage]
@@ -1546,6 +1548,63 @@ class TestAgentSessionPersistence:
         assert "host-controlled" in response.json()["error"]["message"]
         agent.run.assert_not_called()
 
+    async def test_nested_extra_body_cannot_override_unstored_openai_request(self) -> None:
+        outbound: list[dict[str, Any]] = []
+
+        def handle_request(request: Any) -> Any:
+            outbound.append(json.loads(request.content))
+            response = {
+                "id": "resp_inner",
+                "object": "response",
+                "created_at": 0,
+                "model": "test-model",
+                "status": "completed",
+                "output": [],
+            }
+            event = {"type": "response.completed", "sequence_number": 1, "response": response}
+            return _OPENAI_HTTPX.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                text=f"event: response.completed\ndata: {json.dumps(event)}\n\n",
+            )
+
+        async with AsyncOpenAI(
+            api_key="test-key",
+            base_url="https://example.test/v1",
+            http_client=DefaultAsyncHttpxClient(transport=_OPENAI_HTTPX.MockTransport(handle_request)),
+            max_retries=0,
+        ) as openai:
+            agent = Agent(client=OpenAIChatClient(model="test-model", async_client=openai))
+            server = _make_server(agent)
+            rejected = await _post_json(
+                server,
+                {"input": "unsafe", "store": False, "extra_body": {"extra_body": {"store": True}}},
+            )
+            assert rejected.json()["status"] == "failed"
+            assert "Nested extra_body" in rejected.json()["error"]["message"]
+            assert outbound == []
+
+            legacy_default = Agent(
+                client=OpenAIChatClient(model="test-model", async_client=openai),
+                default_options=cast(Any, {"extra_body": {"store": True}}),
+            )
+            legacy_server = _make_server(legacy_default, history_source="agent")
+            rejected_default = await _post_json(legacy_server, {"input": "unsafe", "store": False})
+            assert rejected_default.json()["status"] == "failed"
+            assert "default extra_body" in rejected_default.json()["error"]["message"]
+            assert outbound == []
+
+            unstored = await _post_json(
+                server,
+                {"input": "safe", "store": False, "extra_body": {"temperature": 0.1}},
+            )
+
+        assert unstored.json()["status"] == "completed", unstored.json()
+        assert len(outbound) == 1
+        assert outbound[0]["store"] is False
+        assert outbound[0]["temperature"] == 0.1
+        assert "extra_body" not in outbound[0]
+
     async def test_unsupported_options_policy_rejects_custom_agent(self) -> None:
         agent = _StrictCustomAgent()
         server = _make_server(agent, history_source="agent", unsupported_options="error")
@@ -1651,7 +1710,85 @@ class TestAgentSessionPersistence:
         saved = await store.get("outer-response")
         assert saved is not None
         assert saved.service_session_id == "private-service-conversation"
-        assert "_foundry_provider_background" not in saved.state
+        assert saved.state["_foundry_provider_background"]["completed"] is True
+        assert saved.state["_foundry_provider_background"]["continuation_token"] == {
+            "response_id": "private-provider-token"
+        }
+
+        next_agent = _make_agent(
+            stream_updates=[AgentResponseUpdate(contents=[Content.from_text("next")], role="assistant")]
+        )
+        next_agent.client.STORES_BY_DEFAULT = True
+        next_server = _make_server(next_agent, session_store=store, inner_history="service")
+        next_context = ResponseContext(response_id="outer-next", mode_flags=MagicMock())
+        with patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])):
+            next_events = [
+                event
+                async for event in next_server._handle_response(
+                    CreateResponse(input="next", store=True, previous_response_id="outer-response"),
+                    next_context,
+                    asyncio.Event(),
+                )
+            ]
+
+        assert [event.get("type") for event in next_events if isinstance(event, Mapping)][-1] == "response.completed"
+        next_session = await store.get("outer-next")
+        assert next_session is not None and "_foundry_provider_background" not in next_session.state
+        original_session = await store.get("outer-response")
+        assert original_session is not None
+        assert original_session.state["_foundry_provider_background"]["completed"] is True
+
+    async def test_provider_background_conversation_head_omits_private_recovery_token(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        agent = Agent(client=_ServiceStorageRecordingClient())
+
+        async def run(
+            messages: Any = None,
+            *,
+            session: AgentSession,
+            options: Mapping[str, Any],
+            **kwargs: Any,
+        ) -> AgentResponse:
+            del messages, kwargs
+            if "continuation_token" not in options:
+                return AgentResponse(
+                    messages=[], continuation_token=OpenAIContinuationToken(response_id="private-provider-token")
+                )
+            session.service_session_id = "private-service-conversation"
+            return AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("done")])])
+
+        monkeypatch.setattr(agent, "run", MagicMock(side_effect=run))
+        store = SessionStore()
+        server = _make_server(
+            agent,
+            session_store=store,
+            inner_history="service",
+            inner_background="provider",
+            options=ResponsesServerOptions(resilient_background=True),
+            response_store=FileResponseStore(storage_dir=tmp_path),
+        )
+        context = ResponseContext(
+            response_id="outer-response", conversation_id="outer-conversation", mode_flags=MagicMock()
+        )
+        with (
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
+            patch("agent_framework_foundry_hosting._responses.asyncio.sleep", new=AsyncMock()),
+        ):
+            events = [
+                event
+                async for event in server._handle_response(
+                    CreateResponse(input="hello", store=True, background=True),
+                    context,
+                    asyncio.Event(),
+                )
+            ]
+
+        assert [event.get("type") for event in events if isinstance(event, Mapping)][-1] == "response.completed"
+        snapshot = await store.get("outer-response")
+        head = await store.get("outer-conversation")
+        assert snapshot is not None and snapshot.state["_foundry_provider_background"]["completed"] is True
+        assert head is not None and "_foundry_provider_background" not in head.state
 
     async def test_provider_recovery_without_saved_token_does_not_restart_job(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1756,13 +1893,222 @@ class TestAgentSessionPersistence:
         assert [call.get("background") for call in calls] == [True, None]
         saved = await store.get("outer-recover")
         assert saved is not None and saved.service_session_id == "next-service-session"
-        assert "_foundry_provider_background" not in saved.state
+        assert saved.state["_foundry_provider_background"]["completed"] is True
         assert "private-provider-token" not in str(events)
 
-    async def test_provider_poll_errors_cannot_reveal_private_token(
+    @pytest.mark.parametrize("stage", ["submit", "sleep", "poll"])
+    @pytest.mark.parametrize("interruption", ["cancel", "shutdown"])
+    async def test_provider_background_observes_lifecycle_during_blocked_work(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        stage: str,
+        interruption: str,
+    ) -> None:
+        entered = asyncio.Event()
+        stopped = asyncio.Event()
+        blocked = asyncio.Event()
+        agent = Agent(client=_ServiceStorageRecordingClient())
+        token = OpenAIContinuationToken(response_id="private-provider-token")
+        submissions = 0
+
+        async def run(
+            messages: Any = None,
+            *,
+            session: AgentSession,
+            options: Mapping[str, Any],
+            **kwargs: Any,
+        ) -> AgentResponse:
+            nonlocal submissions
+            del messages, session, kwargs
+            if "continuation_token" not in options:
+                submissions += 1
+                if stage == "submit":
+                    entered.set()
+                    try:
+                        await blocked.wait()
+                    finally:
+                        stopped.set()
+                return AgentResponse(messages=[], continuation_token=token)
+            if stage == "poll":
+                entered.set()
+                try:
+                    await blocked.wait()
+                finally:
+                    stopped.set()
+            return AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("done")])])
+
+        async def sleep(_seconds: float) -> None:
+            if stage == "sleep":
+                entered.set()
+                try:
+                    await blocked.wait()
+                finally:
+                    stopped.set()
+
+        monkeypatch.setattr(agent, "run", MagicMock(side_effect=run))
+        store = SessionStore()
+        server = _make_server(
+            agent,
+            session_store=store,
+            inner_history="service",
+            inner_background="provider",
+            options=ResponsesServerOptions(resilient_background=True),
+            response_store=FileResponseStore(storage_dir=tmp_path),
+        )
+        response_id = f"outer-{stage}-{interruption}"
+        context = ResponseContext(response_id=response_id, mode_flags=MagicMock())
+        request = CreateResponse(input="hello", store=True, background=True)
+        cancellation_signal = asyncio.Event()
+        exit_for_recovery = AsyncMock(side_effect=ResponseExitForRecovery())
+
+        async def collect_events() -> list[Any]:
+            return [event async for event in server._handle_response(request, context, cancellation_signal)]
+
+        with (
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
+            patch.object(ResponseContext, "exit_for_recovery", new=exit_for_recovery),
+            patch("agent_framework_foundry_hosting._responses.asyncio.sleep", new=sleep),
+            caplog.at_level(logging.WARNING),
+        ):
+            task = asyncio.create_task(collect_events())
+            try:
+                await asyncio.wait_for(entered.wait(), timeout=3)
+                if interruption == "cancel":
+                    context.client_cancelled = True
+                    cancellation_signal.set()
+                    events = await asyncio.wait_for(task, timeout=3)
+                    assert all(
+                        event.get("type") not in ("response.completed", "response.failed")
+                        for event in events
+                        if isinstance(event, Mapping)
+                    ), _failure_message(events)
+                    exit_for_recovery.assert_not_awaited()
+                else:
+                    context.shutdown.set()
+                    if stage == "submit":
+                        events = await asyncio.wait_for(task, timeout=3)
+                        assert "cannot safely retry" in _failure_message(events)
+                        exit_for_recovery.assert_not_awaited()
+                    else:
+                        with pytest.raises(ResponseExitForRecovery):
+                            await asyncio.wait_for(task, timeout=3)
+                        exit_for_recovery.assert_awaited_once()
+            finally:
+                if not task.done():
+                    task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await task
+
+        assert stopped.is_set()
+        assert submissions == 1
+        saved = await store.get(response_id)
+        if stage == "submit":
+            assert saved is None
+            if interruption == "cancel":
+                assert "remote work may continue" in caplog.text
+        else:
+            assert saved is not None
+            assert saved.state["_foundry_provider_background"]["continuation_token"] == token
+            assert saved.state["_foundry_provider_background"].get("completed") is None
+
+    async def test_completed_provider_result_wins_simultaneous_shutdown(self) -> None:
+        shutdown = asyncio.Event()
+
+        async def complete_with_token() -> str:
+            shutdown.set()
+            return "private-token"
+
+        completed, result = await _await_before_signal(complete_with_token, shutdown)
+        assert completed is True and result == "private-token"
+
+        operation = MagicMock()
+        completed, result = await _await_before_signal(operation, shutdown)
+        assert completed is False and result is None
+        operation.assert_not_called()
+
+    async def test_final_provider_poll_keeps_token_for_crash_recovery(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        store = SessionStore()
+        token = OpenAIContinuationToken(response_id="private-provider-token")
+        calls: list[dict[str, Any]] = []
+
+        async def run(
+            messages: Any = None,
+            *,
+            session: AgentSession,
+            options: Mapping[str, Any],
+            **kwargs: Any,
+        ) -> AgentResponse:
+            del messages, kwargs
+            calls.append(dict(options))
+            if "continuation_token" not in options:
+                return AgentResponse(messages=[], continuation_token=token)
+            session.service_session_id = "private-conversation"
+            return AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("finished")])])
+
+        def make_host() -> ResponsesHostServer:
+            agent = Agent(client=_ServiceStorageRecordingClient())
+            monkeypatch.setattr(agent, "run", MagicMock(side_effect=run))
+            return _make_server(
+                agent,
+                session_store=store,
+                inner_history="service",
+                inner_background="provider",
+                options=ResponsesServerOptions(resilient_background=True),
+                response_store=FileResponseStore(storage_dir=tmp_path),
+            )
+
+        server = make_host()
+        request = CreateResponse(input="hello", store=True, background=True)
+        context = ResponseContext(response_id="outer-recovered", mode_flags=MagicMock())
+
+        def shutdown_before_output(response: AgentResponse, response_id: str) -> list[AgentResponseUpdate]:
+            context.shutdown.set()
+            return _agent_response_updates(response, response_id)
+
+        with (
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
+            patch.object(ResponseContext, "exit_for_recovery", new=AsyncMock(side_effect=ResponseExitForRecovery())),
+            patch("agent_framework_foundry_hosting._responses.asyncio.sleep", new=AsyncMock()),
+            patch("agent_framework_foundry_hosting._responses._agent_response_updates", new=shutdown_before_output),
+            pytest.raises(ResponseExitForRecovery),
+        ):
+            _ = [event async for event in server._handle_response(request, context, asyncio.Event())]
+
+        saved = await store.get("outer-recovered")
+        assert saved is not None
+        assert saved.state["_foundry_provider_background"] == {
+            "outer_response_id": "outer-recovered",
+            "continuation_token": token,
+            "completed": True,
+        }
+
+        recovered = ResponseContext(response_id="outer-recovered", mode_flags=MagicMock())
+        recovered.is_recovery = True
+        with (
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
+            patch("agent_framework_foundry_hosting._responses.asyncio.sleep", new=AsyncMock()),
+        ):
+            events = [event async for event in make_host()._handle_response(request, recovered, asyncio.Event())]
+
+        assert [event.get("type") for event in events if isinstance(event, Mapping)][-1] == "response.completed"
+        assert "private-provider-token" not in str(events)
+        assert [option.get("background") for option in calls] == [True, None, None]
+        assert all(option["continuation_token"] == token for option in calls[1:])
+
+    @pytest.mark.parametrize("phase", ["submit", "poll", "save"])
+    async def test_provider_errors_cannot_reveal_private_token(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, phase: str
+    ) -> None:
         agent = Agent(client=_ServiceStorageRecordingClient())
+
+        class FailingTokenStore(SessionStore):
+            async def set(self, session_id: str, session: AgentSession) -> None:
+                del session_id, session
+                raise RuntimeError("storage failed for private-provider-token")
 
         async def run(
             messages: Any = None,
@@ -1773,15 +2119,19 @@ class TestAgentSessionPersistence:
         ) -> AgentResponse:
             del messages, session, kwargs
             if "continuation_token" not in options:
+                if phase == "submit":
+                    raise RuntimeError("provider submit failed for private-provider-token")
                 return AgentResponse(
                     messages=[], continuation_token=OpenAIContinuationToken(response_id="private-provider-token")
                 )
-            raise RuntimeError("provider failed for private-provider-token")
+            if phase == "poll":
+                raise RuntimeError("provider poll failed for private-provider-token")
+            return AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("done")])])
 
         monkeypatch.setattr(agent, "run", MagicMock(side_effect=run))
         server = _make_server(
             agent,
-            session_store=SessionStore(),
+            session_store=FailingTokenStore() if phase == "save" else SessionStore(),
             inner_history="service",
             inner_background="provider",
             options=ResponsesServerOptions(resilient_background=True),
@@ -1792,11 +2142,18 @@ class TestAgentSessionPersistence:
         with (
             patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
             patch("agent_framework_foundry_hosting._responses.asyncio.sleep", new=AsyncMock()),
+            caplog.at_level(logging.WARNING),
         ):
             events = [event async for event in server._handle_response(request, context, asyncio.Event())]
 
-        assert "Inner provider background execution failed" in _failure_message(events)
+        error = _failure_message(events)
+        assert "private-provider-token" not in error
         assert "private-provider-token" not in str(events)
+        assert "private-provider-token" not in caplog.text
+        for record in caplog.records:
+            if record.name == "agent_framework_foundry_hosting._responses" and record.exc_info is not None:
+                exception = record.exc_info[1]
+                assert exception is not None and exception.__cause__ is None and exception.__context__ is None
 
     async def test_steering_keeps_superseded_snapshot_without_replacing_conversation_head(self) -> None:
         store = SessionStore()

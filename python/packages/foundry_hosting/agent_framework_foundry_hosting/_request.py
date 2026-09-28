@@ -26,6 +26,7 @@ _HOST_CONTROLLED_FIELDS = frozenset({
     "continuation_token",
     "conversation",
     "conversation_id",
+    "extra_body",
     "input",
     "previous_response_id",
     "response_id",
@@ -53,6 +54,8 @@ def response_run_options(request: CreateResponse) -> dict[str, Any]:
                 not isinstance(key, str) for key in cast(Mapping[object, object], value)
             ):
                 raise TypeError("extra_body must be a mapping of model options.")
+            if "extra_body" in value:
+                raise ValueError("Nested extra_body is not supported; flatten provider options instead.")
             nested_extra.update(cast(Mapping[str, Any], value))
         elif name in _HOST_CONTROLLED_FIELDS:
             continue
@@ -125,6 +128,25 @@ def validate_request_options(options: Mapping[str, Any]) -> None:
     reserved = _HOST_CONTROLLED_FIELDS.intersection(options)
     if reserved:
         raise ValueError(f"prepare_options cannot set host-controlled fields: {', '.join(sorted(reserved))}.")
+
+
+def validate_default_transport_options(defaults: Mapping[str, Any], *, allow_legacy_store: bool) -> None:
+    """Reject transport overrides that would bypass the host's inner storage and identity decisions."""
+    extra_body = defaults.get("extra_body")
+    if extra_body is None:
+        return
+    if not isinstance(extra_body, Mapping) or any(
+        not isinstance(key, str) for key in cast(Mapping[object, object], extra_body)
+    ):
+        raise TypeError("Agent default extra_body must be a mapping of model options.")
+    reserved = _HOST_CONTROLLED_FIELDS.intersection(cast(Mapping[str, Any], extra_body))
+    if allow_legacy_store:
+        reserved -= {"store"}
+    if reserved:
+        raise ValueError(
+            "Agent default extra_body cannot set host-controlled fields: "
+            f"{', '.join(sorted(reserved))}. Use explicit agent defaults or inner_history='service'."
+        )
 
 
 def validate_unsupported_options(mode: str) -> UnsupportedOptions:

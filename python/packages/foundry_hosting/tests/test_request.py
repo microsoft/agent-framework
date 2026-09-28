@@ -15,6 +15,7 @@ from agent_framework_foundry_hosting import HostedResponseRequest
 from agent_framework_foundry_hosting._request import (
     prepare_response_options,
     response_run_options,
+    validate_default_transport_options,
     validate_request_options,
     validate_unsupported_options,
 )
@@ -70,6 +71,8 @@ def test_nested_extra_body_is_also_overlaid_last_without_reserved_fields() -> No
     assert response_run_options(request) == {"max_tokens": 150}
     with pytest.raises(TypeError, match="extra_body must be a mapping"):
         response_run_options(cast(CreateResponse, {"extra_body": ["not a mapping"]}))
+    with pytest.raises(ValueError, match="Nested extra_body is not supported"):
+        response_run_options(cast(CreateResponse, {"extra_body": {"extra_body": {"store": True}}}))
 
 
 async def test_hook_uses_a_request_copy_and_does_not_mutate_defaults() -> None:
@@ -106,8 +109,20 @@ async def test_hook_rejects_reserved_fields_and_non_mapping_result() -> None:
     await prepare_response_options(request, lambda _view, _options: {"store": True, "session_id": "forged"})
     with pytest.raises(ValueError, match="session_id, store"):
         validate_request_options(request.options)
+    await prepare_response_options(request, lambda _view, _options: {"extra_body": {"store": True}})
+    with pytest.raises(ValueError, match="extra_body"):
+        validate_request_options(request.options)
     with pytest.raises(TypeError, match="must return a mapping"):
         await prepare_response_options(request, lambda _view, _options: cast(Any, None))
+
+
+def test_default_transport_cannot_override_host_storage_or_identity() -> None:
+    with pytest.raises(ValueError, match="store"):
+        validate_default_transport_options({"extra_body": {"store": True}}, allow_legacy_store=False)
+    with pytest.raises(ValueError, match="extra_body"):
+        validate_default_transport_options({"extra_body": {"extra_body": {"store": True}}}, allow_legacy_store=True)
+    validate_default_transport_options({"extra_body": {"store": True}}, allow_legacy_store=True)
+    validate_default_transport_options({"extra_body": {"temperature": 0.5}}, allow_legacy_store=False)
 
 
 @pytest.mark.parametrize("mode", ["ignore", "warn", "error"])

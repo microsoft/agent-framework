@@ -71,7 +71,11 @@ Outer background work always uses the caller-visible `response.id` for polling; 
 background automatically. `inner_background="provider"` is a separate opt-in for `"service"` with a storing
 Responses client. Its private continuation token is saved under the outer ID and never returned to the caller.
 Use `ResponsesServerOptions(resilient_background=True)` to permit recovery from a **saved** token; a crash before
-the token is saved cannot safely restart the inner job. Provider background and steering cannot be combined.
+the token is saved cannot safely restart the inner job. A final provider poll retains that token in the private
+response-ID snapshot so recovery can re-poll it if the outer response was not yet committed; a later turn drops
+it from its working session. Shutdown during initial submission fails rather than replaying a job whose
+acceptance is unknown. Cancelling an in-flight submission does not prove the remote provider stopped it.
+Provider background and steering cannot be combined.
 Regular agent runs without this opt-in are not crash-replayable. `steerable_conversations=True` enables AgentServer's
 process-wide multi-turn TaskManager; a superseded turn keeps its own response snapshot but cannot replace a later
 CAS-protected conversation head. Start an in-progress background turn with `stream=True` before steering it: the
@@ -83,7 +87,10 @@ Native CreateResponse generation fields become MAF runtime options (notably `max
 **last**. A sync or async `prepare_options(request: HostedResponseRequest, options: dict)` hook can remove or replace
 *caller* options before `Agent.run`; removed values fall back to the developer's unchanged agent defaults. Hosting
 filters caller platform IDs and private continuation/storage controls from model options and rejects attempts to
-reintroduce them through the hook. A custom agent cannot accept MAF runtime options: choose
+reintroduce them through the hook. Nested `extra_body` transport overrides are rejected for both caller
+input and developer hooks, because they could override the host's `store=False` after the OpenAI SDK merges
+the body. Developer defaults also cannot use this transport channel for host-controlled fields on
+explicit history modes or unstored requests. A custom agent cannot accept MAF runtime options: choose
 `unsupported_options` as `"ignore"`, `"warn"` (default), or `"error"` for that case. See the
 [agent history and options samples](../../samples/04-hosting/foundry-hosted-agents/responses/basic/).
 
