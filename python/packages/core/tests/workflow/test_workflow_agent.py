@@ -2677,6 +2677,11 @@ class TestWorkflowAgentToolApproval:
         assert result.messages[1].author_name == "English"
         assert result.messages[1].text == "four"
 
+        # raw_representation of the non-streaming result must not leak the
+        # filtered-out user/system messages through the public payload.
+        for rep in result.raw_representation or []:
+            assert rep is None or (isinstance(rep, Message) and rep.role == "assistant")
+
     async def test_workflow_as_agent_filters_single_non_assistant_message(self) -> None:
         """Verify WorkflowAgent filters a single Message when role is not assistant."""
 

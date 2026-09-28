@@ -612,7 +612,14 @@ class WorkflowAgent(BaseAgent):
                     assistant_messages = [msg for msg in chat_messages if msg.role == "assistant"]
                     if assistant_messages:
                         messages.extend(assistant_messages)
-                        raw_representations.append(data)
+                        # raw_representation of a filtered list must not leak the
+                        # non-assistant entries the public messages list dropped.
+                        if len(assistant_messages) == len(chat_messages):
+                            raw_representations.append(data)
+                        else:
+                            raw_representations.extend(
+                                msg.raw_representation for msg in assistant_messages
+                            )
                 else:
                     contents = self._extract_contents(data)
                     if not contents:
