@@ -271,161 +271,44 @@ public class AgentFrameworkResponseHandler : ResponseHandler
             hostingOptions);
         chatOptions.Instructions = request.Instructions;
 
-        // Inject Foundry Toolbox tools when the toolbox service is available.
-        //
-        // Two sources are considered:
-        //   1. Pre-registered toolboxes (via AddFoundryToolboxes) — always appended.
-        //   2. Per-request markers embedded in request.Tools (HostedMcpToolboxAITool)
-        //      whose ServerAddress scheme is "foundry-toolbox://". Strict mode rejects
-        //      unknown names; otherwise a lazy MCP client is opened and cached.
-        //
-        // Each toolbox's tools are only appended once per request, even if it appears
-        // in both the pre-registered list and the per-request markers.
+        // Inject Foundry Toolbox tools when the toolbox service is available. ResolveToolboxToolsAsync
+        // describes the toolbox sources and returns the tools, the outstanding consents, or an error.
         if (this._toolboxService is not null)
         {
             // Re-apply the call id: the EmitCreated/EmitInProgress yields above reverted the ambient
             // value, and the toolbox tools/list + consent egress below must carry it per request.
             HostedCallContext.CallId = platformCallId;
 
-            // Retry any pre-registered toolbox that was deferred at startup because it could not be
-            // enumerated without a per-user context (non-consent failure). The request's egress now
-            // carries the platform-injected per-user isolation key, so a delegated tool source can
-            // enumerate as the user — or report that it needs OAuth consent, which is then surfaced
-            // by ResolvePendingConsentsAsync below.
-            await this._toolboxService
-                .RetryDeferredToolboxesAsync(cancellationToken)
-                .ConfigureAwait(false);
+            var toolboxResolution = await this.ResolveToolboxToolsAsync(
+                this._toolboxService,
+                request,
+                context.ResponseId,
+                cancellationToken).ConfigureAwait(false);
 
-            // Resolve any pre-registered toolbox that was awaiting user OAuth consent at startup
-            // (CONSENT_REQUIRED at tools/list time). If consent is still outstanding, surface it to
-            // the caller as an oauth_consent_request and stop: the user completes consent out of band,
-            // then re-sends the request, at which point enumeration succeeds and the tools appear.
-            var pendingConsents = await this._toolboxService
-                .ResolvePendingConsentsAsync(cancellationToken)
-                .ConfigureAwait(false);
-            if (pendingConsents.Count > 0)
+            if (toolboxResolution.Error is not null)
             {
-                // A pending consent whose link fails the policy fails the request rather than
-                // surfacing the link. The toolbox stays pending, so a later request retries it.
-                if (!this.AreConsentLinksAllowed(pendingConsents, context.ResponseId))
-                {
-                    yield return stream.EmitFailed(ResponseErrorCode.ServerError, ConsentLinkRejectedMessage);
-                    yield break;
-                }
-
-                foreach (var consent in pendingConsents)
-                {
-                    foreach (var consentEvent in EmitOAuthConsentRequest(
-                        stream,
-                        consent.ToolName,
-                        consent.ConsentUrl,
-                        this._toolboxService.ConsentLinkPolicy))
-                    {
-                        yield return consentEvent;
-                    }
-                }
-
-                yield return stream.EmitIncomplete(reason: null);
+                yield return stream.EmitFailed(ResponseErrorCode.ServerError, toolboxResolution.Error);
                 yield break;
             }
 
-            List<AITool>? toolsToAdd = null;
-
-            if (this._toolboxService.Tools.Count > 0)
+            // A toolbox that still needs OAuth consent stops this turn instead of silently running
+            // without its tools: the user completes consent out of band, then re-sends the request.
+            if (toolboxResolution.Consents.Count > 0)
             {
-                toolsToAdd = [.. this._toolboxService.Tools];
-            }
-
-            var markers = InputConverter.ReadMcpToolboxMarkers(request);
-            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            string? resolutionError = null;
-            List<McpConsentInfo>? markerConsents = null;
-
-            foreach (var (name, version) in markers)
-            {
-                if (!seen.Add(name))
+                foreach (var consentEvent in this.EmitConsentRequiredResponse(
+                    stream,
+                    toolboxResolution.Consents,
+                    context.ResponseId))
                 {
-                    continue;
+                    yield return consentEvent;
                 }
 
-                FoundryToolboxService.ToolboxResolution resolution;
-                try
-                {
-                    resolution = await this._toolboxService
-                        .GetToolboxToolsAsync(name, version, cancellationToken)
-                        .ConfigureAwait(false);
-                }
-                catch (InvalidOperationException ex)
-                {
-                    if (this._logger.IsEnabled(LogLevel.Warning))
-                    {
-                        this._logger.LogWarning(
-                            ex,
-                            "Foundry toolbox '{ToolboxName}' could not be resolved for response {ResponseId}.",
-                            name,
-                            context.ResponseId);
-                    }
-
-                    resolutionError = ex.Message;
-                    break;
-                }
-
-                // The marker hit CONSENT_REQUIRED: collect its consent requirement (request-scoped)
-                // and keep resolving the other markers so we can surface every outstanding consent at
-                // once. This toolbox contributes no tools to this turn.
-                if (resolution.Consents.Count > 0)
-                {
-                    (markerConsents ??= []).AddRange(resolution.Consents);
-                    continue;
-                }
-
-                toolsToAdd ??= [];
-                foreach (var t in resolution.Tools)
-                {
-                    if (!toolsToAdd.Contains(t))
-                    {
-                        toolsToAdd.Add(t);
-                    }
-                }
-            }
-
-            if (resolutionError is not null)
-            {
-                yield return stream.EmitFailed(ResponseErrorCode.ServerError, resolutionError);
                 yield break;
             }
 
-            // A lazy / per-request marker that needs OAuth consent is surfaced as an
-            // oauth_consent_request and stops this turn, instead of silently running without that
-            // toolbox. The consent is scoped to this request (it was returned by GetToolboxToolsAsync,
-            // not recorded globally), so it cannot leak onto a request that did not reference the marker.
-            if (markerConsents is { Count: > 0 })
+            if (toolboxResolution.Tools.Count > 0)
             {
-                if (!this.AreConsentLinksAllowed(markerConsents, context.ResponseId))
-                {
-                    yield return stream.EmitFailed(ResponseErrorCode.ServerError, ConsentLinkRejectedMessage);
-                    yield break;
-                }
-
-                foreach (var consent in markerConsents)
-                {
-                    foreach (var consentEvent in EmitOAuthConsentRequest(
-                        stream,
-                        consent.ToolName,
-                        consent.ConsentUrl,
-                        this._toolboxService.ConsentLinkPolicy))
-                    {
-                        yield return consentEvent;
-                    }
-                }
-
-                yield return stream.EmitIncomplete(reason: null);
-                yield break;
-            }
-
-            if (toolsToAdd?.Count > 0)
-            {
-                chatOptions.Tools = [.. chatOptions.Tools ?? [], .. toolsToAdd];
+                chatOptions.Tools = [.. chatOptions.Tools ?? [], .. toolboxResolution.Tools];
             }
         }
 
@@ -579,26 +462,20 @@ public class AgentFrameworkResponseHandler : ResponseHandler
 
                 if (consentInfo is not null)
                 {
+                    // Emit oauth_consent_request output item + incomplete for the consent URL.
                     // The tool wrapper records every -32006 and cancels the loop, so a rejected link
                     // fails the turn here instead of reaching the model as a tool error.
-                    if (!this.AreConsentLinksAllowed([consentInfo], context.ResponseId))
-                    {
-                        turnFailed = true;
-                        yield return stream.EmitFailed(ResponseErrorCode.ServerError, ConsentLinkRejectedMessage);
-                        yield break;
-                    }
-
-                    // Emit oauth_consent_request output item + incomplete for the consent URL.
-                    foreach (var consentEvent in EmitOAuthConsentRequest(
+                    foreach (var consentEvent in this.EmitConsentRequiredResponse(
                         stream,
-                        consentInfo.ToolName,
-                        consentInfo.ConsentUrl,
-                        this._toolboxService?.ConsentLinkPolicy))
+                        [consentInfo],
+                        context.ResponseId))
                     {
+                        // Mark the failure before yielding it, so the finally block below does not keep
+                        // the session even when the caller stops reading at the failed event.
+                        turnFailed |= consentEvent is ResponseFailedEvent;
                         yield return consentEvent;
                     }
 
-                    yield return stream.EmitIncomplete(reason: null);
                     yield break;
                 }
 
@@ -835,6 +712,144 @@ public class AgentFrameworkResponseHandler : ResponseHandler
     }
 
     /// <summary>
+    /// Resolves the Foundry toolbox tools to add to this request, or the reason the turn must stop.
+    /// </summary>
+    /// <returns>
+    /// The tools to add, the OAuth consents still outstanding, or the error that fails the request.
+    /// </returns>
+    private async ValueTask<ToolboxRequestResolution> ResolveToolboxToolsAsync(
+        FoundryToolboxService toolboxService,
+        CreateResponse request,
+        string responseId,
+        CancellationToken cancellationToken)
+    {
+        // Two sources are considered:
+        //   1. Pre-registered toolboxes (via AddFoundryToolboxes) — always appended.
+        //   2. Per-request markers embedded in request.Tools (HostedMcpToolboxAITool)
+        //      whose ServerAddress scheme is "foundry-toolbox://". Strict mode rejects
+        //      unknown names; otherwise a lazy MCP client is opened and cached.
+        //
+        // Each toolbox's tools are only appended once per request, even if it appears
+        // in both the pre-registered list and the per-request markers.
+
+        // Retry any pre-registered toolbox that was deferred at startup because it could not be
+        // enumerated without a per-user context (non-consent failure). The request's egress now
+        // carries the platform-injected per-user isolation key, so a delegated tool source can
+        // enumerate as the user — or report that it needs OAuth consent, which is then surfaced
+        // by ResolvePendingConsentsAsync below.
+        await toolboxService
+            .RetryDeferredToolboxesAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        // Resolve any pre-registered toolbox that was awaiting user OAuth consent at startup
+        // (CONSENT_REQUIRED at tools/list time). If consent is still outstanding, surface it to
+        // the caller as an oauth_consent_request and stop: the user completes consent out of band,
+        // then re-sends the request, at which point enumeration succeeds and the tools appear.
+        // Markers are not resolved in that case, matching a turn that stops before running.
+        var pendingConsents = await toolboxService
+            .ResolvePendingConsentsAsync(cancellationToken)
+            .ConfigureAwait(false);
+        if (pendingConsents.Count > 0)
+        {
+            return new(Tools: [], Consents: pendingConsents, Error: null);
+        }
+
+        List<AITool> toolsToAdd = [.. toolboxService.Tools];
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        List<McpConsentInfo>? markerConsents = null;
+
+        foreach (var (name, version) in InputConverter.ReadMcpToolboxMarkers(request))
+        {
+            if (!seen.Add(name))
+            {
+                continue;
+            }
+
+            FoundryToolboxService.ToolboxResolution resolution;
+            try
+            {
+                resolution = await toolboxService
+                    .GetToolboxToolsAsync(name, version, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (InvalidOperationException ex)
+            {
+                if (this._logger.IsEnabled(LogLevel.Warning))
+                {
+                    this._logger.LogWarning(
+                        ex,
+                        "Foundry toolbox '{ToolboxName}' could not be resolved for response {ResponseId}.",
+                        name,
+                        responseId);
+                }
+
+                // A resolution error fails the request even when earlier markers collected consents.
+                return new(Tools: [], Consents: [], Error: ex.Message);
+            }
+
+            // The marker hit CONSENT_REQUIRED: collect its consent requirement (request-scoped)
+            // and keep resolving the other markers so we can surface every outstanding consent at
+            // once. This toolbox contributes no tools to this turn.
+            if (resolution.Consents.Count > 0)
+            {
+                (markerConsents ??= []).AddRange(resolution.Consents);
+                continue;
+            }
+
+            foreach (var t in resolution.Tools)
+            {
+                if (!toolsToAdd.Contains(t))
+                {
+                    toolsToAdd.Add(t);
+                }
+            }
+        }
+
+        // A lazy / per-request marker that needs OAuth consent is surfaced as an
+        // oauth_consent_request and stops this turn, instead of silently running without that
+        // toolbox. The consent is scoped to this request (it was returned by GetToolboxToolsAsync,
+        // not recorded globally), so it cannot leak onto a request that did not reference the marker.
+        return markerConsents is { Count: > 0 }
+            ? new(Tools: [], Consents: markerConsents, Error: null)
+            : new(Tools: toolsToAdd, Consents: [], Error: null);
+    }
+
+    /// <summary>
+    /// Emits the terminal events for a turn that stops on OAuth consent: one <c>oauth_consent_request</c>
+    /// item per consent, then <c>response.incomplete</c>.
+    /// </summary>
+    /// <remarks>
+    /// When any consent link fails the consent link policy, only <c>response.failed</c> is emitted, so
+    /// no link from that turn is surfaced. A pre-registered toolbox that is awaiting consent stays
+    /// pending, so a later request retries it.
+    /// </remarks>
+    private IEnumerable<ResponseStreamEvent> EmitConsentRequiredResponse(
+        ResponseEventStream stream,
+        IReadOnlyList<McpConsentInfo> consents,
+        string responseId)
+    {
+        if (!this.AreConsentLinksAllowed(consents, responseId))
+        {
+            yield return stream.EmitFailed(ResponseErrorCode.ServerError, ConsentLinkRejectedMessage);
+            yield break;
+        }
+
+        foreach (var consent in consents)
+        {
+            foreach (var consentEvent in EmitOAuthConsentRequest(
+                stream,
+                consent.ToolName,
+                consent.ConsentUrl,
+                this._toolboxService?.ConsentLinkPolicy))
+            {
+                yield return consentEvent;
+            }
+        }
+
+        yield return stream.EmitIncomplete(reason: null);
+    }
+
+    /// <summary>
     /// Returns whether every consent link satisfies the toolbox consent link policy. Rejected links are
     /// logged by tool and toolbox name only; the URL is not logged because it comes from an external
     /// error payload.
@@ -997,4 +1012,14 @@ public class AgentFrameworkResponseHandler : ResponseHandler
 
         return agentName;
     }
+
+    /// <summary>
+    /// The toolbox outcome for one request. When <see cref="Error"/> is set, the request fails.
+    /// Otherwise, a non-empty <see cref="Consents"/> stops the turn for OAuth consent, and
+    /// <see cref="Tools"/> holds the toolbox tools to add to the run.
+    /// </summary>
+    private readonly record struct ToolboxRequestResolution(
+        IReadOnlyList<AITool> Tools,
+        IReadOnlyList<McpConsentInfo> Consents,
+        string? Error);
 }

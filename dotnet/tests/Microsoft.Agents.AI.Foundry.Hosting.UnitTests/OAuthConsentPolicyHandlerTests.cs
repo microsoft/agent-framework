@@ -118,6 +118,36 @@ public class OAuthConsentPolicyHandlerTests
         AssertConsentSurfaced(events, OtherLink);
     }
 
+    [Fact]
+    public async Task CreateAsync_PerCallConsentOutsideAllowlist_DoesNotSaveSessionAsync()
+    {
+        // Arrange
+        await using var service = await CreateStartedServiceAsync([AllowedOrigin], toolboxNames: [], opener: null);
+        var sessionStore = new CountingSessionStore();
+
+        // Act
+        var events = await RunAsync(new ConsentRequiringAgent(OtherLink), service, sessionStore: sessionStore);
+
+        // Assert: a rejected consent link fails the turn, so its session is not kept.
+        AssertFailedWithoutLink(events, OtherLink);
+        Assert.Equal(0, sessionStore.SaveAttempts);
+    }
+
+    [Fact]
+    public async Task CreateAsync_PerCallConsentMatchingAllowlist_SavesSessionAsync()
+    {
+        // Arrange
+        await using var service = await CreateStartedServiceAsync([AllowedOrigin], toolboxNames: [], opener: null);
+        var sessionStore = new CountingSessionStore();
+
+        // Act
+        var events = await RunAsync(new ConsentRequiringAgent(AllowedLink), service, sessionStore: sessionStore);
+
+        // Assert: a turn waiting on consent is not a failure, so its session is kept for the retry.
+        AssertConsentSurfaced(events, AllowedLink);
+        Assert.Equal(1, sessionStore.SaveAttempts);
+    }
+
     private static void AssertFailedWithoutLink(List<ResponseStreamEvent> events, string rejectedLink)
     {
         Assert.DoesNotContain(events, e => e is ResponseOutputItemAddedEvent { Item: OAuthConsentRequestOutputItem });
@@ -180,10 +210,11 @@ public class OAuthConsentPolicyHandlerTests
     private static async Task<List<ResponseStreamEvent>> RunAsync(
         AIAgent agent,
         FoundryToolboxService toolboxService,
-        CreateResponse? request = null)
+        CreateResponse? request = null,
+        AgentSessionStore? sessionStore = null)
     {
         var services = new ServiceCollection();
-        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
+        services.AddSingleton(sessionStore ?? new InMemoryAgentSessionStore());
         services.AddSingleton(agent);
         services.AddSingleton<HostedSessionIsolationKeyProvider>(new FakeHostedSessionIsolationKeyProvider());
         var handler = new AgentFrameworkResponseHandler(
@@ -206,6 +237,30 @@ public class OAuthConsentPolicyHandlerTests
 
     private sealed class SimpleAgentSession : AgentSession
     {
+    }
+
+    /// <summary>Counts session saves and never returns a stored session.</summary>
+    private sealed class CountingSessionStore : AgentSessionStore
+    {
+        private int _saveAttempts;
+
+        public int SaveAttempts => this._saveAttempts;
+
+        public override ValueTask SaveSessionAsync(
+            AIAgent agent,
+            AgentSessionStoreKey key,
+            AgentSession session,
+            CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref this._saveAttempts);
+            return default;
+        }
+
+        public override ValueTask<AgentSession?> GetSessionAsync(
+            AIAgent agent,
+            AgentSessionStoreKey key,
+            CancellationToken cancellationToken = default) =>
+            new((AgentSession?)null);
     }
 
     private abstract class AgentBase : AIAgent

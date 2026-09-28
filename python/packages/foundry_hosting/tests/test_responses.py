@@ -78,9 +78,10 @@ from agent_framework_foundry_hosting._responses import (
     _LATEST_CHECKPOINT_ID_KEY,  # pyright: ignore[reportPrivateUsage]
     CONSENT_ERROR_CODE,
     ConsentError,
+    _is_allowed_oauth_consent_link,  # pyright: ignore[reportPrivateUsage]
     _item_to_message,  # pyright: ignore[reportPrivateUsage]
     _json_safe_to_str,  # pyright: ignore[reportPrivateUsage]
-    _OAuthConsentLinkPolicy,  # pyright: ignore[reportPrivateUsage]
+    _normalize_allowed_oauth_consent_origins,  # pyright: ignore[reportPrivateUsage]
     _output_item_to_message,  # pyright: ignore[reportPrivateUsage]
     _OutputItemTracker,  # pyright: ignore[reportPrivateUsage]
     _SignalledIterator,  # pyright: ignore[reportPrivateUsage]
@@ -5004,22 +5005,18 @@ class TestConsentUrlFromError:
 
 
 class TestOAuthConsentLinkPolicy:
-    @pytest.mark.parametrize(
-        "policy_kwargs",
-        [{}, {"allowed_origins": None}],
-        ids=["omitted", "explicit-none"],
-    )
-    def test_omitted_allowlist_preserves_existing_safe_https_behavior(self, policy_kwargs: dict[str, Any]) -> None:
-        policy = _OAuthConsentLinkPolicy(**policy_kwargs)
+    def test_omitted_allowlist_preserves_existing_safe_https_behavior(self) -> None:
+        allowed_origins = _normalize_allowed_oauth_consent_origins(None)
 
-        assert policy.is_allowed("https://external.example/authorize")
-        assert not policy.is_allowed("http://external.example/authorize")
-        assert not policy.is_allowed("javascript:alert(1)")
+        assert allowed_origins is None
+        assert _is_allowed_oauth_consent_link("https://external.example/authorize", allowed_origins)
+        assert not _is_allowed_oauth_consent_link("http://external.example/authorize", allowed_origins)
+        assert not _is_allowed_oauth_consent_link("javascript:alert(1)", allowed_origins)
 
     def test_empty_allowlist_rejects_all_origins(self) -> None:
-        policy = _OAuthConsentLinkPolicy([])
+        allowed_origins = _normalize_allowed_oauth_consent_origins([])
 
-        assert not policy.is_allowed("https://external.example/authorize")
+        assert not _is_allowed_oauth_consent_link("https://external.example/authorize", allowed_origins)
 
     @pytest.mark.parametrize(
         "consent_link",
@@ -5030,17 +5027,23 @@ class TestOAuthConsentLinkPolicy:
         ],
     )
     def test_configured_allowlist_accepts_matching_origins(self, consent_link: str) -> None:
-        policy = _OAuthConsentLinkPolicy([
+        allowed_origins = _normalize_allowed_oauth_consent_origins([
             "https://auth.example.com",
             "https://login.partner.example:8443",
         ])
 
-        assert policy.is_allowed(consent_link)
+        assert _is_allowed_oauth_consent_link(consent_link, allowed_origins)
 
     def test_configured_allowlist_rejects_other_safe_https_origins(self) -> None:
-        policy = _OAuthConsentLinkPolicy(["https://auth.example.com"])
+        allowed_origins = _normalize_allowed_oauth_consent_origins(["https://auth.example.com"])
 
-        assert not policy.is_allowed("https://other.example.com/authorize")
+        assert not _is_allowed_oauth_consent_link("https://other.example.com/authorize", allowed_origins)
+
+    def test_configured_allowlist_still_rejects_unsafe_links(self) -> None:
+        allowed_origins = _normalize_allowed_oauth_consent_origins(["https://auth.example.com"])
+
+        assert not _is_allowed_oauth_consent_link("http://auth.example.com/authorize", allowed_origins)
+        assert not _is_allowed_oauth_consent_link(None, allowed_origins)
 
     @pytest.mark.parametrize(
         "origin",
@@ -5052,7 +5055,7 @@ class TestOAuthConsentLinkPolicy:
     )
     def test_invalid_allowlist_origin_raises(self, origin: str) -> None:
         with pytest.raises(ValueError, match="origin"):
-            _OAuthConsentLinkPolicy([origin])
+            _normalize_allowed_oauth_consent_origins([origin])
 
 
 class TestAgentLifecycle:
