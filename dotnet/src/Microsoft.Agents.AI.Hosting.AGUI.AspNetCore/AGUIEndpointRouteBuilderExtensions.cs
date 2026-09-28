@@ -3,7 +3,9 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using AGUI.Abstractions;
@@ -153,6 +155,24 @@ public static class AGUIEndpointRouteBuilderExtensions
                 ?? context.RequestServices.GetService<IOptions<AGUIStreamOptions>>()?.Value;
 
             var ctx = input.ToChatRequestContext(jsonSerializerOptions, streamOptions);
+            IEnumerable<ChatMessage> modelMessages = ctx.Messages;
+
+            // AG-UI context is client-provided grounding data, not trusted instructions. Add it as
+            // a separate user message so agents that accept arbitrary AIAgent inputs can consume it.
+            if (ctx.Input.Context is { Count: > 0 } contextItems)
+            {
+                List<string> contextLines = ["AG-UI context (client-provided data):"];
+                foreach (AGUIContext item in contextItems)
+                {
+                    contextLines.Add($"{{\"description\":\"{JsonEncodedText.Encode(item.Description ?? string.Empty)}\",\"value\":\"{JsonEncodedText.Encode(item.Value ?? string.Empty)}\"}}");
+                }
+
+                ChatMessage contextMessage = new(ChatRole.User, string.Join("\n", contextLines));
+                if (!ctx.Messages.Any(message => message.Role == ChatRole.User && message.Text == contextMessage.Text))
+                {
+                    modelMessages = [.. ctx.Messages, contextMessage];
+                }
+            }
 
             // AG-UI continuation is keyed by thread id. When the client does not supply one, generate a
             // stable id and write it back onto the input so the persisted session, the RUN_STARTED /
@@ -164,7 +184,7 @@ public static class AGUIEndpointRouteBuilderExtensions
 
             var events = hostAgent
                 .RunStreamingAsync(
-                    ctx.Messages,
+                    modelMessages,
                     session: session,
                     options: new ChatClientAgentRunOptions { ChatOptions = ctx.ChatOptions },
                     cancellationToken: cancellationToken)
