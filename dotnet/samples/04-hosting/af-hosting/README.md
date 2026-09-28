@@ -4,6 +4,9 @@ These samples show how to expose an Agent Framework agent or workflow over the O
 protocol from an ASP.NET Core app that you write, where your app owns the HTTP route, authentication, and
 where conversations are stored.
 
+> [!WARNING]
+> These local samples do not authenticate callers. Before serving multiple users, configure authentication and endpoint authorization, and bind all session, response, and checkpoint lookups to trusted caller identity. `OpenAIResponses` conversion helpers do not automatically scope application-owned storage when an isolation provider is registered. See the [shared hosting guide](../README.md#application-owned-routes-and-storage).
+
 ## Two ways to expose an agent over the Responses protocol
 
 Agent Framework gives you two options:

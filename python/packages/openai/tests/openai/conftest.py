@@ -6,7 +6,25 @@ from unittest.mock import patch
 
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor, SpanExporter
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-from pytest import fixture
+from pytest import FixtureRequest, fixture, skip
+
+# Temporarily skips every OpenAI integration test while the CI OpenAI API key is rejected.
+# Set to None to run the OpenAI integration tests again.
+OPENAI_INTEGRATION_TESTS_SKIP_REASON: str | None = (
+    "OpenAI integration tests are temporarily disabled: the CI OpenAI API key is invalid."
+)
+
+
+@fixture(autouse=True)
+def _skip_openai_integration_tests(request: FixtureRequest) -> None:
+    """Skip OpenAI integration tests while OPENAI_INTEGRATION_TESTS_SKIP_REASON is set."""
+    # Azure-marked tests use Azure OpenAI credentials, not the broken OpenAI key, and have their own skip switch.
+    if (
+        OPENAI_INTEGRATION_TESTS_SKIP_REASON
+        and request.node.get_closest_marker("integration") is not None
+        and request.node.get_closest_marker("azure") is None
+    ):
+        skip(OPENAI_INTEGRATION_TESTS_SKIP_REASON)
 
 
 def _reset_env(monkeypatch, env_names: list[str]) -> None:  # type: ignore
