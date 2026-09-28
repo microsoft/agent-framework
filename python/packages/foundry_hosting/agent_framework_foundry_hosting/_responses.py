@@ -34,6 +34,7 @@ from agent_framework import (
     CheckpointStorage,
     Content,
     ContextProvider,
+    FinishReason,
     HistoryProvider,
     InMemoryHistoryProvider,
     Message,
@@ -175,10 +176,10 @@ def _agent_response_updates(response: AgentResponse[Any], response_id: str) -> l
     ]
     if response.usage_details is not None:
         updates.append(AgentResponseUpdate(contents=[Content.from_usage(response.usage_details)]))
-    if response.finish_reason == "length":
-        updates.append(AgentResponseUpdate(finish_reason="length"))
-    elif response.finish_reason == "content_filter":
-        updates.append(AgentResponseUpdate(finish_reason="content_filter"))
+    if response.finish_reason is not None:
+        if not updates:
+            updates.append(AgentResponseUpdate())
+        updates[-1].finish_reason = FinishReason(response.finish_reason)
     return updates
 
 

@@ -39,6 +39,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    FinishReason,
     FinishReasonLiteral,
     FunctionInvocationLayer,
     HistoryProvider,
@@ -1699,6 +1700,42 @@ class TestAgentSessionPersistence:
 
         assert response.json()["status"] == expected_status, response.json()
         assert "private-provider-token" not in str(response.json())
+
+    @pytest.mark.parametrize(
+        ("finish_reason", "incomplete_reason"),
+        [
+            ("stop", None),
+            ("tool_calls", None),
+            ("length", ResponseIncompleteReason.MAX_OUTPUT_TOKENS),
+            ("content_filter", ResponseIncompleteReason.CONTENT_FILTER),
+            ("provider_specific", None),
+        ],
+    )
+    def test_provider_background_forwards_finish_reason_without_extra_update(
+        self, finish_reason: str, incomplete_reason: ResponseIncompleteReason | None
+    ) -> None:
+        response = AgentResponse(
+            messages=[Message(role="assistant", contents=[Content.from_text("finished")])],
+            finish_reason=FinishReason(finish_reason),
+            continuation_token=OpenAIContinuationToken(response_id="private-provider-token"),
+        )
+        updates = _agent_response_updates(response, "outer-response")
+
+        assert len(updates) == 1
+        assert updates[0].finish_reason == finish_reason
+        assert updates[0].response_id == "outer-response"
+        assert updates[0].continuation_token is None
+        tracker = _OutputItemTracker(ResponseEventStream(response_id="outer-response"))
+        tracker.record_finish_reason(updates[0].finish_reason)
+        assert tracker.incomplete_reason == incomplete_reason
+
+    def test_provider_background_forwards_finish_reason_without_output(self) -> None:
+        response = AgentResponse(messages=[], finish_reason="content_filter")
+        updates = _agent_response_updates(response, "outer-response")
+
+        assert len(updates) == 1
+        assert updates[0].contents == []
+        assert updates[0].finish_reason == "content_filter"
 
     async def test_provider_background_keeps_private_token_under_outer_response(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
