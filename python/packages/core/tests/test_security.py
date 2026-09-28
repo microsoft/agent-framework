@@ -2242,8 +2242,8 @@ class TestPolicyEnforcementMiddleware:
         )
         context.metadata["argument_label"] = ContentLabel()
         context.metadata["effective_invocation_label"] = combine_labels(
-            cast(ContentLabel, context.metadata["context_label"]),
-            cast(ContentLabel, context.metadata["argument_label"]),
+            context.metadata["context_label"],
+            context.metadata["argument_label"],
         )
         executed = False
 
