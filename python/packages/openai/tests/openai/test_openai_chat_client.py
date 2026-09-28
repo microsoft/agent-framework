@@ -2463,9 +2463,12 @@ async def test_local_shell_tool_requires_approval_before_function_loop_execution
     with patch.object(
         client.client.responses, "create", side_effect=[_as_raw(mock_response1), _as_raw(mock_response2)]
     ) as mock_create:
+        # The approval round trip is resumed on the session that issued the request.
+        session = AgentSession(session_id="local-shell-approval")
         response = await client.get_response(
             messages=[Message(role="user", contents=["What Python version is available?"])],
             options={"tools": [local_shell_tool]},
+            client_kwargs={"session": session},
         )
 
         assert executed_commands == []
@@ -2477,6 +2480,7 @@ async def test_local_shell_tool_requires_approval_before_function_loop_execution
         await client.get_response(
             messages=[Message(role="user", contents=[approval_response])],
             options={"tools": [local_shell_tool]},
+            client_kwargs={"session": session},
         )
 
         assert executed_commands == ["python --version"]

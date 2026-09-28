@@ -1644,6 +1644,26 @@ class TestInMemoryHistoryProvider:
         assert texts == ["B", "C", "B", "D"]
 
 
+def _damage_last_history_record(
+    provider: FileHistoryProvider, session_file: Path, serialization_format: Literal["json", "msgpack"]
+) -> bytes:
+    """Replace the last stored record with bytes that cannot be deserialized.
+
+    Returns the damaged file contents so the caller can assert it is left alone.
+    """
+    if serialization_format == "json":
+        lines = session_file.read_text(encoding="utf-8").splitlines()
+        damaged = "\n".join([*lines[:-1], "{not json"]) + "\n"
+        encoded = damaged.encode("utf-8")
+    else:
+        raw = session_file.read_bytes()
+        header_bytes = provider._MSGPACK_RECORD_HEADER_BYTES
+        first_length = int.from_bytes(raw[:header_bytes], "big")
+        encoded = raw[: header_bytes + first_length] + (4).to_bytes(header_bytes, "big") + b"\x00\x01\x02\x03"
+    session_file.write_bytes(encoded)
+    return encoded
+
+
 class TestFileHistoryProvider:
     def test_is_marked_experimental(self) -> None:
         assert FileHistoryProvider.__feature_stage__ == "experimental"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
@@ -1698,6 +1718,34 @@ class TestFileHistoryProvider:
 
         loaded = await provider.get_messages("replayed-transcript")
         assert [message.text for message in loaded] == ["hello", "hi there", "follow-up", "reply"]
+
+    @pytest.mark.parametrize("serialization_format", ["json", "msgpack"])
+    async def test_save_messages_reports_an_unreadable_history_record(
+        self, tmp_path: Path, serialization_format: Literal["json", "msgpack"]
+    ) -> None:
+        provider = FileHistoryProvider(tmp_path, serialization_format=serialization_format)
+        first_turn = [
+            Message(role="user", contents=["hello"]),
+            Message(role="assistant", contents=["hi there"]),
+        ]
+        full_transcript = [
+            *first_turn,
+            Message(role="user", contents=["follow-up"]),
+            Message(role="assistant", contents=["reply"]),
+        ]
+        await provider.save_messages("damaged-history", first_turn)
+        session_file = provider._session_file_path("damaged-history")
+        damaged_contents = _damage_last_history_record(provider, session_file, serialization_format)
+
+        # The record is unreadable, so reading the history reports it ...
+        with pytest.raises(ValueError):
+            await provider.get_messages("damaged-history")
+        # ... and appending must not treat the unreadable message as absent:
+        # that replays it into the file and reports success.
+        with pytest.raises(ValueError):
+            await provider.save_messages("damaged-history", full_transcript)
+
+        assert session_file.read_bytes() == damaged_contents
 
     @pytest.mark.parametrize("serialization_format", ["json", "msgpack"])
     async def test_round_trips_marked_refusal_text(

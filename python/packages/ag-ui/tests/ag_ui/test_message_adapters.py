@@ -2710,6 +2710,23 @@ def test_snapshot_input_image_to_binary():
     assert result[0]["content"][0]["type"] == "binary"
 
 
+def test_convert_content_input_image_is_media_not_text():
+    """input_image parts become image content, not the text repr of the part."""
+    from agent_framework_ag_ui._message_adapters import _convert_agui_content_to_framework
+
+    result = _convert_agui_content_to_framework(
+        [
+            {"type": "input_image", "source": {"type": "url", "url": "https://example.com/img.png"}},
+            {"type": "input_text", "text": "what is this?"},
+        ]
+    )
+
+    assert result[0].type == "uri"
+    assert result[0].uri == "https://example.com/img.png"
+    assert result[0].media_type == "image/*"
+    assert result[1].text == "what is this?"
+
+
 def test_snapshot_mime_type_snake_case():
     """mime_type (snake_case) is normalized to mimeType."""
     result = agui_messages_to_snapshot_format(

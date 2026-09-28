@@ -2156,6 +2156,107 @@ class TestPolicyEnforcementMiddleware:
         assert isinstance(context.result, dict)
         assert context.result["violation_type"] == "unsafe_approval_binding"
 
+    async def test_legacy_user_identity_violation_with_approval_does_not_execute_tool(self) -> None:
+        """Regression for #8761: approval_on_violation must not allow a violating call."""
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+
+        async def reads_user_identity() -> str:
+            return "secret"
+
+        source_tool = FunctionTool(
+            fn=reads_user_identity,
+            name="reads_user_identity",
+            description="Legacy USER_IDENTITY source without principals",
+            additional_properties={"source_integrity": "trusted", "confidentiality": "user_identity"},
+        )
+
+        async def private_sink(value: str) -> str:
+            return value
+
+        destination_tool = FunctionTool(
+            fn=private_sink,
+            name="microsoft_docs_fetch",
+            description="Private destination",
+            additional_properties={"max_allowed_confidentiality": "private"},
+        )
+
+        source_context = FunctionInvocationContext(function=source_tool, arguments={})
+
+        async def produce_identity(_context: FunctionInvocationContext) -> list[Content]:
+            return [Content.from_text("secret")]
+
+        await FunctionMiddlewarePipeline(tracker).execute(source_context, produce_identity)
+
+        violation_context = FunctionInvocationContext(
+            function=destination_tool,
+            arguments={"value": "x"},
+        )
+        executed = False
+
+        async def execute(_context: FunctionInvocationContext) -> list[Content]:
+            nonlocal executed
+            executed = True
+            return [Content.from_text("leaked")]
+
+        with pytest.raises(MiddlewareTermination):
+            await FunctionMiddlewarePipeline(tracker, policy).execute(violation_context, execute)
+
+        assert executed is False
+        assert isinstance(violation_context.result, dict)
+        assert violation_context.result["violation_type"] in {
+            "max_allowed_confidentiality",
+            "unsafe_approval_binding",
+        }
+
+    async def test_approval_on_violation_fail_closed_when_binding_record_fails(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        middleware = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+        monkeypatch.setattr(middleware, "_block_unsafe_approval_binding", lambda *args, **kwargs: None)
+
+        def fail_pending_record(*_args: object, **_kwargs: object) -> None:
+            raise ValueError("simulated pending approval binding failure")
+
+        monkeypatch.setattr(middleware, "_pending_record", fail_pending_record)
+
+        class DestinationArgs(BaseModel):
+            value: str = "value"
+
+        async def destination(value: str = "value") -> str:
+            return value
+
+        function = FunctionTool(
+            fn=destination,
+            name="private_sink",
+            description="Private destination",
+            args_schema=DestinationArgs,
+            additional_properties={"max_allowed_confidentiality": "private"},
+        )
+        context = FunctionInvocationContext(
+            function=function,
+            arguments=function.args_schema(value="value"),  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        )
+        context.metadata["context_label"] = ContentLabel(
+            confidentiality=ConfidentialityLabel.USER_IDENTITY,
+        )
+        context.metadata["argument_label"] = ContentLabel()
+        context.metadata["effective_invocation_label"] = combine_labels(
+            context.metadata["context_label"],
+            context.metadata["argument_label"],
+        )
+        executed = False
+
+        async def execute() -> None:
+            nonlocal executed
+            executed = True
+
+        with pytest.raises(MiddlewareFailure, match="Unsafe policy approval binding did not terminate"):
+            await middleware.process(context, execute)
+
+        assert executed is False
+        assert context.result is None
+
     async def test_approval_binds_computed_argument_principals_without_label_tracker(self) -> None:
         middleware = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
         function = _identity_destination(_principal_metadata("user-c")[_PRINCIPALS_KEY])

@@ -1758,6 +1758,13 @@ class MCPTool:
                         logger.warning(
                             "MCP lifecycle action %s failed after its caller stopped waiting.", action, exc_info=ex
                         )
+                    # A connect that failed without leaving a session behind has nothing for this
+                    # owner to hold, so stop instead of blocking on the queue forever. Mirrors the
+                    # cancelled-connect branch above. The connected check matters because
+                    # is_connected is set before tools and prompts are loaded: when loading fails
+                    # the session is live and still needs this owner to close it later.
+                    if action == "connect" and not self.is_connected and queue.empty():
+                        return
                 else:
                     if not future.done():
                         future.set_result(None)
