@@ -164,17 +164,20 @@ def _command_source_text(update: Mapping[str, Any]) -> str | None:
     return None
 
 
-def telegram_command(update: Mapping[str, Any]) -> str | None:
+def telegram_command(update: Mapping[str, Any], *, bot_username: str | None = None) -> str | None:
     """Parse a leading slash command out of an update, without dispatching it.
 
     Looks at ``message.text`` / ``edited_message.text`` first, then
     ``callback_query.data``. A bot-suffixed command (``/name@bot args``) is
-    normalized to ``/name args`` since a single Bot API integration only ever
-    serves one bot username. Callers are responsible for matching the
-    returned command name and acting on it.
+    normalized to ``/name args``. When ``bot_username`` is provided, commands
+    addressed to another bot return ``None``. Callers are responsible for
+    matching the returned command name and acting on it.
 
     Args:
         update: A Telegram Bot API ``Update`` object.
+        bot_username: This bot's username, without the leading ``@``. Telegram
+            usernames are matched case-insensitively. Omit to preserve the
+            original parsing behavior.
 
     Returns:
         The normalized command (e.g. ``"/start"`` or ``"/start hello"``), or
@@ -185,6 +188,9 @@ def telegram_command(update: Mapping[str, Any]) -> str | None:
         return None
     match = _COMMAND_PATTERN.match(text)
     if not match:
+        return None
+    command_bot = match.group("bot")
+    if bot_username is not None and command_bot and command_bot.casefold() != bot_username.lstrip("@").casefold():
         return None
     return f"/{match.group('name')}{match.group('rest')}".rstrip()
 

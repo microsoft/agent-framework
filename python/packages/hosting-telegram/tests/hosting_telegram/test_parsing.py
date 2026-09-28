@@ -97,6 +97,12 @@ class TestTelegramCommand:
     def test_bot_suffixed_command_with_args_normalizes(self) -> None:
         assert telegram_command(_message_update(text="/echo@mybot hello")) == "/echo hello"
 
+    def test_bot_suffixed_command_only_matches_its_target(self) -> None:
+        update = _message_update(text="/new@OtherBot")
+        assert telegram_command(update, bot_username="mybot") is None
+        assert telegram_command(update, bot_username="otherbot") == "/new"
+        assert telegram_command(_message_update(text="/new"), bot_username="mybot") == "/new"
+
     def test_edited_message_text(self) -> None:
         update = {"update_id": 1, "edited_message": {"chat": {"id": 1}, "text": "/help"}}
         assert telegram_command(update) == "/help"

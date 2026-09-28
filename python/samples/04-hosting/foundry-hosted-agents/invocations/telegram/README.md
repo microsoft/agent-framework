@@ -122,6 +122,7 @@ step registers the same new value with Telegram.
 One bot is deployed per sample environment, so the chat-derived session key is scoped by that environment.
 `/new` clears that Cosmos history without invoking the model. `/start` and `/help` are also handled in application
 code. Callback queries are acknowledged before their data is processed.
+Commands addressed to another bot are ignored before they can clear history or reach the model.
 
 For photos, PDF documents, and MP3 or WAV audio, the agent calls Telegram `getFile`, rejects files over 1 MiB,
 downloads the bytes, and creates an inline data URI. The conservative limit leaves room for base64 and Cosmos DB
