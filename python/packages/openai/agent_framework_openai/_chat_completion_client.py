@@ -1315,7 +1315,7 @@ class RawOpenAIChatCompletionClient(
             case "data" | "uri" if content.has_top_level_media_type("audio"):
                 if content.media_type and "wav" in content.media_type:
                     audio_format = "wav"
-                elif content.media_type and "mp3" in content.media_type:
+                elif content.media_type and ("mp3" in content.media_type or "mpeg" in content.media_type):
                     audio_format = "mp3"
                 else:
                     logger.debug("Unsupported audio media type: %s", content.media_type)

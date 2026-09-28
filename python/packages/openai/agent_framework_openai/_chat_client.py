@@ -2120,7 +2120,7 @@ class RawOpenAIChatClient(
                 if content.has_top_level_media_type("audio"):
                     if content.media_type and "wav" in content.media_type:
                         format = "wav"
-                    elif content.media_type and "mp3" in content.media_type:
+                    elif content.media_type and ("mp3" in content.media_type or "mpeg" in content.media_type):
                         format = "mp3"
                     else:
                         logger.warning("Unsupported audio media type: %s", content.media_type)

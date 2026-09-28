@@ -6961,6 +6961,13 @@ def test_prepare_content_for_openai_audio_content() -> None:
     assert result["type"] == "input_audio"
     assert result["input_audio"]["format"] == "mp3"
 
+    # Test MP3 audio content with the registered media type
+    mpeg_content = Content.from_uri(uri="data:audio/mpeg;base64,ghi789", media_type="audio/mpeg")
+    result = client._prepare_content_for_openai("user", mpeg_content)
+    assert result["type"] == "input_audio"
+    assert result["input_audio"]["data"] == "data:audio/mpeg;base64,ghi789"
+    assert result["input_audio"]["format"] == "mp3"
+
 
 def test_prepare_content_for_openai_unsupported_content() -> None:
     """Test _prepare_content_for_openai with unsupported content types."""

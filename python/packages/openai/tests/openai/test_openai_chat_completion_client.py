@@ -602,6 +602,18 @@ def test_prepare_content_for_openai_data_content_image(
     assert result["input_audio"]["data"] == "//uQAAAAWGluZwAAAA8AAAACAAACcQ=="
     assert result["input_audio"]["format"] == "mp3"
 
+    # Test DataContent with MP3 audio using the registered media type
+    mpeg_data_content = Content.from_uri(
+        uri="data:audio/mpeg;base64,//uQAAAAWGluZwAAAA8AAAACAAACcQ==",
+        media_type="audio/mpeg",
+    )
+
+    result = client._prepare_content_for_openai(mpeg_data_content)  # type: ignore
+
+    assert result["type"] == "input_audio"
+    assert result["input_audio"]["data"] == "//uQAAAAWGluZwAAAA8AAAACAAACcQ=="
+    assert result["input_audio"]["format"] == "mp3"
+
     unsupported_audio = Content.from_uri(uri="data:audio/ogg;base64,abc123", media_type="audio/ogg")
 
     assert client._prepare_content_for_openai(unsupported_audio) == {}  # type: ignore
