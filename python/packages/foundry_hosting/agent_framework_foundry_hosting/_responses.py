@@ -630,11 +630,29 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 If not provided, a default `CheckpointStoreProvider` will be used.
             function_approval_store_provider: Optional provider for function approval storage.
                 If not provided, a default `FunctionApprovalStoreProvider` will be used.
-            inner_history: `"host"` (default) replays outer history with inner storage off;
-                `"service"` keeps the inner service continuation private; `"agent"` uses MAF history.
-            history_source: Deprecated alias. `"agent_server"` selects host history; `"agent"`
-                passes only new input and retains the developer's own history or service-storage
-                choice for stored requests.
+            inner_history: Who supplies prior messages to the *model*, independently of the caller's
+                Responses `store` flag. Omitted means `"host"`:
+
+                - `"host"`: Send the prior outer Responses transcript followed by this request's input.
+                  For a storing chat client, force its per-run `store=False` and clear any restored
+                  `service_session_id` to avoid replaying that transcript twice. A load-enabled
+                  `HistoryProvider` or fixed downstream continuation default conflicts with this mode.
+                - `"service"`: Send only this request's input. On caller `store=True`, run the inner
+                  client with `store=True` and save its issued `service_session_id` in the host's
+                  private MAF session store. The next stored request resumes that provider thread;
+                  it must not branch an already-used provider conversation.
+                - `"agent"`: Send only this request's input; run a storing client with `store=False`.
+                  The agent's `HistoryProvider` loads prior messages from its MAF `AgentSession`,
+                  which the host saves for stored requests. Do not also use downstream service history.
+
+                For example, after a stored response to "My name is Ada", a stored follow-up
+                "What is my name?" sends both turns to the model in `"host"` mode, but sends
+                only the follow-up in `"service"` mode (with a private service continuation).
+                In `"agent"` mode the provider supplies the earlier messages instead.
+            history_source: Deprecated compatibility setting. `"agent_server"` selects `"host"`;
+                `"agent"` sends only current input but preserves developer-controlled downstream
+                `store=True` *or* a `HistoryProvider` on stored requests. It is not equivalent to
+                `inner_history="agent"`, which disables downstream storage.
             inner_background: `"provider"` explicitly opts a storing, resumable client into its
                 background API; `"host"` (default) leaves provider background disabled.
             prepare_options: Developer hook to remove or replace caller model options for an agent.
@@ -643,6 +661,13 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             **kwargs: Additional keyword arguments.
 
         Note:
+            The *caller* controls outer persistence with `POST /responses` `store=True/False`.
+            `store=False` writes no host-managed session or approval state and forces supported
+            inner clients not to store, regardless of `inner_history`. The constructor's
+            deprecated `store=` argument instead selects the outer response-store backend
+            (use `response_store=`). Outer `response.id` is the polling/continuation handle;
+            any inner `service_session_id` is private and never replaces it.
+
             1. With `inner_history="host"` (or the deprecated `history_source="agent_server"`),
                the agent must not have a load-enabled history provider: the host supplies the transcript.
             2. Context providers must not keep required state only on their Python instances,

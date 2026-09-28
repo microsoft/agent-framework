@@ -40,9 +40,33 @@ MAF session and approval state is saved. It does not choose the *inner* history 
 | `"service"` | New input only | Enabled. The service-issued `AgentSession.service_session_id` is saved privately under the outer response ID or conversation. |
 | `"agent"` | New input plus the agent's `HistoryProvider` | Disabled. Agent history in `AgentSession.state` is saved by the host, without duplicating service history. |
 
+For example, suppose the first stored response answers **"My name is Ada"**, then the caller sends
+**"What is my name?"** with `previous_response_id` set to that response's **outer** `response.id`:
+
+- **`"host"`:** The model receives the first user input, the first assistant output, and the new
+  question. The host reconstructs that transcript from the Responses store; the inner service
+  does not retain it.
+- **`"service"`:** The model receives only the new question as *request input*, along with the
+  private `AgentSession.service_session_id` from the first turn. The downstream service retrieves
+  its own transcript. A second branch from the first response cannot safely reuse that service
+  thread and is rejected.
+- **`"agent"`:** The model receives the new question plus earlier messages loaded by the agent's
+  `HistoryProvider` from its stored MAF session. The downstream service does not store either turn.
+
+All three still return **outer** Responses IDs for retrieval and background polling. `store=False`
+requests are one-shot: they do not write host-managed state or ask the inner client to store, so
+they cannot establish a persistent provider thread. Neither an outer `response.id` nor
+`agent_session_id` should be used as an inner `service_session_id`.
+
+Choose **one** mode when constructing each host; do not reuse the same `Agent` instance across hosts.
+For example, to use downstream service history:
+
 ```python
 server = ResponsesHostServer(agent=agent, inner_history="service")
 ```
+
+Omitting `inner_history` instead selects `"host"`. For `"agent"`, construct the agent with a
+`HistoryProvider`, as shown in [agent_history.py](../../samples/04-hosting/foundry-hosted-agents/responses/basic/agent_history.py).
 
 `"host"` and `"service"` reject a load-enabled `HistoryProvider` alongside their own history source; `"host"`
 also rejects default downstream continuation IDs. Explicit modes require a `RawAgent` with a client declaring

@@ -11,6 +11,14 @@ where the **inner** agent gets its conversation history:
 | [options.py](options.py) | `"host"` | The hook removes the caller's token limit so the agent default is used. |
 | [provider_background.py](provider_background.py) | `"service"` | Opt-in provider background with a private recovery token. |
 
+For the same two stored requests—first **"My name is Ada"**, then **"What is my name?"** with the first
+response's `previous_response_id`—the modes differ at the *model* boundary. `main.py` replays both
+the first user message and the first assistant output before the follow-up. `service_history.py`
+sends only the follow-up and privately resumes the service thread returned by the first call.
+`agent_history.py` sends the follow-up plus earlier messages loaded from `InMemoryHistoryProvider`
+inside the persisted MAF session. In none of these cases is the caller's `response.id` the
+downstream service ID.
+
 Run one entry point at a time. The deployment manifest targets `main.py`; select another script to deploy a different
 mode. Set `FOUNDRY_PROJECT_ENDPOINT` and `AZURE_AI_MODEL_DEPLOYMENT_NAME` in `.env`, then run `python main.py`.
 Follow the [parent hosting guide](../../README.md) for local and deployed setup.
@@ -18,7 +26,18 @@ Follow the [parent hosting guide](../../README.md) for local and deployed setup.
 ## Outer response storage and background
 
 `store=True` makes a response retrievable at `GET /responses/{response.id}` and available for continuation using
-`previous_response_id` or a `conversation`. It does **not** choose inner history. With `store=False`, the response
+`previous_response_id` or a `conversation`. For a local two-turn example, capture the `"id"` returned by the
+first request and use it in the second; keep the same Foundry sandbox when deployed:
+
+```bash
+curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" \
+  -d '{"input": "My name is Ada", "store": true}'
+curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" \
+  -d '{"input": "What is my name?", "store": true, "previous_response_id": "REPLACE_WITH_FIRST_RESPONSE_ID"}'
+```
+
+The *same* outer request works with any of the three host entry points above; only the source of
+inner model history changes. `store=True` does **not** choose inner history. With `store=False`, the response
 is one-shot: the host writes no MAF session, approval, or conversation state, and it does not request inner service
 storage. Application-owned tools and other external services can still have their own side effects. If a custom
 agent or external history provider cannot guarantee that boundary, the host rejects the unstored request.
