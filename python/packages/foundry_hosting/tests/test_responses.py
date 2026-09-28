@@ -15,8 +15,6 @@ import copy
 import json
 import logging
 import os
-import threading
-import time
 import uuid
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Mapping, Sequence
@@ -74,7 +72,6 @@ from azure.ai.agentserver.responses.streaming._checkpoint import ResponseCheckpo
 from mcp import McpError
 from mcp.types import ErrorData
 from openai import AsyncOpenAI, DefaultAsyncHttpxClient
-from starlette.testclient import TestClient
 from typing_extensions import Any
 
 from agent_framework_foundry_hosting import ResponsesHostServer
@@ -1082,23 +1079,63 @@ class TestResponsesHostServerInit:
 
     def test_init_rejects_steerable_conversations_for_workflow_agent(self) -> None:
         workflow_agent = _build_text_workflow_agent("hello from workflow")
-        with pytest.raises(RuntimeError, match="steerable_conversations"):
+        with pytest.raises(RuntimeError, match="steerable_conversations=True is temporarily unavailable"):
             ResponsesHostServer(
                 cast(SupportsAgentRun, workflow_agent),
                 store=InMemoryResponseProvider(),
                 options=ResponsesServerOptions(steerable_conversations=True),
             )
 
-    def test_steerable_agent_enables_multi_turn_task_manager(self) -> None:
-        with patch("azure.ai.agentserver.core.tasks.set_resilient_tasks_enabled") as enable:
-            _make_server(_make_agent(), options=ResponsesServerOptions(steerable_conversations=True))
-        enable.assert_called_once_with(True)
+    def test_steering_rejected_before_enabling_task_manager_or_starting_host(self) -> None:
+        agent_factory = MagicMock()
+
+        def construct(_turn: int) -> str:
+            with pytest.raises(RuntimeError, match="steerable_conversations=True is temporarily unavailable") as error:
+                ResponsesHostServer(
+                    agent=agent_factory,
+                    options=ResponsesServerOptions(steerable_conversations=True),
+                )
+            return str(error.value)
+
+        with (
+            patch("azure.ai.agentserver.core.tasks.set_resilient_tasks_enabled") as enable,
+            patch("agent_framework_foundry_hosting._responses.ResponsesAgentServerHost.__init__") as base_init,
+            ThreadPoolExecutor(max_workers=12) as executor,
+        ):
+            failures = list(executor.map(construct, range(24)))
+
+        assert len(failures) == 24
+        assert all("Azure/azure-sdk-for-python#49233" in failure for failure in failures)
+        enable.assert_not_called()
+        base_init.assert_not_called()
+        agent_factory.assert_not_called()
+
+    async def test_non_steerable_background_still_uses_outer_response_id(self) -> None:
+        agent = _make_agent(
+            stream_updates=[AgentResponseUpdate(contents=[Content.from_text("finished")], role="assistant")]
+        )
+        server = _make_server(agent, options=ResponsesServerOptions(steerable_conversations=False))
+
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as http:
+            pending = await http.post("/responses", json={"input": "hello", "store": True, "background": True})
+            assert pending.status_code == 200
+            response_id = pending.json()["id"]
+            for _ in range(100):
+                final = await http.get(f"/responses/{response_id}")
+                if final.json()["status"] == "completed":
+                    break
+                await asyncio.sleep(0.02)
+            else:
+                pytest.fail(f"Non-steerable background response {response_id} did not finish.")
+
+        assert final.json()["id"] == response_id
+        assert "finished" in str(final.json()["output"])
 
     def test_provider_background_rejects_steering_and_wrong_history_mode(self) -> None:
         agent = Agent(client=_ServiceStorageRecordingClient())
         with pytest.raises(ValueError, match="inner_history='service'"):
             _make_server(agent, inner_background="provider")
-        with pytest.raises(ValueError, match="cannot be combined"):
+        with pytest.raises(RuntimeError, match="temporarily unavailable"):
             _make_server(
                 agent,
                 inner_history="service",
@@ -2178,11 +2215,9 @@ class TestAgentSessionPersistence:
             return ResponseStream(updates(), finalizer=AgentResponse.from_updates)
 
         agent.run = MagicMock(side_effect=run_with_state)
-        server = _make_server(
-            agent,
-            session_store=store,
-            options=ResponsesServerOptions(steerable_conversations=True),
-        )
+        server = _make_server(agent, session_store=store)
+        # Exercise the handler's superseded-turn snapshot invariant without starting SDK steering.
+        server._host_options = ResponsesServerOptions(steerable_conversations=True)  # pyright: ignore[reportPrivateUsage]
         first = ResponseContext(
             response_id="first-response", conversation_id="conversation-head", mode_flags=MagicMock()
         )
@@ -2331,95 +2366,6 @@ class TestAgentSessionPersistence:
         assert "finished" in str(result.json()["output"])
         assert missing.status_code == 404
         assert agent.run.call_args_list[0].kwargs["options"].get("background") is None
-
-    def test_http_steering_uses_task_manager_and_keeps_latest_conversation_state(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("AGENTSERVER_STATE_ROOT", str(tmp_path / "state"))
-        first_output = threading.Event()
-        release = threading.Event()
-        turn_number = 0
-        store = SessionStore()
-        agent = _make_agent()
-
-        def run(*args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
-            nonlocal turn_number
-            del args
-            turn_number += 1
-            turn = turn_number
-            kwargs["session"].state["turn"] = turn
-
-            async def updates() -> AsyncIterator[AgentResponseUpdate]:
-                yield AgentResponseUpdate(contents=[Content.from_text(f"turn {turn}")], role="assistant")
-                if turn == 1:
-                    await asyncio.to_thread(release.wait)
-                    yield AgentResponseUpdate(contents=[Content.from_text("stale")], role="assistant")
-
-            return ResponseStream(updates(), finalizer=AgentResponse.from_updates)
-
-        agent.run = MagicMock(side_effect=run)
-        server = _make_server(
-            agent,
-            session_store=store,
-            response_store=FileResponseStore(storage_dir=tmp_path / "responses"),
-            options=ResponsesServerOptions(steerable_conversations=True),
-        )
-
-        async def observe_output(request: Any, context: Any, cancellation_signal: Any) -> AsyncIterator[Any]:
-            async for event in server._handle_response(request, context, cancellation_signal):
-                if isinstance(event, Mapping) and event.get("type") == "response.output_text.delta":
-                    first_output.set()
-                yield event
-
-        server.response_handler(observe_output)
-        with TestClient(server) as http, ThreadPoolExecutor(max_workers=1) as executor:
-            try:
-                first_future = executor.submit(
-                    http.post,
-                    "/responses",
-                    json={
-                        "input": "first",
-                        "store": True,
-                        "stream": True,
-                        "background": True,
-                        "conversation": "http-steering",
-                    },
-                )
-                assert first_output.wait(timeout=5), "The first turn did not produce streamed output."
-                second = http.post(
-                    "/responses",
-                    json={"input": "second", "store": True, "background": True, "conversation": "http-steering"},
-                )
-                assert second.status_code == 200
-                assert second.json()["status"] in ("queued", "in_progress")
-                first_stream = first_future.result(timeout=8)
-            finally:
-                release.set()
-
-            assert first_stream.status_code == 200
-            first_events = _parse_sse_events(first_stream.text)
-            first_completions = [
-                event["data"]["response"] for event in first_events if event["event"] == "response.completed"
-            ]
-            assert len(first_completions) == 1
-            first_id = first_completions[0]["id"]
-            deadline = time.monotonic() + 10
-            while time.monotonic() < deadline:
-                latest_response = http.get(f"/responses/{second.json()['id']}")
-                if latest_response.json()["status"] in ("completed", "incomplete", "failed"):
-                    break
-                time.sleep(0.05)
-            else:
-                pytest.fail(f"Steered response {second.json()['id']} did not finish.")
-            first_retrieved = http.get(f"/responses/{first_id}")
-
-        assert latest_response.json()["status"] == "completed"
-        assert first_retrieved.json()["status"] == "completed"
-        assert turn_number == 2
-        snapshot = asyncio.run(store.get(first_id))
-        latest = asyncio.run(store.get(second.json()["id"]))
-        assert snapshot is not None and snapshot.state["turn"] == 1
-        assert latest is not None and latest.state["turn"] == 2
 
     async def test_agent_history_uses_in_memory_history_from_session_store(self) -> None:
         client = _RecordingHistoryClient()

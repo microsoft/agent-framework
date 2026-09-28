@@ -656,20 +656,25 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                a saved private continuation token can be polled after a crash; a crash before the token
                is saved cannot be replayed safely. Other regular-agent runs are not crash-recoverable.
                Legacy workflow background responses retain their checkpoint-based recovery behavior.
-            5. Steering (steerable_conversations=True) is ONLY supported for non-workflow agents; constructing
-               this server with a workflow agent and `steerable_conversations=True` raises `RuntimeError`.
-               Steering a workflow is conceptually undefined -- a workflow's graph may have loops or parallel
-               branches with no single well-defined "current point" to cancel and resume from, unlike an
-               agent's strictly linear execution. It's also not currently practical to implement: a workflow
-               instance cannot start a new run until its previous (steered-past) run has been garbage
-               collected, and that isn't guaranteed to have happened in time.
+            5. Steering is temporarily unavailable for all agents. `steerable_conversations=True` fails
+               at construction, before starting a host or enabling the process-wide TaskManager. The current
+               AgentServer SDK retains futures for rejected turns after the steering queue fills.
 
         Raises:
             ValueError: If the history, background, or unsupported-options policy is invalid.
             RuntimeError: If the agent configuration conflicts with the selected history source,
                 `resilient_background=True` is requested for a regular agent without provider background, or
-                `steerable_conversations=True` is requested for a workflow agent.
+                `steerable_conversations=True` is requested while steering is unavailable.
         """
+        if options and options.steerable_conversations:
+            # TODO(foundry-hosting): Remove this guard after Azure/azure-sdk-for-python#49233 ships in an official
+            # azure-ai-agentserver-core wheel, the minimum and uv.lock are updated, and a concurrent
+            # queue-overflow regression proves rejected turns leave no pending futures.
+            raise RuntimeError(
+                "steerable_conversations=True is temporarily unavailable: the current AgentServer SDK "
+                "retains futures for rejected steering turns. Wait for the official fix in "
+                "Azure/azure-sdk-for-python#49233, then update the dependency and verify queue overflow."
+            )
         if history_source is not None and history_source not in ("agent_server", "agent"):
             raise ValueError("history_source must be either 'agent_server' or 'agent'.")
         if inner_history is not None and inner_history not in ("host", "service", "agent"):

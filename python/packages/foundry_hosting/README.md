@@ -76,11 +76,14 @@ response-ID snapshot so recovery can re-poll it if the outer response was not ye
 it from its working session. Shutdown during initial submission fails rather than replaying a job whose
 acceptance is unknown. Cancelling an in-flight submission does not prove the remote provider stopped it.
 Provider background and steering cannot be combined.
-Regular agent runs without this opt-in are not crash-replayable. `steerable_conversations=True` enables AgentServer's
-process-wide multi-turn TaskManager; a superseded turn keeps its own response snapshot but cannot replace a later
-CAS-protected conversation head. Start an in-progress background turn with `stream=True` before steering it: the
-current AgentServer release can leave a superseded **non-streamed** background response in progress on retrieval.
-Legacy `WorkflowAgent` dispatch is unchanged.
+Regular agent runs without this opt-in are not crash-replayable. **Steering is temporarily unavailable:**
+`steerable_conversations=True` fails during host construction, before enabling the process-wide TaskManager.
+The current AgentServer SDK retains unbounded futures for rejected turns when its steering queue fills. Do not
+use a queue-length precheck: another worker can append before it. The guard can be removed only after
+[Azure/azure-sdk-for-python#49233](https://github.com/Azure/azure-sdk-for-python/pull/49233) ships in an
+official `azure-ai-agentserver-core` wheel, the minimum dependency and `uv.lock` are updated, and a
+concurrent queue-overflow regression proves rejected turns leave no pending futures. No future SDK
+version is assumed. Non-steerable background polling and legacy `WorkflowAgent` dispatch are unchanged.
 
 Native CreateResponse generation fields become MAF runtime options (notably `max_output_tokens` -> `max_tokens` and
 `parallel_tool_calls` -> `allow_multiple_tool_calls`). Flattened OpenAI `extra_body` fields overlay translated keys
