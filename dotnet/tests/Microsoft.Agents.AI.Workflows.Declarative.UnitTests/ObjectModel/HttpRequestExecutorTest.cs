@@ -411,6 +411,7 @@ public sealed class HttpRequestExecutorTest(ITestOutputHelper output) : Workflow
     }
 
     [Theory]
+    [InlineData(RequestValueLocation.Method)]
     [InlineData(RequestValueLocation.Url)]
     [InlineData(RequestValueLocation.Header)]
     [InlineData(RequestValueLocation.QueryParameter)]
@@ -774,7 +775,9 @@ public sealed class HttpRequestExecutorTest(ITestOutputHelper output) : Workflow
                     ? StringExpression.Expression(EnvironmentExpression)
                     : StringExpression.Literal(TestUrl)),
             Method = new EnumExpression<HttpMethodTypeWrapper>.Builder(
-                EnumExpression<HttpMethodTypeWrapper>.Literal(HttpMethodTypeWrapper.Get(HttpMethodType.Post))),
+                location == RequestValueLocation.Method
+                    ? EnumExpression<HttpMethodTypeWrapper>.Expression(EnvironmentExpression)
+                    : EnumExpression<HttpMethodTypeWrapper>.Literal(HttpMethodTypeWrapper.Get(HttpMethodType.Post))),
         };
 
         switch (location)
@@ -811,6 +814,7 @@ public sealed class HttpRequestExecutorTest(ITestOutputHelper output) : Workflow
 
     public enum RequestValueLocation
     {
+        Method,
         Url,
         Header,
         QueryParameter,

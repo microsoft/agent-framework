@@ -196,7 +196,7 @@ internal sealed class HttpRequestExecutor(
             return "GET";
         }
 
-        HttpMethodTypeWrapper wrapper = this.Evaluator.GetValue(methodExpression).Value;
+        HttpMethodTypeWrapper wrapper = this.GetRequestValue(this.Evaluator.GetValue(methodExpression), "method");
         return !string.IsNullOrEmpty(wrapper.UnknownValue) ? wrapper.UnknownValue! : wrapper.Value.ToString().ToUpperInvariant();
     }
 
