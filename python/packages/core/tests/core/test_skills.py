@@ -4796,7 +4796,7 @@ class TestFileSkillScriptContext:
     """Optional context injection without changing the runner protocol."""
 
     @pytest.mark.parametrize(
-        "runner_kind", ["sync", "async", "object", "async_object", "method", "partial", "decorated"]
+        "runner_kind", ["sync", "async", "awaitable", "object", "async_object", "method", "partial", "decorated"]
     )
     @pytest.mark.parametrize("args", [None, {"ctx": "model", "tenant_id": "model"}, ["--tenant", "model"]])
     async def test_runner_receives_original_context_and_arguments(self, runner_kind: str, args: Any) -> None:
@@ -4821,6 +4821,11 @@ class TestFileSkillScriptContext:
             skill: FileSkill, script: FileSkillScript, args: Any = None, *, ctx: FunctionInvocationContext | None = None
         ) -> Any:
             return runner(skill, script, args, ctx=ctx)
+
+        def awaitable_runner(
+            skill: FileSkill, script: FileSkillScript, args: Any = None, *, ctx: FunctionInvocationContext | None = None
+        ) -> Any:
+            return async_runner(skill, script, args, ctx=ctx)
 
         class Runner:
             def __call__(
@@ -4851,6 +4856,7 @@ class TestFileSkillScriptContext:
         runners: dict[str, SkillScriptRunner] = {
             "sync": runner,
             "async": async_runner,
+            "awaitable": awaitable_runner,
             "object": Runner(),
             "async_object": AsyncRunner(),
             "method": Runner().__call__,
@@ -4978,8 +4984,9 @@ class TestFileSkillScriptContext:
 
     @pytest.mark.parametrize("failure_type", [TypeError, RuntimeError, asyncio.CancelledError])
     @pytest.mark.parametrize("is_async", [False, True])
+    @pytest.mark.parametrize("context_aware", [False, True])
     async def test_runner_failure_propagates_without_retry(
-        self, failure_type: type[BaseException], is_async: bool
+        self, failure_type: type[BaseException], is_async: bool, context_aware: bool
     ) -> None:
         calls: list[FunctionInvocationContext | None] = []
         failure = failure_type("Runner failed")
@@ -4999,9 +5006,12 @@ class TestFileSkillScriptContext:
         skill = FileSkill(frontmatter=SkillFrontmatter(name="s", description="d"), content="Body", path=_ABS)
         context = _script_context()
         with pytest.raises(failure_type) as caught:
-            await script.run_with_context(skill, context=context)
+            if context_aware:
+                await script.run_with_context(skill, context=context)
+            else:
+                await script.run(skill)
         assert caught.value is failure
-        assert calls == [context]
+        assert calls == [context if context_aware else None]
 
     @pytest.mark.parametrize(
         ("invalid_case", "error_type", "message"),
@@ -5011,8 +5021,9 @@ class TestFileSkillScriptContext:
             ("file", ValueError, "not found"),
         ],
     )
-    async def test_validation_precedes_context_runner(
-        self, tmp_path: Path, invalid_case: str, error_type: type[Exception], message: str
+    @pytest.mark.parametrize("context_aware", [False, True])
+    async def test_validation_precedes_runner(
+        self, tmp_path: Path, invalid_case: str, error_type: type[Exception], message: str, context_aware: bool
     ) -> None:
         def runner(
             skill: FileSkill, script: FileSkillScript, args: Any = None, *, ctx: FunctionInvocationContext | None = None
@@ -5031,7 +5042,40 @@ class TestFileSkillScriptContext:
         if invalid_case == "skill":
             skill = InlineSkill(frontmatter=SkillFrontmatter(name="s", description="d"), instructions="Body")
         with pytest.raises(error_type, match=message):
-            await script.run_with_context(skill, context=_script_context())
+            if context_aware:
+                await script.run_with_context(skill, context=_script_context())
+            else:
+                await script.run(skill)
+
+    @pytest.mark.parametrize("context_aware", [False, True])
+    async def test_file_is_revalidated_on_every_run(self, tmp_path: Path, context_aware: bool) -> None:
+        calls: list[FunctionInvocationContext | None] = []
+
+        def runner(
+            skill: FileSkill, script: FileSkillScript, args: Any = None, *, ctx: FunctionInvocationContext | None = None
+        ) -> str:
+            calls.append(ctx)
+            return "executed"
+
+        script_path = tmp_path / "run.py"
+        script_path.write_text("# Script executed by the runner\n", encoding="utf-8")
+        script = FileSkillScript(name="run.py", full_path=str(script_path), skill_dir=str(tmp_path), runner=runner)
+        skill = FileSkill(frontmatter=SkillFrontmatter(name="s", description="d"), content="Body", path=str(tmp_path))
+        context = _script_context()
+
+        if context_aware:
+            assert await script.run_with_context(skill, context=context) == "executed"
+        else:
+            assert await script.run(skill) == "executed"
+
+        script_path.unlink()
+        with pytest.raises(ValueError, match="not found"):
+            if context_aware:
+                await script.run_with_context(skill, context=context)
+            else:
+                await script.run(skill)
+
+        assert calls == [context if context_aware else None]
 
     def test_invalid_context_signatures_fail_at_registration(self) -> None:
         def required(skill: Any, script: Any, args: Any = None, *, ctx: FunctionInvocationContext) -> None: ...

@@ -774,35 +774,9 @@ class FileSkillScript(SkillScript):
 
         Raises:
             TypeError: If ``skill`` is not a :class:`FileSkill`.
-            ValueError: If no runner was provided.
+            ValueError: If no runner was provided or the discovered file is no longer valid.
         """
-        # Require a file-backed skill for runner execution.
-        if not isinstance(skill, FileSkill):
-            raise TypeError(
-                f"File-based script '{self.name}' requires a FileSkill but received '{type(skill).__name__}'."
-            )
-
-        # File scripts need a runner to execute them, e.g. a subprocess runner.
-        if self._runner is None:
-            raise ValueError(f"Script '{self.name}' requires a runner. Provide a script_runner for file-based scripts.")
-
-        # Recheck discovered paths: e.g. scripts/run.py may have been replaced by a symlink.
-        if self._scope is not None:
-            await asyncio.to_thread(
-                FileSkillsSource._validate_file_path_for_use,  # pyright: ignore[reportPrivateUsage]
-                self._scope,
-                self.full_path,
-                self.name,
-                "Script",
-            )
-
-        result = self._runner(skill, self, args)
-
-        # Support both synchronous and asynchronous runners.
-        if inspect.isawaitable(result):
-            return await result
-
-        return result
+        return await self._run_file_runner(skill, args, {})
 
     async def run_with_context(
         self,
@@ -832,6 +806,15 @@ class FileSkillScript(SkillScript):
         if self._context_parameter_name is None or type(self).run is not FileSkillScript.run:
             return await self.run(skill, args, **context.kwargs)
 
+        return await self._run_file_runner(skill, args, {self._context_parameter_name: context})
+
+    async def _run_file_runner(
+        self,
+        skill: Skill,
+        args: dict[str, Any] | list[str] | None,
+        runner_kwargs: Mapping[str, Any],
+    ) -> Any:
+        """Validate the file and invoke its runner with only explicitly supplied runner arguments."""
         # Require a file-backed skill for runner execution.
         if not isinstance(skill, FileSkill):
             raise TypeError(
@@ -856,7 +839,7 @@ class FileSkillScript(SkillScript):
         runner = cast(Callable[..., Any], self._runner)
 
         # E.g. runner(skill, self, ["input.txt"], ctx=context); host values stay in context.kwargs.
-        result = runner(skill, self, args, **{self._context_parameter_name: context})
+        result = runner(skill, self, args, **runner_kwargs)
 
         # Support both synchronous and asynchronous runners.
         if inspect.isawaitable(result):
