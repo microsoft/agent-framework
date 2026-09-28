@@ -583,64 +583,79 @@ def test_ensure_trailing_user_turn_defaults_to_false() -> None:
     assert executor._ensure_trailing_user_turn is False  # pyright: ignore[reportPrivateUsage]
 
 
-def test_ensure_cache_not_assistant_ending_noop_when_flag_disabled() -> None:
-    """When the flag is off, a cache ending on assistant must be left untouched."""
+def test_build_invocation_messages_noop_when_flag_disabled() -> None:
+    """When the flag is off, the returned messages match the cache without modification."""
     agent = _CountingAgent(id="a", name="A")
     executor = AgentExecutor(agent, ensure_trailing_user_turn=False)
-    executor._cache = [  # pyright: ignore[reportPrivateUsage]
+    executor._cache = [
         Message(role="user", contents=["go"]),
         Message(role="assistant", contents=["W-OK"]),
     ]
-
-    executor._ensure_cache_not_assistant_ending()  # pyright: ignore[reportPrivateUsage]
-
-    cache = executor._cache  # pyright: ignore[reportPrivateUsage]
-    assert len(cache) == 2
-    assert cache[-1].role == "assistant"
+    messages = executor._build_invocation_messages()
+    assert len(messages) == 2
+    assert messages[-1].role == "assistant"
+    assert len(executor._cache) == 2
 
 
-def test_ensure_cache_not_assistant_ending_noop_when_cache_not_assistant_ending() -> None:
-    """When the flag is on but the cache already ends on user/tool,  nothing is appended."""
+def test_build_invocation_messages_noop_when_cache_not_assistant_ending() -> None:
+    """When the flag is on but the cache already ends on user/tool, nothing is appended."""
     agent = _CountingAgent(id="a", name="A")
     executor = AgentExecutor(agent, ensure_trailing_user_turn=True)
-    executor._cache = [  # pyright: ignore[reportPrivateUsage]
+    executor._cache = [
         Message(role="user", contents=["go"]),
         Message(role="assistant", contents=["W-OK"]),
         Message(role="user", contents=["continue"]),
     ]
-
-    executor._ensure_cache_not_assistant_ending()  # pyright: ignore[reportPrivateUsage]
-
-    cache = executor._cache  # pyright: ignore[reportPrivateUsage]
-    assert len(cache) == 3
-    assert cache[-1].role == "user"
+    messages = executor._build_invocation_messages()
+    assert len(messages) == 3
+    assert messages[-1].role == "user"
+    assert len(executor._cache) == 3
 
 
-def test_ensure_cache_not_assistant_ending_appends_synthetic_user_turn_when_enabled() -> None:
-    """When the flag is on and cache ends on assistant, a synthetic user turn is appended."""
-
+def test_build_invocation_messages_appends_synthetic_user_turn_when_enabled() -> None:
+    """When the flag is on and cache ends on assistant, a synthetic user turn is
+    appended to the returned copy — but the original cache is not mutated."""
     agent = _CountingAgent(id="a", name="A")
     executor = AgentExecutor(agent, ensure_trailing_user_turn=True)
-    executor._cache = [  # pyright: ignore[reportPrivateUsage]
+    executor._cache = [
         Message(role="user", contents=["go"]),
         Message(role="assistant", contents=["W-OK"]),
     ]
+    messages = executor._build_invocation_messages()
+    assert len(messages) == 3
+    assert messages[-1].role == "user"
+    assert "please continue" in (messages[-1].text or "")
+    assert len(executor._cache) == 2
+    assert executor._cache[-1].role == "assistant"
 
-    executor._ensure_cache_not_assistant_ending()  # pyright: ignore[reportPrivateUsage]
-    cache = executor._cache  # pyright: ignore[reportPrivateUsage]
-    assert len(cache) == 3
-    assert cache[-1].role == "user"
 
-
-def test_ensure_cache_not_assistant_ending_noop_when_cache_empty() -> None:
+def test_build_invocation_messages_noop_when_cache_empty() -> None:
     """An empty cache must not raise or append anything, even with the flag enabled."""
     agent = _CountingAgent(id="a", name="A")
     executor = AgentExecutor(agent, ensure_trailing_user_turn=True)
-    assert executor._cache == []  # pyright: ignore[reportPrivateUsage]
+    assert executor._cache == []
+    messages = executor._build_invocation_messages()
+    assert messages == []
+    assert executor._cache == []
 
-    executor._ensure_cache_not_assistant_ending()  # pyright: ignore[reportPrivateUsage]
 
-    assert executor._cache == []  # pyright: ignore[reportPrivateUsage]
+async def test_synthetic_turn_does_not_leak_to_third_agent() -> None:
+    """The synthetic 'please continue.' must not appear in the third agent's
+    context — it is invocation-only and must not persist in full_conversation."""
+    a1 = _MessageCapturingAgent(id="first", name="First", reply_text="first reply")
+    a2 = _MessageCapturingAgent(id="second", name="Second", reply_text="second reply")
+    a3 = _MessageCapturingAgent(id="third", name="Third", reply_text="third reply")
+    exec_a = AgentExecutor(a1, id="exec_a")
+    exec_b = AgentExecutor(a2, id="exec_b", context_mode="full", ensure_trailing_user_turn=True)
+    exec_c = AgentExecutor(a3, id="exec_c", context_mode="full")
+    wf = WorkflowBuilder(start_executor=exec_a).add_edge(exec_a, exec_b).add_edge(exec_b, exec_c).build()
+    async for ev in wf.run("hello", stream=True):
+        if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
+            break
+    seen = a3.last_messages
+    assert len(seen) == 3
+    for msg in seen:
+        assert "please continue" not in (msg.text or "")
 
 
 async def test_from_response_ensure_trailing_user_turn_end_to_end_full_mode() -> None:
