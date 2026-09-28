@@ -655,7 +655,7 @@ public sealed class BackgroundAgentsProvider : AIContextProvider
                 }),
 
             AIFunctionFactory.Create(
-                async (List<int> taskIds) =>
+                async (List<int> taskIds, CancellationToken cancellationToken) =>
                 {
                     if (taskIds.Count == 0)
                     {
@@ -694,10 +694,11 @@ public sealed class BackgroundAgentsProvider : AIContextProvider
 
                     // Wait for the first task to complete, but return control without stopping the tasks if the timeout elapses.
                     Task<Task<AgentResponse>> firstCompletionTask = Task.WhenAny(waitableTasks.Select(t => t.Task));
-                    using var timeoutCts = new CancellationTokenSource();
+                    using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                     Task timeoutTask = Task.Delay(this._waitTimeout, timeoutCts.Token);
                     Task winner = await Task.WhenAny(firstCompletionTask, timeoutTask).ConfigureAwait(false);
                     timeoutCts.Cancel();
+                    cancellationToken.ThrowIfCancellationRequested();
 
                     if (winner == timeoutTask && !firstCompletionTask.IsCompleted)
                     {

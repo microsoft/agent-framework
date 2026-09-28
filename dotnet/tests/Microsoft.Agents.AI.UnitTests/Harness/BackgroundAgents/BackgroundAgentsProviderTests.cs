@@ -425,6 +425,56 @@ public class BackgroundAgentsProviderTests
     }
 
     /// <summary>
+    /// Verify that cancelling a wait stops the invocation without cancelling the background task.
+    /// </summary>
+    [Fact]
+    public async Task WaitForFirstCompletion_CancellationLeavesTaskRunningAsync()
+    {
+        // Arrange
+        var tcs = new TaskCompletionSource<AgentResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var agent = CreateMockAgentWithRunResult("Research", tcs.Task);
+        var provider = new BackgroundAgentsProvider(new[] { agent });
+        var (tools, session) = await CreateToolsForSessionAsync(provider);
+        AIFunction startBackgroundTask = GetTool(tools, "background_agents_start_task");
+        AIFunction waitForFirst = GetTool(tools, "background_agents_wait_for_first_completion");
+
+        await startBackgroundTask.InvokeAsync(new AIFunctionArguments
+        {
+            ["agentName"] = "Research",
+            ["input"] = "Task 1",
+            ["description"] = "First task",
+        });
+
+        using var cancellation = new CancellationTokenSource();
+        Task<object?> wait = waitForFirst.InvokeAsync(new AIFunctionArguments
+        {
+            ["taskIds"] = new List<int> { 1 },
+        }, cancellation.Token).AsTask();
+
+        // Act & Assert
+        try
+        {
+            Assert.False(wait.IsCompleted);
+            cancellation.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => wait.WaitAsync(TimeSpan.FromSeconds(5)));
+
+            BackgroundAgentRuntimeState runtimeState = GetRuntimeState(provider, session);
+            Assert.False(runtimeState.InFlightTasks[1].IsCompleted);
+            Assert.Equal(BackgroundTaskStatus.Running, Assert.Single(provider.GetIncompleteTasks(session)).Status);
+        }
+        finally
+        {
+            tcs.TrySetResult(new AgentResponse(new ChatMessage(ChatRole.Assistant, "done")));
+        }
+
+        object? completed = await waitForFirst.InvokeAsync(new AIFunctionArguments
+        {
+            ["taskIds"] = new List<int> { 1 },
+        });
+        Assert.Contains("finished with status: Completed", GetStringResult(completed));
+    }
+
+    /// <summary>
     /// Verify that the wait timeout is controlled by the provider rather than exposed to the model.
     /// </summary>
     [Fact]
