@@ -5,6 +5,9 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.Declarative.Events;
+using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
+using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.ObjectModel;
@@ -73,6 +76,43 @@ public sealed class InvokeAzureAgentExecutorTest(ITestOutputHelper output) : Wor
     }
 
     [Fact]
+    public async Task DeclaredAgentVersionIsForwardedAsync()
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        CapturingAgentProvider provider = new("acknowledged");
+        InvokeAzureAgent model =
+            this.CreateModel(
+                displayName: nameof(DeclaredAgentVersionIsForwardedAsync),
+                agentName: "BrainVersioned",
+                agentVersion: 7);
+
+        // Act
+        await this.ExecuteAsync(new InvokeAzureAgentExecutor(model, provider, this.State), isDiscrete: false);
+
+        // Assert
+        Assert.Equal("7", provider.CapturedAgentVersion);
+    }
+
+    [Fact]
+    public async Task OmittedAgentVersionUsesProviderDefaultAsync()
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        CapturingAgentProvider provider = new("acknowledged");
+        InvokeAzureAgent model =
+            this.CreateModel(
+                displayName: nameof(OmittedAgentVersionUsesProviderDefaultAsync),
+                agentName: "BrainLatest");
+
+        // Act
+        await this.ExecuteAsync(new InvokeAzureAgentExecutor(model, provider, this.State), isDiscrete: false);
+
+        // Assert
+        Assert.Null(provider.CapturedAgentVersion);
+    }
+
+    [Fact]
     public async Task RecordValuedArgumentIsBoundAsRecordAsync()
     {
         // Arrange
@@ -100,6 +140,32 @@ public sealed class InvokeAzureAgentExecutorTest(ITestOutputHelper output) : Wor
         IDictionary<string, object?> record = Assert.IsAssignableFrom<IDictionary<string, object?>>(provider.CapturedArguments!["input"]);
         Assert.Equal("alpha", record["a"]);
         Assert.Equal("beta", record["b"]);
+    }
+
+    [Fact]
+    public async Task SensitiveInputMessagesThrowAsync()
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        List<ChatMessage> testMessages =
+        [
+            new ChatMessage(ChatRole.User, "Message from variable")
+        ];
+        this.State.Set("SourceMessages", testMessages.ToTable(), sensitivity: SensitivityLevel.Sensitive);
+        CapturingAgentProvider provider = new("acknowledged");
+        InvokeAzureAgent model =
+            this.CreateModel(
+                displayName: nameof(SensitiveInputMessagesThrowAsync),
+                agentName: "BrainMessages",
+                messages: ValueExpression.Variable(PropertyPath.TopicVariable("SourceMessages")));
+
+        InvokeAzureAgentExecutor action = new(model, provider, this.State);
+        Task ExecuteAsync() => this.ExecuteAsync(action, isDiscrete: false);
+
+        // Act & Assert
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(ExecuteAsync);
+        Assert.Contains("Cannot send sensitive agent input messages", exception.Message);
+        Assert.Null(provider.CapturedMessages);
     }
 
     [Fact]
@@ -211,6 +277,151 @@ public sealed class InvokeAzureAgentExecutorTest(ITestOutputHelper output) : Wor
         Assert.Equal(42d, number.Value);
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("hello world")]
+    [InlineData("""["alpha",1]""")]
+    [InlineData("[[1,2],[3,4]]")]
+    public async Task InvalidResponseObjectOutputClearsPreviousValueAsync(string responseText)
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        this.State.Set(
+            "Result",
+            FormulaValue.NewRecordFromFields(new NamedValue("allow", FormulaValue.New(true))));
+        CapturingAgentProvider provider = new(responseText);
+        InvokeAzureAgent model =
+            this.CreateModel(
+                displayName: nameof(InvalidResponseObjectOutputClearsPreviousValueAsync),
+                agentName: "BrainInvalidResponse",
+                responseObjectVariable: "Result");
+
+        // Act
+        await this.ExecuteAsync(new InvokeAzureAgentExecutor(model, provider, this.State), isDiscrete: false);
+
+        // Assert
+        this.VerifyUndefined("Result");
+    }
+
+    [Theory]
+    [InlineData("not json", "IsBlank(Local.Result)", true)]
+    [InlineData("null", "IsBlank(Local.Result)", true)]
+    [InlineData("not json", "IsBlank(Local.Result.IsResolved)", false)]
+    [InlineData("not json", "Local.Result.IsResolved", false)]
+    [InlineData("not json", "Local.ResultBackup", true)]
+    public async Task BlankResponseObjectOutputEvaluatesExternalLoopWhenPossibleAsync(
+        string responseText,
+        string externalLoopWhen,
+        bool expectRequest)
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        this.State.Set(
+            "Result",
+            FormulaValue.NewRecordFromFields(new NamedValue("IsResolved", FormulaValue.New(false))));
+        this.State.Set("ResultBackup", FormulaValue.New(true));
+        CapturingAgentProvider provider = new(responseText);
+        InvokeAzureAgent model =
+            this.CreateModel(
+                displayName: nameof(BlankResponseObjectOutputEvaluatesExternalLoopWhenPossibleAsync),
+                agentName: "BrainInvalidResponseWithLoop",
+                responseObjectVariable: "Result",
+                externalLoopWhen: externalLoopWhen);
+        InvokeAzureAgentExecutor action = new(model, provider, this.State);
+        ExternalInputRequest? capturedRequest = null;
+
+        // Act
+        await this.ExecuteAsync(
+            [
+                action,
+                new DelegateActionExecutor<ExternalInputRequest>(
+                    InvokeAzureAgentExecutor.Steps.ExternalInput(action.Id),
+                    this.State,
+                    CaptureExternalInputRequestAsync)
+            ],
+            isDiscrete: false);
+
+        // Assert
+        this.VerifyUndefined("Result");
+        if (expectRequest)
+        {
+            ExternalInputRequest request = Assert.IsType<ExternalInputRequest>(capturedRequest);
+            Assert.Equal(responseText, Assert.Single(request.AgentResponse.Messages).Text);
+        }
+        else
+        {
+            Assert.Null(capturedRequest);
+        }
+
+        ValueTask CaptureExternalInputRequestAsync(IWorkflowContext context, ExternalInputRequest request, CancellationToken cancellationToken)
+        {
+            capturedRequest = request;
+            return default;
+        }
+    }
+
+    [Fact]
+    public async Task InvalidResponseObjectOutputDoesNotSuppressIndependentExternalLoopFailureAsync()
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        this.State.Set(
+            "Result",
+            FormulaValue.NewRecordFromFields(new NamedValue("IsResolved", FormulaValue.New(false))));
+        CapturingAgentProvider provider = new("not json");
+        InvokeAzureAgent model =
+            this.CreateModel(
+                displayName: nameof(InvalidResponseObjectOutputDoesNotSuppressIndependentExternalLoopFailureAsync),
+                agentName: "BrainInvalidResponseWithInvalidLoop",
+                responseObjectVariable: "Result",
+                externalLoopWhen: "UnknownFunction()");
+
+        // Act & Assert
+        await Assert.ThrowsAsync<DeclarativeActionException>(
+            () => this.ExecuteAsync(new InvokeAzureAgentExecutor(model, provider, this.State), isDiscrete: false));
+    }
+
+    [Fact]
+    public async Task InvalidResponseObjectOutputStillEvaluatesIndependentExternalLoopAsync()
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        this.State.Set(
+            "Result",
+            FormulaValue.NewRecordFromFields(new NamedValue("IsResolved", FormulaValue.New(false))));
+        CapturingAgentProvider provider = new("not json");
+        InvokeAzureAgent model =
+            this.CreateModel(
+                displayName: nameof(InvalidResponseObjectOutputStillEvaluatesIndependentExternalLoopAsync),
+                agentName: "BrainInvalidResponseWithIndependentLoop",
+                responseObjectVariable: "Result",
+                externalLoopWhen: "Upper(\"continue\") <> \"EXIT\"");
+        InvokeAzureAgentExecutor action = new(model, provider, this.State);
+        ExternalInputRequest? capturedRequest = null;
+
+        // Act
+        await this.ExecuteAsync(
+            [
+                action,
+                new DelegateActionExecutor<ExternalInputRequest>(
+                    InvokeAzureAgentExecutor.Steps.ExternalInput(action.Id),
+                    this.State,
+                    CaptureExternalInputRequestAsync)
+            ],
+            isDiscrete: false);
+
+        // Assert
+        this.VerifyUndefined("Result");
+        ExternalInputRequest request = Assert.IsType<ExternalInputRequest>(capturedRequest);
+        Assert.Equal("not json", Assert.Single(request.AgentResponse.Messages).Text);
+
+        ValueTask CaptureExternalInputRequestAsync(IWorkflowContext context, ExternalInputRequest request, CancellationToken cancellationToken)
+        {
+            capturedRequest = request;
+            return default;
+        }
+    }
+
     [Fact]
     public async Task MixedJsonArrayOutputSkipsAssignmentAsync()
     {
@@ -290,8 +501,11 @@ public sealed class InvokeAzureAgentExecutorTest(ITestOutputHelper output) : Wor
     private InvokeAzureAgent CreateModel(
         string displayName,
         string agentName,
+        long? agentVersion = null,
         IReadOnlyList<(string Key, ValueExpression Value)>? arguments = null,
-        string? responseObjectVariable = null)
+        ValueExpression? messages = null,
+        string? responseObjectVariable = null,
+        string? externalLoopWhen = null)
     {
         InvokeAzureAgent.Builder builder =
             new()
@@ -305,14 +519,39 @@ public sealed class InvokeAzureAgentExecutorTest(ITestOutputHelper output) : Wor
                     },
             };
 
+        if (agentVersion is not null)
+        {
+            builder.Agent.Version = new IntExpression.Builder(IntExpression.Literal(agentVersion.Value));
+        }
+
+        AzureAgentInput.Builder? inputBuilder = null;
         if (arguments is not null)
         {
-            AzureAgentInput.Builder inputBuilder = new();
+            inputBuilder = new();
             foreach ((string key, ValueExpression value) in arguments)
             {
                 inputBuilder.Arguments.Add(key, value);
             }
+        }
+
+        if (externalLoopWhen is not null)
+        {
+            inputBuilder ??= new();
+            inputBuilder.ExternalLoop =
+                new AzureAgentExternal.Builder
+                {
+                    When = new BoolExpression.Builder(BoolExpression.Expression(externalLoopWhen)),
+                };
+        }
+
+        if (inputBuilder is not null)
+        {
             builder.Input = inputBuilder;
+        }
+
+        if (messages is not null)
+        {
+            (builder.Input ??= new AzureAgentInput.Builder()).Messages = messages;
         }
 
         if (responseObjectVariable is not null)
@@ -358,7 +597,11 @@ public sealed class InvokeAzureAgentExecutorTest(ITestOutputHelper output) : Wor
     /// </summary>
     private sealed class CapturingAgentProvider(string responseText) : ResponseAgentProvider
     {
+        public string? CapturedAgentVersion { get; private set; }
+
         public IDictionary<string, object?>? CapturedArguments { get; private set; }
+
+        public IEnumerable<ChatMessage>? CapturedMessages { get; private set; }
 
         public override IAsyncEnumerable<AgentResponseUpdate> InvokeAgentAsync(
             string agentId,
@@ -368,7 +611,9 @@ public sealed class InvokeAzureAgentExecutorTest(ITestOutputHelper output) : Wor
             IDictionary<string, object?>? inputArguments,
             CancellationToken cancellationToken = default)
         {
+            this.CapturedAgentVersion = agentVersion;
             this.CapturedArguments = inputArguments;
+            this.CapturedMessages = messages;
             return YieldAsync(responseText);
         }
 

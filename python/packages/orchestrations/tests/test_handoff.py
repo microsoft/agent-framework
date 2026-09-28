@@ -84,6 +84,7 @@ class MockChatClient(FunctionInvocationLayer[Any], ChatMiddlewareLayer[Any], Bas
         self._name = name
         self._handoff_to = handoff_to
         self._call_index = 0
+        self.received_messages: list[list[Message]] = []
 
     def _inner_get_response(
         self,
@@ -93,6 +94,7 @@ class MockChatClient(FunctionInvocationLayer[Any], ChatMiddlewareLayer[Any], Bas
         options: Mapping[str, Any],
         **kwargs: Any,
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        self.received_messages.append(list(messages))
         if stream:
             return self._build_streaming_response(options=dict(options))
 
@@ -301,6 +303,71 @@ def _request_text(event: WorkflowEvent[Any]) -> str:
     messages = request_payload.agent_response.messages
     assert messages
     return messages[-1].text or ""
+
+
+@pytest.mark.parametrize(
+    ("return_to_previous", "expected_start_agent_calls"),
+    [
+        param(None, 1, id="default"),
+        param(True, 1, id="enabled"),
+        param(False, 2, id="disabled"),
+    ],
+)
+async def test_handoff_user_response_routing(
+    return_to_previous: bool | None,
+    expected_start_agent_calls: int,
+) -> None:
+    """User responses return to the prior agent unless configured to revisit the start agent."""
+    triage_client = MockChatClient(name="triage", handoff_to="specialist")
+    specialist_client = MockChatClient(name="specialist")
+    triage = Agent(
+        id="triage",
+        name="triage",
+        client=triage_client,
+        require_per_service_call_history_persistence=True,
+    )
+    specialist = Agent(
+        id="specialist",
+        name="specialist",
+        client=specialist_client,
+        require_per_service_call_history_persistence=True,
+    )
+    builder = HandoffBuilder(
+        participants=_as_handoff_agents(triage, specialist),
+        termination_condition=lambda _: False,
+    ).with_start_agent(_as_handoff_agent(triage))
+    if return_to_previous is True:
+        builder.enable_return_to_previous()
+    elif return_to_previous is False:
+        builder.enable_return_to_previous(False)
+    workflow = builder.build()
+
+    first_events = await _drain(workflow.run("Need specialist help", stream=True))
+    first_request = _latest_request_info_event(first_events)
+    assert first_request.source_executor_id == specialist.name
+    assert len(triage_client.received_messages) == 1
+    assert len(specialist_client.received_messages) == 1
+
+    second_events = await _drain(
+        workflow.run(
+            stream=True,
+            responses={first_request.request_id: [Message(role="user", contents=["Additional details"])]},
+        )
+    )
+    second_request = _latest_request_info_event(second_events)
+
+    assert second_request.source_executor_id == specialist.name
+    assert len(triage_client.received_messages) == expected_start_agent_calls
+    assert len(specialist_client.received_messages) == 2
+    if return_to_previous is False:
+        assert any(
+            message.role == "user" and message.text == "Additional details"
+            for message in triage_client.received_messages[-1]
+        )
+    assert any(
+        message.role == "user" and message.text == "Additional details"
+        for message in specialist_client.received_messages[-1]
+    )
 
 
 async def test_resume_keeps_prior_user_context_for_same_agent() -> None:

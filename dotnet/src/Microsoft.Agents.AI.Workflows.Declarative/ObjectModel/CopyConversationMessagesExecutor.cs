@@ -45,6 +45,11 @@ internal sealed class CopyConversationMessagesExecutor(CopyConversationMessages 
         Throw.IfNull(this.Model.Messages, $"{nameof(this.Model)}.{nameof(this.Model.Messages)}");
 
         EvaluationResult<DataValue> expressionResult = this.Evaluator.GetValue(this.Model.Messages);
+        if (expressionResult.Sensitivity == SensitivityLevel.Sensitive)
+        {
+            throw new DeclarativeActionException($"Cannot send sensitive conversation messages: {this.Id}.");
+        }
+
         DataValue messages = expressionResult.Value;
 
         return messages.ToChatMessages();

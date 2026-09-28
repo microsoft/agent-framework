@@ -198,6 +198,20 @@ Available primitives:
 | `asyncio.gather(...)` | Fans out concurrent tool calls. |
 | `print(...)` | Captured and surfaced as text in the tool result. |
 
+## Network access and Python packages
+
+Monty runs its own Python interpreter, not the host's Python environment. This
+integration exposes no `pip` or package-installation option; installing a
+dependency on the host does not make it importable in Monty code. Use the
+interpreter's supported modules for code that runs inside Monty.
+
+Unlike Hyperlight, `MontyCodeActProvider` and `MontyExecuteCodeTool` do not expose
+an `allowed_domains` option. For external API calls or operations requiring
+host-installed packages, register a host function in `tools` and invoke it with
+`await tool_name(...)` or `await call_tool("name", ...)`. Keep credentials,
+authorization, and any destination allow-list checks inside that function.
+These functions execute on the host rather than inside the Monty interpreter.
+
 ## Notes
 
 - `MontyCodeActProvider` and `MontyExecuteCodeTool` mirror the API surface of

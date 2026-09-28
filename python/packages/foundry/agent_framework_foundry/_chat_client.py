@@ -5,10 +5,11 @@ from __future__ import annotations
 import logging
 import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, cast
 
 from agent_framework import (
     ChatMiddlewareLayer,
+    ChatResponse,
     ChatResponseUpdate,
     Content,
     FunctionInvocationConfiguration,
@@ -84,6 +85,16 @@ logger: logging.Logger = logging.getLogger("agent_framework.foundry")
 
 AzureTokenProvider = Callable[[], str | Awaitable[str]]
 AzureCredentialTypes = TokenCredential | AsyncTokenCredential
+_FOUNDRY_REASONING_REPLAY_ITEM_KEY = "__foundry_reasoning_replay_item__"
+_FOUNDRY_REASONING_REPLAY_FIELDS = frozenset({
+    "type",
+    "id",
+    "response_id",
+    "status",
+    "summary",
+    "content",
+    "encrypted_content",
+})
 
 
 class FoundrySettings(TypedDict, total=False):
@@ -271,6 +282,73 @@ class RawFoundryChatClient(
         return run_options
 
     @override
+    def _prepare_provider_reasoning_item_for_openai(
+        self,
+        reasoning_id: str,
+        contents: Sequence[Content],
+    ) -> dict[str, Any] | None:
+        for content in reversed(contents):
+            raw_item = content.additional_properties.get(_FOUNDRY_REASONING_REPLAY_ITEM_KEY)
+            if isinstance(raw_item, Mapping):
+                payload = self._prepare_foundry_reasoning_replay_item(raw_item)
+                if payload is not None and payload["id"] == reasoning_id:
+                    return payload
+        return None
+
+    @classmethod
+    def _prepare_foundry_reasoning_replay_item(cls, item: Any) -> dict[str, Any] | None:
+        payload = cls._serialize_provider_payload(item)
+        if not isinstance(payload, Mapping):
+            return None
+        typed_payload = cast("Mapping[str, Any]", payload)
+        if typed_payload.get("type") != "reasoning":
+            return None
+        reasoning_id = typed_payload.get("id")
+        if not isinstance(reasoning_id, str) or not reasoning_id:
+            return None
+        response_id = typed_payload.get("response_id")
+        if not isinstance(response_id, str) or not response_id:
+            return None
+        if not isinstance(typed_payload.get("summary"), list) or not isinstance(typed_payload.get("content"), list):
+            return None
+        return {key: typed_payload[key] for key in _FOUNDRY_REASONING_REPLAY_FIELDS if key in typed_payload}
+
+    @classmethod
+    def _attach_foundry_reasoning_replay_item(cls, contents: list[Content], item: Any) -> None:
+        payload = cls._prepare_foundry_reasoning_replay_item(item)
+        if payload is None:
+            return
+
+        reasoning_id = cast(str, payload["id"])
+        for content in reversed(contents):
+            if content.type == "text_reasoning" and content.id == reasoning_id:
+                content.additional_properties[_FOUNDRY_REASONING_REPLAY_ITEM_KEY] = payload
+                return
+
+        contents.append(
+            Content.from_text_reasoning(
+                id=reasoning_id,
+                text="",
+                raw_representation=item,
+                additional_properties={_FOUNDRY_REASONING_REPLAY_ITEM_KEY: payload},
+            )
+        )
+
+    @override
+    def _parse_response_from_openai(
+        self,
+        response: Any,
+        options: dict[str, Any],
+    ) -> ChatResponse:
+        chat_response = super()._parse_response_from_openai(response, options)
+        if chat_response.messages:
+            for item in getattr(response, "output", ()):
+                if getattr(item, "type", None) != "reasoning":
+                    continue
+                self._attach_foundry_reasoning_replay_item(chat_response.messages[0].contents, item)
+        return chat_response
+
+    @override
     def _check_model_presence(self, options: dict[str, Any]) -> None:
         if not options.get("model"):
             if not self.model:
@@ -297,7 +375,10 @@ class RawFoundryChatClient(
         update = try_parse_oauth_consent_event(event, self.model)
         if update is not None:
             return update
-        return super()._parse_chunk_from_openai(event, options, function_call_ids, seen_reasoning_delta_item_ids)
+        update = super()._parse_chunk_from_openai(event, options, function_call_ids, seen_reasoning_delta_item_ids)
+        if event.type == "response.output_item.done" and getattr(event.item, "type", None) == "reasoning":
+            self._attach_foundry_reasoning_replay_item(update.contents, event.item)
+        return update
 
     async def configure_azure_monitor(
         self,

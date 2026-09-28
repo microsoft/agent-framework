@@ -1535,8 +1535,17 @@ class Content:
 
         # Special handling for DataContent with data and media_type
         if content_type == "data" and "data" in remaining and "media_type" in remaining:
-            # Use from_data() to properly create the DataContent with URI
-            return cls.from_data(remaining["data"], remaining["media_type"])
+            # Use from_data() to properly create the DataContent with URI. The three
+            # fields popped above are passed on explicitly: this branch returns before
+            # the constructor below, so leaving them out dropped on a data content what
+            # every other content type keeps.
+            return cls.from_data(
+                remaining["data"],
+                remaining["media_type"],
+                annotations=annotations,
+                additional_properties=additional_properties,
+                raw_representation=raw_representation,
+            )
 
         # Handle nested Content objects (e.g., function_call in function_approval_request)
         if (function_call := remaining.get("function_call")) and isinstance(function_call, dict):
@@ -3495,10 +3504,10 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
 
     async def __anext__(self) -> UpdateT:
         while True:
-            if self._pending_mapped_updates:
-                return await self._record_update(self._pending_mapped_updates.pop(0))
-
             try:
+                if self._pending_mapped_updates:
+                    return await self._record_update(self._pending_mapped_updates.pop(0))
+
                 with contextlib.ExitStack() as stack:
                     for factory in self._pull_context_manager_factories:
                         stack.enter_context(factory())
@@ -3510,6 +3519,18 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
                         stream = await self._get_stream()
                         self._iterator = stream.__aiter__()
                     update: UpdateT = await self._iterator.__anext__()
+
+                if self._flat_map_update is not None:
+                    mapped_updates = self._flat_map_update(update)
+                    if isawaitable(mapped_updates):
+                        mapped_updates = await mapped_updates
+                    self._pending_mapped_updates.extend(mapped_updates)
+                    continue
+                if self._map_update is not None:
+                    update = self._map_update(update)  # type: ignore[assignment]
+                    if isawaitable(update):
+                        update = await update
+                return await self._record_update(update)
             except StopAsyncIteration:
                 self._consumed = True
                 await self._run_cleanup_hooks()
@@ -3522,17 +3543,6 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
                 finally:
                     self._stream_error = None
                 raise
-            if self._flat_map_update is not None:
-                mapped_updates = self._flat_map_update(update)
-                if isawaitable(mapped_updates):
-                    mapped_updates = await mapped_updates
-                self._pending_mapped_updates.extend(mapped_updates)
-                continue
-            if self._map_update is not None:
-                update = self._map_update(update)  # type: ignore[assignment]
-                if isawaitable(update):
-                    update = await update
-            return await self._record_update(update)
 
     async def close(self) -> None:
         """Close the active iterator and run cleanup hooks.

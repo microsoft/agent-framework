@@ -1,6 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Globalization;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.PowerFx;
 using Microsoft.PowerFx.Types;
 
@@ -16,8 +18,9 @@ internal static class NumberExpressionExtensions
     /// </summary>
     /// <param name="expression">Expression to evaluate.</param>
     /// <param name="engine">Recalc engine to use for evaluation.</param>
+    /// <param name="cancellationToken">Cancellation token to observe while evaluating the expression.</param>
     /// <returns>The evaluated number value, or null if the expression is null or cannot be evaluated.</returns>
-    internal static double? Eval(this NumberExpression? expression, RecalcEngine? engine)
+    internal static async Task<double?> EvalAsync(this NumberExpression? expression, RecalcEngine? engine, CancellationToken cancellationToken = default)
     {
         if (expression is null)
         {
@@ -36,11 +39,11 @@ internal static class NumberExpressionExtensions
 
         if (expression.IsExpression)
         {
-            return engine.Eval(expression.ExpressionText!).AsDouble();
+            return (await engine.EvalAsync(expression.ExpressionText!, cancellationToken).ConfigureAwait(false)).AsDouble();
         }
         else if (expression.IsVariableReference)
         {
-            var formulaValue = engine.Eval(expression.VariableReference!.VariableName);
+            var formulaValue = await engine.EvalAsync(expression.VariableReference!.VariableName, cancellationToken).ConfigureAwait(false);
             if (formulaValue is NumberValue numberValue)
             {
                 return numberValue.Value;

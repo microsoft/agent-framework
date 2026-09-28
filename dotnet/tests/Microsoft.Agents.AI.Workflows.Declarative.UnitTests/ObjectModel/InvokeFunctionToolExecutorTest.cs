@@ -199,27 +199,48 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
     }
 
     [Fact]
-    public async Task InvokeFunctionToolCaptureResponseWithConversationIdAsync()
+    public async Task InvokeFunctionToolCaptureResponsePersistsResultAsUserTextAsync()
     {
         // Arrange
         this.State.InitializeSystem();
+        this.State.Bind();
         const string ConversationId = "TestConversationId";
+        const string ResultVariable = "Result";
+        const string FunctionResult = "Result for conversation";
         InvokeFunctionTool model = this.CreateModel(
-            displayName: nameof(InvokeFunctionToolCaptureResponseWithConversationIdAsync),
+            displayName: nameof(InvokeFunctionToolCaptureResponsePersistsResultAsUserTextAsync),
             functionName: "test_function",
-            conversationId: ConversationId);
+            conversationId: ConversationId,
+            outputResultVariable: ResultVariable);
         MockAgentProvider mockAgentProvider = new();
+        mockAgentProvider.TestMessages.Clear();
         InvokeFunctionToolExecutor action = new(model, mockAgentProvider.Object, this.State);
 
-        FunctionResultContent functionResult = new(action.Id, "Result for conversation");
-        ExternalInputResponse response = new(new ChatMessage(ChatRole.Tool, [functionResult]));
+        List<ExternalInputRequest> emittedRequests = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext(emittedRequests);
+        await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
 
         // Act
-        WorkflowEvent[] events = await this.ExecuteCaptureResponseTestAsync(action, response);
+        ExternalInputRequest request = Assert.Single(emittedRequests);
+        FunctionCallContent functionCall = GetFunctionCall(request);
+        ExternalInputResponse response = CreateFunctionResultResponse(
+            request,
+            expectedRequestId: functionCall.CallId,
+            callId: functionCall.CallId,
+            result: FunctionResult);
+        await action.CaptureResponseAsync(mockContext.Object, response, CancellationToken.None);
 
         // Assert
-        VerifyModel(model, action);
-        Assert.NotEmpty(events);
+        Assert.Contains(mockContext.Invocations, i =>
+            i.Method.Name == nameof(IWorkflowContext.QueueStateUpdateAsync)
+            && i.Arguments.Count >= 2
+            && i.Arguments[1] is StringValue sv
+            && sv.Value == FunctionResult);
+        ChatMessage persistedMessage = Assert.Single(mockAgentProvider.TestMessages);
+        Assert.Equal(ChatRole.User, persistedMessage.Role);
+        Assert.DoesNotContain(persistedMessage.Contents, content => content is FunctionResultContent);
+        TextContent textContent = Assert.Single(persistedMessage.Contents.OfType<TextContent>());
+        Assert.Contains(FunctionResult, textContent.Text, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1368,6 +1389,7 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
 
         // Assert
         ChatMessage persistedMessage = Assert.Single(testAgentProvider.TestMessages);
+        Assert.Equal(ChatRole.User, persistedMessage.Role);
         Assert.DoesNotContain(persistedMessage.Contents, content => content is ToolApprovalResponseContent);
         Assert.DoesNotContain(persistedMessage.Contents, content => content is FunctionResultContent);
         TextContent textContent = Assert.Single(persistedMessage.Contents.OfType<TextContent>());
