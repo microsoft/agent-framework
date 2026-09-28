@@ -617,8 +617,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             **kwargs: Additional keyword arguments.
 
         Note:
-            1. When `history_source="agent_server"`, the agent must not have a history provider
-               with `load_messages=True`, because history is managed by the hosting infrastructure.
+            1. With `inner_history="host"` (or the deprecated `history_source="agent_server"`),
+               the agent must not have a load-enabled history provider: the host supplies the transcript.
             2. Context providers must not keep required state only on their Python instances,
                because the hosting environment may get deactivated between requests. Provider
                state carried by `AgentSession`, including `InMemoryHistoryProvider` messages in
@@ -626,12 +626,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             3. The server owns the supplied agent instance and may add hosting-specific providers.
                Do not reuse the same agent with another host or invoke it directly after construction.
                An agent returned by a callable belongs to that request.
-            4. Resiliency (resilient_background=True) is ONLY supported for workflows; constructing this
-               server with a non-workflow agent and `resilient_background=True` raises `RuntimeError`.
-               When resiliency is enabled, and the server crashes mid-response:
-               - Background responses are automatically re-invoked on server restart (client won't see the crash).
-               - Stream events are preserved for client reconnection.
-               - State is maintained across crashes.
+            4. `resilient_background=True` supports legacy workflows and regular agents configured with
+               `inner_history="service", inner_background="provider"`. For provider background, only
+               a saved private continuation token can be polled after a crash; a crash before the token
+               is saved cannot be replayed safely. Other regular-agent runs are not crash-recoverable.
+               Legacy workflow background responses retain their checkpoint-based recovery behavior.
             5. Steering (steerable_conversations=True) is ONLY supported for non-workflow agents; constructing
                this server with a workflow agent and `steerable_conversations=True` raises `RuntimeError`.
                Steering a workflow is conceptually undefined -- a workflow's graph may have loops or parallel
@@ -643,7 +642,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         Raises:
             ValueError: If the history, background, or unsupported-options policy is invalid.
             RuntimeError: If the agent configuration conflicts with the selected history source,
-                `resilient_background=True` is requested for a non-workflow agent, or
+                `resilient_background=True` is requested for a regular agent without provider background, or
                 `steerable_conversations=True` is requested for a workflow agent.
         """
         if history_source is not None and history_source not in ("agent_server", "agent"):
