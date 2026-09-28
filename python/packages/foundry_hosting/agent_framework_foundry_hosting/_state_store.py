@@ -417,13 +417,18 @@ class AgentSessionStoreProvider(StoreProvider[SessionStore]):
             raise ValueError("store_name must be a non-empty string")
         self._store_name = store_name
 
-    def get_store(self, *, config: AgentConfig, platform_context: FoundryAgentRequestContext) -> SessionStore:
-        """Get agent session store for the requested hosting environment."""
+    def _get_scoped_store(
+        self, platform_context: FoundryAgentRequestContext, scope: FoundryRequestScope | None
+    ) -> SessionStore:
         return FoundryAgentSessionStore(
             platform_context,
             store_name=self._store_name,
-            scope=_store_scope(config, platform_context),
+            scope=scope,
         )
+
+    def get_store(self, *, config: AgentConfig, platform_context: FoundryAgentRequestContext) -> SessionStore:
+        """Get agent session store for the requested hosting environment."""
+        return self._get_scoped_store(platform_context, _store_scope(config, platform_context))
 
 
 # endregion Agent session persistence

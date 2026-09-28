@@ -96,18 +96,26 @@ encoding of the store name. For example:
 
 ### User isolation
 
-Hosted requests take their sandbox session ID from the platform-configured
-`FOUNDRY_AGENT_SESSION_ID` (`AgentConfig.session_id`), and their user and call IDs
-from the AgentServer request context. All three are required. AgentServer can also
-resolve its request-context session ID from a caller's `agent_session_id` body field
-or query parameter; hosted requests reject that value when it differs from the
-platform-configured ID. The exported
-`FoundryRequestScope.from_context(config, platform_context)` validates this boundary.
-Its `storage_key` is a bounded hash of the framed user and sandbox IDs, not a caller
-conversation or response ID. If a hosted deployment does not provide
-`FOUNDRY_AGENT_SESSION_ID`, default hosted state access fails closed rather than
-using the caller's ID. Platform injection of this setting has not been verified in
-every hosted deployment; do not bypass this check without another verified identity.
+Hosted requests require platform user and call IDs from the AgentServer request
+context. Responses also requires the platform-configured `FOUNDRY_AGENT_SESSION_ID`
+(`AgentConfig.session_id`) for sandbox identity; a different caller-supplied
+`agent_session_id` fails closed. For Invocations, the
+[platform routes by the `agent_session_id` query parameter](https://learn.microsoft.com/azure/foundry/agents/how-to/manage-hosted-sessions#how-each-protocol-binds-an-invocation-to-a-session).
+When `FOUNDRY_AGENT_SESSION_ID` is present, it must match that query and the
+resolved request context. When it is absent, only an explicit, nonempty routed
+query matching the request context can identify the sandbox; duplicate query
+IDs or a request without the query are rejected rather than using the SDK's
+generated fallback ID.
+This means an automatically created first Invocations session without a query
+cannot access default hosted state when the platform does not configure the
+session ID. The platform documentation does not guarantee that the environment
+variable is provided for every sandbox.
+
+`FoundryRequestScope.from_context(config, platform_context)` requires the
+configured ID and remains strict for Responses and direct store providers. Only
+the Invocations host accepts the verified routed-query alternative. Its
+`storage_key` is a bounded hash of the framed user and sandbox IDs, not a caller
+conversation or response ID.
 
 | Identifier | Purpose |
 | --- | --- |
@@ -127,13 +135,15 @@ behavior. Applications that supply custom store providers must implement equival
 hosted user and sandbox isolation.
 
 **Existing hosted state is not migrated.** The default stores never fall back to
-legacy unscoped `agent_sessions`, `checkpoints/<context_id>`, or
-`function_approvals` data: an old MAF session, workflow checkpoint, or pending approval
-cannot be resumed through the new default hosted stores. Start a fresh Responses
-conversation rather than reusing an old `previous_response_id` or conversation ID;
-the separate AgentServer response store is not migrated by this change. Recovering
-old state requires a separately designed migration that verifies the original user's
-and sandbox's ownership; reading unscoped data by user alone is not safe.
+legacy unscoped `agent_sessions`, `invocation_sessions`,
+`checkpoints/<context_id>`, or `function_approvals` data: an old MAF session,
+workflow checkpoint, or pending approval cannot be resumed through the new
+default hosted stores. Start a fresh Responses conversation rather than reusing
+an old `previous_response_id` or conversation ID; Invocations starts with an
+empty MAF session in its scoped store. The separate AgentServer response store
+is not migrated by this change. Recovering old state requires a separately
+designed migration that verifies the original user's and sandbox's ownership;
+reading unscoped data by user alone is not safe.
 
 ### Agent Sessions
 
@@ -170,9 +180,11 @@ their last write; an invocation after expiry starts a fresh session.
 Existing stores retain their creation-time settings, and custom providers own their retention
 policies.
 
-Applications must coordinate overlapping requests for the same session; the store does not
-provide transactions or exactly-once execution. Independent local applications should use
-separate state roots or store providers.
+Default hosted stores reject stale ETag and duplicate-create writes for
+overlapping turns instead of overwriting a newer MAF session. This does not
+provide transactions or exactly-once execution for agent/tool side effects;
+applications still need to coordinate overlapping requests. Independent local
+applications should use separate state roots or store providers.
 
 ### Workflow checkpoints
 

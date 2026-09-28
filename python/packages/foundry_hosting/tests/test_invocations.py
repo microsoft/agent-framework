@@ -20,6 +20,7 @@ from itertools import product
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from agent_framework import (
     Agent,
@@ -42,9 +43,12 @@ from agent_framework import (
 from azure.ai.agentserver.core import (
     AgentConfig,
     FoundryAgentRequestContext,
+    get_request_context,
     reset_request_context,
     set_request_context,
 )
+from azure.ai.agentserver.core.storage import FoundryStateStore
+from starlette.datastructures import QueryParams
 from starlette.requests import ClientDisconnect, Request
 from starlette.responses import Response, StreamingResponse
 from typing_extensions import Any
@@ -190,10 +194,13 @@ def _make_agent(
     return _FakeAgent(response=response, stream_updates=stream_updates, update_session=update_session)
 
 
-def _make_request(payload: dict[str, Any]) -> Request:
+def _make_request(payload: dict[str, Any], *, agent_session_id: str | None = None) -> Request:
     """Build a mock Starlette request whose ``json()`` returns ``payload``."""
     request = MagicMock(spec=Request)
     request.json = AsyncMock(return_value=payload)
+    request.query_params = (
+        QueryParams({"agent_session_id": agent_session_id}) if agent_session_id is not None else QueryParams()
+    )
     return request
 
 
@@ -256,6 +263,46 @@ class TestSessionLifecycle:
         restored = await responses_store.get(key)
         assert restored is not None
         assert restored.state == {"protocol": "responses"}
+
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_default_hosted_invocations_isolate_sandboxes_and_users(self, stream: bool) -> None:
+        store_names: list[str] = []
+        real_get_or_create = FoundryStateStore.get_or_create
+
+        async def capture_store_name(name: str, *, user_isolation: bool) -> FoundryStateStore:
+            assert user_isolation is True
+            store_names.append(name)
+            return await real_get_or_create(name, user_isolation=user_isolation)
+
+        def update_session(session: AgentSession) -> None:
+            session.state["turn"] = session.state.get("turn", 0) + 1
+
+        agent = _make_agent(response_text="ok", stream_texts=["ok"], update_session=update_session)
+        identities = [("sandbox-a", "user-1"), ("sandbox-b", "user-1"), ("sandbox-a", "user-2")]
+
+        with patch(
+            "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+            new=capture_store_name,
+        ):
+            for round_number in (1, 2):
+                for sandbox_id, user_id in identities:
+                    server = InvocationsHostServer(agent)
+                    server.config.is_hosted = True
+                    server.config.session_id = ""
+                    with _request_context(call_id=f"call-{round_number}", user_id=user_id, session_id=sandbox_id):
+                        response = await server._handle_invoke(  # pyright: ignore[reportPrivateUsage]
+                            _make_request({"message": "next", "stream": stream}, agent_session_id=sandbox_id)
+                        )
+                        if isinstance(response, StreamingResponse):
+                            assert await _collect_stream(response) == "ok"
+                        else:
+                            assert bytes(response.body).decode() == "ok"
+                    assert agent.calls[-1]["session"].state["turn"] == round_number
+
+        assert len(store_names) == 12
+        assert len(set(store_names)) == len(identities)
+        assert all(name.startswith("invocation_sessions/v2/") and len(name) <= 128 for name in store_names)
+        assert all("sandbox" not in name and "user" not in name for name in store_names)
 
     @pytest.mark.parametrize("spec_version", ["2.0", "2.4"])
     @pytest.mark.parametrize("keep_alive", [False, True])
@@ -629,6 +676,220 @@ class TestPartitionKey:
 
 
 class TestHandleInvoke:
+    async def test_sdk_routes_explicit_query_but_not_generated_session_without_env(self) -> None:
+        agent = _make_agent(response_text="ok")
+        server = InvocationsHostServer(agent)
+        server.config.is_hosted = True
+        server.config.session_id = ""
+        headers = {"x-agent-user-id": "user-1", "x-agent-foundry-call-id": "call-1"}
+
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as client:
+            routed = await client.post(
+                "/invocations",
+                params={"agent_session_id": "sandbox-1"},
+                json={"message": "hello"},
+                headers=headers,
+            )
+            generated = await client.post("/invocations", json={"message": "hello"}, headers=headers)
+            ambiguous = await client.post(
+                "/invocations",
+                params=[("agent_session_id", "sandbox-1"), ("agent_session_id", "sandbox-2")],
+                json={"message": "hello"},
+                headers=headers,
+            )
+
+        assert routed.status_code == 200
+        assert routed.headers["x-agent-session-id"] == "sandbox-1"
+        assert agent.calls[0]["session"].session_id == '["sandbox-1","user-1"]'
+        assert generated.status_code == 500
+        assert "explicit routed agent_session_id query parameter" in generated.text
+        assert ambiguous.status_code == 500
+        assert "exactly one agent_session_id" in ambiguous.text
+        assert len(agent.calls) == 1
+
+    async def test_sdk_local_request_without_session_query_keeps_single_user_fallback(self) -> None:
+        agent = _make_agent(response_text="ok")
+        server = InvocationsHostServer(agent)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as client:
+            result = await client.post("/invocations", json={"message": "hello"})
+        assert result.status_code == 200
+        assert agent.calls[0]["session"].session_id == result.headers["x-agent-session-id"]
+
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_hosted_routed_query_works_without_configured_session(self, stream: bool) -> None:
+        agent = _make_agent(response_text="ok", stream_texts=["ok"])
+        server = InvocationsHostServer(agent)
+        server.config.is_hosted = True
+        server.config.session_id = ""
+        request = _make_request({"message": "hello", "stream": stream}, agent_session_id="sandbox-1")
+
+        with _request_context(call_id="call-1", user_id="user-1", session_id="sandbox-1"):
+            response = await server._handle_invoke(request)  # pyright: ignore[reportPrivateUsage]
+            if isinstance(response, StreamingResponse):
+                assert await _collect_stream(response) == "ok"
+            else:
+                assert bytes(response.body).decode() == "ok"
+
+        assert agent.calls[0]["session"].session_id == '["sandbox-1","user-1"]'
+
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_hosted_routed_stream_captures_request_context(self, stream: bool) -> None:
+        store = _mock_session_store()
+        provider = _SessionStoreProvider(store)
+        server = InvocationsHostServer(
+            _make_agent(response_text="ok", stream_texts=["ok"]), agent_session_store_provider=provider
+        )
+        server.config.is_hosted = True
+        server.config.session_id = ""
+        request = _make_request({"message": "hello", "stream": stream}, agent_session_id="sandbox-1")
+
+        with _request_context(call_id="call-1", user_id="user-1", session_id="sandbox-1"):
+            context = get_request_context()
+            response = await server._handle_invoke(request)  # pyright: ignore[reportPrivateUsage]
+        if isinstance(response, StreamingResponse):
+            assert provider.contexts == []
+            assert await _collect_stream(response) == "ok"
+        else:
+            assert bytes(response.body).decode() == "ok"
+
+        assert provider.contexts == [context]
+        store.set.assert_awaited_once()
+
+    @pytest.mark.parametrize(
+        ("configured_id", "context_id", "query_id", "body", "call_id", "error"),
+        [
+            ("", "generated-id", None, {}, "call-1", "explicit routed agent_session_id query parameter"),
+            ("", "generated-id", None, {"agent_session_id": "sandbox-1"}, "call-1", "explicit routed agent_session_id"),
+            ("", "sandbox-1", "", {}, "call-1", "explicit routed agent_session_id"),
+            ("", "sandbox-1", "other-sandbox", {}, "call-1", "matching the request context"),
+            ("", "sandbox-1", "sandbox-1", {}, None, "trusted user ID and call ID"),
+            ("sandbox-1", "sandbox-1", "other-sandbox", {}, "call-1", "does not match"),
+        ],
+    )
+    async def test_hosted_invocation_rejects_unverified_route_before_storage(
+        self,
+        configured_id: str,
+        context_id: str,
+        query_id: str | None,
+        body: dict[str, Any],
+        call_id: str | None,
+        error: str,
+    ) -> None:
+        agent = _make_agent(response_text="ok")
+        store = _mock_session_store()
+        provider = _SessionStoreProvider(store)
+        server = InvocationsHostServer(agent, agent_session_store_provider=provider)
+        server.config.is_hosted = True
+        server.config.session_id = configured_id
+        with _request_context(call_id=call_id, user_id="user-1", session_id=context_id):
+            response = await server._handle_invoke(  # pyright: ignore[reportPrivateUsage]
+                _make_request({"message": "hello", **body}, agent_session_id=query_id)
+            )
+        assert response.status_code == 500
+        assert error in bytes(response.body).decode()
+        assert agent.calls == []
+        assert provider.contexts == []
+
+    async def test_hosted_invocation_matching_config_and_query_succeeds(self) -> None:
+        agent = _make_agent(response_text="ok")
+        server = InvocationsHostServer(agent)
+        server.config.is_hosted = True
+        server.config.session_id = "sandbox-1"
+        with _request_context(call_id="call-1", user_id="user-1", session_id="sandbox-1"):
+            response = await server._handle_invoke(  # pyright: ignore[reportPrivateUsage]
+                _make_request({"message": "hello"}, agent_session_id="sandbox-1")
+            )
+        assert response.status_code == 200
+        assert agent.calls[0]["session"].session_id == '["sandbox-1","user-1"]'
+
+    @pytest.mark.parametrize("stream", [False, True])
+    @pytest.mark.parametrize("initially_stored", [False, True])
+    async def test_overlapping_hosted_invocations_do_not_overwrite_state(
+        self, stream: bool, initially_stored: bool
+    ) -> None:
+        sandbox_id = "concurrent-sandbox"
+        user_id = "user-1"
+        if initially_stored:
+            initial = InvocationsHostServer(_make_agent(response_text="ok"))
+            initial.config.is_hosted = True
+            initial.config.session_id = ""
+            with _request_context(call_id="call-0", user_id=user_id, session_id=sandbox_id):
+                await initial._handle_invoke(  # pyright: ignore[reportPrivateUsage]
+                    _make_request({"message": "seed"}, agent_session_id=sandbox_id)
+                )
+
+        started = [asyncio.Event(), asyncio.Event()]
+        released = [asyncio.Event(), asyncio.Event()]
+
+        class PausingAgent(_FakeAgent):
+            def __init__(self, index: int) -> None:
+                super().__init__()
+                self.index = index
+
+            def run(
+                self,
+                messages: Any = None,
+                *,
+                stream: bool = False,
+                session: AgentSession | None = None,
+                **kwargs: Any,
+            ) -> Any:
+                assert session is not None
+
+                async def run_once() -> AgentResponse:
+                    started[self.index].set()
+                    await released[self.index].wait()
+                    session.state["winner"] = self.index
+                    return AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("ok")])])
+
+                async def updates() -> AsyncIterator[AgentResponseUpdate]:
+                    started[self.index].set()
+                    await released[self.index].wait()
+                    session.state["winner"] = self.index
+                    yield AgentResponseUpdate(contents=[Content.from_text("ok")])
+
+                return updates() if stream else run_once()
+
+        hosts = [InvocationsHostServer(PausingAgent(index)) for index in (0, 1)]
+        for host in hosts:
+            host.config.is_hosted = True
+            host.config.session_id = ""
+
+        async def invoke(host: InvocationsHostServer, call_id: str) -> str:
+            with _request_context(call_id=call_id, user_id=user_id, session_id=sandbox_id):
+                response = await host._handle_invoke(  # pyright: ignore[reportPrivateUsage]
+                    _make_request({"message": "next", "stream": stream}, agent_session_id=sandbox_id)
+                )
+                if isinstance(response, StreamingResponse):
+                    return await _collect_stream(response)
+                return bytes(response.body).decode()
+
+        tasks = [asyncio.create_task(invoke(host, f"call-{index + 1}")) for index, host in enumerate(hosts)]
+        try:
+            await asyncio.wait_for(asyncio.gather(*(event.wait() for event in started)), timeout=5)
+            released[0].set()
+            assert await asyncio.wait_for(tasks[0], timeout=5) == "ok"
+            released[1].set()
+            with pytest.raises(RuntimeError, match="Another request advanced this agent session"):
+                await asyncio.wait_for(tasks[1], timeout=5)
+        finally:
+            for event in released:
+                event.set()
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+        verifier_agent = _make_agent(response_text="ok")
+        verifier = InvocationsHostServer(verifier_agent)
+        verifier.config.is_hosted = True
+        verifier.config.session_id = ""
+        with _request_context(call_id="call-3", user_id=user_id, session_id=sandbox_id):
+            await verifier._handle_invoke(  # pyright: ignore[reportPrivateUsage]
+                _make_request({"message": "verify"}, agent_session_id=sandbox_id)
+            )
+        assert verifier_agent.calls[0]["session"].state["winner"] == 0
+
     async def test_completed_sessions_are_released_and_state_is_restored(self) -> None:
         sessions: list[weakref.ReferenceType[AgentSession]] = []
         turns: list[int] = []

@@ -86,7 +86,12 @@ class InvocationsHostServer(InvocationAgentServerHost):
         self.invoke_handler(self._handle_invoke)
         mark_feature_used(FeatureIndex.FOUNDRY_HOSTING)
 
-    def _partition_key(self) -> str | tuple[str, str]:
+    def _partition_key(
+        self,
+        *,
+        context: FoundryAgentRequestContext | None = None,
+        scope: FoundryRequestScope | None = None,
+    ) -> str | tuple[str, str]:
         """Get the partition key for the current request.
 
         A hosted partition key is a tuple containing the session ID and user ID,
@@ -100,7 +105,8 @@ class InvocationsHostServer(InvocationAgentServerHost):
         Exceptions:
             RuntimeError: If the context doesn't contain the expected IDs.
         """
-        context = get_request_context()
+        if context is None:
+            context = get_request_context()
 
         if self.config.is_hosted:
             if not context.user_id:
@@ -108,8 +114,8 @@ class InvocationsHostServer(InvocationAgentServerHost):
                     "The hosted environment is missing user_id in the request context. "
                     "Please ensure that the request is coming from a valid Foundry platform service."
                 )
-            scope = FoundryRequestScope.from_context(self.config, context)
-            return scope.session_id, context.user_id
+            hosted_scope = scope or FoundryRequestScope.from_context(self.config, context)
+            return hosted_scope.session_id, context.user_id
 
         if not context.session_id:
             raise RuntimeError(
@@ -117,6 +123,34 @@ class InvocationsHostServer(InvocationAgentServerHost):
             )
 
         return context.session_id
+
+    def _hosted_scope(self, request: Request, context: FoundryAgentRequestContext) -> FoundryRequestScope:
+        """Accept an unconfigured session only when the routed Invocations query identifies it."""
+        if not context.user_id:
+            raise RuntimeError("The hosted environment is missing user_id in the request context.")
+
+        routed_session_ids = request.query_params.getlist("agent_session_id")
+        if len(routed_session_ids) > 1:
+            raise RuntimeError("Hosted Invocations requires exactly one agent_session_id query parameter.")
+        routed_session_id = routed_session_ids[0] if routed_session_ids else None
+        if self.config.session_id:
+            if routed_session_id is not None and routed_session_id != self.config.session_id:
+                raise RuntimeError("The request agent_session_id does not match the platform session ID.")
+            return FoundryRequestScope.from_context(self.config, context)
+
+        if not routed_session_id or routed_session_id != context.session_id:
+            raise RuntimeError(
+                "Hosted Invocations without FOUNDRY_AGENT_SESSION_ID require an explicit routed "
+                "agent_session_id query parameter matching the request context."
+            )
+        if not context.call_id:
+            raise RuntimeError("Foundry hosted requests require a trusted user ID and call ID.")
+        return FoundryRequestScope(
+            session_id=routed_session_id,
+            user_id=context.user_id,
+            call_id=context.call_id,
+            is_hosted=True,
+        )
 
     @asynccontextmanager
     async def _request_agent(self) -> AsyncGenerator[SupportsAgentRun]:
@@ -128,13 +162,21 @@ class InvocationsHostServer(InvocationAgentServerHost):
 
     @asynccontextmanager
     async def _request_session(
-        self, partition_key: str | tuple[str, str], context: FoundryAgentRequestContext
+        self,
+        partition_key: str | tuple[str, str],
+        context: FoundryAgentRequestContext,
+        *,
+        hosted_scope: FoundryRequestScope | None = None,
     ) -> AsyncGenerator[AgentSession]:
         session_id = (
             json.dumps(partition_key, separators=(",", ":")) if isinstance(partition_key, tuple) else partition_key
         )
         try:
-            store = self._session_store_provider.get_store(config=self.config, platform_context=context)
+            provider = self._session_store_provider
+            if hosted_scope is not None and not self.config.session_id and type(provider) is AgentSessionStoreProvider:
+                store = provider._get_scoped_store(context, hosted_scope)  # pyright: ignore[reportPrivateUsage]
+            else:
+                store = provider.get_store(config=self.config, platform_context=context)
             session = await store.get(session_id)
             if session is None:
                 session = AgentSession(session_id=session_id)
@@ -159,8 +201,10 @@ class InvocationsHostServer(InvocationAgentServerHost):
 
     async def _handle_invoke(self, request: Request) -> Response:
         """Invoke the agent with the given request."""
+        context = get_request_context()
         try:
-            partition_key = self._partition_key()
+            hosted_scope = self._hosted_scope(request, context) if self.config.is_hosted else None
+            partition_key = self._partition_key(context=context, scope=hosted_scope)
         except Exception as e:
             return Response(content=str(e), status_code=500)
 
@@ -174,13 +218,11 @@ class InvocationsHostServer(InvocationAgentServerHost):
                 return StreamingResponse(content=error, status_code=400)
             return Response(content=error, status_code=400)
 
-        context = get_request_context()
-
         if stream:
 
             async def stream_response() -> AsyncGenerator[str]:
                 async with (
-                    self._request_session(partition_key, context) as session,
+                    self._request_session(partition_key, context, hosted_scope=hosted_scope) as session,
                     self._request_agent() as agent,
                 ):
                     stream = agent.run(user_message, session=session, stream=True)
@@ -199,7 +241,7 @@ class InvocationsHostServer(InvocationAgentServerHost):
             return _InvocationStreamingResponse(stream_response())
 
         async with (
-            self._request_session(partition_key, context) as session,
+            self._request_session(partition_key, context, hosted_scope=hosted_scope) as session,
             self._request_agent() as agent,
         ):
             response = await agent.run([user_message], session=session)

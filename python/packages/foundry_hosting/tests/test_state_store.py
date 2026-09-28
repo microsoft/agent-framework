@@ -466,6 +466,37 @@ async def test_agent_session_provider_selects_a_separate_logical_store() -> None
     assert store.set_item.call_args.args[1]["session_id"] == "runtime-id"
 
 
+async def test_hosted_invocation_store_is_scoped_and_ignores_legacy_state() -> None:
+    context = _platform_context()
+    key = '["sandbox-1","user-1"]'
+    legacy = await FoundryStateStore.get_or_create("invocation_sessions", user_isolation=True)
+    old_session = AgentSession(session_id=key)
+    old_session.state["legacy"] = True
+    async with legacy:
+        await legacy.create_item(key, old_session.to_dict(), call_id=context.call_id)
+
+    config = _config(is_hosted=True)
+    invocations = AgentSessionStoreProvider(store_name="invocation_sessions").get_store(
+        config=config, platform_context=context
+    )
+    responses = AgentSessionStoreProvider().get_store(config=config, platform_context=context)
+    assert await invocations.get(key) is None
+    assert await responses.get(key) is None
+
+    fresh = AgentSession(session_id=key)
+    fresh.state["new"] = True
+    await invocations.set(key, fresh)
+    restored_store = AgentSessionStoreProvider(store_name="invocation_sessions").get_store(
+        config=config, platform_context=context
+    )
+    restored = await restored_store.get(key)
+    assert restored is not None and restored.state == {"new": True}
+    assert await responses.get(key) is None
+    async with legacy:
+        legacy_item = await legacy.get_item(key, call_id=context.call_id)
+        assert legacy_item is not None and legacy_item.value == old_session.to_dict()
+
+
 @pytest.mark.parametrize("store_name", ["", " \t", 123])
 def test_session_store_name_must_be_nonempty(store_name: Any) -> None:
     with pytest.raises(ValueError, match="store_name must be a non-empty string"):
