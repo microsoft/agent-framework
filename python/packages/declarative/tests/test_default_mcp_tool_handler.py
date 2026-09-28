@@ -1070,6 +1070,39 @@ class TestCache:
         assert FakeTool.instances[0].connect_count == 1
 
     @pytest.mark.asyncio
+    async def test_cancelled_creator_does_not_cancel_shared_inflight_waiter(self) -> None:
+        handler = DefaultMCPToolHandler()
+        first_connect_started = asyncio.Event()
+        release_first_connect = asyncio.Event()
+        original_connect = FakeTool.connect
+
+        async def gated_connect(tool: FakeTool) -> None:
+            if len(FakeTool.instances) == 1:
+                first_connect_started.set()
+                await release_first_connect.wait()
+            await original_connect(tool)
+
+        with _patch_tool(), patch.object(FakeTool, "connect", gated_connect):
+            creator = asyncio.create_task(handler.invoke_tool(_invocation(workflow_session_id="workflow-a")))
+            await first_connect_started.wait()
+            waiter = asyncio.create_task(handler.invoke_tool(_invocation(workflow_session_id="workflow-a")))
+            await asyncio.sleep(0)
+
+            creator.cancel()
+            release_first_connect.set()
+            with pytest.raises(asyncio.CancelledError):
+                _ = await creator
+
+            waiter_result = await waiter
+            follow_up_result = await handler.invoke_tool(_invocation(workflow_session_id="workflow-a"))
+
+        assert not waiter_result.is_error
+        assert not follow_up_result.is_error
+        assert len(FakeTool.instances) == 2
+        assert FakeTool.instances[0].close_count == 1
+        assert FakeTool.instances[1].connect_count == 1
+
+    @pytest.mark.asyncio
     async def test_repeated_use_keeps_lru_alive(self) -> None:
         handler = DefaultMCPToolHandler(cache_max_size=2)
         with _patch_tool():
@@ -1298,7 +1331,7 @@ class TestAclose:
             release_close.set()
 
             with pytest.raises(asyncio.CancelledError):
-                await invoke_task
+                _ = await invoke_task
             await asyncio.wait_for(close_task, timeout=1)
 
         assert FakeTool.instances[0].close_count == 1
@@ -1327,7 +1360,7 @@ class TestAclose:
             handler._cache_lock.release()
 
             with pytest.raises(asyncio.CancelledError):
-                await invocation
+                _ = await invocation
 
         assert FakeTool.instances[0].close_count == 1
         assert not handler._inflight

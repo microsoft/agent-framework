@@ -552,7 +552,12 @@ class DefaultMCPToolHandler:
                 creating = True
 
         if not creating:
-            _ = await asyncio.shield(inflight)
+            try:
+                _ = await asyncio.shield(inflight)
+            except asyncio.CancelledError:
+                current_task = asyncio.current_task()
+                if current_task is not None and current_task.cancelling():
+                    raise
             return await self._get_or_create_entry(invocation)
 
         # Phase 2: we own creation. Build the entry outside the lock.
