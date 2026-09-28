@@ -50,6 +50,12 @@ skip_if_no_credentials = pytest.mark.skipif(
 _TEST_MODEL = os.getenv("GOOGLE_MODEL") or "gemini-2.5-flash-lite"
 
 
+@pytest.fixture(autouse=True)
+def clear_enterprise_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Isolate chat tests from an externally configured Enterprise SDK mode."""
+    monkeypatch.delenv("GOOGLE_GENAI_USE_ENTERPRISE", raising=False)
+
+
 class _ToolListItem(TypedDict):
     title: str
     description: NotRequired[str]
@@ -273,6 +279,40 @@ def test_client_created_from_vertex_ai_env(monkeypatch: pytest.MonkeyPatch) -> N
     assert client_factory.call_args.kwargs["location"] == "global"
     assert "api_key" not in client_factory.call_args.kwargs
     assert client.service_url() == "https://aiplatform.googleapis.com"
+
+
+def test_chat_clients_created_from_enterprise_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Both chat layers share the current Enterprise settings with the embedding client."""
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_GENAI_USE_VERTEXAI", raising=False)
+    monkeypatch.setenv("GOOGLE_GENAI_USE_ENTERPRISE", "true")
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "project")
+    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "global")
+
+    mock_client = MagicMock()
+    mock_client._api_client.vertexai = True
+    mock_client._api_client._http_options.base_url = "https://aiplatform.googleapis.com/"
+    with patch("agent_framework_gemini._sdk_client.genai.Client", return_value=mock_client) as factory:
+        raw = RawGeminiChatClient()
+        full = GeminiChatClient()
+
+    assert factory.call_count == 2
+    for call in factory.call_args_list:
+        assert call.kwargs["enterprise"] is True
+        assert "vertexai" not in call.kwargs
+        assert call.kwargs["project"] == "project"
+        assert call.kwargs["location"] == "global"
+        assert "api_key" not in call.kwargs
+    assert raw.service_url() == full.service_url() == "https://aiplatform.googleapis.com"
+
+
+def test_chat_rejects_conflicting_enterprise_and_vertex_flags(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GOOGLE_GENAI_USE_ENTERPRISE", "true")
+    monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "false")
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+
+    with pytest.raises(ValueError, match="cannot disagree"):
+        GeminiChatClient(model="gemini-2.5-flash")
 
 
 def test_google_settings_are_used_when_gemini_aliases_are_present(monkeypatch: pytest.MonkeyPatch) -> None:

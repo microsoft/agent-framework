@@ -159,7 +159,7 @@ variable.
 | `agent-framework-gemini` | `GeminiChatClient / GeminiEmbeddingClient` | `GOOGLE_API_KEY` | `your-api-key` |
 | `agent-framework-gemini` | `GeminiChatClient` | `GOOGLE_MODEL` | `gemini-2.5-flash-lite` |
 | `agent-framework-gemini` | `GeminiEmbeddingClient` | `GOOGLE_EMBEDDING_MODEL` | `gemini-embedding-2` |
-| `agent-framework-gemini` | `GeminiEmbeddingClient` | `GOOGLE_GENAI_USE_ENTERPRISE` | `true` |
+| `agent-framework-gemini` | `GeminiChatClient / GeminiEmbeddingClient` | `GOOGLE_GENAI_USE_ENTERPRISE` | `true` |
 | `agent-framework-gemini` | `GeminiChatClient / GeminiEmbeddingClient` | `GOOGLE_GENAI_USE_VERTEXAI` | `true` |
 | `agent-framework-gemini` | `GeminiChatClient / GeminiEmbeddingClient` | `GOOGLE_CLOUD_PROJECT` | `your-project-id` |
 | `agent-framework-gemini` | `GeminiChatClient / GeminiEmbeddingClient` | `GOOGLE_CLOUD_LOCATION` | `global` |

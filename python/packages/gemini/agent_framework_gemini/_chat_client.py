@@ -281,6 +281,7 @@ class RawGeminiChatClient(
         *,
         api_key: str | SecretString | None = None,
         model: str | None = None,
+        enterprise: bool | None = None,
         vertexai: bool | None = None,
         project: str | None = None,
         location: str | None = None,
@@ -296,8 +297,10 @@ class RawGeminiChatClient(
         Args:
             api_key: Gemini Developer API key. Falls back to ``GOOGLE_API_KEY``.
             model: Default model identifier. Falls back to ``GOOGLE_MODEL``.
-            vertexai: Whether to use Vertex AI endpoints. Falls back to environment settings,
-                using ``GOOGLE_GENAI_USE_VERTEXAI`` when not passed explicitly.
+            enterprise: Whether to use Gemini Enterprise Agent Platform. Falls back to
+                ``GOOGLE_GENAI_USE_ENTERPRISE``.
+            vertexai: Legacy alias for ``enterprise``. Falls back to
+                ``GOOGLE_GENAI_USE_VERTEXAI`` when not passed explicitly.
             project: Google Cloud project ID for Vertex AI. Falls back to environment settings,
                 using ``GOOGLE_CLOUD_PROJECT`` when not passed explicitly.
             location: Vertex AI location. Falls back to environment settings, preferring
@@ -321,6 +324,7 @@ class RawGeminiChatClient(
             env_prefix="GOOGLE_",
             api_key=api_key,
             model=model,
+            genai_use_enterprise=enterprise,
             genai_use_vertexai=vertexai,
             cloud_project=project,
             cloud_location=location,
@@ -328,17 +332,20 @@ class RawGeminiChatClient(
             env_file_encoding=env_file_encoding,
         )
 
+        configured_enterprise = google_settings.get("genai_use_enterprise")
         configured_vertexai = google_settings.get("genai_use_vertexai")
         self._genai_client = create_genai_client(
             client=client,
             api_key=google_settings.get("api_key"),
+            enterprise=configured_enterprise,
             vertexai=configured_vertexai,
             project=google_settings.get("cloud_project"),
             location=google_settings.get("cloud_location"),
             credentials=credentials,
         )
 
-        self._vertexai = resolve_vertexai_mode(self._genai_client, fallback=configured_vertexai)
+        configured_mode = configured_enterprise if configured_enterprise is not None else configured_vertexai
+        self._vertexai = resolve_vertexai_mode(self._genai_client, fallback=configured_mode)
         self._service_url = resolve_service_url(self._genai_client, vertexai=self._vertexai)
         self.model = google_settings.get("model")
         self.max_tracked_thought_signatures = max_tracked_thought_signatures
@@ -1292,6 +1299,7 @@ class GeminiChatClient(
         *,
         api_key: str | SecretString | None = None,
         model: str | None = None,
+        enterprise: bool | None = None,
         vertexai: bool | None = None,
         project: str | None = None,
         location: str | None = None,
@@ -1309,7 +1317,9 @@ class GeminiChatClient(
         Args:
             api_key: Gemini Developer API key. Falls back to ``GOOGLE_API_KEY``.
             model: Default model identifier. Falls back to ``GOOGLE_MODEL``.
-            vertexai: Whether to use Vertex AI endpoints. Falls back to ``GOOGLE_GENAI_USE_VERTEXAI``.
+            enterprise: Whether to use Gemini Enterprise Agent Platform. Falls back to
+                ``GOOGLE_GENAI_USE_ENTERPRISE``.
+            vertexai: Legacy alias for ``enterprise``. Falls back to ``GOOGLE_GENAI_USE_VERTEXAI``.
             project: Google Cloud project ID for Vertex AI. Falls back to ``GOOGLE_CLOUD_PROJECT``.
             location: Vertex AI location. Falls back to ``GOOGLE_CLOUD_LOCATION``.
             credentials: Google Cloud credentials for Vertex AI. When omitted, the SDK can use
@@ -1329,6 +1339,7 @@ class GeminiChatClient(
         super().__init__(
             api_key=api_key,
             model=model,
+            enterprise=enterprise,
             vertexai=vertexai,
             project=project,
             location=location,

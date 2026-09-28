@@ -8,8 +8,8 @@
 
 Allows the model to write and run code in a sandboxed environment to answer questions.
 
-Requires ``GOOGLE_MODEL`` and either ``GOOGLE_API_KEY`` for the Developer API or Vertex AI settings
-(``GOOGLE_GENAI_USE_VERTEXAI``, ``GOOGLE_CLOUD_PROJECT``, and ``GOOGLE_CLOUD_LOCATION``).
+Requires ``GOOGLE_MODEL`` and either ``GOOGLE_API_KEY`` for the Developer API or Enterprise settings
+(``GOOGLE_GENAI_USE_ENTERPRISE``, ``GOOGLE_CLOUD_PROJECT``, and ``GOOGLE_CLOUD_LOCATION``).
 """
 
 import asyncio

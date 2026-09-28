@@ -78,7 +78,7 @@ for cross-modal text-to-image retrieval. Images are embedded without a text task
 and upserted with `generate_vectors=False`; the search tool uses
 `RETRIEVAL_QUERY` through its `embeddings_options`.
 
-For embeddings on Enterprise, use the current SDK setting
+For chat and embeddings on Enterprise, use the current SDK setting
 `GOOGLE_GENAI_USE_ENTERPRISE=true` (or pass `enterprise=True`) together with
 `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION`. The older
 `GOOGLE_GENAI_USE_VERTEXAI=true` / `vertexai=True` setting remains supported.
@@ -106,16 +106,18 @@ The connector no longer reads `GEMINI_API_KEY`, `GEMINI_MODEL`, or
 or pass the API key and model explicitly. An injected `google.genai.Client` retains
 the Google SDK's own authentication behavior.
 
-### Vertex AI
+### Gemini Enterprise Agent Platform (Vertex AI)
 
-Set the standard Vertex AI environment variables used by `google-genai`:
+Set the standard Enterprise environment variables used by `google-genai`:
 
 ```bash
-export GOOGLE_GENAI_USE_VERTEXAI=true
+export GOOGLE_GENAI_USE_ENTERPRISE=true
 export GOOGLE_CLOUD_PROJECT="your-project-id"
 export GOOGLE_CLOUD_LOCATION="global"
 export GOOGLE_MODEL="gemini-2.5-flash-lite"
 ```
+
+The older `GOOGLE_GENAI_USE_VERTEXAI=true` setting remains supported.
 
 ## Examples
 
