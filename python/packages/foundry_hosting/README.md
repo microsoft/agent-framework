@@ -122,6 +122,18 @@ explicit history modes or unstored requests. A custom agent cannot accept MAF ru
 `unsupported_options` as `"ignore"`, `"warn"` (default), or `"error"` for that case. See the
 [agent history and options samples](../../samples/04-hosting/foundry-hosted-agents/responses/basic/).
 
+## Computer use
+
+The Responses host emits native `computer_call` and `computer_call_output` items, including ordered `actions`,
+screenshots, and typed safety checks. It restores those items from request input and prior response history as
+`Content.from_computer_tool_call(...)` and `Content.from_computer_tool_result(...)`. The application must review
+`pending_safety_checks` before executing actions and return a screenshot `Content` with explicit
+`acknowledged_safety_checks`; the host never acknowledges checks automatically. Results correlate to calls by
+`call_id`. When an upstream provider's item ID does not meet AgentServer's ID format, the host assigns a valid
+output item ID without changing the provider's `call_id`.
+Although screenshots are optional in shared `Content`, this Responses host requires them on computer results.
+The computer-use `Content` constructors and `ComputerSafetyCheck` type are experimental Agent Framework APIs.
+
 ## State store
 
 ### Local persistence

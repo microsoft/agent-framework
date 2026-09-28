@@ -28,7 +28,10 @@
     <PackageVersion Include="Azure.AI.AgentServer.Invocations" Version="1.0.0-beta.6" />
     <PackageVersion Include="Azure.AI.AgentServer.Responses" Version="1.0.0-beta.8" />
     <PackageVersion Include="Azure.Search.Documents" Version="12.0.0" />
-    <PackageVersion Include="Azure.AI.Projects" Version="3.0.0-beta.2" />
+    <PackageVersion Include="Azure.AI.Projects" Version="3.0.0-beta.3" />
+    <!-- Azure.AI.Projects 3.0.0-beta.3 declares a dependency on an unpublished 3.0.0-alpha build of this package,
+         which makes NuGet raise NU1603 and fall back to the stale 3.0.0-beta.1. Pin the matching beta explicitly. -->
+    <PackageVersion Include="Azure.AI.Extensions.OpenAI" Version="3.0.0-beta.3" />
     <PackageVersion Include="Azure.AI.Agents.Persistent" Version="1.2.0-beta.10" />
     <PackageVersion Include="Azure.Core" Version="1.62.0" />
     <PackageVersion Include="Azure.Identity" Version="1.21.0" />
@@ -82,11 +85,11 @@
     <PackageVersion Include="Swashbuckle.AspNetCore.SwaggerUI" Version="10.2.3" />
     <!-- Microsoft.Extensions.* -->
     <PackageVersion Include="Microsoft.Extensions.AI" Version="10.10.0" />
-    <PackageVersion Include="Microsoft.Extensions.AI.Abstractions" Version="10.10.0" />
+    <PackageVersion Include="Microsoft.Extensions.AI.Abstractions" Version="10.10.1" />
     <PackageVersion Include="Microsoft.Extensions.AI.Evaluation" Version="10.10.0" />
     <PackageVersion Include="Microsoft.Extensions.AI.Evaluation.Quality" Version="10.10.0" />
     <PackageVersion Include="Microsoft.Extensions.AI.Evaluation.Safety" Version="10.10.0" />
-    <PackageVersion Include="Microsoft.Extensions.AI.OpenAI" Version="10.10.0" />
+    <PackageVersion Include="Microsoft.Extensions.AI.OpenAI" Version="10.10.1" />
     <PackageVersion Include="Microsoft.Extensions.Caching.Memory" Version="10.0.12" />
     <PackageVersion Include="Microsoft.Extensions.Compliance.Abstractions" Version="10.10.0" />
     <PackageVersion Include="Microsoft.Extensions.Configuration" Version="10.0.12" />
@@ -130,7 +133,7 @@
     <PackageVersion Include="Microsoft.ML.OnnxRuntimeGenAI" Version="0.15.2" />
     <PackageVersion Include="Microsoft.ML.Tokenizers" Version="2.0.0" />
     <PackageVersion Include="OllamaSharp" Version="5.4.30" />
-    <PackageVersion Include="OpenAI" Version="2.13.0" />
+    <PackageVersion Include="OpenAI" Version="2.14.0" />
     <!-- Identity -->
     <PackageVersion Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.89.0" />
     <!-- Workflows -->
