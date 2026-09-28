@@ -247,9 +247,13 @@ public sealed class FileSystemAgentSessionStore : AgentSessionStore
         cancellationToken.ThrowIfCancellationRequested();
 
         string path = this.GetSessionPath(agent, key);
-        if (File.Exists(path))
+        try
         {
             File.Delete(path);
+        }
+        catch (DirectoryNotFoundException)
+        {
+            // No directory for this agent means nothing was ever stored.
         }
 
         return default;
