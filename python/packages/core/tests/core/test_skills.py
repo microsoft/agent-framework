@@ -5647,8 +5647,64 @@ class TestSkillsProviderFactories:
         assert context.kwargs == {"skill": "host-skill", "args": "host-args", "context": "host-context"}
         assert context.result is None
 
+    @pytest.mark.parametrize(
+        "helper_kind", ["no_context", "kwargs", "context_in_args_slot", "required_parameter", "positional_context"]
+    )
+    async def test_run_skill_script_falls_back_to_run_for_unrelated_run_with_context(self, helper_kind: str) -> None:
+        calls: list[tuple[Any, dict[str, Any]]] = []
+
+        class LegacyScript(SkillScript):
+            async def run(self, skill: Skill, args: Any = None, **kwargs: Any) -> Any:
+                calls.append((args, kwargs))
+                return "legacy"
+
+        class PositionalHelperScript(LegacyScript):
+            def run_with_context(self, skill: Skill, args: Any = None) -> Any:  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]  # pyright: ignore[reportIncompatibleMethodOverride]
+                pytest.fail("Unrelated helper must not be dispatched")
+
+        class KwargsHelperScript(LegacyScript):
+            def run_with_context(self, skill: Skill, args: Any = None, **kwargs: Any) -> Any:  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]  # pyright: ignore[reportIncompatibleMethodOverride]
+                pytest.fail("Unrelated helper must not be dispatched")
+
+        class ContextInArgsSlotScript(LegacyScript):
+            def run_with_context(self, skill: Skill, context: Any = None) -> Any:  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]  # pyright: ignore[reportIncompatibleMethodOverride]
+                pytest.fail("Unrelated helper must not be dispatched")
+
+        class RequiredParameterScript(LegacyScript):
+            def run_with_context(self, skill: Skill, args: Any, extra: Any, *, context: Any) -> Any:  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]  # pyright: ignore[reportIncompatibleMethodOverride]
+                pytest.fail("Unrelated helper must not be dispatched")
+
+        class PositionalContextScript(LegacyScript):
+            def run_with_context(self, skill: Skill, args: Any = None, context: Any = None, /) -> Any:  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]  # pyright: ignore[reportIncompatibleMethodOverride]
+                pytest.fail("Unrelated helper must not be dispatched")
+
+        helpers: dict[str, type[SkillScript]] = {
+            "no_context": PositionalHelperScript,
+            "kwargs": KwargsHelperScript,
+            "context_in_args_slot": ContextInArgsSlotScript,
+            "required_parameter": RequiredParameterScript,
+            "positional_context": PositionalContextScript,
+        }
+        script = helpers[helper_kind](name="s1")
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="my-skill", description="test"), instructions="body")
+        skill._scripts.append(script)
+        provider = SkillsProvider([skill])
+        await _init_provider(provider)
+        run_tool = next(t for t in _ctx(provider)[2] if hasattr(t, "name") and t.name == "run_skill_script")
+
+        result = await provider._run_skill_script(
+            _raw_skills(provider),
+            "my-skill",
+            "s1",
+            args={"value": "model"},
+            context=_invocation_context(run_tool, user_id="host"),
+        )
+
+        assert result == "legacy"
+        assert calls == [({"value": "model"}, {"user_id": "host"})]
+
     @pytest.mark.parametrize("context_override", [False, True])
-    @pytest.mark.parametrize("failure_type", [RuntimeError, asyncio.CancelledError])
+    @pytest.mark.parametrize("failure_type", [TypeError, RuntimeError, asyncio.CancelledError])
     async def test_script_failure_propagates_once_through_context_dispatch(
         self, context_override: bool, failure_type: type[BaseException], caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -5679,7 +5735,7 @@ class TestSkillsProviderFactories:
 
         assert caught.value is failure
         assert calls == ["context" if context_override else "legacy"]
-        if failure_type is RuntimeError:
+        if failure_type is not asyncio.CancelledError:
             assert "Error running script 'boom' in skill 'my-skill'" in caplog.text
 
     async def test_run_skill_script_error_on_missing_script(self) -> None:

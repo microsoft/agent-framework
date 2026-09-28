@@ -2942,7 +2942,8 @@ class SkillsProvider(ContextProvider):
         """Run a named script from a skill.
 
         Resolves the skill and script by name, then delegates execution
-        to :meth:`SkillScript.run_with_context`.
+        to :meth:`SkillScript.run_with_context`, or to :meth:`SkillScript.run`
+        when a subclass's ``run_with_context`` does not support the context-aware call.
 
         Args:
             skills: The skills to look up the skill from.
@@ -2977,10 +2978,30 @@ class SkillsProvider(ContextProvider):
             return f"Error: Script '{script_name}' not found in skill '{skill_name}'."
 
         try:
-            return await script.run_with_context(skill, args, context=context)
+            # An unrelated pre-existing run_with_context override may not accept the context.
+            if self._accepts_invocation_context(script):
+                return await script.run_with_context(skill, args, context=context)
+
+            return await script.run(skill, args, **context.kwargs)
         except Exception:
             logger.exception("Error running script '%s' in skill '%s'", script_name, skill_name)
             raise
+
+    @staticmethod
+    def _accepts_invocation_context(script: SkillScript) -> bool:
+        """Return whether ``run_with_context`` explicitly accepts context and supports the provider's call."""
+        try:
+            signature = inspect.signature(script.run_with_context)
+            signature.bind(None, None, context=None)
+        except (TypeError, ValueError):
+            logger.debug("Cannot bind context-aware call for script '%s'; using legacy invocation.", script.name)
+            return False
+
+        context_param = signature.parameters.get("context")
+        return context_param is not None and context_param.kind in (
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        )
 
     async def _read_skill_resource(
         self,
