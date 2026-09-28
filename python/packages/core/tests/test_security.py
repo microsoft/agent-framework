@@ -2251,12 +2251,11 @@ class TestPolicyEnforcementMiddleware:
             nonlocal executed
             executed = True
 
-        with pytest.raises(MiddlewareTermination):
+        with pytest.raises(MiddlewareFailure, match="Unsafe policy approval binding did not terminate"):
             await middleware.process(context, execute)
 
         assert executed is False
-        assert isinstance(context.result, dict)
-        assert context.result["violation_type"] == "max_allowed_confidentiality"
+        assert context.result is None
 
     async def test_approval_binds_computed_argument_principals_without_label_tracker(self) -> None:
         middleware = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
