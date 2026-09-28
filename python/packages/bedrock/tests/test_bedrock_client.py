@@ -489,16 +489,26 @@ async def test_get_response_forwards_bedrock_specific_options() -> None:
     assert {key: payload.get(key) for key in bedrock_options} == bedrock_options
 
 
-def test_prepare_options_omits_stream_processing_mode_from_guardrail_config() -> None:
-    """Converse rejects streamProcessingMode, so it should be left out while the guardrail still applies."""
-    client = _make_client()
+async def test_guardrail_stream_processing_mode_is_sent_only_to_converse_stream() -> None:
+    """ConverseStream accepts streamProcessingMode and Converse rejects it, so only the Converse request drops it."""
+    stub = _StubBedrockStreamRuntime([{"messageStop": {"stopReason": "end_turn"}}])
+    client = BedrockChatClient(
+        model="us.openai.gpt-6-sol",
+        region="us-east-1",
+        client=stub,  # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type] # pyright: ignore[reportArgumentType]
+    )
+    messages = [Message(role="user", contents=[Content.from_text(text="hello")])]
     options: BedrockChatOptions = {
         "guardrailConfig": {"guardrailIdentifier": "gr-123", "guardrailVersion": "1", "streamProcessingMode": "async"}
     }
 
-    request = client._prepare_options([Message(role="user", contents=[Content.from_text(text="hello")])], options)
+    await client.get_response(messages, options=options)
+    stream = client._inner_get_response(messages=messages, options=options, stream=True)
+    assert isinstance(stream, ResponseStream)
+    _ = [update async for update in stream]
 
-    assert request["guardrailConfig"] == {"guardrailIdentifier": "gr-123", "guardrailVersion": "1"}
+    assert stub.calls[0]["guardrailConfig"] == {"guardrailIdentifier": "gr-123", "guardrailVersion": "1"}
+    assert stub.calls[1]["guardrailConfig"] == options["guardrailConfig"]
     assert options["guardrailConfig"]["streamProcessingMode"] == "async"
 
 

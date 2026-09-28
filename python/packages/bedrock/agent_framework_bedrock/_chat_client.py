@@ -392,6 +392,10 @@ class BedrockChatClient(
             return self._build_response_stream(_stream(), response_format=options.get("response_format"))
 
         # Non-streaming mode
+        if guardrail_config := request.get("guardrailConfig"):
+            # streamProcessingMode is only valid for ConverseStream; Converse rejects requests that include it.
+            request["guardrailConfig"] = {k: v for k, v in guardrail_config.items() if k != "streamProcessingMode"}
+
         async def _get_response() -> ChatResponse:
             raw_response = await asyncio.to_thread(self._invoke_converse, request)
             return self._process_converse_response(raw_response, options)
@@ -472,9 +476,6 @@ class BedrockChatClient(
         ):
             if (value := options.get(key)) is not None:
                 run_options[key] = value
-        if guardrail_config := run_options.get("guardrailConfig"):
-            # streamProcessingMode is only valid for ConverseStream; Converse rejects requests that include it.
-            run_options["guardrailConfig"] = {k: v for k, v in guardrail_config.items() if k != "streamProcessingMode"}
         if ":prompt/" in model:
             # A Prompt Management ARN takes these fields from the prompt, and Converse rejects requests that set them.
             if run_options["inferenceConfig"] == {"maxTokens": DEFAULT_MAX_TOKENS}:
