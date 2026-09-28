@@ -4450,6 +4450,48 @@ class TestResponseStreamCleanupHooks:
 
         assert cleanup_called["value"] is True
 
+    async def test_transform_hook_raising_runs_cleanup(self) -> None:
+        """Cleanup hook is called when a transform hook raises mid-stream."""
+        cleanup_called = {"value": False}
+
+        def cleanup_hook() -> None:
+            cleanup_called["value"] = True
+
+        def failing_hook(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            raise RuntimeError("hook error")
+
+        stream = ResponseStream(
+            _generate_updates(1),
+            finalizer=_combine_updates,
+            transform_hooks=[failing_hook],  # type: ignore[arg-type]
+            cleanup_hooks=[cleanup_hook],
+        )
+
+        with pytest.raises(RuntimeError, match="hook error"):
+            async for _ in stream:
+                pass
+
+        assert cleanup_called["value"] is True
+
+    async def test_mapper_raising_runs_cleanup(self) -> None:
+        """Cleanup hook on a mapped stream is called when the mapper raises mid-stream."""
+        cleanup_called = {"value": False}
+
+        def cleanup_hook() -> None:
+            cleanup_called["value"] = True
+
+        def failing_mapper(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            raise ValueError("mapper error")
+
+        inner = ResponseStream(_generate_updates(1), finalizer=_combine_updates)
+        outer = inner.map(failing_mapper, _combine_updates).with_cleanup_hook(cleanup_hook)
+
+        with pytest.raises(ValueError, match="mapper error"):
+            async for _ in outer:
+                pass
+
+        assert cleanup_called["value"] is True
+
 
 class TestResponseStreamResultHooks:
     """Tests for result hooks (after finalizer)."""

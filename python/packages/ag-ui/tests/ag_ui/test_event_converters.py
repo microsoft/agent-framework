@@ -195,6 +195,20 @@ class TestAGUIEventConverter:
         assert update.contents[0].call_id == "call_123"
         assert update.contents[0].result == '{"temperature": 22, "condition": "sunny"}'
 
+    def test_tool_call_result_event_snake_case_id(self) -> None:
+        """TOOL_CALL_RESULT accepts tool_call_id like the other tool call events."""
+        converter = AGUIEventConverter()
+        event = {
+            "type": "TOOL_CALL_RESULT",
+            "tool_call_id": "call_snake",
+            "content": "sunny",
+        }
+
+        update = converter.convert_event(event)
+
+        assert update is not None
+        assert update.contents[0].call_id == "call_snake"
+
     def test_run_finished_event(self) -> None:
         """Test conversion of RUN_FINISHED event."""
         converter = AGUIEventConverter()

@@ -56,7 +56,7 @@ from agent_framework import (
 )
 from agent_framework.ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
 from agent_framework.openai import OpenAIChatClient
-from azure.ai.agentserver.core import get_request_context
+from azure.ai.agentserver.core import FoundryAgentRequestContext, get_request_context
 from azure.ai.agentserver.responses import (
     FileResponseStore,
     InMemoryResponseProvider,
@@ -1086,6 +1086,49 @@ class TestResponsesHostServerInit:
 
 
 class TestAgentSessionPersistence:
+    @pytest.mark.parametrize(
+        ("platform_session_id", "request_session_id", "call_id", "expected_error"),
+        [
+            ("sandbox-1", "sandbox-1", None, "trusted user ID and call ID"),
+            ("", "caller-session", "call-1", "FOUNDRY_AGENT_SESSION_ID"),
+            ("sandbox-1", "caller-session", "call-1", "does not match"),
+        ],
+    )
+    async def test_hosted_invalid_identity_fails_without_running_agent(
+        self, platform_session_id: str, request_session_id: str, call_id: str | None, expected_error: str
+    ) -> None:
+        agent = _make_agent()
+        server = _make_server(agent, session_store=SessionStore())
+        server.config.is_hosted = True
+        server.config.session_id = platform_session_id
+        request = CreateResponse(model="m", input="hi")
+        context = ResponseContext(response_id="response-1", mode_flags=MagicMock())
+
+        with patch(
+            "agent_framework_foundry_hosting._responses.get_request_context",
+            return_value=FoundryAgentRequestContext(session_id=request_session_id, user_id="user-1", call_id=call_id),
+        ):
+            events = [
+                event
+                async for event in server._handle_response(  # pyright: ignore[reportPrivateUsage]
+                    request, context, asyncio.Event()
+                )
+            ]
+
+        types = [event["type"] for event in events if isinstance(event, Mapping)]
+        assert types[-1] == "response.failed"
+        assert "response.completed" not in types
+        failed_events = [
+            event for event in events if isinstance(event, Mapping) and event.get("type") == "response.failed"
+        ]
+        assert len(failed_events) == 1
+        failed_event = cast(Mapping[str, Any], failed_events[0])
+        response = cast(Mapping[str, Any], failed_event["response"])
+        error = cast(Mapping[str, Any], response["error"])
+        assert expected_error in error["message"]
+        agent.run.assert_not_called()
+        agent.create_session.assert_not_called()
+
     async def test_previous_response_chain_restores_session_state(self) -> None:
         seen_counts: list[int] = []
         seen_session_ids: list[str] = []

@@ -2403,21 +2403,7 @@ class FileHistoryProvider(HistoryProvider):
         def _append_messages() -> None:
             with file_lock:
                 if self.serialization_format == "json":
-                    existing_messages: list[Message] = []
-                    if file_path.exists():
-                        with file_path.open("r", encoding="utf-8") as f:
-                            for line in f:
-                                line = line.strip()
-                                if not line:
-                                    continue
-                                try:
-                                    payload = self.loads(line)
-                                    msg = Message.from_dict(dict(cast(Mapping[str, Any], payload)))
-                                    existing_messages.append(msg)
-                                except Exception:
-                                    logger.debug("failed to parse history line for deduplication")
-                                    continue
-
+                    existing_messages = self._read_json_messages(file_path) if file_path.exists() else []
                     new_messages = filter_new_messages(existing_messages, messages)
                     if new_messages:
                         with file_path.open("a", encoding="utf-8") as file_handle:
