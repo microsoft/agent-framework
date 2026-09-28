@@ -197,11 +197,12 @@ internal sealed class InvokeMcpToolExecutor(
     {
         if (mcpToolHandler is IWorkflowScopedMcpToolHandler scopedHandler)
         {
+            string generatedWorkflowSessionId = Guid.NewGuid().ToString("N");
             string workflowSessionId = context is IWorkflowSessionContext sessionContext
                 ? sessionContext.SessionId
                 : await context.ReadOrInitStateAsync(
                     DeclarativeWorkflowContext.WorkflowSessionIdStateKey,
-                    static () => Guid.NewGuid().ToString("N"),
+                    () => generatedWorkflowSessionId,
                     VariableScopeNames.System,
                     cancellationToken).ConfigureAwait(false);
             return await scopedHandler.InvokeToolInWorkflowSessionAsync(
