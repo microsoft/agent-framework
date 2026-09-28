@@ -2177,7 +2177,7 @@ async def test_endpoint_detached_run_guards_active_scoped_thread_mutations(
     assert mutation_status == 409
     assert b"already active" in mutation_body
 
-    checkpoint_status, _ = await _post_asgi_request(
+    checkpoint_status, checkpoint_body = await _post_asgi_request(
         app,
         "/detached-guard",
         {
@@ -2188,7 +2188,8 @@ async def test_endpoint_detached_run_guards_active_scoped_thread_mutations(
             "forwardedProps": {"checkpoint_id": "checkpoint-1"},
         },
     )
-    assert checkpoint_status == 409
+    assert checkpoint_status == 200
+    assert b'"type":"MESSAGES_SNAPSHOT"' in checkpoint_body
 
     for forwarded_props in (
         {"resume": [{"interruptId": "approval-1", "status": "resolved", "payload": {"approved": True}}]},

@@ -2977,6 +2977,68 @@ async def test_finish_reason_and_trailing_usage_do_not_persist_invalidated_model
     assert "c1" not in str(snapshot.messages)
 
 
+async def test_tool_result_safe_point_excludes_unfinalized_sibling_output() -> None:
+    """Intermediate result snapshots retain completed groups but omit sibling model output."""
+    from agent_framework_ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
+
+    invalidated = ResponseInvalidatedException("provider invalidated result update")
+    function_call = Content.from_function_call(call_id="safe-call", name="lookup", arguments={})
+    stub = StubAgent()
+    original_run = stub.run
+
+    def invalidating_run(*args: Any, **kwargs: Any) -> Any:
+        if not kwargs.get("stream", False):
+            return original_run(*args, **kwargs)
+
+        async def updates():
+            yield AgentResponseUpdate(
+                contents=[function_call],
+                role="assistant",
+                finish_reason="tool_calls",
+            )
+            yield AgentResponseUpdate(
+                contents=[
+                    Content.from_text(text="unfinalized sibling text"),
+                    Content.from_text_reasoning(id="unsafe-reasoning", text="unfinalized reasoning"),
+                    Content.from_function_result(call_id="safe-call", result="completed tool output"),
+                ],
+                role="tool",
+            )
+
+        stream = ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+        def invalidate_result(response: AgentResponse[Any]) -> None:
+            del response
+            raise invalidated
+
+        return stream.with_result_hook(invalidate_result)
+
+    stub.run = invalidating_run  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+    store = InMemoryAGUIThreadSnapshotStore()
+    agent = AgentFrameworkAgent(agent=stub, snapshot_store=store)
+
+    with pytest.raises(ResponseInvalidatedException, match="provider invalidated"):
+        _ = [
+            event
+            async for event in agent.run(
+                {
+                    "thread_id": "safe-projection-thread",
+                    "run_id": "safe-projection-run",
+                    "__ag_ui_snapshot_scope": "tenant-a",
+                    "messages": [{"role": "user", "content": "Start"}],
+                }
+            )
+        ]
+
+    snapshot = await store.get(scope="tenant-a", thread_id="safe-projection-thread")
+    assert snapshot is not None
+    serialized = str(snapshot.messages)
+    assert "safe-call" in serialized
+    assert "completed tool output" in serialized
+    assert "unfinalized sibling text" not in serialized
+    assert "unfinalized reasoning" not in serialized
+
+
 async def test_snapshot_is_saved_after_tool_result_without_finish_reason():
     """A completed tool-result batch is durable even when its update has no finish reason."""
     from agent_framework_ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
@@ -3198,12 +3260,14 @@ async def test_interrupt_snapshot_is_saved_after_approval_lifecycle_registration
     from agent_framework_ag_ui import InMemoryAGUIThreadSnapshotStore
 
     approval_saved = asyncio.Event()
+    saved_snapshots: list[Any] = []
     state_store = InMemoryAGUIApprovalStateStore()
     scoped_thread_id = approval_state_thread_id(scope="tenant-a", thread_id="approval-thread")
 
     class RecordingStore(InMemoryAGUIThreadSnapshotStore):
         async def save(self, **kwargs: Any) -> None:
             snapshot = kwargs["snapshot"]
+            saved_snapshots.append(snapshot)
             for interrupt in snapshot.interrupt or []:
                 occurrence = state_store.lifecycle.occurrence_for_alias(
                     thread_id=scoped_thread_id,
@@ -3226,7 +3290,11 @@ async def test_interrupt_snapshot_is_saved_after_approval_lifecycle_registration
     stub = StubAgent(
         updates=[
             AgentResponseUpdate(
-                contents=[approval_request],
+                contents=[
+                    Content.from_text(text="unfinalized approval sibling"),
+                    Content.from_text_reasoning(id="approval-reasoning", text="unfinalized approval reasoning"),
+                    approval_request,
+                ],
                 role="assistant",
                 finish_reason="tool_calls",
             )
@@ -3257,6 +3325,12 @@ async def test_interrupt_snapshot_is_saved_after_approval_lifecycle_registration
     assert snapshot is not None
     assert snapshot.interrupt is not None
     assert snapshot.interrupt[0]["id"] == "approval-occurrence"
+    assert len(saved_snapshots) >= 2
+    intermediate_snapshot = saved_snapshots[0]
+    assert "unfinalized approval sibling" not in str(intermediate_snapshot.messages)
+    assert "unfinalized approval reasoning" not in str(intermediate_snapshot.messages)
+    assert "unfinalized approval sibling" in str(snapshot.messages)
+    assert "unfinalized approval reasoning" in str(snapshot.messages)
 
 
 async def test_plain_async_iterable_persists_waiting_approval_snapshot():

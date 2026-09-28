@@ -102,6 +102,7 @@ from ._run_common import (
     _extract_resume_payload,  # type: ignore
     _extract_tool_result_display,  # type: ignore
     _has_only_tool_calls,  # type: ignore
+    _is_snapshot_hydration_request,  # type: ignore
     _iterate_with_context,  # type: ignore
     _normalize_resume_interrupts,  # type: ignore
     _new_tool_call_segment_id,  # type: ignore
@@ -2363,6 +2364,97 @@ def _build_messages_snapshot(
     return MessagesSnapshotEvent(messages=_project_host_payload_history(bounded_messages))  # type: ignore[arg-type]
 
 
+def _safe_point_tool_call_ids(flow: FlowState) -> set[str]:
+    """Return tool calls whose snapshot content is safe before stream finalization."""
+    safe_ids = {str(result["toolCallId"]) for result in flow.tool_results if result.get("toolCallId") is not None}
+    interrupt_call_ids = {
+        str(tool_call_id)
+        for interrupt in flow.interrupts
+        if (tool_call_id := interrupt.get("toolCallId") or interrupt.get("id")) is not None
+    }
+    safe_ids.update(interrupt_call_ids)
+    for call in flow.pending_tool_calls:
+        call_id = call.get("id")
+        function = call.get("function")
+        if call_id is None or not isinstance(function, Mapping) or function.get("name") != "confirm_changes":
+            continue
+        arguments = function.get("arguments")
+        try:
+            parsed_arguments = json.loads(arguments) if isinstance(arguments, str) else arguments
+        except json.JSONDecodeError:
+            parsed_arguments = None
+        if not isinstance(parsed_arguments, Mapping):
+            continue
+        original_call_id = parsed_arguments.get("function_call_id")
+        if original_call_id is None or str(original_call_id) in interrupt_call_ids:
+            safe_ids.add(str(call_id))
+    return safe_ids
+
+
+def _build_safe_point_messages_snapshot(
+    flow: FlowState,
+    snapshot_messages: list[dict[str, Any]],
+) -> MessagesSnapshotEvent:
+    """Build an intermediate snapshot without unfinalized text or reasoning."""
+    all_messages = list(snapshot_messages)
+    safe_call_ids = _safe_point_tool_call_ids(flow)
+    results_by_call_id: dict[str, list[dict[str, Any]]] = {}
+    for result in flow.tool_results:
+        call_id = result.get("toolCallId")
+        if call_id is not None:
+            results_by_call_id.setdefault(str(call_id), []).append(result)
+
+    emitted_call_ids: set[str] = set()
+    for segment in flow.snapshot_segments:
+        if segment.get("kind") != "tool_calls":
+            continue
+        calls = [
+            flow.tool_calls_by_id[call_id]
+            for call_id in segment.get("call_ids", [])
+            if call_id in safe_call_ids and call_id in flow.tool_calls_by_id
+        ]
+        if not calls:
+            continue
+        all_messages.append(
+            {
+                "id": str(segment.get("id") or generate_event_id()),
+                "role": "assistant",
+                "tool_calls": [call.copy() for call in calls],
+            }
+        )
+        for call in calls:
+            call_id = str(call["id"])
+            emitted_call_ids.add(call_id)
+            all_messages.extend(results_by_call_id.get(call_id, []))
+
+    leftover_calls = [
+        call
+        for call in flow.pending_tool_calls
+        if (call_id := call.get("id")) is not None
+        and str(call_id) in safe_call_ids
+        and str(call_id) not in emitted_call_ids
+    ]
+    if leftover_calls:
+        all_messages.append(
+            {
+                "id": generate_event_id(),
+                "role": "assistant",
+                "tool_calls": [call.copy() for call in leftover_calls],
+            }
+        )
+        for call in leftover_calls:
+            call_id = str(call["id"])
+            emitted_call_ids.add(call_id)
+            all_messages.extend(results_by_call_id.get(call_id, []))
+
+    for call_id, results in results_by_call_id.items():
+        if call_id not in emitted_call_ids:
+            all_messages.extend(results)
+
+    bounded_messages = _bound_host_payload_history(_persistable_host_payload_history(all_messages))
+    return MessagesSnapshotEvent(messages=_project_host_payload_history(bounded_messages))  # type: ignore[arg-type]
+
+
 def _text_events_to_snapshot_messages(events: list[BaseEvent]) -> list[dict[str, Any]]:
     """Convert streamed text-message events into snapshot message dictionaries."""
     messages: list[dict[str, Any]] = []
@@ -2773,7 +2865,11 @@ async def _run_agent_stream(
                 await snapshot_session.clear_interrupts(interrupt_ids=retired_interrupt_ids)
                 stored_snapshot = snapshot_session.stored
                 stored_pending_approval_interrupt_ids.difference_update(retired_interrupt_ids)
-    if snapshot_session.enabled and not raw_messages and resume_payload is None:
+    if _is_snapshot_hydration_request(
+        input_data,
+        snapshot_enabled=snapshot_session.enabled,
+        supports_checkpoint_resume=False,
+    ):
         async for event in snapshot_session.hydrate_events(run_id=run_id):
             yield event
         return
@@ -3356,8 +3452,8 @@ async def _run_agent_stream(
         cast(dict[str, Any], make_json_safe(flow.current_state)) if flow.current_state else None
     )
 
-    async def save_flow_snapshot() -> None:
-        safe_point_event = _build_messages_snapshot(flow, snapshot_messages)
+    async def save_safe_point_snapshot() -> None:
+        safe_point_event = _build_safe_point_messages_snapshot(flow, snapshot_messages)
         safe_point_messages = _event_messages_to_snapshot_dicts(list(safe_point_event.messages))
         if resume_payload is not None and not seeded_resume_from_snapshot and snapshot_seed_messages is None:
             safe_point_messages = snapshot_session.resume_seeded_messages(safe_point_messages)
@@ -3556,7 +3652,7 @@ async def _run_agent_stream(
                 and not flow.waiting_for_approval
                 and not config.use_service_session
             ):
-                await save_flow_snapshot()
+                await save_safe_point_snapshot()
 
             # Stop if waiting for approval
             if flow.waiting_for_approval:
@@ -3592,7 +3688,7 @@ async def _run_agent_stream(
         if isinstance(stream, ResponseStream):
             await stream.get_final_response()
         if snapshot_session.enabled and not config.use_service_session:
-            await save_flow_snapshot()
+            await save_safe_point_snapshot()
 
     # If no updates at all, still emit RunStarted
     if not run_started_emitted:

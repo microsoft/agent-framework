@@ -21,7 +21,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from ._agent import AgentFrameworkAgent
 from ._approval_state import _APPROVAL_SCOPE_INPUT_KEY
-from ._run_common import _extract_resume_payload
+from ._run_common import _is_snapshot_hydration_request
 from ._snapshots import (
     _DEFAULT_STATE_INPUT_KEY,
     _SNAPSHOT_SCOPE_INPUT_KEY,
@@ -88,19 +88,6 @@ def _validate_detached_run_options(max_detached_runs: int, detached_run_timeout_
         raise ValueError("max_detached_runs must be greater than 0.")
     if detached_run_timeout_seconds <= 0:
         raise ValueError("detached_run_timeout_seconds must be positive.")
-
-
-def _is_snapshot_hydration_request(
-    request: AGUIRequest,
-    input_data: dict[str, Any],
-    *,
-    snapshot_persistence_active: bool,
-) -> bool:
-    """Return whether a request only replays the latest stored snapshot."""
-    if not snapshot_persistence_active or request.messages or _extract_resume_payload(input_data) is not None:
-        return False
-    forwarded_props = request.forwarded_props or {}
-    return not (forwarded_props.get("checkpoint_id") or forwarded_props.get("checkpointId"))
 
 
 def add_agent_framework_fastapi_endpoint(
@@ -265,9 +252,9 @@ def add_agent_framework_fastapi_endpoint(
 
             keepalive_enabled = keepalive_seconds is not None
             snapshot_hydration_request = _is_snapshot_hydration_request(
-                request_body,
                 input_data,
-                snapshot_persistence_active=snapshot_persistence_active,
+                snapshot_enabled=snapshot_persistence_active,
+                supports_checkpoint_resume=isinstance(protocol_runner, AgentFrameworkWorkflow),
             )
             active_run_key: tuple[str | None, str] | None = None
             if detached_runs and request_body.thread_id is not None and not snapshot_hydration_request:
