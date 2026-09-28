@@ -281,6 +281,23 @@ public sealed class TextSearchProviderTests
             Times.AtLeastOnce);
     }
 
+    [Fact]
+    public async Task InvokingAsync_ShouldPropagateCancellation_WhenSearchIsCanceledAsync()
+    {
+        // Arrange
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        var provider = new TextSearchProvider((_, ct) => Task.FromCanceled<IEnumerable<TextSearchProvider.TextSearchResult>>(ct));
+        var invokingContext = new AIContextProvider.InvokingContext(
+            s_mockAgent,
+            new TestAgentSession(),
+            new AIContext { Messages = new List<ChatMessage> { new(ChatRole.User, "Q?") } });
+
+        // Act & Assert
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            async () => await provider.InvokingAsync(invokingContext, cts.Token));
+    }
+
     [Theory]
     [InlineData(null, null)]
     [InlineData("Custom context prompt", "Custom citations prompt")]
