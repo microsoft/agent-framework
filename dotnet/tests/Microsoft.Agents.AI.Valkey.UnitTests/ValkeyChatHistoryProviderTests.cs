@@ -122,6 +122,28 @@ public sealed class ValkeyChatHistoryProviderTests
         Assert.Equal("custom_key", keys[0]);
     }
 
+    [Fact]
+    public void Constructor_NegativeMaxMessages_ThrowsArgumentOutOfRangeException()
+    {
+        // Act & Assert
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new ValkeyChatHistoryProvider(
+                CreateMockConnection().Object,
+                _ => new ValkeyChatHistoryProvider.State("conv-1"),
+                new ValkeyChatHistoryProviderOptions { MaxMessages = -1 }));
+    }
+
+    [Fact]
+    public void Constructor_NegativeMaxMessagesToRetrieve_ThrowsArgumentOutOfRangeException()
+    {
+        // Act & Assert
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new ValkeyChatHistoryProvider(
+                CreateMockConnection().Object,
+                _ => new ValkeyChatHistoryProvider.State("conv-1"),
+                new ValkeyChatHistoryProviderOptions { MaxMessagesToRetrieve = -1 }));
+    }
+
     // --- ProvideChatHistoryAsync tests ---
 
     [Fact]
@@ -174,6 +196,30 @@ public sealed class ValkeyChatHistoryProviderTests
         // Assert — should use -5, -1 range
         dbMock.Verify(d => d.ListRangeAsync(
             It.IsAny<ValkeyKey>(), -5, -1), Times.Once);
+    }
+
+    [Fact]
+    public async Task ProvideChatHistoryAsync_WithZeroMaxMessagesToRetrieve_ReturnsNoHistoryAsync()
+    {
+        // Arrange
+        var dbMock = new Mock<IDatabase>();
+        dbMock.Setup(d => d.ListRangeAsync(It.IsAny<ValkeyKey>(), It.IsAny<long>(), It.IsAny<long>()))
+            .ReturnsAsync([JsonSerializer.Serialize(new ChatMessage(ChatRole.Assistant, "stored"))]);
+
+        var provider = new ValkeyChatHistoryProvider(
+            CreateMockConnection(dbMock).Object,
+            _ => new ValkeyChatHistoryProvider.State("conv-1"),
+            new ValkeyChatHistoryProviderOptions { MaxMessagesToRetrieve = 0 });
+
+        var context = TestHelpers.CreateChatHistoryInvokingContext();
+
+        // Act
+        var result = await provider.InvokingAsync(context);
+
+        // Assert — LRANGE key 0 -1 would return the whole list, so no range query is made
+        Assert.DoesNotContain(result, m => m.Text == "stored");
+        dbMock.Verify(d => d.ListRangeAsync(
+            It.IsAny<ValkeyKey>(), It.IsAny<long>(), It.IsAny<long>()), Times.Never);
     }
 
     [Fact]
@@ -245,5 +291,30 @@ public sealed class ValkeyChatHistoryProviderTests
         // Assert — trim called unconditionally when MaxMessages is set
         dbMock.Verify(d => d.ListTrimAsync(
             It.IsAny<ValkeyKey>(), -10, -1), Times.Once);
+    }
+
+    [Fact]
+    public async Task StoreChatHistoryAsync_WithZeroMaxMessages_StoresNothingAsync()
+    {
+        // Arrange
+        var dbMock = new Mock<IDatabase>();
+
+        var provider = new ValkeyChatHistoryProvider(
+            CreateMockConnection(dbMock).Object,
+            _ => new ValkeyChatHistoryProvider.State("conv-1"),
+            new ValkeyChatHistoryProviderOptions { MaxMessages = 0 });
+
+        var context = TestHelpers.CreateChatHistoryInvokedContext(
+            [new ChatMessage(ChatRole.User, "hello")],
+            [new ChatMessage(ChatRole.Assistant, "hi")]);
+
+        // Act
+        await provider.InvokedAsync(context);
+
+        // Assert — LTRIM key 0 -1 would keep the whole list, so nothing is pushed
+        dbMock.Verify(d => d.ListRightPushAsync(
+            It.IsAny<ValkeyKey>(), It.IsAny<ValkeyValue[]>()), Times.Never);
+        dbMock.Verify(d => d.ListTrimAsync(
+            It.IsAny<ValkeyKey>(), It.IsAny<long>(), It.IsAny<long>()), Times.Never);
     }
 }
