@@ -23,6 +23,10 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
     /// </summary>
     /// <param name="endpoints">The <see cref="IEndpointRouteBuilder"/> to add the OpenAI Responses endpoints to.</param>
     /// <param name="agentBuilder">The builder for <see cref="AIAgent"/> to map the OpenAI Responses endpoints for.</param>
+    /// <remarks>
+    /// See <see cref="MapOpenAIResponses(IEndpointRouteBuilder, string)"/> for endpoint authorization
+    /// and caller isolation requirements.
+    /// </remarks>
     public static IEndpointConventionBuilder MapOpenAIResponses(this IEndpointRouteBuilder endpoints, IHostedAgentBuilder agentBuilder)
         => MapOpenAIResponses(endpoints, agentBuilder, path: null);
 
@@ -33,6 +37,10 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
     /// <param name="agentBuilder">The builder for <see cref="AIAgent"/> to map the OpenAI Responses endpoints for.</param>
     /// <param name="path">Custom route path for the OpenAI Responses endpoint.</param>
     /// <param name="mapOptions">Optional options controlling how incoming requests are mapped onto the agent run.</param>
+    /// <remarks>
+    /// See <see cref="MapOpenAIResponses(IEndpointRouteBuilder, string)"/> for endpoint authorization
+    /// and caller isolation requirements.
+    /// </remarks>
     public static IEndpointConventionBuilder MapOpenAIResponses(this IEndpointRouteBuilder endpoints, IHostedAgentBuilder agentBuilder, string? path, OpenAIResponsesMapOptions? mapOptions = null)
     {
         ArgumentNullException.ThrowIfNull(endpoints);
@@ -60,6 +68,10 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
     /// </summary>
     /// <param name="endpoints">The <see cref="IEndpointRouteBuilder"/> to add the OpenAI Responses endpoints to.</param>
     /// <param name="agent">The <see cref="AIAgent"/> instance to map the OpenAI Responses endpoints for.</param>
+    /// <remarks>
+    /// See <see cref="MapOpenAIResponses(IEndpointRouteBuilder, string)"/> for endpoint authorization
+    /// and caller isolation requirements.
+    /// </remarks>
     public static IEndpointConventionBuilder MapOpenAIResponses(this IEndpointRouteBuilder endpoints, AIAgent agent) =>
         MapOpenAIResponses(endpoints, agent, responsesPath: null);
 
@@ -70,6 +82,10 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
     /// <param name="agent">The <see cref="AIAgent"/> instance to map the OpenAI Responses endpoints for.</param>
     /// <param name="responsesPath">Custom route path for the responses endpoint.</param>
     /// <param name="mapOptions">Optional options controlling how incoming requests are mapped onto the agent run.</param>
+    /// <remarks>
+    /// See <see cref="MapOpenAIResponses(IEndpointRouteBuilder, string)"/> for endpoint authorization
+    /// and caller isolation requirements.
+    /// </remarks>
     public static IEndpointConventionBuilder MapOpenAIResponses(
         this IEndpointRouteBuilder endpoints,
         AIAgent agent,
@@ -152,6 +168,10 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
     /// Maps OpenAI Responses API endpoints to the specified <see cref="IEndpointRouteBuilder"/>.
     /// </summary>
     /// <param name="endpoints">The <see cref="IEndpointRouteBuilder"/> to add the OpenAI Responses endpoints to.</param>
+    /// <remarks>
+    /// See <see cref="MapOpenAIResponses(IEndpointRouteBuilder, string)"/> for endpoint authorization
+    /// and caller isolation requirements.
+    /// </remarks>
     public static IEndpointConventionBuilder MapOpenAIResponses(this IEndpointRouteBuilder endpoints) =>
         MapOpenAIResponses(endpoints, responsesPath: null);
 
@@ -160,6 +180,25 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
     /// </summary>
     /// <param name="endpoints">The <see cref="IEndpointRouteBuilder"/> to add the OpenAI Responses endpoints to.</param>
     /// <param name="responsesPath">Custom route path for the responses endpoint.</param>
+    /// <remarks>
+    /// <para>
+    /// This method does not require authorization automatically. Configure authentication and enforce
+    /// authorization on the returned route group, for example with <c>RequireAuthorization()</c>.
+    /// Protect separately mapped Conversations endpoints as well.
+    /// </para>
+    /// <para>
+    /// Multi-user hosts must register an <see cref="AgentIsolationKeyProvider"/> to scope stored responses
+    /// and conversations. Response and conversation storage can retain data even without an
+    /// <see cref="AgentSessionStore"/>. This method does not add an isolation decorator to a configured agent
+    /// session store; register it with an isolation-enabled helper such as <c>WithSessionStore(...)</c> or
+    /// <c>WithInMemorySessionStore()</c>, or wrap it in <see cref="IsolationKeyScopedAgentSessionStore"/>, so that
+    /// session and approval state is also scoped to the caller. For claims-based isolation, register
+    /// <c>AddHttpContextAccessor()</c> and <c>UseClaimsBasedAgentIsolation(...)</c> from
+    /// <c>Microsoft.Agents.AI.Hosting.AspNetCore</c>, using a claim that uniquely identifies the caller.
+    /// Response and conversation identifiers are not authorization tokens. Clients must authenticate
+    /// every operation, including continuations, approval responses, retrieval, cancellation, and deletion.
+    /// </para>
+    /// </remarks>
     public static IEndpointConventionBuilder MapOpenAIResponses(
         this IEndpointRouteBuilder endpoints,
         [StringSyntax("Route")] string? responsesPath)

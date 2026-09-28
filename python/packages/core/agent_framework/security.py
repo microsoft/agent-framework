@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING, Annotated, Any, NoReturn, cast
 from pydantic import BaseModel, Field
 
 from ._feature_stage import ExperimentalFeature, experimental
-from ._middleware import FunctionInvocationContext, FunctionMiddleware, MiddlewareTermination
+from ._middleware import FunctionInvocationContext, FunctionMiddleware, MiddlewareFailure, MiddlewareTermination
 from ._serialization import SerializationMixin
 from ._sessions import AgentSession, ContextProvider
 from ._tools import (
@@ -2880,7 +2880,11 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
                 binding = self._pending_record(context, violations)
             except (TypeError, ValueError, OverflowError):
                 self._block_unsafe_approval_binding(context, context_label=context_label)
-            approved = self._matches_pending_approval(context, binding)
+                raise MiddlewareFailure(  # pyright: ignore[reportUnreachable]
+                    "Unsafe policy approval binding did not terminate"
+                ) from None
+            else:
+                approved = self._matches_pending_approval(context, binding)
 
         disclosed = ", ".join(item["violation_type"] for item in violations)
         if approved:
@@ -2896,7 +2900,7 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
                 violations=violations,
                 binding=binding,
             )
-        elif self.block_on_violation:
+        elif self.block_on_violation or self.approval_on_violation:
             self._block_policy_violation(context, context_label=context_label, violations=violations)
         else:
             logger.warning("WARNING: Tool '%s' policy violation(s) [%s] (allowed)", function_name, disclosed)

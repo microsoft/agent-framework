@@ -1815,6 +1815,20 @@ async def test_scoreless_results_remain_when_threshold_cannot_be_applied() -> No
         ({"one": True, "two": False}, {"two": False, "one": True}, True),
         ({"one": True}, {"two": True}, False),
         ({"value": True}, {}, False),
+        # Sets: `{1} == {True}` is true in Python, so they need the same
+        # bool/number distinction the sequence and mapping cases get.
+        ({1}, {True}, False),
+        ({0}, {False}, False),
+        (frozenset({1}), frozenset({True}), False),
+        ({(1,)}, {(True,)}, False),
+        ({1}, {1.0}, True),
+        ({1, 2}, {2, 1}, True),
+        ({1}, {1, 2}, False),
+        (set(), set(), True),
+        # set and frozenset compare equal by contents in Python; keep that.
+        ({1}, frozenset({1}), True),
+        ({True}, frozenset({1}), False),
+        ({1}, [1], False),
         ("1", 1, False),
         ("text", "text", True),
         (b"\x01", b"\x01", True),

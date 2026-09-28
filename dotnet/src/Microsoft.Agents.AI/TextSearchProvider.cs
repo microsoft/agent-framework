@@ -196,7 +196,7 @@ public sealed class TextSearchProvider : MessageAIContextProvider
 
             return [new ChatMessage(ChatRole.User, formatted)];
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
             this._logger?.LogError(ex, "TextSearchProvider: Failed to search for data due to error");
             return [];
