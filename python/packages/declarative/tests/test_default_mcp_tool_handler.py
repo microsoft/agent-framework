@@ -968,7 +968,7 @@ class TestCache:
 
             release_first.set()
             first_result = await first
-            await close_task
+            await asyncio.gather(close_task)
 
         assert not first_result.is_error
         assert FakeTool.instances[0].close_count == 1
