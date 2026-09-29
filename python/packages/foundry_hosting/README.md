@@ -52,6 +52,25 @@ implementations must use `history_source="agent"` because that protocol does not
 instance with another host or invoke it directly after constructing the server. An agent returned by a callable belongs
 to that request.
 
+### OAuth consent origin allowlist
+
+OAuth consent links keep their existing absolute-HTTPS safety validation. Hosts that know the expected authorization
+origins can add an exact origin allowlist:
+
+```python
+server = ResponsesHostServer(
+    agent,
+    allowed_oauth_consent_origins=[
+        "https://logic-region.consent.azure-apihub.net",
+        "https://auth.partner.example",
+    ],
+)
+```
+
+An omitted allowlist preserves existing behavior and does not restrict the HTTPS origin. A provided allowlist activates
+the gate, so an empty sequence rejects every consent link. Entries are normalized as origins, so paths and query strings
+belong on the emitted consent link, not in the configuration.
+
 To preserve the agent's regular history and service-storage behavior, select the agent as the history source:
 
 ```python
@@ -75,6 +94,18 @@ The `store` argument remains independent: it selects the AgentServer response pr
 persistence and retrieval. Omitting it or passing `None` selects the environment default. With
 `history_source="agent_server"`, that response provider also supplies model history; with `history_source="agent"`, it
 does not.
+
+## Computer use
+
+The Responses host emits native `computer_call` and `computer_call_output` items, including ordered `actions`,
+screenshots, and typed safety checks. It restores those items from request input and prior response history as
+`Content.from_computer_tool_call(...)` and `Content.from_computer_tool_result(...)`. The application must review
+`pending_safety_checks` before executing actions and return a screenshot `Content` with explicit
+`acknowledged_safety_checks`; the host never acknowledges checks automatically. Results correlate to calls by
+`call_id`. When an upstream provider's item ID does not meet AgentServer's ID format, the host assigns a valid
+output item ID without changing the provider's `call_id`.
+Although screenshots are optional in shared `Content`, this Responses host requires them on computer results.
+The computer-use `Content` constructors and `ComputerSafetyCheck` type are experimental Agent Framework APIs.
 
 ## State store
 
