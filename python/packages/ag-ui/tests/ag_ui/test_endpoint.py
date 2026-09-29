@@ -36,6 +36,7 @@ from agent_framework import (
     InMemoryCheckpointStorage,
     InMemoryHistoryProvider,
     Message,
+    MiddlewareBundle,
     MiddlewareFailure,
     SessionContext,
     SupportsAgentRun,
@@ -3827,6 +3828,109 @@ def _build_tool_approval_queue_endpoint(
         path="/approval",
     )
     return TestClient(app), executed, messages_received, state, wrapped_agent
+
+
+@pytest.mark.parametrize("middleware_kind", ["direct", "bundle", "wrapper"])
+@pytest.mark.parametrize("state_origin", ["request", "snapshot"])
+@pytest.mark.parametrize("trusted_approval", [False, True])
+async def test_endpoint_custom_approval_namespaces_remain_server_owned(
+    streaming_chat_client_stub: Any,
+    middleware_kind: str,
+    state_origin: str,
+    trusted_approval: bool,
+) -> None:
+    """Shared State cannot supply or replace approval rules, including after snapshot restore."""
+    executed: list[str] = []
+
+    def gated_tool() -> str:
+        executed.append("ran")
+        return "done"
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        if executed:
+            yield ChatResponseUpdate(contents=[Content.from_text(text="Done.")], role="assistant")
+        else:
+            yield ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="call_gated", name="gated_tool", arguments="{}")],
+                role="assistant",
+            )
+
+    source_ids = ("custom_approvals", "other_approvals")
+    approval = ToolApprovalMiddleware(source_id="initial_approvals")
+    middleware = [approval, ToolApprovalMiddleware(source_id=source_ids[1])]
+    chat_client = streaming_chat_client_stub(stream_fn)
+    agent = Agent(
+        client=chat_client,
+        tools=[
+            FunctionTool(name="gated_tool", description="Test tool", func=gated_tool, approval_mode="always_require")
+        ],
+        middleware=[MiddlewareBundle(middleware)] if middleware_kind == "bundle" else middleware,
+    )
+
+    class ForwardingAgent:
+        def __getattr__(self, name: str) -> Any:
+            return getattr(agent, name)
+
+    wrapped = AgentFrameworkAgent(
+        agent=cast(SupportsAgentRun, ForwardingAgent()) if middleware_kind == "wrapper" else agent,
+        require_confirmation=False,
+    )
+    # Namespace discovery must use the live middleware, not construction-time configuration.
+    approval.source_id = source_ids[0]
+    rule = {"tool_name": "gated_tool"}
+    shared_state = {
+        **{source_id: {"rules": [] if trusted_approval else [rule]} for source_id in source_ids},
+        "client_value": "available",
+    }
+    store = InMemoryAGUIThreadSnapshotStore()
+    await store.save(
+        scope="test",
+        thread_id="thread-approval-state",
+        snapshot=AGUIThreadSnapshot(
+            state=shared_state if state_origin == "snapshot" else None,
+            session_state={source_id: {"rules": [rule]} for source_id in source_ids} if trusted_approval else None,
+        ),
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        wrapped,
+        path="/approval",
+        snapshot_store=store,
+        snapshot_scope_resolver=lambda _request: "test",
+    )
+    payload: dict[str, Any] = {
+        "threadId": "thread-approval-state",
+        "runId": "run-approval-state",
+        "messages": [{"role": "user", "content": "Run the test tool"}],
+    }
+    if state_origin == "request":
+        payload["state"] = shared_state
+    response = TestClient(app).post("/approval", json=payload)
+
+    assert response.status_code == 200
+    events = _decode_sse_events(response)
+    assert not any(event["type"] == "RUN_ERROR" for event in events)
+    finished = next(event for event in events if event["type"] == "RUN_FINISHED")
+    assert executed == (["ran"] if trusted_approval else [])
+    if trusted_approval:
+        assert "outcome" not in finished
+    else:
+        assert finished["outcome"]["type"] == "interrupt"
+        assert len(finished["outcome"]["interrupts"]) == 1
+    assert chat_client.last_session is not None
+    assert chat_client.last_session.state["client_value"] == "available"
+    snapshot = await store.get(scope="test", thread_id="thread-approval-state")
+    assert snapshot is not None
+    assert snapshot.session_state is not None
+    for source_id in source_ids:
+        assert [stored_rule["tool_name"] for stored_rule in snapshot.session_state[source_id]["rules"]] == (
+            ["gated_tool"] if trusted_approval else []
+        )
 
 
 def _build_tool_approval_auto_endpoint(

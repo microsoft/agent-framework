@@ -70,6 +70,10 @@ agent_framework/
 - **`ChatResponseUpdate`** - Streaming response update
 - **`AgentResponse`** / **`AgentResponseUpdate`** - Agent-level response wrappers
 - **`Content`** - Base class for message content (text, function calls, images, etc.)
+- **Computer use** - `ComputerSafetyCheck` and the `Content.from_computer_tool_call` / `from_computer_tool_result`
+  constructors are experimental under `COMPUTER_USE`; the rest of `Content` retains its existing stage. Computer
+  results can omit screenshots in core; OpenAI-based connectors require them when converting to Responses items.
+  Completed call/result pairs remain in the transcript but are not user-input requests.
 - **`ChatOptions`** - TypedDict for chat request options
 
 ### Tools (`_tools.py`)
@@ -163,6 +167,9 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
 - **`HistoryProvider`** - Base class for conversation history storage
 - **`InMemoryHistoryProvider`** - Built-in session-state history provider for local runs
 - **`FileHistoryProvider`** - Experimental append-only file-backed history provider; msgspec JSON Lines is the default and `serialization_format="msgpack"` uses length-prefixed binary MessagePack records. Custom `dumps`/`loads` remain as deprecated JSON-only compatibility hooks and emit `DeprecationWarning` when supplied.
+- **Mixed computer/function workflow history** - The default `HistoryProvider.after_run` defers completed local
+  function results for loadable providers that store inputs until the computer reply arrives, so history records
+  them once in call order. Custom `after_run` implementations must handle this themselves.
 
 ### Skills (`_skills.py`)
 
@@ -248,6 +255,17 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
   A `call_id` may be reused after a completed round, so approval normalization matches ordered call occurrences and
   consumes approved results per occurrence rather than using one global result per `call_id`. All contents produced by
   one execution remain one result group and are consumed together, including multiple user-input requests.
+- A local (non-hosted) `function_approval_response` authorizes execution only when it binds to an approval request
+  recorded in an authoritative `AgentSession`. Runs without one drop inbound local approval responses with a warning
+  and execute nothing, so callers must pass the session that issued the request back on the resuming run. An approval
+  request that merely appears in the caller-supplied history is not proof the framework asked for approval. Hosted
+  provider-issued approvals still pass through untouched, and a response already settled by a terminal result is
+  replayed history rather than an authorization, so replaying a completed transcript keeps working without a session.
+  That settled exemption is an allow-list evaluated per response object, not per approval id, because several
+  responses can share one approval id and only the first is eligible to execute. Filtering runs before stateless
+  mixed-batch completeness is enforced, so a dropped response is never counted as an answer.
+  Set the `disable_approval_response_binding` function invocation configuration option to restore the previous
+  unbound behavior.
 - Approval resume keeps terminal `function_result` contents in tool-role messages and follow-up user-input requests
   in assistant-role messages, including mixed sibling batches.
 - Function-call budget accounting counts one unit per executed result group, not per emitted `function_result`, so
@@ -285,7 +303,8 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
   requests without synthesizing responses, recursively releases nested executor correlation, resumes executors whose
   remaining requests were already answered, accepts the same request-scoped tools and invocation/client kwargs needed
   by that continuation, can atomically restore a supplied checkpoint before cancellation, and returns the resulting
-  `WorkflowRunResult`.
+  `WorkflowRunResult`. Cancelling a computer request also cancels the other pending requests in that agent's batch,
+  retains already resolved sibling evidence in terminal output, and resets its session before new input.
 - **`WorkflowBuilder`** - Fluent API for building workflows, including explicit
   `output_from` / `intermediate_output_from` selection for caller-facing emissions. `output_from`
   is an allow-list for **Workflow Output**; unselected executor payloads are hidden unless

@@ -186,6 +186,24 @@ Nested output paths require secure directory-relative file opening. On platforms
 without that capability, nested attachments fail closed; write attachment files
 directly under `/output` for portable behavior.
 
+## Network access and Python packages
+
+`allowed_domains` controls outbound requests from the sandbox. It does not
+install Python packages or make packages from the host environment available
+inside the guest. Installing a dependency with `pip` on the host is separate
+from making it importable in sandboxed code.
+
+`module_path` selects an existing guest module; it is not a package-installation
+option. The Agent Framework integration does not provide a custom guest build
+or package installation workflow. Guest package availability depends on the
+selected Hyperlight module and backend.
+
+For operations requiring host-installed libraries or external APIs, register a
+host function in `tools` and call it from sandboxed code using `call_tool(...)`.
+Keep credentials and access checks in that function. Host tools execute outside
+the guest, so the sandbox's `allowed_domains` setting does not restrict their
+network requests; enforce any required destination policy in the host tool.
+
 ## Notes
 
 - This package is intentionally separate from `agent-framework-core` so CodeAct
