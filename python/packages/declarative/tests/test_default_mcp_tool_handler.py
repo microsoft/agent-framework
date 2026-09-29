@@ -996,6 +996,33 @@ class TestCache:
             await asyncio.wait_for(handler.aclose(), timeout=1)
 
     @pytest.mark.asyncio
+    async def test_repeated_cancellation_while_releasing_entry_does_not_leak_lease(self) -> None:
+        handler = DefaultMCPToolHandler()
+        invocation_started = asyncio.Event()
+        release_invocation = asyncio.Event()
+
+        async def gated_call(_tool: FakeTool, _tool_name: str, **_arguments: Any) -> Any:
+            invocation_started.set()
+            await release_invocation.wait()
+            return [Content.from_text("ok")]
+
+        with _patch_tool(), patch.object(FakeTool, "call_tool", gated_call):
+            invocation = asyncio.create_task(handler.invoke_tool(_invocation(headers={"X": "1"})))
+            await invocation_started.wait()
+            await handler._cache_lock.acquire()
+            invocation.cancel()
+            await asyncio.sleep(0)
+            invocation.cancel()
+            handler._cache_lock.release()
+
+            with pytest.raises(asyncio.CancelledError):
+                await invocation
+            await asyncio.wait_for(handler.aclose(), timeout=1)
+
+        assert FakeTool.instances[0].close_count == 1
+        assert all(entry.active_users == 0 for entry in handler._cache.values())
+
+    @pytest.mark.asyncio
     async def test_entry_creation_is_bounded_and_cancelled_waiter_is_cleaned_up(self) -> None:
         handler = DefaultMCPToolHandler(cache_max_size=2)
         connecting = 0

@@ -697,6 +697,18 @@ class DefaultMCPToolHandler:
         return exc
 
     async def _release_entry(self, entry: _CacheEntry) -> None:
+        release = asyncio.create_task(self._release_entry_core(entry))
+        cancelled = False
+        while not release.done():
+            try:
+                await asyncio.shield(release)
+            except asyncio.CancelledError:
+                cancelled = True
+        release.result()
+        if cancelled:
+            raise asyncio.CancelledError
+
+    async def _release_entry_core(self, entry: _CacheEntry) -> None:
         close_entry = False
         async with self._cache_lock:
             entry.active_users -= 1

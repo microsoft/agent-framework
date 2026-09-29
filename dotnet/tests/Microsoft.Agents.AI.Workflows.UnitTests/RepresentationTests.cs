@@ -91,6 +91,26 @@ public class RepresentationTests
         await RunExecutorBindingInfoMatchTestAsync(new RequestInfoExecutor(TestRequestPort));
     }
 
+    [Fact]
+    public void SubworkflowSessionId_IsStableAndHierarchicallyScoped()
+    {
+        // Arrange
+        const string ParentSessionId = "parent-session";
+
+        // Act
+        string firstChild = SubworkflowBinding.CreateSubworkflowSessionId(ParentSessionId, "first");
+        string sameChild = SubworkflowBinding.CreateSubworkflowSessionId(ParentSessionId, "first");
+        string siblingChild = SubworkflowBinding.CreateSubworkflowSessionId(ParentSessionId, "second");
+        string nestedChild = SubworkflowBinding.CreateSubworkflowSessionId(firstChild, "nested");
+
+        // Assert
+        Assert.Equal(firstChild, sameChild);
+        Assert.NotEqual(ParentSessionId, firstChild);
+        Assert.NotEqual(firstChild, siblingChild);
+        Assert.NotEqual(firstChild, nestedChild);
+        Assert.NotEqual(siblingChild, nestedChild);
+    }
+
     private static string Source(int id) => $"Source/{id}";
     private static string Sink(int id) => $"Sink/{id}";
 
