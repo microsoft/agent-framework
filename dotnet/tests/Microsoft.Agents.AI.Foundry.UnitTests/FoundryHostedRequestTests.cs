@@ -122,7 +122,12 @@ public sealed class FoundryHostedRequestTests
     [InlineData("\0")]
     [InlineData("\r")]
     [InlineData("\n")]
-    public void UserIdentityPolicy_Process_ProhibitedUserIdentityCharacter_Throws(string prohibitedCharacter)
+    [InlineData("before\0after")]
+    [InlineData("before\rafter")]
+    [InlineData("before\nafter")]
+    [InlineData(" \r ")]
+    [InlineData(" \n ")]
+    public void UserIdentityPolicy_Process_ProhibitedUserIdentityCharacter_Throws(string invalidIdentity)
     {
         // Arrange
         using var handler = new RecordingHandler(MinimalResponseJson());
@@ -135,7 +140,7 @@ public sealed class FoundryHostedRequestTests
             perTryPolicies: default,
             beforeTransportPolicies: default);
         PipelineMessage message = CreatePipelineMessage(pipeline);
-        UserIdentityScope.Current = $"before{prohibitedCharacter}after";
+        UserIdentityScope.Current = invalidIdentity;
 
         try
         {
@@ -159,7 +164,12 @@ public sealed class FoundryHostedRequestTests
     [InlineData("\0")]
     [InlineData("\r")]
     [InlineData("\n")]
-    public async Task UserIdentityPolicy_ProcessAsync_ProhibitedUserIdentityCharacter_ThrowsAsync(string prohibitedCharacter)
+    [InlineData("before\0after")]
+    [InlineData("before\rafter")]
+    [InlineData("before\nafter")]
+    [InlineData(" \r ")]
+    [InlineData(" \n ")]
+    public async Task UserIdentityPolicy_ProcessAsync_ProhibitedUserIdentityCharacter_ThrowsAsync(string invalidIdentity)
     {
         // Arrange
         using var handler = new RecordingHandler(MinimalResponseJson());
@@ -172,7 +182,7 @@ public sealed class FoundryHostedRequestTests
             perTryPolicies: default,
             beforeTransportPolicies: default);
         PipelineMessage message = CreatePipelineMessage(pipeline);
-        UserIdentityScope.Current = $"before{prohibitedCharacter}after";
+        UserIdentityScope.Current = invalidIdentity;
 
         try
         {
@@ -196,14 +206,19 @@ public sealed class FoundryHostedRequestTests
     [InlineData("\0")]
     [InlineData("\r")]
     [InlineData("\n")]
-    public async Task RunAsync_RestoredProhibitedUserIdentity_DoesNotReachTransportAsync(string prohibitedCharacter)
+    [InlineData("before\0after")]
+    [InlineData("before\rafter")]
+    [InlineData("before\nafter")]
+    [InlineData(" \r ")]
+    [InlineData(" \n ")]
+    public async Task RunAsync_RestoredProhibitedUserIdentity_DoesNotReachTransportAsync(string invalidIdentity)
     {
         // Arrange
         using var handler = new RecordingHandler(MinimalResponseJson());
         (FoundryHostedRequestAgent agent, AgentSession session, HttpClient http) = await CreateEndToEndAgentAsync(handler);
         using (http)
         {
-            SetRawUserIdentity(session, $"before{prohibitedCharacter}after");
+            SetRawUserIdentity(session, invalidIdentity);
 
             // Act
             ArgumentException exception = await Assert.ThrowsAsync<ArgumentException>(
@@ -219,14 +234,19 @@ public sealed class FoundryHostedRequestTests
     [InlineData("\0")]
     [InlineData("\r")]
     [InlineData("\n")]
-    public async Task RunStreamingAsync_RestoredProhibitedUserIdentity_DoesNotReachTransportAsync(string prohibitedCharacter)
+    [InlineData("before\0after")]
+    [InlineData("before\rafter")]
+    [InlineData("before\nafter")]
+    [InlineData(" \r ")]
+    [InlineData(" \n ")]
+    public async Task RunStreamingAsync_RestoredProhibitedUserIdentity_DoesNotReachTransportAsync(string invalidIdentity)
     {
         // Arrange
         using var handler = new RecordingHandler(MinimalResponseJson());
         (FoundryHostedRequestAgent agent, AgentSession session, HttpClient http) = await CreateEndToEndAgentAsync(handler);
         using (http)
         {
-            SetRawUserIdentity(session, $"before{prohibitedCharacter}after");
+            SetRawUserIdentity(session, invalidIdentity);
 
             // Act
             ArgumentException exception = await Assert.ThrowsAsync<ArgumentException>(

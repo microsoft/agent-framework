@@ -34,7 +34,7 @@ internal sealed class UserIdentityPolicy : PipelinePolicy
     private static void Stamp(PipelineMessage message)
     {
         var identity = UserIdentityScope.Current;
-        if (string.IsNullOrWhiteSpace(identity))
+        if (identity is null)
         {
             return;
         }
@@ -45,6 +45,12 @@ internal sealed class UserIdentityPolicy : PipelinePolicy
             identity,
             "userIdentity",
             "User identity must not contain NUL, carriage-return, or line-feed characters.");
+
+        if (string.IsNullOrWhiteSpace(identity))
+        {
+            return;
+        }
+
         message.Request.Headers.Set("x-ms-user-identity", identity);
     }
 }
