@@ -19,6 +19,13 @@ public static class AGUIServerServiceCollectionExtensions
     /// </summary>
     /// <param name="services">The <see cref="IServiceCollection"/> to configure.</param>
     /// <returns>The <see cref="IServiceCollection"/> for method chaining.</returns>
+    /// <remarks>
+    /// This method configures AG-UI JSON serialization, not authentication, authorization, or caller isolation.
+    /// Multi-user hosts must configure ASP.NET Core authentication and authorization, require authorization
+    /// on their <c>MapAGUIServer</c> endpoints, and register an <c>AgentIsolationKeyProvider</c> to isolate
+    /// persisted sessions. For claims-based isolation, register <c>AddHttpContextAccessor()</c> and
+    /// <c>UseClaimsBasedAgentIsolation(...)</c> from <c>Microsoft.Agents.AI.Hosting.AspNetCore</c>.
+    /// </remarks>
     public static IServiceCollection AddAGUIServer(this IServiceCollection services)
     {
         ArgumentNullException.ThrowIfNull(services);

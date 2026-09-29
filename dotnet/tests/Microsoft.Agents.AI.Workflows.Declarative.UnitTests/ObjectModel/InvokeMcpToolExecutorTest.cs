@@ -296,6 +296,62 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
         await this.ExecuteTestAsync(model);
     }
 
+    [Theory]
+    [InlineData(McpInvocationValueLocation.ServerUrl, false)]
+    [InlineData(McpInvocationValueLocation.ServerLabel, false)]
+    [InlineData(McpInvocationValueLocation.ToolName, false)]
+    [InlineData(McpInvocationValueLocation.Argument, false)]
+    [InlineData(McpInvocationValueLocation.Header, false)]
+    [InlineData(McpInvocationValueLocation.ServerUrl, true)]
+    [InlineData(McpInvocationValueLocation.ServerLabel, true)]
+    [InlineData(McpInvocationValueLocation.ToolName, true)]
+    [InlineData(McpInvocationValueLocation.Argument, true)]
+    [InlineData(McpInvocationValueLocation.Header, true)]
+    public async Task InvokeMcpToolWithProtectedEnvironmentValueThrowsAsync(
+        McpInvocationValueLocation location,
+        bool requireApproval)
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        this.State.Set(
+            "PROTECTED_SETTING",
+            FormulaValue.New("protected-value"),
+            VariableScopeNames.Environment,
+            SensitivityLevel.Sensitive);
+        this.State.Bind();
+
+        InvokeMcpTool model = this.CreateModelWithEnvironmentExpression(location, requireApproval);
+        MockMcpToolProvider mockProvider = new();
+        MockAgentProvider mockAgentProvider = new();
+        InvokeMcpToolExecutor action = new(model, mockProvider.Object, mockAgentProvider.Object, this.State);
+        List<ExternalInputRequest> emittedRequests = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext(emittedRequests);
+
+        // Act
+        ValueTask ExecuteAsync() =>
+            action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
+
+        // Assert
+        await Assert.ThrowsAsync<DeclarativeActionException>(async () => await ExecuteAsync());
+        mockProvider.Verify(provider => provider.InvokeToolAsync(
+            It.IsAny<string>(),
+            It.IsAny<string?>(),
+            It.IsAny<string>(),
+            It.IsAny<IDictionary<string, object?>?>(),
+            It.IsAny<IDictionary<string, string>?>(),
+            It.IsAny<string?>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+        Assert.Empty(emittedRequests);
+        FieldInfo? approvalSnapshotsField = typeof(InvokeMcpToolExecutor)
+            .GetField("_approvalSnapshots", BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.NotNull(approvalSnapshotsField);
+        object? approvalSnapshotsValue = approvalSnapshotsField.GetValue(action);
+        Assert.NotNull(approvalSnapshotsValue);
+        ConcurrentDictionary<string, ApprovalSnapshot> approvalSnapshots =
+            Assert.IsType<ConcurrentDictionary<string, ApprovalSnapshot>>(approvalSnapshotsValue);
+        Assert.Empty(approvalSnapshots);
+    }
+
     [Fact]
     public async Task InvokeMcpToolApprovalRequestExcludesTransportHeadersAsync()
     {
@@ -1772,6 +1828,56 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
             RequireApproval = new BoolExpression.Builder(BoolExpression.Literal(true)),
         };
         return AssignParent<InvokeMcpTool>(builder);
+    }
+
+    private InvokeMcpTool CreateModelWithEnvironmentExpression(
+        McpInvocationValueLocation location,
+        bool requireApproval)
+    {
+        const string EnvironmentExpression = "Env.PROTECTED_SETTING";
+
+        InvokeMcpTool.Builder builder = new()
+        {
+            Id = this.CreateActionId(),
+            DisplayName = this.FormatDisplayName(
+                $"{nameof(InvokeMcpToolWithProtectedEnvironmentValueThrowsAsync)}_{location}_{requireApproval}"),
+            ServerUrl = new StringExpression.Builder(
+                location == McpInvocationValueLocation.ServerUrl
+                    ? StringExpression.Expression(EnvironmentExpression)
+                    : StringExpression.Literal(TestServerUrl)),
+            ServerLabel = new StringExpression.Builder(
+                location == McpInvocationValueLocation.ServerLabel
+                    ? StringExpression.Expression(EnvironmentExpression)
+                    : StringExpression.Literal(TestServerLabel)),
+            ToolName = new StringExpression.Builder(
+                location == McpInvocationValueLocation.ToolName
+                    ? StringExpression.Expression(EnvironmentExpression)
+                    : StringExpression.Literal(TestToolName)),
+            RequireApproval = new BoolExpression.Builder(BoolExpression.Literal(requireApproval)),
+        };
+
+        builder.Arguments.Add(
+            "argument",
+            location == McpInvocationValueLocation.Argument
+                ? ValueExpression.Expression(EnvironmentExpression)
+                : ValueExpression.Literal(new StringDataValue("argument-value")));
+        builder.Headers.Add(
+            "X-Value",
+            new StringExpression.Builder(
+                location == McpInvocationValueLocation.Header
+                    ? StringExpression.Expression(EnvironmentExpression)
+                    : StringExpression.Literal("header-value")));
+
+        return AssignParent<InvokeMcpTool>(builder);
+    }
+
+    public enum McpInvocationValueLocation
+    {
+        ServerUrl,
+        ServerLabel,
+        ToolName,
+        Argument,
+        Header,
     }
 
     #endregion

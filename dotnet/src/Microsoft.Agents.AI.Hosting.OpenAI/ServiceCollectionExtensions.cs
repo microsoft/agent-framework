@@ -23,6 +23,11 @@ public static class MicrosoftAgentAIHostingOpenAIServiceCollectionExtensions
     /// </summary>
     /// <param name="services">The <see cref="IServiceCollection"/> to configure.</param>
     /// <returns>The <see cref="IServiceCollection"/> for method chaining.</returns>
+    /// <remarks>
+    /// This configures protocol serialization, not caller authentication or endpoint authorization.
+    /// Protect mapped Chat Completions endpoints, for example with <c>RequireAuthorization()</c>.
+    /// The adapter does not itself persist conversations; isolate any application-owned state separately.
+    /// </remarks>
     public static IServiceCollection AddOpenAIChatCompletions(this IServiceCollection services)
     {
         ArgumentNullException.ThrowIfNull(services);
@@ -43,6 +48,14 @@ public static class MicrosoftAgentAIHostingOpenAIServiceCollectionExtensions
     /// <see cref="AgentIsolationKeyProvider"/>. Hosts serving multiple callers should register a provider,
     /// require authentication on the mapped endpoints, and use a stable claim that uniquely identifies the caller.
     /// Without a provider, all callers share the same in-memory namespace.
+    /// <para>
+    /// This method does not configure authentication or endpoint authorization. For claims-based
+    /// isolation, also register <c>AddHttpContextAccessor()</c> and <c>UseClaimsBasedAgentIsolation(...)</c>
+    /// from <c>Microsoft.Agents.AI.Hosting.AspNetCore</c>. Protect each mapped Responses and Conversations
+    /// route group. Their storage needs caller isolation even without an <see cref="AgentSessionStore"/>.
+    /// A configured agent session store is used as registered; use an isolation-enabled helper such as
+    /// <c>WithSessionStore(...)</c> or wrap it in <see cref="IsolationKeyScopedAgentSessionStore"/> to scope it to the caller.
+    /// </para>
     /// <para>
     /// Agents that expose <see cref="ApprovalRequiredAIFunction"/> tools must also
     /// configure an <see cref="AgentSessionStore"/>. The store preserves the server-recorded approval request
@@ -81,6 +94,11 @@ public static class MicrosoftAgentAIHostingOpenAIServiceCollectionExtensions
     /// </summary>
     /// <param name="services">The service collection to add services to.</param>
     /// <returns>The service collection for chaining.</returns>
+    /// <remarks>
+    /// This registers storage, not authentication or endpoint authorization. Multi-user hosts must
+    /// register an <see cref="AgentIsolationKeyProvider"/> and protect the mapped Conversations endpoints.
+    /// An agent session store is not required for this conversation storage to retain caller data.
+    /// </remarks>
     public static IServiceCollection AddOpenAIConversations(this IServiceCollection services)
     {
         ArgumentNullException.ThrowIfNull(services);

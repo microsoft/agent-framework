@@ -2,6 +2,9 @@
 
 This sample demonstrates how to use the AG-UI (Agent UI) protocol to enable communication between a client application and a remote agent server. The AG-UI protocol provides a standardized way for clients to interact with AI agents.
 
+> [!WARNING]
+> This sample does not authenticate AG-UI callers. Before exposing either server to other users, configure authentication, require authorization on every AG-UI endpoint, and enable caller-scoped session isolation. Follow the shared [AG-UI security configuration](../../02-agents/AGUI/README.md#security-considerations), including its client credential requirements. Azure OpenAI credentials authenticate the server to the model service, not callers to this server.
+
 ## Overview
 
 The demonstration has two components:
@@ -167,7 +170,7 @@ The client result carries the original call ID and returns on a continuation req
 
 Both bypassing and session persistence are required for this flow. `AGUIDojoServer` configures the same behavior for `PredictiveStateUpdatesAgent`, which combines server-side `write_document` with client-side `confirm_changes`. Session stores must be keyed by the agent's name.
 
-In-memory storage is for demonstration: it loses sessions on restart and has no size limit or eviction. Production hosts should use a persistent store and an `AgentIsolationKeyProvider` to isolate sessions by authenticated user.
+In-memory storage is for demonstration: it loses sessions on restart and has no size limit or eviction. Production hosts should use a persistent store and an `AgentIsolationKeyProvider` to isolate sessions by authenticated user. The `WithInMemorySessionStore()` helper uses strict isolation by default, so the main server requires a valid isolation key to use that store. Registering an in-memory store alone does not supply caller identity; see the [configuration example](../../02-agents/AGUI/README.md#configure-a-multi-user-host).
 
 ### Client Side
 

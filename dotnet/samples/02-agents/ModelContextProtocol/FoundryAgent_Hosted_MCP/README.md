@@ -31,7 +31,7 @@ AITool tool = FoundryAITool.CreateMcpTool(
     serverLabel: "github",
     serverUri: new Uri("https://api.githubcopilot.com/mcp"),
     projectConnectionId: "my-foundry-connection",
-    toolCallApprovalPolicy: new McpToolCallApprovalPolicy(GlobalMcpToolCallApprovalPolicy.AlwaysRequireApproval));
+    toolCallApprovalPolicy: new McpToolCallApprovalPolicy(DefaultMcpToolCallApprovalPolicy.AlwaysRequireApproval));
 ```
 
 The resulting tool sends `project_connection_id` on the MCP tool to Foundry.
