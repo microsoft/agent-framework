@@ -1482,10 +1482,10 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         return None
 
     def _run_tool_sources(self, agent_tools: Any, run_tools: Any) -> list[Any]:
-        """Return a run's tool sources in precedence order: agent tools, run-level tools, MCP servers.
+        """Return a run's tool sources in discovery order: agent tools, run-level tools, then MCP servers.
 
-        When two sources provide a tool with the same name, the tool from the earlier source is
-        the one the run keeps. Run start and the mid-run refresh both resolve tools in this order.
+        Earlier sources win duplicate names at run start and among items discovered in the same refresh.
+        A name already exposed by an earlier refresh remains bound to its existing tool.
         """
         return [agent_tools, run_tools, self.mcp_tools]
 
