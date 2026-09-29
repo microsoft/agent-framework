@@ -174,6 +174,23 @@ def _extract_resume_payload(input_data: dict[str, Any]) -> Any:
     return forwarded_props_dict.get("resume")
 
 
+def _is_snapshot_hydration_request(
+    input_data: dict[str, Any],
+    *,
+    snapshot_enabled: bool,
+    supports_checkpoint_resume: bool,
+) -> bool:
+    """Return whether a request only replays the latest stored snapshot."""
+    if not snapshot_enabled or input_data.get("messages") or _extract_resume_payload(input_data) is not None:
+        return False
+    if not supports_checkpoint_resume:
+        return True
+    forwarded_props = input_data.get("forwarded_props") or input_data.get("forwardedProps")
+    if not isinstance(forwarded_props, Mapping):
+        return True
+    return not (forwarded_props.get("checkpoint_id") or forwarded_props.get("checkpointId"))
+
+
 def _strict_resume_entries(resume_payload: Any) -> tuple[list[dict[str, Any]], str | None]:
     """Parse resume entries for pending interrupt contract validation."""
     if isinstance(resume_payload, list):
