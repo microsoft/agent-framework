@@ -278,6 +278,7 @@ public sealed class CompactionProviderTests
         await provider.InvokingAsync(new(mockAgent.Object, session, new AIContext { Messages = messages }));
         var serializedState = session.StateBag.Serialize();
         Assert.Equal(2, serializedState.GetProperty(provider.StateKeys[0]).GetProperty("processedinputmessagecount").GetInt32());
+        Assert.Equal(0, serializedState.GetProperty(provider.StateKeys[0]).GetProperty("inputsummarygroupindices")[0].GetInt32());
         TestAgentSession restoredSession = new(AgentSessionStateBag.Deserialize(serializedState));
 
         // Act
@@ -323,6 +324,56 @@ public sealed class CompactionProviderTests
         Assert.Equal(replacement.Count, resultMessages.Count);
         Assert.Equal("New question", resultMessages[0].Text);
         Assert.Equal("New answer", resultMessages[2].Text);
+    }
+
+    [Fact]
+    public async Task InvokingAsyncUsesSummaryProvenanceAfterSerializationAsync()
+    {
+        // Arrange — persist both summary origins, with the generated group preceding the input group.
+        CompactionProvider provider = new(new TruncationCompactionStrategy(CompactionTriggers.TokensExceed(100000)));
+        Mock<AIAgent> mockAgent = new() { CallBase = true };
+        TestAgentSession session = new();
+        ChatMessage inputSummary = new(ChatRole.Assistant, "S1");
+        (inputSummary.AdditionalProperties ??= [])[CompactionMessageGroup.SummaryPropertyKey] = true;
+        CompactionMessageIndex index = CompactionMessageIndex.Create([inputSummary, new ChatMessage(ChatRole.User, "U")]);
+        ChatMessage generatedSummary = new(ChatRole.Assistant, "X");
+        (generatedSummary.AdditionalProperties ??= [])[CompactionMessageGroup.SummaryPropertyKey] = true;
+        index.InsertGroup(0, CompactionGroupKind.Summary, [generatedSummary]);
+        CompactionProvider.State state = new()
+        {
+            MessageGroups = [.. index.Groups],
+            ProcessedInputMessageCount = index.ProcessedInputMessageCount,
+            InputSummaryGroupIndices = index.InputSummaryGroupIndices,
+        };
+        session.StateBag.SetValue(provider.StateKeys[0], state, AgentJsonUtilities.DefaultOptions);
+        var serializedState = session.StateBag.Serialize();
+        TestAgentSession unchangedSession = new(AgentSessionStateBag.Deserialize(serializedState));
+        List<ChatMessage> appended = [inputSummary, new ChatMessage(ChatRole.User, "U"), new ChatMessage(ChatRole.User, "Follow-up")];
+        ChatMessage replacementSummary = new(ChatRole.Assistant, "X");
+        (replacementSummary.AdditionalProperties ??= [])[CompactionMessageGroup.SummaryPropertyKey] = true;
+        List<ChatMessage> replacement = [replacementSummary, new ChatMessage(ChatRole.User, "U")];
+
+        // Act — unchanged input preserves the generated summary after session serialization.
+        AIContext appendedResult = await provider.InvokingAsync(new(mockAgent.Object, unchangedSession, new AIContext { Messages = appended }));
+
+        // Assert
+        Assert.NotNull(appendedResult.Messages);
+        List<ChatMessage> appendedResultMessages = [.. appendedResult.Messages];
+        Assert.Equal(4, appendedResultMessages.Count);
+        Assert.Equal("X", appendedResultMessages[0].Text);
+        Assert.Equal("S1", appendedResultMessages[1].Text);
+        Assert.Equal("Follow-up", appendedResultMessages[3].Text);
+
+        // Act — changed input matches the generated summary but must discard the stale input summary.
+        TestAgentSession restoredSession = new(AgentSessionStateBag.Deserialize(serializedState));
+        AIContext result = await provider.InvokingAsync(new(mockAgent.Object, restoredSession, new AIContext { Messages = replacement }));
+
+        // Assert
+        Assert.NotNull(result.Messages);
+        List<ChatMessage> resultMessages = [.. result.Messages];
+        Assert.Equal(2, resultMessages.Count);
+        Assert.Equal("X", resultMessages[0].Text);
+        Assert.Equal("U", resultMessages[1].Text);
     }
 
     [Fact]

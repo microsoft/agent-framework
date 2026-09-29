@@ -659,7 +659,7 @@ public class CompactionMessageIndexTests
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Hello"), summary];
         CompactionMessageIndex original = CompactionMessageIndex.Create(messages);
         original.Groups[0].IsExcluded = true;
-        CompactionMessageIndex restored = CompactionMessageIndex.Restore([.. original.Groups], original.ProcessedInputMessageCount);
+        CompactionMessageIndex restored = CompactionMessageIndex.Restore([.. original.Groups], original.ProcessedInputMessageCount, original.InputSummaryGroupIndices);
 
         // Act
         messages.Add(new ChatMessage(ChatRole.User, "What is the weather today?"));
@@ -683,7 +683,7 @@ public class CompactionMessageIndexTests
         ];
         CompactionMessageIndex original = CompactionMessageIndex.Create(originalMessages);
         original.Groups[0].IsExcluded = true;
-        CompactionMessageIndex restored = CompactionMessageIndex.Restore([.. original.Groups], original.ProcessedInputMessageCount);
+        CompactionMessageIndex restored = CompactionMessageIndex.Restore([.. original.Groups], original.ProcessedInputMessageCount, original.InputSummaryGroupIndices);
         List<ChatMessage> replacement =
         [
             new ChatMessage(ChatRole.User, "New question"),
@@ -730,6 +730,83 @@ public class CompactionMessageIndexTests
         Assert.Same(shifted[0], restored.Groups[0].Messages[0]);
         Assert.Same(shifted[2], restored.Groups[2].Messages[0]);
         Assert.All(restored.Groups, group => Assert.False(group.IsExcluded));
+    }
+
+    [Fact]
+    public void RestoreSkipsGeneratedSummaryButMatchesInputSummary()
+    {
+        // Arrange — a strategy inserts a generated summary ahead of an input summary.
+        ChatMessage inputSummary = new(ChatRole.Assistant, "Input summary");
+        (inputSummary.AdditionalProperties ??= [])[CompactionMessageGroup.SummaryPropertyKey] = true;
+        List<ChatMessage> messages = [inputSummary, new ChatMessage(ChatRole.User, "Question")];
+        CompactionMessageIndex original = CompactionMessageIndex.Create(messages);
+        original.InsertGroup(0, CompactionGroupKind.Summary, [new ChatMessage(ChatRole.Assistant, "Generated summary")]);
+        original.Groups[2].IsExcluded = true;
+        Assert.Equal([1], original.InputSummaryGroupIndices);
+        CompactionMessageIndex restored = CompactionMessageIndex.Restore([.. original.Groups], original.ProcessedInputMessageCount, original.InputSummaryGroupIndices);
+
+        // Act
+        messages.Add(new ChatMessage(ChatRole.User, "Follow-up"));
+        restored.Update(messages);
+
+        // Assert — matching input keeps both summaries and the existing exclusion.
+        Assert.Equal(4, restored.Groups.Count);
+        Assert.Equal("Generated summary", restored.Groups[0].Messages[0].Text);
+        Assert.Equal("Input summary", restored.Groups[1].Messages[0].Text);
+        Assert.True(restored.Groups[2].IsExcluded);
+        Assert.Same(messages[2], restored.Groups[3].Messages[0]);
+        Assert.Equal([1], restored.InputSummaryGroupIndices);
+    }
+
+    [Fact]
+    public void RestoreRebuildsWhenGeneratedSummaryMatchesChangedInputSummary()
+    {
+        // Arrange — the new input summary matches the generated group, not the old input group.
+        ChatMessage inputSummary = new(ChatRole.Assistant, "S1");
+        (inputSummary.AdditionalProperties ??= [])[CompactionMessageGroup.SummaryPropertyKey] = true;
+        CompactionMessageIndex original = CompactionMessageIndex.Create([inputSummary, new ChatMessage(ChatRole.User, "U")]);
+        ChatMessage generatedSummary = new(ChatRole.Assistant, "X");
+        (generatedSummary.AdditionalProperties ??= [])[CompactionMessageGroup.SummaryPropertyKey] = true;
+        original.InsertGroup(0, CompactionGroupKind.Summary, [generatedSummary]);
+        original.Groups[1].IsExcluded = true;
+        CompactionMessageIndex restored = CompactionMessageIndex.Restore([.. original.Groups], original.ProcessedInputMessageCount, original.InputSummaryGroupIndices);
+        ChatMessage replacementSummary = new(ChatRole.Assistant, "X");
+        (replacementSummary.AdditionalProperties ??= [])[CompactionMessageGroup.SummaryPropertyKey] = true;
+        List<ChatMessage> replacement = [replacementSummary, new ChatMessage(ChatRole.User, "U")];
+
+        // Act
+        restored.Update(replacement);
+
+        // Assert — the stale S1 group and its exclusion are discarded.
+        Assert.Equal(2, restored.Groups.Count);
+        Assert.Same(replacement[0], restored.Groups[0].Messages[0]);
+        Assert.Same(replacement[1], restored.Groups[1].Messages[0]);
+        Assert.All(restored.Groups, group => Assert.False(group.IsExcluded));
+        Assert.Equal([0], restored.InputSummaryGroupIndices);
+    }
+
+    [Fact]
+    public void RestoreRebuildsSummaryStateWithoutProvenance()
+    {
+        // Arrange — persisted state from before summary provenance was recorded.
+        ChatMessage inputSummary = new(ChatRole.Assistant, "Input summary");
+        (inputSummary.AdditionalProperties ??= [])[CompactionMessageGroup.SummaryPropertyKey] = true;
+        List<ChatMessage> messages = [inputSummary, new ChatMessage(ChatRole.User, "Question")];
+        CompactionMessageIndex original = CompactionMessageIndex.Create(messages);
+        original.InsertGroup(0, CompactionGroupKind.Summary, [new ChatMessage(ChatRole.Assistant, "Generated summary")]);
+        original.Groups[2].IsExcluded = true;
+        CompactionMessageIndex restored = CompactionMessageIndex.Restore([.. original.Groups], original.ProcessedInputMessageCount, inputSummaryGroupIndices: null);
+
+        // Act
+        messages.Add(new ChatMessage(ChatRole.User, "Follow-up"));
+        restored.Update(messages);
+
+        // Assert — ambiguous legacy state is rebuilt rather than retaining an incorrect group.
+        Assert.Equal(3, restored.Groups.Count);
+        Assert.Same(messages[0], restored.Groups[0].Messages[0]);
+        Assert.Same(messages[2], restored.Groups[2].Messages[0]);
+        Assert.All(restored.Groups, group => Assert.False(group.IsExcluded));
+        Assert.Equal([0], restored.InputSummaryGroupIndices);
     }
 
     [Fact]

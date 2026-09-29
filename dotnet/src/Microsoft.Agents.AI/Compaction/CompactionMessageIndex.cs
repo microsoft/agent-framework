@@ -26,6 +26,8 @@ namespace Microsoft.Agents.AI.Compaction;
 public sealed class CompactionMessageIndex
 {
     private int _currentTurn;
+    private HashSet<CompactionMessageGroup>? _inputSummaryGroups;
+    private bool _hasSummaryProvenance = true;
 
     /// <summary>
     /// Gets the list of message groups in this collection.
@@ -84,14 +86,54 @@ public sealed class CompactionMessageIndex
         return instance;
     }
 
-    internal static CompactionMessageIndex Restore(IList<CompactionMessageGroup> groups, int? processedInputMessageCount)
+    internal static CompactionMessageIndex Restore(IList<CompactionMessageGroup> groups, int? processedInputMessageCount, IReadOnlyList<int>? inputSummaryGroupIndices)
     {
         CompactionMessageIndex instance = new(groups);
         instance.ProcessedInputMessageCount = processedInputMessageCount;
+
+        if (inputSummaryGroupIndices is null)
+        {
+            instance._hasSummaryProvenance = !groups.Any(group => group.Kind == CompactionGroupKind.Summary);
+        }
+        else
+        {
+            foreach (int index in inputSummaryGroupIndices)
+            {
+                if (index < 0 || index >= groups.Count || groups[index].Kind != CompactionGroupKind.Summary ||
+                    !(instance._inputSummaryGroups ??= []).Add(groups[index]))
+                {
+                    instance._inputSummaryGroups?.Clear();
+                    instance._hasSummaryProvenance = false;
+                    break;
+                }
+            }
+        }
+
         return instance;
     }
 
     internal int? ProcessedInputMessageCount { get; private set; }
+
+    internal List<int> InputSummaryGroupIndices
+    {
+        get
+        {
+            List<int> indices = [];
+            if (this._inputSummaryGroups is not null)
+            {
+                // Strategies may insert generated groups before an input summary, so record its current position.
+                for (int index = 0; index < this.Groups.Count; index++)
+                {
+                    if (this._inputSummaryGroups.Contains(this.Groups[index]))
+                    {
+                        indices.Add(index);
+                    }
+                }
+            }
+
+            return indices;
+        }
+    }
 
     /// <summary>
     /// Incrementally updates the groups with new messages from the conversation.
@@ -119,15 +161,18 @@ public sealed class CompactionMessageIndex
         {
             this.Groups.Clear();
             this._currentTurn = 0;
+            this._inputSummaryGroups?.Clear();
+            this._hasSummaryProvenance = true;
             this.ProcessedInputMessageCount = 0;
             return;
         }
 
         int processedMessageCount = this.ProcessedInputMessageCount ?? this.RawMessageCount;
 
-        // Older state with summaries has no reliable input count because RawMessageCount excludes
-        // input summaries. Rebuild it once to establish a known boundary.
-        if (!this.ProcessedInputMessageCount.HasValue && this.Groups.Any(group => group.Kind == CompactionGroupKind.Summary))
+        // Older state with summaries may lack the input count or summary provenance.
+        // Rebuild it once rather than guessing which summary groups came from the input.
+        if ((!this.ProcessedInputMessageCount.HasValue || !this._hasSummaryProvenance) &&
+            this.Groups.Any(group => group.Kind == CompactionGroupKind.Summary))
         {
             this.RebuildFromMessages(allMessages);
             return;
@@ -148,6 +193,8 @@ public sealed class CompactionMessageIndex
     {
         this.Groups.Clear();
         this._currentTurn = 0;
+        this._inputSummaryGroups?.Clear();
+        this._hasSummaryProvenance = true;
         this.AppendFromMessages(messages, 0);
     }
 
@@ -161,16 +208,21 @@ public sealed class CompactionMessageIndex
         int inputIndex = 0;
         foreach (CompactionMessageGroup group in this.Groups)
         {
+            if (group.Kind == CompactionGroupKind.Summary && this._inputSummaryGroups?.Contains(group) is not true)
+            {
+                continue;
+            }
+
             foreach (ChatMessage message in group.Messages)
             {
-                if (inputIndex < processedMessageCount && messages[inputIndex].ContentEquals(message))
-                {
-                    inputIndex++;
-                }
-                else if (group.Kind != CompactionGroupKind.Summary)
+                if (inputIndex >= processedMessageCount ||
+                    !messages[inputIndex].ContentEquals(message) ||
+                    IsSummaryMessage(messages[inputIndex]) != IsSummaryMessage(message))
                 {
                     return false;
                 }
+
+                inputIndex++;
             }
         }
 
@@ -215,7 +267,9 @@ public sealed class CompactionMessageIndex
             }
             else if (message.Role == ChatRole.Assistant && IsSummaryMessage(message))
             {
-                this.Groups.Add(CreateGroup(CompactionGroupKind.Summary, [message], this.Tokenizer, this._currentTurn));
+                CompactionMessageGroup group = CreateGroup(CompactionGroupKind.Summary, [message], this.Tokenizer, this._currentTurn);
+                this.Groups.Add(group);
+                (this._inputSummaryGroups ??= []).Add(group);
                 index++;
             }
             else if (message.Role == ChatRole.Assistant && HasOnlyReasoning(message))
