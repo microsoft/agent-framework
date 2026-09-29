@@ -81,7 +81,7 @@ class TestAgentContext:
         def preferred(response: AgentResponse[Any]) -> AgentResponse[Any]:
             return response
 
-        context.stream_transform_hooks = [legacy]
+        context.stream_transform_hooks = cast(Any, [legacy])
         assert context.stream_update_transforms == [legacy]
 
         context.stream_result_transforms = [preferred]
@@ -160,7 +160,7 @@ class TestChatContext:
         context.stream_update_transforms = [preferred]
         assert context.stream_transform_hooks == [preferred]
 
-        context.stream_result_hooks = [legacy]
+        context.stream_result_hooks = cast(Any, [legacy])
         assert context.stream_result_transforms == [legacy]
 
     def test_record_message_replacement(self, mock_chat_client: Any) -> None:

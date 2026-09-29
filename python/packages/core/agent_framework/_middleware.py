@@ -329,8 +329,8 @@ class AgentContext:
         self.function_invocation_kwargs: dict[str, Any] = (
             dict(function_invocation_kwargs) if function_invocation_kwargs is not None else {}
         )
-        self._stream_update_transforms = list(stream_transform_hooks or [])
-        self._stream_result_transforms = list(stream_result_hooks or [])
+        self.stream_transform_hooks = list(stream_transform_hooks or [])
+        self.stream_result_hooks = list(stream_result_hooks or [])
         self.stream_cleanup_hooks = list(stream_cleanup_hooks or [])
         self.stream_update_gates_before: list[Callable[[AgentResponseUpdate], object]] = []
         self.stream_update_gates_after: list[Callable[[AgentResponseUpdate], object]] = []
@@ -363,28 +363,14 @@ class AgentContext:
         self,
     ) -> list[Callable[[AgentResponseUpdate], AgentResponseUpdate | Awaitable[AgentResponseUpdate]]]:
         """Transforms applied to agent updates after the middleware chain unwinds."""
-        return self._stream_update_transforms
+        return self.stream_transform_hooks
 
     @stream_update_transforms.setter
     def stream_update_transforms(
         self,
         transforms: Sequence[Callable[[AgentResponseUpdate], AgentResponseUpdate | Awaitable[AgentResponseUpdate]]],
     ) -> None:
-        self._stream_update_transforms = list(transforms)
-
-    @property
-    def stream_transform_hooks(
-        self,
-    ) -> list[Callable[[AgentResponseUpdate], AgentResponseUpdate | Awaitable[AgentResponseUpdate]]]:
-        """Compatibility alias for :attr:`stream_update_transforms`."""
-        return self._stream_update_transforms
-
-    @stream_transform_hooks.setter
-    def stream_transform_hooks(
-        self,
-        hooks: Sequence[Callable[[AgentResponseUpdate], AgentResponseUpdate | Awaitable[AgentResponseUpdate]]],
-    ) -> None:
-        self._stream_update_transforms = list(hooks)
+        self.stream_transform_hooks = list(transforms)
 
     @property
     def stream_result_transforms(
@@ -396,7 +382,7 @@ class AgentContext:
         ]
     ]:
         """Transforms applied to the finalized agent response after middleware unwinds."""
-        return self._stream_result_transforms
+        return self.stream_result_hooks
 
     @stream_result_transforms.setter
     def stream_result_transforms(
@@ -408,31 +394,7 @@ class AgentContext:
             ]
         ],
     ) -> None:
-        self._stream_result_transforms = list(transforms)
-
-    @property
-    def stream_result_hooks(
-        self,
-    ) -> list[
-        Callable[
-            [AgentResponse[Any]],
-            AgentResponse[Any] | Awaitable[AgentResponse[Any] | None] | None,
-        ]
-    ]:
-        """Compatibility alias for :attr:`stream_result_transforms`."""
-        return self._stream_result_transforms
-
-    @stream_result_hooks.setter
-    def stream_result_hooks(
-        self,
-        hooks: Sequence[
-            Callable[
-                [AgentResponse[Any]],
-                AgentResponse[Any] | Awaitable[AgentResponse[Any] | None] | None,
-            ]
-        ],
-    ) -> None:
-        self._stream_result_transforms = list(hooks)
+        self.stream_result_hooks = list(transforms)
 
     def _resolve_run_start_tools(self) -> list[ToolTypes]:
         """Resolve the run-start tool list for this invocation, normalized.
@@ -755,8 +717,8 @@ class ChatContext:
         self.function_invocation_kwargs: dict[str, Any] = (
             dict(function_invocation_kwargs) if function_invocation_kwargs is not None else {}
         )
-        self._stream_update_transforms = list(stream_transform_hooks or [])
-        self._stream_result_transforms = list(stream_result_hooks or [])
+        self.stream_transform_hooks = list(stream_transform_hooks or [])
+        self.stream_result_hooks = list(stream_result_hooks or [])
         self.stream_cleanup_hooks = list(stream_cleanup_hooks or [])
         self.stream_update_gates_before: list[Callable[[ChatResponseUpdate], object]] = []
         self.stream_update_gates_after: list[Callable[[ChatResponseUpdate], object]] = []
@@ -786,28 +748,14 @@ class ChatContext:
         self,
     ) -> list[Callable[[ChatResponseUpdate], ChatResponseUpdate | Awaitable[ChatResponseUpdate]]]:
         """Transforms applied to chat updates after the middleware chain unwinds."""
-        return self._stream_update_transforms
+        return self.stream_transform_hooks
 
     @stream_update_transforms.setter
     def stream_update_transforms(
         self,
         transforms: Sequence[Callable[[ChatResponseUpdate], ChatResponseUpdate | Awaitable[ChatResponseUpdate]]],
     ) -> None:
-        self._stream_update_transforms = list(transforms)
-
-    @property
-    def stream_transform_hooks(
-        self,
-    ) -> list[Callable[[ChatResponseUpdate], ChatResponseUpdate | Awaitable[ChatResponseUpdate]]]:
-        """Compatibility alias for :attr:`stream_update_transforms`."""
-        return self._stream_update_transforms
-
-    @stream_transform_hooks.setter
-    def stream_transform_hooks(
-        self,
-        hooks: Sequence[Callable[[ChatResponseUpdate], ChatResponseUpdate | Awaitable[ChatResponseUpdate]]],
-    ) -> None:
-        self._stream_update_transforms = list(hooks)
+        self.stream_transform_hooks = list(transforms)
 
     @property
     def stream_result_transforms(
@@ -819,7 +767,7 @@ class ChatContext:
         ]
     ]:
         """Transforms applied to the finalized chat response after middleware unwinds."""
-        return self._stream_result_transforms
+        return self.stream_result_hooks
 
     @stream_result_transforms.setter
     def stream_result_transforms(
@@ -831,31 +779,7 @@ class ChatContext:
             ]
         ],
     ) -> None:
-        self._stream_result_transforms = list(transforms)
-
-    @property
-    def stream_result_hooks(
-        self,
-    ) -> list[
-        Callable[
-            [ChatResponse[Any]],
-            ChatResponse[Any] | Awaitable[ChatResponse[Any] | None] | None,
-        ]
-    ]:
-        """Compatibility alias for :attr:`stream_result_transforms`."""
-        return self._stream_result_transforms
-
-    @stream_result_hooks.setter
-    def stream_result_hooks(
-        self,
-        hooks: Sequence[
-            Callable[
-                [ChatResponse[Any]],
-                ChatResponse[Any] | Awaitable[ChatResponse[Any] | None] | None,
-            ]
-        ],
-    ) -> None:
-        self._stream_result_transforms = list(hooks)
+        self.stream_result_hooks = list(transforms)
 
     def record_message_replacement(
         self,
