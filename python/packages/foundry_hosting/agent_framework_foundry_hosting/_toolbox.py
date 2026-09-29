@@ -22,6 +22,7 @@ from agent_framework import (
 )
 from agent_framework._telemetry import mark_feature_used
 from azure.ai.agentserver.core import get_request_context
+from azure.ai.agentserver.core.platform_headers import FOUNDRY_CALL_ID
 from typing_extensions import override
 
 from ._feature_usage import FeatureIndex
@@ -43,6 +44,22 @@ logger = logging.getLogger(__name__)
 DEFAULT_TOOLBOX_SCOPE = "https://ai.azure.com/.default"
 # Default timeout (seconds) for toolbox MCP requests.
 _DEFAULT_TIMEOUT = 120.0
+# Environment variable used to inject platform-provided toolbox feature flags.
+_TOOLSET_FEATURES_ENV_VAR = "FOUNDRY_AGENT_TOOLSET_FEATURES"
+# Mandatory preview feature flag for Foundry toolbox requests.
+_MANDATORY_TOOLBOX_FEATURE = "Toolboxes=V1Preview"
+
+
+def _build_toolbox_features_header(additional_features: str | None) -> str:
+    """Merge platform-provided features with the mandatory toolbox feature."""
+    if additional_features is None or not additional_features.strip():
+        return _MANDATORY_TOOLBOX_FEATURE
+    if any(
+        feature.strip().casefold() == _MANDATORY_TOOLBOX_FEATURE.casefold()
+        for feature in additional_features.split(",")
+    ):
+        return additional_features
+    return f"{_MANDATORY_TOOLBOX_FEATURE},{additional_features}"
 
 
 def _resolve_toolbox_endpoint() -> str:
@@ -100,11 +117,16 @@ class _ToolboxAuth(httpx.Auth):
     def __init__(self, credential: AzureCredentialTypes, scope: str) -> None:
         self._credential = credential
         self._scope = scope
+        # Feature flags are startup configuration, matching the .NET toolbox service.
+        self._features_header = _build_toolbox_features_header(os.environ.get(_TOOLSET_FEATURES_ENV_VAR))
 
     def _apply_headers(self, request: httpx.Request, token: AccessToken) -> None:
         request.headers["Authorization"] = f"Bearer {token.token}"
+        # A Request may be retried or reused after an earlier auth flow, so absence must clear prior caller context.
+        request.headers.pop(FOUNDRY_CALL_ID, None)
         for key, value in get_request_context().platform_headers().items():
             request.headers[key] = value
+        request.headers["Foundry-Features"] = self._features_header
 
     def sync_auth_flow(self, request: httpx.Request) -> Generator[httpx.Request, httpx.Response, None]:
         # azure-core credentials cache the token internally and only refresh near
@@ -139,7 +161,8 @@ class FoundryToolbox(MCPStreamableHTTPTool):
     ``MCPStreamableHTTPTool`` by hand it:
 
     - resolves the toolbox endpoint and tool name from the environment when not given,
-    - authenticates every request with a bearer token from ``credential``, and
+    - authenticates every request with a bearer token from ``credential``,
+    - sends the mandatory toolbox preview feature plus platform-provided feature flags, and
     - forwards the platform per-request call-id (``x-agent-foundry-call-id``) so the
       Foundry MCP proxy can resolve the caller context server-side.
 

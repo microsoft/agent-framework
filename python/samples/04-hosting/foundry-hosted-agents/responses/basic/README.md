@@ -38,6 +38,15 @@ To have a multi-turn conversation with the agent, include the previous response 
 curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -d '{"input": "How are you?", "previous_response_id": "REPLACE_WITH_PREVIOUS_RESPONSE_ID"}'
 ```
 
+When deployed to Foundry, reuse the same platform-provided agent session to continue
+the agent's private state. The request's `previous_response_id` selects a Responses
+continuation; it does not identify the Foundry sandbox. Hosted state is isolated by
+the platform's user and sandbox IDs, so putting those IDs in the JSON body cannot
+recover a different sandbox's state. After upgrading from unscoped hosted state,
+start a fresh conversation: older MAF session data is not read by the new default
+stores. See [State store](../../../../../packages/foundry_hosting/README.md#state-store)
+for the ID mapping and migration implications.
+
 ## Deploying the Agent to Foundry
 
 To host the agent on Foundry, follow the instructions in the [Deploying the Agent to Foundry](../../README.md#deploying-the-agent-to-foundry) section of the README in the parent directory.

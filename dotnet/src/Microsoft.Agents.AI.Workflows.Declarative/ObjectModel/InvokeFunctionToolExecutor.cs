@@ -224,7 +224,7 @@ internal sealed class InvokeFunctionToolExecutor(
 
         // Add messages to conversation if conversationId is provided
         // Note: We transform messages containing FunctionResultContent or FunctionCallContent
-        // to assistant text messages because workflow-generated CallIds don't correspond to
+        // to user text messages because workflow-generated CallIds don't correspond to
         // actual AI-generated tool calls and would be rejected by the API.
         if (conversationId is not null)
         {
@@ -336,8 +336,8 @@ internal sealed class InvokeFunctionToolExecutor(
     }
 
     /// <summary>
-    /// Transforms messages containing function-related content to assistant text messages.
-    /// Messages with FunctionResultContent are converted to assistant messages with the result as text.
+    /// Transforms messages containing function-related content to user text messages.
+    /// Messages with FunctionResultContent are converted to user messages with the result as text.
     /// Messages with only FunctionCallContent are excluded as they have no informational value.
     /// </summary>
     private static IEnumerable<ChatMessage> TransformConversationMessages(IEnumerable<ChatMessage> messages)
@@ -350,7 +350,8 @@ internal sealed class InvokeFunctionToolExecutor(
 
             if (hasFunctionResult)
             {
-                // Convert function results to assistant text message
+                // Convert function results to user text messages so externally supplied results
+                // are not attributed to the assistant.
                 List<AIContent> updatedContents = [];
                 foreach (AIContent content in message.Contents)
                 {
@@ -371,7 +372,7 @@ internal sealed class InvokeFunctionToolExecutor(
 
                 if (updatedContents.Count > 0)
                 {
-                    yield return new ChatMessage(ChatRole.Assistant, updatedContents);
+                    yield return new ChatMessage(ChatRole.User, updatedContents);
                 }
             }
             else if (!hasFunctionCall)

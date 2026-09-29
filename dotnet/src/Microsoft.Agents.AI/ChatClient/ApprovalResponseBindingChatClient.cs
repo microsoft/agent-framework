@@ -85,9 +85,17 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
             return await base.GetResponseAsync(messages, options, cancellationToken).ConfigureAwait(false);
         }
 
-        messages = this.ValidateInboundApprovalResponses(messages, session);
+        var (messagesToSend, hasPendingRequests) = this.ValidateInboundApprovalResponses(messages, session);
 
-        var response = await base.GetResponseAsync(messages, options, cancellationToken).ConfigureAwait(false);
+        var response = await base.GetResponseAsync(messagesToSend, options, cancellationToken).ConfigureAwait(false);
+
+        // The records are consumed only now that the run has succeeded, so a failed run leaves them intact and the
+        // caller can supply the same approval response again. This runs before the requests surfaced by this run
+        // are recorded, so it never discards those.
+        if (hasPendingRequests)
+        {
+            session.StateBag.TryRemoveValue(StateBagKey);
+        }
 
         this.RecordPendingApprovalRequests(response.Messages, session);
 
@@ -110,13 +118,19 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
             yield break;
         }
 
-        messages = this.ValidateInboundApprovalResponses(messages, session);
+        var (messagesToSend, hasPendingRequests) = this.ValidateInboundApprovalResponses(messages, session);
 
         List<ToolApprovalRequestContent>? emitted = null;
 
+        // Set only once the stream has run to completion, so that any abnormal end - an exception from the inner
+        // client, a cancellation, or a consumer that stops enumerating early - leaves the records intact and lets the
+        // caller supply the same approval response again. A caught exception is not enough on its own: breaking out of
+        // the enumeration disposes this iterator without throwing, and the run then persists nothing either.
+        bool completedNormally = false;
+
         try
         {
-            await foreach (var update in base.GetStreamingResponseAsync(messages, options, cancellationToken).ConfigureAwait(false))
+            await foreach (var update in base.GetStreamingResponseAsync(messagesToSend, options, cancellationToken).ConfigureAwait(false))
             {
                 foreach (var content in update.Contents)
                 {
@@ -128,9 +142,19 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
 
                 yield return update;
             }
+
+            completedNormally = true;
         }
         finally
         {
+            if (completedNormally && hasPendingRequests)
+            {
+                session.StateBag.TryRemoveValue(StateBagKey);
+            }
+
+            // Recorded regardless of how the stream ended, because each request was already handed to the caller
+            // before the stream stopped and the caller may act on it. Consumers commonly stop enumerating as soon as
+            // they see an approval request, and the record has to be in place for the answer to bind.
             if (emitted is { Count: > 0 })
             {
                 this.MergePendingApprovalRequests(emitted, session);
@@ -173,7 +197,15 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
     /// function invocation middleware. That is deliberate: a payload whose approval was rejected surfaces as an
     /// error instead of silently continuing as though the call had never been requested.
     /// </remarks>
-    private IEnumerable<ChatMessage> ValidateInboundApprovalResponses(IEnumerable<ChatMessage> messages, AgentSession session)
+    /// <param name="messages">The inbound messages.</param>
+    /// <param name="session">The session holding the recorded pending approval requests.</param>
+    /// <returns>
+    /// The messages to send to the inner client, and whether the session held any recorded pending requests, which
+    /// the caller consumes once the inner call has succeeded.
+    /// </returns>
+    private (IEnumerable<ChatMessage> Messages, bool HasPendingRequests) ValidateInboundApprovalResponses(
+        IEnumerable<ChatMessage> messages,
+        AgentSession session)
     {
         var messageList = messages as IList<ChatMessage> ?? new List<ChatMessage>(messages);
 
@@ -183,12 +215,11 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
         // its request id is known, and it is rebound to the known request's call.
         var knownRequests = LoadPendingApprovalRequestLookup(session);
 
-        // Pending state only needs to bridge a single turn; consume it now. Tool-call results must be supplied
-        // as a complete set, so an approval batch is always answered in one turn and nothing is left to carry over.
-        if (knownRequests.Count > 0)
-        {
-            session.StateBag.TryRemoveValue(StateBagKey);
-        }
+        // Pending state only needs to bridge a single turn. Tool-call results must be supplied as a complete set,
+        // so an approval batch is always answered in one turn and nothing is left to carry over. It is consumed by
+        // the caller once the inner call has succeeded rather than here, because a run that fails persists neither
+        // the approval response nor anything else, and the caller must be able to supply the same response again.
+        var hasPendingRequests = knownRequests.Count > 0;
 
         // Tool calls that already carry a result in the inbound messages. The approval gate guards execution, and
         // a call whose result is already present will not be executed again, so its approval is settled history
@@ -220,7 +251,7 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
         // Only approval responses are rewritten; if there are none there is nothing to bind or drop.
         if (!hasResponse)
         {
-            return messageList;
+            return (messageList, hasPendingRequests);
         }
 
         // Copy-on-write: only allocate a new message list once a message is actually modified.
@@ -257,7 +288,7 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
             }
         }
 
-        return result ?? messageList;
+        return (result ?? messageList, hasPendingRequests);
     }
 
     /// <summary>

@@ -97,6 +97,9 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
 
     public async ValueTask InitializeAsync()
     {
+        // Skipping here covers every conformance test in this project, because each test initializes this fixture first.
+        Assert.SkipWhen(!string.IsNullOrEmpty(TestSkipReasons.OpenAIIntegrationTests), TestSkipReasons.OpenAIIntegrationTests ?? string.Empty);
+
         this._modelName = TestConfiguration.GetRequiredValue(TestSettings.OpenAIChatModelName);
         this._openAIResponseClient = new OpenAIClient(TestConfiguration.GetRequiredValue(TestSettings.OpenAIApiKey))
             .GetResponsesClient();

@@ -36,6 +36,7 @@ from agent_framework import (
     InMemoryCheckpointStorage,
     InMemoryHistoryProvider,
     Message,
+    MiddlewareBundle,
     MiddlewareFailure,
     SessionContext,
     SupportsAgentRun,
@@ -4763,6 +4764,109 @@ def _build_tool_approval_queue_endpoint(
     return TestClient(app), executed, messages_received, state, wrapped_agent
 
 
+@pytest.mark.parametrize("middleware_kind", ["direct", "bundle", "wrapper"])
+@pytest.mark.parametrize("state_origin", ["request", "snapshot"])
+@pytest.mark.parametrize("trusted_approval", [False, True])
+async def test_endpoint_custom_approval_namespaces_remain_server_owned(
+    streaming_chat_client_stub: Any,
+    middleware_kind: str,
+    state_origin: str,
+    trusted_approval: bool,
+) -> None:
+    """Shared State cannot supply or replace approval rules, including after snapshot restore."""
+    executed: list[str] = []
+
+    def gated_tool() -> str:
+        executed.append("ran")
+        return "done"
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        if executed:
+            yield ChatResponseUpdate(contents=[Content.from_text(text="Done.")], role="assistant")
+        else:
+            yield ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="call_gated", name="gated_tool", arguments="{}")],
+                role="assistant",
+            )
+
+    source_ids = ("custom_approvals", "other_approvals")
+    approval = ToolApprovalMiddleware(source_id="initial_approvals")
+    middleware = [approval, ToolApprovalMiddleware(source_id=source_ids[1])]
+    chat_client = streaming_chat_client_stub(stream_fn)
+    agent = Agent(
+        client=chat_client,
+        tools=[
+            FunctionTool(name="gated_tool", description="Test tool", func=gated_tool, approval_mode="always_require")
+        ],
+        middleware=[MiddlewareBundle(middleware)] if middleware_kind == "bundle" else middleware,
+    )
+
+    class ForwardingAgent:
+        def __getattr__(self, name: str) -> Any:
+            return getattr(agent, name)
+
+    wrapped = AgentFrameworkAgent(
+        agent=cast(SupportsAgentRun, ForwardingAgent()) if middleware_kind == "wrapper" else agent,
+        require_confirmation=False,
+    )
+    # Namespace discovery must use the live middleware, not construction-time configuration.
+    approval.source_id = source_ids[0]
+    rule = {"tool_name": "gated_tool"}
+    shared_state = {
+        **{source_id: {"rules": [] if trusted_approval else [rule]} for source_id in source_ids},
+        "client_value": "available",
+    }
+    store = InMemoryAGUIThreadSnapshotStore()
+    await store.save(
+        scope="test",
+        thread_id="thread-approval-state",
+        snapshot=AGUIThreadSnapshot(
+            state=shared_state if state_origin == "snapshot" else None,
+            session_state={source_id: {"rules": [rule]} for source_id in source_ids} if trusted_approval else None,
+        ),
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        wrapped,
+        path="/approval",
+        snapshot_store=store,
+        snapshot_scope_resolver=lambda _request: "test",
+    )
+    payload: dict[str, Any] = {
+        "threadId": "thread-approval-state",
+        "runId": "run-approval-state",
+        "messages": [{"role": "user", "content": "Run the test tool"}],
+    }
+    if state_origin == "request":
+        payload["state"] = shared_state
+    response = TestClient(app).post("/approval", json=payload)
+
+    assert response.status_code == 200
+    events = _decode_sse_events(response)
+    assert not any(event["type"] == "RUN_ERROR" for event in events)
+    finished = next(event for event in events if event["type"] == "RUN_FINISHED")
+    assert executed == (["ran"] if trusted_approval else [])
+    if trusted_approval:
+        assert "outcome" not in finished
+    else:
+        assert finished["outcome"]["type"] == "interrupt"
+        assert len(finished["outcome"]["interrupts"]) == 1
+    assert chat_client.last_session is not None
+    assert chat_client.last_session.state["client_value"] == "available"
+    snapshot = await store.get(scope="test", thread_id="thread-approval-state")
+    assert snapshot is not None
+    assert snapshot.session_state is not None
+    for source_id in source_ids:
+        assert [stored_rule["tool_name"] for stored_rule in snapshot.session_state[source_id]["rules"]] == (
+            ["gated_tool"] if trusted_approval else []
+        )
+
+
 def _build_tool_approval_auto_endpoint(
     streaming_chat_client_stub: Any,
 ) -> tuple[TestClient, list[str], list[Message], dict[str, str]]:
@@ -6475,6 +6579,14 @@ async def test_endpoint_fides_replacement_rotates_lifecycle_generation(
     snapshot = await snapshot_store.get(scope="tenant-a", thread_id=thread_id)
     assert snapshot is not None and snapshot.session_state is not None
     snapshot.session_state[security.source_id]["pending_policy_approvals"][original_id]["created_at"] = 0.0
+    assert snapshot.interrupt is not None
+    snapshot.interrupt.append(
+        {
+            "id": "other-input",
+            "reason": "input_required",
+            "message": "Choose another value.",
+        }
+    )
     await snapshot_store.save(scope="tenant-a", thread_id=thread_id, snapshot=snapshot)
 
     stale = client.post(
@@ -6496,6 +6608,10 @@ async def test_endpoint_fides_replacement_rotates_lifecycle_generation(
     assert replacement_id != original_id
     assert replacement_interrupts[0]["toolCallId"] == "call-guarded"
     assert executed == []
+    replaced_snapshot = await snapshot_store.get(scope="tenant-a", thread_id=thread_id)
+    assert replaced_snapshot is not None
+    assert replaced_snapshot.interrupt is not None
+    assert {interrupt["id"] for interrupt in replaced_snapshot.interrupt} == {replacement_id, "other-input"}
     approval_state = wrapped_agent._approval_state_store.get_tool_approval_state(
         approval_state_thread_id(scope="tenant-a", thread_id=thread_id)
     )
@@ -10481,8 +10597,12 @@ async def test_endpoint_double_encoding_failure_terminates():
     assert response.status_code == 200
 
 
-async def test_agent_endpoint_confirm_changes_clears_persisted_interrupt(streaming_chat_client_stub):
-    """A confirm_changes response persists the completed turn and clears the stored interrupt."""
+@pytest.mark.parametrize("with_other_interrupt", [False, True], ids=["only-confirm", "preserve-other"])
+async def test_agent_endpoint_confirm_changes_clears_persisted_interrupt(
+    streaming_chat_client_stub,
+    with_other_interrupt: bool,
+):
+    """A confirm response retires only its own persisted interrupt."""
     app = FastAPI()
     call_count = 0
 
@@ -10528,6 +10648,17 @@ async def test_agent_endpoint_confirm_changes_clears_persisted_interrupt(streami
     first_finished = [event for event in first_events if event.get("type") == "RUN_FINISHED"]
     first_interrupts = _run_finished_interrupts(first_finished[-1])
     confirm_call_id = first_interrupts[0]["id"]
+    if with_other_interrupt:
+        stored_snapshot = await store.get(scope="tenant-a", thread_id="agent-thread")
+        assert stored_snapshot is not None and stored_snapshot.interrupt is not None
+        stored_snapshot.interrupt.append(
+            {
+                "id": "other-input",
+                "reason": "input_required",
+                "message": "Choose another value.",
+            }
+        )
+        await store.save(scope="tenant-a", thread_id="agent-thread", snapshot=stored_snapshot)
 
     confirm_response = client.post(
         "/snapshots",
@@ -10553,7 +10684,10 @@ async def test_agent_endpoint_confirm_changes_clears_persisted_interrupt(streami
     assert hydrate_response.status_code == 200
     assert call_count == 1
     events = _decode_sse_events(hydrate_response)
-    assert "outcome" not in events[-1]
+    if with_other_interrupt:
+        assert [interrupt["id"] for interrupt in _run_finished_interrupts(events[-1])] == ["other-input"]
+    else:
+        assert "outcome" not in events[-1]
     messages = _latest_messages_snapshot(hydrate_response)
     assert any(
         message.get("role") == "assistant" and message.get("content") == "Changes confirmed and applied successfully!"
@@ -10917,6 +11051,150 @@ async def test_agent_endpoint_approval_resume_seeds_provider_history_from_snapsh
     assert ("user", "text", None, None) in received
     assert ("assistant", "function_call", "call_get_weather", "get_weather") in received
     assert ("tool", "function_result", "call_get_weather", None) in received
+
+
+async def test_agent_endpoint_approved_result_is_persisted_before_provider_continuation_failure():
+    """Hydration keeps an executed approval result when the provider continuation fails."""
+    from agent_framework import AgentResponse, ResponseInvalidatedException, ResponseStream
+
+    store = InMemoryAGUIThreadSnapshotStore()
+    client, agent, executed_cities = _build_weather_approval_endpoint(snapshot_store=store)
+    original_run = agent.run
+
+    def failing_run(*args: Any, **kwargs: Any) -> Any:
+        if not kwargs.get("stream", False):
+            return original_run(*args, **kwargs)
+
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            if False:  # pragma: no cover
+                yield AgentResponseUpdate()
+            raise ResponseInvalidatedException("provider continuation failed")
+
+        return ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+    agent.run = failing_run  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+    resume_response = client.post(
+        "/approval",
+        json={
+            "runId": "run-resume-failure",
+            "threadId": "thread-weather",
+            "messages": [],
+            "resume": [
+                {
+                    "interruptId": "call_get_weather",
+                    "status": "resolved",
+                    "payload": {"accepted": True},
+                }
+            ],
+        },
+    )
+
+    resume_events = _decode_sse_events(resume_response)
+    assert executed_cities == ["Seattle"]
+    assert [
+        (event["toolCallId"], event["content"]) for event in resume_events if event.get("type") == "TOOL_CALL_RESULT"
+    ] == [("call_get_weather", "Sunny in Seattle")]
+    assert [event["code"] for event in resume_events if event.get("type") == "RUN_ERROR"] == [
+        "ResponseInvalidatedException"
+    ]
+
+    snapshot = await store.get(scope="tenant-a", thread_id="thread-weather")
+    assert snapshot is not None
+    assert snapshot.interrupt is None
+    assert "Sunny in Seattle" in str(snapshot.messages)
+
+
+async def test_agent_endpoint_rejected_approval_is_persisted_before_provider_continuation_failure():
+    """Hydration cannot replay a rejected approval when provider continuation fails."""
+    from agent_framework import AgentResponse, ResponseInvalidatedException, ResponseStream
+
+    store = InMemoryAGUIThreadSnapshotStore()
+    client, agent, executed_cities = _build_weather_approval_endpoint(snapshot_store=store)
+    original_run = agent.run
+
+    def failing_run(*args: Any, **kwargs: Any) -> Any:
+        if not kwargs.get("stream", False):
+            return original_run(*args, **kwargs)
+
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            if False:  # pragma: no cover
+                yield AgentResponseUpdate()
+            raise ResponseInvalidatedException("provider continuation failed")
+
+        return ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+    agent.run = failing_run  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+    resume_response = client.post(
+        "/approval",
+        json={
+            "runId": "run-reject-failure",
+            "threadId": "thread-weather",
+            "messages": [],
+            "resume": [
+                {
+                    "interruptId": "call_get_weather",
+                    "status": "resolved",
+                    "payload": {"approved": False},
+                }
+            ],
+        },
+    )
+
+    resume_events = _decode_sse_events(resume_response)
+    assert executed_cities == []
+    assert [event["code"] for event in resume_events if event.get("type") == "RUN_ERROR"] == [
+        "ResponseInvalidatedException"
+    ]
+
+    snapshot = await store.get(scope="tenant-a", thread_id="thread-weather")
+    assert snapshot is not None
+    assert snapshot.interrupt is None
+    assert "Tool call invocation was rejected by user" in str(snapshot.messages)
+
+
+async def test_agent_endpoint_approval_resume_preserves_other_stored_interrupts():
+    """A successful approval continuation retains unrelated stored interrupts."""
+    store = InMemoryAGUIThreadSnapshotStore()
+    client, _, executed_cities = _build_weather_approval_endpoint(snapshot_store=store)
+    snapshot = await store.get(scope="tenant-a", thread_id="thread-weather")
+    assert snapshot is not None
+    assert snapshot.interrupt is not None
+    snapshot.interrupt.append(
+        {
+            "id": "other-input",
+            "reason": "input_required",
+            "message": "Choose another value.",
+        }
+    )
+    await store.save(scope="tenant-a", thread_id="thread-weather", snapshot=snapshot)
+
+    resume_response = client.post(
+        "/approval",
+        json={
+            "runId": "run-resume-preserve",
+            "threadId": "thread-weather",
+            "messages": [],
+            "resume": [
+                {
+                    "interruptId": "call_get_weather",
+                    "status": "resolved",
+                    "payload": {"accepted": True},
+                }
+            ],
+        },
+    )
+
+    assert resume_response.status_code == 200
+    assert executed_cities == ["Seattle"]
+    final_snapshot = await store.get(scope="tenant-a", thread_id="thread-weather")
+    assert final_snapshot is not None
+    assert final_snapshot.interrupt == [
+        {
+            "id": "other-input",
+            "reason": "input_required",
+            "message": "Choose another value.",
+        }
+    ]
 
 
 async def test_agent_endpoint_cancelled_approval_resume_clears_persisted_interrupt():
