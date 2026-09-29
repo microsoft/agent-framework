@@ -122,15 +122,17 @@ public sealed class ValkeyChatHistoryProviderTests
         Assert.Equal("custom_key", keys[0]);
     }
 
-    [Fact]
-    public void Constructor_NegativeMaxMessages_ThrowsArgumentOutOfRangeException()
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void Constructor_NonPositiveMaxMessages_ThrowsArgumentOutOfRangeException(int maxMessages)
     {
         // Act & Assert
         Assert.Throws<ArgumentOutOfRangeException>(() =>
             new ValkeyChatHistoryProvider(
                 CreateMockConnection().Object,
                 _ => new ValkeyChatHistoryProvider.State("conv-1"),
-                new ValkeyChatHistoryProviderOptions { MaxMessages = -1 }));
+                new ValkeyChatHistoryProviderOptions { MaxMessages = maxMessages }));
     }
 
     [Fact]
@@ -291,30 +293,5 @@ public sealed class ValkeyChatHistoryProviderTests
         // Assert — trim called unconditionally when MaxMessages is set
         dbMock.Verify(d => d.ListTrimAsync(
             It.IsAny<ValkeyKey>(), -10, -1), Times.Once);
-    }
-
-    [Fact]
-    public async Task StoreChatHistoryAsync_WithZeroMaxMessages_StoresNothingAsync()
-    {
-        // Arrange
-        var dbMock = new Mock<IDatabase>();
-
-        var provider = new ValkeyChatHistoryProvider(
-            CreateMockConnection(dbMock).Object,
-            _ => new ValkeyChatHistoryProvider.State("conv-1"),
-            new ValkeyChatHistoryProviderOptions { MaxMessages = 0 });
-
-        var context = TestHelpers.CreateChatHistoryInvokedContext(
-            [new ChatMessage(ChatRole.User, "hello")],
-            [new ChatMessage(ChatRole.Assistant, "hi")]);
-
-        // Act
-        await provider.InvokedAsync(context);
-
-        // Assert — LTRIM key 0 -1 would keep the whole list, so nothing is pushed
-        dbMock.Verify(d => d.ListRightPushAsync(
-            It.IsAny<ValkeyKey>(), It.IsAny<ValkeyValue[]>()), Times.Never);
-        dbMock.Verify(d => d.ListTrimAsync(
-            It.IsAny<ValkeyKey>(), It.IsAny<long>(), It.IsAny<long>()), Times.Never);
     }
 }

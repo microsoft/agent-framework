@@ -19,7 +19,7 @@ public sealed class ValkeyChatHistoryProviderOptions
 
     /// <summary>
     /// Gets or sets the maximum number of messages to retain per conversation.
-    /// When exceeded, oldest messages are automatically trimmed. Null means unlimited; zero retains nothing.
+    /// When exceeded, oldest messages are automatically trimmed. Null means unlimited; otherwise the value must be greater than zero.
     /// </summary>
     public int? MaxMessages { get; set; }
 

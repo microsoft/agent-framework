@@ -72,7 +72,7 @@ public sealed class ValkeyChatHistoryProvider : ChatHistoryProvider
         this._keyPrefix = options?.KeyPrefix ?? "chat_history";
         if (options?.MaxMessages is int maxMessages)
         {
-            Throw.IfLessThan(maxMessages, 0, nameof(options.MaxMessages));
+            Throw.IfLessThanOrEqual(maxMessages, 0, nameof(options.MaxMessages));
         }
 
         if (options?.MaxMessagesToRetrieve is int maxMessagesToRetrieve)
@@ -165,13 +165,6 @@ public sealed class ValkeyChatHistoryProvider : ChatHistoryProvider
         }
 
         FeatureUsageMarker.MarkUsed();
-
-        // A limit of zero retains nothing, so nothing is written. LTRIM key 0 -1 would keep the whole list.
-        if (this._maxMessages == 0)
-        {
-            return;
-        }
-
         var db = this._connection.GetDatabase();
         var key = this.BuildKey(state);
 
