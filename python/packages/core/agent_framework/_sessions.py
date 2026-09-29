@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeAlias, TypeVar, cast
 
 import msgspec
+from typing_extensions import TypedDict
 
 from ._feature_stage import ExperimentalFeature, experimental
 from ._filesystem import (
@@ -67,6 +68,7 @@ logger = logging.getLogger("agent_framework")
 
 MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY: str = "message_injection.pending_messages"
 _MESSAGE_INJECTION_LOCK = threading.Lock()
+_WORKFLOW_DEFER_COMPUTER_FUNCTION_RESULTS_KEY = "workflow.defer_computer_function_results"
 
 JsonDumps: TypeAlias = Callable[[Any], str | bytes]
 JsonLoads: TypeAlias = Callable[[str | bytes], Any]
@@ -174,7 +176,7 @@ def _get_message_hash(message: Message) -> MessageIdentity:
 
 
 def filter_new_messages(existing: Sequence[Message], incoming: Sequence[Message]) -> list[Message]:
-    """Filters incoming messages to only those that are truly new.
+    """Return messages after the ordered overlap with persisted history.
 
     Handles both 'append-only' and 'full transcript replay' scenarios.
     Prevents superlinear growth and preserves legitimate duplicate turns.
@@ -185,23 +187,20 @@ def filter_new_messages(existing: Sequence[Message], incoming: Sequence[Message]
     existing_hashes = [_get_message_hash(m) for m in existing]
     incoming_hashes = [_get_message_hash(m) for m in incoming]
 
-    if len(incoming) >= len(existing) and incoming_hashes[: len(existing_hashes)] == existing_hashes:
-        return list(incoming[len(existing) :])
+    for i in range(len(incoming_hashes) - len(existing_hashes) + 1):
+        if incoming_hashes[i : i + len(existing_hashes)] == existing_hashes:
+            if i == 0 and len(existing) == 1 and existing[-1].role == "user" and existing_hashes[-1][0] != "id":
+                break  # A repeated input without an ID is more important to retain than a possible replay.
+            return list(incoming[i + len(existing_hashes) :])
 
-    try:
-        for i in range(len(incoming_hashes) - len(existing_hashes) + 1):
-            if incoming_hashes[i : i + len(existing_hashes)] == existing_hashes:
-                return list(incoming[i + len(existing_hashes) :])
-    except Exception:
-        logger.debug("sequence alignment check failed, falling back to set-based deduplication")
+    for overlap in range(min(len(existing_hashes), len(incoming_hashes)), 0, -1):
+        if existing_hashes[-overlap:] != incoming_hashes[:overlap]:
+            continue
+        if overlap == 1 and existing[-1].role == "user" and existing_hashes[-1][0] != "id":
+            continue
+        return list(incoming[overlap:])
 
-    existing_set = set(existing_hashes)
-    new_msgs: list[Message] = []
-    for m, h in zip(incoming, incoming_hashes):
-        if h not in existing_set:
-            new_msgs.append(m)
-            existing_set.add(h)
-    return new_msgs
+    return list(incoming)
 
 
 @dataclass(frozen=True, slots=True)
@@ -830,17 +829,14 @@ class ContextProvider:
         """
 
 
-def _is_approval_placeholder_result(content: Content) -> bool:
-    result = getattr(content, "result", None)
-    return isinstance(result, str) and "[APPROVAL_PENDING]" in result
-
-
 def _approval_controls_to_keep(messages: Sequence[Message]) -> set[int]:
     unresolved_requests_by_id: dict[str, Content] = {}
     local_request_ids_by_call_id: dict[str, deque[str]] = {}
     local_request_ids_by_occurrence: dict[str, str] = {}
+    local_requests_by_id: dict[str, Content] = {}
+    closed_request_occurrences: set[int] = set()
     unresolved_local_responses_by_id: dict[str, Content] = {}
-    local_responses_by_call_id: dict[str, deque[tuple[str, str | None]]] = {}
+    local_responses_by_call_id: dict[str, deque[tuple[str, Content | None]]] = {}
 
     for message in messages:
         for content in message.contents:
@@ -849,6 +845,7 @@ def _approval_controls_to_keep(messages: Sequence[Message]) -> set[int]:
                 if content.id is not None and function_call is not None and function_call.call_id is not None:
                     if content.id not in unresolved_requests_by_id:
                         unresolved_requests_by_id[content.id] = content
+                        local_requests_by_id[content.id] = content
                         local_request_ids_by_call_id.setdefault(function_call.call_id, deque()).append(content.id)
                         if function_call.id is not None:
                             local_request_ids_by_occurrence[function_call.id] = content.id
@@ -863,8 +860,14 @@ def _approval_controls_to_keep(messages: Sequence[Message]) -> set[int]:
                 continue
             if content.type == "function_approval_response":
                 function_call = content.function_call
-                if content.id is not None:
-                    unresolved_requests_by_id.pop(local_request_ids_by_occurrence.get(content.id, content.id), None)
+                request_id = (
+                    local_request_ids_by_occurrence.get(content.id, content.id) if content.id is not None else None
+                )
+                request = local_requests_by_id.get(request_id) if request_id is not None else None
+                if request_id is not None:
+                    unresolved_requests_by_id.pop(request_id, None)
+                if request is not None and id(request) in closed_request_occurrences:
+                    continue
                 if (
                     content.id is not None
                     and function_call is not None
@@ -873,15 +876,14 @@ def _approval_controls_to_keep(messages: Sequence[Message]) -> set[int]:
                     and content.id not in unresolved_local_responses_by_id
                 ):
                     unresolved_local_responses_by_id[content.id] = content
-                    request_id = local_request_ids_by_occurrence.get(content.id)
                     local_responses_by_call_id.setdefault(function_call.call_id, deque()).append((
                         content.id,
-                        request_id,
+                        request,
                     ))
                 continue
             if content.call_id is None:
                 continue
-            is_terminal_result = content.type == "function_result" and not _is_approval_placeholder_result(content)
+            is_terminal_result = content.type == "function_result"
             is_follow_up_request = content.user_input_request and content.type not in {
                 "function_approval_request",
                 "function_approval_response",
@@ -893,16 +895,20 @@ def _approval_controls_to_keep(messages: Sequence[Message]) -> set[int]:
                 while responses and responses[0][0] not in unresolved_local_responses_by_id:
                     responses.popleft()
                 if responses:
-                    response_id, request_id = responses.popleft()
+                    response_id, request = responses.popleft()
                     unresolved_local_responses_by_id.pop(response_id, None)
-                    if request_id is not None:
-                        unresolved_requests_by_id.pop(request_id, None)
+                    if request is not None:
+                        closed_request_occurrences.add(id(request))
+                        if request.id is not None:
+                            unresolved_requests_by_id.pop(request.id, None)
                     resolved_response = True
             if not resolved_response and (request_ids := local_request_ids_by_call_id.get(content.call_id)):
                 while request_ids and request_ids[0] not in unresolved_requests_by_id:
                     request_ids.popleft()
                 if request_ids:
-                    unresolved_requests_by_id.pop(request_ids.popleft(), None)
+                    request = unresolved_requests_by_id.pop(request_ids.popleft(), None)
+                    if request is not None:
+                        closed_request_occurrences.add(id(request))
 
     return {
         id(content) for content in (*unresolved_requests_by_id.values(), *unresolved_local_responses_by_id.values())
@@ -929,6 +935,53 @@ def _filter_approval_control_messages(messages: Sequence[Message]) -> list[Messa
         filtered_message.contents = filtered_contents
         filtered_messages.append(filtered_message)
     return filtered_messages
+
+
+def _paired_local_function_results(contents: Sequence[Content]) -> dict[int, Content]:
+    """Match completed local results to their function-call occurrences."""
+    results_by_call_id: dict[str, deque[Content]] = {}
+    for content in contents:
+        if content.type == "function_result" and content.call_id:
+            results_by_call_id.setdefault(content.call_id, deque()).append(content)
+    pairs: dict[int, Content] = {}
+    for content in contents:
+        if (
+            content.type == "function_call"
+            and not content.informational_only
+            and content.id
+            and content.call_id
+            and (results := results_by_call_id.get(content.call_id))
+        ):
+            pairs[id(content)] = results.popleft()
+    return pairs
+
+
+def _without_deferred_workflow_function_results(messages: Sequence[Message]) -> list[Message]:
+    """Persist mixed computer turns without results staged for workflow resume."""
+    start = next(
+        (
+            index
+            for index, message in enumerate(messages)
+            if any(content.type == "computer_tool_call" and content.user_input_request for content in message.contents)
+        ),
+        None,
+    )
+    if start is None:
+        return list(messages)
+    contents = [content for message in messages[start:] for content in message.contents]
+    deferred_ids = {id(result) for result in _paired_local_function_results(contents).values()}
+    if not deferred_ids:
+        return list(messages)
+    stored = list(messages[:start])
+    for message in messages[start:]:
+        kept = [content for content in message.contents if id(content) not in deferred_ids]
+        if len(kept) == len(message.contents):
+            stored.append(message)
+        elif kept:
+            copied = copy.copy(message)
+            copied.contents = kept
+            stored.append(copied)
+    return stored
 
 
 class HistoryProvider(ContextProvider):
@@ -1061,7 +1114,14 @@ class HistoryProvider(ContextProvider):
         if self.store_inputs:
             messages_to_store.extend(context.input_messages)
         if self.store_outputs and context.response and context.response.messages:
-            messages_to_store.extend(context.response.messages)
+            output_messages = context.response.messages
+            if (
+                self.load_messages
+                and self.store_inputs
+                and session.state.get(_WORKFLOW_DEFER_COMPUTER_FUNCTION_RESULTS_KEY)
+            ):
+                output_messages = _without_deferred_workflow_function_results(output_messages)
+            messages_to_store.extend(output_messages)
         if messages_to_store:
             await self.save_messages(context.session_id, messages_to_store, state=state)
 
@@ -1100,7 +1160,7 @@ def _current_run_identity() -> object | None:  # pyright: ignore[reportUnusedFun
 
 
 @contextlib.contextmanager
-def _run_identity_scope(identity: object) -> Generator[None]:  # pyright: ignore[reportUnusedFunction]
+def _run_identity_scope(identity: object) -> Generator[None]:
     """Stamp ``identity`` as the current run identity for the enclosed extent."""
     token = _CURRENT_RUN_IDENTITY.set(identity)
     try:
@@ -1754,6 +1814,32 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
         )
 
 
+class _AgentSessionDictRequired(TypedDict):
+    """Required fields for a serialized :class:`AgentSession`."""
+
+    session_id: str
+
+
+class AgentSessionDict(_AgentSessionDictRequired, total=False):
+    """Serialized :class:`AgentSession` payload shape produced by :meth:`AgentSession.to_dict`.
+
+    ``AgentSession.to_dict`` returns a plain ``dict[str, Any]`` that conforms to this
+    schema. Callers that need a TypedDict view can ``cast`` the result.
+
+    Built as a required base plus ``total=False`` optional fields so postponed
+    annotations do not turn optional keys into required runtime metadata.
+
+    ``service_session_id`` may be a plain string or a structured
+    :data:`ServiceSessionId` mapping, matching :attr:`AgentSession.service_session_id`.
+    ``state`` holds session-local data and may be incomplete when the session uses
+    service-side storage.
+    """
+
+    type: str
+    service_session_id: str | ServiceSessionId | None
+    state: dict[str, Any]
+
+
 class AgentSession:
     """A conversation session with an agent.
 
@@ -1796,6 +1882,11 @@ class AgentSession:
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize session to a plain dict for storage/transfer.
+
+        The returned mapping matches :class:`AgentSessionDict`. The annotated
+        return type stays ``dict[str, Any]`` so subclasses and callers that
+        extend or pass the payload as a mutable ``dict`` remain type-correct
+        (TypedDict is not assignable to ``dict`` under pyright).
 
         Registered custom values use their configured codecs. Unregistered
         values defining ``to_dict`` retain the established dictionary behavior.
@@ -2364,21 +2455,7 @@ class FileHistoryProvider(HistoryProvider):
         def _append_messages() -> None:
             with file_lock:
                 if self.serialization_format == "json":
-                    existing_messages: list[Message] = []
-                    if file_path.exists():
-                        with file_path.open("r", encoding="utf-8") as f:
-                            for line in f:
-                                line = line.strip()
-                                if not line:
-                                    continue
-                                try:
-                                    payload = self.loads(line)
-                                    msg = Message.from_dict(dict(cast(Mapping[str, Any], payload)))
-                                    existing_messages.append(msg)
-                                except Exception:
-                                    logger.debug("failed to parse history line for deduplication")
-                                    continue
-
+                    existing_messages = self._read_json_messages(file_path) if file_path.exists() else []
                     new_messages = filter_new_messages(existing_messages, messages)
                     if new_messages:
                         with file_path.open("a", encoding="utf-8") as file_handle:

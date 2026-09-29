@@ -34,6 +34,7 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
         public Response? Response { get; set; }
         public CreateResponse? Request { get; set; }
         public string? ConversationStorageId { get; set; }
+        public string? IsolationKey { get; set; }
         public List<StreamingResponseEvent> StreamingUpdates { get; } = [];
         public Task? CompletionTask { get; set; }
         public CancellationTokenSource? CancellationTokenSource { get; set; }
@@ -206,10 +207,12 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
         var idGenerator = new IdGenerator(responseId: null, conversationId: request.Conversation?.Id);
         var responseId = idGenerator.ResponseId;
 
-        var responseStorageId = await this.GetStorageIdAsync(responseId, cancellationToken).ConfigureAwait(false);
+        // Resolve ambient caller identity before a background response detaches from the HTTP request.
+        string? isolationKey = await this.GetIsolationKeyAsync(cancellationToken).ConfigureAwait(false);
+        string responseStorageId = IsolationKeyResolver.ScopeId(responseId, isolationKey);
 
         var conversationStorageId = request.Conversation?.Id is { } conversationId
-            ? await this.GetStorageIdAsync(conversationId, cancellationToken).ConfigureAwait(false)
+            ? IsolationKeyResolver.ScopeId(conversationId, isolationKey)
             : null;
 
         var ct = request.Background switch
@@ -218,7 +221,8 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
             _ => cancellationToken,
         };
 
-        var state = this.InitializeResponse(responseId, responseStorageId, conversationStorageId, request);
+        var state = this.InitializeResponse(
+            responseId, responseStorageId, conversationStorageId, isolationKey, request);
         state.CompletionTask = this.ExecuteResponseAsync(responseId, state, ct);
 
         // For background responses, start execution and return immediately
@@ -244,14 +248,17 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
         var idGenerator = new IdGenerator(responseId: null, conversationId: request.Conversation?.Id);
         var responseId = idGenerator.ResponseId;
 
-        var responseStorageId = await this.GetStorageIdAsync(responseId, cancellationToken).ConfigureAwait(false);
+        // Streaming execution is also detached from the request cancellation token, so capture identity now.
+        string? isolationKey = await this.GetIsolationKeyAsync(cancellationToken).ConfigureAwait(false);
+        string responseStorageId = IsolationKeyResolver.ScopeId(responseId, isolationKey);
 
         var conversationStorageId = request.Conversation?.Id is { } conversationId
-            ? await this.GetStorageIdAsync(conversationId, cancellationToken).ConfigureAwait(false)
+            ? IsolationKeyResolver.ScopeId(conversationId, isolationKey)
             : null;
 
         // Start execution
-        var state = this.InitializeResponse(responseId, responseStorageId, conversationStorageId, request);
+        var state = this.InitializeResponse(
+            responseId, responseStorageId, conversationStorageId, isolationKey, request);
         state.CompletionTask = this.ExecuteResponseAsync(responseId, state, CancellationToken.None);
 
         // Stream updates as they become available
@@ -408,7 +415,17 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
         return this._isolationKeyResolver.ScopeIdAsync(id, cancellationToken);
     }
 
-    private ResponseState InitializeResponse(string responseId, string responseStorageId, string? conversationStorageId, CreateResponse request)
+    private ValueTask<string?> GetIsolationKeyAsync(CancellationToken cancellationToken) =>
+        this._isolationKeyResolver is null
+            ? new ValueTask<string?>((string?)null)
+            : this._isolationKeyResolver.GetKeyAsync(cancellationToken);
+
+    private ResponseState InitializeResponse(
+        string responseId,
+        string responseStorageId,
+        string? conversationStorageId,
+        string? isolationKey,
+        CreateResponse request)
     {
         var metadata = request.Metadata ?? [];
 
@@ -458,6 +475,7 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
             Response = response,
             Request = request,
             ConversationStorageId = conversationStorageId,
+            IsolationKey = isolationKey,
             CancellationTokenSource = new CancellationTokenSource()
         };
 
@@ -484,7 +502,9 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
         try
         {
             // Create agent invocation context
-            var context = new AgentInvocationContext(new IdGenerator(responseId: responseId, conversationId: state.Response?.Conversation?.Id));
+            var context = new AgentInvocationContext(
+                new IdGenerator(responseId: responseId, conversationId: state.Response?.Conversation?.Id),
+                isolationKey: state.IsolationKey);
 
             // Load conversation history if a conversation ID is provided
             IReadOnlyList<Extensions.AI.ChatMessage>? conversationHistory = null;

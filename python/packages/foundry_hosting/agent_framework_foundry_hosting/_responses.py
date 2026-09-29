@@ -9,7 +9,16 @@ import json
 import logging
 import os
 import re
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Mapping, Sequence
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterable,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Generator,
+    Mapping,
+    Sequence,
+)
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, aclosing, suppress
 from dataclasses import asdict, dataclass, is_dataclass
 from typing import Generic, Literal, TypeGuard, TypeVar, cast
@@ -19,12 +28,14 @@ from agent_framework import (
     AgentResponseUpdate,
     ChatOptions,
     CheckpointStorage,
+    ComputerSafetyCheck,
     Content,
     ContextProvider,
     HistoryProvider,
     InMemoryHistoryProvider,
     Message,
     RawAgent,
+    ResponseStream,
     SessionStore,
     SupportsAgentRun,
     UsageDetails,
@@ -43,6 +54,9 @@ from azure.ai.agentserver.responses._id_generator import IdGenerator
 from azure.ai.agentserver.responses.aio import ResponseEventStream
 from azure.ai.agentserver.responses.hosting import ResponsesAgentServerHost
 from azure.ai.agentserver.responses.models import (
+    ComputerAction,
+    ComputerCallSafetyCheckParam,
+    ComputerScreenshotImage,
     CreateResponse,
     FunctionShellAction,
     FunctionShellCallOutputContent,
@@ -53,8 +67,11 @@ from azure.ai.agentserver.responses.models import (
     MessageContent,
     OAuthConsentRequestOutputItem,
     OutputItem,
+    OutputItemComputerToolCall,
+    OutputItemComputerToolCallOutput,
     OutputItemReasoningItem,
     OutputMessageContent,
+    ResponseIncompleteReason,
     ResponseStreamEvent,
     ResponseUsage,
     ResponseUsageInputTokensDetails,
@@ -73,7 +90,9 @@ from azure.ai.agentserver.responses.streaming._checkpoint import ResponseCheckpo
 from mcp import McpError
 from typing_extensions import Any
 
+from ._agent_source import is_agent, resolve_agent, validate_agent_source
 from ._feature_usage import FeatureIndex
+from ._scope import FoundryRequestScope
 from ._state_store import (
     AgentSessionStoreProvider,
     CheckpointStoreProvider,
@@ -151,9 +170,8 @@ class _SignalledIterator(Generic[_T]):
     async context.
 
     If an event and a new item becomes ready at the same time, the event takes priority and the item
-    is discarded. Cancelling the background task while it's mid-call is also what actually interrupts
-    a suspended model/tool call, since ``ResponseStream`` (what ``SupportsAgentRun.run(stream=True)``
-    returns) has no ``aclose()`` of its own.
+    is discarded. Cancelling the background task while it's mid-call interrupts a suspended model or
+    tool call, then the driver closes the underlying stream in ``finally``.
 
     Callers MUST drive this through ``contextlib.aclosing`` (or an equivalent try/finally calling
     ``aclose()``): ``__anext__`` only cancels the driver task on its own signalled/exhausted paths, so
@@ -161,15 +179,27 @@ class _SignalledIterator(Generic[_T]):
     task -- and the real agent/workflow run it's pumping -- would otherwise be silently abandoned.
     """
 
-    def __init__(self, iterator: AsyncIterator[_T], *events: asyncio.Event) -> None:
+    def __init__(
+        self,
+        iterator: AsyncIterator[_T],
+        *events: asyncio.Event,
+        stamp: Callable[[], Awaitable[Any]] | None = None,
+    ) -> None:
         """Wrap an async iterator, stopping early if any of ``events`` fires.
 
         Args:
             iterator: The async iterator to wrap.
             events: One or more asyncio.Event objects to watch for. If any of them is set, iteration stops early.
+            stamp: Optional coroutine function the driver awaits right after the wrapped iterator produces an
+                item and before it is advanced again. Its result is exposed as :attr:`stamp` while that item
+                is the current one, which lets a consumer observe state (e.g. the latest persisted workflow
+                checkpoint) as it was when the item was produced rather than when it is consumed: the driver
+                runs one item ahead, so by consumption time the wrapped iterator may already have moved on.
         """
         self._iterator = iterator
         self._events = events
+        self._stamp_fn = stamp
+        self._stamp: Any = None
         self._signalled = False
         # The queue is used to communicate items from the background driver task to the main iteration loop.
         self._queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=1)
@@ -185,21 +215,36 @@ class _SignalledIterator(Generic[_T]):
         """
         return self._signalled
 
+    @property
+    def stamp(self) -> Any:
+        """The ``stamp`` result taken when the current item was produced (``None`` without a ``stamp``)."""
+        return self._stamp
+
     def __aiter__(self) -> _SignalledIterator[_T]:
         return self
 
     async def _drive(self) -> None:
         """Pull items from the wrapped iterator into ``self._queue`` for the object's lifetime."""
-        while True:
-            try:
-                item: Any = await self._iterator.__anext__()
-            except StopAsyncIteration:
-                await self._queue.put(_STOP_SENTINEL)
-                return
-            except Exception as exc:
-                await self._queue.put(exc)
-                return
-            await self._queue.put(item)
+        try:
+            while True:
+                try:
+                    item: Any = await self._iterator.__anext__()
+                    stamp = await self._stamp_fn() if self._stamp_fn is not None else None
+                except StopAsyncIteration:
+                    await self._queue.put(_STOP_SENTINEL)
+                    return
+                except Exception as exc:
+                    await self._queue.put(exc)
+                    return
+                await self._queue.put((item, stamp))
+        finally:
+            iterator: AsyncIterator[_T] = self._iterator
+            if isinstance(iterator, ResponseStream):
+                await cast(ResponseStream[_T, Any], iterator).close()
+            else:
+                close = getattr(iterator, "aclose", None)
+                if close is not None:
+                    await close()
 
     async def __anext__(self) -> _T:
         if self._driver is None:
@@ -232,6 +277,7 @@ class _SignalledIterator(Generic[_T]):
             raise StopAsyncIteration
         if isinstance(item, Exception):
             raise item
+        item, self._stamp = item
         return cast(_T, item)
 
     async def aclose(self) -> None:
@@ -255,6 +301,9 @@ class _SignalledIterator(Generic[_T]):
 # checkpoint in storage (if any), or replay the original input if none exists as no output was ever
 # durably persisted.
 _LATEST_CHECKPOINT_ID_KEY = "_last_checkpoint_id"
+# ``internal_metadata`` key carrying a truncating finish reason across resilient checkpoints, so a
+# turn cut short before a crash still ends ``incomplete`` after recovery.
+_INCOMPLETE_REASON_KEY = "_incomplete_reason"
 
 
 # Foundry Toolbox Auth integration
@@ -306,6 +355,43 @@ def _is_safe_oauth_consent_link(consent_link: object) -> TypeGuard[str]:
     if "[" in authority or "]" in authority or ":" in hostname:
         return False
     return _OAUTH_HOST_PATTERN.fullmatch(hostname) is not None
+
+
+def _normalize_oauth_consent_origin(value: str, *, require_origin_only: bool) -> str:
+    """Normalize an HTTPS consent URL or configured origin for exact matching."""
+    if not _is_safe_oauth_consent_link(value):
+        raise ValueError("OAuth consent origins must be absolute HTTPS URLs without user information.")
+
+    parsed = urlparse(value)
+    if require_origin_only and (parsed.path not in ("", "/") or parsed.params or parsed.query or parsed.fragment):
+        raise ValueError("OAuth consent origin entries must not include a path, query, parameters, or fragment.")
+
+    hostname = parsed.hostname
+    if hostname is None:  # pragma: no cover - _is_safe_oauth_consent_link already proved this.
+        raise ValueError("OAuth consent origin must include a hostname.")
+    normalized_host = f"[{hostname.lower()}]" if ":" in hostname else hostname.lower()
+    port = parsed.port
+    return f"https://{normalized_host}" if port in (None, 443) else f"https://{normalized_host}:{port}"
+
+
+def _normalize_allowed_oauth_consent_origins(allowed_origins: Sequence[str] | None) -> frozenset[str] | None:
+    """Normalize the host-configured consent origin allowlist, or return ``None`` when none is configured."""
+    if allowed_origins is None:
+        return None
+    return frozenset(_normalize_oauth_consent_origin(origin, require_origin_only=True) for origin in allowed_origins)
+
+
+def _is_allowed_oauth_consent_link(consent_link: object, allowed_origins: frozenset[str] | None) -> TypeGuard[str]:
+    """Return whether the link is safe and, when an allowlist is configured, has an allowed origin.
+
+    ``allowed_origins`` must come from ``_normalize_allowed_oauth_consent_origins``. ``None`` keeps the
+    safe-HTTPS check without restricting the origin; an empty set rejects every link.
+    """
+    if not _is_safe_oauth_consent_link(consent_link):
+        return False
+    if allowed_origins is None:
+        return True
+    return _normalize_oauth_consent_origin(consent_link, require_origin_only=False) in allowed_origins
 
 
 def consent_url_from_error(exc: BaseException) -> list[ConsentError] | None:
@@ -372,13 +458,102 @@ def consent_url_from_error(exc: BaseException) -> list[ConsentError] | None:
 # endregion Foundry Toolbox Auth integration
 
 
+@dataclass(frozen=True)
+class _AgentConfiguration:
+    workflow: bool
+    agent_server_history: bool
+    client_stores_by_default: bool
+    hosted_history: bool
+
+
+def _validate_agent_configuration(
+    agent: SupportsAgentRun,
+    history_source: Literal["agent_server", "agent"],
+    options: ResponsesServerOptions | None,
+) -> _AgentConfiguration:
+    is_workflow_agent = isinstance(agent, WorkflowAgent)
+    if is_workflow_agent and agent.workflow._runner_context.has_checkpointing():  # pyright: ignore[reportPrivateUsage]
+        raise RuntimeError(
+            "There should not be a checkpoint storage already present in the workflow agent. "
+            "The hosting infrastructure will manage checkpoints instead."
+        )
+
+    resilient_background = bool(options and options.resilient_background)
+    if resilient_background and not is_workflow_agent:
+        raise RuntimeError(
+            "resilient_background=True is only supported for workflow agents. "
+            "Crash recovery cannot be provided for non-workflow agents."
+        )
+    if options and options.steerable_conversations and is_workflow_agent:
+        raise RuntimeError(
+            "steerable_conversations=True is only supported for non-workflow agents. "
+            "Steering cannot be provided reliably for workflow agents."
+        )
+
+    uses_agent_server_history = history_source == "agent_server"
+    client_stores_by_default = False
+    if uses_agent_server_history and not is_workflow_agent:
+        if not isinstance(agent, RawAgent):
+            raise RuntimeError(
+                "history_source='agent_server' requires a RawAgent so hosting can enforce downstream "
+                "storage options. Construct ResponsesHostServer with history_source='agent' for a custom "
+                "SupportsAgentRun implementation."
+            )
+        for provider in agent.context_providers:
+            if isinstance(provider, HistoryProvider) and provider.load_messages:
+                if _is_hosted_responses_history_sentinel(provider):
+                    continue
+                raise RuntimeError(
+                    "AgentServer response history is enabled, but the agent has a HistoryProvider "
+                    "with load_messages=True. Remove that provider or construct ResponsesHostServer "
+                    "with history_source='agent' to use the agent's regular history setup."
+                )
+        service_continuation_options = [
+            name
+            for name in ("conversation_id", "previous_response_id", "conversation")
+            if agent.default_options.get(name) is not None
+        ]
+        if service_continuation_options:
+            raise RuntimeError(
+                "AgentServer response history is enabled, but the agent has downstream service continuation "
+                f"option(s): {', '.join(service_continuation_options)}. Remove them or construct "
+                "ResponsesHostServer with history_source='agent' to resume the downstream service conversation."
+            )
+        stores_by_default = getattr(cast(Any, agent).client, "STORES_BY_DEFAULT", None)
+        if not isinstance(stores_by_default, bool):
+            raise RuntimeError(
+                "history_source='agent_server' requires the agent's chat client to declare "
+                "STORES_BY_DEFAULT so hosting can enforce downstream storage behavior."
+            )
+        client_stores_by_default = stores_by_default
+
+    return _AgentConfiguration(
+        workflow=is_workflow_agent,
+        agent_server_history=uses_agent_server_history,
+        client_stores_by_default=client_stores_by_default,
+        hosted_history=uses_agent_server_history and not is_workflow_agent,
+    )
+
+
+def _initialize_agent_history(agent: SupportsAgentRun, configuration: _AgentConfiguration) -> None:
+    if not configuration.hosted_history or not isinstance(agent, RawAgent):
+        return
+    if not configuration.client_stores_by_default:
+        agent.default_options.pop("store", None)
+    if not any(
+        _is_hosted_responses_history_sentinel(provider)
+        for provider in cast(Sequence[ContextProvider], agent.context_providers)
+    ):
+        agent.context_providers.append(InMemoryHistoryProvider(source_id=_HOSTED_RESPONSES_HISTORY_SOURCE_ID))
+
+
 # region ResponsesHostServer
 class ResponsesHostServer(ResponsesAgentServerHost):
     """A responses server host for an agent."""
 
     def __init__(
         self,
-        agent: SupportsAgentRun,
+        agent: SupportsAgentRun | Callable[[], SupportsAgentRun | Awaitable[SupportsAgentRun]],
         *,
         prefix: str = "",
         options: ResponsesServerOptions | None = None,
@@ -386,13 +561,15 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         agent_session_store_provider: StoreProvider[SessionStore] | None = None,
         checkpoint_store_provider: ContextScopedStoreProvider[CheckpointStorage] | None = None,
         function_approval_store_provider: StoreProvider[FunctionApprovalStore] | None = None,
+        allowed_oauth_consent_origins: Sequence[str] | None = None,
         history_source: Literal["agent_server", "agent"] = "agent_server",
         **kwargs: Any,
     ) -> None:
         """Initialize a ResponsesHostServer.
 
         Args:
-            agent: The agent to handle responses for.
+            agent: The agent to handle responses for, or a zero-argument sync or async callable that creates one for
+                each request. Use a callable for agents that keep mutable state outside `AgentSession`.
             prefix: The URL prefix for the server.
             options: Optional server options.
             store: Optional response store for input and history look up.
@@ -402,6 +579,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 If not provided, a default `CheckpointStoreProvider` will be used.
             function_approval_store_provider: Optional provider for function approval storage.
                 If not provided, a default `FunctionApprovalStoreProvider` will be used.
+            allowed_oauth_consent_origins: Optional exact HTTPS origins allowed for OAuth consent links.
+                When omitted, hosting retains its existing safe-HTTPS validation without restricting the
+                destination origin. When provided, every link must match an entry; an empty sequence rejects
+                every link. Entries must be origins such as `"https://auth.example.com"` and must not include
+                a path, query, or fragment.
             history_source: Source of conversation history supplied to the model for regular agents.
                 `"agent_server"` (default) uses the transcript from the configured response store,
                 requires a `RawAgent` whose client declares `STORES_BY_DEFAULT`, rejects load-enabled
@@ -420,6 +602,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                `history_source="agent"` mode, is persisted by the configured session store.
             3. The server owns the supplied agent instance and may add hosting-specific providers.
                Do not reuse the same agent with another host or invoke it directly after construction.
+               An agent returned by a callable belongs to that request.
             4. Resiliency (resilient_background=True) is ONLY supported for workflows; constructing this
                server with a non-workflow agent and `resilient_background=True` raises `RuntimeError`.
                When resiliency is enabled, and the server crashes mid-response:
@@ -442,92 +625,30 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         """
         if history_source not in ("agent_server", "agent"):
             raise ValueError("history_source must be either 'agent_server' or 'agent'.")
+        validate_agent_source(agent)
 
-        is_workflow_agent = isinstance(agent, WorkflowAgent)
-        if is_workflow_agent and agent.workflow._runner_context.has_checkpointing():  # pyright: ignore[reportPrivateUsage]
-            raise RuntimeError(
-                "There should not be a checkpoint storage already present in the workflow agent. "
-                "The hosting infrastructure will manage checkpoints instead."
-            )
-
-        resilient_background = bool(options and options.resilient_background)
-        if resilient_background and not is_workflow_agent:
-            raise RuntimeError(
-                "resilient_background=True is only supported for workflow agents. "
-                "Crash recovery cannot be provided for non-workflow agents."
-            )
-        if options and options.steerable_conversations and is_workflow_agent:
-            raise RuntimeError(
-                "steerable_conversations=True is only supported for non-workflow agents. "
-                "Steering cannot be provided reliably for workflow agents."
-            )
-
-        uses_agent_server_history = history_source == "agent_server"
-        client_stores_by_default = False
-        if uses_agent_server_history and not is_workflow_agent:
-            if not isinstance(agent, RawAgent):
-                raise RuntimeError(
-                    "history_source='agent_server' requires a RawAgent so hosting can enforce downstream "
-                    "storage options. Construct ResponsesHostServer with history_source='agent' for a custom "
-                    "SupportsAgentRun implementation."
-                )
-            for provider in agent.context_providers:
-                if isinstance(provider, HistoryProvider) and provider.load_messages:
-                    if _is_hosted_responses_history_sentinel(provider):
-                        continue
-                    raise RuntimeError(
-                        "AgentServer response history is enabled, but the agent has a HistoryProvider "
-                        "with load_messages=True. Remove that provider or construct ResponsesHostServer "
-                        "with history_source='agent' to use the agent's regular history setup."
-                    )
-            service_continuation_options = [
-                name
-                for name in ("conversation_id", "previous_response_id", "conversation")
-                if agent.default_options.get(name) is not None
-            ]
-            if service_continuation_options:
-                raise RuntimeError(
-                    "AgentServer response history is enabled, but the agent has downstream service continuation "
-                    f"option(s): {', '.join(service_continuation_options)}. Remove them or construct "
-                    "ResponsesHostServer with history_source='agent' to resume the downstream service conversation."
-                )
-            stores_by_default = getattr(cast(Any, agent).client, "STORES_BY_DEFAULT", None)
-            if not isinstance(stores_by_default, bool):
-                raise RuntimeError(
-                    "history_source='agent_server' requires the agent's chat client to declare "
-                    "STORES_BY_DEFAULT so hosting can enforce downstream storage behavior."
-                )
-            client_stores_by_default = stores_by_default
+        resolved_agent = agent if is_agent(agent) else None
+        configuration = (
+            _validate_agent_configuration(resolved_agent, history_source, options)
+            if resolved_agent is not None
+            else None
+        )
 
         # No caller-owned agent state is mutated until all validation and base-host construction succeed.
+        self._allowed_oauth_consent_origins = _normalize_allowed_oauth_consent_origins(allowed_oauth_consent_origins)
         super().__init__(prefix=prefix, options=options, store=store, **kwargs)
 
-        self._uses_agent_server_history = uses_agent_server_history
-        self._client_stores_by_default = client_stores_by_default
-        self._is_workflow_agent = is_workflow_agent
-        self._resilient_background = resilient_background
-
-        self._uses_hosted_responses_history = False
-        if self._uses_agent_server_history and not self._is_workflow_agent and isinstance(agent, RawAgent):
-            self._uses_hosted_responses_history = True
-            if not self._client_stores_by_default:
-                agent.default_options.pop("store", None)
-            if not any(
-                _is_hosted_responses_history_sentinel(provider)
-                for provider in cast(Sequence[ContextProvider], agent.context_providers)
-            ):
-                # The Responses provider already supplies the complete transcript on every
-                # call. Agent.run would otherwise mutate the same user-owned agent by
-                # auto-injecting its default InMemoryHistoryProvider. Install a transient
-                # buffer that carries history within a function-call loop, then discard its
-                # state before persisting the session so the transcript is not replayed twice.
-                agent.context_providers.append(
-                    InMemoryHistoryProvider(
-                        source_id=_HOSTED_RESPONSES_HISTORY_SOURCE_ID,
-                    )
-                )
-
-        self._agent: SupportsAgentRun = agent
+        self._agent_source = agent
+        self._agent = resolved_agent
+        self._configuration = configuration
+        self._history_source: Literal["agent_server", "agent"] = history_source
+        self._host_options = options
+        self._uses_agent_server_history = (
+            configuration.agent_server_history if configuration is not None else history_source == "agent_server"
+        )
+        self._resilient_background = bool(options and options.resilient_background)
+        if resolved_agent is not None and configuration is not None:
+            _initialize_agent_history(resolved_agent, configuration)
 
         # Storage providers
         self._checkpoint_storage_provider = (
@@ -566,10 +687,13 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         async with self._agent_init_lock:
             if self._agent_stack is not None:
                 return
+            agent = self._agent
+            if agent is None:
+                raise RuntimeError("A request-scoped agent cannot use the server-lifetime initialization path.")
             stack = AsyncExitStack()
             try:
-                if isinstance(self._agent, AbstractAsyncContextManager):
-                    await stack.enter_async_context(cast(AbstractAsyncContextManager[Any], self._agent))
+                if isinstance(agent, AbstractAsyncContextManager):
+                    await stack.enter_async_context(cast(AbstractAsyncContextManager[Any], agent))
             except BaseException:
                 await stack.aclose()
                 raise
@@ -589,26 +713,74 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         cancellation_signal: asyncio.Event,
     ) -> AsyncIterable[ResponseStreamEvent | ResponseCheckpointEvent]:
         """Handle the creation of a response."""
-        # Common per-request setup shared by the workflow and non-workflow paths:
-        # create the response stream and the streaming output-item tracker, emit
-        # the opening lifecycle events, and convert any exception raised while
-        # producing the response into a terminal ``response.failed`` event (which
-        # also drains the tracker so the SSE stream stays well-formed).
         response_event_stream = _create_response_event_stream(context)
-
         if context.is_steered_turn:
             logger.debug("Serving steered turn (pending_input_count=%d)", context.pending_input_count)
-
         yield response_event_stream.emit_created()
         yield response_event_stream.emit_in_progress()
 
+        if self.config.is_hosted:
+            try:
+                FoundryRequestScope.from_context(self.config, get_request_context())
+            except RuntimeError as exc:
+                logger.error("Invalid Foundry hosted request context: %s", exc)
+                for event in self._emit_failure(response_event_stream, None, exc):
+                    yield event
+                return
+
+        terminal_event: ResponseStreamEvent | None = None
+        agent = await resolve_agent(self._agent_source)
+        configuration = self._configuration or _validate_agent_configuration(
+            agent, self._history_source, self._host_options
+        )
+        if self._configuration is None:
+            _initialize_agent_history(agent, configuration)
+
+        async with AsyncExitStack() as resources:
+            inner = self._handle_prepared_response(
+                request,
+                context,
+                cancellation_signal,
+                response_event_stream,
+                agent,
+                configuration,
+                resources,
+            )
+            try:
+                async for event in inner:
+                    if isinstance(event, Mapping) and event.get("type") in (
+                        "response.completed",
+                        "response.incomplete",
+                        "response.failed",
+                    ):
+                        terminal_event = event
+                    else:
+                        yield event
+            finally:
+                await inner.aclose()
+        if terminal_event is not None:
+            yield terminal_event
+
+    async def _handle_prepared_response(
+        self,
+        request: CreateResponse,
+        context: ResponseContext,
+        cancellation_signal: asyncio.Event,
+        response_event_stream: ResponseEventStream,
+        agent: SupportsAgentRun,
+        configuration: _AgentConfiguration,
+        resources: AsyncExitStack,
+    ) -> AsyncGenerator[ResponseStreamEvent | ResponseCheckpointEvent]:
         # Lazy-enter the agent (and any MCP tools it owns). The MCP client wraps gateway
         # consent failures (and other connection-time errors) in AgentFrameworkException; if
         # one of those is a consent error we surface the consent link to the client through
         # the already-opened response stream instead of failing the request. Other exception
         # types fall through to the outer handler below and become ``response.failed``.
         try:
-            await self._ensure_agent_ready()
+            if self._configuration is not None:
+                await self._ensure_agent_ready()
+            elif isinstance(agent, AbstractAsyncContextManager):
+                await resources.enter_async_context(agent)
         except AgentFrameworkException as ex:
             consent_errors_to_emit = consent_url_from_error(ex)
             if consent_errors_to_emit is None or len(consent_errors_to_emit) == 0:
@@ -621,20 +793,23 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 (
                     consent_error
                     for consent_error in consent_errors_to_emit
-                    if not _is_safe_oauth_consent_link(consent_error.consent_url)
+                    if not _is_allowed_oauth_consent_link(
+                        consent_error.consent_url, self._allowed_oauth_consent_origins
+                    )
                 ),
                 None,
             )
             if invalid_consent is not None:
                 validation_error = ValueError(
-                    f"OAuth consent request for tool '{invalid_consent.name}' must include a safe HTTPS consent link."
+                    f"OAuth consent request for tool '{invalid_consent.name}' must include an allowed safe HTTPS "
+                    "consent link."
                 )
                 logger.error("%s", validation_error)
                 for event in self._emit_failure(response_event_stream, None, validation_error):
                     yield event
                 return
 
-            if not self._is_workflow_agent:
+            if not configuration.workflow:
                 try:
                     request_context = get_request_context()
                     session_storage = self._session_storage_provider.get_store(
@@ -649,7 +824,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                                 "Cannot find an existing agent session for "
                                 f"previous_response_id={previous_response_id}."
                             )
-                        session = self._agent.create_session()
+                        session = agent.create_session()
                     await session_storage.set(context.conversation_id or context.response_id, session)
                 except Exception as save_error:
                     logger.error(
@@ -676,14 +851,27 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             yield response_event_stream.emit_incomplete()
             return
 
-        tracker = _OutputItemTracker(response_event_stream)
+        tracker = _OutputItemTracker(response_event_stream, self._allowed_oauth_consent_origins)
         try:
-            if self._is_workflow_agent:
+            if configuration.workflow:
                 inner = self._handle_inner_workflow(
-                    request, context, response_event_stream, tracker, cancellation_signal
+                    request,
+                    context,
+                    response_event_stream,
+                    tracker,
+                    cancellation_signal,
+                    cast(WorkflowAgent, agent),
                 )
             else:
-                inner = self._handle_inner_agent(request, context, response_event_stream, tracker, cancellation_signal)
+                inner = self._handle_inner_agent(
+                    request,
+                    context,
+                    response_event_stream,
+                    tracker,
+                    cancellation_signal,
+                    agent,
+                    configuration,
+                )
 
             try:
                 async for event in inner:
@@ -692,11 +880,33 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 await inner.aclose()
                 raise
 
+            if cancellation_signal.is_set() and context.client_cancelled:
+                # A cancelled run drains the inner generator without raising (both
+                # ``_handle_inner_workflow`` and ``_handle_inner_agent`` stop their
+                # ``_SignalledIterator`` loop and return normally once the signal fires).
+                # Emit nothing here so a caller cannot mistake this for a normal
+                # completion; the host server's cancel-aware layer synthesizes the
+                # cancelled terminal when the handler returns without one. Gated on
+                # ``client_cancelled`` (not just the signal) because steering pressure
+                # also sets ``cancellation_signal`` without that cause flag; a steered
+                # turn must still drain ``tracker.close()`` and emit its normal terminal
+                # below so its partial output is not misreported as a failure.
+                return
+
             for event in tracker.close():
                 yield event
 
-            if tracker.oauth_consent_requested:
-                yield response_event_stream.emit_incomplete(usage=tracker.usage)
+            if cancellation_signal.is_set() and context.client_cancelled:
+                # Draining ``tracker.close()`` yields events one at a time, and each
+                # ``yield`` above suspends this handler until the caller resumes it.
+                # A cancellation can arrive during that window, after the earlier check
+                # already passed, so it must be rechecked here, immediately before
+                # selecting the terminal event. Same ``client_cancelled`` gate as above.
+                return
+
+            incomplete_reason = tracker.incomplete_reason
+            if tracker.oauth_consent_requested or incomplete_reason is not None:
+                yield response_event_stream.emit_incomplete(reason=incomplete_reason, usage=tracker.usage)
             else:
                 yield response_event_stream.emit_completed(usage=tracker.usage)
         except Exception as ex:
@@ -712,6 +922,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         context: ResponseContext,
         *,
         approval_storage: FunctionApprovalStore | None,
+        configuration: _AgentConfiguration | None = None,
     ) -> list[Message]:
         """Load the request's input and prior history concurrently, assembled for the run.
 
@@ -726,13 +937,16 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         need to know the storage-result ordering. If either read fails, the
         sibling task is cancelled and drained so no storage read is orphaned.
         """
+        uses_agent_server_history = (
+            configuration.agent_server_history if configuration is not None else self._uses_agent_server_history
+        )
 
         async def _load_input() -> list[Message]:
             input_items = await context.get_input_items()
             return await _items_to_messages(input_items, approval_storage=approval_storage)
 
         async def _load_history() -> list[Message]:
-            if not self._uses_agent_server_history:
+            if not uses_agent_server_history:
                 return []
             history = await context.get_history()
             return await _output_items_to_messages(history, approval_storage=approval_storage)
@@ -758,6 +972,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         response_event_stream: ResponseEventStream,
         tracker: _OutputItemTracker,
         cancellation_signal: asyncio.Event,
+        agent: SupportsAgentRun,
+        configuration: _AgentConfiguration,
     ) -> AsyncGenerator[ResponseStreamEvent]:
         """Handle a regular (non-workflow) agent.
 
@@ -786,7 +1002,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             # session load below. These are independent storage round-trips with no data dependency
             # between them, so overlapping them removes serial latency from the request critical path.
             request_messages_task = asyncio.ensure_future(
-                self._load_request_messages(context, approval_storage=approval_storage)
+                self._load_request_messages(
+                    context,
+                    approval_storage=approval_storage,
+                    configuration=configuration,
+                )
             )
 
             previous_response_id = request.get("previous_response_id")
@@ -797,7 +1017,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     raise RuntimeError(
                         f"Cannot find an existing agent session for previous_response_id={previous_response_id}."
                     )
-                session = self._agent.create_session()
+                session = agent.create_session()
             session_save_id = context.conversation_id or context.response_id
         except BaseException as ex:
             # Session preparation failed (or the request was cancelled / the stream closed —
@@ -816,7 +1036,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         request_interrupted = False
 
         try:
-            if self._uses_agent_server_history:
+            if configuration.agent_server_history:
                 session.state.pop(_HOSTED_RESPONSES_HISTORY_SOURCE_ID, None)
                 # A restored service ID belongs to the downstream model service. Replaying the
                 # AgentServer transcript while resuming that service history would duplicate every
@@ -829,8 +1049,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 "session": session,
             }
             chat_options, are_options_set = _to_chat_options(request)
-            if self._uses_agent_server_history:
-                if self._client_stores_by_default:
+            if configuration.agent_server_history:
+                if configuration.client_stores_by_default:
                     # The response provider already owns the transcript used for this run. Keep a
                     # storing downstream service stateless so it cannot become a second history source.
                     chat_options["store"] = False
@@ -838,7 +1058,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     # Do not pass a storage option to clients that do not advertise support for it.
                     chat_options.pop("store", None)
 
-            if isinstance(self._agent, RawAgent):
+            if isinstance(agent, RawAgent):
                 run_kwargs["options"] = chat_options
             elif are_options_set:
                 logger.warning("Agent doesn't support runtime options. They will be ignored.")
@@ -846,17 +1066,14 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             # Non-workflow agents can't be resilient, so there is no exit_for_recovery path here:
             # both shutdown and steering/cancel just wind the turn down once observed.
             agent_stream = _SignalledIterator(
-                self._agent.run(stream=True, **run_kwargs),  # type: ignore[reportUnknownMemberType]
+                agent.run(stream=True, **run_kwargs),  # type: ignore[reportUnknownMemberType]
                 context.shutdown,
                 cancellation_signal,
             )
             async with aclosing(agent_stream):
                 async for update in agent_stream:
-                    for content in update.contents:
-                        async for event in tracker.handle(
-                            content, message_id=update.message_id, approval_storage=approval_storage
-                        ):
-                            yield event
+                    async for event in tracker.handle_update(update, approval_storage=approval_storage):
+                        yield event
         except (asyncio.CancelledError, GeneratorExit):
             request_interrupted = True
             raise
@@ -867,12 +1084,12 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 exc_info=(type(ex), ex, ex.__traceback__),
             )
         finally:
-            if self._uses_hosted_responses_history:
+            if configuration.hosted_history:
                 session.state.pop(_HOSTED_RESPONSES_HISTORY_SOURCE_ID, None)
 
             # A service ID here means the client stored the turn despite the forced `store=False`.
             # Do not persist a session that could resume that unreconciled history on a later turn.
-            stored_output_violation = self._uses_agent_server_history and session.service_session_id is not None
+            stored_output_violation = configuration.agent_server_history and session.service_session_id is not None
             if stored_output_violation:
                 misconfigured = RuntimeError(
                     "The agent's chat client stored this turn server-side while AgentServer response history "
@@ -912,11 +1129,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         response_event_stream: ResponseEventStream,
         tracker: _OutputItemTracker,
         cancellation_signal: asyncio.Event,
+        agent: WorkflowAgent,
     ) -> AsyncGenerator[ResponseStreamEvent | ResponseCheckpointEvent]:
         """Handle the creation of a response for a workflow agent."""
-        if not isinstance(self._agent, WorkflowAgent):
-            raise RuntimeError("Agent is not a workflow agent.")
-
         try:
             request_context = get_request_context()
             approval_storage = self._function_approval_storage_provider.get_store(
@@ -953,10 +1168,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 if checkpoint_id is not None:
                     logger.debug("Serving recovery request from workflow checkpoint %s", checkpoint_id)
                     run_stream = self._resume_workflow_from_checkpoint(
-                        checkpoint_id, checkpoint_storage, context.response_id
+                        checkpoint_id, checkpoint_storage, context.response_id, agent
                     )
                 else:
-                    latest_checkpoint = await checkpoint_storage.get_latest(workflow_name=self._agent.workflow.name)
+                    latest_checkpoint = await checkpoint_storage.get_latest(workflow_name=agent.workflow.name)
                     if latest_checkpoint is not None:
                         logger.debug(
                             "Found a workflow checkpoint %s but no prior response snapshot was durably persisted; "
@@ -964,7 +1179,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                             latest_checkpoint.checkpoint_id,
                         )
                         run_stream = self._resume_workflow_from_checkpoint(
-                            latest_checkpoint.checkpoint_id, checkpoint_storage, context.response_id
+                            latest_checkpoint.checkpoint_id,
+                            checkpoint_storage,
+                            context.response_id,
+                            agent,
                         )
                     else:
                         # No checkpoint was ever paired with a persisted response snapshot (e.g. the crash
@@ -974,7 +1192,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         logger.debug(
                             "Serving recovery request with no prior workflow checkpoint; replaying original input"
                         )
-                        run_stream = self._agent.run(
+                        run_stream = agent.run(
                             input_messages,
                             stream=True,
                             checkpoint_storage=checkpoint_storage,
@@ -996,7 +1214,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                             context_id=checkpoint_load_id,
                             platform_context=request_context,
                         )
-                latest_checkpoint = await restore_checkpoint_storage.get_latest(workflow_name=self._agent.workflow.name)
+                latest_checkpoint = await restore_checkpoint_storage.get_latest(workflow_name=agent.workflow.name)
 
                 if latest_checkpoint is None and previous_response_id is not None:
                     # A previous_response_id must have a prior workflow checkpoint to resume from
@@ -1014,13 +1232,13 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     # If the restored checkpoint had pending request_info events, the
                     # restore-only call replays them through
                     # ``WorkflowAgent._convert_workflow_event_to_agent_response_updates``
-                    # and populates ``self._agent.pending_requests``. That is the correct
+                    # and populates ``agent.pending_requests``. That is the correct
                     # state: those requests are genuinely outstanding, and the next
                     # ``run(input_messages, ...)`` call may contain ``function_call_output``
                     # items (carried as FunctionResult/FunctionApprovalResponse content)
                     # that fulfill them via :meth:`WorkflowAgent._process_pending_requests`.
                     restore_iter = _SignalledIterator(
-                        self._agent.run(
+                        agent.run(
                             stream=True,
                             checkpoint_id=latest_checkpoint.checkpoint_id,
                             checkpoint_storage=restore_checkpoint_storage,
@@ -1042,47 +1260,63 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 if cancellation_signal.is_set():
                     return
 
-                run_stream = self._agent.run(
+                run_stream = agent.run(
                     input_messages,
                     stream=True,
                     checkpoint_storage=checkpoint_storage,
                 )
 
-            main_iter = _SignalledIterator(run_stream, context.shutdown, cancellation_signal)
+            workflow_name = agent.workflow.name
+
+            async def latest_checkpoint_id() -> str | None:
+                latest = await checkpoint_storage.get_latest(workflow_name=workflow_name)
+                return latest.checkpoint_id if latest is not None else None
+
+            def snapshot_response(
+                checkpoint_id: str | None,
+            ) -> Generator[ResponseStreamEvent | ResponseCheckpointEvent]:
+                # Pair the response output emitted so far with the workflow checkpoint it corresponds
+                # to, so recovery from that checkpoint replays exactly the updates that came after it.
+                if checkpoint_id is None or checkpoint_id == response_event_stream.internal_metadata.get(
+                    _LATEST_CHECKPOINT_ID_KEY
+                ):
+                    return
+                yield from tracker.close()
+                response_event_stream.internal_metadata[_LATEST_CHECKPOINT_ID_KEY] = checkpoint_id
+                yield response_event_stream.checkpoint()
+
+            main_iter = _SignalledIterator(
+                run_stream,
+                context.shutdown,
+                cancellation_signal,
+                # The runner creates a checkpoint at the end of each superstep, inside the generator
+                # that produces the updates (see RunnerImpl.run_until_convergence). Stamping each
+                # update with the latest checkpoint as it was produced tells which checkpoint the
+                # update follows; the driver runs one update ahead, so by the time an update is
+                # consumed the workflow may already have checkpointed past it.
+                stamp=latest_checkpoint_id if self._resilient_background else None,
+            )
             async with aclosing(main_iter):
                 async for update in main_iter:
                     if self._resilient_background:
-                        latest_checkpoint = await checkpoint_storage.get_latest(workflow_name=self._agent.workflow.name)
-                        if (
-                            latest_checkpoint is not None
-                            and latest_checkpoint.checkpoint_id
-                            != response_event_stream.internal_metadata.get(_LATEST_CHECKPOINT_ID_KEY)
-                        ):
-                            # A new checkpoint is created when we pull the next item from the stream
-                            # (see RunnerImpl.run_until_convergence). We only take a snapshot of the
-                            # response (response_event_stream.checkpoint()) once the checkpoint is
-                            # durably persisted. This means all items from the previous superstep
-                            # has been pulled thus we can safely close the tracker. The latest checkpoint
-                            # now reflects the state of the workflow that matches the response output.
-                            # Note that if a workflow crashes before any update is created, no response
-                            # snapshot is taken. However, upon recovery the workflow will still be resumed
-                            # from the latest checkpoint.
-                            for event in tracker.close():
-                                yield event
-                            response_event_stream.internal_metadata[_LATEST_CHECKPOINT_ID_KEY] = (
-                                latest_checkpoint.checkpoint_id
-                            )
-                            yield response_event_stream.checkpoint()
-
-                    for content in update.contents:
-                        async for event in tracker.handle(
-                            content, message_id=update.message_id, approval_storage=approval_storage
-                        ):
+                        # Every update before this one belongs to the stamped checkpoint (or an
+                        # earlier one), so the output so far can be snapshotted against it. If the
+                        # workflow crashes before any update is produced, no snapshot is taken and
+                        # recovery still resumes from the latest workflow checkpoint.
+                        for event in snapshot_response(main_iter.stamp):
                             yield event
+
+                    async for event in tracker.handle_update(update, approval_storage=approval_storage):
+                        yield event
             # Cancellation needs no extra action here (the loop above already stopped); shutdown
             # does, but only if it's what actually stopped the loop, not a natural completion.
             if main_iter.signalled and context.shutdown.is_set():
                 await context.exit_for_recovery()
+            elif self._resilient_background and not main_iter.signalled:
+                # The workflow ran to completion: pair its final checkpoint with the full output, so
+                # recovery after this point does not replay the last superstep.
+                for event in snapshot_response(await latest_checkpoint_id()):
+                    yield event
         except Exception:
             logger.exception("Failed to produce response for workflow agent")
             raise
@@ -1092,6 +1326,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         checkpoint_id: str,
         checkpoint_storage: CheckpointStorage,
         response_id: str,
+        agent: WorkflowAgent,
     ) -> AsyncGenerator[AgentResponseUpdate]:
         """Resume a crashed background workflow run, forwarding every event it produces.
 
@@ -1106,9 +1341,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
         TODO(@taochen): #7677
         """
-        if not isinstance(self._agent, WorkflowAgent):
-            raise RuntimeError("Agent is not a workflow agent.")
-        agent = self._agent
         async for event in agent.workflow.run(
             stream=True,
             checkpoint_id=checkpoint_id,
@@ -1158,8 +1390,13 @@ class _OutputItemTracker:
     approval requests, etc.) are emitted in one shot, closing any still-open streaming item first.
     """
 
-    def __init__(self, stream: ResponseEventStream) -> None:
+    def __init__(
+        self,
+        stream: ResponseEventStream,
+        allowed_oauth_consent_origins: frozenset[str] | None = None,
+    ) -> None:
         self._stream = stream
+        self._allowed_oauth_consent_origins = allowed_oauth_consent_origins
         self._usage_details: UsageDetails | None = None
         self._active_type: str | None = None
         self._active_id: str | None = None
@@ -1179,11 +1416,29 @@ class _OutputItemTracker:
         self._fc_builder: OutputItemFunctionCallBuilder | None = None
         self._mcp_builder: OutputItemMcpCallBuilder | None = None
         self._outstanding_function_calls: dict[str, str | None] = {}
+        self._outstanding_computer_calls: set[str] = set()
         self._oauth_consent_requests: set[tuple[str, str]] = set()
+        # Set when an agent update reports the model stopped early (content filter, token
+        # limit); the response then ends as ``incomplete`` instead of ``completed`` so callers
+        # can tell a cut-short turn from a successful one. Mirrored into the stream's
+        # ``internal_metadata`` so it survives a resilient checkpoint/recovery cycle, which
+        # rebuilds this tracker from the persisted response.
+        self._incomplete_reason: ResponseIncompleteReason | None = None
+        persisted_reason = stream.internal_metadata.get(_INCOMPLETE_REASON_KEY)
+        if isinstance(persisted_reason, str):
+            with suppress(ValueError):
+                self._incomplete_reason = ResponseIncompleteReason(persisted_reason)
         for item in stream.response.get("output", []):
             if not isinstance(item, Mapping):
                 continue
             persisted_item = cast(Mapping[str, Any], item)
+            if persisted_item.get("type") == "computer_call":
+                call_id = persisted_item.get("call_id")
+                if isinstance(call_id, str):
+                    self._outstanding_computer_calls.add(call_id)
+            elif persisted_item.get("type") == "computer_call_output":
+                if isinstance(call_id := persisted_item.get("call_id"), str):
+                    self._outstanding_computer_calls.discard(call_id)
             if persisted_item.get("type") != "oauth_consent_request":
                 continue
             consent_link = persisted_item.get("consent_link")
@@ -1217,6 +1472,43 @@ class _OutputItemTracker:
     def oauth_consent_requested(self) -> bool:
         """Return whether this response emitted an OAuth consent request."""
         return bool(self._oauth_consent_requests)
+
+    @property
+    def incomplete_reason(self) -> ResponseIncompleteReason | None:
+        """Return why the turn was cut short, if any update reported a truncating finish reason."""
+        return self._incomplete_reason
+
+    def record_finish_reason(self, finish_reason: str | None) -> None:
+        """Note the finish reason of an agent update.
+
+        Only finish reasons that mean the model stopped early are retained, mapped onto the
+        Responses ``incomplete_details.reason`` vocabulary. A content filter is kept in
+        preference to a token limit if both are seen during a multi-step turn, since it is the
+        more actionable signal for the caller.
+        """
+        if finish_reason == "content_filter":
+            self._incomplete_reason = ResponseIncompleteReason.CONTENT_FILTER
+        elif finish_reason == "length" and self._incomplete_reason is None:
+            self._incomplete_reason = ResponseIncompleteReason.MAX_OUTPUT_TOKENS
+        else:
+            return
+        self._stream.internal_metadata[_INCOMPLETE_REASON_KEY] = self._incomplete_reason.value
+
+    async def handle_update(
+        self,
+        update: AgentResponseUpdate,
+        *,
+        approval_storage: FunctionApprovalStore | None = None,
+    ) -> AsyncGenerator[ResponseStreamEvent]:
+        """Process one agent update: note its finish reason, then handle each of its contents.
+
+        This is the single entry point for both the plain-agent and the workflow loops, so the
+        finish reason cannot be forgotten on one of them.
+        """
+        self.record_finish_reason(update.finish_reason)
+        for content in update.contents:
+            async for event in self.handle(content, message_id=update.message_id, approval_storage=approval_storage):
+                yield event
 
     async def handle(
         self,
@@ -1395,6 +1687,67 @@ class _OutputItemTracker:
             ):
                 yield event
 
+        elif content.type == "computer_tool_call":
+            if not content.id or not content.call_id or not content.actions:
+                raise ValueError("A computer call requires an item id, call_id, and actions.")
+            if content.call_id in self._outstanding_computer_calls:
+                return
+            for event in self._close():
+                yield event
+            if IdGenerator.is_valid(content.id)[0]:
+                builder = self._stream.add_output_item(content.id)
+            else:
+                logger.warning("Remapping computer call item id %r to an AgentServer id.", content.id)
+                builder = self._stream.add_output_item_computer_call()
+            status = content.status if content.status is not None else "completed"
+            if status not in ("in_progress", "completed", "incomplete"):
+                raise ValueError(f"Unsupported computer call status: {status!r}")
+            item = OutputItemComputerToolCall(
+                type="computer_call",
+                id=builder.item_id,
+                call_id=content.call_id,
+                actions=cast(list[ComputerAction], content.actions),
+                pending_safety_checks=cast(list[ComputerCallSafetyCheckParam], content.pending_safety_checks or []),
+                status=status,
+            )
+            if content.additional_properties.get("computer_action_format") == "single":
+                if len(content.actions) != 1:
+                    raise ValueError("A preview computer call requires exactly one action.")
+                item.pop("actions")
+                item["action"] = cast(ComputerAction, content.actions[0])
+            yield builder.emit_added(item)
+            yield builder.emit_done(item)
+            self._outstanding_computer_calls.add(content.call_id)
+
+        elif content.type == "computer_tool_result":
+            if not content.call_id or content.screenshot is None:
+                raise ValueError("A computer result requires a call_id and screenshot.")
+            for event in self._close():
+                yield event
+            if content.id and IdGenerator.is_valid(content.id)[0]:
+                builder = self._stream.add_output_item(content.id)
+            else:
+                if content.id:
+                    logger.warning("Remapping computer output item id %r to an AgentServer id.", content.id)
+                builder = self._stream.add_output_item_computer_call_output()
+            item = OutputItemComputerToolCallOutput(
+                type="computer_call_output",
+                id=builder.item_id,
+                call_id=content.call_id,
+                output=cast(ComputerScreenshotImage, _computer_screenshot_to_output(content.screenshot)),
+            )
+            if content.status is not None:
+                if content.status not in ("in_progress", "completed", "incomplete"):
+                    raise ValueError(f"Unsupported computer output status: {content.status!r}")
+                item["status"] = content.status
+            if content.acknowledged_safety_checks is not None:
+                item["acknowledged_safety_checks"] = cast(
+                    list[ComputerCallSafetyCheckParam], content.acknowledged_safety_checks
+                )
+            yield builder.emit_added(item)
+            yield builder.emit_done(item)
+            self._outstanding_computer_calls.discard(content.call_id)
+
         elif content.type == "function_approval_request":
             for event in self._close():
                 yield event
@@ -1431,8 +1784,8 @@ class _OutputItemTracker:
                 yield event
 
             consent_link = content.consent_link
-            if not _is_safe_oauth_consent_link(consent_link):
-                raise ValueError("OAuth consent request content must include a safe HTTPS consent link.")
+            if not _is_allowed_oauth_consent_link(consent_link, self._allowed_oauth_consent_origins):
+                raise ValueError("OAuth consent request content must include an allowed safe HTTPS consent link.")
 
             server_label = content.additional_properties.get("server_label")
             if not isinstance(server_label, str) or not server_label:
@@ -1686,6 +2039,57 @@ def _reasoning_item_to_contents(reasoning: ItemReasoningItem | OutputItemReasoni
     return [Content.from_text_reasoning(id=reasoning["id"], protected_data=encrypted_content)]
 
 
+def _computer_safety_checks(checks: Sequence[Mapping[str, Any]] | None) -> list[ComputerSafetyCheck] | None:
+    if checks is None:
+        return None
+    parsed: list[ComputerSafetyCheck] = []
+    for check in checks:
+        check_id = check.get("id")
+        if not isinstance(check_id, str) or not check_id:
+            raise ValueError("Computer safety checks require an id.")
+        entry = ComputerSafetyCheck(id=check_id)
+        for key in ("code", "message"):
+            value = check.get(key)
+            if value is not None:
+                if not isinstance(value, str):
+                    raise ValueError(f"Computer safety check {key} must be a string.")
+                entry[key] = value
+        parsed.append(entry)
+    return parsed
+
+
+def _computer_screenshot_from_output(output: Mapping[str, Any]) -> Content:
+    if output.get("type") != "computer_screenshot":
+        raise ValueError("Computer call output must contain a computer screenshot.")
+    image_url = output.get("image_url")
+    file_id = output.get("file_id")
+    additional_properties: dict[str, Any] = {}
+    if detail := output.get("detail"):
+        additional_properties["detail"] = detail
+    if isinstance(image_url, str) and image_url:
+        if file_id is not None:
+            additional_properties["file_id"] = file_id
+        return Content.from_uri(image_url, additional_properties=additional_properties)
+    if isinstance(file_id, str) and file_id:
+        return Content.from_hosted_file(file_id, additional_properties=additional_properties)
+    raise ValueError("Computer screenshot is missing its image URL or file ID.")
+
+
+def _computer_screenshot_to_output(screenshot: Content) -> dict[str, Any]:
+    output: dict[str, Any] = {"type": "computer_screenshot"}
+    if screenshot.type in ("data", "uri") and screenshot.uri:
+        output["image_url"] = screenshot.uri
+        if file_id := screenshot.additional_properties.get("file_id"):
+            output["file_id"] = file_id
+    elif screenshot.type == "hosted_file" and screenshot.file_id:
+        output["file_id"] = screenshot.file_id
+    else:
+        raise ValueError("A computer screenshot requires image data, a URI, or a hosted file.")
+    if detail := screenshot.additional_properties.get("detail"):
+        output["detail"] = detail
+    return output
+
+
 async def _item_to_message(
     item: Item,
     *,
@@ -1867,14 +2271,22 @@ async def _item_to_message(
         )
 
     if item["type"] == "computer_call":
+        plural_actions = item.get("actions")
+        singular_action = item.get("action")
+        actions = plural_actions or ([singular_action] if singular_action is not None else [])
+        if not actions:
+            raise ValueError("Computer call is missing its ordered actions.")
+        props = {"computer_action_format": "single"} if not plural_actions and singular_action is not None else None
         return Message(
             role="assistant",
             contents=[
-                Content.from_function_call(
-                    item["call_id"],
-                    "computer_use",
-                    arguments=_json_safe_to_str(item.get("action")),
-                    informational_only=True,
+                Content.from_computer_tool_call(
+                    id=item["id"],
+                    call_id=item["call_id"],
+                    actions=actions,
+                    status=item.get("status"),
+                    pending_safety_checks=_computer_safety_checks(item.get("pending_safety_checks")),
+                    additional_properties=props,
                 )
             ],
         )
@@ -1882,7 +2294,15 @@ async def _item_to_message(
     if item["type"] == "computer_call_output":
         return Message(
             role="tool",
-            contents=[Content.from_function_result(item["call_id"], result=_json_safe_to_str(item["output"]))],
+            contents=[
+                Content.from_computer_tool_result(
+                    id=item.get("id"),
+                    call_id=item["call_id"],
+                    screenshot=_computer_screenshot_from_output(item["output"]),
+                    status=item.get("status"),
+                    acknowledged_safety_checks=_computer_safety_checks(item.get("acknowledged_safety_checks")),
+                )
+            ],
         )
 
     if item["type"] == "custom_tool_call":
@@ -2084,10 +2504,7 @@ def _convert_message_content(content: MessageContent) -> Content:
         if file_data := content.get("file_data"):
             return _convert_file_data(file_data, content.get("filename"))
     if content["type"] == "computer_screenshot":
-        if image_url := content.get("image_url"):
-            return Content.from_uri(image_url)
-        if file_id := content.get("file_id"):
-            return Content.from_hosted_file(file_id, name=content.get("filename"))
+        return _computer_screenshot_from_output(content)
 
     raise ValueError(f"Unsupported MessageContent type: {content['type']}")
 

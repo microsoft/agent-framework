@@ -210,7 +210,8 @@ class WorkflowFactory:
             An executable Workflow object with action nodes for each YAML action.
 
         Raises:
-            DeclarativeWorkflowError: If the YAML is invalid or cannot be parsed.
+            DeclarativeWorkflowError: If the YAML is invalid, cannot be parsed, or
+                environment-reference discovery encounters a mapping/list cycle.
             FileNotFoundError: If the YAML file doesn't exist.
 
         Examples:
@@ -262,7 +263,8 @@ class WorkflowFactory:
             An executable Workflow object with action nodes for each YAML action.
 
         Raises:
-            DeclarativeWorkflowError: If the YAML is invalid or cannot be parsed.
+            DeclarativeWorkflowError: If the YAML is invalid, cannot be parsed, or
+                environment-reference discovery encounters a mapping/list cycle.
 
         Examples:
             .. code-block:: python
@@ -338,7 +340,8 @@ class WorkflowFactory:
             An executable Workflow object with action nodes for each YAML action.
 
         Raises:
-            DeclarativeWorkflowError: If the definition is invalid or missing required fields.
+            DeclarativeWorkflowError: If the definition is invalid, is missing required
+                fields, or environment-reference discovery encounters a mapping/list cycle.
 
         Examples:
             .. code-block:: python

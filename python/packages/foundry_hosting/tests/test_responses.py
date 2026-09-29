@@ -11,11 +11,13 @@ the registered _handle_create handler.
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import logging
 import os
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Mapping, Sequence
+from contextlib import aclosing, asynccontextmanager
 from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
@@ -34,9 +36,12 @@ from agent_framework import (
     ChatMiddlewareLayer,
     ChatResponse,
     ChatResponseUpdate,
+    ComputerSafetyCheck,
     Content,
+    FinishReasonLiteral,
     FunctionInvocationLayer,
     HistoryProvider,
+    InMemoryCheckpointStorage,
     InMemoryHistoryProvider,
     Message,
     RawAgent,
@@ -52,7 +57,7 @@ from agent_framework import (
 )
 from agent_framework.ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
 from agent_framework.openai import OpenAIChatClient
-from azure.ai.agentserver.core import get_request_context
+from azure.ai.agentserver.core import FoundryAgentRequestContext, get_request_context
 from azure.ai.agentserver.responses import (
     FileResponseStore,
     InMemoryResponseProvider,
@@ -60,22 +65,31 @@ from azure.ai.agentserver.responses import (
     ResponseExitForRecovery,
     ResponsesServerOptions,
 )
+from azure.ai.agentserver.responses._id_generator import IdGenerator
 from azure.ai.agentserver.responses.aio import ResponseEventStream
-from azure.ai.agentserver.responses.models import CreateResponse, Item, OutputItem
+from azure.ai.agentserver.responses.models import CreateResponse, Item, OutputItem, ResponseIncompleteReason
 from azure.ai.agentserver.responses.streaming._checkpoint import ResponseCheckpointEvent
 from mcp import McpError
 from mcp.types import ErrorData
 from openai import AsyncOpenAI, DefaultAsyncHttpxClient
+from openai.types.responses.response_input_item_param import ResponseInputItemParam
+from pydantic import TypeAdapter
 from typing_extensions import Any
 
 from agent_framework_foundry_hosting import ResponsesHostServer
 from agent_framework_foundry_hosting._responses import (
+    _INCOMPLETE_REASON_KEY,  # pyright: ignore[reportPrivateUsage]
+    _LATEST_CHECKPOINT_ID_KEY,  # pyright: ignore[reportPrivateUsage]
     CONSENT_ERROR_CODE,
     ConsentError,
+    _is_allowed_oauth_consent_link,  # pyright: ignore[reportPrivateUsage]
     _item_to_message,  # pyright: ignore[reportPrivateUsage]
     _json_safe_to_str,  # pyright: ignore[reportPrivateUsage]
+    _normalize_allowed_oauth_consent_origins,  # pyright: ignore[reportPrivateUsage]
     _output_item_to_message,  # pyright: ignore[reportPrivateUsage]
+    _output_items_to_messages,  # pyright: ignore[reportPrivateUsage]
     _OutputItemTracker,  # pyright: ignore[reportPrivateUsage]
+    _SignalledIterator,  # pyright: ignore[reportPrivateUsage]
     _stringify_mcp_output,  # pyright: ignore[reportPrivateUsage]
     consent_url_from_error,
 )
@@ -140,6 +154,42 @@ async def _raising_updates(
     raise RuntimeError(message)
 
 
+class _AgentProtocolMock(MagicMock):
+    id = "test-agent"
+    name: str | None = "Test Agent"
+    description: str | None = "A mock agent for testing"
+    run: Any = None
+    create_session: Any = None
+    get_session: Any = None
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.run = MagicMock()
+        self.create_session = MagicMock(side_effect=lambda *, session_id=None: AgentSession(session_id=session_id))
+        self.get_session = MagicMock(
+            side_effect=lambda service_session_id, *, session_id=None: AgentSession(
+                service_session_id=service_session_id,
+                session_id=session_id,
+            )
+        )
+
+
+class _RawAgentMock(_AgentProtocolMock, RawAgent):
+    pass
+
+
+class _WorkflowAgentMock(_AgentProtocolMock, WorkflowAgent):
+    _workflow_value: Any = None
+
+    @property
+    def workflow(self) -> Any:
+        return self._workflow_value
+
+    @workflow.setter
+    def workflow(self, value: Any) -> None:
+        self._workflow_value = value
+
+
 def _make_agent(
     *,
     response: AgentResponse | None = None,
@@ -152,7 +202,7 @@ def _make_agent(
     tests that only care about complete output messages: the helper converts those messages into streamed updates.
     ``stream_updates`` is for tests that need explicit chunk boundaries to verify streaming event behavior.
     """
-    agent = MagicMock(spec=RawAgent) if raw_agent else MagicMock()
+    agent = _RawAgentMock() if raw_agent else _AgentProtocolMock()
     agent.id = "test-agent"
     agent.name = "Test Agent"
     agent.description = "A mock agent for testing"
@@ -164,7 +214,8 @@ def _make_agent(
     def create_session(*, session_id: str | None = None) -> AgentSession:
         return AgentSession(session_id=session_id)
 
-    agent.create_session.side_effect = create_session
+    agent.create_session = MagicMock(side_effect=create_session)
+    agent.run = MagicMock()
 
     if response is not None:
 
@@ -207,6 +258,14 @@ class _StrictCustomAgent:
 
     def create_session(self, *, session_id: str | None = None) -> AgentSession:
         return AgentSession(session_id=session_id)
+
+    def get_session(
+        self,
+        service_session_id: str | ServiceSessionId,
+        *,
+        session_id: str | None = None,
+    ) -> AgentSession:
+        return AgentSession(service_session_id=service_session_id, session_id=session_id)
 
     def run(
         self,
@@ -852,6 +911,18 @@ class TestSerializationHelpers:
 
 
 class TestResponsesHostServerInit:
+    @pytest.mark.parametrize("agent", [None, 42])
+    def test_init_rejects_invalid_agent_source(self, agent: Any) -> None:
+        with pytest.raises(TypeError, match="agent must be an agent instance or a zero-argument callable"):
+            ResponsesHostServer(agent)
+
+    async def test_zero_argument_agent_class_is_resolved_as_factory(self) -> None:
+        server = _make_server(cast(Any, _StrictCustomAgent), history_source="agent")
+
+        response = await _post(server)
+
+        assert response.json()["status"] == "completed"
+
     def test_init_basic(self) -> None:
         agent = _make_agent(
             response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
@@ -1022,6 +1093,49 @@ class TestResponsesHostServerInit:
 
 
 class TestAgentSessionPersistence:
+    @pytest.mark.parametrize(
+        ("platform_session_id", "request_session_id", "call_id", "expected_error"),
+        [
+            ("sandbox-1", "sandbox-1", None, "trusted user ID and call ID"),
+            ("", "caller-session", "call-1", "FOUNDRY_AGENT_SESSION_ID"),
+            ("sandbox-1", "caller-session", "call-1", "does not match"),
+        ],
+    )
+    async def test_hosted_invalid_identity_fails_without_running_agent(
+        self, platform_session_id: str, request_session_id: str, call_id: str | None, expected_error: str
+    ) -> None:
+        agent = _make_agent()
+        server = _make_server(agent, session_store=SessionStore())
+        server.config.is_hosted = True
+        server.config.session_id = platform_session_id
+        request = CreateResponse(model="m", input="hi")
+        context = ResponseContext(response_id="response-1", mode_flags=MagicMock())
+
+        with patch(
+            "agent_framework_foundry_hosting._responses.get_request_context",
+            return_value=FoundryAgentRequestContext(session_id=request_session_id, user_id="user-1", call_id=call_id),
+        ):
+            events = [
+                event
+                async for event in server._handle_response(  # pyright: ignore[reportPrivateUsage]
+                    request, context, asyncio.Event()
+                )
+            ]
+
+        types = [event["type"] for event in events if isinstance(event, Mapping)]
+        assert types[-1] == "response.failed"
+        assert "response.completed" not in types
+        failed_events = [
+            event for event in events if isinstance(event, Mapping) and event.get("type") == "response.failed"
+        ]
+        assert len(failed_events) == 1
+        failed_event = cast(Mapping[str, Any], failed_events[0])
+        response = cast(Mapping[str, Any], failed_event["response"])
+        error = cast(Mapping[str, Any], response["error"])
+        assert expected_error in error["message"]
+        agent.run.assert_not_called()
+        agent.create_session.assert_not_called()
+
     async def test_previous_response_chain_restores_session_state(self) -> None:
         seen_counts: list[int] = []
         seen_session_ids: list[str] = []
@@ -1443,8 +1557,9 @@ class TestAgentSessionPersistence:
         assert stored is not None
         assert stored.state["started"] is True
 
-    async def test_cancellation_signal_stops_streaming_and_completes(self) -> None:
-        """Steering/explicit-cancel: the loop must break promptly, and the response still completes."""
+    async def test_cancellation_signal_stops_streaming_without_completing(self) -> None:
+        """Explicit cancel: the loop must break promptly, and the handler must not emit a
+        ``response.completed`` terminal for a run it didn't finish (regression for #8564)."""
         store = SessionStore()
         agent = _make_agent(
             stream_updates=[
@@ -1471,22 +1586,109 @@ class TestAgentSessionPersistence:
                 events.append(event)
                 if isinstance(event, Mapping) and event.get("type") == "response.output_text.delta":
                     break
-            # Cancellation arrives after the first delta; the loop must not process "two"/"three".
+            # Cancellation arrives after the first delta, via the explicit /cancel endpoint (both
+            # the signal and its cause flag fire together); the loop must not process "two"/"three".
+            context.client_cancelled = True
             cancellation_signal.set()
             events.extend([event async for event in handler])
 
         types = [event.get("type") for event in events if isinstance(event, Mapping)]
         assert types.count("response.output_text.delta") == 1
-        assert types[-1] == "response.completed"
+        assert "response.completed" not in types
+        assert types[-1] == "response.output_text.delta"
+
+        stored = await store.get("response-1")
+        assert stored is not None
+
+    async def test_cancellation_signal_during_close_drain_stops_completion(self) -> None:
+        """Regression for #8564 (Copilot follow-up): the cancellation recheck must happen *after*
+        draining ``tracker.close()``, not only before it. Each event that loop yields suspends the
+        handler, so an explicit cancel arriving mid-drain must still suppress ``response.completed``."""
+        store = SessionStore()
+        agent = _make_agent(
+            stream_updates=[AgentResponseUpdate(contents=[Content.from_text("done")], role="assistant")]
+        )
+        server = _make_server(agent, session_store=store)
+        request = CreateResponse(model="m", input="hi", stream=True)
+        context = ResponseContext(response_id="response-1", mode_flags=MagicMock())
+        cancellation_signal = asyncio.Event()
+
+        with (
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
+            patch.object(ResponseContext, "get_history", new=AsyncMock(return_value=[])),
+        ):
+            handler = cast(
+                AsyncGenerator[Any, None],
+                server._handle_response(request, context, cancellation_signal),  # pyright: ignore[reportPrivateUsage]
+            )
+            events: list[Any] = []
+            async for event in handler:
+                events.append(event)
+                # The inner agent stream has already finished draining (so the earlier check
+                # passed) by the time `tracker.close()` emits its first closing event; fire the
+                # explicit cancel exactly then, mid-drain, instead of before the drain starts.
+                if isinstance(event, Mapping) and event.get("type") == "response.output_text.done":
+                    context.client_cancelled = True
+                    cancellation_signal.set()
+                    break
+            events.extend([event async for event in handler])
+
+        types = [event.get("type") for event in events if isinstance(event, Mapping)]
+        assert "response.output_text.done" in types
+        assert "response.completed" not in types
+
+    async def test_steering_pressure_without_client_cancel_still_completes_normally(self) -> None:
+        """Steering: ``cancellation_signal`` also fires when a steerable conversation supersedes a
+        turn, but ``context.client_cancelled`` stays False for that cause (only the explicit
+        /cancel endpoint or a non-background disconnect sets it). A steered turn must still drain
+        ``tracker.close()`` and emit its normal terminal below so agentserver preserves the partial
+        output as ``response.completed`` instead of synthesizing ``response.failed`` for it."""
+        store = SessionStore()
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(contents=[Content.from_text("one")], role="assistant"),
+                AgentResponseUpdate(contents=[Content.from_text("two")], role="assistant"),
+            ]
+        )
+        server = _make_server(agent, session_store=store)
+        request = CreateResponse(model="m", input="hi", stream=True)
+        context = ResponseContext(response_id="response-1", mode_flags=MagicMock())
+        cancellation_signal = asyncio.Event()
+
+        with (
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
+            patch.object(ResponseContext, "get_history", new=AsyncMock(return_value=[])),
+        ):
+            handler = cast(
+                AsyncGenerator[Any, None],
+                server._handle_response(request, context, cancellation_signal),  # pyright: ignore[reportPrivateUsage]
+            )
+            events: list[Any] = []
+            async for event in handler:
+                events.append(event)
+                if isinstance(event, Mapping) and event.get("type") == "response.output_text.delta":
+                    break
+            # Steering pressure supersedes the turn: the signal fires with no cause flag
+            # (``client_cancelled`` stays False), unlike an explicit /cancel.
+            assert context.client_cancelled is False
+            cancellation_signal.set()
+            events.extend([event async for event in handler])
+
+        types = [event.get("type") for event in events if isinstance(event, Mapping)]
+        assert types.count("response.output_text.delta") == 1
+        assert "response.completed" in types
+        text_done = [e for e in events if isinstance(e, Mapping) and e.get("type") == "response.output_text.done"]
+        assert any(e.get("text") == "one" for e in text_done)
 
         stored = await store.get("response-1")
         assert stored is not None
 
     async def test_cancellation_signal_preempts_stuck_agent_call(self) -> None:
-        """Steering/explicit-cancel must interrupt an agent call stuck awaiting a slow model/tool
+        """Explicit cancel must interrupt an agent call stuck awaiting a slow model/tool
         response, not merely be checked between already-produced updates."""
         store = SessionStore()
         gate = asyncio.Event()  # Never set: simulates a model/tool call that never returns.
+        cleanup_called = asyncio.Event()
         agent = _make_agent()
 
         async def _stream_gen() -> AsyncIterator[AgentResponseUpdate]:
@@ -1495,7 +1697,11 @@ class TestAgentSessionPersistence:
 
         def run_streaming(*_args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
             del _args, kwargs
-            return ResponseStream(_stream_gen(), finalizer=AgentResponse.from_updates)
+            return ResponseStream(
+                _stream_gen(),
+                finalizer=AgentResponse.from_updates,
+                cleanup_hooks=[cleanup_called.set],
+            )
 
         agent.run = MagicMock(side_effect=run_streaming)
         server = _make_server(agent, session_store=store)
@@ -1513,6 +1719,7 @@ class TestAgentSessionPersistence:
             )
             await anext(handler)  # response.created
             await anext(handler)  # response.in_progress
+            context.client_cancelled = True
             cancellation_signal.set()  # Fires while the agent is stuck awaiting `gate`.
 
             async def _drain() -> list[Any]:
@@ -1522,9 +1729,8 @@ class TestAgentSessionPersistence:
             # call instead of only being observed after it (eventually) produced an update.
             events = await asyncio.wait_for(_drain(), timeout=1.0)
 
-        types = [event.get("type") for event in events if isinstance(event, Mapping)]
-        assert "response.output_text.delta" not in types
-        assert types[-1] == "response.completed"
+        assert events == []
+        assert cleanup_called.is_set()
 
     async def test_consumer_failure_cancels_agent_stream_driver_task(self) -> None:
         """A crash in the consumer (`_OutputItemTracker.handle`) must not leave the background
@@ -1649,6 +1855,204 @@ class TestNonStreaming:
         assert "function_call" in types
         assert "function_call_output" in types
         assert "message" in types
+
+    async def test_native_computer_call_and_result(self) -> None:
+        item_id = IdGenerator.new_computer_call_item_id()
+        actions: list[dict[str, Any]] = [
+            {"type": "click", "x": 100, "y": 200},
+            {"type": "keypress", "keys": ["ENTER"]},
+        ]
+        checks: list[ComputerSafetyCheck] = [{"id": "check-1", "code": "untrusted", "message": "Review this page."}]
+        agent = _make_agent(
+            response=AgentResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[
+                            Content.from_computer_tool_call(
+                                id=item_id, call_id="call-computer-1", actions=actions, pending_safety_checks=checks
+                            )
+                        ],
+                    ),
+                    Message(
+                        role="tool",
+                        contents=[
+                            Content.from_computer_tool_result(
+                                call_id="call-computer-1",
+                                screenshot=Content.from_data(b"png-data", "image/png"),
+                                acknowledged_safety_checks=[{"id": "check-1"}],
+                            )
+                        ],
+                    ),
+                ]
+            )
+        )
+        server = _make_server(agent)
+
+        resp = await _post(server)
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "completed"
+        call, result = body["output"]
+        assert call["type"] == "computer_call"
+        assert call["id"] == item_id
+        assert call["call_id"] == "call-computer-1"
+        assert call["actions"] == actions
+        assert "action" not in call
+        assert call["pending_safety_checks"] == checks
+        assert result["type"] == "computer_call_output"
+        assert result["call_id"] == "call-computer-1"
+        assert result["output"] == {"type": "computer_screenshot", "image_url": "data:image/png;base64,cG5nLWRhdGE="}
+        assert result["acknowledged_safety_checks"] == [{"id": "check-1"}]
+
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_computer_result_without_screenshot_fails_response(self, stream: bool) -> None:
+        call = Content.from_computer_tool_call(
+            id=IdGenerator.new_computer_call_item_id(), call_id="call-no-image", actions=[{"type": "screenshot"}]
+        )
+        result = Content.from_computer_tool_result(call_id="call-no-image")
+        agent = _make_agent(
+            response=AgentResponse(
+                messages=[Message(role="assistant", contents=[call]), Message(role="tool", contents=[result])]
+            )
+        )
+
+        resp = await _post(_make_server(agent), stream=stream)
+
+        assert resp.status_code == 200
+        error: dict[str, Any]
+        if stream:
+            events = _parse_sse_events(resp.text)
+            assert _sse_event_types(events)[-1] == "response.failed"
+            failed = [event for event in events if event["event"] == "response.failed"]
+            assert len(failed) == 1
+            error = (failed[0]["data"].get("response") or {}).get("error") or {}
+        else:
+            body = resp.json()
+            assert body["status"] == "failed"
+            error = body.get("error") or {}
+        assert error.get("message") == "A computer result requires a call_id and screenshot."
+
+    async def test_computer_items_with_provider_ids_use_valid_host_ids(self) -> None:
+        call_id = "provider-computer-call"
+        call = Content.from_computer_tool_call(id="cu_" + "a" * 32, call_id=call_id, actions=[{"type": "screenshot"}])
+        result = Content.from_computer_tool_result(
+            id="cco_" + "b" * 32,
+            call_id=call_id,
+            screenshot=Content.from_data(b"png", "image/png"),
+        )
+        agent = _make_agent(
+            response=AgentResponse(
+                messages=[Message(role="assistant", contents=[call]), Message(role="tool", contents=[result])]
+            )
+        )
+
+        resp = await _post(_make_server(agent))
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "completed"
+        output_call, output_result = body["output"]
+        assert output_call["type"] == "computer_call"
+        assert IdGenerator.is_valid(output_call["id"])[0]
+        assert output_call["call_id"] == call_id
+        assert output_call["actions"] == [{"type": "screenshot"}]
+        assert output_result["type"] == "computer_call_output"
+        assert IdGenerator.is_valid(output_result["id"])[0]
+        assert output_result["call_id"] == call_id
+        assert result.screenshot is not None
+        assert output_result["output"]["image_url"] == result.screenshot.uri
+
+        history = [await _output_item_to_message(cast(OutputItem, item)) for item in (output_call, output_result)]
+        replay = OpenAIChatClient(model="test-model", api_key="test-key")._prepare_messages_for_openai(
+            history, request_uses_service_side_storage=False
+        )
+        assert [item["type"] for item in replay] == ["computer_call", "computer_call_output"]
+        assert replay[0]["id"] == output_call["id"]
+        assert replay[0]["call_id"] == replay[1]["call_id"] == call_id
+        assert replay[0]["actions"] == output_call["actions"]
+        assert replay[1]["output"] == output_result["output"]
+        for item in replay:
+            TypeAdapter(ResponseInputItemParam).validate_python(item)
+
+    async def test_computer_items_survive_previous_response_history(self) -> None:
+        item_id = IdGenerator.new_computer_call_item_id()
+        actions = [{"type": "move", "x": 10, "y": 20}, {"type": "click", "x": 10, "y": 20}]
+        call = Content.from_computer_tool_call(id=item_id, call_id="call-history", actions=actions)
+        result = Content.from_computer_tool_result(
+            call_id="call-history", screenshot=Content.from_hosted_file("file-screenshot")
+        )
+        agent = _make_agent(
+            response=AgentResponse(
+                messages=[Message(role="assistant", contents=[call]), Message(role="tool", contents=[result])]
+            )
+        )
+        server = _make_server(agent, session_store=SessionStore())
+
+        first = await _post(server, input_text="first")
+        second = await _post(server, input_text="next", previous_response_id=first.json()["id"])
+
+        assert first.json()["status"] == "completed"
+        assert second.json()["status"] == "completed"
+        prior_messages = agent.run.call_args_list[1].kwargs["messages"]
+        prior_contents = [content for message in prior_messages for content in message.contents]
+        previous_call = next(content for content in prior_contents if content.type == "computer_tool_call")
+        previous_result = next(content for content in prior_contents if content.type == "computer_tool_result")
+        assert previous_call.id == item_id
+        assert previous_call.call_id == "call-history"
+        assert previous_call.actions == actions
+        assert previous_result.call_id == "call-history"
+        assert previous_result.screenshot is not None
+        assert previous_result.screenshot.file_id == "file-screenshot"
+
+    async def test_computer_result_input_resumes_native_call_with_history(self) -> None:
+        call = Content.from_computer_tool_call(
+            id=IdGenerator.new_computer_call_item_id(),
+            call_id="call-awaiting-screenshot",
+            actions=[{"type": "click", "x": 10, "y": 20}],
+            pending_safety_checks=[{"id": "check-1"}],
+        )
+        agent = _make_multi_response_agent([
+            AgentResponse(messages=[Message(role="assistant", contents=[call])]),
+            AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("done")])]),
+        ])
+        server = _make_server(agent, session_store=SessionStore())
+
+        first = await _post(server, input_text="Use the computer")
+        second = await _post_json(
+            server,
+            {
+                "model": "test-model",
+                "previous_response_id": first.json()["id"],
+                "input": [
+                    {
+                        "type": "computer_call_output",
+                        "call_id": "call-awaiting-screenshot",
+                        "output": {"type": "computer_screenshot", "image_url": "data:image/png;base64,cG5n"},
+                        "acknowledged_safety_checks": [{"id": "check-1"}],
+                    }
+                ],
+                "stream": False,
+            },
+        )
+
+        assert first.json()["status"] == "completed"
+        assert second.json()["status"] == "completed"
+        inputs = agent.run.call_args_list[1].kwargs["messages"]
+        [past_call] = [
+            content for message in inputs for content in message.contents if content.type == "computer_tool_call"
+        ]
+        [result_message] = [message for message in inputs if message.role == "tool"]
+        [result] = result_message.contents
+        assert past_call.id == call.id
+        assert past_call.actions == call.actions
+        assert result.type == "computer_tool_result"
+        assert result.call_id == call.call_id
+        assert result.screenshot is not None
+        assert result.screenshot.type == "data"
+        assert result.screenshot.uri == "data:image/png;base64,cG5n"
+        assert result.acknowledged_safety_checks == [{"id": "check-1"}]
 
     async def test_function_result_omits_internal_exception(self) -> None:
         agent = _make_agent(
@@ -2001,6 +2405,42 @@ class TestStreaming:
         done_events = [e for e in events if e["event"] == "response.output_text.done"]
         assert len(done_events) == 1
         assert done_events[0]["data"]["text"] == "Hello world!"
+
+    async def test_computer_call_streaming_emits_complete_items_once(self) -> None:
+        item_id = "cu_" + "a" * 32
+        call = Content.from_computer_tool_call(
+            id=item_id,
+            call_id="call-stream",
+            actions=[{"type": "scroll", "scroll_y": 100}, {"type": "screenshot"}],
+            pending_safety_checks=[{"id": "check-stream"}],
+        )
+        result = Content.from_computer_tool_result(
+            call_id="call-stream",
+            screenshot=Content.from_uri("https://example.com/screenshot.png"),
+            acknowledged_safety_checks=[{"id": "check-stream"}],
+        )
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(contents=[call], role="assistant"),
+                AgentResponseUpdate(contents=[call], role="assistant"),
+                AgentResponseUpdate(contents=[result], role="tool"),
+            ]
+        )
+
+        resp = await _post(_make_server(agent), stream=True)
+
+        assert resp.status_code == 200
+        events = _parse_sse_events(resp.text)
+        added = [event["data"]["item"] for event in events if event["event"] == "response.output_item.added"]
+        done = [event["data"]["item"] for event in events if event["event"] == "response.output_item.done"]
+        assert [item["type"] for item in added] == ["computer_call", "computer_call_output"]
+        assert [item["type"] for item in done] == ["computer_call", "computer_call_output"]
+        assert IdGenerator.is_valid(done[0]["id"])[0]
+        assert done[0]["actions"] == call.actions
+        assert done[0]["pending_safety_checks"] == [{"id": "check-stream"}]
+        assert done[1]["call_id"] == call.call_id
+        assert done[1]["output"]["image_url"] == "https://example.com/screenshot.png"
+        assert done[1]["acknowledged_safety_checks"] == [{"id": "check-stream"}]
 
     async def test_usage_is_aggregated_in_completed_response(self, caplog: pytest.LogCaptureFixture) -> None:
         agent = _make_agent(
@@ -2691,20 +3131,19 @@ class TestOutputItemToMessage:
             OutputItemFunctionShellCallOutput,
         )
 
-        item = OutputItemFunctionShellCallOutput({
+        output: FunctionShellCallOutputContent = {
+            "stdout": "file.txt",
+            "stderr": "",
+            "outcome": cast(FunctionShellCallOutputExitOutcome, {"exit_code": 0}),
+        }
+        item: OutputItemFunctionShellCallOutput = {
             "type": "shell_call_output",
             "id": "sco-1",
             "call_id": "call_sc",
             "status": "completed",
-            "output": [
-                FunctionShellCallOutputContent({
-                    "stdout": "file.txt",
-                    "stderr": "",
-                    "outcome": cast(FunctionShellCallOutputExitOutcome, {"exit_code": 0}),
-                })
-            ],
+            "output": [output],
             "max_output_length": 1024,
-        })
+        }
         msg = await _output_item_to_message(item)
         assert msg.role == "tool"
         assert msg.contents[0].type == "shell_tool_result"
@@ -2788,12 +3227,12 @@ class TestOutputItemToMessage:
         )
         msg = await _output_item_to_message(item)
         assert msg.role == "assistant"
-        assert msg.contents[0].type == "function_call"
-        assert msg.contents[0].name == "computer_use"
-        arguments = msg.contents[0].arguments
-        assert isinstance(arguments, str)
-        assert json.loads(arguments) == {"type": "click"}
-        assert msg.contents[0].informational_only is True
+        assert msg.contents[0].type == "computer_tool_call"
+        assert msg.contents[0].id == "cc-1"
+        assert msg.contents[0].call_id == "call_cc"
+        assert msg.contents[0].actions == [{"type": "click"}]
+        assert msg.contents[0].additional_properties["computer_action_format"] == "single"
+        assert msg.contents[0].user_input_request is True
 
     async def test_computer_call_output(self) -> None:
         item = cast(
@@ -2809,12 +3248,65 @@ class TestOutputItemToMessage:
         )
         msg = await _output_item_to_message(item)
         assert msg.role == "tool"
-        assert msg.contents[0].type == "function_result"
+        assert msg.contents[0].type == "computer_tool_result"
         assert msg.contents[0].call_id == "call_cc"
-        assert json.loads(msg.contents[0].result) == {
-            "type": "computer_screenshot",
-            "image_url": "data:image/png;base64,abc",
-        }
+        assert msg.contents[0].screenshot is not None
+        assert msg.contents[0].screenshot.type == "data"
+        assert msg.contents[0].screenshot.uri == "data:image/png;base64,abc"
+
+    @pytest.mark.parametrize(
+        ("output", "error"),
+        [
+            ({"type": "text"}, "must contain a computer screenshot"),
+            ({"type": "computer_screenshot"}, "missing its image URL or file ID"),
+        ],
+    )
+    async def test_computer_call_output_requires_screenshot(self, output: dict[str, str], error: str) -> None:
+        item = cast(OutputItem, {"type": "computer_call_output", "call_id": "call_cc", "output": output})
+
+        with pytest.raises(ValueError, match=error):
+            await _output_item_to_message(item)
+
+    async def test_computer_history_preserves_ordered_actions_ids_and_safety_checks(self) -> None:
+        actions = [{"type": "click", "x": 1, "y": 2}, {"type": "keypress", "keys": ["ENTER"]}]
+        messages = await _output_items_to_messages([
+            cast(
+                OutputItem,
+                {
+                    "type": "computer_call",
+                    "id": "cc-history",
+                    "call_id": "call-history",
+                    "actions": actions,
+                    "pending_safety_checks": [{"id": "check-1", "code": "untrusted"}],
+                    "status": "completed",
+                },
+            ),
+            cast(
+                OutputItem,
+                {
+                    "type": "computer_call_output",
+                    "id": "cco-history",
+                    "call_id": "call-history",
+                    "output": {"type": "computer_screenshot", "file_id": "file-screenshot"},
+                    "acknowledged_safety_checks": [{"id": "check-1"}],
+                    "status": "completed",
+                },
+            ),
+        ])
+        assert [message.role for message in messages] == ["assistant", "tool"]
+        call, result = (message.contents[0] for message in messages)
+        assert call.type == "computer_tool_call"
+        assert call.id == "cc-history"
+        assert call.call_id == "call-history"
+        assert call.actions == actions
+        assert call.pending_safety_checks == [{"id": "check-1", "code": "untrusted"}]
+        assert result.type == "computer_tool_result"
+        assert result.id == "cco-history"
+        assert result.call_id == "call-history"
+        assert result.screenshot is not None
+        assert result.screenshot.type == "hosted_file"
+        assert result.screenshot.file_id == "file-screenshot"
+        assert result.acknowledged_safety_checks == [{"id": "check-1"}]
 
     async def test_custom_tool_call(self) -> None:
         item = cast(
@@ -3232,23 +3724,22 @@ class TestItemToMessage:
 
     async def test_shell_call_output(self) -> None:
         from azure.ai.agentserver.responses.models import (
-            FunctionShellCallOutputContent,
-            FunctionShellCallOutputExitOutcome,
+            FunctionShellCallOutputContentParam,
+            FunctionShellCallOutputExitOutcomeParam,
             FunctionShellCallOutputItemParam,
         )
 
-        item = FunctionShellCallOutputItemParam({
+        output: FunctionShellCallOutputContentParam = {
+            "stdout": "file.txt",
+            "stderr": "",
+            "outcome": cast(FunctionShellCallOutputExitOutcomeParam, {"exit_code": 0}),
+        }
+        item: FunctionShellCallOutputItemParam = {
             "type": "shell_call_output",
             "call_id": "call_sc",
-            "output": [
-                FunctionShellCallOutputContent({
-                    "stdout": "file.txt",
-                    "stderr": "",
-                    "outcome": cast(FunctionShellCallOutputExitOutcome, {"exit_code": 0}),
-                })
-            ],
+            "output": [output],
             "max_output_length": 1024,
-        })
+        }
         msg = await _item_to_message(item)
         assert msg is not None
         assert msg.role == "tool"
@@ -3340,12 +3831,12 @@ class TestItemToMessage:
         msg = await _item_to_message(item)
         assert msg is not None
         assert msg.role == "assistant"
-        assert msg.contents[0].type == "function_call"
-        assert msg.contents[0].name == "computer_use"
-        arguments = msg.contents[0].arguments
-        assert isinstance(arguments, str)
-        assert json.loads(arguments) == {"type": "click"}
-        assert msg.contents[0].informational_only is True
+        assert msg.contents[0].type == "computer_tool_call"
+        assert msg.contents[0].id == "cc-1"
+        assert msg.contents[0].call_id == "call_cc"
+        assert msg.contents[0].actions == [{"type": "click"}]
+        assert msg.contents[0].additional_properties["computer_action_format"] == "single"
+        assert msg.contents[0].user_input_request is True
 
     async def test_computer_call_output(self) -> None:
         from azure.ai.agentserver.responses.models import ComputerCallOutputItemParam, ComputerScreenshotImage
@@ -3361,12 +3852,52 @@ class TestItemToMessage:
         msg = await _item_to_message(item)
         assert msg is not None
         assert msg.role == "tool"
-        assert msg.contents[0].type == "function_result"
+        assert msg.contents[0].type == "computer_tool_result"
         assert msg.contents[0].call_id == "call_cc"
-        assert json.loads(msg.contents[0].result) == {
-            "type": "computer_screenshot",
-            "image_url": "data:image/png;base64,abc",
-        }
+        assert msg.contents[0].screenshot is not None
+        assert msg.contents[0].screenshot.type == "data"
+        assert msg.contents[0].screenshot.uri == "data:image/png;base64,abc"
+
+    async def test_computer_call_with_ordered_actions_and_safety_checks(self) -> None:
+        actions = [{"type": "move", "x": 1, "y": 2}, {"type": "click", "x": 1, "y": 2}]
+        pending_checks = [{"id": "check-1", "code": "untrusted", "message": "Review this page."}]
+        item = cast(
+            Item,
+            {
+                "type": "computer_call",
+                "id": "cc-plural",
+                "call_id": "call-plural",
+                "actions": actions,
+                "pending_safety_checks": pending_checks,
+                "status": "completed",
+            },
+        )
+        msg = await _item_to_message(item)
+        call = msg.contents[0]
+        assert call.type == "computer_tool_call"
+        assert call.actions == actions
+        assert call.pending_safety_checks == pending_checks
+        assert "computer_action_format" not in call.additional_properties
+
+    async def test_computer_call_output_with_acknowledged_safety_checks(self) -> None:
+        item = cast(
+            Item,
+            {
+                "type": "computer_call_output",
+                "id": "cco-plural",
+                "call_id": "call-plural",
+                "output": {"type": "computer_screenshot", "file_id": "file-screenshot"},
+                "acknowledged_safety_checks": [{"id": "check-1"}],
+                "status": "completed",
+            },
+        )
+        msg = await _item_to_message(item)
+        result = msg.contents[0]
+        assert result.type == "computer_tool_result"
+        assert result.id == "cco-plural"
+        assert result.screenshot is not None
+        assert result.screenshot.file_id == "file-screenshot"
+        assert result.acknowledged_safety_checks == [{"id": "check-1"}]
 
     async def test_custom_tool_call(self) -> None:
         from azure.ai.agentserver.responses.models import ItemCustomToolCall
@@ -3516,7 +4047,7 @@ def _make_multi_response_agent(
     stream_updates_list: list[list[AgentResponseUpdate]] | None = None,
 ) -> MagicMock:
     """Create a mock agent that returns different responses on successive calls."""
-    agent = MagicMock(spec=RawAgent)
+    agent = _RawAgentMock()
     agent.id = "test-agent"
     agent.name = "Test Agent"
     agent.description = "A mock agent for testing"
@@ -3528,7 +4059,7 @@ def _make_multi_response_agent(
     def create_session(*, session_id: str | None = None) -> AgentSession:
         return AgentSession(session_id=session_id)
 
-    agent.create_session.side_effect = create_session
+    agent.create_session = MagicMock(side_effect=create_session)
 
     call_index = [0]
 
@@ -4732,7 +5263,8 @@ class TestCheckpointContextValidation:
         context_field: str,
         bad_id: str,
     ) -> None:
-        agent = MagicMock(spec=WorkflowAgent)
+        agent = _WorkflowAgentMock()
+        agent.run = MagicMock()
         agent.context_providers = []
         agent.workflow = MagicMock()
         agent.workflow.name = "workflow"
@@ -4847,7 +5379,80 @@ class TestConsentUrlFromError:
         assert consent_url_from_error(exc) is None
 
 
+class TestOAuthConsentLinkPolicy:
+    def test_omitted_allowlist_preserves_existing_safe_https_behavior(self) -> None:
+        allowed_origins = _normalize_allowed_oauth_consent_origins(None)
+
+        assert allowed_origins is None
+        assert _is_allowed_oauth_consent_link("https://external.example/authorize", allowed_origins)
+        assert not _is_allowed_oauth_consent_link("http://external.example/authorize", allowed_origins)
+        assert not _is_allowed_oauth_consent_link("javascript:alert(1)", allowed_origins)
+
+    def test_empty_allowlist_rejects_all_origins(self) -> None:
+        allowed_origins = _normalize_allowed_oauth_consent_origins([])
+
+        assert not _is_allowed_oauth_consent_link("https://external.example/authorize", allowed_origins)
+
+    @pytest.mark.parametrize(
+        "consent_link",
+        [
+            "https://auth.example.com/authorize?state=1",
+            "https://auth.example.com:443/authorize",
+            "https://login.partner.example:8443/consent",
+        ],
+    )
+    def test_configured_allowlist_accepts_matching_origins(self, consent_link: str) -> None:
+        allowed_origins = _normalize_allowed_oauth_consent_origins([
+            "https://auth.example.com",
+            "https://login.partner.example:8443",
+        ])
+
+        assert _is_allowed_oauth_consent_link(consent_link, allowed_origins)
+
+    def test_configured_allowlist_rejects_other_safe_https_origins(self) -> None:
+        allowed_origins = _normalize_allowed_oauth_consent_origins(["https://auth.example.com"])
+
+        assert not _is_allowed_oauth_consent_link("https://other.example.com/authorize", allowed_origins)
+
+    def test_configured_allowlist_still_rejects_unsafe_links(self) -> None:
+        allowed_origins = _normalize_allowed_oauth_consent_origins(["https://auth.example.com"])
+
+        assert not _is_allowed_oauth_consent_link("http://auth.example.com/authorize", allowed_origins)
+        assert not _is_allowed_oauth_consent_link(None, allowed_origins)
+
+    @pytest.mark.parametrize(
+        "origin",
+        [
+            "http://auth.example.com",
+            "https://auth.example.com/path",
+            "https://auth.example.com?tenant=1",
+        ],
+    )
+    def test_invalid_allowlist_origin_raises(self, origin: str) -> None:
+        with pytest.raises(ValueError, match="origin"):
+            _normalize_allowed_oauth_consent_origins([origin])
+
+
 class TestAgentLifecycle:
+    async def test_factory_agent_is_entered_and_exited_for_each_request(self) -> None:
+        agents: list[MagicMock] = []
+
+        def create_agent() -> MagicMock:
+            agent = _make_agent(
+                response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
+            )
+            agents.append(agent)
+            return agent
+
+        server = _make_server(create_agent)
+
+        await _post(server, input_text="first", stream=False)
+        await _post(server, input_text="second", stream=False)
+
+        assert len(agents) == 2
+        assert [agent.__aenter__.await_count for agent in agents] == [1, 1]
+        assert [agent.__aexit__.await_count for agent in agents] == [1, 1]
+
     async def test_agent_entered_lazily_on_first_request(self) -> None:
         agent = _make_agent(
             response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
@@ -4905,6 +5510,49 @@ class TestAgentLifecycle:
 
 
 class TestOAuthConsentSurfacing:
+    async def test_explicit_none_origin_allowlist_accepts_any_safe_https_consent(self) -> None:
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
+        )
+        agent.__aenter__.side_effect = _make_consent_error("https://external.example/authorize")
+        server = _make_server(agent, allowed_oauth_consent_origins=None)
+
+        resp = await _post(server, input_text="hello", stream=False)
+        body = resp.json()
+
+        assert body["status"] == "incomplete"
+        oauth_items = [item for item in body["output"] if item["type"] == "oauth_consent_request"]
+        assert [item["consent_link"] for item in oauth_items] == ["https://external.example/authorize"]
+
+    async def test_configured_origin_allowlist_accepts_connect_time_consent(self) -> None:
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
+        )
+        agent.__aenter__.side_effect = _make_consent_error("https://auth.example.com/authorize?state=1")
+        server = _make_server(agent, allowed_oauth_consent_origins=["https://auth.example.com"])
+
+        resp = await _post(server, input_text="hello", stream=False)
+
+        assert resp.json()["status"] == "incomplete"
+
+    async def test_configured_origin_allowlist_rejects_connect_time_consent(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
+        )
+        agent.__aenter__.side_effect = _make_consent_error("https://other.example.com/authorize")
+        server = _make_server(agent, allowed_oauth_consent_origins=["https://auth.example.com"])
+
+        with caplog.at_level(logging.ERROR):
+            resp = await _post(server, input_text="hello", stream=False)
+        body = resp.json()
+
+        assert body["status"] == "failed"
+        assert not any(item["type"] == "oauth_consent_request" for item in body["output"])
+        assert "must include an allowed safe HTTPS consent link" in caplog.text
+        agent.run.assert_not_called()
+
     async def test_non_streaming_consent_error_emits_oauth_output_item(self) -> None:
         agent = _make_agent(
             response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
@@ -5159,6 +5807,29 @@ class TestOAuthConsentSurfacing:
         assert body["status"] == "failed"
         assert not any(item["type"] == "oauth_consent_request" for item in body["output"])
 
+    async def test_mid_run_consent_rejects_origin_outside_configured_allowlist(self) -> None:
+        agent = _make_agent(
+            response=AgentResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[
+                            Content.from_oauth_consent_request(
+                                consent_link="https://other.example.com/authorize",
+                            )
+                        ],
+                    )
+                ]
+            )
+        )
+        server = _make_server(agent, allowed_oauth_consent_origins=["https://auth.example.com"])
+
+        resp = await _post(server, input_text="hello", stream=False)
+        body = resp.json()
+
+        assert body["status"] == "failed"
+        assert not any(item["type"] == "oauth_consent_request" for item in body["output"])
+
     async def test_connect_time_consent_rejects_unsafe_links(self) -> None:
         agent = _make_agent(
             response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
@@ -5177,6 +5848,143 @@ class TestOAuthConsentSurfacing:
 # endregion
 
 # region Error handling (response.failed surfacing)
+
+
+class TestIncompleteFinishReasonSurfacing:
+    """A turn the model stopped early must end as ``incomplete`` with the reason, not ``completed``.
+
+    Regression coverage for https://github.com/microsoft/agent-framework/issues/8475: the
+    underlying chat completion reported ``finish_reason="content_filter"`` but the hosted
+    ``/responses`` payload said ``status="completed"`` with no trace of the filter.
+    """
+
+    @staticmethod
+    def _filtered_agent(*, finish_reason: FinishReasonLiteral) -> MagicMock:
+        return _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[Content.from_text("I'm sorry, but I cannot assist with that request.")],
+                    role="assistant",
+                    finish_reason=finish_reason,
+                )
+            ]
+        )
+
+    async def test_non_streaming_content_filter_marks_response_incomplete(self) -> None:
+        server = _make_server(self._filtered_agent(finish_reason="content_filter"))
+
+        resp = await _post(server, input_text="hello", stream=False)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "incomplete"
+        assert body["incomplete_details"] == {"reason": "content_filter"}
+        assert body.get("error") is None
+
+        # The refusal text is still delivered so the caller can show it if it chooses to.
+        messages = [it for it in body["output"] if it["type"] == "message"]
+        assert len(messages) == 1
+        assert messages[0]["content"][0]["text"] == "I'm sorry, but I cannot assist with that request."
+
+    async def test_streaming_content_filter_emits_response_incomplete(self) -> None:
+        server = _make_server(self._filtered_agent(finish_reason="content_filter"))
+
+        resp = await _post(server, input_text="hello", stream=True)
+        assert resp.status_code == 200
+        events = _parse_sse_events(resp.text)
+        types = _sse_event_types(events)
+
+        assert types[-1] == "response.incomplete"
+        assert "response.completed" not in types
+        incomplete = events[-1]["data"]["response"]
+        assert incomplete["status"] == "incomplete"
+        assert incomplete["incomplete_details"] == {"reason": "content_filter"}
+        # The text item itself still closes normally before the terminal event.
+        assert "response.output_text.done" in types
+
+    async def test_length_finish_reason_maps_to_max_output_tokens(self) -> None:
+        server = _make_server(self._filtered_agent(finish_reason="length"))
+
+        resp = await _post(server, input_text="hello", stream=False)
+        body = resp.json()
+        assert body["status"] == "incomplete"
+        assert body["incomplete_details"] == {"reason": "max_output_tokens"}
+
+    async def test_normal_finish_reasons_still_complete(self) -> None:
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(contents=[Content.from_text("part one")], role="assistant"),
+                AgentResponseUpdate(contents=[Content.from_text(" part two")], role="assistant", finish_reason="stop"),
+            ]
+        )
+        server = _make_server(agent)
+
+        resp = await _post(server, input_text="hello", stream=False)
+        body = resp.json()
+        assert body["status"] == "completed"
+        assert body.get("incomplete_details") is None
+
+    async def test_content_filter_persists_across_later_updates_in_the_turn(self) -> None:
+        """A filter mid-turn is not erased by a later update that finishes normally."""
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[Content.from_text("filtered")], role="assistant", finish_reason="content_filter"
+                ),
+                AgentResponseUpdate(contents=[Content.from_text("trailing")], role="assistant", finish_reason="stop"),
+            ]
+        )
+        server = _make_server(agent)
+
+        resp = await _post(server, input_text="hello", stream=False)
+        body = resp.json()
+        assert body["status"] == "incomplete"
+        assert body["incomplete_details"] == {"reason": "content_filter"}
+
+    async def test_content_filter_takes_precedence_over_length(self) -> None:
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(contents=[Content.from_text("cut")], role="assistant", finish_reason="length"),
+                AgentResponseUpdate(
+                    contents=[Content.from_text("filtered")], role="assistant", finish_reason="content_filter"
+                ),
+            ]
+        )
+        server = _make_server(agent)
+
+        resp = await _post(server, input_text="hello", stream=False)
+        body = resp.json()
+        assert body["incomplete_details"] == {"reason": "content_filter"}
+
+    async def test_incomplete_reason_survives_checkpoint_recovery(self) -> None:
+        """Resilient recovery rebuilds the tracker from the persisted response; the marker must ride along.
+
+        A filtered update followed by a crash and a later ``stop`` update must still end ``incomplete``.
+        """
+        stream = ResponseEventStream(response_id="resp_filtered")
+        stream.emit_created()
+        stream.emit_in_progress()
+        tracker = _OutputItemTracker(stream)
+        tracker.record_finish_reason("content_filter")
+        assert stream.internal_metadata[_INCOMPLETE_REASON_KEY] == "content_filter"
+
+        # Simulate recovery: a fresh tracker over the checkpointed response snapshot.
+        recovered = _OutputItemTracker(stream)
+        assert recovered.incomplete_reason == ResponseIncompleteReason.CONTENT_FILTER
+        recovered.record_finish_reason("stop")
+        assert recovered.incomplete_reason == ResponseIncompleteReason.CONTENT_FILTER
+
+        # A stream that was never marked restores nothing.
+        assert _OutputItemTracker(ResponseEventStream(response_id="resp_clean")).incomplete_reason is None
+
+    async def test_workflow_agent_content_filter_marks_response_incomplete(self) -> None:
+        workflow_agent = _build_text_workflow_agent("filtered by workflow", finish_reason="content_filter")
+        server = _make_server(workflow_agent)
+
+        resp = await _post(server, input_text="hi", stream=False)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "incomplete"
+        assert body["incomplete_details"] == {"reason": "content_filter"}
 
 
 class TestResponseFailedSurfacing:
@@ -5215,7 +6023,7 @@ class TestResponseFailedSurfacing:
             yield AgentResponseUpdate(contents=[Content.from_text("partial ")], role="assistant")
             raise RuntimeError("stream kaboom")
 
-        agent = MagicMock(spec=RawAgent)
+        agent = _RawAgentMock()
         agent.id = "test-agent"
         agent.name = "Test Agent"
         agent.description = "A mock agent for testing"
@@ -5227,7 +6035,7 @@ class TestResponseFailedSurfacing:
         def create_session(*, session_id: str | None = None) -> AgentSession:
             return AgentSession(session_id=session_id)
 
-        agent.create_session.side_effect = create_session
+        agent.create_session = MagicMock(side_effect=create_session)
 
         def run_streaming(*args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
             del args
@@ -5266,7 +6074,7 @@ class TestResponseFailedSurfacing:
             yield AgentResponseUpdate(contents=[Content.from_text("hello ")], role="assistant")
             raise RuntimeError("mid-item kaboom")
 
-        agent = MagicMock(spec=RawAgent)
+        agent = _RawAgentMock()
         agent.id = "test-agent"
         agent.name = "Test Agent"
         agent.description = "A mock agent for testing"
@@ -5278,7 +6086,7 @@ class TestResponseFailedSurfacing:
         def create_session(*, session_id: str | None = None) -> AgentSession:
             return AgentSession(session_id=session_id)
 
-        agent.create_session.side_effect = create_session
+        agent.create_session = MagicMock(side_effect=create_session)
 
         def run_streaming(*args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
             del args, kwargs
@@ -5517,15 +6325,16 @@ class _ToolApprovalWorkflowAgentMock(SupportsAgentRun):
         return ResponseStream(_iter(), finalizer=AgentResponse.from_updates)
 
 
-def _build_text_workflow_agent(text: str) -> WorkflowAgent:
+def _build_text_workflow_agent(text: str, *, finish_reason: FinishReasonLiteral | None = None) -> WorkflowAgent:
     """Build a minimal ``WorkflowAgent`` whose inner agent emits a fixed text."""
 
     class _TextAgent(SupportsAgentRun):
-        def __init__(self, name: str, text: str) -> None:
+        def __init__(self, name: str, text: str, finish_reason: FinishReasonLiteral | None) -> None:
             self.id = str(uuid.uuid4())
             self.name = name
             self.description: str | None = None
             self._text = text
+            self._finish_reason: FinishReasonLiteral | None = finish_reason
 
         def create_session(self, **kwargs: Any) -> AgentSession:
             del kwargs
@@ -5569,17 +6378,19 @@ def _build_text_workflow_agent(text: str) -> WorkflowAgent:
             assert stream is True, "The inner agent only runs in stream mode in Foundry Hosted Agents."
             text = self._text
             name = self.name
+            finish_reason = self._finish_reason
 
             async def _aiter() -> AsyncIterator[AgentResponseUpdate]:
                 yield AgentResponseUpdate(
                     contents=[Content.from_text(text=text)],
                     role="assistant",
                     author_name=name,
+                    finish_reason=finish_reason,
                 )
 
             return ResponseStream(_aiter(), finalizer=AgentResponse.from_updates)
 
-    inner = _TextAgent("text-agent", text)
+    inner = _TextAgent("text-agent", text, finish_reason)
 
     @executor
     async def start(messages: list[Message], ctx: WorkflowContext[AgentExecutorRequest]) -> None:
@@ -5599,7 +6410,8 @@ class _MultiUpdateWorkflowAgentMock(SupportsAgentRun):
         self._texts = list(texts)
         self._gate = gate
         self.run_count = 0
-        self.started = asyncio.Event()  # Set at the top of run(), before any gate wait.
+        self.started = asyncio.Event()
+        self.cancelled = asyncio.Event()
 
     def create_session(self, **kwargs: Any) -> AgentSession:
         del kwargs
@@ -5640,14 +6452,18 @@ class _MultiUpdateWorkflowAgentMock(SupportsAgentRun):
         del messages, session, kwargs
         assert stream is True, "The inner agent only runs in stream mode in Foundry Hosted Agents."
         self.run_count += 1
-        self.started.set()
         texts = self._texts
         name = self.name
         gate = self._gate
 
         async def _aiter() -> AsyncIterator[AgentResponseUpdate]:
+            self.started.set()
             if gate is not None:
-                await gate.wait()  # Simulates a stuck model/tool call for preemption tests.
+                try:
+                    await gate.wait()  # Simulates a stuck model/tool call for preemption tests.
+                except asyncio.CancelledError:
+                    self.cancelled.set()
+                    raise
             for text in texts:
                 yield AgentResponseUpdate(
                     contents=[Content.from_text(text=text)],
@@ -5668,8 +6484,27 @@ def _build_multi_update_workflow_agent(
     async def start(messages: list[Message], ctx: WorkflowContext[AgentExecutorRequest]) -> None:
         await ctx.send_message(AgentExecutorRequest(messages=messages, should_respond=True))
 
-    workflow = WorkflowBuilder(start_executor=start).add_edge(start, inner).build()
+    workflow = WorkflowBuilder(name="multi-update-workflow", start_executor=start).add_edge(start, inner).build()
     return WorkflowAgent(workflow=workflow, name="Multi Update Workflow Agent"), inner
+
+
+@asynccontextmanager
+async def _pending_workflow_event(
+    handler: AsyncGenerator[Any], started: asyncio.Event
+) -> AsyncIterator[asyncio.Future[Any]]:
+    pending = asyncio.ensure_future(anext(handler))
+    started_wait = asyncio.ensure_future(started.wait())
+    try:
+        # Startup uses pytest's test timeout; only preemption has a short deadline.
+        await asyncio.wait([pending, started_wait], return_when=asyncio.FIRST_COMPLETED)
+        if pending.done():
+            pytest.fail(f"Workflow returned before reaching the blocked call: {pending.result()!r}")
+        yield pending
+    finally:
+        started_wait.cancel()
+        pending.cancel()
+        await asyncio.gather(started_wait, pending, return_exceptions=True)
+        await handler.aclose()
 
 
 def _build_approval_workflow_agent(
@@ -5706,6 +6541,47 @@ class TestWorkflowAgentHosting:
     relative to the regular agent path.
     """
 
+    async def test_async_factory_creates_workflow_agent_for_each_request(self) -> None:
+        created: list[tuple[WorkflowAgent, _MultiUpdateWorkflowAgentMock]] = []
+
+        async def create_agent() -> WorkflowAgent:
+            agent, inner = _build_multi_update_workflow_agent(["hello"])
+            created.append((agent, inner))
+            return agent
+
+        server = _make_server(create_agent)
+
+        first = await _post(server, input_text="one")
+        second = await _post(server, input_text="two")
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert len(created) == 2
+        assert created[0][0].workflow is not created[1][0].workflow
+        assert [inner.run_count for _, inner in created] == [1, 1]
+
+    async def test_factory_workflow_restores_checkpoint_for_same_conversation(self) -> None:
+        runs: list[MagicMock] = []
+
+        def create_agent() -> WorkflowAgent:
+            agent, _ = _build_multi_update_workflow_agent(["hello"])
+            run = MagicMock(wraps=agent.run)
+            cast(Any, agent).run = run
+            runs.append(run)
+            return agent
+
+        checkpoint_storage = InMemoryCheckpointStorage()
+        checkpoint_provider = MagicMock(spec=CheckpointStoreProvider)
+        checkpoint_provider.get_store.return_value = checkpoint_storage
+        server = _make_server(create_agent, checkpoint_store_provider=checkpoint_provider)
+
+        first = await _post(server, input_text="one", conversation_id="conversation-1")
+        second = await _post(server, input_text="two", conversation_id="conversation-1")
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert [run.call_count for run in runs] == [1, 2]
+
     async def test_basic_text_response(self) -> None:
         workflow_agent = _build_text_workflow_agent("hello from workflow")
         server = _make_server(workflow_agent)
@@ -5737,8 +6613,9 @@ class TestWorkflowAgentHosting:
         text_done = [e for e in events if e["event"] == "response.output_text.done"]
         assert any(e["data"]["text"] == "hello stream" for e in text_done)
 
-    async def test_cancellation_signal_stops_main_loop_and_completes(self) -> None:
-        """Explicit-cancel: the workflow's main loop must break promptly and still complete."""
+    async def test_cancellation_signal_stops_main_loop_without_completing(self) -> None:
+        """Explicit-cancel: the workflow's main loop must break promptly, and the handler must not
+        emit a ``response.completed`` terminal for a run it didn't finish (regression for #8564)."""
         workflow_agent, inner = _build_multi_update_workflow_agent(["one", "two", "three"])
         server = _make_server(workflow_agent)
         request = CreateResponse(model="m", input="hi", stream=True)
@@ -5758,13 +6635,16 @@ class TestWorkflowAgentHosting:
                 events.append(event)
                 if isinstance(event, Mapping) and event.get("type") == "response.output_text.delta":
                     break
-            # Cancellation arrives after the first delta; the loop must not process "two"/"three".
+            # Cancellation arrives after the first delta, via the explicit /cancel endpoint (both
+            # the signal and its cause flag fire together); the loop must not process "two"/"three".
+            context.client_cancelled = True
             cancellation_signal.set()
             events.extend([event async for event in handler])
 
         types = [event.get("type") for event in events if isinstance(event, Mapping)]
         assert types.count("response.output_text.delta") == 1
-        assert types[-1] == "response.completed"
+        assert "response.completed" not in types
+        assert types[-1] == "response.output_text.delta"
         assert inner.run_count == 1
 
     async def test_cancellation_signal_preempts_stuck_workflow_call(self) -> None:
@@ -5788,24 +6668,27 @@ class TestWorkflowAgentHosting:
             await anext(handler)  # response.created
             await anext(handler)  # response.in_progress
 
-            # Pull the first workflow event in the background so we can wait for the inner agent's
-            # run() to actually start (proving it's genuinely stuck on `gate`) before signalling --
-            # otherwise cancellation could preempt the pull before the workflow even reaches it.
-            pending = asyncio.ensure_future(anext(handler))
-            await asyncio.wait_for(inner.started.wait(), timeout=1.0)
-            cancellation_signal.set()  # Fires while the inner agent is stuck awaiting `gate`.
+            async with _pending_workflow_event(handler, inner.started) as pending:
+                context.client_cancelled = True
+                cancellation_signal.set()  # Fires while the inner agent is stuck awaiting `gate`.
 
-            async def _drain() -> list[Any]:
-                first = await pending
-                return [first, *[event async for event in handler]]
+                async def _drain() -> list[Any]:
+                    events: list[Any] = []
+                    try:
+                        events.append(await pending)
+                    except StopAsyncIteration:
+                        return events
+                    events.extend([event async for event in handler])
+                    return events
 
-            # Bounded well below `gate` never being set: proves cancellation preempted the stuck
-            # call instead of only being observed after it (eventually) produced an update.
-            events = await asyncio.wait_for(_drain(), timeout=1.0)
+                # Bounded well below `gate` never being set: proves cancellation preempted the stuck
+                # call instead of only being observed after it (eventually) produced an update.
+                events = await asyncio.wait_for(_drain(), timeout=1.0)
+                assert inner.cancelled.is_set()
 
         types = [event.get("type") for event in events if isinstance(event, Mapping)]
         assert "response.output_text.delta" not in types
-        assert types[-1] == "response.completed"
+        assert "response.completed" not in types
         assert inner.run_count == 1
 
     async def test_shutdown_signal_preempts_stuck_workflow_call(self, tmp_path: Path) -> None:
@@ -5835,16 +6718,14 @@ class TestWorkflowAgentHosting:
             await anext(handler)  # response.created
             await anext(handler)  # response.in_progress
 
-            # Pull the first workflow event in the background so we can wait for the inner agent's
-            # run() to actually start (proving it's genuinely stuck on `gate`) before signalling.
-            pending = asyncio.ensure_future(anext(handler))
-            await asyncio.wait_for(inner.started.wait(), timeout=1.0)
-            context.shutdown.set()  # Fires while the inner agent is stuck awaiting `gate`.
+            async with _pending_workflow_event(handler, inner.started) as pending:
+                context.shutdown.set()  # Fires while the inner agent is stuck awaiting `gate`.
 
-            # Bounded well below `gate` never being set: proves shutdown preempted the stuck call
-            # instead of only being observed after it (eventually) produced an update.
-            with pytest.raises(ResponseExitForRecovery):
-                await asyncio.wait_for(pending, timeout=1.0)
+                # Bounded well below `gate` never being set: proves shutdown preempted the stuck call
+                # instead of only being observed after it (eventually) produced an update.
+                with pytest.raises(ResponseExitForRecovery):
+                    await asyncio.wait_for(pending, timeout=1.0)
+                assert inner.cancelled.is_set()
 
         assert inner.run_count == 1
 
@@ -5863,7 +6744,8 @@ class TestWorkflowAgentHosting:
         request = CreateResponse(model="m", input="hi again", stream=True)
         context = ResponseContext(response_id="response-2", mode_flags=MagicMock(), conversation_id="conv-1")
         cancellation_signal = asyncio.Event()
-        cancellation_signal.set()  # Steering pressure already present before the turn even starts.
+        context.client_cancelled = True  # Explicit cancel already present before the turn even starts.
+        cancellation_signal.set()
 
         with (
             patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
@@ -5877,7 +6759,8 @@ class TestWorkflowAgentHosting:
 
         types = [event.get("type") for event in events if isinstance(event, Mapping)]
         assert "response.output_text.delta" not in types
-        assert types[-1] == "response.completed"
+        assert "response.completed" not in types
+        assert types[-1] == "response.in_progress"
         # At most the restore-only replay call happened; the new-turn call (which would deliver
         # "hi again") must never fire.
         assert inner.run_count <= run_count_after_first_turn + 1
@@ -6183,6 +7066,84 @@ class TestResilientBackgroundCheckpointing:
 
         checkpoint_events = [e for e in events if isinstance(e, ResponseCheckpointEvent)]
         assert checkpoint_events, "expected at least one checkpoint event yielded for a resilient background run"
+
+    async def test_signalled_iterator_stamps_items_when_produced(self) -> None:
+        """The stamp reflects state as of production, not consumption.
+
+        The driver runs one item ahead: once the consumer holds item k, the wrapped iterator may
+        already have resumed and created a checkpoint after it. The stamp taken right after item k
+        was produced must not see that later checkpoint.
+        """
+        checkpoints: list[int] = []
+
+        async def produce() -> AsyncIterator[int]:
+            for k in range(1, 4):
+                yield k
+                # Runs when the iterator is resumed to produce the next item, i.e. after item k
+                # was handed over, mirroring the runner checkpointing at the end of a superstep.
+                checkpoints.append(k)
+
+        async def stamp() -> int:
+            return len(checkpoints)
+
+        seen: list[tuple[int, int, int]] = []
+        it = _SignalledIterator(produce(), asyncio.Event(), stamp=stamp)
+        async with aclosing(it):
+            async for item in it:
+                # Give the driver every chance to run ahead before we look at the stamp.
+                for _ in range(5):
+                    await asyncio.sleep(0)
+                seen.append((item, it.stamp, len(checkpoints)))
+
+        assert [(item, stamped) for item, stamped, _ in seen] == [(1, 0), (2, 1), (3, 2)]
+        # Consumption-time state had already moved past the stamped one for every item.
+        assert all(consumed > stamped for _, stamped, consumed in seen)
+
+    async def test_snapshots_pair_output_with_the_checkpoint_it_follows(self, tmp_path: Path) -> None:
+        """Every persisted snapshot must contain exactly the output emitted before it, and the final
+        snapshot must carry the full output and the incomplete reason.
+        """
+        workflow_agent = _build_text_workflow_agent("filtered by workflow", finish_reason="content_filter")
+        server = _make_server(
+            workflow_agent,
+            response_store=FileResponseStore(storage_dir=tmp_path),
+            options=ResponsesServerOptions(resilient_background=True),
+        )
+        request = CreateResponse(model="m", input="hi", background=True, stream=True, store=True)
+        context = ResponseContext(response_id="response-current", mode_flags=MagicMock())
+
+        emitted_text = ""
+        snapshots: list[tuple[str, dict[str, Any]]] = []
+        async for event in server._handle_response(  # pyright: ignore[reportPrivateUsage]
+            request, context, asyncio.Event()
+        ):
+            if isinstance(event, ResponseCheckpointEvent):
+                # The event references the live response; copy it as it is at persistence time.
+                snapshots.append((emitted_text, copy.deepcopy(dict(event.response))))
+            elif isinstance(event, Mapping) and event.get("type") == "response.output_text.delta":
+                emitted_text += str(event.get("delta", ""))
+
+        assert emitted_text == "filtered by workflow"
+        assert snapshots, "expected the completed workflow to be snapshotted"
+        checkpoint_ids: list[str] = []
+        for text_before, response in snapshots:
+            internal = json.loads(response["metadata"]["_internal_metadata"])
+            checkpoint_ids.append(internal[_LATEST_CHECKPOINT_ID_KEY])
+            snapshot_text = "".join(
+                part["text"]
+                for item in response["output"]
+                if item["type"] == "message"
+                for part in item["content"]
+                if part["type"] == "output_text"
+            )
+            assert snapshot_text == text_before
+        assert len(set(checkpoint_ids)) == len(checkpoint_ids), "each checkpoint is snapshotted once"
+
+        # The last snapshot is paired with the workflow's final checkpoint and carries everything.
+        final_text, final_response = snapshots[-1]
+        assert final_text == "filtered by workflow"
+        assert json.loads(final_response["metadata"]["_internal_metadata"])[_INCOMPLETE_REASON_KEY] == "content_filter"
+        assert final_response["status"] == "in_progress"
 
 
 # endregion

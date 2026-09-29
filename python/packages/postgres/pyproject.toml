@@ -23,7 +23,8 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core>=1.18.0,<2",
-    "psycopg[binary,pool]>=3.3.5,<4",
+    "psycopg[binary,pool]>=3.3.5,<4 ; python_version < '3.15'",
+    "psycopg[pool]>=3.3.5,<4 ; python_version >= '3.15'",
     "pgvector>=0.5.0,<0.6",
 ]
 

@@ -28,7 +28,7 @@ var aiProjectClient = new AIProjectClient(new Uri(endpoint), new DefaultAzureCre
 var mcpTool = ResponseTool.CreateMcpTool(
     serverLabel: "microsoft_learn",
     serverUri: new Uri("https://learn.microsoft.com/api/mcp"),
-    toolCallApprovalPolicy: new McpToolCallApprovalPolicy(GlobalMcpToolCallApprovalPolicy.NeverRequireApproval));
+    toolCallApprovalPolicy: new McpToolCallApprovalPolicy(DefaultMcpToolCallApprovalPolicy.NeverRequireApproval));
 
 // Optional: authenticate the MCP server through a Foundry project connection.
 // The connection stores credentials, so the platform injects them at request time and no inline token is sent.
@@ -38,7 +38,7 @@ var mcpTool = ResponseTool.CreateMcpTool(
 //       serverLabel: "github",
 //       serverUri: new Uri("https://api.githubcopilot.com/mcp"),
 //       projectConnectionId: "my-foundry-connection",
-//       toolCallApprovalPolicy: new McpToolCallApprovalPolicy(GlobalMcpToolCallApprovalPolicy.AlwaysRequireApproval));
+//       toolCallApprovalPolicy: new McpToolCallApprovalPolicy(DefaultMcpToolCallApprovalPolicy.AlwaysRequireApproval));
 
 // Create a server side agent with the mcp tool, and expose it as an AIAgent.
 ProjectsAgentVersion agentVersion = await aiProjectClient.AgentAdministrationClient.CreateAgentVersionAsync(
@@ -68,7 +68,7 @@ var mcpToolWithApproval = ResponseTool.CreateMcpTool(
     serverLabel: "microsoft_learn",
     serverUri: new Uri("https://learn.microsoft.com/api/mcp"),
     allowedTools: new McpToolFilter() { ToolNames = { "microsoft_docs_search" } },
-    toolCallApprovalPolicy: new McpToolCallApprovalPolicy(GlobalMcpToolCallApprovalPolicy.AlwaysRequireApproval));
+    toolCallApprovalPolicy: new McpToolCallApprovalPolicy(DefaultMcpToolCallApprovalPolicy.AlwaysRequireApproval));
 
 // Create an agent with the MCP tool that requires approval.
 ProjectsAgentVersion agentVersionWithApproval = await aiProjectClient.AgentAdministrationClient.CreateAgentVersionAsync(

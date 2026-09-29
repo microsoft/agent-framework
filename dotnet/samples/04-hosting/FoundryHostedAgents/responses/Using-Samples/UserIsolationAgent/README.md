@@ -4,9 +4,9 @@ This client demonstrates delegated user identity for a middle tier that serves s
 users through one Foundry hosted session.
 
 The sample creates one shared hosted session. Each user receives a separate Agent Framework
-`AgentSession`, and every invocation sends that user's stable identifier through
-`ChatOptions.WithFoundryHostedAgentUserIdentity`. Agent Framework places the value in the
-`x-ms-user-identity` request header.
+`AgentSession` created with that user's stable identifier. Agent Framework stores the identifier
+with the session and automatically places it in the `x-ms-user-identity` request header on every
+invocation that reuses the session.
 
 ## What Foundry isolates
 
@@ -24,6 +24,10 @@ continue Alice's response chain, even though both users share the same hosted sa
 The sample deliberately creates one `AgentSession` per user. Reusing one `AgentSession` for different
 users would also reuse its conversation continuation identifier. Foundry rejects that cross user
 continuation rather than exposing the first user's history.
+
+The delegated identity is fixed when `CreateFoundryHostedAgentSessionAsync` creates the local
+`AgentSession`. To serve another user, create another `AgentSession`; it may still reference the same
+hosted sandbox.
 
 ## What the application must isolate
 

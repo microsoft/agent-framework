@@ -41,6 +41,47 @@ public class AgentModeProviderTests
     }
 
     /// <summary>
+    /// Verify that each built-in mode tool can be disabled independently.
+    /// </summary>
+    [Theory]
+    [InlineData(false, false, "mode_set,mode_get")]
+    [InlineData(false, true, "mode_set")]
+    [InlineData(true, false, "mode_get")]
+    [InlineData(true, true, "")]
+    public async Task ProvideAIContextAsync_DisablesConfiguredToolsAsync(
+        bool disableModeSetTool,
+        bool disableModeGetTool,
+        string expectedToolNames)
+    {
+        // Arrange
+        var provider = new AgentModeProvider(new AgentModeProviderOptions
+        {
+            DisableModeSetTool = disableModeSetTool,
+            DisableModeGetTool = disableModeGetTool,
+        });
+        var agent = new Mock<AIAgent>().Object;
+        var session = new ChatClientAgentSession();
+#pragma warning disable MAAI001
+        var context = new AIContextProvider.InvokingContext(agent, session, new AIContext());
+#pragma warning restore MAAI001
+
+        // Act
+        AIContext result = await provider.InvokingAsync(context);
+
+        // Assert
+        string[] expectedNames = expectedToolNames.Length == 0 ? [] : expectedToolNames.Split(',');
+        Assert.Equal(expectedNames, result.Tools!.Cast<AIFunction>().Select(tool => tool.Name));
+        Assert.Equal(!disableModeSetTool, result.Instructions!.Contains("mode_set", StringComparison.Ordinal));
+        Assert.Equal(!disableModeGetTool, result.Instructions.Contains("mode_get", StringComparison.Ordinal));
+        Assert.Contains("### Mandatory Mode based Workflow", result.Instructions);
+        Assert.Contains("You are currently operating in the plan mode.", result.Instructions);
+        Assert.DoesNotContain("{mode_get_instructions}", result.Instructions);
+        Assert.DoesNotContain("{mode_set_instructions}", result.Instructions);
+        Assert.DoesNotContain("{plan_mode_transition}", result.Instructions);
+        Assert.Equal("plan", await provider.GetModeAsync(session));
+    }
+
+    /// <summary>
     /// Verify that the instructions include the current mode.
     /// </summary>
     [Fact]
@@ -199,6 +240,53 @@ public class AgentModeProviderTests
     }
 
     /// <summary>
+    /// Verify that the public SetMode helper can suppress the mode-change notification.
+    /// </summary>
+    [Fact]
+    public async Task PublicSetMode_DisableNotification_DoesNotInjectNotificationAsync()
+    {
+        // Arrange
+        var provider = new AgentModeProvider();
+        var agent = new Mock<AIAgent>().Object;
+        var session = new ChatClientAgentSession();
+#pragma warning disable MAAI001
+        var context = new AIContextProvider.InvokingContext(agent, session, new AIContext());
+#pragma warning restore MAAI001
+
+        // Act
+        await provider.SetModeAsync(session, "execute", disableNotification: true);
+        AIContext result = await provider.InvokingAsync(context);
+
+        // Assert
+        Assert.Equal("execute", await provider.GetModeAsync(session));
+        Assert.Null(result.Messages);
+    }
+
+    /// <summary>
+    /// Verify that suppressing a notification clears an earlier pending mode-change notification.
+    /// </summary>
+    [Fact]
+    public async Task PublicSetMode_DisableNotification_ClearsPendingNotificationAsync()
+    {
+        // Arrange
+        var provider = new AgentModeProvider();
+        var agent = new Mock<AIAgent>().Object;
+        var session = new ChatClientAgentSession();
+#pragma warning disable MAAI001
+        var context = new AIContextProvider.InvokingContext(agent, session, new AIContext());
+#pragma warning restore MAAI001
+        await provider.SetModeAsync(session, "execute");
+
+        // Act
+        await provider.SetModeAsync(session, "plan", disableNotification: true);
+        AIContext result = await provider.InvokingAsync(context);
+
+        // Assert
+        Assert.Equal("plan", await provider.GetModeAsync(session));
+        Assert.Null(result.Messages);
+    }
+
+    /// <summary>
     /// Verify that the public SetMode helper throws for an unsupported value and does not persist the mode.
     /// </summary>
     [Fact]
@@ -301,6 +389,39 @@ public class AgentModeProviderTests
 
         // Assert
         Assert.Equal("Custom mode instructions.", result.Instructions);
+    }
+
+    /// <summary>
+    /// Verify that disabling tools does not rewrite custom instructions or custom mode guidance.
+    /// </summary>
+    [Fact]
+    public async Task Options_DisabledTools_PreserveCustomInstructionsAsync()
+    {
+        // Arrange
+        var options = new AgentModeProviderOptions
+        {
+            DisableModeSetTool = true,
+            DisableModeGetTool = true,
+            Instructions = "Use custom mode_set and mode_get behavior in {current_mode}.\n{available_modes}",
+            Modes =
+            [
+                new AgentModeProviderOptions.AgentMode("draft", "Custom mode_set and mode_get guidance."),
+            ],
+        };
+        var provider = new AgentModeProvider(options);
+        var agent = new Mock<AIAgent>().Object;
+        var session = new ChatClientAgentSession();
+#pragma warning disable MAAI001
+        var context = new AIContextProvider.InvokingContext(agent, session, new AIContext());
+#pragma warning restore MAAI001
+
+        // Act
+        AIContext result = await provider.InvokingAsync(context);
+
+        // Assert
+        Assert.Empty(result.Tools!);
+        Assert.Contains("Use custom mode_set and mode_get behavior in draft.", result.Instructions);
+        Assert.Contains("Custom mode_set and mode_get guidance.", result.Instructions);
     }
 
     /// <summary>
@@ -531,6 +652,38 @@ public class AgentModeProviderTests
         Assert.Single(result.Messages!);
         ChatMessage message = result.Messages!.First();
         Assert.Equal(ChatRole.User, message.Role);
+        Assert.Contains("plan", message.Text);
+        Assert.Contains("execute", message.Text);
+    }
+
+    /// <summary>
+    /// Verify that disabling both tools preserves mode state, instructions, and external-change notifications.
+    /// </summary>
+    [Fact]
+    public async Task DisabledTools_PreserveStateInstructionsAndNotificationsAsync()
+    {
+        // Arrange
+        var provider = new AgentModeProvider(new AgentModeProviderOptions
+        {
+            DisableModeSetTool = true,
+            DisableModeGetTool = true,
+        });
+        var agent = new Mock<AIAgent>().Object;
+        var session = new ChatClientAgentSession();
+#pragma warning disable MAAI001
+        var context = new AIContextProvider.InvokingContext(agent, session, new AIContext());
+#pragma warning restore MAAI001
+        _ = await provider.InvokingAsync(context);
+
+        // Act
+        await provider.SetModeAsync(session, "execute");
+        AIContext result = await provider.InvokingAsync(context);
+
+        // Assert
+        Assert.Empty(result.Tools!);
+        Assert.Contains("You are currently operating in the execute mode.", result.Instructions);
+        Assert.Equal("execute", await provider.GetModeAsync(session));
+        ChatMessage message = Assert.Single(result.Messages!);
         Assert.Contains("plan", message.Text);
         Assert.Contains("execute", message.Text);
     }

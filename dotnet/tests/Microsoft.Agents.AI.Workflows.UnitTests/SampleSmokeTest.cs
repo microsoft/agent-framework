@@ -117,17 +117,7 @@ public class SampleSmokeTest
     {
         using StringWriter writer = new();
 
-        VerifyingPlaybackResponder<string, int> responder = new(
-            // Iteration 1
-            ("Guess the number.", 50),
-            ("Your guess was too high. Try again.", 23),
-
-            // Iteration 2
-            ("Your guess was too high. Try again.", 23),
-            ("Your guess was too low. Try again.", 42)
-         );
-
-        string guessResult = await Step5EntryPoint.RunAsync(writer, userGuessCallback: responder.InvokeNext, environment.ToWorkflowExecutionEnvironment());
+        string guessResult = await Step5EntryPoint.RunAsync(writer, userGuessCallback: GetGuessResponse, environment.ToWorkflowExecutionEnvironment());
         Assert.Equal("You guessed correctly! You Win!", guessResult);
     }
 
@@ -139,17 +129,7 @@ public class SampleSmokeTest
     {
         using StringWriter writer = new();
 
-        VerifyingPlaybackResponder<string, int> responder = new(
-            // Iteration 1
-            ("Guess the number.", 50),
-            ("Your guess was too high. Try again.", 23),
-
-            // Iteration 2
-            ("Your guess was too high. Try again.", 23),
-            ("Your guess was too low. Try again.", 42)
-         );
-
-        string guessResult = await Step5EntryPoint.RunAsync(writer, userGuessCallback: responder.InvokeNext, environment.ToWorkflowExecutionEnvironment(), rehydrateToRestore: true);
+        string guessResult = await Step5EntryPoint.RunAsync(writer, userGuessCallback: GetGuessResponse, environment.ToWorkflowExecutionEnvironment(), rehydrateToRestore: true);
         Assert.Equal("You guessed correctly! You Win!", guessResult);
     }
 
@@ -161,21 +141,11 @@ public class SampleSmokeTest
     {
         using StringWriter writer = new();
 
-        VerifyingPlaybackResponder<string, int> responder = new(
-            // Iteration 1
-            ("Guess the number.", 50),
-            ("Your guess was too high. Try again.", 23),
-
-            // Iteration 2
-            ("Your guess was too high. Try again.", 23),
-            ("Your guess was too low. Try again.", 42)
-         );
-
         JsonSerializerOptions options = new(SampleJsonContext.Default.Options);
         options.MakeReadOnly();
 
         CheckpointManager memoryJsonManager = CheckpointManager.CreateJson(new InMemoryJsonStore(), options);
-        string guessResult = await Step5EntryPoint.RunAsync(writer, userGuessCallback: responder.InvokeNext, environment.ToWorkflowExecutionEnvironment(), rehydrateToRestore: true, checkpointManager: memoryJsonManager);
+        string guessResult = await Step5EntryPoint.RunAsync(writer, userGuessCallback: GetGuessResponse, environment.ToWorkflowExecutionEnvironment(), rehydrateToRestore: true, checkpointManager: memoryJsonManager);
         Assert.Equal("You guessed correctly! You Win!", guessResult);
     }
 
@@ -555,6 +525,15 @@ public class SampleSmokeTest
 
         Assert.IsType<InvalidOperationException>(actualError);
     }
+
+    private static int GetGuessResponse(string prompt) =>
+        prompt switch
+        {
+            "Guess the number." => 50,
+            "Your guess was too high. Try again." => 23,
+            "Your guess was too low. Try again." => 42,
+            _ => throw new InvalidOperationException($"Unexpected guess prompt: {prompt}")
+        };
 }
 
 internal sealed class VerifyingPlaybackResponder<TInput, TResponse>

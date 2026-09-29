@@ -34,7 +34,7 @@ import os
 import sys
 from collections.abc import Callable, Sequence
 from contextlib import suppress
-from typing import Any, Union, get_args, get_origin, get_type_hints
+from typing import Any, Literal, Union, cast, get_args, get_origin, get_type_hints
 
 from dotenv import dotenv_values
 
@@ -156,9 +156,25 @@ def _coerce_value(value: str, target_type: type) -> Any:
     if args and type(None) in args:
         for arg in args:
             if arg is not type(None):
+                if arg is Any:
+                    return value
+                runtime_type = _runtime_class(arg)
+                if runtime_type is None and get_origin(arg) is not Literal:
+                    continue
                 with suppress(ValueError, TypeError):
-                    return _coerce_value(value, arg)
-        return value
+                    coerced = _coerce_value(value, arg)
+                    if runtime_type is None or isinstance(coerced, runtime_type):
+                        return coerced
+        raise ValueError("Value cannot be converted to any allowed type.")
+
+    if origin is Literal:
+        for choice in args:
+            choice_type = cast(type[Any], type(choice))
+            with suppress(ValueError, TypeError):
+                coerced = _coerce_value(value, choice_type)
+                if type(coerced) is choice_type and coerced == choice:
+                    return coerced
+        raise ValueError("Value is not an allowed literal.")
 
     # Handle SecretString
     if target_type is SecretString or (isinstance(target_type, type) and issubclass(target_type, SecretString)):
@@ -172,9 +188,23 @@ def _coerce_value(value: str, target_type: type) -> Any:
     if target_type is float:
         return float(value)
     if target_type is bool:
-        return value.lower() in ("true", "1", "yes", "on")
+        normalized = value.strip().lower()
+        if normalized in ("true", "1", "yes", "on"):
+            return True
+        if normalized in ("false", "0", "no", "off"):
+            return False
+        raise ValueError("Value is not a recognized boolean.")
 
     return value
+
+
+def _coerce_from_source(value: str, target_type: type, *, field_name: str, source: str) -> Any:
+    """Coerce a supplied value or identify the setting and source on failure."""
+    try:
+        return _coerce_value(value, target_type)
+    except (ValueError, TypeError):
+        pass
+    raise ValueError(f"Invalid value for setting '{field_name}' from {source}.")
 
 
 def _runtime_class(annotation: Any) -> type | None:
@@ -185,6 +215,8 @@ def _runtime_class(annotation: Any) -> type | None:
     is always preferred. Annotations without a runtime class, such as ``Literal[...]``,
     return ``None`` so callers can skip validation instead of guessing.
     """
+    if annotation is Any:
+        return None
     origin = get_origin(annotation)
     candidate = annotation if origin is None else origin
     return candidate if isinstance(candidate, type) else None
@@ -245,7 +277,8 @@ def _check_override_type(value: Any, field_type: type, field_name: str) -> None:
 
         allowed_names = ", ".join(t.__name__ for t in allowed)
         raise ValueError(
-            f"Invalid type for setting '{field_name}': expected {allowed_names}, got {type(value).__name__}."
+            f"Invalid type for setting '{field_name}' from explicit override: "
+            f"expected {allowed_names}, got {type(value).__name__}."
         )
 
 
@@ -293,7 +326,8 @@ def load_settings(
         FileNotFoundError: If *env_file_path* was provided but the file does not exist.
         SettingNotFoundError: If a required field could not be resolved from any
             source, or if a mutually exclusive constraint is violated.
-        ValueError: If an override value has an incompatible type.
+        ValueError: If an override value has an incompatible type or an environment
+            or ``.env`` value cannot be coerced to the setting's type.
     """
     encoding = env_file_encoding or "utf-8"
 
@@ -332,19 +366,17 @@ def load_settings(
         if loaded_dotenv_values:
             dotenv_value = loaded_dotenv_values.get(env_var_name)
             if dotenv_value is not None:
-                try:
-                    result[field_name] = _coerce_value(dotenv_value, field_type)
-                except (ValueError, TypeError):
-                    result[field_name] = dotenv_value
+                result[field_name] = _coerce_from_source(
+                    dotenv_value, field_type, field_name=field_name, source=f".env file '{env_file_path}'"
+                )
                 continue
 
         # 3. Environment variable
         env_value = os.getenv(env_var_name)
         if env_value is not None:
-            try:
-                result[field_name] = _coerce_value(env_value, field_type)
-            except (ValueError, TypeError):
-                result[field_name] = env_value
+            result[field_name] = _coerce_from_source(
+                env_value, field_type, field_name=field_name, source=f"environment variable '{env_var_name}'"
+            )
             continue
 
         # 4. Default from TypedDict class-level defaults, or None for optional fields

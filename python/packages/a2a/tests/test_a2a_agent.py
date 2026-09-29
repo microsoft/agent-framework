@@ -754,6 +754,36 @@ def test_create_timeout_config_httpx_timeout() -> None:
     assert timeout_config.pool == 8.0
 
 
+def test_create_timeout_config_integer_timeout() -> None:
+    """Test _create_timeout_config accepts an int timeout (PEP 484 numeric tower)."""
+    agent = A2AAgent(name="Test Agent", client=cast(Any, MockA2AClient()), http_client=None)
+
+    timeout_config = agent._create_timeout_config(30)
+
+    assert isinstance(timeout_config, httpx.Timeout)
+    assert timeout_config.connect == 30.0
+    assert timeout_config.read == 30.0
+    assert timeout_config.write == 30.0
+    assert timeout_config.pool == 30.0
+
+
+def test_a2a_agent_initialization_with_integer_timeout_parameter() -> None:
+    """Test A2AAgent initialization accepts an int timeout without raising TypeError."""
+    with (
+        patch("agent_framework_a2a._agent.httpx.AsyncClient") as mock_async_client,
+        patch("agent_framework_a2a._agent.ClientFactory") as mock_factory,
+    ):
+        mock_client_instance = MagicMock()
+        mock_factory.return_value.create.return_value = mock_client_instance
+
+        A2AAgent(name="Test Agent", url="https://test-agent.example.com", timeout=120)
+
+        mock_async_client.assert_called_once()
+        timeout_arg = mock_async_client.call_args.kwargs["timeout"]
+        assert isinstance(timeout_arg, httpx.Timeout)
+        assert timeout_arg.read == 120.0
+
+
 def test_create_timeout_config_invalid_type() -> None:
     """Test _create_timeout_config with invalid type raises TypeError."""
     agent = A2AAgent(name="Test Agent", client=cast(Any, MockA2AClient()), http_client=None)
@@ -2349,19 +2379,58 @@ async def test_context_id_tracked_from_message_payload(mock_a2a_client: MockA2AC
     assert session.task_id is None
 
 
-@mark.asyncio
-async def test_context_id_mismatch_raises_error(mock_a2a_client: MockA2AClient) -> None:
-    """Test that a context_id mismatch between session and response raises an error."""
+@mark.parametrize("stream", [False, True])
+@mark.parametrize("payload_type", ["message", "task", "status_update", "artifact_update"])
+async def test_context_id_mismatch_raises_error(
+    mock_a2a_client: MockA2AClient, stream: bool, payload_type: str
+) -> None:
+    """A context mismatch must raise before yielding any response updates."""
     agent = A2AAgent(name="Test Agent", id="test-agent", client=cast(Any, mock_a2a_client), http_client=None)
-
-    # Task response has context_id="test-context" (from add_task_response helper)
-    mock_a2a_client.add_task_response("task-mismatch", [{"content": "Reply"}])
-
-    # Session already has a different context_id
-    session = A2AAgentSession(context_id="different-context")
+    message = A2AMessage(
+        message_id="message-1",
+        context_id="test-context",
+        role=A2ARole.ROLE_AGENT,
+        parts=[Part(text="Reply")],
+    )
+    artifact = Artifact(artifact_id="artifact-1", parts=[Part(text="Reply")])
+    responses = {
+        "message": StreamResponse(message=message),
+        "task": StreamResponse(
+            task=Task(
+                id="task-1",
+                context_id="test-context",
+                status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED),
+                artifacts=[artifact],
+            )
+        ),
+        "status_update": StreamResponse(
+            status_update=TaskStatusUpdateEvent(
+                task_id="task-1",
+                context_id="test-context",
+                status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED, message=message),
+            )
+        ),
+        "artifact_update": StreamResponse(
+            artifact_update=TaskArtifactUpdateEvent(
+                task_id="task-1",
+                context_id="test-context",
+                artifact=artifact,
+            )
+        ),
+    }
+    mock_a2a_client.responses.append(responses[payload_type])
+    session = AgentSession(service_session_id="different-context")
+    updates: list[AgentResponseUpdate] = []
 
     with raises(RuntimeError, match="differs from the session's context_id"):
-        await agent.run("Hello", session=session)
+        if stream:
+            async for update in agent.run("Hello", session=session, stream=True):
+                updates.append(update)
+        else:
+            await agent.run("Hello", session=session)
+
+    assert updates == []
+    assert session.service_session_id == "different-context"
 
 
 @mark.asyncio

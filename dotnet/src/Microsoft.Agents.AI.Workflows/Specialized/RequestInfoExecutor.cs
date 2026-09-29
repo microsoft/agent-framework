@@ -3,8 +3,11 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Execution;
 using Microsoft.Shared.Diagnostics;
 
@@ -88,7 +91,13 @@ internal sealed class RequestInfoExecutor : Executor
         Debug.Assert(this._allowWrapped);
         Throw.IfNull(message);
 
-        if (!message.Data.IsType(this.Port.Request, out var requestData))
+        Type? originalRequestType = ResolveType(message.PortInfo.RequestType, this.Port.Request);
+        if (originalRequestType is null || !this.Port.Request.IsAssignableFrom(originalRequestType))
+        {
+            throw new InvalidOperationException($"Request type {this.Port.Request} is not valid for original request, whose request type is {message.PortInfo.RequestType}");
+        }
+
+        if (!message.Data.IsType(originalRequestType, out var requestData))
         {
             throw new InvalidOperationException($"Message type {message.Data.TypeId} could not be interpreted as a value of Request Type {this.Port.Request}");
         }
@@ -105,6 +114,25 @@ internal sealed class RequestInfoExecutor : Executor
         await this.RequestSink!.PostAsync(request).ConfigureAwait(false);
 
         return request;
+    }
+
+    [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Request types are preserved by their workflow port and serialization registrations.")]
+    internal static Type? ResolveType(TypeId typeId, Type assignableToType)
+    {
+        Throw.IfNull(typeId);
+        Throw.IfNull(assignableToType);
+
+        foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies()
+            .Where(assembly => string.Equals(assembly.GetName().Name, typeId.SimpleAssemblyName, StringComparison.Ordinal)))
+        {
+            Type? resolvedType = assembly.GetType(typeId.NormalizedTypeName, throwOnError: false);
+            if (resolvedType is not null && assignableToType.IsAssignableFrom(resolvedType))
+            {
+                return resolvedType;
+            }
+        }
+
+        return null;
     }
 
     public async ValueTask<ExternalRequest> HandleAsync(object message, IWorkflowContext context, CancellationToken cancellationToken = default)
