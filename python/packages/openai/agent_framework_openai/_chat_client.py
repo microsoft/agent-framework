@@ -2455,6 +2455,15 @@ class RawOpenAIChatClient(
             ),
         ]
 
+    def _shell_call_targets_local_executor(self, item: Any) -> bool:
+        """Whether a ``shell_call`` item should run against a registered local executor.
+
+        The OpenAI Responses service echoes ``environment.type == "local"`` for local shell
+        calls and container types for hosted ones, so the marker disambiguates mixed
+        hosted/local responses. Providers that omit the marker override this.
+        """
+        return getattr(getattr(item, "environment", None), "type", None) == "local"
+
     def _shell_item_to_contents(self, item: Any, local_shell_tool_name: str | None) -> list[Content]:
         """Convert a shell output item into framework ``Content`` objects.
 
@@ -2483,7 +2492,7 @@ class RawOpenAIChatClient(
             )
             shell_timeout_ms = getattr(action, "timeout_ms", None)
             shell_max_output = getattr(action, "max_output_length", None)
-            is_local_environment = getattr(getattr(item, "environment", None), "type", None) == "local"
+            is_local_environment = self._shell_call_targets_local_executor(item)
             if (
                 local_shell_tool_name
                 and is_local_environment

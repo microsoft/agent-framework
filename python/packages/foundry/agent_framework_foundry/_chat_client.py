@@ -356,6 +356,12 @@ class RawFoundryChatClient(
             options["model"] = self.model
 
     @override
+    def _shell_call_targets_local_executor(self, item: Any) -> bool:
+        # Foundry omits the local environment marker, so a registered executor owns every
+        # shell call that is not explicitly marked hosted.
+        return getattr(getattr(item, "environment", None), "type", None) in (None, "local")
+
+    @override
     def _prepare_tools_for_openai(
         self,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None,
