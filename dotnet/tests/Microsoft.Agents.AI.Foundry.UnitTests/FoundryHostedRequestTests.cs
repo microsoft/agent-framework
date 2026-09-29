@@ -254,6 +254,7 @@ public sealed class FoundryHostedRequestTests
                 {
                     await foreach (AgentResponseUpdate _ in agent.RunStreamingAsync("hi", session))
                     {
+                        // Drain the stream so transport validation executes.
                     }
                 });
 
