@@ -33,6 +33,7 @@ import logging
 import uuid
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast, runtime_checkable
@@ -178,6 +179,10 @@ class _CacheEntry:
     evicted: bool = False
     disposal_claimed: bool = False
     closed: asyncio.Event = field(default_factory=asyncio.Event)
+
+
+class _EntryCreationCancelled(Exception):
+    """Signal waiters to retry after the task creating their entry was cancelled."""
 
 
 class DefaultMCPToolHandler:
@@ -572,12 +577,8 @@ class DefaultMCPToolHandler:
                 creating = True
 
         if not creating:
-            try:
+            with suppress(_EntryCreationCancelled):
                 _ = await asyncio.shield(inflight)
-            except asyncio.CancelledError:
-                current_task = asyncio.current_task()
-                if current_task is not None and current_task.cancelling():
-                    raise
             return await self._get_or_create_entry(invocation)
 
         # Phase 2: we own creation. Build the entry outside the lock.
@@ -591,7 +592,7 @@ class DefaultMCPToolHandler:
             async with self._cache_lock:
                 self._inflight.pop(key, None)
             if not inflight.done():
-                inflight.set_exception(exc if isinstance(exc, BaseException) else RuntimeError(str(exc)))
+                inflight.set_exception(self._entry_creation_exception(exc))
             # Mark the exception retrieved to suppress noisy "Future exception
             # was never retrieved" warnings when there are no other awaiters
             # (other awaiters still see the exception through their ``await``).
@@ -673,7 +674,7 @@ class DefaultMCPToolHandler:
                 async with self._cache_lock:
                     self._inflight.pop(key, None)
                 if not inflight.done():
-                    inflight.set_exception(exc)
+                    inflight.set_exception(self._entry_creation_exception(exc))
                 inflight.exception()
 
         cleanup_task = asyncio.create_task(cleanup())
@@ -683,6 +684,12 @@ class DefaultMCPToolHandler:
             except asyncio.CancelledError:
                 continue
         cleanup_task.result()
+
+    @staticmethod
+    def _entry_creation_exception(exc: BaseException) -> BaseException:
+        if isinstance(exc, asyncio.CancelledError):
+            return _EntryCreationCancelled()
+        return exc
 
     async def _release_entry(self, entry: _CacheEntry) -> None:
         close_entry = False
