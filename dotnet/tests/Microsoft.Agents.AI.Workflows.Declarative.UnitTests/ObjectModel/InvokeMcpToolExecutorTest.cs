@@ -339,6 +339,7 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
 
         // Defense in depth: the credential value must not appear anywhere in the serialized approval content.
         string serializedApproval = System.Text.Json.JsonSerializer.Serialize(capturedRequest.AgentResponse);
+        Assert.DoesNotContain("Authorization", serializedApproval);
         Assert.DoesNotContain("super-secret-token", serializedApproval);
 
         ValueTask CaptureRequestAsync(IWorkflowContext context, ExternalInputRequest request, CancellationToken cancellationToken)
@@ -847,6 +848,317 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
     #endregion
 
     #region Approval Snapshot Security Tests
+
+    [Fact]
+    public async Task InvokeMcpToolCaptureResponseUsesApprovedHeadersNotMutatedAsync()
+    {
+        // Arrange
+        const string ApprovedHeaderValue = "approved-value";
+        const string MutatedHeaderValue = "mutated-value";
+
+        this.State.Set("HeaderValue", FormulaValue.New(ApprovedHeaderValue));
+        this.State.InitializeSystem();
+        this.State.Bind();
+
+        InvokeMcpTool model = this.CreateModelWithVariableHeader(
+            displayName: nameof(InvokeMcpToolCaptureResponseUsesApprovedHeadersNotMutatedAsync),
+            serverUrl: TestServerUrl,
+            toolName: TestToolName,
+            headerName: "X-Test-Header",
+            variableName: "HeaderValue");
+
+        IDictionary<string, string>? capturedHeaders = null;
+        Mock<IMcpToolHandler> mockProvider = new();
+        mockProvider.Setup(provider => provider.InvokeToolAsync(
+                It.IsAny<string>(),
+                It.IsAny<string?>(),
+                It.IsAny<string>(),
+                It.IsAny<IDictionary<string, object?>?>(),
+                It.IsAny<IDictionary<string, string>?>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<string, string?, string, IDictionary<string, object?>?, IDictionary<string, string>?, string?, CancellationToken>(
+                (_, _, _, _, headers, _, _) => capturedHeaders = headers)
+            .ReturnsAsync(new McpServerToolResultContent("capture-call-id")
+            {
+                Outputs = [new TextContent("result")]
+            });
+        MockAgentProvider mockAgentProvider = new();
+        InvokeMcpToolExecutor action = new(model, mockProvider.Object, mockAgentProvider.Object, this.State);
+
+        List<ExternalInputRequest> emittedRequests = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext(emittedRequests);
+        await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
+
+        this.State.Set("HeaderValue", FormulaValue.New(MutatedHeaderValue));
+        this.State.Bind();
+
+        // Act
+        await action.CaptureResponseAsync(
+            mockContext.Object,
+            CreateApprovalResponseFor(emittedRequests, approved: true),
+            CancellationToken.None);
+
+        // Assert
+        Assert.NotNull(capturedHeaders);
+        Assert.Equal(ApprovedHeaderValue, capturedHeaders["X-Test-Header"]);
+    }
+
+    [Theory]
+    [InlineData("", "added-value", false, null)]
+    [InlineData("removed-value", "", true, "removed-value")]
+    public async Task InvokeMcpToolCaptureResponseUsesApprovedHeaderPresenceAsync(
+        string approvedHeaderValue,
+        string mutatedHeaderValue,
+        bool expectedPresent,
+        string? expectedValue)
+    {
+        // Arrange
+        this.State.Set("HeaderValue", FormulaValue.New(approvedHeaderValue));
+        this.State.InitializeSystem();
+        this.State.Bind();
+
+        InvokeMcpTool model = this.CreateModelWithVariableHeader(
+            displayName: nameof(InvokeMcpToolCaptureResponseUsesApprovedHeaderPresenceAsync),
+            serverUrl: TestServerUrl,
+            toolName: TestToolName,
+            headerName: "X-Test-Header",
+            variableName: "HeaderValue");
+
+        IDictionary<string, string>? capturedHeaders = null;
+        Mock<IMcpToolHandler> mockProvider = new();
+        mockProvider.Setup(provider => provider.InvokeToolAsync(
+                It.IsAny<string>(),
+                It.IsAny<string?>(),
+                It.IsAny<string>(),
+                It.IsAny<IDictionary<string, object?>?>(),
+                It.IsAny<IDictionary<string, string>?>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<string, string?, string, IDictionary<string, object?>?, IDictionary<string, string>?, string?, CancellationToken>(
+                (_, _, _, _, headers, _, _) => capturedHeaders = headers)
+            .ReturnsAsync(new McpServerToolResultContent("capture-call-id")
+            {
+                Outputs = [new TextContent("result")]
+            });
+        MockAgentProvider mockAgentProvider = new();
+        InvokeMcpToolExecutor action = new(model, mockProvider.Object, mockAgentProvider.Object, this.State);
+
+        List<ExternalInputRequest> emittedRequests = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext(emittedRequests);
+        await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
+
+        this.State.Set("HeaderValue", FormulaValue.New(mutatedHeaderValue));
+        this.State.Bind();
+
+        // Act
+        await action.CaptureResponseAsync(
+            mockContext.Object,
+            CreateApprovalResponseFor(emittedRequests, approved: true),
+            CancellationToken.None);
+
+        // Assert
+        Assert.NotNull(capturedHeaders);
+        Assert.Equal(expectedPresent, capturedHeaders.ContainsKey("X-Test-Header"));
+        if (expectedPresent)
+        {
+            Assert.Equal(expectedValue, capturedHeaders["X-Test-Header"]);
+        }
+    }
+
+    [Fact]
+    public async Task InvokeMcpToolApprovedHeadersUseCaseInsensitiveNamesIndependentOfOrderAsync()
+    {
+        // Arrange
+        this.State.Set("FirstHeader", FormulaValue.New("first-approved"));
+        this.State.Set("SecondHeader", FormulaValue.New("second-approved"));
+        this.State.InitializeSystem();
+        this.State.Bind();
+
+        InvokeMcpTool model = this.CreateModelWithVariableHeaders(
+            displayName: nameof(InvokeMcpToolApprovedHeadersUseCaseInsensitiveNamesIndependentOfOrderAsync),
+            serverUrl: TestServerUrl,
+            toolName: TestToolName,
+            ("x-second", "SecondHeader"),
+            ("X-First", "FirstHeader"));
+
+        IDictionary<string, string>? capturedHeaders = null;
+        Mock<IMcpToolHandler> mockProvider = new();
+        mockProvider.Setup(provider => provider.InvokeToolAsync(
+                It.IsAny<string>(),
+                It.IsAny<string?>(),
+                It.IsAny<string>(),
+                It.IsAny<IDictionary<string, object?>?>(),
+                It.IsAny<IDictionary<string, string>?>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<string, string?, string, IDictionary<string, object?>?, IDictionary<string, string>?, string?, CancellationToken>(
+                (_, _, _, _, headers, _, _) => capturedHeaders = headers)
+            .ReturnsAsync(new McpServerToolResultContent("capture-call-id")
+            {
+                Outputs = [new TextContent("result")]
+            });
+        MockAgentProvider mockAgentProvider = new();
+        InvokeMcpToolExecutor action = new(model, mockProvider.Object, mockAgentProvider.Object, this.State);
+
+        List<ExternalInputRequest> emittedRequests = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext(emittedRequests);
+        await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
+
+        this.State.Set("FirstHeader", FormulaValue.New("first-mutated"));
+        this.State.Set("SecondHeader", FormulaValue.New("second-mutated"));
+        this.State.Bind();
+
+        // Act
+        await action.CaptureResponseAsync(
+            mockContext.Object,
+            CreateApprovalResponseFor(emittedRequests, approved: true),
+            CancellationToken.None);
+
+        // Assert
+        Assert.NotNull(capturedHeaders);
+        Assert.Equal(2, capturedHeaders.Count);
+        Assert.Equal("first-approved", capturedHeaders["x-first"]);
+        Assert.Equal("second-approved", capturedHeaders["X-SECOND"]);
+    }
+
+    [Fact]
+    public async Task InvokeMcpToolHeaderSnapshotsAreRequestIsolatedAndReplaySafeAsync()
+    {
+        // Arrange
+        this.State.Set("HeaderValue", FormulaValue.New("header-a"));
+        this.State.InitializeSystem();
+        this.State.Bind();
+
+        InvokeMcpTool model = this.CreateModelWithVariableHeader(
+            displayName: nameof(InvokeMcpToolHeaderSnapshotsAreRequestIsolatedAndReplaySafeAsync),
+            serverUrl: TestServerUrl,
+            toolName: TestToolName,
+            headerName: "X-Test-Header",
+            variableName: "HeaderValue");
+
+        List<string> capturedHeaderValues = [];
+        Mock<IMcpToolHandler> mockProvider = new();
+        mockProvider.Setup(provider => provider.InvokeToolAsync(
+                It.IsAny<string>(),
+                It.IsAny<string?>(),
+                It.IsAny<string>(),
+                It.IsAny<IDictionary<string, object?>?>(),
+                It.IsAny<IDictionary<string, string>?>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<string, string?, string, IDictionary<string, object?>?, IDictionary<string, string>?, string?, CancellationToken>(
+                (_, _, _, _, headers, _, _) => capturedHeaderValues.Add(headers!["X-Test-Header"]))
+            .ReturnsAsync(new McpServerToolResultContent("capture-call-id")
+            {
+                Outputs = [new TextContent("result")]
+            });
+        MockAgentProvider mockAgentProvider = new();
+        InvokeMcpToolExecutor action = new(model, mockProvider.Object, mockAgentProvider.Object, this.State);
+
+        List<ExternalInputRequest> emittedRequests = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext(emittedRequests);
+        await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
+
+        this.State.Set("HeaderValue", FormulaValue.New("header-b"));
+        this.State.Bind();
+        await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
+
+        ExternalInputResponse responseA = CreateApprovalResponseForRequest(emittedRequests[0], approved: true);
+        ExternalInputResponse responseB = CreateApprovalResponseForRequest(emittedRequests[1], approved: true);
+
+        // Act
+        await action.CaptureResponseAsync(mockContext.Object, responseB, CancellationToken.None);
+        await action.CaptureResponseAsync(mockContext.Object, responseA, CancellationToken.None);
+        await action.CaptureResponseAsync(mockContext.Object, responseA, CancellationToken.None);
+
+        // Assert
+        Assert.Equal(["header-b", "header-a"], capturedHeaderValues);
+    }
+
+    [Fact]
+    public async Task InvokeMcpToolRestoredApprovalReissuesWithoutPersistingHeadersAsync()
+    {
+        // Arrange
+        const string BeforeRestoreHeader = "before-restore-secret";
+        const string AfterRestoreHeader = "after-restore-secret";
+
+        this.State.Set("HeaderValue", FormulaValue.New(BeforeRestoreHeader));
+        this.State.InitializeSystem();
+        this.State.Bind();
+
+        InvokeMcpTool model = this.CreateModelWithVariableHeader(
+            displayName: nameof(InvokeMcpToolRestoredApprovalReissuesWithoutPersistingHeadersAsync),
+            serverUrl: TestServerUrl,
+            toolName: TestToolName,
+            headerName: "Authorization",
+            variableName: "HeaderValue");
+
+        List<string> capturedHeaderValues = [];
+        Mock<IMcpToolHandler> mockProvider = new();
+        mockProvider.Setup(provider => provider.InvokeToolAsync(
+                It.IsAny<string>(),
+                It.IsAny<string?>(),
+                It.IsAny<string>(),
+                It.IsAny<IDictionary<string, object?>?>(),
+                It.IsAny<IDictionary<string, string>?>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<string, string?, string, IDictionary<string, object?>?, IDictionary<string, string>?, string?, CancellationToken>(
+                (_, _, _, _, headers, _, _) => capturedHeaderValues.Add(headers!["Authorization"]))
+            .ReturnsAsync(new McpServerToolResultContent("capture-call-id")
+            {
+                Outputs = [new TextContent("result")]
+            });
+        MockAgentProvider mockAgentProvider = new();
+        InvokeMcpToolExecutor action = new(model, mockProvider.Object, mockAgentProvider.Object, this.State);
+
+        List<ExternalInputRequest> emittedRequests = [];
+        Dictionary<string, object?> stateStore = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContextWithStateStore(emittedRequests, stateStore);
+        await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
+        ExternalInputResponse staleResponse = CreateApprovalResponseForRequest(emittedRequests[0], approved: true);
+
+        await InvokeProtectedMethodAsync(action, "OnCheckpointingAsync", mockContext.Object, CancellationToken.None);
+        string serializedCheckpoint = System.Text.Json.JsonSerializer.Serialize(stateStore);
+        Assert.DoesNotContain("Authorization", serializedCheckpoint);
+        Assert.DoesNotContain(BeforeRestoreHeader, serializedCheckpoint);
+
+        await action.ResetAsync();
+        await InvokeProtectedMethodAsync(action, "OnCheckpointRestoredAsync", mockContext.Object, CancellationToken.None);
+
+        this.State.Set("HeaderValue", FormulaValue.New(AfterRestoreHeader));
+        this.State.Bind();
+
+        // Act
+        await action.CaptureResponseAsync(mockContext.Object, staleResponse, CancellationToken.None);
+
+        // Assert
+        Assert.Empty(capturedHeaderValues);
+        Assert.Equal(2, emittedRequests.Count);
+
+        string staleRequestId = emittedRequests[0].AgentResponse.Messages
+            .SelectMany(message => message.Contents)
+            .OfType<ToolApprovalRequestContent>()
+            .Single()
+            .RequestId;
+        string freshRequestId = emittedRequests[1].AgentResponse.Messages
+            .SelectMany(message => message.Contents)
+            .OfType<ToolApprovalRequestContent>()
+            .Single()
+            .RequestId;
+        Assert.NotEqual(staleRequestId, freshRequestId);
+
+        string serializedFreshApproval = System.Text.Json.JsonSerializer.Serialize(emittedRequests[1].AgentResponse);
+        Assert.DoesNotContain("Authorization", serializedFreshApproval);
+        Assert.DoesNotContain(AfterRestoreHeader, serializedFreshApproval);
+
+        await action.CaptureResponseAsync(
+            mockContext.Object,
+            CreateApprovalResponseForRequest(emittedRequests[1], approved: true),
+            CancellationToken.None);
+        Assert.Equal([AfterRestoreHeader], capturedHeaderValues);
+    }
 
     /// <summary>
     /// Verifies that mutating the tool name variable after approval does not change
@@ -1771,6 +2083,43 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
             ToolName = new StringExpression.Builder(StringExpression.Literal(toolName)),
             RequireApproval = new BoolExpression.Builder(BoolExpression.Literal(true)),
         };
+        return AssignParent<InvokeMcpTool>(builder);
+    }
+
+    private InvokeMcpTool CreateModelWithVariableHeader(
+        string displayName,
+        string serverUrl,
+        string toolName,
+        string headerName,
+        string variableName)
+    {
+        return this.CreateModelWithVariableHeaders(
+            displayName,
+            serverUrl,
+            toolName,
+            (headerName, variableName));
+    }
+
+    private InvokeMcpTool CreateModelWithVariableHeaders(
+        string displayName,
+        string serverUrl,
+        string toolName,
+        params (string HeaderName, string VariableName)[] headers)
+    {
+        InvokeMcpTool.Builder builder = new()
+        {
+            Id = this.CreateActionId(),
+            DisplayName = this.FormatDisplayName(displayName),
+            ServerUrl = new StringExpression.Builder(StringExpression.Literal(serverUrl)),
+            ToolName = new StringExpression.Builder(StringExpression.Literal(toolName)),
+            RequireApproval = new BoolExpression.Builder(BoolExpression.Literal(true)),
+        };
+        foreach ((string headerName, string variableName) in headers)
+        {
+            builder.Headers.Add(
+                headerName,
+                new StringExpression.Builder(StringExpression.Variable(PropertyPath.TopicVariable(variableName))));
+        }
         return AssignParent<InvokeMcpTool>(builder);
     }
 
