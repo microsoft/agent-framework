@@ -3722,6 +3722,13 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
     def __aiter__(self) -> ResponseStream[UpdateT, FinalT]:
         return self
 
+    async def __aenter__(self) -> ResponseStream[UpdateT, FinalT]:
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        """Close the stream on block exit, including an early consumer break."""
+        await self.close()
+
     def _start_content_pipeline(self) -> None:
         if self._content_pipeline_started:
             return
@@ -4005,9 +4012,9 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
             await self._finish_consumption()
             raise
         except Exception as exc:
+            await self.close()
             await self._handle_stream_error(exc)
             raise
-
     async def close(self) -> None:
         """Close the active iterator and run cleanup hooks.
 

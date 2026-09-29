@@ -2215,9 +2215,35 @@ async def test_streaming_closes_provider_stream_when_consumer_stops_early(
     with patch.object(client.client.chat.completions, "create", side_effect=create):
         stream = client._inner_get_response(messages=[Message(role="user", contents=["test"])], stream=True, options={})
         assert isinstance(stream, ResponseStream)
-        async for _ in stream:
-            break
-        await stream.close()
+        # No manual close(): the async-with protocol is what an early break
+        # relies on to release the provider stream.
+        async with stream:
+            async for _ in stream:
+                break
+
+    assert sdk_stream.closed
+
+
+async def test_streaming_closes_provider_stream_when_transform_hook_raises(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """A hook failing after a yielded update must also close the SDK stream (#8762)."""
+    client = OpenAIChatCompletionClient()
+    sdk_stream = _FakeAsyncStream([_make_content_chunk("hello"), _make_content_chunk("world")])
+
+    async def create(**kwargs: Any) -> Any:
+        return sdk_stream
+
+    def failing_hook(update: Any) -> Any:
+        raise RuntimeError("hook blew up")
+
+    with patch.object(client.client.chat.completions, "create", side_effect=create):
+        stream = client._inner_get_response(messages=[Message(role="user", contents=["test"])], stream=True, options={})
+        assert isinstance(stream, ResponseStream)
+        stream._transform_hooks.append(failing_hook)
+        with pytest.raises(RuntimeError, match="hook blew up"):
+            async for _ in stream:
+                pass
 
     assert sdk_stream.closed
 

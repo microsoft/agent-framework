@@ -4493,6 +4493,51 @@ class TestResponseStreamCleanupHooks:
 
         assert events == ["iterator", "inner", "outer"]
 
+    async def test_async_with_break_closes_iterator(self) -> None:
+        """Breaking out of `async with stream:` releases the iterator without a manual close."""
+        events: list[str] = []
+
+        async def updates() -> AsyncIterable[ChatResponseUpdate]:
+            try:
+                yield ChatResponseUpdate(contents=[Content.from_text("first")], role="assistant")
+                yield ChatResponseUpdate(contents=[Content.from_text("second")], role="assistant")
+            finally:
+                events.append("iterator")
+
+        stream: ResponseStream[ChatResponseUpdate, Sequence[ChatResponseUpdate]] = ResponseStream(
+            updates(), cleanup_hooks=[lambda: events.append("cleanup")]
+        )
+
+        async with stream:
+            async for _ in stream:
+                break
+
+        assert events == ["iterator", "cleanup"]
+
+    async def test_transform_hook_error_closes_iterator(self) -> None:
+        """A hook that fails after a yielded update releases the suspended iterator."""
+        events: list[str] = []
+
+        async def updates() -> AsyncIterable[ChatResponseUpdate]:
+            try:
+                yield ChatResponseUpdate(contents=[Content.from_text("first")], role="assistant")
+                yield ChatResponseUpdate(contents=[Content.from_text("second")], role="assistant")
+            finally:
+                events.append("iterator")
+
+        def failing_hook(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            raise RuntimeError("hook blew up")
+
+        stream: ResponseStream[ChatResponseUpdate, Sequence[ChatResponseUpdate]] = ResponseStream(
+            updates(), transform_hooks=[failing_hook]  # ty: ignore[invalid-argument-type]
+        )
+
+        with pytest.raises(RuntimeError, match="hook blew up"):
+            async for _ in stream:
+                pass
+
+        assert events == ["iterator"]
+
     async def test_cleanup_hook_called_after_iteration(self) -> None:
         """Cleanup hook is called after iteration completes."""
         cleanup_called = {"value": False}
