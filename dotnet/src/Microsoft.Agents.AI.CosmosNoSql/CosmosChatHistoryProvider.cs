@@ -46,6 +46,10 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
     private readonly Container _container;
     private readonly bool _ownsClient;
     private bool _disposed;
+    private int _maxBatchSize = MaxTransactionalBatchSize;
+
+    // The most operations Cosmos DB accepts in one transactional batch.
+    private const int MaxTransactionalBatchSize = 100;
 
     /// <summary>
     /// Cached JSON serializer options for .NET 9.0 compatibility.
@@ -72,7 +76,12 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
     /// Gets or sets the maximum number of items per transactional batch operation.
     /// Default is 100, maximum allowed by Cosmos DB is 100.
     /// </summary>
-    public int MaxBatchSize { get; set; } = 100;
+    /// <exception cref="ArgumentOutOfRangeException">The value is less than 1 or greater than 100.</exception>
+    public int MaxBatchSize
+    {
+        get => this._maxBatchSize;
+        set => this._maxBatchSize = Throw.IfOutOfRange(value, 1, MaxTransactionalBatchSize);
+    }
 
     /// <summary>
     /// Gets or sets the maximum number of messages to retrieve from the provider.
