@@ -588,8 +588,9 @@ class Content:
         )
         self.raw_representation = raw_representation
 
-        # Set all content-specific attributes
-        self.text = text
+        # Set all content-specific attributes. A text content always carries a string, so
+        # concatenation and `Message.text` never see None.
+        self.text = (text or "") if type == "text" else text
         self.protected_data = protected_data
         self.uri = uri
         self.media_type = media_type

@@ -746,7 +746,8 @@ class RawAnthropicClient(
 
         # Handle user option -> metadata.user_id (Anthropic uses metadata.user_id instead of user)
         if user := run_options.pop("user", None):
-            metadata = run_options.get("metadata", {})
+            # Copy so the caller's metadata dict is not modified across requests.
+            metadata = dict(run_options.get("metadata") or {})
             if "user_id" not in metadata:
                 metadata["user_id"] = user
             run_options["metadata"] = metadata
