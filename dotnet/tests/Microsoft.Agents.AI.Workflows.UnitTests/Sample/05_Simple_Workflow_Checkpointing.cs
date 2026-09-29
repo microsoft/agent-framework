@@ -40,6 +40,7 @@ internal static class Step5EntryPoint
         // can still be publishing queued updates when the restore begins.
         await foreach (WorkflowEvent _ in handle.WatchStreamAsync(blockOnPendingRequest: false).ConfigureAwait(false))
         {
+            // Intentionally drain the stream until the current workflow run has halted.
         }
 
         CheckpointInfo targetCheckpoint = checkpoints[2];

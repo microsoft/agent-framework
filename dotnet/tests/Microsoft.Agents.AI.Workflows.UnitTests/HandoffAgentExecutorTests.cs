@@ -77,6 +77,25 @@ public class HandoffAgentExecutorTests : AIAgentHostingExecutorTestsBase
         }
     }
 
+    private sealed class StreamingUpdatesReplayAgent(
+        IReadOnlyList<AgentResponseUpdate> updates,
+        string? id = null,
+        string? name = null) : TestReplayAgent(id, name)
+    {
+        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
+            IEnumerable<ChatMessage> messages,
+            AgentSession? session = null,
+            AgentRunOptions? options = null,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            foreach (AgentResponseUpdate update in updates)
+            {
+                await Task.Yield();
+                yield return update;
+            }
+        }
+    }
+
     private static async ValueTask<TestRunContext> PrepareHandoffSharedStateAsync(TestRunContext? runContext = null, IEnumerable<ChatMessage>? messages = null)
     {
         runContext ??= new();
@@ -395,7 +414,7 @@ public class HandoffAgentExecutorTests : AIAgentHostingExecutorTestsBase
     }
 
     [Fact]
-    public async Task Test_HandoffAgentExecutor_DoesNotRouteHandoffRequestWithoutAgentProvenanceAsync()
+    public async Task Test_HandoffAgentExecutor_RoutesHandoffRequestWithoutAgentProvenanceAsync()
     {
         // Arrange
         TestEchoAgent targetAgent = new("target-agent", "Target Agent");
@@ -414,9 +433,9 @@ public class HandoffAgentExecutorTests : AIAgentHostingExecutorTestsBase
         await executor.HandleAsync(new HandoffState(new(false), null, null), testContext.BindWorkflowContext(executor.Id));
 
         // Assert
-        Assert.False(testContext.QueuedMessages.ContainsKey(executor.Id));
-        FunctionCallContent externalRequest = Assert.IsType<FunctionCallContent>(Assert.Single(testContext.ExternalRequests).Data.As<FunctionCallContent>());
-        Assert.Same(nestedRequest, externalRequest);
+        HandoffState sentState = Assert.IsType<HandoffState>(Assert.Single(testContext.QueuedMessages[executor.Id]).Message);
+        Assert.Equal(targetAgent.Id, sentState.RequestedHandoffTargetAgentId);
+        Assert.Empty(testContext.ExternalRequests);
     }
 
     [Fact]
@@ -442,6 +461,202 @@ public class HandoffAgentExecutorTests : AIAgentHostingExecutorTestsBase
         Assert.False(testContext.QueuedMessages.ContainsKey(executor.Id));
         FunctionCallContent externalRequest = Assert.IsType<FunctionCallContent>(Assert.Single(testContext.ExternalRequests).Data.As<FunctionCallContent>());
         Assert.Same(nestedRequest, externalRequest);
+    }
+
+    [Fact]
+    public async Task Test_HandoffAgentExecutor_InheritsRoleWithinMessageAsync()
+    {
+        // Arrange
+        FunctionCallContent handoffRequest = new("handoff-call", $"{HandoffWorkflowBuilder.FunctionPrefix}1");
+        StreamingUpdatesReplayAgent agent = new(
+        [
+            CreateUpdate(ChatRole.Assistant, TestAgentId, "message", "response", new TextContent("Thinking")),
+            CreateUpdate(null, TestAgentId, "message", "response", handoffRequest),
+        ], TestAgentId, TestAgentName);
+
+        // Act
+        (TestRunContext testContext, HandoffAgentExecutor executor, TestEchoAgent targetAgent) =
+            await RunHandoffAgentAsync(agent);
+
+        // Assert
+        HandoffState sentState = Assert.IsType<HandoffState>(Assert.Single(testContext.QueuedMessages[executor.Id]).Message);
+        Assert.Equal(targetAgent.Id, sentState.RequestedHandoffTargetAgentId);
+    }
+
+    [Fact]
+    public async Task Test_HandoffAgentExecutor_InheritsForeignAgentWithinMessageAsync()
+    {
+        // Arrange
+        FunctionCallContent handoffRequest = new("handoff-call", $"{HandoffWorkflowBuilder.FunctionPrefix}1");
+        StreamingUpdatesReplayAgent agent = new(
+        [
+            CreateUpdate(ChatRole.Assistant, "different-agent", "message", "response", new TextContent("Thinking")),
+            CreateUpdate(null, null, "message", "response", handoffRequest),
+        ], TestAgentId, TestAgentName);
+
+        // Act
+        (TestRunContext testContext, HandoffAgentExecutor executor, _) = await RunHandoffAgentAsync(agent);
+
+        // Assert
+        Assert.False(testContext.QueuedMessages.ContainsKey(executor.Id));
+        FunctionCallContent externalRequest = Assert.IsType<FunctionCallContent>(Assert.Single(testContext.ExternalRequests).Data.As<FunctionCallContent>());
+        Assert.Same(handoffRequest, externalRequest);
+    }
+
+    [Fact]
+    public async Task Test_HandoffAgentExecutor_DoesNotInheritForeignAgentAcrossMessagesAsync()
+    {
+        // Arrange
+        FunctionCallContent handoffRequest = new("handoff-call", $"{HandoffWorkflowBuilder.FunctionPrefix}1");
+        StreamingUpdatesReplayAgent agent = new(
+        [
+            CreateUpdate(ChatRole.Assistant, "different-agent", "foreign-message", "response", new TextContent("Nested response")),
+            CreateUpdate(ChatRole.Assistant, null, "direct-message", "response", handoffRequest),
+        ], TestAgentId, TestAgentName);
+
+        // Act
+        (TestRunContext testContext, HandoffAgentExecutor executor, TestEchoAgent targetAgent) =
+            await RunHandoffAgentAsync(agent);
+
+        // Assert
+        HandoffState sentState = Assert.IsType<HandoffState>(Assert.Single(testContext.QueuedMessages[executor.Id]).Message);
+        Assert.Equal(targetAgent.Id, sentState.RequestedHandoffTargetAgentId);
+    }
+
+    [Theory]
+    [InlineData("different-message", "response")]
+    [InlineData("message", "different-response")]
+    public async Task Test_HandoffAgentExecutor_DoesNotInheritRoleAcrossMessageOrResponseAsync(string messageId, string responseId)
+    {
+        // Arrange
+        FunctionCallContent handoffRequest = new("handoff-call", $"{HandoffWorkflowBuilder.FunctionPrefix}1");
+        StreamingUpdatesReplayAgent agent = new(
+        [
+            CreateUpdate(ChatRole.Assistant, TestAgentId, "message", "response", new TextContent("Thinking")),
+            CreateUpdate(null, TestAgentId, messageId, responseId, handoffRequest),
+        ], TestAgentId, TestAgentName);
+
+        // Act
+        (TestRunContext testContext, HandoffAgentExecutor executor, _) = await RunHandoffAgentAsync(agent);
+
+        // Assert
+        Assert.False(testContext.QueuedMessages.ContainsKey(executor.Id));
+        FunctionCallContent externalRequest = Assert.IsType<FunctionCallContent>(Assert.Single(testContext.ExternalRequests).Data.As<FunctionCallContent>());
+        Assert.Same(handoffRequest, externalRequest);
+    }
+
+    [Fact]
+    public async Task Test_HandoffAgentExecutor_DoesNotCancelHandoffForForeignProducerAsync()
+    {
+        // Arrange
+        const string CallId = "handoff-call";
+        StreamingUpdatesReplayAgent agent = new(
+        [
+            CreateUpdate(ChatRole.Assistant, TestAgentId, "request-message", "response", new FunctionCallContent(CallId, $"{HandoffWorkflowBuilder.FunctionPrefix}1")),
+            CreateUpdate(ChatRole.Tool, "different-agent", "result-message", "response", new FunctionResultContent(CallId, "Completed")),
+        ], TestAgentId, TestAgentName);
+
+        // Act
+        (TestRunContext testContext, HandoffAgentExecutor executor, TestEchoAgent targetAgent) =
+            await RunHandoffAgentAsync(agent);
+
+        // Assert
+        HandoffState sentState = Assert.IsType<HandoffState>(Assert.Single(testContext.QueuedMessages[executor.Id]).Message);
+        Assert.Equal(targetAgent.Id, sentState.RequestedHandoffTargetAgentId);
+    }
+
+    [Fact]
+    public async Task Test_HandoffAgentExecutor_DoesNotCancelHandoffForDifferentResponseAsync()
+    {
+        // Arrange
+        const string CallId = "handoff-call";
+        StreamingUpdatesReplayAgent agent = new(
+        [
+            CreateUpdate(ChatRole.Assistant, TestAgentId, "request-message", "request-response", new FunctionCallContent(CallId, $"{HandoffWorkflowBuilder.FunctionPrefix}1")),
+            CreateUpdate(ChatRole.Tool, TestAgentId, "result-message", "different-response", new FunctionResultContent(CallId, "Completed")),
+        ], TestAgentId, TestAgentName);
+
+        // Act
+        (TestRunContext testContext, HandoffAgentExecutor executor, TestEchoAgent targetAgent) =
+            await RunHandoffAgentAsync(agent);
+
+        // Assert
+        HandoffState sentState = Assert.IsType<HandoffState>(Assert.Single(testContext.QueuedMessages[executor.Id]).Message);
+        Assert.Equal(targetAgent.Id, sentState.RequestedHandoffTargetAgentId);
+    }
+
+    [Theory]
+    [InlineData("response")]
+    [InlineData(null)]
+    public async Task Test_HandoffAgentExecutor_CancelsHandoffForSameProducerAndResponseAsync(string? responseId)
+    {
+        // Arrange
+        const string CallId = "handoff-call";
+        StreamingUpdatesReplayAgent agent = new(
+        [
+            CreateUpdate(ChatRole.Assistant, TestAgentId, responseId is null ? null : "request-message", responseId, new FunctionCallContent(CallId, $"{HandoffWorkflowBuilder.FunctionPrefix}1")),
+            CreateUpdate(ChatRole.Tool, TestAgentId, null, null, new FunctionResultContent(CallId, "Completed")),
+        ], TestAgentId, TestAgentName);
+
+        // Act
+        (TestRunContext testContext, HandoffAgentExecutor executor, _) = await RunHandoffAgentAsync(agent);
+
+        // Assert
+        HandoffState sentState = Assert.IsType<HandoffState>(Assert.Single(testContext.QueuedMessages[executor.Id]).Message);
+        Assert.Null(sentState.RequestedHandoffTargetAgentId);
+    }
+
+    [Fact]
+    public async Task Test_HandoffAgentExecutor_CancelsAnonymousHandoffAfterMetadataOnlyDeltaAsync()
+    {
+        // Arrange
+        const string CallId = "handoff-call";
+        StreamingUpdatesReplayAgent agent = new(
+        [
+            CreateUpdate(ChatRole.Assistant, TestAgentId, null, null, new TextContent("Thinking")),
+            CreateUpdate(null, null, null, null, new FunctionCallContent(CallId, $"{HandoffWorkflowBuilder.FunctionPrefix}1")),
+            CreateUpdate(ChatRole.Tool, null, null, null, new FunctionResultContent(CallId, "Completed")),
+        ], TestAgentId, TestAgentName);
+
+        // Act
+        (TestRunContext testContext, HandoffAgentExecutor executor, _) = await RunHandoffAgentAsync(agent);
+
+        // Assert
+        HandoffState sentState = Assert.IsType<HandoffState>(Assert.Single(testContext.QueuedMessages[executor.Id]).Message);
+        Assert.Null(sentState.RequestedHandoffTargetAgentId);
+    }
+
+    [Theory]
+    [InlineData("different-agent", "response", true)]
+    [InlineData(TestAgentId, "different-response", true)]
+    [InlineData(TestAgentId, "response", false)]
+    public async Task Test_HandoffAgentExecutor_ScopesCompletionBeforeHandoffRequestAsync(
+        string completionAgentId,
+        string completionResponseId,
+        bool expectedHandoff)
+    {
+        // Arrange
+        const string CallId = "handoff-call";
+        StreamingUpdatesReplayAgent agent = new(
+        [
+            CreateUpdate(ChatRole.Tool, completionAgentId, "result-message", completionResponseId, new FunctionResultContent(CallId, "Completed")),
+            CreateUpdate(ChatRole.Assistant, TestAgentId, "request-message", "response", new FunctionCallContent(CallId, $"{HandoffWorkflowBuilder.FunctionPrefix}1")),
+        ], TestAgentId, TestAgentName);
+
+        // Act
+        (TestRunContext testContext, HandoffAgentExecutor executor, TestEchoAgent targetAgent) =
+            await RunHandoffAgentAsync(agent);
+
+        // Assert
+        if (expectedHandoff)
+        {
+            HandoffState sentState = Assert.IsType<HandoffState>(Assert.Single(testContext.QueuedMessages[executor.Id]).Message);
+            Assert.Equal(targetAgent.Id, sentState.RequestedHandoffTargetAgentId);
+        }
+        else
+        {
+            Assert.False(testContext.QueuedMessages.ContainsKey(executor.Id));
+        }
     }
 
     [Fact]
@@ -472,6 +687,37 @@ public class HandoffAgentExecutorTests : AIAgentHostingExecutorTestsBase
 
         HandoffState sentState = Assert.IsType<HandoffState>(Assert.Single(testContext.QueuedMessages[executor.Id]).Message);
         Assert.Null(sentState.RequestedHandoffTargetAgentId);
+    }
+
+    private static AgentResponseUpdate CreateUpdate(
+        ChatRole? role,
+        string? agentId,
+        string? messageId,
+        string? responseId,
+        AIContent content) =>
+        new()
+        {
+            Role = role,
+            AgentId = agentId,
+            MessageId = messageId,
+            ResponseId = responseId,
+            Contents = [content],
+        };
+
+    private static async Task<(TestRunContext Context, HandoffAgentExecutor Executor, TestEchoAgent TargetAgent)> RunHandoffAgentAsync(AIAgent agent)
+    {
+        TestEchoAgent targetAgent = new("target-agent", "Target Agent");
+        HandoffAgentExecutorOptions options = new("",
+                                                  emitAgentResponseEvents: false,
+                                                  emitAgentResponseUpdateEvents: false,
+                                                  HandoffToolCallFilteringBehavior.None);
+        HandoffAgentExecutor executor = new(agent, [new HandoffTarget(targetAgent)], options);
+        TestRunContext testContext = await PrepareHandoffSharedStateAsync();
+        testContext.ConfigureExecutor(executor);
+
+        await executor.HandleAsync(new HandoffState(new(false), null, null), testContext.BindWorkflowContext(executor.Id));
+
+        return (testContext, executor, targetAgent);
     }
 }
 

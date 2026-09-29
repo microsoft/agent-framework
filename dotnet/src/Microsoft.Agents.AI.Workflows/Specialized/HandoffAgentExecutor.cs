@@ -429,8 +429,13 @@ internal sealed class HandoffAgentExecutor :
         AIAgentUnservicedRequestsCollector collector = new(this._userInputHandler, this._functionCallHandler);
         string? requestedHandoff = null;
         List<AgentResponseUpdate> updates = [];
-        List<(FunctionCallContent Request, string? ResponseId)> candidateRequests = [];
-        HashSet<string> completedRequestIds = new(StringComparer.Ordinal);
+        List<(FunctionCallContent Request, string ProducerId, string? ResponseId)> candidateRequests = [];
+        HashSet<(string CallId, string ProducerId, string? ResponseId)> completedRequests = [];
+        bool hasMessageScope = false;
+        string? scopedMessageId = null;
+        string? scopedResponseId = null;
+        ChatRole? scopedRole = null;
+        string? scopedAgentId = null;
 
         this._session ??= await this._agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
 
@@ -441,16 +446,53 @@ internal sealed class HandoffAgentExecutor :
         {
             await AddUpdateAsync(update, cancellationToken).ConfigureAwait(false);
 
+            bool isSameMessageScope =
+                hasMessageScope
+                && AreCompatibleMessageIds(scopedMessageId, update.MessageId)
+                && !(scopedResponseId is not null
+                     && update.ResponseId is not null
+                     && !string.Equals(scopedResponseId, update.ResponseId, StringComparison.Ordinal));
+
+            if (!isSameMessageScope)
+            {
+                // Optional metadata is inherited only within one logical message. Resetting on an
+                // identifiable message or response transition prevents foreign provenance or an
+                // assistant role from leaking into the next message.
+                scopedRole = null;
+                scopedAgentId = null;
+                scopedMessageId = update.MessageId;
+                scopedResponseId = update.ResponseId;
+                hasMessageScope = true;
+            }
+            else
+            {
+                // Contiguous updates with no message or response ID form one invocation-local
+                // anonymous scope. Null remains an exact correlation value, never a global wildcard.
+                scopedMessageId ??= update.MessageId;
+                scopedResponseId ??= update.ResponseId;
+            }
+
+            scopedRole = update.Role ?? scopedRole;
+            scopedAgentId = update.AgentId ?? scopedAgentId ?? this._agent.Id;
+
+            ChatRole? effectiveRole = scopedRole;
+            string effectiveAgentId = scopedAgentId;
+            string? effectiveResponseId = update.ResponseId ?? scopedResponseId;
+
             // Process content in stream order so a provider-owned tool completion cancels the
-            // corresponding candidate before routing. Keeping this state invocation-local also
-            // ensures cancellation or failure cannot retain a partial decision for the next turn.
+            // corresponding candidate before routing. Producer and response identity are part of
+            // the key because provider streams may reuse bare call IDs across concurrent responses.
             foreach (AIContent content in update.Contents)
             {
                 if (content is FunctionResultContent functionResult)
                 {
-                    _ = completedRequestIds.Add(functionResult.CallId);
+                    (string CallId, string ProducerId, string? ResponseId) completion =
+                        (functionResult.CallId, effectiveAgentId, effectiveResponseId);
+                    _ = completedRequests.Add(completion);
                     _ = candidateRequests.RemoveAll(
-                        candidate => string.Equals(candidate.Request.CallId, functionResult.CallId, StringComparison.Ordinal));
+                        candidate => string.Equals(candidate.Request.CallId, completion.CallId, StringComparison.Ordinal)
+                                     && string.Equals(candidate.ProducerId, completion.ProducerId, StringComparison.Ordinal)
+                                     && string.Equals(candidate.ResponseId, completion.ResponseId, StringComparison.Ordinal));
                 }
 
                 collector.ProcessAIContents([content], CollectHandoffRequestsFilter);
@@ -462,15 +504,14 @@ internal sealed class HandoffAgentExecutor :
                 // executor. Other roles, other agents, malformed IDs, and already-completed calls
                 // are provider lifecycle events rather than application routing decisions.
                 bool isHandoffRequest =
-                    update.Role == ChatRole.Assistant
-                    && update.AgentId is not null
-                    && string.Equals(update.AgentId, this._agent.Id, StringComparison.Ordinal)
+                    effectiveRole == ChatRole.Assistant
+                    && string.Equals(effectiveAgentId, this._agent.Id, StringComparison.Ordinal)
                     && !string.IsNullOrWhiteSpace(candidateHandoffRequest.CallId)
-                    && !completedRequestIds.Contains(candidateHandoffRequest.CallId)
+                    && !completedRequests.Contains((candidateHandoffRequest.CallId, effectiveAgentId, effectiveResponseId))
                     && this._handoffFunctionNames.Contains(candidateHandoffRequest.Name);
                 if (isHandoffRequest)
                 {
-                    candidateRequests.Add((candidateHandoffRequest, update.ResponseId));
+                    candidateRequests.Add((candidateHandoffRequest, effectiveAgentId, effectiveResponseId));
                 }
 
                 return !isHandoffRequest;
@@ -485,7 +526,7 @@ internal sealed class HandoffAgentExecutor :
 
         if (candidateRequests.Count > 0)
         {
-            (FunctionCallContent handoffRequest, string? handoffResponseId) = candidateRequests[candidateRequests.Count - 1];
+            (FunctionCallContent handoffRequest, _, string? handoffResponseId) = candidateRequests[candidateRequests.Count - 1];
             requestedHandoff = handoffRequest.Name;
 
             await AddUpdateAsync(
@@ -526,6 +567,11 @@ internal sealed class HandoffAgentExecutor :
             => requestedHandoff != null
              ? this._handoffFunctionToAgentId.TryGetValue(requestedHandoff, out string? targetId) ? targetId : null
              : null;
+
+        static bool AreCompatibleMessageIds(string? establishedId, string? updateId)
+            => establishedId is null
+               ? updateId is null
+               : updateId is null || string.Equals(establishedId, updateId, StringComparison.Ordinal);
     }
 
     internal static FunctionResultContent CreateHandoffResult(string requestCallId) => new(requestCallId, "Transferred.");
