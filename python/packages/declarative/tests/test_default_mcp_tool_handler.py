@@ -968,10 +968,9 @@ class TestCache:
 
             release_first.set()
             first_result = await first
-            close_result = await close_task
+            await close_task
 
         assert not first_result.is_error
-        assert close_result is None
         assert FakeTool.instances[0].close_count == 1
         assert FakeTool.instances[1].close_count == 1
 
@@ -1267,7 +1266,7 @@ class TestAclose:
             await first_close_started.wait()
             shutdown.cancel()
             with pytest.raises(asyncio.CancelledError):
-                _ = await shutdown
+                await shutdown
 
             release_first_close.set()
             await asyncio.wait_for(handler.aclose(), timeout=1)
