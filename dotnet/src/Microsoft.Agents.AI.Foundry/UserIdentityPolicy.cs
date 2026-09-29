@@ -3,6 +3,7 @@
 using System.ClientModel.Primitives;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Foundry;
 
@@ -38,6 +39,12 @@ internal sealed class UserIdentityPolicy : PipelinePolicy
             return;
         }
 
+        // Session state can be restored without using the binding API, so validate again at the
+        // final transport boundary before the value reaches the header collection.
+        HttpHeaderValidation.ValidateNoProhibitedCharacters(
+            identity,
+            "userIdentity",
+            "User identity must not contain NUL, carriage-return, or line-feed characters.");
         message.Request.Headers.Set("x-ms-user-identity", identity);
     }
 }
