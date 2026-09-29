@@ -179,6 +179,7 @@ class _CacheEntry:
     evicted: bool = False
     disposal_claimed: bool = False
     closed: asyncio.Event = field(default_factory=asyncio.Event)
+    close_exception: BaseException | None = None
 
 
 class _EntryCreationCancelled(Exception):
@@ -540,6 +541,9 @@ class DefaultMCPToolHandler:
         )
         for entry in entries:
             await entry.closed.wait()
+        for entry in entries:
+            if entry.close_exception is not None:
+                raise entry.close_exception
         for result in close_results:
             if isinstance(result, BaseException):
                 raise result
@@ -594,14 +598,7 @@ class DefaultMCPToolHandler:
                         raise RuntimeError("DefaultMCPToolHandler is closed")
                 entry = await self._create_entry(invocation)
         except BaseException as exc:
-            async with self._cache_lock:
-                self._inflight.pop(key, None)
-            if not inflight.done():
-                inflight.set_exception(self._entry_creation_exception(exc))
-            # Mark the exception retrieved to suppress noisy "Future exception
-            # was never retrieved" warnings when there are no other awaiters
-            # (other awaiters still see the exception through their ``await``).
-            inflight.exception()
+            await self._complete_inflight_failure(key, inflight, exc)
             raise
 
         # Phase 3: insert with LRU eviction; resolve the in-flight future.
@@ -690,6 +687,27 @@ class DefaultMCPToolHandler:
                 continue
         cleanup_task.result()
 
+    async def _complete_inflight_failure(
+        self,
+        key: tuple[str, str, str, str, str],
+        inflight: asyncio.Future[_CacheEntry],
+        exc: BaseException,
+    ) -> None:
+        async def cleanup() -> None:
+            async with self._cache_lock:
+                self._inflight.pop(key, None)
+            if not inflight.done():
+                inflight.set_exception(self._entry_creation_exception(exc))
+            inflight.exception()
+
+        cleanup_task = asyncio.create_task(cleanup())
+        while not cleanup_task.done():
+            try:
+                await asyncio.shield(cleanup_task)
+            except asyncio.CancelledError:
+                continue
+        cleanup_task.result()
+
     @staticmethod
     def _entry_creation_exception(exc: BaseException) -> BaseException:
         if isinstance(exc, asyncio.CancelledError):
@@ -722,6 +740,9 @@ class DefaultMCPToolHandler:
     async def _close_claimed_entry(self, entry: _CacheEntry) -> None:
         try:
             await self._close_invocation_entry(entry)
+        except BaseException as exc:
+            entry.close_exception = exc
+            raise
         finally:
             async with self._cache_lock:
                 self._retired.pop(id(entry), None)

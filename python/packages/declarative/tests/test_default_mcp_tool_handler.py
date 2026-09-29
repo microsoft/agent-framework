@@ -1129,6 +1129,47 @@ class TestCache:
         assert FakeTool.instances[1].connect_count == 1
 
     @pytest.mark.asyncio
+    async def test_repeated_creator_cancellation_completes_inflight_failure(self) -> None:
+        handler = DefaultMCPToolHandler()
+
+        class GatedCreationSemaphore:
+            def __init__(self) -> None:
+                self.entered = asyncio.Event()
+                self.release = asyncio.Event()
+
+            async def __aenter__(self) -> None:
+                self.entered.set()
+                await self.release.wait()
+
+            async def __aexit__(self, *_args: Any) -> None:
+                pass
+
+        creation_gate: Any = GatedCreationSemaphore()
+        handler._creation_semaphore = creation_gate
+
+        with _patch_tool():
+            creator = asyncio.create_task(handler.invoke_tool(_invocation(workflow_session_id="workflow-a")))
+            await creation_gate.entered.wait()
+            assert handler._inflight
+            waiter = asyncio.create_task(handler.invoke_tool(_invocation(workflow_session_id="workflow-a")))
+            await asyncio.sleep(0)
+
+            await handler._cache_lock.acquire()
+            creator.cancel()
+            await asyncio.sleep(0)
+            creator.cancel()
+            handler._cache_lock.release()
+            creation_gate.release.set()
+
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.gather(creator)
+            waiter_result = await asyncio.wait_for(waiter, timeout=1)
+            await asyncio.wait_for(handler.aclose(), timeout=1)
+
+        assert not waiter_result.is_error
+        assert not handler._inflight
+
+    @pytest.mark.asyncio
     async def test_repeated_use_keeps_lru_alive(self) -> None:
         handler = DefaultMCPToolHandler(cache_max_size=2)
         with _patch_tool():
@@ -1323,6 +1364,41 @@ class TestAclose:
 
         assert [tool.close_count for tool in FakeTool.instances] == [1, 1]
         assert all(tool._httpx_client is not None and tool._httpx_client.is_closed for tool in FakeTool.instances)
+
+    @pytest.mark.asyncio
+    async def test_active_entry_cleanup_cancellation_is_reported_by_aclose(self) -> None:
+        handler = DefaultMCPToolHandler()
+        invocation_started = asyncio.Event()
+        release_invocation = asyncio.Event()
+
+        async def gated_call(_tool: FakeTool, _tool_name: str, **_arguments: Any) -> Any:
+            invocation_started.set()
+            await release_invocation.wait()
+            return [Content.from_text("ok")]
+
+        async def cancelled_close(tool: FakeTool) -> None:
+            tool.close_count += 1
+            raise asyncio.CancelledError
+
+        with (
+            _patch_tool(),
+            patch.object(FakeTool, "call_tool", gated_call),
+            patch.object(FakeTool, "close", cancelled_close),
+        ):
+            invocation = asyncio.create_task(handler.invoke_tool(_invocation(headers={"X": "1"})))
+            await invocation_started.wait()
+            shutdown = asyncio.create_task(handler.aclose())
+            await asyncio.sleep(0)
+            assert handler._closed
+            release_invocation.set()
+
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.gather(invocation)
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.gather(shutdown)
+
+        assert FakeTool.instances[0].close_count == 1
+        assert not handler._retired
 
     @pytest.mark.asyncio
     async def test_invoke_after_close_returns_error_result(self) -> None:

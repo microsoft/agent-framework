@@ -32,13 +32,7 @@ public record SubworkflowBinding(Workflow WorkflowInstance, string Id, ExecutorO
         {
             ProtocolDescriptor workflowProtocol = await workflow.DescribeProtocolAsync().ConfigureAwait(false);
 
-            return new WorkflowHostExecutor(
-                id,
-                workflow,
-                workflowProtocol,
-                CreateSubworkflowSessionId(sessionId, id),
-                ownershipToken,
-                options);
+            return new WorkflowHostExecutor(id, workflow, workflowProtocol, sessionId, ownershipToken, options);
         }
     }
 
