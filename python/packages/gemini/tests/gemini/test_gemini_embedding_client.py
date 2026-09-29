@@ -671,8 +671,6 @@ async def test_google_genai_enterprise_embeds_texts_separately() -> None:
 
 
 def _integration_configured() -> bool:
-    if not os.getenv("GOOGLE_EMBEDDING_MODEL"):
-        return False
     if os.getenv("GOOGLE_API_KEY"):
         return True
     return bool(
@@ -683,9 +681,14 @@ def _integration_configured() -> bool:
     )
 
 
+def test_integration_gate_uses_default_embedding_model(monkeypatch: pytest.MonkeyPatch, clear_google_env: None) -> None:
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    assert _integration_configured()
+
+
 @pytest.mark.flaky
 @pytest.mark.integration
-@pytest.mark.skipif(not _integration_configured(), reason="Set Google credentials and an embedding model to run.")
+@pytest.mark.skipif(not _integration_configured(), reason="Set GOOGLE_API_KEY or Enterprise credentials to run.")
 async def test_gemini_embedding_integration() -> None:
     client = GeminiEmbeddingClient()
     try:

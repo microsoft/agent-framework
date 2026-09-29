@@ -91,7 +91,7 @@ class MockEmbeddingClient(BaseEmbeddingClient):
     def __init__(self) -> None:
         super().__init__()
         self.values: list[Any] = []
-        self.options: EmbeddingGenerationOptions | None = None
+        self.options: dict[str, Any] | None = None
 
     async def get_embeddings(
         self,
@@ -100,7 +100,7 @@ class MockEmbeddingClient(BaseEmbeddingClient):
         options: EmbeddingGenerationOptions | None = None,
     ) -> GeneratedEmbeddings[list[float]]:
         self.values = list(values)
-        self.options = options
+        self.options = dict(options) if options is not None else None
         return GeneratedEmbeddings([Embedding(vector=[float(len(str(value))), 0.5]) for value in values])
 
 
@@ -750,7 +750,8 @@ async def test_upsert_embedding_options_are_merged_with_field_dimensions() -> No
 
     assert embedding_client.options == caller_options
     assert embedding_client.values == ["document"]
-    cast(dict[str, Any], embedding_client.options)["extra_parameters"]["provider_flag"] = False
+    assert embedding_client.options is not None
+    embedding_client.options["extra_parameters"]["provider_flag"] = False
     assert caller_options["extra_parameters"] == {"provider_flag": True}
     assert collection.records["one"]["vector"] == [8.0, 0.5]
 

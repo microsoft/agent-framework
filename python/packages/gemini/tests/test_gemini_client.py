@@ -28,11 +28,12 @@ from agent_framework_gemini._feature_usage import FeatureIndex
 
 
 def _has_gemini_integration_credentials() -> bool:
-    """Return whether integration credentials for either Gemini API or Vertex AI appear to be configured."""
+    """Return whether Developer API or Enterprise credentials appear to be configured."""
     if os.getenv("GOOGLE_API_KEY"):
         return True
 
-    if os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "").lower() in {"true", "1", "yes", "on"}:
+    enterprise_mode = os.getenv("GOOGLE_GENAI_USE_ENTERPRISE") or os.getenv("GOOGLE_GENAI_USE_VERTEXAI") or ""
+    if enterprise_mode.lower() in {"true", "1", "yes", "on"}:
         return bool(
             os.getenv("GOOGLE_CLOUD_PROJECT")
             or os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
@@ -51,9 +52,30 @@ _TEST_MODEL = os.getenv("GOOGLE_MODEL") or "gemini-2.5-flash-lite"
 
 
 @pytest.fixture(autouse=True)
-def clear_enterprise_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Isolate chat tests from an externally configured Enterprise SDK mode."""
+def clear_enterprise_env(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Isolate unit tests without removing the configured mode from integration tests."""
+    if request.node.get_closest_marker("integration") is None:
+        monkeypatch.delenv("GOOGLE_GENAI_USE_ENTERPRISE", raising=False)
+
+
+@pytest.mark.parametrize("mode", ["GOOGLE_GENAI_USE_ENTERPRISE", "GOOGLE_GENAI_USE_VERTEXAI"])
+def test_enterprise_integration_gate_accepts_either_mode(monkeypatch: pytest.MonkeyPatch, mode: str) -> None:
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     monkeypatch.delenv("GOOGLE_GENAI_USE_ENTERPRISE", raising=False)
+    monkeypatch.delenv("GOOGLE_GENAI_USE_VERTEXAI", raising=False)
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
+    monkeypatch.setenv(mode, "true")
+
+    assert _has_gemini_integration_credentials()
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(
+    os.getenv("GOOGLE_GENAI_USE_ENTERPRISE", "").lower() not in {"true", "1", "yes", "on"},
+    reason="Enterprise mode not configured.",
+)
+def test_integration_fixture_preserves_enterprise_mode() -> None:
+    assert os.getenv("GOOGLE_GENAI_USE_ENTERPRISE", "").lower() in {"true", "1", "yes", "on"}
 
 
 class _ToolListItem(TypedDict):
