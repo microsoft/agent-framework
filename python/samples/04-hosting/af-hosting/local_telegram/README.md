@@ -87,7 +87,8 @@ process just registered.
   both the in-memory session store and history provider deliberately.
 - **Commands:** recognized commands are handled by application code and bypass
   the agent. Unknown slash commands fall through as ordinary agent input.
-  Commands addressed to another bot in a group are ignored, including `/new`.
+  Commands addressed to another bot in a group are ignored, including `/new`
+  in a media caption.
 - **Callback queries:** the app acknowledges callback queries first to clear
   Telegram's loading indicator, then treats callback data as user input unless
   it matched an app-owned command.

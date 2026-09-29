@@ -65,3 +65,28 @@ async def test_command_target_controls_dispatch(
     else:
         handle_command.assert_not_awaited()
     to_run.assert_not_awaited()
+
+
+async def test_media_caption_for_other_bot_is_ignored(sample: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    bot = SimpleNamespace(id=123456, me=AsyncMock(return_value=SimpleNamespace(username="mybot")))
+    monkeypatch.setattr(sample, "bot", bot, raising=False)
+    handle_command = AsyncMock()
+    to_run = AsyncMock()
+    monkeypatch.setattr(sample, "handle_command", handle_command)
+    monkeypatch.setattr(sample, "telegram_to_run", to_run)
+    update = {
+        "message": {
+            "from": {"id": 42},
+            "chat": {"id": -123, "type": "supergroup"},
+            "caption": "/new@otherbot",
+            "photo": [{"file_id": "photo-1", "file_size": 10}],
+        }
+    }
+
+    if sample.__name__.endswith("polling_app"):
+        await sample.handle_update(bot, update)
+    else:
+        await sample.handle_update(update)
+
+    handle_command.assert_not_awaited()
+    to_run.assert_not_awaited()

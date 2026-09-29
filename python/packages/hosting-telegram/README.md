@@ -28,7 +28,8 @@ long-running service. Your app remains fully responsible for:
 - `telegram_session_id(update, bot_id=...)` -- a bot-scoped `AgentState`
   session id. Private chats use `telegram:<bot_id>:<user_id>`; other chats use
   `telegram:<bot_id>:<chat_id>`.
-- `telegram_command(update, bot_username=None)` -- a leading slash command,
+- `telegram_command(update, bot_username=None)` -- a leading slash command in
+  message text, callback data, or a media caption,
   with `/name@bot args` normalized to `/name args`. Pass your bot's username to
   return `None` for commands addressed to another bot. Without it, parsing
   keeps the original behavior.
