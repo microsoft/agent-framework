@@ -13,6 +13,7 @@ using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.ObjectModel;
+using Microsoft.Agents.ObjectModel.Abstractions;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
@@ -382,10 +383,12 @@ internal sealed class InvokeMcpToolExecutor(
     }
 
     private string GetServerUrl() =>
-        this.Evaluator.GetValue(
-            Throw.IfNull(
-                this.Model.ServerUrl,
-                $"{nameof(this.Model)}.{nameof(this.Model.ServerUrl)}")).Value;
+        this.GetInvocationValue(
+            this.Evaluator.GetValue(
+                Throw.IfNull(
+                    this.Model.ServerUrl,
+                    $"{nameof(this.Model)}.{nameof(this.Model.ServerUrl)}")),
+            "server URL");
 
     private string? GetServerLabel()
     {
@@ -394,15 +397,17 @@ internal sealed class InvokeMcpToolExecutor(
             return null;
         }
 
-        string value = this.Evaluator.GetValue(this.Model.ServerLabel).Value;
+        string value = this.GetInvocationValue(this.Evaluator.GetValue(this.Model.ServerLabel), "server label");
         return value.Length == 0 ? null : value;
     }
 
     private string GetToolName() =>
-        this.Evaluator.GetValue(
-            Throw.IfNull(
-                this.Model.ToolName,
-                $"{nameof(this.Model)}.{nameof(this.Model.ToolName)}")).Value;
+        this.GetInvocationValue(
+            this.Evaluator.GetValue(
+                Throw.IfNull(
+                    this.Model.ToolName,
+                    $"{nameof(this.Model)}.{nameof(this.Model.ToolName)}")),
+            "tool name");
 
     private string? GetConversationId()
     {
@@ -460,7 +465,9 @@ internal sealed class InvokeMcpToolExecutor(
         Dictionary<string, object?> result = [];
         foreach (KeyValuePair<string, ValueExpression> argument in this.Model.Arguments)
         {
-            result[argument.Key] = this.Evaluator.GetValue(argument.Value).Value.ToObject();
+            result[argument.Key] = this.GetInvocationValue(
+                this.Evaluator.GetValue(argument.Value),
+                $"argument '{argument.Key}'").ToObject();
         }
 
         return result;
@@ -476,7 +483,9 @@ internal sealed class InvokeMcpToolExecutor(
         Dictionary<string, string> result = new(StringComparer.OrdinalIgnoreCase);
         foreach (KeyValuePair<string, StringExpression> header in this.Model.Headers)
         {
-            string value = this.Evaluator.GetValue(header.Value).Value;
+            string value = this.GetInvocationValue(
+                this.Evaluator.GetValue(header.Value),
+                $"header '{header.Key}'");
             if (!string.IsNullOrEmpty(value))
             {
                 result[header.Key] = value;
@@ -484,6 +493,16 @@ internal sealed class InvokeMcpToolExecutor(
         }
 
         return result;
+    }
+
+    private T GetInvocationValue<T>(EvaluationResult<T> result, string location)
+    {
+        if (result.Sensitivity == SensitivityLevel.Sensitive)
+        {
+            throw this.Exception($"Cannot use a protected value in MCP tool invocation {location}.");
+        }
+
+        return result.Value;
     }
 
     /// <summary>

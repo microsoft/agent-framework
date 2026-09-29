@@ -9,13 +9,11 @@ concepts of **Agent Framework** one step at a time.
 pip install agent-framework-foundry
 ```
 
-Sample 08 additionally requires `agent-framework-azurefunctions --pre`.
-
 Set the required environment variables:
 
 ```bash
 export FOUNDRY_PROJECT_ENDPOINT="https://your-project-endpoint"
-export FOUNDRY_MODEL="gpt-4o"   # optional, defaults to gpt-4o
+export FOUNDRY_MODEL="gpt-4o"
 ```
 
 ## Samples
