@@ -507,8 +507,16 @@ class DefaultMCPToolHandler:
         inflight_futures: list[asyncio.Future[_CacheEntry]],
         active_invocations: list[asyncio.Future[None]],
     ) -> None:
-        for completion in active_invocations:
-            await completion
+        if active_invocations:
+            invocation_results = await asyncio.gather(*active_invocations, return_exceptions=True)
+            for result in invocation_results:
+                if isinstance(result, BaseException):
+                    if isinstance(result, (KeyboardInterrupt, SystemExit, GeneratorExit)):
+                        raise result
+                    logger.debug(
+                        "DefaultMCPToolHandler: active invocation raised during aclose",
+                        exc_info=(type(result), result, result.__traceback__),
+                    )
 
         # Wait for in-flight creations to finish their self-cleanup. Each
         # in-flight task self-closes its entry under the closed-flag branch
