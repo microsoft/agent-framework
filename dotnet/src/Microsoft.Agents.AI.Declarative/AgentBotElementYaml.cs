@@ -1,11 +1,14 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
 using Microsoft.Agents.ObjectModel;
 using Microsoft.Agents.ObjectModel.Abstractions;
+using Microsoft.Agents.ObjectModel.Analysis;
+using Microsoft.Agents.ObjectModel.PowerFx;
 using Microsoft.Agents.ObjectModel.Yaml;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Shared.Diagnostics;
@@ -22,8 +25,9 @@ internal static class AgentBotElementYaml
     /// </summary>
     /// <param name="text">YAML representation of the <see cref="BotElement"/> to use to create the prompt function.</param>
     /// <param name="configuration">Optional <see cref="IConfiguration"/> instance which provides environment variables to the template.</param>
+    /// <param name="allowedConfigurationVariables">Configuration keys that may be exposed when the YAML references them through <c>Env</c>.</param>
     [RequiresDynamicCode("Calls YamlDotNet.Serialization.DeserializerBuilder.DeserializerBuilder()")]
-    public static GptComponentMetadata FromYaml(string text, IConfiguration? configuration = null)
+    public static GptComponentMetadata FromYaml(string text, IConfiguration? configuration = null, IEnumerable<string>? allowedConfigurationVariables = null)
     {
         Throw.IfNullOrEmpty(text);
 
@@ -35,7 +39,7 @@ internal static class AgentBotElementYaml
             throw new InvalidDataException($"Unsupported root element: {rootElement.GetType().Name}. Expected an {nameof(GptComponentMetadata)}.");
         }
 
-        var botDefinition = WrapPromptAgentWithBot(promptAgent, configuration);
+        var botDefinition = WrapPromptAgentWithBot(promptAgent, configuration, allowedConfigurationVariables);
 
         return botDefinition.Descendants().OfType<GptComponentMetadata>().First();
     }
@@ -52,7 +56,7 @@ internal static class AgentBotElementYaml
         public bool IsTenantFeatureEnabled(string featureName, bool defaultValue) => defaultValue;
     }
 
-    public static BotDefinition WrapPromptAgentWithBot(this GptComponentMetadata element, IConfiguration? configuration = null)
+    public static BotDefinition WrapPromptAgentWithBot(this GptComponentMetadata element, IConfiguration? configuration = null, IEnumerable<string>? allowedConfigurationVariables = null)
     {
         var botBuilder =
             new BotDefinition.Builder
@@ -67,25 +71,40 @@ internal static class AgentBotElementYaml
                 }
             };
 
-        if (configuration is not null)
+        if (configuration is not null && allowedConfigurationVariables is not null)
         {
-            foreach (var kvp in configuration.AsEnumerable().Where(kvp => kvp.Value is not null))
+            HashSet<string> allowedVariables = new(allowedConfigurationVariables, StringComparer.OrdinalIgnoreCase);
+            foreach (string variableName in GetReferencedEnvironmentVariableNames(element).Where(allowedVariables.Contains))
             {
+                string? configurationValue = configuration[variableName];
+                if (configurationValue is null)
+                {
+                    continue;
+                }
+
                 botBuilder.EnvironmentVariables.Add(new EnvironmentVariableDefinition.Builder()
                 {
-                    SchemaName = kvp.Key,
+                    SchemaName = variableName,
                     Id = Guid.NewGuid(),
-                    DisplayName = kvp.Key,
+                    DisplayName = variableName,
                     ValueComponent = new EnvironmentVariableValue.Builder()
                     {
                         Id = Guid.NewGuid(),
-                        Value = kvp.Value!,
+                        Value = configurationValue,
                     },
                 });
             }
         }
 
         return botBuilder.Build();
+    }
+
+    internal static ISet<string> GetReferencedEnvironmentVariableNames(GptComponentMetadata element)
+    {
+        var botDefinition = WrapPromptAgentWithBot(element);
+        SemanticModel semanticModel = botDefinition.GetSemanticModel(new PowerFxExpressionChecker(new AgentFeatureConfiguration()), new AgentFeatureConfiguration());
+
+        return semanticModel.GetAllEnvironmentVariablesReferencedInTheBot();
     }
     #endregion
 }

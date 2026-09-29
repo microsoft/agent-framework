@@ -121,6 +121,16 @@ def test_type_compatibility_with_any_type_passes():
     assert workflow is not None
 
 
+def test_type_compatibility_from_any_source_passes():
+    """An executor declaring WorkflowContext[Any] can send to a typed executor."""
+    any_executor = AnyExecutor(id="any_executor")
+    string_executor = StringExecutor(id="string_executor")
+
+    workflow = WorkflowBuilder(start_executor=any_executor).add_edge(any_executor, string_executor).build()
+
+    assert workflow is not None
+
+
 def test_type_compatibility_with_no_output_types():
     no_output_executor = NoOutputTypesExecutor(id="no_output")
     string_executor = StringExecutor(id="string_executor")

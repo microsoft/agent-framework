@@ -96,7 +96,7 @@ def _numeric_vector(value: Any, *, field_name: str) -> tuple[float, ...]:
         number = float(item)
         if not math.isfinite(number):
             raise ValueError(f"Vector field '{field_name}' must contain only finite numbers.")
-        vector.append(number)
+        vector.append(item)
     if not vector:
         raise ValueError(f"Vector field '{field_name}' cannot be empty.")
     return tuple(vector)
@@ -115,6 +115,11 @@ def _paired_vectors(left: Vector, right: Vector) -> tuple[tuple[float, ...], tup
 
 def _calculate_score(left: Vector, right: Vector, distance_function: DistanceFunction) -> float:
     left_values, right_values = _paired_vectors(left, right)
+    if distance_function == "hamming":
+        # Compare coordinates before float conversion can round distinct large integers to the same value.
+        return sum(a != b for a, b in zip(left_values, right_values, strict=True)) / len(left_values)
+    left_values = tuple(float(value) for value in left_values)
+    right_values = tuple(float(value) for value in right_values)
     if distance_function in ("cosine_similarity", "cosine_distance", "DEFAULT"):
         left_scale = max(abs(value) for value in left_values)
         right_scale = max(abs(value) for value in right_values)
@@ -140,8 +145,6 @@ def _calculate_score(left: Vector, right: Vector, distance_function: DistanceFun
         score = sum((a - b) * (a - b) for a, b in zip(left_values, right_values, strict=True))
     elif distance_function == "manhattan":
         score = sum(abs(a - b) for a, b in zip(left_values, right_values, strict=True))
-    elif distance_function == "hamming":
-        score = sum(a != b for a, b in zip(left_values, right_values, strict=True)) / len(left_values)
     else:
         raise NotImplementedError(f"Distance function '{distance_function}' is not supported by InMemoryCollection.")
     if not math.isfinite(score):

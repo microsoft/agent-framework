@@ -35,6 +35,7 @@ from agent_framework import (
     InMemoryStore,
     Message,
     MessageInjectionMiddleware,
+    RawAgent,
     ResponseStream,
     ServiceSessionId,
     SessionContext,
@@ -91,6 +92,46 @@ class _ConnectedMCPTool(MCPTool):
 
     def get_mcp_client(self) -> contextlib.AbstractAsyncContextManager[Any]:  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
         raise NotImplementedError
+
+
+class _LifecycleClient(MockBaseChatClient):
+    def __init__(self, events: list[str]) -> None:
+        super().__init__()
+        self.events = events
+        self.exit_exception_type: type[BaseException] | None = None
+
+    async def __aenter__(self) -> "_LifecycleClient":
+        self.events.append("client.enter")
+        return self
+
+    async def __aexit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:
+        self.exit_exception_type = exc_type
+        self.events.append("client.exit")
+
+
+class _LifecycleMCPTool(_ConnectedMCPTool):
+    def __init__(self, name: str, events: list[str], *, fail_on_enter: bool = False) -> None:
+        super().__init__(name=name, function_names=[])
+        self.events = events
+        self.fail_on_enter = fail_on_enter
+        self.exit_exception_type: type[BaseException] | None = None
+
+    async def __aenter__(self) -> "_LifecycleMCPTool":
+        self.events.append(f"{self.name}.enter")
+        if self.fail_on_enter:
+            raise RuntimeError("MCP entry failed")
+        self.is_connected = True
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: Any,
+    ) -> None:
+        self.exit_exception_type = exc_type
+        self.events.append(f"{self.name}.exit")
+        self.is_connected = False
 
 
 class _RecordingHistoryProvider(HistoryProvider):
@@ -160,6 +201,85 @@ def test_agent_session_type(agent_session: AgentSession) -> None:
 
 def test_agent_type(agent: SupportsAgentRun) -> None:
     assert isinstance(agent, SupportsAgentRun)
+
+
+@pytest.mark.parametrize("agent_type", [Agent, RawAgent])
+async def test_agent_explicit_open_close(agent_type: type[RawAgent]) -> None:
+    events: list[str] = []
+    client = _LifecycleClient(events)
+    mcp_tool = _LifecycleMCPTool("mcp", events)
+    agent = agent_type(client=client, tools=[mcp_tool])
+
+    assert await agent.open() is agent
+    assert events == ["client.enter", "mcp.enter"]
+
+    await agent.close()
+    await agent.close()
+
+    assert events == ["client.enter", "mcp.enter", "mcp.exit", "client.exit"]
+
+
+@pytest.mark.parametrize("agent_type", [Agent, RawAgent])
+async def test_agent_async_with_delegates_to_open_close(agent_type: type[RawAgent]) -> None:
+    events: list[str] = []
+    client = _LifecycleClient(events)
+    mcp_tool = _LifecycleMCPTool("mcp", events)
+    agent = agent_type(client=client, tools=[mcp_tool])
+
+    with (
+        patch.object(agent, "open", wraps=agent.open) as open_mock,
+        patch.object(agent, "close", wraps=agent.close) as close_mock,
+        pytest.raises(RuntimeError, match="body failed"),
+    ):
+        async with agent as entered_agent:
+            assert entered_agent is agent
+            assert events == ["client.enter", "mcp.enter"]
+            raise RuntimeError("body failed")
+
+    open_mock.assert_awaited_once_with()
+    close_mock.assert_awaited_once_with()
+    assert events == ["client.enter", "mcp.enter", "mcp.exit", "client.exit"]
+    assert client.exit_exception_type is None
+    assert mcp_tool.exit_exception_type is None
+
+
+@pytest.mark.parametrize("agent_type", [Agent, RawAgent])
+async def test_agent_failed_open_closes_entered_contexts(agent_type: type[RawAgent]) -> None:
+    events: list[str] = []
+    client = _LifecycleClient(events)
+    first_tool = _LifecycleMCPTool("first", events)
+    failing_tool = _LifecycleMCPTool("failing", events, fail_on_enter=True)
+    agent = agent_type(client=client, tools=[first_tool, failing_tool])
+
+    with pytest.raises(RuntimeError, match="MCP entry failed"):
+        await agent.open()
+
+    assert events == ["client.enter", "first.enter", "failing.enter", "first.exit", "client.exit"]
+    assert first_tool.exit_exception_type is None
+    assert client.exit_exception_type is None
+
+    events.clear()
+    failing_tool.fail_on_enter = False
+    assert await agent.open() is agent
+    await agent.close()
+    assert events == ["client.enter", "first.enter", "failing.enter", "failing.exit", "first.exit", "client.exit"]
+
+
+async def test_agent_close_cleans_up_mcp_tool_opened_during_run(chat_client_base: MockBaseChatClient) -> None:
+    events: list[str] = []
+    mcp_tool = _LifecycleMCPTool("lazy", events)
+    mcp_tool.is_connected = False
+    agent = Agent(client=chat_client_base, tools=[mcp_tool])
+
+    await agent.run("hello")
+
+    assert events == ["lazy.enter"]
+    assert mcp_tool.is_connected
+
+    await agent.close()
+
+    assert events == ["lazy.enter", "lazy.exit"]
+    assert not mcp_tool.is_connected
 
 
 async def test_agent_run(agent: SupportsAgentRun) -> None:

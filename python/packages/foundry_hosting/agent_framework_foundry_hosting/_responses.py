@@ -28,6 +28,7 @@ from agent_framework import (
     AgentResponseUpdate,
     ChatOptions,
     CheckpointStorage,
+    ComputerSafetyCheck,
     Content,
     ContextProvider,
     HistoryProvider,
@@ -53,6 +54,9 @@ from azure.ai.agentserver.responses._id_generator import IdGenerator
 from azure.ai.agentserver.responses.aio import ResponseEventStream
 from azure.ai.agentserver.responses.hosting import ResponsesAgentServerHost
 from azure.ai.agentserver.responses.models import (
+    ComputerAction,
+    ComputerCallSafetyCheckParam,
+    ComputerScreenshotImage,
     CreateResponse,
     FunctionShellAction,
     FunctionShellCallOutputContent,
@@ -63,6 +67,8 @@ from azure.ai.agentserver.responses.models import (
     MessageContent,
     OAuthConsentRequestOutputItem,
     OutputItem,
+    OutputItemComputerToolCall,
+    OutputItemComputerToolCallOutput,
     OutputItemReasoningItem,
     OutputMessageContent,
     ResponseIncompleteReason,
@@ -86,6 +92,7 @@ from typing_extensions import Any
 
 from ._agent_source import is_agent, resolve_agent, validate_agent_source
 from ._feature_usage import FeatureIndex
+from ._scope import FoundryRequestScope
 from ._state_store import (
     AgentSessionStoreProvider,
     CheckpointStoreProvider,
@@ -350,6 +357,43 @@ def _is_safe_oauth_consent_link(consent_link: object) -> TypeGuard[str]:
     return _OAUTH_HOST_PATTERN.fullmatch(hostname) is not None
 
 
+def _normalize_oauth_consent_origin(value: str, *, require_origin_only: bool) -> str:
+    """Normalize an HTTPS consent URL or configured origin for exact matching."""
+    if not _is_safe_oauth_consent_link(value):
+        raise ValueError("OAuth consent origins must be absolute HTTPS URLs without user information.")
+
+    parsed = urlparse(value)
+    if require_origin_only and (parsed.path not in ("", "/") or parsed.params or parsed.query or parsed.fragment):
+        raise ValueError("OAuth consent origin entries must not include a path, query, parameters, or fragment.")
+
+    hostname = parsed.hostname
+    if hostname is None:  # pragma: no cover - _is_safe_oauth_consent_link already proved this.
+        raise ValueError("OAuth consent origin must include a hostname.")
+    normalized_host = f"[{hostname.lower()}]" if ":" in hostname else hostname.lower()
+    port = parsed.port
+    return f"https://{normalized_host}" if port in (None, 443) else f"https://{normalized_host}:{port}"
+
+
+def _normalize_allowed_oauth_consent_origins(allowed_origins: Sequence[str] | None) -> frozenset[str] | None:
+    """Normalize the host-configured consent origin allowlist, or return ``None`` when none is configured."""
+    if allowed_origins is None:
+        return None
+    return frozenset(_normalize_oauth_consent_origin(origin, require_origin_only=True) for origin in allowed_origins)
+
+
+def _is_allowed_oauth_consent_link(consent_link: object, allowed_origins: frozenset[str] | None) -> TypeGuard[str]:
+    """Return whether the link is safe and, when an allowlist is configured, has an allowed origin.
+
+    ``allowed_origins`` must come from ``_normalize_allowed_oauth_consent_origins``. ``None`` keeps the
+    safe-HTTPS check without restricting the origin; an empty set rejects every link.
+    """
+    if not _is_safe_oauth_consent_link(consent_link):
+        return False
+    if allowed_origins is None:
+        return True
+    return _normalize_oauth_consent_origin(consent_link, require_origin_only=False) in allowed_origins
+
+
 def consent_url_from_error(exc: BaseException) -> list[ConsentError] | None:
     """Return the consent URLs when ``exc`` wraps Foundry MCP gateway consent errors.
 
@@ -517,6 +561,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         agent_session_store_provider: StoreProvider[SessionStore] | None = None,
         checkpoint_store_provider: ContextScopedStoreProvider[CheckpointStorage] | None = None,
         function_approval_store_provider: StoreProvider[FunctionApprovalStore] | None = None,
+        allowed_oauth_consent_origins: Sequence[str] | None = None,
         history_source: Literal["agent_server", "agent"] = "agent_server",
         **kwargs: Any,
     ) -> None:
@@ -534,6 +579,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 If not provided, a default `CheckpointStoreProvider` will be used.
             function_approval_store_provider: Optional provider for function approval storage.
                 If not provided, a default `FunctionApprovalStoreProvider` will be used.
+            allowed_oauth_consent_origins: Optional exact HTTPS origins allowed for OAuth consent links.
+                When omitted, hosting retains its existing safe-HTTPS validation without restricting the
+                destination origin. When provided, every link must match an entry; an empty sequence rejects
+                every link. Entries must be origins such as `"https://auth.example.com"` and must not include
+                a path, query, or fragment.
             history_source: Source of conversation history supplied to the model for regular agents.
                 `"agent_server"` (default) uses the transcript from the configured response store,
                 requires a `RawAgent` whose client declares `STORES_BY_DEFAULT`, rejects load-enabled
@@ -585,6 +635,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         )
 
         # No caller-owned agent state is mutated until all validation and base-host construction succeed.
+        self._allowed_oauth_consent_origins = _normalize_allowed_oauth_consent_origins(allowed_oauth_consent_origins)
         super().__init__(prefix=prefix, options=options, store=store, **kwargs)
 
         self._agent_source = agent
@@ -668,6 +719,15 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         yield response_event_stream.emit_created()
         yield response_event_stream.emit_in_progress()
 
+        if self.config.is_hosted:
+            try:
+                FoundryRequestScope.from_context(self.config, get_request_context())
+            except RuntimeError as exc:
+                logger.error("Invalid Foundry hosted request context: %s", exc)
+                for event in self._emit_failure(response_event_stream, None, exc):
+                    yield event
+                return
+
         terminal_event: ResponseStreamEvent | None = None
         agent = await resolve_agent(self._agent_source)
         configuration = self._configuration or _validate_agent_configuration(
@@ -733,13 +793,16 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 (
                     consent_error
                     for consent_error in consent_errors_to_emit
-                    if not _is_safe_oauth_consent_link(consent_error.consent_url)
+                    if not _is_allowed_oauth_consent_link(
+                        consent_error.consent_url, self._allowed_oauth_consent_origins
+                    )
                 ),
                 None,
             )
             if invalid_consent is not None:
                 validation_error = ValueError(
-                    f"OAuth consent request for tool '{invalid_consent.name}' must include a safe HTTPS consent link."
+                    f"OAuth consent request for tool '{invalid_consent.name}' must include an allowed safe HTTPS "
+                    "consent link."
                 )
                 logger.error("%s", validation_error)
                 for event in self._emit_failure(response_event_stream, None, validation_error):
@@ -788,7 +851,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             yield response_event_stream.emit_incomplete()
             return
 
-        tracker = _OutputItemTracker(response_event_stream)
+        tracker = _OutputItemTracker(response_event_stream, self._allowed_oauth_consent_origins)
         try:
             if configuration.workflow:
                 inner = self._handle_inner_workflow(
@@ -1327,8 +1390,13 @@ class _OutputItemTracker:
     approval requests, etc.) are emitted in one shot, closing any still-open streaming item first.
     """
 
-    def __init__(self, stream: ResponseEventStream) -> None:
+    def __init__(
+        self,
+        stream: ResponseEventStream,
+        allowed_oauth_consent_origins: frozenset[str] | None = None,
+    ) -> None:
         self._stream = stream
+        self._allowed_oauth_consent_origins = allowed_oauth_consent_origins
         self._usage_details: UsageDetails | None = None
         self._active_type: str | None = None
         self._active_id: str | None = None
@@ -1348,6 +1416,7 @@ class _OutputItemTracker:
         self._fc_builder: OutputItemFunctionCallBuilder | None = None
         self._mcp_builder: OutputItemMcpCallBuilder | None = None
         self._outstanding_function_calls: dict[str, str | None] = {}
+        self._outstanding_computer_calls: set[str] = set()
         self._oauth_consent_requests: set[tuple[str, str]] = set()
         # Set when an agent update reports the model stopped early (content filter, token
         # limit); the response then ends as ``incomplete`` instead of ``completed`` so callers
@@ -1363,6 +1432,13 @@ class _OutputItemTracker:
             if not isinstance(item, Mapping):
                 continue
             persisted_item = cast(Mapping[str, Any], item)
+            if persisted_item.get("type") == "computer_call":
+                call_id = persisted_item.get("call_id")
+                if isinstance(call_id, str):
+                    self._outstanding_computer_calls.add(call_id)
+            elif persisted_item.get("type") == "computer_call_output":
+                if isinstance(call_id := persisted_item.get("call_id"), str):
+                    self._outstanding_computer_calls.discard(call_id)
             if persisted_item.get("type") != "oauth_consent_request":
                 continue
             consent_link = persisted_item.get("consent_link")
@@ -1611,6 +1687,67 @@ class _OutputItemTracker:
             ):
                 yield event
 
+        elif content.type == "computer_tool_call":
+            if not content.id or not content.call_id or not content.actions:
+                raise ValueError("A computer call requires an item id, call_id, and actions.")
+            if content.call_id in self._outstanding_computer_calls:
+                return
+            for event in self._close():
+                yield event
+            if IdGenerator.is_valid(content.id)[0]:
+                builder = self._stream.add_output_item(content.id)
+            else:
+                logger.warning("Remapping computer call item id %r to an AgentServer id.", content.id)
+                builder = self._stream.add_output_item_computer_call()
+            status = content.status if content.status is not None else "completed"
+            if status not in ("in_progress", "completed", "incomplete"):
+                raise ValueError(f"Unsupported computer call status: {status!r}")
+            item = OutputItemComputerToolCall(
+                type="computer_call",
+                id=builder.item_id,
+                call_id=content.call_id,
+                actions=cast(list[ComputerAction], content.actions),
+                pending_safety_checks=cast(list[ComputerCallSafetyCheckParam], content.pending_safety_checks or []),
+                status=status,
+            )
+            if content.additional_properties.get("computer_action_format") == "single":
+                if len(content.actions) != 1:
+                    raise ValueError("A preview computer call requires exactly one action.")
+                item.pop("actions")
+                item["action"] = cast(ComputerAction, content.actions[0])
+            yield builder.emit_added(item)
+            yield builder.emit_done(item)
+            self._outstanding_computer_calls.add(content.call_id)
+
+        elif content.type == "computer_tool_result":
+            if not content.call_id or content.screenshot is None:
+                raise ValueError("A computer result requires a call_id and screenshot.")
+            for event in self._close():
+                yield event
+            if content.id and IdGenerator.is_valid(content.id)[0]:
+                builder = self._stream.add_output_item(content.id)
+            else:
+                if content.id:
+                    logger.warning("Remapping computer output item id %r to an AgentServer id.", content.id)
+                builder = self._stream.add_output_item_computer_call_output()
+            item = OutputItemComputerToolCallOutput(
+                type="computer_call_output",
+                id=builder.item_id,
+                call_id=content.call_id,
+                output=cast(ComputerScreenshotImage, _computer_screenshot_to_output(content.screenshot)),
+            )
+            if content.status is not None:
+                if content.status not in ("in_progress", "completed", "incomplete"):
+                    raise ValueError(f"Unsupported computer output status: {content.status!r}")
+                item["status"] = content.status
+            if content.acknowledged_safety_checks is not None:
+                item["acknowledged_safety_checks"] = cast(
+                    list[ComputerCallSafetyCheckParam], content.acknowledged_safety_checks
+                )
+            yield builder.emit_added(item)
+            yield builder.emit_done(item)
+            self._outstanding_computer_calls.discard(content.call_id)
+
         elif content.type == "function_approval_request":
             for event in self._close():
                 yield event
@@ -1647,8 +1784,8 @@ class _OutputItemTracker:
                 yield event
 
             consent_link = content.consent_link
-            if not _is_safe_oauth_consent_link(consent_link):
-                raise ValueError("OAuth consent request content must include a safe HTTPS consent link.")
+            if not _is_allowed_oauth_consent_link(consent_link, self._allowed_oauth_consent_origins):
+                raise ValueError("OAuth consent request content must include an allowed safe HTTPS consent link.")
 
             server_label = content.additional_properties.get("server_label")
             if not isinstance(server_label, str) or not server_label:
@@ -1902,6 +2039,57 @@ def _reasoning_item_to_contents(reasoning: ItemReasoningItem | OutputItemReasoni
     return [Content.from_text_reasoning(id=reasoning["id"], protected_data=encrypted_content)]
 
 
+def _computer_safety_checks(checks: Sequence[Mapping[str, Any]] | None) -> list[ComputerSafetyCheck] | None:
+    if checks is None:
+        return None
+    parsed: list[ComputerSafetyCheck] = []
+    for check in checks:
+        check_id = check.get("id")
+        if not isinstance(check_id, str) or not check_id:
+            raise ValueError("Computer safety checks require an id.")
+        entry = ComputerSafetyCheck(id=check_id)
+        for key in ("code", "message"):
+            value = check.get(key)
+            if value is not None:
+                if not isinstance(value, str):
+                    raise ValueError(f"Computer safety check {key} must be a string.")
+                entry[key] = value
+        parsed.append(entry)
+    return parsed
+
+
+def _computer_screenshot_from_output(output: Mapping[str, Any]) -> Content:
+    if output.get("type") != "computer_screenshot":
+        raise ValueError("Computer call output must contain a computer screenshot.")
+    image_url = output.get("image_url")
+    file_id = output.get("file_id")
+    additional_properties: dict[str, Any] = {}
+    if detail := output.get("detail"):
+        additional_properties["detail"] = detail
+    if isinstance(image_url, str) and image_url:
+        if file_id is not None:
+            additional_properties["file_id"] = file_id
+        return Content.from_uri(image_url, additional_properties=additional_properties)
+    if isinstance(file_id, str) and file_id:
+        return Content.from_hosted_file(file_id, additional_properties=additional_properties)
+    raise ValueError("Computer screenshot is missing its image URL or file ID.")
+
+
+def _computer_screenshot_to_output(screenshot: Content) -> dict[str, Any]:
+    output: dict[str, Any] = {"type": "computer_screenshot"}
+    if screenshot.type in ("data", "uri") and screenshot.uri:
+        output["image_url"] = screenshot.uri
+        if file_id := screenshot.additional_properties.get("file_id"):
+            output["file_id"] = file_id
+    elif screenshot.type == "hosted_file" and screenshot.file_id:
+        output["file_id"] = screenshot.file_id
+    else:
+        raise ValueError("A computer screenshot requires image data, a URI, or a hosted file.")
+    if detail := screenshot.additional_properties.get("detail"):
+        output["detail"] = detail
+    return output
+
+
 async def _item_to_message(
     item: Item,
     *,
@@ -2083,14 +2271,22 @@ async def _item_to_message(
         )
 
     if item["type"] == "computer_call":
+        plural_actions = item.get("actions")
+        singular_action = item.get("action")
+        actions = plural_actions or ([singular_action] if singular_action is not None else [])
+        if not actions:
+            raise ValueError("Computer call is missing its ordered actions.")
+        props = {"computer_action_format": "single"} if not plural_actions and singular_action is not None else None
         return Message(
             role="assistant",
             contents=[
-                Content.from_function_call(
-                    item["call_id"],
-                    "computer_use",
-                    arguments=_json_safe_to_str(item.get("action")),
-                    informational_only=True,
+                Content.from_computer_tool_call(
+                    id=item["id"],
+                    call_id=item["call_id"],
+                    actions=actions,
+                    status=item.get("status"),
+                    pending_safety_checks=_computer_safety_checks(item.get("pending_safety_checks")),
+                    additional_properties=props,
                 )
             ],
         )
@@ -2098,7 +2294,15 @@ async def _item_to_message(
     if item["type"] == "computer_call_output":
         return Message(
             role="tool",
-            contents=[Content.from_function_result(item["call_id"], result=_json_safe_to_str(item["output"]))],
+            contents=[
+                Content.from_computer_tool_result(
+                    id=item.get("id"),
+                    call_id=item["call_id"],
+                    screenshot=_computer_screenshot_from_output(item["output"]),
+                    status=item.get("status"),
+                    acknowledged_safety_checks=_computer_safety_checks(item.get("acknowledged_safety_checks")),
+                )
+            ],
         )
 
     if item["type"] == "custom_tool_call":
@@ -2300,10 +2504,7 @@ def _convert_message_content(content: MessageContent) -> Content:
         if file_data := content.get("file_data"):
             return _convert_file_data(file_data, content.get("filename"))
     if content["type"] == "computer_screenshot":
-        if image_url := content.get("image_url"):
-            return Content.from_uri(image_url)
-        if file_id := content.get("file_id"):
-            return Content.from_hosted_file(file_id, name=content.get("filename"))
+        return _computer_screenshot_from_output(content)
 
     raise ValueError(f"Unsupported MessageContent type: {content['type']}")
 

@@ -226,6 +226,36 @@ def test_group_annotations_pair_nonadjacent_function_result_by_call_id() -> None
     assert _group_id(messages[1]) != call_group
 
 
+@pytest.mark.parametrize("screenshot", [Content.from_data(b"image", "image/png"), None])
+def test_group_annotations_keep_computer_call_result_and_reasoning_atomic(screenshot: Content | None) -> None:
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_text_reasoning(id="rs_1", text="navigate"),
+                Content.from_computer_tool_call(
+                    id="cu_1",
+                    call_id="call_1",
+                    actions=[{"type": "click", "x": 1, "y": 2}],
+                ),
+            ],
+        ),
+        Message(role="assistant", contents=["action approved"]),
+    ]
+    annotate_message_groups(messages)
+    group_id = _group_id(messages[0])
+    result = Message(
+        role="tool",
+        contents=[Content.from_computer_tool_result(call_id="call_1", screenshot=screenshot)],
+    )
+    extend_compaction_messages(messages, [result], tokenizer=CharacterEstimatorTokenizer())
+
+    assert _group_kind(messages[0]) == "tool_call"
+    assert _group_id(messages[2]) == group_id
+    assert _group_has_reasoning(messages[2]) is True
+    assert _group_id(messages[1]) != group_id
+
+
 def test_group_annotations_pair_multiple_nonadjacent_results_with_declaration() -> None:
     messages = [
         _assistant_reasoning_and_function_calls("c1", "c2"),
@@ -1153,6 +1183,18 @@ def test_format_summary_message_renders_function_result_without_call_id() -> Non
 
     assert "done" in rendered
     assert "call_id" not in rendered
+
+
+def test_format_summary_message_only_labels_present_computer_screenshot() -> None:
+    without_screenshot = Message(role="tool", contents=[Content.from_computer_tool_result(call_id="call_1")])
+    screenshot = Content.from_data(b"png", "image/png")
+    with_screenshot = Message(
+        role="tool",
+        contents=[Content.from_computer_tool_result(call_id="call_1", screenshot=screenshot)],
+    )
+
+    assert _format_summary_message(1, without_screenshot) == "1. [tool] computer_tool_result [call_id=call_1]"
+    assert _format_summary_message(1, with_screenshot) == "1. [tool] computer_tool_result: screenshot [call_id=call_1]"
 
 
 def test_format_summary_message_combines_tool_calls_with_text() -> None:

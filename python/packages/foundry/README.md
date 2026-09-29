@@ -4,7 +4,7 @@ This package contains the Microsoft Foundry integrations for Microsoft Agent Fra
 
 ## SDK compatibility
 
-This package supports `azure-ai-projects>=2.2.0,<2.7.0`. Projects 2.5 and later require
+This package supports `azure-ai-projects>=2.2.0,<2.8.0`. Projects 2.5 and later require
 `openai>=3.0.0`, so `agent-framework-foundry` requires `agent-framework-openai>=1.14.2`,
 which supports both OpenAI 2.x and 3.x.
 
@@ -20,6 +20,39 @@ With Application Insights connected to your project, call
 `await agent.configure_azure_monitor()` before invoking a `FoundryAgent`.
 See [the tracing sample](../../samples/02-agents/observability/foundry_agent_tracing.py)
 for streaming and non-streaming examples.
+
+## Embeddings
+
+`FoundryEmbeddingClient` supports OpenAI text embedding deployments exposed through a Microsoft Foundry project.
+Pass an existing `AIProjectClient`, or provide the project endpoint and an async Azure credential:
+
+```python
+import os
+
+from agent_framework.foundry import FoundryEmbeddingClient
+from azure.identity.aio import AzureCliCredential
+
+async with AzureCliCredential() as credential:
+    async with FoundryEmbeddingClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_EMBEDDING_MODEL"],
+        credential=credential,
+    ) as client:
+        result = await client.get_embeddings(["Hello, world!"])
+        print(result[0].dimensions)
+```
+
+Set `FOUNDRY_PROJECT_ENDPOINT` to the project endpoint and `FOUNDRY_EMBEDDING_MODEL` to the embedding deployment
+name. When an `AIProjectClient` is already available, pass it as `project_client` and omit the endpoint and
+credential.
+
+The client uses the project for authentication and converts a
+`https://<resource>.services.ai.azure.com/api/projects/<project>` endpoint to the documented resource-scoped
+`https://<resource>.openai.azure.com/openai/v1/` model route. The existing `FOUNDRY_MODELS_ENDPOINT` and
+`FOUNDRY_MODELS_API_KEY` configuration remains available for Foundry Models inference endpoints. A Models endpoint is
+required for image embedding models. If both project and Models endpoints are configured only through environment
+variables, the Models endpoint is retained for backward compatibility; pass `project_endpoint` explicitly to select
+the project OpenAI deployment.
 
 ## Evaluations
 
@@ -118,9 +151,41 @@ agent = Agent(
 )
 ```
 
-Generally available factories: `get_code_interpreter_tool`,
+Non-preview factories: `get_computer_tool`, `get_code_interpreter_tool`,
 `get_file_search_tool`, `get_web_search_tool`,
 `get_image_generation_tool`, `get_mcp_tool`.
+
+`get_computer_tool()` returns the Foundry SDK's `ComputerTool` (available in
+`azure-ai-projects>=2.3.0`). The package still supports 2.2.x for other tools:
+only calling this factory on an older SDK raises `ImportError` with upgrade guidance.
+`get_computer_use_tool(...)` remains available for the separate preview API.
+The OpenAI Responses client also exposes `OpenAIChatClient.get_computer_tool()`.
+The new `ComputerSafetyCheck` type and `Content.from_computer_tool_call` /
+`Content.from_computer_tool_result` constructors are experimental Agent Framework APIs,
+even though Foundry's `ComputerTool` is a non-preview SDK model.
+
+Computer calls arrive as `Content` with `type="computer_tool_call"`, a
+provider item `id`, a distinct `call_id`, ordered `actions`, and optional
+`pending_safety_checks`. Unanswered calls require application input: inspect
+`AgentResponse.user_input_requests` (or `ChatResponse.messages[*].contents`),
+show the actions and warnings to the user, and execute actions only after
+approval. To continue, return `Content.from_computer_tool_result(call_id=...,
+screenshot=Content.from_data(image_bytes, "image/png"))` in a tool message;
+`Content.from_uri(...)` and `Content.from_hosted_file(...)` also work for
+screenshots. Shared `Content` allows a result without a screenshot for other
+providers, but OpenAI and Foundry Responses require one. If checks were pending,
+explicitly pass *only* those the
+application has confirmed as `acknowledged_safety_checks=[{"id": "..."}]`.
+The framework never acknowledges warnings on your behalf. Calls and results
+can be persisted as `Content.to_dict()` and restored with `Content.from_dict()`.
+A call already paired with a completed screenshot result stays in the transcript
+for audit (`informational_only=True`), but does not appear in
+`AgentResponse.user_input_requests`. When a workflow pauses on a computer call
+alongside locally executable functions, it sends their completed results with
+the screenshot in the original call order after the application responds. If
+any computer request in a workflow batch is cancelled, the remaining requests
+in that agent's batch are cancelled too; the terminal output retains already
+resolved results, and the next turn starts with a fresh agent session.
 
 > **Choosing a web grounding tool.** `get_web_search_tool` is the recommended
 > default — it requires no separate Bing resource and works with Azure OpenAI

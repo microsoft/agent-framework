@@ -176,6 +176,42 @@ async def test_auth_flow_injects_bearer_token_async_credential() -> None:
     assert cred.scopes == ["https://ai.azure.com/.default"]
 
 
+@pytest.mark.parametrize(
+    ("additional_features", "expected"),
+    [
+        (None, "Toolboxes=V1Preview"),
+        ("   ", "Toolboxes=V1Preview"),
+        ("FeatureOne=Enabled,FeatureTwo=Enabled", "Toolboxes=V1Preview,FeatureOne=Enabled,FeatureTwo=Enabled"),
+        ("FeatureOne=Enabled, toolboxes=v1preview ", "FeatureOne=Enabled, toolboxes=v1preview "),
+    ],
+)
+async def test_auth_flow_injects_foundry_features_header(
+    monkeypatch: pytest.MonkeyPatch,
+    additional_features: str | None,
+    expected: str,
+) -> None:
+    if additional_features is None:
+        monkeypatch.delenv("FOUNDRY_AGENT_TOOLSET_FEATURES", raising=False)
+    else:
+        monkeypatch.setenv("FOUNDRY_AGENT_TOOLSET_FEATURES", additional_features)
+    auth = _ToolboxAuth(_FakeCredential(), "scope")  # type: ignore
+    request = httpx.Request("POST", "https://h/toolboxes/tb/mcp")
+
+    prepared = await anext(auth.async_auth_flow(request))
+
+    assert prepared.headers["Foundry-Features"] == expected
+
+
+def test_sync_auth_flow_injects_foundry_features_header(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FOUNDRY_AGENT_TOOLSET_FEATURES", "FeatureOne=Enabled")
+    auth = _ToolboxAuth(_FakeCredential(), "scope")  # type: ignore
+    request = httpx.Request("POST", "https://h/toolboxes/tb/mcp")
+
+    prepared = next(auth.sync_auth_flow(request))
+
+    assert prepared.headers["Foundry-Features"] == "Toolboxes=V1Preview,FeatureOne=Enabled"
+
+
 def test_sync_auth_flow_injects_bearer_token() -> None:
     cred = _FakeCredential("sync123")
     auth = _ToolboxAuth(cred, "https://ai.azure.com/.default")  # type: ignore
@@ -213,6 +249,38 @@ async def test_auth_flow_omits_call_id_when_absent() -> None:
     request = httpx.Request("POST", "https://h/toolboxes/tb/mcp")
 
     prepared = await anext(auth.async_auth_flow(request))
+
+    assert "x-agent-foundry-call-id" not in prepared.headers
+
+
+async def test_async_auth_flow_removes_call_id_from_reused_request_when_context_absent() -> None:
+    auth = _ToolboxAuth(_FakeCredential(), "scope")  # type: ignore
+    request = httpx.Request("POST", "https://h/toolboxes/tb/mcp")
+
+    token = set_request_context(FoundryAgentRequestContext(call_id="canary-call-id"))
+    try:
+        prepared = await anext(auth.async_auth_flow(request))
+        assert prepared.headers["x-agent-foundry-call-id"] == "canary-call-id"
+    finally:
+        reset_request_context(token)
+
+    prepared = await anext(auth.async_auth_flow(request))
+
+    assert "x-agent-foundry-call-id" not in prepared.headers
+
+
+def test_sync_auth_flow_removes_call_id_from_reused_request_when_context_absent() -> None:
+    auth = _ToolboxAuth(_FakeCredential(), "scope")  # type: ignore
+    request = httpx.Request("POST", "https://h/toolboxes/tb/mcp")
+
+    token = set_request_context(FoundryAgentRequestContext(call_id="canary-call-id"))
+    try:
+        prepared = next(auth.sync_auth_flow(request))
+        assert prepared.headers["x-agent-foundry-call-id"] == "canary-call-id"
+    finally:
+        reset_request_context(token)
+
+    prepared = next(auth.sync_auth_flow(request))
 
     assert "x-agent-foundry-call-id" not in prepared.headers
 
