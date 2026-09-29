@@ -5345,6 +5345,16 @@ def test_merge_chat_options_single_mapping_tool_is_not_spread_into_keys():
     assert merged["tools"] == [hosted, my_tool]
 
 
+def test_merge_chat_options_same_plain_callable_on_both_sides():
+    """The same undecorated function on both sides is merged into one tool."""
+
+    def my_func() -> None:
+        pass
+
+    merged = merge_chat_options({"tools": [my_func]}, {"tools": [my_func]})  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    assert [t.name for t in merged["tools"]] == ["my_func"]
+
+
 def test_merge_chat_options_keeps_pydantic_provider_tool_whole():
     """A Pydantic provider-native tool spec is one tool, not spread into its fields."""
 
