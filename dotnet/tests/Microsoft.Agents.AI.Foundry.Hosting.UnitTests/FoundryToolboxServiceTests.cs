@@ -1,6 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Linq;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
@@ -350,6 +353,7 @@ public class FoundryToolboxServiceTests
                     Consents: null)),
         };
         await service.StartAsync(CancellationToken.None);
+        HostedCallContext.CallId = $"request-{validName}";
 
         // Act
         var resolution = await service.GetToolboxToolsAsync(validName, version: null, CancellationToken.None);
@@ -358,5 +362,316 @@ public class FoundryToolboxServiceTests
         Assert.Empty(resolution.Consents);
         Assert.Single(resolution.Tools);
         Assert.Same(tool, resolution.Tools[0]);
+    }
+
+    [Fact]
+    public async Task GetToolboxToolsAsync_DifferentRequestContexts_DoNotReuseCachedToolsAsync()
+    {
+        // Arrange
+        var options = new FoundryToolboxOptions
+        {
+            StrictMode = false,
+            EndpointOverride = "https://proj.example/api/projects/proj",
+        };
+        var openCount = 0;
+        await using var service = new FoundryToolboxService(
+            Options.Create(options),
+            Mock.Of<TokenCredential>())
+        {
+            ToolboxOpener = (_, _, _) =>
+            {
+                openCount++;
+                AITool tool = AIFunctionFactory.Create(() => HostedCallContext.CallId, name: $"tool_{openCount}");
+                return Task.FromResult(
+                    new FoundryToolboxService.ToolboxOpenResult(
+                        new FoundryToolboxService.CachedToolbox(Client: null, new HttpClient(), [tool]),
+                        Consents: null));
+            },
+        };
+        await service.StartAsync(CancellationToken.None);
+
+        // Act
+        HostedCallContext.CallId = "request-a";
+        var first = await service.GetToolboxToolsAsync("shared-toolbox", version: null, CancellationToken.None);
+        HostedCallContext.CallId = "request-b";
+        var second = await service.GetToolboxToolsAsync("shared-toolbox", version: null, CancellationToken.None);
+
+        // Assert
+        Assert.Equal(2, openCount);
+        Assert.NotSame(first.Tools[0], second.Tools[0]);
+    }
+
+    [Fact]
+    public async Task GetToolboxToolsAsync_SameRequestContext_ReusesCachedToolsAsync()
+    {
+        // Arrange
+        var options = new FoundryToolboxOptions
+        {
+            StrictMode = false,
+            EndpointOverride = "https://proj.example/api/projects/proj",
+        };
+        var openCount = 0;
+        await using var service = new FoundryToolboxService(
+            Options.Create(options),
+            Mock.Of<TokenCredential>())
+        {
+            ToolboxOpener = (_, _, _) =>
+            {
+                openCount++;
+                AITool tool = AIFunctionFactory.Create(() => "ok", name: "shared_tool");
+                return Task.FromResult(
+                    new FoundryToolboxService.ToolboxOpenResult(
+                        new FoundryToolboxService.CachedToolbox(Client: null, new HttpClient(), [tool]),
+                        Consents: null));
+            },
+        };
+        await service.StartAsync(CancellationToken.None);
+
+        // Act
+        HostedCallContext.CallId = "request-a";
+        var first = await service.GetToolboxToolsAsync("shared-toolbox", version: null, CancellationToken.None);
+        var second = await service.GetToolboxToolsAsync("shared-toolbox", version: null, CancellationToken.None);
+
+        // Assert
+        Assert.Equal(1, openCount);
+        Assert.Same(first.Tools[0], second.Tools[0]);
+    }
+
+    [Fact]
+    public async Task RetryDeferredToolboxesAsync_DifferentRequestContexts_RetryIndependentlyAsync()
+    {
+        // Arrange
+        var options = new FoundryToolboxOptions
+        {
+            EndpointOverride = "https://proj.example/api/projects/proj",
+        };
+        options.ToolboxNames.Add("shared-toolbox");
+        var openCount = 0;
+        await using var service = new FoundryToolboxService(
+            Options.Create(options),
+            Mock.Of<TokenCredential>())
+        {
+            ToolboxOpener = (_, _, _) =>
+            {
+                openCount++;
+                if (HostedCallContext.CallId is null)
+                {
+                    throw new InvalidOperationException("A request context is required.");
+                }
+
+                AITool tool = AIFunctionFactory.Create(() => HostedCallContext.CallId, name: $"tool_{openCount}");
+                return Task.FromResult(
+                    new FoundryToolboxService.ToolboxOpenResult(
+                        new FoundryToolboxService.CachedToolbox(Client: null, new HttpClient(), [tool]),
+                        Consents: null));
+            },
+        };
+        await service.StartAsync(CancellationToken.None);
+
+        // Act
+        HostedCallContext.CallId = "request-a";
+        await service.RetryDeferredToolboxesAsync(CancellationToken.None);
+        HostedCallContext.CallId = "request-b";
+        await service.RetryDeferredToolboxesAsync(CancellationToken.None);
+
+        // Assert
+        Assert.Equal(3, openCount);
+    }
+
+    [Fact]
+    public async Task ResolvePendingConsentsAsync_DifferentRequestContexts_ResolveIndependentlyAsync()
+    {
+        // Arrange
+        var options = new FoundryToolboxOptions
+        {
+            EndpointOverride = "https://proj.example/api/projects/proj",
+        };
+        options.ToolboxNames.Add("shared-toolbox");
+        var openCount = 0;
+        await using var service = new FoundryToolboxService(
+            Options.Create(options),
+            Mock.Of<TokenCredential>())
+        {
+            ToolboxOpener = (_, _, _) =>
+            {
+                openCount++;
+                if (HostedCallContext.CallId is null)
+                {
+                    IReadOnlyList<McpConsentInfo> consents =
+                    [
+                        new("shared-toolbox", "send", "https://auth.example.com/consent"),
+                    ];
+                    return Task.FromResult(
+                        new FoundryToolboxService.ToolboxOpenResult(Cached: null, Consents: consents));
+                }
+
+                AITool tool = AIFunctionFactory.Create(() => HostedCallContext.CallId, name: $"tool_{openCount}");
+                return Task.FromResult(
+                    new FoundryToolboxService.ToolboxOpenResult(
+                        new FoundryToolboxService.CachedToolbox(Client: null, new HttpClient(), [tool]),
+                        Consents: null));
+            },
+        };
+        await service.StartAsync(CancellationToken.None);
+
+        // Act
+        HostedCallContext.CallId = "request-a";
+        var first = await service.ResolvePendingConsentsAsync(CancellationToken.None);
+        HostedCallContext.CallId = "request-b";
+        var second = await service.ResolvePendingConsentsAsync(CancellationToken.None);
+
+        // Assert
+        Assert.Empty(first);
+        Assert.Empty(second);
+        Assert.Equal(3, openCount);
+    }
+
+    [Fact]
+    public async Task GetToolboxToolsAsync_StartupOpenedToolbox_ReusesContainerCacheAcrossRequestsAsync()
+    {
+        // Arrange
+        var options = new FoundryToolboxOptions
+        {
+            EndpointOverride = "https://proj.example/api/projects/proj",
+        };
+        options.ToolboxNames.Add("shared-toolbox");
+        var openCount = 0;
+        await using var service = new FoundryToolboxService(
+            Options.Create(options),
+            Mock.Of<TokenCredential>())
+        {
+            ToolboxOpener = (_, _, _) =>
+            {
+                openCount++;
+                AITool tool = AIFunctionFactory.Create(() => "ok", name: "shared_tool");
+                return Task.FromResult(
+                    new FoundryToolboxService.ToolboxOpenResult(
+                        new FoundryToolboxService.CachedToolbox(Client: null, new HttpClient(), [tool]),
+                        Consents: null));
+            },
+        };
+        await service.StartAsync(CancellationToken.None);
+
+        // Act
+        HostedCallContext.CallId = "request-a";
+        var first = await service.GetToolboxToolsAsync("shared-toolbox", version: null, CancellationToken.None);
+        HostedCallContext.CallId = "request-b";
+        var second = await service.GetToolboxToolsAsync("shared-toolbox", version: null, CancellationToken.None);
+
+        // Assert
+        Assert.Equal(1, openCount);
+        Assert.Same(first.Tools[0], second.Tools[0]);
+    }
+
+    [Fact]
+    public async Task RequestToolboxScope_Dispose_ReleasesScopedClientAsync()
+    {
+        // Arrange
+        var options = new FoundryToolboxOptions
+        {
+            StrictMode = false,
+            EndpointOverride = "https://proj.example/api/projects/proj",
+        };
+        var handler = new TrackingHttpMessageHandler();
+        await using var service = new FoundryToolboxService(
+            Options.Create(options),
+            Mock.Of<TokenCredential>())
+        {
+            ToolboxOpener = (_, _, _) =>
+            {
+                AITool tool = AIFunctionFactory.Create(() => "ok", name: "shared_tool");
+                return Task.FromResult(
+                    new FoundryToolboxService.ToolboxOpenResult(
+                        new FoundryToolboxService.CachedToolbox(
+                            Client: null,
+                            new HttpClient(handler),
+                            [tool]),
+                        Consents: null));
+            },
+        };
+        await service.StartAsync(CancellationToken.None);
+        var scope = service.CreateRequestScope();
+        HostedCallContext.ToolboxCacheScopeId = scope.Id;
+        _ = await service.GetToolboxToolsAsync("shared-toolbox", version: null, CancellationToken.None);
+
+        // Act
+        await scope.DisposeAsync();
+
+        // Assert
+        Assert.True(handler.IsDisposed);
+    }
+
+    [Fact]
+    public async Task GetToolboxToolsAsync_ConcurrentOpaqueScopes_DoNotCollideAsync()
+    {
+        // Arrange
+        var options = new FoundryToolboxOptions
+        {
+            StrictMode = false,
+            EndpointOverride = "https://proj.example/api/projects/proj",
+        };
+        var openedScopes = new ConcurrentBag<string>();
+        var handlers = new ConcurrentBag<TrackingHttpMessageHandler>();
+        var openCount = 0;
+        await using var service = new FoundryToolboxService(
+            Options.Create(options),
+            Mock.Of<TokenCredential>())
+        {
+            ToolboxOpener = (_, _, _) =>
+            {
+                var scopeId = Assert.IsType<string>(HostedCallContext.ToolboxCacheScopeId);
+                openedScopes.Add(scopeId);
+                var handler = new TrackingHttpMessageHandler();
+                handlers.Add(handler);
+                var openNumber = Interlocked.Increment(ref openCount);
+                AITool tool = AIFunctionFactory.Create(() => scopeId, name: $"scoped_tool_{openNumber}");
+                return Task.FromResult(
+                    new FoundryToolboxService.ToolboxOpenResult(
+                        new FoundryToolboxService.CachedToolbox(
+                            Client: null,
+                            new HttpClient(handler),
+                            [tool]),
+                        Consents: null));
+            },
+        };
+        await service.StartAsync(CancellationToken.None);
+
+        async Task<FoundryToolboxService.ToolboxResolution> ResolveInOwnScopeAsync()
+        {
+            await using var scope = service.CreateRequestScope();
+            HostedCallContext.ToolboxCacheScopeId = scope.Id;
+            return await service.GetToolboxToolsAsync(
+                "shared-toolbox",
+                version: null,
+                CancellationToken.None);
+        }
+
+        // Act
+        var resolutions = await Task.WhenAll(
+            Task.Run(ResolveInOwnScopeAsync),
+            Task.Run(ResolveInOwnScopeAsync));
+
+        // Assert
+        Assert.Equal(2, openCount);
+        Assert.Equal(2, openedScopes.Distinct(StringComparer.Ordinal).Count());
+        Assert.NotSame(resolutions[0].Tools[0], resolutions[1].Tools[0]);
+        Assert.Equal(2, handlers.Count);
+        Assert.All(handlers, static item => Assert.True(item.IsDisposed));
+    }
+
+    private sealed class TrackingHttpMessageHandler : HttpMessageHandler
+    {
+        internal bool IsDisposed { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        protected override void Dispose(bool disposing)
+        {
+            this.IsDisposed = true;
+            base.Dispose(disposing);
+        }
     }
 }
