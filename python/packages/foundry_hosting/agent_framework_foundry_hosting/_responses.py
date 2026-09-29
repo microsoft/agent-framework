@@ -432,6 +432,43 @@ def _is_safe_oauth_consent_link(consent_link: object) -> TypeGuard[str]:
     return _OAUTH_HOST_PATTERN.fullmatch(hostname) is not None
 
 
+def _normalize_oauth_consent_origin(value: str, *, require_origin_only: bool) -> str:
+    """Normalize an HTTPS consent URL or configured origin for exact matching."""
+    if not _is_safe_oauth_consent_link(value):
+        raise ValueError("OAuth consent origins must be absolute HTTPS URLs without user information.")
+
+    parsed = urlparse(value)
+    if require_origin_only and (parsed.path not in ("", "/") or parsed.params or parsed.query or parsed.fragment):
+        raise ValueError("OAuth consent origin entries must not include a path, query, parameters, or fragment.")
+
+    hostname = parsed.hostname
+    if hostname is None:  # pragma: no cover - _is_safe_oauth_consent_link already proved this.
+        raise ValueError("OAuth consent origin must include a hostname.")
+    normalized_host = f"[{hostname.lower()}]" if ":" in hostname else hostname.lower()
+    port = parsed.port
+    return f"https://{normalized_host}" if port in (None, 443) else f"https://{normalized_host}:{port}"
+
+
+def _normalize_allowed_oauth_consent_origins(allowed_origins: Sequence[str] | None) -> frozenset[str] | None:
+    """Normalize the host-configured consent origin allowlist, or return ``None`` when none is configured."""
+    if allowed_origins is None:
+        return None
+    return frozenset(_normalize_oauth_consent_origin(origin, require_origin_only=True) for origin in allowed_origins)
+
+
+def _is_allowed_oauth_consent_link(consent_link: object, allowed_origins: frozenset[str] | None) -> TypeGuard[str]:
+    """Return whether the link is safe and, when an allowlist is configured, has an allowed origin.
+
+    ``allowed_origins`` must come from ``_normalize_allowed_oauth_consent_origins``. ``None`` keeps the
+    safe-HTTPS check without restricting the origin; an empty set rejects every link.
+    """
+    if not _is_safe_oauth_consent_link(consent_link):
+        return False
+    if allowed_origins is None:
+        return True
+    return _normalize_oauth_consent_origin(consent_link, require_origin_only=False) in allowed_origins
+
+
 def consent_url_from_error(exc: BaseException) -> list[ConsentError] | None:
     """Return the consent URLs when ``exc`` wraps Foundry MCP gateway consent errors.
 
@@ -624,6 +661,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         agent_session_store_provider: StoreProvider[SessionStore] | None = None,
         checkpoint_store_provider: ContextScopedStoreProvider[CheckpointStorage] | None = None,
         function_approval_store_provider: StoreProvider[FunctionApprovalStore] | None = None,
+        allowed_oauth_consent_origins: Sequence[str] | None = None,
         history_source: Literal["agent_server", "agent", "service"] = "agent_server",
         background_source: Literal["agent_server", "provider"] = "agent_server",
         prepare_options: OptionsHook | None = None,
@@ -645,6 +683,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 If not provided, a default `CheckpointStoreProvider` will be used.
             function_approval_store_provider: Optional provider for function approval storage.
                 If not provided, a default `FunctionApprovalStoreProvider` will be used.
+            allowed_oauth_consent_origins: Optional exact HTTPS origins allowed for OAuth consent links.
+                When omitted, hosting retains its existing safe-HTTPS validation without restricting the
+                destination origin. When provided, every link must match an entry; an empty sequence rejects
+                every link. Entries must be origins such as `"https://auth.example.com"` and must not include
+                a path, query, or fragment.
             history_source: Who supplies prior messages to the *model*, independently of the caller's
                 Responses `store` flag. Defaults to `"agent_server"`:
 
@@ -742,6 +785,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         )
 
         # No caller-owned agent state is mutated until all validation and base-host construction succeed.
+        self._allowed_oauth_consent_origins = _normalize_allowed_oauth_consent_origins(allowed_oauth_consent_origins)
         super().__init__(
             prefix=prefix,
             options=options,
@@ -924,13 +968,16 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 (
                     consent_error
                     for consent_error in consent_errors_to_emit
-                    if not _is_safe_oauth_consent_link(consent_error.consent_url)
+                    if not _is_allowed_oauth_consent_link(
+                        consent_error.consent_url, self._allowed_oauth_consent_origins
+                    )
                 ),
                 None,
             )
             if invalid_consent is not None:
                 validation_error = ValueError(
-                    f"OAuth consent request for tool '{invalid_consent.name}' must include a safe HTTPS consent link."
+                    f"OAuth consent request for tool '{invalid_consent.name}' must include an allowed safe HTTPS "
+                    "consent link."
                 )
                 logger.error("%s", validation_error)
                 for event in self._emit_failure(response_event_stream, None, validation_error):
@@ -998,7 +1045,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             yield response_event_stream.emit_incomplete()
             return
 
-        tracker = _OutputItemTracker(response_event_stream)
+        tracker = _OutputItemTracker(response_event_stream, self._allowed_oauth_consent_origins)
         try:
             if configuration.workflow:
                 inner = self._handle_inner_workflow(
@@ -1902,8 +1949,13 @@ class _OutputItemTracker:
     approval requests, etc.) are emitted in one shot, closing any still-open streaming item first.
     """
 
-    def __init__(self, stream: ResponseEventStream) -> None:
+    def __init__(
+        self,
+        stream: ResponseEventStream,
+        allowed_oauth_consent_origins: frozenset[str] | None = None,
+    ) -> None:
         self._stream = stream
+        self._allowed_oauth_consent_origins = allowed_oauth_consent_origins
         self._usage_details: UsageDetails | None = None
         self._active_type: str | None = None
         self._active_id: str | None = None
@@ -2291,8 +2343,8 @@ class _OutputItemTracker:
                 yield event
 
             consent_link = content.consent_link
-            if not _is_safe_oauth_consent_link(consent_link):
-                raise ValueError("OAuth consent request content must include a safe HTTPS consent link.")
+            if not _is_allowed_oauth_consent_link(consent_link, self._allowed_oauth_consent_origins):
+                raise ValueError("OAuth consent request content must include an allowed safe HTTPS consent link.")
 
             server_label = content.additional_properties.get("server_label")
             if not isinstance(server_label, str) or not server_label:

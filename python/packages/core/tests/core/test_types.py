@@ -2309,6 +2309,65 @@ def test_text_content_iadd_coverage():
     assert t1.additional_properties == {"key1": "val1", "key2": "val2"}
 
 
+def test_text_content_add_handles_missing_text() -> None:
+    """A text content may carry no text at all; adding one must not raise.
+
+    `text` is optional on a text content -- `Content.from_dict({"type": "text"})`
+    produces one, and a provider can stream a text part that carries only
+    annotations or metadata. Concatenating the raw attributes raised
+    `TypeError: can only concatenate str (not "NoneType") to str`.
+    """
+    with_text = Content("text", text="Hello")
+    without_text = Content("text")
+
+    assert (with_text + without_text).text == "Hello"
+    assert (without_text + with_text).text == "Hello"
+
+
+def test_text_content_without_text_stores_empty_string() -> None:
+    """A text content built without text stores "" so every consumer can treat it as a string."""
+    assert Content("text").text == ""
+    assert Content("text", text=None).text == ""
+    assert Content.from_dict({"type": "text"}).text == ""
+    assert (Content("text") + Content("text")).text == ""
+
+    # Other content types keep None for a missing text.
+    assert Content("text_reasoning").text is None
+
+
+def test_message_and_response_text_with_text_content_missing_text() -> None:
+    """The public `.text` accessors join content text directly and must not raise."""
+    message = Message(role="assistant", contents=[Content("text")])
+    assert message.text == ""
+
+    response = ChatResponse(messages=[Message(role="assistant", contents=[Content("text")])])
+    assert response.text == ""
+
+    update = ChatResponseUpdate(role="assistant", contents=[Content("text")])
+    assert update.text == ""
+
+
+def test_chat_response_from_updates_coalesces_text_update_without_text() -> None:
+    """The reachable path: coalescing a stream that contains a text part with no delta.
+
+    `_coalesce_text_content` merges consecutive text contents with `+`, so one
+    such part used to abort the whole response. The identical stream built from
+    `text_reasoning` parts already worked, which is the asymmetry being fixed.
+    """
+
+    def updates(content_type: Literal["text", "text_reasoning"]) -> list[ChatResponseUpdate]:
+        return [
+            ChatResponseUpdate(role="assistant", contents=[Content(content_type, text="Hello ")]),
+            ChatResponseUpdate(role="assistant", contents=[Content(content_type)]),
+            ChatResponseUpdate(role="assistant", contents=[Content(content_type, text="world")]),
+        ]
+
+    content_types: tuple[Literal["text", "text_reasoning"], ...] = ("text", "text_reasoning")
+    for content_type in content_types:
+        response = ChatResponse.from_updates(updates(content_type))
+        assert [content.text for content in response.messages[0].contents] == ["Hello world"]
+
+
 def test_text_reasoning_content_add_coverage():
     """Test TextReasoningContent __add__ method for better coverage."""
 

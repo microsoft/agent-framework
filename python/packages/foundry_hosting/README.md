@@ -126,6 +126,25 @@ explicit history modes or unstored requests. A custom agent cannot accept MAF ru
 `unsupported_options` as `"ignore"`, `"warn"` (default), or `"error"` for that case. See the
 [agent history and options samples](../../samples/04-hosting/foundry-hosted-agents/responses/basic/).
 
+### OAuth consent origin allowlist
+
+OAuth consent links keep their existing absolute-HTTPS safety validation. Hosts that know the expected authorization
+origins can add an exact origin allowlist:
+
+```python
+server = ResponsesHostServer(
+    agent,
+    allowed_oauth_consent_origins=[
+        "https://logic-region.consent.azure-apihub.net",
+        "https://auth.partner.example",
+    ],
+)
+```
+
+An omitted allowlist preserves existing behavior and does not restrict the HTTPS origin. A provided allowlist activates
+the gate, so an empty sequence rejects every consent link. Entries are normalized as origins, so paths and query strings
+belong on the emitted consent link, not in the configuration.
+
 ## Computer use
 
 The Responses host emits native `computer_call` and `computer_call_output` items, including ordered `actions`,
