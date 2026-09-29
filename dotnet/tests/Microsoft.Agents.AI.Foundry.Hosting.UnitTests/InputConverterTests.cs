@@ -892,6 +892,71 @@ public class InputConverterTests
     }
 
     [Fact]
+    public void ConvertOutputItemsToMessages_McpApprovalRequest_ResolvesAfRequestFromStateBag()
+    {
+        const string AfRequestId = "ficc_call_history";
+        var wireId = ToolApprovalIdMap.ComputeWireId(AfRequestId);
+        var stateBag = new AgentSessionStateBag();
+        ToolApprovalIdMap.Record(
+            stateBag,
+            wireId,
+            AfRequestId,
+            "call_history",
+            "delete_file",
+            "{\"path\":\"/tmp/x\"}");
+
+        var item = new OutputItemMcpApprovalRequest(
+            id: wireId,
+            serverLabel: "agent_framework",
+            name: "delete_file",
+            arguments: "{\"path\":\"/tmp/x\"}");
+
+        var messages = InputConverter.ConvertOutputItemsToMessages([item], stateBag);
+
+        var content = Assert.IsType<ToolApprovalRequestContent>(Assert.Single(messages[0].Contents));
+        Assert.Equal(AfRequestId, content.RequestId);
+
+        var fcc = Assert.IsType<FunctionCallContent>(content.ToolCall);
+        Assert.Equal("call_history", fcc.CallId);
+        Assert.Equal("delete_file", fcc.Name);
+        Assert.NotNull(fcc.Arguments);
+        Assert.Equal("/tmp/x", ((System.Text.Json.JsonElement)fcc.Arguments!["path"]!).GetString());
+    }
+
+    [Fact]
+    public void ConvertOutputAndInputItems_McpApprovalRoundTrip_UsesSameAfRequestId()
+    {
+        const string AfRequestId = "ficc_call_roundtrip";
+        var wireId = ToolApprovalIdMap.ComputeWireId(AfRequestId);
+        var stateBag = new AgentSessionStateBag();
+        ToolApprovalIdMap.Record(
+            stateBag,
+            wireId,
+            AfRequestId,
+            "call_roundtrip",
+            "get_monster",
+            "{\"slug\":\"goblin\"}");
+
+        var historyItem = new OutputItemMcpApprovalRequest(
+            id: wireId,
+            serverLabel: "agent_framework",
+            name: "get_monster",
+            arguments: "{\"slug\":\"goblin\"}");
+        var approvalResponse = new MCPApprovalResponse(approvalRequestId: wireId, approve: true);
+
+        var historyMessages = InputConverter.ConvertOutputItemsToMessages([historyItem], stateBag);
+        var inputMessages = InputConverter.ConvertItemsToMessages([approvalResponse], stateBag);
+
+        var request = Assert.IsType<ToolApprovalRequestContent>(Assert.Single(historyMessages[0].Contents));
+        var response = Assert.IsType<ToolApprovalResponseContent>(Assert.Single(inputMessages[0].Contents));
+        Assert.Equal(request.RequestId, response.RequestId);
+        Assert.Equal(AfRequestId, request.RequestId);
+
+        Assert.Equal("call_roundtrip", Assert.IsType<FunctionCallContent>(request.ToolCall).CallId);
+        Assert.Equal("call_roundtrip", Assert.IsType<FunctionCallContent>(response.ToolCall).CallId);
+    }
+
+    [Fact]
     public void ConvertOutputItemsToMessages_McpApprovalResponse_ProducesToolApprovalResponse()
     {
         const string AfRequestId = "ficc_call_history";
