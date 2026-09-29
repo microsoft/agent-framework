@@ -1416,6 +1416,29 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
             )
 
     @staticmethod
+    def _degrade_rewritten_arguments(context: FunctionInvocationContext) -> None:
+        """Degrade rewritten argument indices when validation mutates arguments.
+
+        For list arguments, marks every final list position as rewritten
+        (fail-closed) rather than using -1, which callers may misinterpret as
+        "non-list argument." A validator that moves hidden content from index 0
+        to index 1 must not let a tool treat index 1 as safe.
+
+        For non-list arguments, uses -1 as before.
+        """
+        rewritten = context.metadata.get(_REWRITTEN_ARGUMENT_INDICES_KEY)
+        if not rewritten:
+            return
+        degraded: dict[str, set[int]] = {}
+        for arg_name in cast(dict[str, set[int]], rewritten):
+            value, _ = _top_level_argument_value(context, arg_name)
+            if isinstance(value, (list, tuple)):
+                degraded[arg_name] = set(range(len(cast(Sequence[Any], value))))
+            else:
+                degraded[arg_name] = {-1}
+        context.metadata[_REWRITTEN_ARGUMENT_INDICES_KEY] = degraded
+
+    @staticmethod
     def _extract_primary_tool_content(expanded_content: Any, *, from_quarantined_llm: bool) -> Any:
         """Return the primary response from a proven quarantined LLM result.
 
@@ -1619,6 +1642,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         active_variables: set[str] = set()
         reference_count = [0]
         rewritten_paths: set[tuple[str | int, ...]] = set()
+        kwargs_rewritten_paths: set[tuple[str | int, ...]] = set()
         if context.arguments:
             context.arguments = self._resolve_value(
                 context.arguments,
@@ -1637,16 +1661,24 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
                     depth=0,
                     active_variables=active_variables,
                     reference_count=reference_count,
-                    rewritten_paths=rewritten_paths,
+                    rewritten_paths=kwargs_rewritten_paths,
                 ),
             )
 
+        args_mapping = cast(Any, context.arguments)
+        arg_names_in_arguments: set[str] = (
+            set(cast(dict[str, Any], args_mapping).keys()) if isinstance(args_mapping, Mapping) else set()
+        )
+
         rewritten_args: dict[str, set[int]] = {}
-        for path in rewritten_paths:
+        for path in rewritten_paths | kwargs_rewritten_paths:
             if not path or not isinstance(path[0], str):
                 continue
 
             arg_name = path[0]
+            if path not in rewritten_paths and arg_name in arg_names_in_arguments:
+                continue
+
             if arg_name not in rewritten_args:
                 rewritten_args[arg_name] = set()
 
@@ -1858,16 +1890,10 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
                     context,
                     context.arguments,
                 )
-                context.metadata[_SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY] = _argument_authority_token(
-                    context.arguments,
-                    boundary="security policy",
-                )
-                if pre_validation_token != context.metadata[_SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY]:
-                    rewritten = context.metadata.get(_REWRITTEN_ARGUMENT_INDICES_KEY)
-                    if rewritten:
-                        context.metadata[_REWRITTEN_ARGUMENT_INDICES_KEY] = {
-                            arg_name: {-1} for arg_name in cast(dict[str, set[int]], rewritten)
-                        }
+                post_validation_token = _argument_authority_token(context.arguments, boundary="security policy")
+                context.metadata[_SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY] = post_validation_token
+                if pre_validation_token != post_validation_token:
+                    self._degrade_rewritten_arguments(context)
 
             argument_labels = [*input_labels, *resolved_labels]
             argument_label = combine_labels(*argument_labels) if argument_labels else ContentLabel()
@@ -2337,6 +2363,13 @@ def rewritten_arguments(context: FunctionInvocationContext | None = None) -> dic
     that were rewritten by variable expansion. For non-list arguments, the set
     contains -1.
 
+    If the arguments were mutated after the indices were published (e.g., by a
+    Pydantic validator that reorders or filters a list), all final list
+    positions are marked as rewritten (fail-closed) because the original
+    positions are stale and a validator may have moved hidden content to any
+    position. For non-list arguments, -1 is used. This covers both the
+    auto-preparation path and the public direct-middleware path.
+
     Args:
         context: The function invocation context. If None, the context from
             the current execution flow is used.
@@ -2351,6 +2384,19 @@ def rewritten_arguments(context: FunctionInvocationContext | None = None) -> dic
     rewritten = context.metadata.get(_REWRITTEN_ARGUMENT_INDICES_KEY)
     if rewritten is None:
         return {}
+
+    indices_snapshot = context.metadata.get(_SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY)
+    if indices_snapshot is not None:
+        current_snapshot = _argument_authority_token(context.arguments, boundary="security policy")
+        if current_snapshot != indices_snapshot:
+            result: dict[str, set[int]] = {}
+            for arg_name in cast(dict[str, set[int]], rewritten):
+                value, _ = _top_level_argument_value(context, arg_name)
+                if isinstance(value, (list, tuple)):
+                    result[arg_name] = set(range(len(cast(Sequence[Any], value))))
+                else:
+                    result[arg_name] = {-1}
+            return result
     return {k: set(v) for k, v in cast(dict[str, set[int]], rewritten).items()}
 
 
