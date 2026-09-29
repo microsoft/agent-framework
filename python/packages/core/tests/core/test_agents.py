@@ -4574,3 +4574,411 @@ async def test_psc_flag_on_storing_without_conversation_id_warns_every_call(
     # Two service calls -> the warning is emitted twice (one per call, not deduped).
     missing_id_warnings = [r for r in caplog.records if "returned no conversation_id" in r.message]
     assert len(missing_id_warnings) == 2
+
+
+# region Tools added to the agent's or run's tool list during a run
+
+
+def _math_tool_script(chat_client_base: MockBaseChatClient, *, stream: bool) -> None:
+    """Script three model turns: call load_math_tools, then multiply, then answer."""
+    turns = [
+        [Content.from_function_call(call_id="call_1", name="load_math_tools", arguments="{}")],
+        [Content.from_function_call(call_id="call_2", name="multiply", arguments='{"a": 6, "b": 7}')],
+        [Content.from_text("42")],
+    ]
+    if stream:
+        chat_client_base.streaming_responses = [
+            [ChatResponseUpdate(contents=contents, role="assistant", finish_reason="stop" if index == 2 else None)]
+            for index, contents in enumerate(turns)
+        ]
+    else:
+        chat_client_base.run_responses = [
+            ChatResponse(messages=Message(role="assistant", contents=contents)) for contents in turns
+        ]
+    chat_client_base.function_invocation_configuration["max_iterations"] = 3
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_tool_appended_to_agent_tools_during_run_is_sent_on_next_request(
+    chat_client_base: MockBaseChatClient,
+    stream: bool,
+) -> None:
+    executed: list[str] = []
+
+    @tool(name="multiply", approval_mode="never_require")
+    def multiply(a: int, b: int) -> int:
+        """Multiply two numbers."""
+        executed.append("multiply")
+        return a * b
+
+    @tool(name="load_math_tools", approval_mode="never_require")
+    def load_math_tools() -> str:
+        """Load the math tools."""
+        agent.default_options["tools"].append(multiply)
+        return "Math tools loaded."
+
+    agent = Agent(client=chat_client_base, tools=[load_math_tools])
+    _math_tool_script(chat_client_base, stream=stream)
+
+    requested_tool_names: list[list[str]] = []
+    original_inner = chat_client_base._inner_get_response
+
+    def capture_inner(
+        *, messages: MutableSequence[Message], stream: bool, options: dict[str, Any], **kwargs: Any
+    ) -> Any:
+        requested_tool_names.append([tool.name for tool in options.get("tools", [])])
+        return original_inner(messages=messages, stream=stream, options=options, **kwargs)
+
+    with patch.object(chat_client_base, "_inner_get_response", side_effect=capture_inner):
+        if stream:
+            text = "".join([update.text or "" async for update in agent.run("What is 6 times 7?", stream=True)])
+        else:
+            text = (await agent.run("What is 6 times 7?")).text
+
+    assert requested_tool_names == [
+        ["load_math_tools"],
+        ["load_math_tools", "multiply"],
+        ["load_math_tools", "multiply"],
+    ]
+    assert executed == ["multiply"]
+    assert text == "42"
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_tool_appended_to_run_tools_during_run_is_sent_on_next_request(
+    chat_client_base: MockBaseChatClient,
+    stream: bool,
+) -> None:
+    executed: list[str] = []
+
+    @tool(name="multiply", approval_mode="never_require")
+    def multiply(a: int, b: int) -> int:
+        """Multiply two numbers."""
+        executed.append("multiply")
+        return a * b
+
+    @tool(name="load_math_tools", approval_mode="never_require")
+    def load_math_tools() -> str:
+        """Load the math tools."""
+        run_tools.append(multiply)
+        return "Math tools loaded."
+
+    run_tools: list[Any] = [load_math_tools]
+    agent = Agent(client=chat_client_base)
+    _math_tool_script(chat_client_base, stream=stream)
+
+    requested_tool_names: list[list[str]] = []
+    original_inner = chat_client_base._inner_get_response
+
+    def capture_inner(
+        *, messages: MutableSequence[Message], stream: bool, options: dict[str, Any], **kwargs: Any
+    ) -> Any:
+        requested_tool_names.append([tool.name for tool in options.get("tools", [])])
+        return original_inner(messages=messages, stream=stream, options=options, **kwargs)
+
+    with patch.object(chat_client_base, "_inner_get_response", side_effect=capture_inner):
+        if stream:
+            text = "".join([
+                update.text or "" async for update in agent.run("What is 6 times 7?", tools=run_tools, stream=True)
+            ])
+        else:
+            text = (await agent.run("What is 6 times 7?", tools=run_tools)).text
+
+    assert requested_tool_names == [
+        ["load_math_tools"],
+        ["load_math_tools", "multiply"],
+        ["load_math_tools", "multiply"],
+    ]
+    assert executed == ["multiply"]
+    assert text == "42"
+
+
+def _capture_requested_tool_names(
+    chat_client_base: MockBaseChatClient, requested_tool_names: list[list[str]], *, kwarg_names: list[str] | None = None
+) -> Any:
+    original_inner = chat_client_base._inner_get_response
+
+    def capture_inner(
+        *, messages: MutableSequence[Message], stream: bool, options: dict[str, Any], **kwargs: Any
+    ) -> Any:
+        requested_tool_names.append([tool.name for tool in options.get("tools", [])])
+        if kwarg_names is not None:
+            kwarg_names.extend(kwargs)
+        return original_inner(messages=messages, stream=stream, options=options, **kwargs)
+
+    return patch.object(chat_client_base, "_inner_get_response", side_effect=capture_inner)
+
+
+async def test_tool_removed_with_context_during_run_is_not_restored_from_agent_tools(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    @tool(name="get_weather", approval_mode="never_require")
+    def get_weather(location: str) -> str:
+        """Get the weather."""
+        return "sunny"
+
+    @tool(name="drop_weather", approval_mode="never_require")
+    def drop_weather(ctx: FunctionInvocationContext) -> str:
+        """Remove the weather tool."""
+        ctx.remove_tools("get_weather")
+        return "Weather tool removed."
+
+    agent = Agent(client=chat_client_base, tools=[drop_weather, get_weather])
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[Content.from_function_call(call_id="call_1", name="drop_weather", arguments="{}")],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+    requested_tool_names: list[list[str]] = []
+
+    with _capture_requested_tool_names(chat_client_base, requested_tool_names):
+        await agent.run("Drop the weather tool.")
+
+    assert requested_tool_names == [["drop_weather", "get_weather"], ["drop_weather"]]
+    assert [tool.name for tool in agent.default_options["tools"]] == ["drop_weather", "get_weather"]
+
+
+@pytest.mark.parametrize("function_invocation_enabled", [True, False])
+async def test_run_tools_refresh_is_not_forwarded_to_chat_client(
+    chat_client_base: MockBaseChatClient,
+    function_invocation_enabled: bool,
+) -> None:
+    from agent_framework._tools import _REFRESH_RUN_TOOLS_KEY
+
+    @tool(name="lookup_weather", approval_mode="never_require")
+    def lookup_weather(location: str) -> str:
+        """Get the weather."""
+        return "sunny"
+
+    chat_client_base.function_invocation_configuration["enabled"] = function_invocation_enabled
+    agent = Agent(client=chat_client_base, tools=[lookup_weather])
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="call_1", name="lookup_weather", arguments='{"location": "Seattle"}'
+                    )
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+    requested_tool_names: list[list[str]] = []
+    kwarg_names: list[str] = []
+
+    with _capture_requested_tool_names(chat_client_base, requested_tool_names, kwarg_names=kwarg_names):
+        await agent.run("What's the weather in Seattle?")
+
+    assert _REFRESH_RUN_TOOLS_KEY not in kwarg_names
+    expected_calls = 2 if function_invocation_enabled else 1
+    assert requested_tool_names == [["lookup_weather"]] * expected_calls
+
+
+async def test_mcp_server_added_to_agent_during_run_is_sent_on_next_request(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    math_server = _ConnectedMCPTool("math", ["multiply"])
+
+    @tool(name="connect_math_server", approval_mode="never_require")
+    def connect_math_server() -> str:
+        """Connect the math MCP server."""
+        agent.mcp_tools.append(math_server)
+        return "Math server connected."
+
+    agent = Agent(client=chat_client_base, tools=[connect_math_server])
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[Content.from_function_call(call_id="call_1", name="connect_math_server", arguments="{}")],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+    requested_tool_names: list[list[str]] = []
+
+    with _capture_requested_tool_names(chat_client_base, requested_tool_names):
+        await agent.run("Connect the math server.")
+
+    assert requested_tool_names == [["connect_math_server"], ["connect_math_server", "multiply"]]
+
+
+async def test_tool_with_duplicate_name_added_during_run_is_skipped(
+    chat_client_base: MockBaseChatClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    executed: list[str] = []
+
+    @tool(name="multiply", approval_mode="never_require")
+    def multiply(a: int, b: int) -> int:
+        """Multiply two numbers."""
+        executed.append("original")
+        return a * b
+
+    @tool(name="multiply", approval_mode="never_require")
+    def other_multiply(a: int, b: int) -> int:
+        """Multiply two numbers differently."""
+        executed.append("other")
+        return a * b
+
+    @tool(name="load_math_tools", approval_mode="never_require")
+    def load_math_tools() -> str:
+        """Load the math tools."""
+        agent.default_options["tools"].append(other_multiply)
+        return "Math tools loaded."
+
+    agent = Agent(client=chat_client_base, tools=[load_math_tools, multiply])
+    _math_tool_script(chat_client_base, stream=False)
+    requested_tool_names: list[list[str]] = []
+
+    with (
+        caplog.at_level(logging.WARNING, logger="agent_framework"),
+        _capture_requested_tool_names(chat_client_base, requested_tool_names),
+    ):
+        response = await agent.run("What is 6 times 7?")
+
+    assert requested_tool_names == [["load_math_tools", "multiply"]] * 3
+    assert executed == ["original"]
+    assert response.text == "42"
+    assert any("could not be made available to the model" in record.message for record in caplog.records)
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_tools_list_identity_is_unchanged_across_iterations_when_nothing_is_added(
+    chat_client_base: MockBaseChatClient,
+    stream: bool,
+) -> None:
+    """Regression: when no tool mutates any tool list, the run-local tools list sent to the
+    model is not replaced or reordered between iterations of the same run.
+
+    This guards the no-op path in ``_refresh_run_tools``: with nothing new to merge, the
+    run-local list object identity (and its contents) must be exactly what it was before,
+    matching behavior prior to mid-run tool refresh.
+    """
+
+    @tool(name="lookup_weather", approval_mode="never_require")
+    def lookup_weather(location: str) -> str:
+        """Get the weather."""
+        return "sunny"
+
+    @tool(name="lookup_time", approval_mode="never_require")
+    def lookup_time(location: str) -> str:
+        """Get the time."""
+        return "noon"
+
+    agent = Agent(client=chat_client_base, tools=[lookup_weather])
+    turns = [
+        [Content.from_function_call(call_id="call_1", name="lookup_weather", arguments='{"location": "Seattle"}')],
+        [Content.from_function_call(call_id="call_2", name="lookup_time", arguments='{"location": "Boston"}')],
+        [Content.from_text("done")],
+    ]
+    if stream:
+        chat_client_base.streaming_responses = [
+            [ChatResponseUpdate(contents=contents, role="assistant", finish_reason="stop" if index == 2 else None)]
+            for index, contents in enumerate(turns)
+        ]
+    else:
+        chat_client_base.run_responses = [
+            ChatResponse(messages=Message(role="assistant", contents=contents)) for contents in turns
+        ]
+    chat_client_base.function_invocation_configuration["max_iterations"] = 3
+
+    requested_tool_lists: list[Any] = []
+    original_inner = chat_client_base._inner_get_response
+
+    def capture_inner(
+        *, messages: MutableSequence[Message], stream: bool, options: dict[str, Any], **kwargs: Any
+    ) -> Any:
+        requested_tool_lists.append(options.get("tools"))
+        return original_inner(messages=messages, stream=stream, options=options, **kwargs)
+
+    with patch.object(chat_client_base, "_inner_get_response", side_effect=capture_inner):
+        if stream:
+            text = "".join([
+                update.text or "" async for update in agent.run("weather?", tools=[lookup_time], stream=True)
+            ])
+        else:
+            text = (await agent.run("weather?", tools=[lookup_time])).text
+
+    assert text == "done"
+    assert len(requested_tool_lists) == 3
+    # The exact same list object is reused for every model call in the run: nothing was
+    # added or removed, so the loop never replaces it with a new list.
+    assert all(tools_list is requested_tool_lists[0] for tools_list in requested_tool_lists)
+    assert [t.name for t in requested_tool_lists[0]] == ["lookup_weather", "lookup_time"]
+
+
+async def test_same_tool_object_appended_twice_during_run_is_idempotent(
+    chat_client_base: MockBaseChatClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Appending the exact same tool object to the agent's tools twice, across two
+    different iterations, is a no-op the second time: no duplicate entry, no warning,
+    and no error, since it's the same object under an already-adopted name.
+    """
+    executed: list[str] = []
+
+    @tool(name="multiply", approval_mode="never_require")
+    def multiply(a: int, b: int) -> int:
+        """Multiply two numbers."""
+        executed.append("multiply")
+        return a * b
+
+    @tool(name="add_multiply", approval_mode="never_require")
+    def add_multiply() -> str:
+        """Add the multiply tool."""
+        agent.default_options["tools"].append(multiply)
+        return "added"
+
+    @tool(name="add_multiply_again", approval_mode="never_require")
+    def add_multiply_again() -> str:
+        """Add the exact same multiply tool object a second time."""
+        agent.default_options["tools"].append(multiply)
+        return "added again"
+
+    agent = Agent(client=chat_client_base, tools=[add_multiply, add_multiply_again])
+    chat_client_base.function_invocation_configuration["max_iterations"] = 4
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[Content.from_function_call(call_id="call_1", name="add_multiply", arguments="{}")],
+            )
+        ),
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[Content.from_function_call(call_id="call_2", name="add_multiply_again", arguments="{}")],
+            )
+        ),
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[Content.from_function_call(call_id="call_3", name="multiply", arguments='{"a": 2, "b": 3}')],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+    requested_tool_names: list[list[str]] = []
+
+    with (
+        caplog.at_level(logging.WARNING, logger="agent_framework"),
+        _capture_requested_tool_names(chat_client_base, requested_tool_names),
+    ):
+        response = await agent.run("Multiply 2 and 3.")
+
+    assert requested_tool_names == [
+        ["add_multiply", "add_multiply_again"],
+        ["add_multiply", "add_multiply_again", "multiply"],
+        ["add_multiply", "add_multiply_again", "multiply"],
+        ["add_multiply", "add_multiply_again", "multiply"],
+    ]
+    assert executed == ["multiply"]
+    assert response.text == "done"
+    assert not any("could not be made available to the model" in record.message for record in caplog.records)

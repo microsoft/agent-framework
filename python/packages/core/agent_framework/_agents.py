@@ -1481,6 +1481,45 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
 
         return None
 
+    def _run_tool_source_items(self, run_tools: Any) -> list[Any]:
+        """Return the items of the tool lists a run re-reads before each model call.
+
+        These are the agent's tools, its MCP servers, and the run-level tools when they
+        were passed as a list.
+        """
+        items: list[Any] = [*self.mcp_tools]
+        for source in (self.default_options.get("tools"), run_tools):
+            if isinstance(source, list):
+                items.extend(cast("list[Any]", source))
+        return items
+
+    async def _append_run_tools(
+        self,
+        final_tools: list[ToolTypes],
+        tools: Sequence[ToolTypes],
+        function_invocation_kwargs: Mapping[str, Any],
+    ) -> None:
+        """Append tools to a run's tool list, connecting MCP tools and adding their functions."""
+        from ._mcp import MCPTool
+
+        for tool in tools:
+            if not isinstance(tool, MCPTool):
+                _append_unique_tools(final_tools, [tool])
+                continue
+            await tool._prepare_for_run(function_invocation_kwargs)  # pyright: ignore[reportPrivateUsage]
+            if not tool.is_connected:
+                # The handshake and discovery requests are issued before any tool call, so the run's
+                # kwargs must reach header_provider here or those requests go out unauthenticated.
+                await self._async_exit_stack.enter_async_context(tool)
+                await tool._prepare_for_run(function_invocation_kwargs)  # pyright: ignore[reportPrivateUsage]
+            _append_unique_tools(
+                final_tools,
+                tool.functions,
+                duplicate_error_message=(
+                    "Tool names must be unique. Consider setting `tool_name_prefix` on the MCPTool."
+                ),
+            )
+
     async def _prepare_run_context(
         self,
         *,
@@ -1503,6 +1542,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         # remaining options into the request and silently override the resolved list.
         tools_ = _select_run_level_tools(tools, opts)
         opts.pop("tools", None)
+        # Items already in the agent's and the run's tool lists when the run starts; anything
+        # appended to those lists later is added to the run before its next model call.
+        seen_tool_items = {id(item): item for item in self._run_tool_source_items(tools_)}
 
         input_messages = normalize_messages(messages)
 
@@ -1585,11 +1627,13 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             }
 
         agent_name = self._get_agent_name()
-        from ._mcp import MCPTool
-        from ._tools import _PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY  # pyright: ignore[reportPrivateUsage]
+        from ._tools import (
+            _PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
+            _REFRESH_RUN_TOOLS_KEY,  # pyright: ignore[reportPrivateUsage]
+            FunctionInvocationLayer,
+        )
 
         base_tools = _normalize_tools(chat_options.pop("tools", None))
-        mcp_duplicate_message = "Tool names must be unique. Consider setting `tool_name_prefix` on the MCPTool."
 
         # Normalize tools
         normalized_tools = _normalize_tools(tools_)
@@ -1602,34 +1646,18 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
 
         # Resolve final tool list (configured tools + runtime provided tools + local MCP server tools)
         final_tools = list(base_tools)
-        for tool in normalized_tools:
-            if isinstance(tool, MCPTool):
-                await tool._prepare_for_run(additional_function_arguments)  # pyright: ignore[reportPrivateUsage]
-                if not tool.is_connected:
-                    # The handshake and discovery requests are issued before any tool call, so the run's
-                    # kwargs must reach header_provider here or those requests go out unauthenticated.
-                    await self._async_exit_stack.enter_async_context(tool)
-                    await tool._prepare_for_run(additional_function_arguments)  # pyright: ignore[reportPrivateUsage]
-                _append_unique_tools(
-                    final_tools,
-                    tool.functions,
-                    duplicate_error_message=mcp_duplicate_message,
-                )
-            else:
-                _append_unique_tools(final_tools, [tool])
+        await self._append_run_tools(final_tools, [*normalized_tools, *self.mcp_tools], additional_function_arguments)
+        # MCP tools added later in the run are prepared with the same kwargs as those added above.
+        mcp_run_kwargs = dict(additional_function_arguments)
 
-        for mcp_server in self.mcp_tools:
-            await mcp_server._prepare_for_run(additional_function_arguments)  # pyright: ignore[reportPrivateUsage]
-            if not mcp_server.is_connected:
-                await self._async_exit_stack.enter_async_context(mcp_server)
-                await mcp_server._prepare_for_run(  # pyright: ignore[reportPrivateUsage]
-                    additional_function_arguments
-                )
-            _append_unique_tools(
-                final_tools,
-                mcp_server.functions,
-                duplicate_error_message=mcp_duplicate_message,
-            )
+        async def refresh_run_tools() -> list[ToolTypes]:
+            new_items = {
+                id(item): item for item in self._run_tool_source_items(tools_) if id(item) not in seen_tool_items
+            }
+            seen_tool_items.update(new_items)
+            new_tools: list[ToolTypes] = []
+            await self._append_run_tools(new_tools, _normalize_tools(list(new_items.values())), mcp_run_kwargs)
+            return new_tools
 
         additional_function_arguments[_PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY] = _tool_approval_source_ids(
             self.middleware
@@ -1678,6 +1706,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         if active_session is not None:
             effective_client_kwargs["session"] = active_session
             effective_client_kwargs[_APPROVAL_SESSION_IS_AUTHORITATIVE_KEY] = not framework_created_session
+        effective_client_kwargs.pop(_REFRESH_RUN_TOOLS_KEY, None)
+        if isinstance(self.client, FunctionInvocationLayer):
+            effective_client_kwargs[_REFRESH_RUN_TOOLS_KEY] = refresh_run_tools
         per_service_call_history_middleware: PerServiceCallHistoryPersistingMiddleware | None = None
         if per_service_call_history_providers and active_session is not None:
             per_service_call_history_middleware = PerServiceCallHistoryPersistingMiddleware(

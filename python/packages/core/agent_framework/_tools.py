@@ -106,6 +106,7 @@ DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST: Final[int] = 3
 SHELL_TOOL_KIND_VALUE: Final[str] = "shell"
 _TOOL_APPROVAL_STATE_KEY: Final[str] = "tool_approval"
 _APPROVAL_SESSION_IS_AUTHORITATIVE_KEY: Final[str] = "_approval_session_is_authoritative"
+_REFRESH_RUN_TOOLS_KEY: Final[str] = "_refresh_run_tools"
 _PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY: Final[str] = "_parent_tool_approval_source_ids"
 
 
@@ -4381,6 +4382,39 @@ def _prepare_messages_for_next_iteration(prepared_messages: list[Message], respo
     prepared_messages[:] = response.messages[-1:]
 
 
+_RunToolsRefresher: TypeAlias = Callable[[], Awaitable[list[ToolTypes]]]
+
+
+async def _refresh_run_tools(options: dict[str, Any], refresh_run_tools: _RunToolsRefresher | None) -> None:
+    """Add tools that joined the run's tool sources since the previous model call.
+
+    Agent runs supply ``refresh_run_tools`` so a tool appended to the agent's or the run's
+    tool list while the run executes is sent on the next model call. The new tools are
+    merged into the run-local tools list in place, so the tool map and
+    ``FunctionInvocationContext.tools`` see them too. A resolution failure (for example a
+    duplicate tool name) is logged and the run continues with its current tools rather
+    than aborting mid-loop.
+    """
+    options_tools = options.get("tools")
+    # Without a run-local tools list the run started with no tools, so no tool can have run yet.
+    if refresh_run_tools is None or not isinstance(options_tools, list):
+        return
+    live_tools = cast("list[ToolTypes]", options_tools)
+    try:
+        new_tools = await refresh_run_tools()
+        if not new_tools:
+            return
+        # Validate against a copy first so a duplicate name leaves the live list unchanged.
+        merged = _append_unique_tools(list(live_tools), new_tools)
+    except Exception:
+        logger.warning(
+            "Tools added during the run could not be made available to the model; they take effect from the next run.",
+            exc_info=True,
+        )
+        return
+    live_tools[:] = merged
+
+
 @dataclass
 class _FunctionProcessingResult:
     """Control data produced while resolving or executing function calls."""
@@ -5028,6 +5062,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         budget_state: dict[str, Any],
         max_errors: int,
         middleware_pipeline: FunctionMiddlewarePipeline | None = None,
+        refresh_run_tools: _RunToolsRefresher | None = None,
     ) -> ChatResponse[Any]:
         """Run the non-streaming function invocation loop."""
         from ._compaction import _reconcile_compaction_summaries  # pyright: ignore[reportPrivateUsage]
@@ -5107,6 +5142,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         # Phase 2: alternate model turns and local execution until a terminal response or safety limit is reached.
         for attempt_idx in range(attempt_start, max_iterations):
             budget_state["attempt_count"] = attempt_idx + 1
+            await _refresh_run_tools(options, refresh_run_tools)
             on_invalidated = _response_invalidation_cleanup(invocation_session, budget_state)
             response = cast(
                 ChatResponse[Any],
@@ -5253,6 +5289,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         max_errors: int,
         middleware_pipeline: FunctionMiddlewarePipeline | None = None,
         invalidation_error: list[ResponseInvalidatedException],
+        refresh_run_tools: _RunToolsRefresher | None = None,
     ) -> AsyncIterable[ChatResponseUpdate]:
         """Run the streaming function invocation loop."""
         from ._middleware import MiddlewareFailure
@@ -5326,6 +5363,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         # Phase 2: stream each model turn, finalize it, execute its calls, then advance the transcript.
         for attempt_idx in range(attempt_start, max_iterations):
             budget_state["attempt_count"] = attempt_idx + 1
+            await _refresh_run_tools(options, refresh_run_tools)
             on_invalidated = _response_invalidation_cleanup(invocation_session, budget_state, invalidation_error)
             inner_stream = cast(
                 "ResponseStream[ChatResponseUpdate, ChatResponse[Any]]",
@@ -5633,6 +5671,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         approval_session_is_authoritative = (
             request_kwargs.pop(_APPROVAL_SESSION_IS_AUTHORITATIVE_KEY, True) is not False
         )
+        refresh_run_tools = cast("_RunToolsRefresher | None", request_kwargs.pop(_REFRESH_RUN_TOOLS_KEY, None))
         if invocation_session is None and requires_session_state:
             invocation_session = _AgentSession()
             approval_session_is_authoritative = False
@@ -5687,6 +5726,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 budget_state=budget_state,
                 max_errors=max_errors,
                 middleware_pipeline=function_middleware_pipeline,
+                refresh_run_tools=refresh_run_tools,
             )
 
         response_format = mutable_options.get("response_format")
@@ -5712,6 +5752,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 max_errors=max_errors,
                 middleware_pipeline=function_middleware_pipeline,
                 invalidation_error=invalidation_error,
+                refresh_run_tools=refresh_run_tools,
             ),
             finalizer=finalize_stream,
         )
