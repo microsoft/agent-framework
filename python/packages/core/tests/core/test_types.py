@@ -2250,15 +2250,27 @@ def test_text_content_add_handles_missing_text() -> None:
     assert (without_text + with_text).text == "Hello"
 
 
-def test_text_content_add_preserves_none_and_empty_string() -> None:
-    """`None` means no text, `""` means an empty one, and adding keeps them apart.
+def test_text_content_without_text_stores_empty_string() -> None:
+    """A text content built without text stores "" so every consumer can treat it as a string."""
+    assert Content("text").text == ""
+    assert Content("text", text=None).text == ""
+    assert Content.from_dict({"type": "text"}).text == ""
+    assert (Content("text") + Content("text")).text == ""
 
-    Same rule `_add_text_reasoning_content` follows, so the two content types do
-    not disagree about what an absent value means.
-    """
-    assert (Content("text") + Content("text")).text is None
-    assert (Content("text", text="") + Content("text")).text == ""
-    assert (Content("text") + Content("text", text="")).text == ""
+    # Other content types keep None for a missing text.
+    assert Content("text_reasoning").text is None
+
+
+def test_message_and_response_text_with_text_content_missing_text() -> None:
+    """The public `.text` accessors join content text directly and must not raise."""
+    message = Message(role="assistant", contents=[Content("text")])
+    assert message.text == ""
+
+    response = ChatResponse(messages=[Message(role="assistant", contents=[Content("text")])])
+    assert response.text == ""
+
+    update = ChatResponseUpdate(role="assistant", contents=[Content("text")])
+    assert update.text == ""
 
 
 def test_chat_response_from_updates_coalesces_text_update_without_text() -> None:
