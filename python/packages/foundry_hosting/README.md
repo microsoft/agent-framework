@@ -100,6 +100,10 @@ the token is saved cannot safely restart the inner job. A final provider poll re
 response-ID snapshot so recovery can re-poll it if the outer response was not yet committed; a later turn drops
 it from its working session. Shutdown during initial submission fails rather than replaying a job whose
 acceptance is unknown. Cancelling an in-flight submission does not prove the remote provider stopped it.
+Each poll retains the caller's generation options and `background=True`, so a tool-loop follow-up requests
+another background response and saves its next token. A crash after a local tool side effect but before that
+next token is saved can still repeat the tool on recovery; use idempotent tools or avoid provider background
+for side-effecting local tools. This mechanism does not provide exactly-once tool execution.
 Provider background and steering cannot be combined.
 Regular agent runs without this opt-in are not crash-replayable. **Steering is temporarily unavailable:**
 `steerable_conversations=True` fails during host construction, before enabling the process-wide TaskManager.
@@ -213,11 +217,18 @@ Invocations sessions use the separate `invocation_sessions` store.
 Each stored agent turn saves a snapshot under its **own** outer `response.id`. For a named `conversation`, a
 separate mutable conversation-head key is also updated. Loaded MAF sessions use PR1's ETag condition for that key:
 a competing turn that advanced the head causes a visible conflict rather than a stale overwrite. A superseded
-steered turn saves its response snapshot but skips the head update. Service-backed history is linear: when
-continuing by `previous_response_id`, the prior response is claimed with a conditional write so a second branch
+steered turn saves its response snapshot but skips the head update. In `"service"` or `"agent"` history mode, a
+stored named-conversation turn first claims that head with a conditional write *before* calling the inner agent.
+Another request that read the old head loses the CAS; one that reads the claim fails before touching the provider.
+The claim is cleared when the winning turn successfully commits the new head. If a dispatched turn fails or is
+cancelled, the claim remains: the provider may already have changed its thread, so start a new conversation
+instead of retrying this one blindly. A recovered provider-background turn must still own the same claim.
+When continuing by `previous_response_id`, the prior response is claimed with a conditional write **after**
+the input is validated, so an invalid approval response does not consume a usable parent. A second branch
 cannot reuse the same downstream service thread; attempting to fork a named service conversation is also rejected.
 New hosted keys are created only if absent. Custom store providers must provide equivalent scoped conditional
-writes for concurrent turns. Local callers can still upsert directly without first loading a session.
+writes for concurrent turns, including the pre-dispatch claim. Local callers can still upsert directly without
+first loading a session.
 
 See the [custom storage provider sample](../../samples/04-hosting/foundry-hosted-agents/responses/custom_storage/)
 for an example that uses an in-memory session store locally and Azure Cosmos DB when hosted.

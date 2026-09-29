@@ -49,7 +49,10 @@ background runs inside AgentServer even if the chat client cannot run in the bac
 continuation, a process crash can leave such a response unfinished. The optional
 [provider_background.py](provider_background.py) opts a storing Responses client into its *separate* background
 mode: only this mode persists the provider's private token and polls it until completion/recovery. It is incompatible
-with steering. The deployed identity needs Foundry User permission on the project for private provider polling.
+with steering. Polls keep the original model options and `background=True`, including when a tool loop submits
+its next leg. A crash between a local tool side effect and saving the next private token can still replay
+that tool; use idempotent tools or avoid this mode for side-effecting local tools. The deployed identity
+needs Foundry User permission on the project for private provider polling.
 
 [client.py](client.py) shows stored conversation turns, an unstored request, and background polling. It also needs
 `FOUNDRY_AGENT_NAME` and Azure CLI authentication. For a local host, a simple multi-turn request is:
@@ -64,6 +67,10 @@ Send another request with the same `conversation` to continue. When deployed, ke
 `AgentSession.service_session_id`. A `conversation` binds that sandbox; with a bare `previous_response_id`, also
 forward the earlier response's `agent_session_id`. Older unscoped hosted MAF state is not migrated; start a new
 conversation after upgrading (see the [package state guide](../../../../../packages/foundry_hosting/README.md#state-store)).
+For `"service"` and `"agent"` history, a stored named turn claims the conversation before inner dispatch: concurrent
+turns fail rather than mutating the same service thread. An invalid input does not consume a
+`previous_response_id` parent. If a named turn fails or is cancelled after dispatch, start a new conversation;
+the existing thread may have changed even if its outer response did not complete.
 
 ## Options and compatibility
 

@@ -125,6 +125,7 @@ _HOSTED_RESPONSES_HISTORY_SOURCE_ID = "_foundry_responses_history"
 _HOSTED_PROVIDER_STATE_KEY = "_foundry_provider_background"
 _HOSTED_SOURCE_CONVERSATION_KEY = "_foundry_source_conversation"
 _HOSTED_SERVICE_CHILD_KEY = "_foundry_service_child"
+_HOSTED_CONVERSATION_CLAIM_KEY = "_foundry_conversation_claim"
 
 _HistorySource = Literal["agent_server", "agent", "service"]
 
@@ -157,6 +158,15 @@ def _is_hosted_responses_history_sentinel(provider: ContextProvider) -> bool:
         and not provider.store_context_messages
         and provider.store_outputs
     )
+
+
+def _reject_busy_conversation(session: AgentSession) -> None:
+    if session.state.get(_HOSTED_CONVERSATION_CLAIM_KEY) is not None:
+        raise RuntimeError(
+            "A service-backed conversation already has an in-flight turn. Wait for it to finish; "
+            "if it failed or was cancelled after dispatch, start a new conversation rather than "
+            "reusing a possibly changed provider thread."
+        )
 
 
 def _create_response_event_stream(context: ResponseContext) -> ResponseEventStream:
@@ -659,6 +669,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             background_source: `"agent_server"` (default) runs background work in the Responses host
                 without invoking provider-native background APIs; `"provider"` opts a storing, resumable
                 client into provider background polling and requires `history_source="service"`.
+                Each poll retains the caller's run options and `background=True`; local tools must be
+                idempotent because a crash before the next private token is saved can replay them.
             prepare_options: Developer hook to remove or replace caller model options for an agent.
             unsupported_options: `"warn"` (default), `"error"`, or `"ignore"` when a custom agent
                 cannot accept runtime model options.
@@ -689,6 +701,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             5. Steering is temporarily unavailable for all agents. `steerable_conversations=True` fails
                at construction, before starting a host or enabling the process-wide TaskManager. The current
                AgentServer SDK retains futures for rejected turns after the steering queue fills.
+            6. A stored, named `"service"` or `"agent"` conversation is claimed in the scoped session store
+               before the agent runs. Conditional writes prevent a concurrent turn from mutating the same
+               provider thread. If the turn fails or is cancelled, start a new conversation instead of
+               reusing a potentially changed downstream thread.
 
         Raises:
             ValueError: If the history, background, or unsupported-options policy is invalid.
@@ -944,6 +960,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                                 f"previous_response_id={previous_response_id}."
                             )
                         session = agent.create_session()
+                    if context.conversation_id is not None:
+                        _reject_busy_conversation(session)
                     if previous_response_id is not None and context.conversation_id is None:
                         if session.service_session_id is not None and session.state.get(
                             _HOSTED_SOURCE_CONVERSATION_KEY
@@ -1220,6 +1238,18 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         f"Cannot find an existing agent session for previous_response_id={previous_response_id}."
                     )
                 session = agent.create_session()
+            if context.conversation_id is not None:
+                if context.is_recovery and provider_background:
+                    if session_storage is None:
+                        raise RuntimeError("Provider background recovery requires agent session storage.")
+                    head = await session_storage.get(context.conversation_id)
+                    if head is None or head.state.get(_HOSTED_CONVERSATION_CLAIM_KEY) != context.response_id:
+                        raise RuntimeError(
+                            "Cannot recover provider background: the service-backed conversation claim "
+                            "is no longer held by this response."
+                        )
+                else:
+                    _reject_busy_conversation(session)
             if not stored and self._history_source == "agent" and session.service_session_id is not None:
                 raise ValueError(
                     "store=false cannot continue agent-managed downstream service history; "
@@ -1238,17 +1268,13 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             if previous_response_id is not None and context.conversation_id is None and not context.is_recovery:
                 if session.service_session_id is not None and session.state.get(_HOSTED_SOURCE_CONVERSATION_KEY):
                     raise ValueError("A service-managed downstream conversation cannot be forked.")
-                if stored and self._history_source in ("service", "agent") and session.service_session_id is not None:
-                    if session.state.get(_HOSTED_SERVICE_CHILD_KEY):
-                        raise ValueError("A service-managed downstream response cannot be forked.")
-                    if session_storage is None:
-                        raise RuntimeError("Service history requires agent session storage.")
-                    session.state[_HOSTED_SERVICE_CHILD_KEY] = context.response_id
-                    await session_storage.set(previous_response_id, session)
-                    session.state.pop(_HOSTED_SERVICE_CHILD_KEY)
-                session.state.pop(_HOSTED_SOURCE_CONVERSATION_KEY, None)
-            if not context.is_recovery:
-                session.state.pop(_HOSTED_PROVIDER_STATE_KEY, None)
+                if (
+                    stored
+                    and self._history_source in ("service", "agent")
+                    and session.service_session_id is not None
+                    and session.state.get(_HOSTED_SERVICE_CHILD_KEY)
+                ):
+                    raise ValueError("A service-managed downstream response cannot be forked.")
         except BaseException as ex:
             # Session preparation failed (or the request was cancelled / the stream closed —
             # neither of which is an Exception). Cancel and drain the in-flight message-loading
@@ -1310,6 +1336,31 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 if self._unsupported_options == "warn":
                     logger.warning("Agent doesn't support runtime options. They will be ignored.")
 
+            if previous_response_id is not None and context.conversation_id is None and not context.is_recovery:
+                if stored and self._history_source in ("service", "agent") and session.service_session_id is not None:
+                    if session_storage is None:
+                        raise RuntimeError("Service history requires agent session storage.")
+                    session.state[_HOSTED_SERVICE_CHILD_KEY] = context.response_id
+                    try:
+                        await session_storage.set(previous_response_id, session)
+                    finally:
+                        session.state.pop(_HOSTED_SERVICE_CHILD_KEY, None)
+                session.state.pop(_HOSTED_SOURCE_CONVERSATION_KEY, None)
+
+            if not context.is_recovery:
+                session.state.pop(_HOSTED_PROVIDER_STATE_KEY, None)
+
+            if stored and context.conversation_id is not None and not configuration.agent_server_history:
+                if session_storage is None:
+                    raise RuntimeError("Service history requires agent session storage.")
+                # The scoped store's conditional write must succeed before the provider can
+                # mutate its linear thread; a losing turn never reaches agent.run().
+                session.state[_HOSTED_CONVERSATION_CLAIM_KEY] = context.response_id
+                try:
+                    await session_storage.set(context.conversation_id, session)
+                finally:
+                    session.state.pop(_HOSTED_CONVERSATION_CLAIM_KEY, None)
+
             inner_stream: ResponseStream[AgentResponseUpdate, AgentResponse[Any]] | None = None
             if provider_background:
                 if session_storage is None or not isinstance(agent, RawAgent):
@@ -1355,6 +1406,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         finally:
             if configuration.hosted_history:
                 session.state.pop(_HOSTED_RESPONSES_HISTORY_SOURCE_ID, None)
+            if not provider_background and not context.is_recovery:
+                session.state.pop(_HOSTED_PROVIDER_STATE_KEY, None)
 
             # Never persist a session that could resume an inner response contrary to the
             # history mode or the caller's explicit storage decision.
@@ -1407,6 +1460,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         and not superseded_by_steering
                         and not request_interrupted
                         and request_failure is None
+                        and (
+                            configuration.agent_server_history
+                            or (not cancellation_signal.is_set() and not context.shutdown.is_set())
+                        )
                     ):
                         if provider_background:
                             session.state.pop(_HOSTED_PROVIDER_STATE_KEY, None)
@@ -1538,7 +1595,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 return
             completed, current = await _await_before_signal(
                 lambda token=continuation_token: run_provider(
-                    cast(ChatOptions[Any], {"continuation_token": token, "store": True}),
+                    cast(
+                        ChatOptions[Any],
+                        {**options, "background": True, "store": True, "continuation_token": token},
+                    ),
                     input_messages=None,
                     phase="poll",
                 ),
