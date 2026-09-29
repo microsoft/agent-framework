@@ -315,6 +315,12 @@ internal static class InputConverter
     private static ChatMessage ConvertMcpApprovalRequest(string id, string name, string? arguments, AgentSessionStateBag? stateBag)
     {
         var entry = ToolApprovalIdMap.ResolveEntry(stateBag, id);
+        if (entry is not null && (entry.Name != name || entry.Arguments != arguments))
+        {
+            throw new InvalidOperationException(
+                $"Approval mapping for wire id '{id}' does not match the replayed approval request.");
+        }
+
         var requestId = entry?.AfRequestId ?? id;
         var functionCall = new FunctionCallContent(
             entry?.CallId ?? id,

@@ -924,6 +924,31 @@ public class InputConverterTests
     }
 
     [Fact]
+    public void ConvertOutputItemsToMessages_McpApprovalRequest_ThrowsWhenMappedMetadataDisagrees()
+    {
+        const string AfRequestId = "ficc_reused_call";
+        var wireId = ToolApprovalIdMap.ComputeWireId(AfRequestId);
+        var stateBag = new AgentSessionStateBag();
+        ToolApprovalIdMap.Record(
+            stateBag,
+            wireId,
+            AfRequestId,
+            "reused_call",
+            "new_tool",
+            "{\"value\":2}");
+
+        var replayedItem = new OutputItemMcpApprovalRequest(
+            id: wireId,
+            serverLabel: "agent_framework",
+            name: "old_tool",
+            arguments: "{\"value\":1}");
+
+        var ex = Assert.Throws<InvalidOperationException>(() => InputConverter.ConvertOutputItemsToMessages([replayedItem], stateBag));
+        Assert.Contains(wireId, ex.Message);
+        Assert.Contains("does not match", ex.Message);
+    }
+
+    [Fact]
     public void ConvertOutputAndInputItems_McpApprovalRoundTrip_UsesSameAfRequestId()
     {
         const string AfRequestId = "ficc_call_roundtrip";
