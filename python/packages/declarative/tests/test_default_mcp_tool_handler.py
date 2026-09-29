@@ -1266,7 +1266,7 @@ class TestAclose:
             await first_close_started.wait()
             shutdown.cancel()
             with pytest.raises(asyncio.CancelledError):
-                await shutdown
+                await asyncio.gather(shutdown)
 
             release_first_close.set()
             await asyncio.wait_for(handler.aclose(), timeout=1)
