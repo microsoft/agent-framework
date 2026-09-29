@@ -333,7 +333,7 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
         {
             await Task.WhenAll(cleanupTasks).ConfigureAwait(false);
         }
-        catch (Exception exception)
+        catch (Exception exception) when (!IsFatalException(exception))
         {
             cleanupException = exception;
         }
@@ -345,6 +345,16 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
             ExceptionDispatchInfo.Capture(cleanupException).Throw();
         }
     }
+
+    private static bool IsFatalException(Exception exception) =>
+        exception is OutOfMemoryException and not InsufficientMemoryException
+        or StackOverflowException
+        or AccessViolationException
+        or AppDomainUnloadedException
+        or BadImageFormatException
+        or CannotUnloadAppDomainException
+        or InvalidProgramException
+        or ThreadAbortException;
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1513:Use ObjectDisposedException throw helper",
         Justification = "The helper is not available on .NET Framework or .NET Standard 2.0.")]
