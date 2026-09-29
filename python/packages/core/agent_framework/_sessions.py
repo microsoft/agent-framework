@@ -68,6 +68,7 @@ logger = logging.getLogger("agent_framework")
 
 MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY: str = "message_injection.pending_messages"
 _MESSAGE_INJECTION_LOCK = threading.Lock()
+_WORKFLOW_DEFER_COMPUTER_FUNCTION_RESULTS_KEY = "workflow.defer_computer_function_results"
 
 JsonDumps: TypeAlias = Callable[[Any], str | bytes]
 JsonLoads: TypeAlias = Callable[[str | bytes], Any]
@@ -939,6 +940,53 @@ def _filter_approval_control_messages(messages: Sequence[Message]) -> list[Messa
     return filtered_messages
 
 
+def _paired_local_function_results(contents: Sequence[Content]) -> dict[int, Content]:
+    """Match completed local results to their function-call occurrences."""
+    results_by_call_id: dict[str, deque[Content]] = {}
+    for content in contents:
+        if content.type == "function_result" and content.call_id:
+            results_by_call_id.setdefault(content.call_id, deque()).append(content)
+    pairs: dict[int, Content] = {}
+    for content in contents:
+        if (
+            content.type == "function_call"
+            and not content.informational_only
+            and content.id
+            and content.call_id
+            and (results := results_by_call_id.get(content.call_id))
+        ):
+            pairs[id(content)] = results.popleft()
+    return pairs
+
+
+def _without_deferred_workflow_function_results(messages: Sequence[Message]) -> list[Message]:
+    """Persist mixed computer turns without results staged for workflow resume."""
+    start = next(
+        (
+            index
+            for index, message in enumerate(messages)
+            if any(content.type == "computer_tool_call" and content.user_input_request for content in message.contents)
+        ),
+        None,
+    )
+    if start is None:
+        return list(messages)
+    contents = [content for message in messages[start:] for content in message.contents]
+    deferred_ids = {id(result) for result in _paired_local_function_results(contents).values()}
+    if not deferred_ids:
+        return list(messages)
+    stored = list(messages[:start])
+    for message in messages[start:]:
+        kept = [content for content in message.contents if id(content) not in deferred_ids]
+        if len(kept) == len(message.contents):
+            stored.append(message)
+        elif kept:
+            copied = copy.copy(message)
+            copied.contents = kept
+            stored.append(copied)
+    return stored
+
+
 class HistoryProvider(ContextProvider):
     """Base class for conversation history storage providers.
 
@@ -1069,7 +1117,14 @@ class HistoryProvider(ContextProvider):
         if self.store_inputs:
             messages_to_store.extend(context.input_messages)
         if self.store_outputs and context.response and context.response.messages:
-            messages_to_store.extend(context.response.messages)
+            output_messages = context.response.messages
+            if (
+                self.load_messages
+                and self.store_inputs
+                and session.state.get(_WORKFLOW_DEFER_COMPUTER_FUNCTION_RESULTS_KEY)
+            ):
+                output_messages = _without_deferred_workflow_function_results(output_messages)
+            messages_to_store.extend(output_messages)
         if messages_to_store:
             await self.save_messages(context.session_id, messages_to_store, state=state)
 

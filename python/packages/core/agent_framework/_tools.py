@@ -4845,7 +4845,12 @@ async def _process_model_function_calls(
         had_errors=execution.had_errors,
         max_errors=max_errors,
     )
-    if execution.should_terminate:
+    has_pending_computer_call = any(
+        content.type == "computer_tool_call" and content.user_input_request
+        for message in response.messages
+        for content in message.contents
+    )
+    if execution.should_terminate or has_pending_computer_call:
         processing_result.action = "return"
     if processing_result.action == "return":
         returned_approval_requests = [
