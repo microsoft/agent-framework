@@ -30,7 +30,7 @@ from agent_framework.orchestrations import (
     MagenticProgressLedgerItem,
 )
 
-from agent_framework_orchestrations import BaseGroupChatOrchestrator
+from agent_framework_orchestrations import AgentBasedGroupChatOrchestrator, BaseGroupChatOrchestrator
 
 
 class StubAgent(BaseAgent):
@@ -176,6 +176,40 @@ class ConcatenatedJsonManagerAgent(Agent):
                 )
             ]
         )
+
+
+class FencedJsonManagerAgent(Agent):
+    """Manager agent that ignores response_format and wraps its JSON in a Markdown code fence."""
+
+    def __init__(self) -> None:
+        super().__init__(client=cast(Any, MockChatClient()), name="fenced_manager", description="Fenced JSON manager")
+        self._call_count = 0
+
+    async def run(  # type: ignore[override]  # ty: ignore[invalid-method-override]
+        self,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
+        *,
+        session: AgentSession | None = None,
+        **kwargs: Any,
+    ) -> AgentResponse[Any]:
+        if self._call_count == 0:
+            self._call_count += 1
+            text = (
+                "```json\n"
+                '{"terminate": false, "reason": "delegate", "next_speaker": "agent", "final_message": null}\n'
+                "```"
+            )
+        else:
+            text = (
+                "```json\n"
+                "{\n"
+                '  "terminate": true,\n'
+                '  "reason": "Task complete",\n'
+                '  "final_message": "fenced manager final"\n'
+                "}\n"
+                "```"
+            )
+        return AgentResponse(messages=[Message(role="assistant", contents=[text], author_name=self.name)])
 
 
 def make_sequence_selector() -> Callable[[GroupChatState], str]:
@@ -409,6 +443,53 @@ async def test_agent_manager_handles_concatenated_json_output() -> None:
     # Terminal update is the orchestrator's completion message.
     assert final_update.author_name == manager.name
     assert final_update.text == "concatenated manager final"
+
+
+async def test_agent_manager_handles_fenced_json_output() -> None:
+    manager = FencedJsonManagerAgent()
+    worker = StubAgent("agent", "worker response")
+
+    workflow = GroupChatBuilder(
+        participants=[worker],
+        orchestrator_agent=manager,
+    ).build()
+
+    updates: list[AgentResponseUpdate] = []
+    async for event in workflow.run("coordinate task", stream=True):
+        if event.type == "output" and isinstance(event.data, AgentResponseUpdate):
+            updates.append(event.data)
+
+    assert updates
+    final_update = updates[-1]
+    # terminate=true inside the fence must end the chat, not fall through to max_rounds.
+    assert final_update.author_name == manager.name
+    assert final_update.text == "fenced manager final"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '```json\n{"terminate": true, "reason": "done", "final_message": "bye"}\n```',
+        '```\n{"terminate": true, "reason": "done", "final_message": "bye"}\n```',
+        '```JSON\r\n{"terminate": true, "reason": "done", "final_message": "bye"}\r\n```',
+        '```json {"terminate": true, "reason": "done", "final_message": "bye"} ```',
+        'Here is my decision:\n```json\n{"terminate": true, "reason": "done", "final_message": "bye"}\n```',
+    ],
+)
+def test_agent_orchestrator_parses_fenced_json(text: str) -> None:
+    response = AgentResponse(messages=[Message(role="assistant", contents=[text])])
+
+    output = AgentBasedGroupChatOrchestrator._parse_agent_output(response)
+
+    assert output.terminate is True
+    assert output.final_message == "bye"
+
+
+def test_agent_orchestrator_rejects_fenced_non_json() -> None:
+    response = AgentResponse(messages=[Message(role="assistant", contents=["```json\nnot json\n```"])])
+
+    with pytest.raises(ValueError, match="Failed to parse agent orchestration output"):
+        AgentBasedGroupChatOrchestrator._parse_agent_output(response)
 
 
 # Comprehensive tests for group chat functionality

@@ -23,6 +23,7 @@ from __future__ import annotations
 import inspect
 import json
 import logging
+import re
 import sys
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Sequence
@@ -70,6 +71,9 @@ else:
 
 logger = logging.getLogger(__name__)
 DEFAULT_WORKFLOW_NAME = "GroupChat"
+
+# Matches a Markdown code fence with an optional language tag (```json ... ```) and captures its body.
+_CODE_FENCE_PATTERN = re.compile(r"```[\w-]*\s*(.*?)\s*```", re.DOTALL)
 
 
 @dataclass(frozen=True)
@@ -450,7 +454,9 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
 
         Preferred path is structured output (`agent_response.value`) when available.
         If only text is available, first attempt strict JSON parsing and then apply a
-        temporary concatenated-JSON fallback as a stop-gap.
+        temporary concatenated-JSON fallback as a stop-gap. Providers that ignore
+        `response_format` often wrap the JSON in a Markdown code fence, so the body of
+        the last fenced block is tried as well.
         """
         try:
             structured_value = agent_response.value
@@ -469,6 +475,11 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
         response_text = agent_response.text.strip()
         if response_text and response_text not in text_candidates:
             text_candidates.append(response_text)
+
+        for candidate in list(text_candidates):
+            fenced_blocks = _CODE_FENCE_PATTERN.findall(candidate)
+            if fenced_blocks and fenced_blocks[-1] and fenced_blocks[-1] not in text_candidates:
+                text_candidates.append(fenced_blocks[-1])
 
         last_error: Exception | None = None
         for candidate in text_candidates:
