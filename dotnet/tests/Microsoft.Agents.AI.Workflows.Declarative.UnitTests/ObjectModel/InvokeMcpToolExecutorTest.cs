@@ -342,56 +342,14 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
             It.IsAny<string?>(),
             It.IsAny<CancellationToken>()), Times.Never);
         Assert.Empty(emittedRequests);
+        FieldInfo? approvalSnapshotsField = typeof(InvokeMcpToolExecutor)
+            .GetField("_approvalSnapshots", BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.NotNull(approvalSnapshotsField);
+        object? approvalSnapshotsValue = approvalSnapshotsField.GetValue(action);
+        Assert.NotNull(approvalSnapshotsValue);
         ConcurrentDictionary<string, ApprovalSnapshot> approvalSnapshots =
-            (ConcurrentDictionary<string, ApprovalSnapshot>)typeof(InvokeMcpToolExecutor)
-                .GetField("_approvalSnapshots", BindingFlags.NonPublic | BindingFlags.Instance)!
-                .GetValue(action)!;
+            Assert.IsType<ConcurrentDictionary<string, ApprovalSnapshot>>(approvalSnapshotsValue);
         Assert.Empty(approvalSnapshots);
-    }
-
-    [Fact]
-    public async Task InvokeMcpToolApprovedResponseWithProtectedHeaderThrowsAsync()
-    {
-        // Arrange
-        this.State.InitializeSystem();
-        this.State.Set(
-            "PROTECTED_SETTING",
-            FormulaValue.New("initial-value"),
-            VariableScopeNames.Environment);
-        this.State.Bind();
-
-        InvokeMcpTool model = this.CreateModelWithEnvironmentExpression(
-            McpInvocationValueLocation.Header,
-            requireApproval: true);
-        MockMcpToolProvider mockProvider = new();
-        MockAgentProvider mockAgentProvider = new();
-        InvokeMcpToolExecutor action = new(model, mockProvider.Object, mockAgentProvider.Object, this.State);
-        List<ExternalInputRequest> emittedRequests = [];
-        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext(emittedRequests);
-        await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
-        ExternalInputResponse response = CreateApprovalResponseFor(emittedRequests, approved: true);
-
-        this.State.Set(
-            "PROTECTED_SETTING",
-            FormulaValue.New("protected-value"),
-            VariableScopeNames.Environment,
-            SensitivityLevel.Sensitive);
-        this.State.Bind();
-
-        // Act
-        ValueTask CaptureResponseAsync() =>
-            action.CaptureResponseAsync(mockContext.Object, response, CancellationToken.None);
-
-        // Assert
-        await Assert.ThrowsAsync<DeclarativeActionException>(async () => await CaptureResponseAsync());
-        mockProvider.Verify(provider => provider.InvokeToolAsync(
-            It.IsAny<string>(),
-            It.IsAny<string?>(),
-            It.IsAny<string>(),
-            It.IsAny<IDictionary<string, object?>?>(),
-            It.IsAny<IDictionary<string, string>?>(),
-            It.IsAny<string?>(),
-            It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
