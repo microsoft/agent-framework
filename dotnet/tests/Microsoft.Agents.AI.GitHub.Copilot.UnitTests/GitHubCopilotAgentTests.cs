@@ -670,7 +670,7 @@ public sealed class GitHubCopilotAgentTests
     {
         // Arrange
         ChatMessage[] messages = CreateAttachmentMessages();
-        string testRoot = Path.Combine(Path.GetTempPath(), $"af_copilot_test_{Guid.NewGuid():N}");
+        string testRoot = Path.Join(Path.GetTempPath(), $"af_copilot_test_{Guid.NewGuid():N}");
         Directory.CreateDirectory(testRoot);
         using var cancellationTokenSource = new CancellationTokenSource();
         cancellationTokenSource.Cancel();
@@ -714,13 +714,27 @@ public sealed class GitHubCopilotAgentTests
         (string? runner, string[] prefix) = await GetUnprivilegedUserRunnerAsync();
         Assert.SkipWhen(runner is null, "This assurance test requires root with runuser or passwordless sudo.");
         ChatMessage[] messages = CreateAttachmentMessages();
-        (List<AttachmentFile>? attachments, string? tempDir) = await InvokeProcessDataContentAttachmentsAsync(messages);
-        _ = Assert.Single(attachments!);
+        string controlDir = Path.Join(Path.GetTempPath(), $"af_copilot_control_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(
+            controlDir,
+            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
+            UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
+            UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+        string? tempDir = null;
 
         try
         {
+            (int controlExitCode, _, string controlError) = await RunProcessAsync(
+                runner!,
+                [.. prefix, "/bin/ls", "--", controlDir]);
+            Assert.True(controlExitCode == 0, $"The unprivileged control listing failed: {controlError}");
+
+            (List<AttachmentFile>? attachments, string? stagedTempDir) = await InvokeProcessDataContentAttachmentsAsync(messages);
+            _ = Assert.Single(attachments!);
+            tempDir = Assert.IsType<string>(stagedTempDir);
+
             // Act - list the staging directory as the unprivileged nobody account.
-            (int exitCode, _, _) = await RunProcessAsync(runner, [.. prefix, "/bin/ls", "--", tempDir!]);
+            (int exitCode, _, _) = await RunProcessAsync(runner, [.. prefix, "/bin/ls", "--", tempDir]);
 
             // Assert
             Assert.NotEqual(0, exitCode);
@@ -728,6 +742,7 @@ public sealed class GitHubCopilotAgentTests
         finally
         {
             InvokeCleanupTempDir(tempDir);
+            Directory.Delete(controlDir);
         }
     }
 

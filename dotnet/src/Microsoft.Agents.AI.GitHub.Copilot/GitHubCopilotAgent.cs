@@ -735,7 +735,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
 
     private static string CreateAttachmentTempDirectory(string? tempRoot)
     {
-        string path = Path.Combine(tempRoot ?? Path.GetTempPath(), $"af_copilot_{Guid.NewGuid():N}");
+        string path = Path.Join(tempRoot ?? Path.GetTempPath(), $"af_copilot_{Guid.NewGuid():N}");
         return OperatingSystem.IsWindows()
             ? CreateAttachmentTempDirectoryOnWindows(path)
             : Directory.CreateDirectory(path, OwnerOnlyDirectoryMode).FullName;
