@@ -115,6 +115,30 @@ public sealed class InMemoryResponsesServiceTests
     }
 
     [Fact]
+    public async Task ListResponseInputItemsAsync_WithBeforePrecedingAfter_ReturnsAnEmptyPageAsync()
+    {
+        // Arrange
+        using var service = new InMemoryResponsesService(new StubResponseExecutor(), new InMemoryStorageOptions());
+        Response response = await service.CreateResponseAsync(new CreateResponse
+        {
+            Input = ResponseInput.FromMessages(
+                Enumerable.Range(0, 6)
+                    .Select(i => new InputMessage { Role = ChatRole.User, Content = $"message {i}" })
+                    .ToList())
+        });
+        List<string> ids = (await service.ListResponseInputItemsAsync(response.Id, limit: 100, order: SortOrder.Ascending))
+            .Data.ConvertAll(item => item.Id);
+
+        // Act
+        ListResponse<ItemResource> page = await service.ListResponseInputItemsAsync(
+            response.Id, order: SortOrder.Ascending, after: ids[4], before: ids[1]);
+
+        // Assert
+        Assert.Empty(page.Data);
+        Assert.False(page.HasMore);
+    }
+
+    [Fact]
     public async Task ListResponseInputItemsAsync_WithBeforeOnly_ReturnsTheItemsBeforeItAsync()
     {
         // Arrange
