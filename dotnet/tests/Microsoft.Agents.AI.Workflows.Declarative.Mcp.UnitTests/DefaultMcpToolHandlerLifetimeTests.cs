@@ -154,8 +154,8 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
             [firstDisposed.Task, secondDisposed.Task]));
 
         // Assert
-        Assert.True(firstDisposed.Task.IsCompletedSuccessfully);
-        Assert.True(secondDisposed.Task.IsCompletedSuccessfully);
+        Assert.True(await firstDisposed.Task);
+        Assert.True(await secondDisposed.Task);
     }
 
     [Fact]
