@@ -2522,7 +2522,7 @@ async def test_tool_nested_run_inside_drained_attempt_persists_inline() -> None:
 
 
 @requires_sdk
-async def test_stream_hooks_cannot_rewrite_egress_after_the_verdict(chat_client_base: MockBaseChatClient) -> None:
+async def test_stream_hooks_are_covered_by_the_output_verdict(chat_client_base: MockBaseChatClient) -> None:
     seen_at_output: list[Any] = []
 
     class RecordingOutputGuard:
@@ -2532,7 +2532,7 @@ async def test_stream_hooks_cannot_rewrite_egress_after_the_verdict(chat_client_
             return ALLOW
 
     class HookInjector(AgentMiddleware):
-        """Previously: rewrote egressed updates AFTER the output verdict (fail-open)."""
+        """Rewrites the stream inside the agent-hooks enforcement boundary."""
 
         async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
             def sneak(update: AgentResponseUpdate) -> AgentResponseUpdate:
@@ -2555,11 +2555,12 @@ async def test_stream_hooks_cannot_rewrite_egress_after_the_verdict(chat_client_
         updates.append(update.text)
     final = await stream.get_final_response()
 
-    # Streamed egress and the final response match the verdicted content exactly;
-    # the hook's rewrite could not escape the gate.
-    assert seen_at_output == ["update - hi"]
-    assert "".join(updates) == "update - hi"
-    assert final.text == "update - hi"
+    # The transform runs before the output verdict, and streamed egress and the
+    # final response both match the content the verdict inspected.
+    expected = "update - hi INJECTED-AFTER-VERDICT"
+    assert seen_at_output == [expected]
+    assert "".join(updates) == expected
+    assert final.text == expected
 
 
 @requires_sdk
@@ -2648,7 +2649,9 @@ async def test_gated_response_stream_applies_pending_hooks_before_the_gate_and_s
         order.append(f"rederive({final})")
         return list(final)
 
-    stream = cast("Any", ResponseStream).buffered_and_gated(consume=consume, gate=gate, rederive=rederive)
+    with pytest.warns(DeprecationWarning, match="buffered_and_gated"):
+        stream = cast("Any", ResponseStream).buffered_and_gated(consume=consume, gate=gate, rederive=rederive)
+    assert type(stream) is ResponseStream
 
     def transform(update: str) -> str:
         order.append(f"transform({update})")
@@ -2693,7 +2696,12 @@ async def test_gated_response_stream_combinator_owns_the_rederive_rule() -> None
     async def transforming_gate(updates: list[str], final: str) -> tuple[str, bool]:
         return "XY", True
 
-    stream = cast("Any", ResponseStream).buffered_and_gated(consume=consume, gate=transforming_gate, rederive=rederive)
+    with pytest.warns(DeprecationWarning, match="buffered_and_gated"):
+        stream = cast("Any", ResponseStream).buffered_and_gated(
+            consume=consume,
+            gate=transforming_gate,
+            rederive=rederive,
+        )
     assert [update async for update in stream] == ["X", "Y"]
     assert await stream.get_final_response() == "XY"
     assert rederived == ["XY"]
@@ -2702,7 +2710,12 @@ async def test_gated_response_stream_combinator_owns_the_rederive_rule() -> None
         return final, False
 
     rederived.clear()
-    stream = cast("Any", ResponseStream).buffered_and_gated(consume=consume, gate=passthrough_gate, rederive=rederive)
+    with pytest.warns(DeprecationWarning, match="buffered_and_gated"):
+        stream = cast("Any", ResponseStream).buffered_and_gated(
+            consume=consume,
+            gate=passthrough_gate,
+            rederive=rederive,
+        )
     assert [update async for update in stream] == ["a", "b"]
     assert rederived == []
 
@@ -2720,7 +2733,8 @@ async def test_gated_response_stream_raising_rederive_releases_nothing() -> None
     def rederive(final: str) -> list[str]:
         raise RuntimeError("rederive failed")
 
-    stream = cast("Any", ResponseStream).buffered_and_gated(consume=consume, gate=gate, rederive=rederive)
+    with pytest.warns(DeprecationWarning, match="buffered_and_gated"):
+        stream = cast("Any", ResponseStream).buffered_and_gated(consume=consume, gate=gate, rederive=rederive)
     released: list[str] = []
     with pytest.raises(RuntimeError, match="rederive failed"):
         async for update in stream:

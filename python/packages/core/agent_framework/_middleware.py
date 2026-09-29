@@ -285,7 +285,12 @@ class AgentContext:
             Callable[[AgentResponseUpdate], AgentResponseUpdate | Awaitable[AgentResponseUpdate]]
         ]
         | None = None,
-        stream_result_hooks: Sequence[Callable[[AgentResponse], AgentResponse | Awaitable[AgentResponse]]]
+        stream_result_hooks: Sequence[
+            Callable[
+                [AgentResponse[Any]],
+                AgentResponse[Any] | Awaitable[AgentResponse[Any] | None] | None,
+            ]
+        ]
         | None = None,
         stream_cleanup_hooks: Sequence[Callable[[], Awaitable[None] | None]] | None = None,
     ) -> None:
@@ -324,9 +329,19 @@ class AgentContext:
         self.function_invocation_kwargs: dict[str, Any] = (
             dict(function_invocation_kwargs) if function_invocation_kwargs is not None else {}
         )
-        self.stream_transform_hooks = list(stream_transform_hooks or [])
-        self.stream_result_hooks = list(stream_result_hooks or [])
+        self.stream_update_transforms = list(stream_transform_hooks or [])
+        self.stream_result_transforms = list(stream_result_hooks or [])
+        # Compatibility aliases for the original middleware context field names.
+        self.stream_transform_hooks = self.stream_update_transforms
+        self.stream_result_hooks = self.stream_result_transforms
         self.stream_cleanup_hooks = list(stream_cleanup_hooks or [])
+        self.stream_update_gates_before: list[Callable[[AgentResponseUpdate], object]] = []
+        self.stream_update_gates_after: list[Callable[[AgentResponseUpdate], object]] = []
+        self.stream_result_gates_before: list[Callable[[AgentResponse[Any]], object]] = []
+        self.stream_result_gates_after: list[Callable[[AgentResponse[Any]], object]] = []
+        self.stream_buffer_updates = False
+        self.stream_result_to_updates: Callable[[AgentResponse[Any]], Sequence[AgentResponseUpdate]] | None = None
+        self.stream_consumption_context_manager_factories: list[Callable[[], Any]] = []
         # Set by egress-enforcement middleware (agent-hooks): the run-persistence gate
         # covering this pipeline's run. The final handler offers it for adoption by
         # the run it starts (see _sessions._offer_run_persistence_gate_claim), so the
@@ -618,7 +633,13 @@ class ChatContext:
             Callable[[ChatResponseUpdate], ChatResponseUpdate | Awaitable[ChatResponseUpdate]]
         ]
         | None = None,
-        stream_result_hooks: Sequence[Callable[[ChatResponse], ChatResponse | Awaitable[ChatResponse]]] | None = None,
+        stream_result_hooks: Sequence[
+            Callable[
+                [ChatResponse[Any]],
+                ChatResponse[Any] | Awaitable[ChatResponse[Any] | None] | None,
+            ]
+        ]
+        | None = None,
         stream_cleanup_hooks: Sequence[Callable[[], Awaitable[None] | None]] | None = None,
     ) -> None:
         """Initialize the ChatContext.
@@ -648,9 +669,19 @@ class ChatContext:
         self.function_invocation_kwargs: dict[str, Any] = (
             dict(function_invocation_kwargs) if function_invocation_kwargs is not None else {}
         )
-        self.stream_transform_hooks = list(stream_transform_hooks or [])
-        self.stream_result_hooks = list(stream_result_hooks or [])
+        self.stream_update_transforms = list(stream_transform_hooks or [])
+        self.stream_result_transforms = list(stream_result_hooks or [])
+        # Compatibility aliases for the original middleware context field names.
+        self.stream_transform_hooks = self.stream_update_transforms
+        self.stream_result_hooks = self.stream_result_transforms
         self.stream_cleanup_hooks = list(stream_cleanup_hooks or [])
+        self.stream_update_gates_before: list[Callable[[ChatResponseUpdate], object]] = []
+        self.stream_update_gates_after: list[Callable[[ChatResponseUpdate], object]] = []
+        self.stream_result_gates_before: list[Callable[[ChatResponse[Any]], object]] = []
+        self.stream_result_gates_after: list[Callable[[ChatResponse[Any]], object]] = []
+        self.stream_buffer_updates = False
+        self.stream_result_to_updates: Callable[[ChatResponse[Any]], Sequence[ChatResponseUpdate]] | None = None
+        self.stream_consumption_context_manager_factories: list[Callable[[], Any]] = []
         self._message_replacements: list[tuple[Message, tuple[Message, ...]]] = []
         self._fallback_reconciliation_messages: list[Message] | None = None
 
@@ -1299,10 +1330,22 @@ class AgentMiddlewarePipeline(BaseMiddlewarePipeline):
             await first_handler()
 
         if context.result and isinstance(context.result, ResponseStream):
-            for hook in context.stream_transform_hooks:
+            if context.stream_buffer_updates:
+                context.result.buffer_updates(result_to_updates=context.stream_result_to_updates)
+            for factory in context.stream_consumption_context_manager_factories:
+                context.result.with_consumption_context_manager(factory)
+            for hook in context.stream_update_transforms:
                 context.result.with_transform_hook(hook)
-            for result_hook in context.stream_result_hooks:
+            for result_hook in context.stream_result_transforms:
                 context.result.with_result_hook(result_hook)
+            for gate in context.stream_update_gates_before:
+                context.result.with_update_gate(gate, phase="before_transform")
+            for gate in context.stream_update_gates_after:
+                context.result.with_update_gate(gate, phase="after_transform")
+            for gate in context.stream_result_gates_before:
+                context.result.with_result_gate(gate, phase="before_transform")
+            for gate in context.stream_result_gates_after:
+                context.result.with_result_gate(gate, phase="after_transform")
             for cleanup_hook in context.stream_cleanup_hooks:
                 context.result.with_cleanup_hook(cleanup_hook)
         return context.result
@@ -1483,10 +1526,22 @@ class ChatMiddlewarePipeline(BaseMiddlewarePipeline):
             await first_handler()
 
         if context.result and isinstance(context.result, ResponseStream):
-            for hook in context.stream_transform_hooks:
+            if context.stream_buffer_updates:
+                context.result.buffer_updates(result_to_updates=context.stream_result_to_updates)
+            for factory in context.stream_consumption_context_manager_factories:
+                context.result.with_consumption_context_manager(factory)
+            for hook in context.stream_update_transforms:
                 context.result.with_transform_hook(hook)
-            for result_hook in context.stream_result_hooks:
+            for result_hook in context.stream_result_transforms:
                 context.result.with_result_hook(result_hook)
+            for gate in context.stream_update_gates_before:
+                context.result.with_update_gate(gate, phase="before_transform")
+            for gate in context.stream_update_gates_after:
+                context.result.with_update_gate(gate, phase="after_transform")
+            for gate in context.stream_result_gates_before:
+                context.result.with_result_gate(gate, phase="before_transform")
+            for gate in context.stream_result_gates_after:
+                context.result.with_result_gate(gate, phase="after_transform")
             for cleanup_hook in context.stream_cleanup_hooks:
                 context.result.with_cleanup_hook(cleanup_hook)
         return context.result
