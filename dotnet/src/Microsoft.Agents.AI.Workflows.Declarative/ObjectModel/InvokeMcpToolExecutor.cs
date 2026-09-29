@@ -130,6 +130,8 @@ internal sealed class InvokeMcpToolExecutor(
     /// <param name="response">The external input response.</param>
     /// <param name="cancellationToken">A cancellation token.</param>
     /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
+    [SendsMessage(typeof(ExternalInputRequest))]
+    [SendsMessage(typeof(ActionExecutorResult))]
     public async ValueTask CaptureResponseAsync(
         IWorkflowContext context,
         ExternalInputResponse response,
@@ -143,6 +145,7 @@ internal sealed class InvokeMcpToolExecutor(
         if (approvalResponse is null)
         {
             await this.AssignErrorAsync(context, "No pending approval matched the response.").ConfigureAwait(false);
+            await context.SendResultMessageAsync(this.Id, result: null, cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -151,12 +154,14 @@ internal sealed class InvokeMcpToolExecutor(
             this._approvalSnapshots.TryRemove(approvalResponse.RequestId, out _);
             this._approvalHeaderSnapshots.TryRemove(approvalResponse.RequestId, out _);
             await this.AssignErrorAsync(context, "MCP tool invocation was not approved by user.").ConfigureAwait(false);
+            await context.SendResultMessageAsync(this.Id, result: null, cancellationToken).ConfigureAwait(false);
             return;
         }
 
         if (!this._approvalSnapshots.TryRemove(approvalResponse.RequestId, out ApprovalSnapshot? snapshot))
         {
             await this.AssignErrorAsync(context, "No pending approval matched the response.").ConfigureAwait(false);
+            await context.SendResultMessageAsync(this.Id, result: null, cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -185,6 +190,7 @@ internal sealed class InvokeMcpToolExecutor(
             cancellationToken).ConfigureAwait(false);
 
         await this.ProcessResultAsync(context, resultContent, cancellationToken).ConfigureAwait(false);
+        await context.SendResultMessageAsync(this.Id, result: null, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>

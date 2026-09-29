@@ -1,7 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Threading;
@@ -1158,6 +1160,164 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
             CreateApprovalResponseForRequest(emittedRequests[1], approved: true),
             CancellationToken.None);
         Assert.Equal([AfterRestoreHeader], capturedHeaderValues);
+    }
+
+    [Fact]
+    public async Task InvokeMcpToolWorkflowRestoreRoutesReapprovalToExternalInputAsync()
+    {
+        // Arrange
+        const string HeaderValue = "fresh-header-value";
+        using StringReader yamlReader = new(
+            $$"""
+                kind: Workflow
+                trigger:
+
+                  kind: OnConversationStart
+                  id: restored_mcp_approval_workflow
+                  actions:
+
+                    - kind: InvokeMcpTool
+                      id: invoke_mcp_tool
+                      serverUrl: {{TestServerUrl}}
+                      serverLabel: {{TestServerLabel}}
+                      toolName: {{TestToolName}}
+                      requireApproval: true
+                      headers:
+                        X-Test-Header: {{HeaderValue}}
+                      output:
+                        autoSend: false
+                        result: Local.ToolResult
+                """);
+
+        List<string> capturedHeaderValues = [];
+        Mock<IMcpToolHandler> mockProvider = new();
+        mockProvider.Setup(provider => provider.InvokeToolAsync(
+                It.IsAny<string>(),
+                It.IsAny<string?>(),
+                It.IsAny<string>(),
+                It.IsAny<IDictionary<string, object?>?>(),
+                It.IsAny<IDictionary<string, string>?>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<string, string?, string, IDictionary<string, object?>?, IDictionary<string, string>?, string?, CancellationToken>(
+                (_, _, _, _, headers, _, _) => capturedHeaderValues.Add(headers!["X-Test-Header"]))
+            .ReturnsAsync(new McpServerToolResultContent("capture-call-id")
+            {
+                Outputs = [new TextContent("result")]
+            });
+
+        DeclarativeWorkflowOptions options = new(new MockAgentProvider().Object)
+        {
+            McpToolHandler = mockProvider.Object,
+        };
+        Workflow workflow = DeclarativeWorkflowBuilder.Build<string>(yamlReader, options);
+        CheckpointManager checkpointManager = CheckpointManager.CreateInMemory();
+
+        // Act - run to the original approval request and restore from its checkpoint.
+        (RequestInfoEvent initialRequestEvent, CheckpointInfo initialCheckpoint) =
+            await RunToRequestAsync(workflow, checkpointManager, "restored-mcp-approval");
+        ExternalInputRequest initialRequest = Assert.IsType<ExternalInputRequest>(
+            initialRequestEvent.Request.Data.As<ExternalInputRequest>());
+        ToolApprovalRequestContent initialApproval = initialRequest.AgentResponse.Messages
+            .SelectMany(message => message.Contents)
+            .OfType<ToolApprovalRequestContent>()
+            .Single();
+
+        RequestInfoEvent replacementRequestEvent = await ResumeThroughReapprovalAsync(
+            workflow,
+            checkpointManager,
+            initialCheckpoint,
+            initialRequestEvent.Request.CreateResponse(
+                new ExternalInputResponse(
+                    new ChatMessage(ChatRole.Tool, [initialApproval.CreateResponse(approved: true)]))));
+
+        ExternalInputRequest replacementRequest = Assert.IsType<ExternalInputRequest>(
+            replacementRequestEvent.Request.Data.As<ExternalInputRequest>());
+        ToolApprovalRequestContent replacementApproval = replacementRequest.AgentResponse.Messages
+            .SelectMany(message => message.Contents)
+            .OfType<ToolApprovalRequestContent>()
+            .Single();
+
+        // Assert
+        Assert.NotEqual(initialApproval.RequestId, replacementApproval.RequestId);
+        Assert.Equal([HeaderValue], capturedHeaderValues);
+
+        static async Task<(RequestInfoEvent Request, CheckpointInfo Checkpoint)> RunToRequestAsync(
+            Workflow workflow,
+            CheckpointManager checkpointManager,
+            string runId)
+        {
+            await using StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, "start", checkpointManager, runId);
+            return await ReadRequestAndCheckpointAsync(run, response: null);
+        }
+
+        static async Task<RequestInfoEvent> ResumeThroughReapprovalAsync(
+            Workflow workflow,
+            CheckpointManager checkpointManager,
+            CheckpointInfo checkpoint,
+            ExternalResponse response)
+        {
+            await using StreamingRun run = await InProcessExecution.ResumeStreamingAsync(workflow, checkpoint, checkpointManager);
+            await run.SendResponseAsync(response);
+            RequestInfoEvent? replacementRequestEvent = null;
+            await foreach (WorkflowEvent workflowEvent in run.WatchStreamAsync())
+            {
+                if (workflowEvent is WorkflowErrorEvent errorEvent)
+                {
+                    throw errorEvent.Data as Exception ?? new InvalidOperationException("Unexpected workflow failure.");
+                }
+
+                if (workflowEvent is RequestInfoEvent candidate &&
+                    candidate.Request.RequestId != response.RequestId)
+                {
+                    replacementRequestEvent = candidate;
+                    ExternalInputRequest replacementRequest = Assert.IsType<ExternalInputRequest>(
+                        candidate.Request.Data.As<ExternalInputRequest>());
+                    ToolApprovalRequestContent replacementApproval = replacementRequest.AgentResponse.Messages
+                        .SelectMany(message => message.Contents)
+                        .OfType<ToolApprovalRequestContent>()
+                        .Single();
+                    await run.SendResponseAsync(
+                        candidate.Request.CreateResponse(
+                            new ExternalInputResponse(
+                                new ChatMessage(ChatRole.Tool, [replacementApproval.CreateResponse(approved: true)]))));
+                }
+            }
+
+            Assert.NotNull(replacementRequestEvent);
+            return replacementRequestEvent;
+        }
+
+        static async Task<(RequestInfoEvent Request, CheckpointInfo Checkpoint)> ReadRequestAndCheckpointAsync(
+            StreamingRun run,
+            ExternalResponse? response)
+        {
+            RequestInfoEvent? requestEvent = null;
+            CheckpointInfo? checkpoint = null;
+
+            await foreach (WorkflowEvent workflowEvent in run.WatchStreamAsync(blockOnPendingRequest: false))
+            {
+                if (workflowEvent is WorkflowErrorEvent errorEvent)
+                {
+                    throw errorEvent.Data as Exception ?? new InvalidOperationException("Unexpected workflow failure.");
+                }
+
+                if (workflowEvent is RequestInfoEvent candidate &&
+                    (response is null || candidate.Request.RequestId != response.RequestId))
+                {
+                    requestEvent = candidate;
+                }
+
+                if (workflowEvent is SuperStepCompletedEvent { CompletionInfo.Checkpoint: { } completedCheckpoint })
+                {
+                    checkpoint = completedCheckpoint;
+                }
+            }
+
+            Assert.NotNull(requestEvent);
+            Assert.NotNull(checkpoint);
+            return (requestEvent, checkpoint);
+        }
     }
 
     /// <summary>
