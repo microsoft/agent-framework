@@ -28,6 +28,7 @@ from agent_framework import (
     ResponseInvalidatedException,
     ResponseStream,
     SupportsChatGetResponse,
+    ToolMode,
     chat_middleware,
     tool,
 )
@@ -1003,6 +1004,140 @@ async def test_base_client_with_function_calling(chat_client_base: SupportsChatG
     assert response.messages[1].contents[0].result == "Processed value1"
     assert response.messages[2].role == "assistant"
     assert response.messages[2].text == "done"
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non_streaming", "streaming"])
+@pytest.mark.parametrize(
+    ("tool_choice", "expected_executions"),
+    [
+        ({"mode": "auto", "allowed_tools": ["allowed_tool"]}, ["allowed"]),
+        ({"mode": "required", "required_function_name": "allowed_tool"}, ["allowed"]),
+        ({"mode": "none"}, []),
+    ],
+    ids=["allowed_tools", "required_function", "none"],
+)
+async def test_fresh_function_dispatch_enforces_tool_choice_policy(
+    chat_client_base: SupportsChatGetResponse,
+    streaming: bool,
+    tool_choice: ToolMode,
+    expected_executions: list[str],
+) -> None:
+    """A provider response cannot dispatch local functions excluded by tool_choice."""
+    executions: list[str] = []
+
+    @tool(name="allowed_tool", approval_mode="never_require")
+    def allowed_tool() -> str:
+        executions.append("allowed")
+        return "allowed"
+
+    @tool(name="blocked_tool", approval_mode="never_require")
+    def blocked_tool() -> str:
+        executions.append("blocked")
+        return "blocked"
+
+    calls = [
+        Content.from_function_call(call_id="allowed", name="allowed_tool", arguments={}),
+        Content.from_function_call(call_id="blocked", name="blocked_tool", arguments={}),
+    ]
+    options: ChatOptions = {"tools": [allowed_tool, blocked_tool], "tool_choice": tool_choice}
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [ChatResponseUpdate(role="assistant", contents=calls)],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")])],
+        ]
+        stream = chat_client_base.get_response(
+            [Message(role="user", contents=["run tools"])],
+            options=options,
+            stream=True,
+        )
+        response = await stream.get_final_response()
+    else:
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            ChatResponse(messages=Message(role="assistant", contents=calls)),
+            ChatResponse(messages=Message(role="assistant", contents=["done"])),
+        ]
+        response = await chat_client_base.get_response(
+            [Message(role="user", contents=["run tools"])],
+            options=options,
+        )
+
+    assert executions == expected_executions
+    results = {
+        content.call_id: content
+        for message in response.messages
+        for content in message.contents
+        if content.type == "function_result"
+    }
+    assert results["blocked"].exception == "FunctionInvocationPolicyError"
+    assert results["allowed"].exception == (None if expected_executions else "FunctionInvocationPolicyError")
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non_streaming", "streaming"])
+async def test_tool_choice_rejection_does_not_consume_function_call_budget(
+    chat_client_base: SupportsChatGetResponse,
+    streaming: bool,
+) -> None:
+    """A policy-rejected call does not prevent a later allowed call from using the execution budget."""
+    from agent_framework._tools import _FUNCTION_INVOCATION_BUDGET_STATE_KEY
+
+    executions: list[str] = []
+
+    @tool(name="allowed_tool", approval_mode="never_require")
+    def allowed_tool() -> str:
+        executions.append("allowed")
+        return "allowed"
+
+    @tool(name="blocked_tool", approval_mode="never_require")
+    def blocked_tool() -> str:
+        executions.append("blocked")
+        return "blocked"
+
+    blocked_call = Content.from_function_call(call_id="blocked", name="blocked_tool", arguments={})
+    allowed_call = Content.from_function_call(call_id="allowed", name="allowed_tool", arguments={})
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [ChatResponseUpdate(role="assistant", contents=[blocked_call])],
+            [ChatResponseUpdate(role="assistant", contents=[allowed_call])],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")])],
+        ]
+    else:
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            ChatResponse(messages=Message(role="assistant", contents=[blocked_call])),
+            ChatResponse(messages=Message(role="assistant", contents=[allowed_call])),
+            ChatResponse(messages=Message(role="assistant", contents=["done"])),
+        ]
+
+    budget_state: dict[str, int] = {}
+    chat_client_base.function_invocation_configuration["max_function_calls"] = 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    options: ChatOptions = {
+        "tools": [allowed_tool, blocked_tool],
+        "tool_choice": {"mode": "auto", "allowed_tools": ["allowed_tool"]},
+    }
+    if streaming:
+        stream = chat_client_base.get_response(
+            [Message(role="user", contents=["run tools"])],
+            options=options,
+            stream=True,
+            client_kwargs={_FUNCTION_INVOCATION_BUDGET_STATE_KEY: budget_state},
+        )
+        response = await stream.get_final_response()
+    else:
+        response = await chat_client_base.get_response(
+            [Message(role="user", contents=["run tools"])],
+            options=options,
+            client_kwargs={_FUNCTION_INVOCATION_BUDGET_STATE_KEY: budget_state},
+        )
+
+    assert executions == ["allowed"]
+    assert budget_state["total_function_calls"] == 1
+    results = {
+        content.call_id: content
+        for message in response.messages
+        for content in message.contents
+        if content.type == "function_result"
+    }
+    assert results["blocked"].exception == "FunctionInvocationPolicyError"
+    assert results["allowed"].exception is None
 
 
 async def test_function_call_with_length_finish_reason_executes_and_continues(
@@ -8663,7 +8798,10 @@ async def test_streaming_approval_resume_yields_terminal_result_before_model_tex
     first_stream = chat_client_base.get_response(
         [Message(role="user", contents=["run guarded"])],
         stream=True,
-        options={"tools": [guarded_stream_tool]},
+        options={
+            "tools": [guarded_stream_tool],
+            "tool_choice": {"mode": "auto", "allowed_tools": ["guarded_stream_tool"]},
+        },
         client_kwargs={"session": session},
     )
     first_updates = [update async for update in first_stream]
@@ -8677,7 +8815,10 @@ async def test_streaming_approval_resume_yields_terminal_result_before_model_tex
     resumed_stream = chat_client_base.get_response(
         [Message(role="user", contents=[approval_request.to_function_approval_response(approved=approved)])],
         stream=True,
-        options={"tools": [guarded_stream_tool]},
+        options={
+            "tools": [guarded_stream_tool],
+            "tool_choice": {"mode": "auto", "allowed_tools": ["guarded_stream_tool"]},
+        },
         client_kwargs={"session": session},
     )
     resumed_updates = [update async for update in resumed_stream]
@@ -11029,7 +11170,7 @@ async def test_local_approval_response_executes_with_authoritative_session(
 
     paused = await chat_client_base.get_response(
         [Message(role="user", contents=["please continue"])],
-        options={"tools": [guarded_tool]},
+        options={"tools": [guarded_tool], "tool_choice": {"mode": "auto", "allowed_tools": ["guarded_tool"]}},
         client_kwargs={"session": session},
     )
     approval_request = next(
@@ -11044,7 +11185,7 @@ async def test_local_approval_response_executes_with_authoritative_session(
             *paused.messages,
             Message(role="user", contents=[approval_request.to_function_approval_response(approved=True)]),
         ],
-        options={"tools": [guarded_tool]},
+        options={"tools": [guarded_tool], "tool_choice": {"mode": "auto", "allowed_tools": ["guarded_tool"]}},
         client_kwargs={"session": session},
     )
 
