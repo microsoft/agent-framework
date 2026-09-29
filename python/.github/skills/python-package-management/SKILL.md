@@ -157,9 +157,11 @@ Every new package starts as `alpha`.
    removed, renamed, or promoted. If the package exposes individually staged APIs, keep the feature list
    there current too.
 9. Keep the `Typing :: Typed` classifier and the `py.typed` marker in step. The classifier alone is a
-   promise PEP 561 keeps through the `py.typed` file inside the package directory, so a package that
-   declares `Typing :: Typed` without shipping that file resolves to `Any` for every type checker
-   that sees the installed distribution. Check both, not one:
+   promise PEP 561 keeps through the `py.typed` file inside the package directory, and that file is
+   the signal checkers act on: a package that declares `Typing :: Typed` without shipping it is not
+   treated as typed, so its API falls back to whatever a checker does with an untyped import
+   (`Any`, `Unknown`, or a missing-stub diagnostic) instead of the inline annotations. Check both,
+   not one:
 
    ```bash
    # every package that claims to be typed must ship the marker
