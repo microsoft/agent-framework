@@ -855,6 +855,23 @@ class TestParallelToolCallUniqueness:
         tool_messages = [message for message in prepared if message.role == "tool"]
         assert [(m.content, m.tool_name) for m in tool_messages] == [("10:00", "get_time"), ("sunny", "get_weather")]
 
+    def test_tool_message_name_with_reused_call_id(self) -> None:
+        """A call_id reused later in the transcript maps each result to its own call."""
+        client = OllamaChatClient(host="http://localhost:12345", model="test-model")
+        messages = [
+            Message(role="user", contents=[Content.from_text("weather?")]),
+            Message(role="assistant", contents=[Content.from_function_call(call_id="c1", name="get_weather")]),
+            Message(role="tool", contents=[Content.from_function_result(call_id="c1", result="sunny")]),
+            Message(role="user", contents=[Content.from_text("time?")]),
+            Message(role="assistant", contents=[Content.from_function_call(call_id="c1", name="get_time")]),
+            Message(role="tool", contents=[Content.from_function_result(call_id="c1", result="10:00")]),
+        ]
+
+        prepared = client._prepare_messages_for_ollama(messages)
+
+        tool_messages = [message for message in prepared if message.role == "tool"]
+        assert [(m.content, m.tool_name) for m in tool_messages] == [("sunny", "get_weather"), ("10:00", "get_time")]
+
 
 def test_prepare_options_single_stop_string_becomes_list(ollama_unit_test_env: dict[str, str]) -> None:
     """Ollama expects options.stop to be a list, so a single stop string is wrapped."""
