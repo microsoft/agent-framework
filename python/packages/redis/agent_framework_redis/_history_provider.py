@@ -12,7 +12,7 @@ import json
 import warnings
 from collections.abc import Awaitable, Sequence
 from inspect import isawaitable
-from typing import Any, ClassVar, Literal, TypeVar, cast
+from typing import Any, ClassVar, Literal, TypeVar, cast, overload
 
 import redis.asyncio as redis
 from agent_framework import Message
@@ -24,6 +24,14 @@ from redis.credentials import CredentialProvider
 from ._feature_usage import FeatureIndex
 
 _T = TypeVar("_T")
+
+
+@overload
+async def _redis_result(value: Awaitable[_T]) -> _T: ...
+
+
+@overload
+async def _redis_result(value: _T) -> _T: ...
 
 
 async def _redis_result(value: Awaitable[_T] | _T) -> _T:

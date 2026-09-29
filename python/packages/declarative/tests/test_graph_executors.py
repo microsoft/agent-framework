@@ -1771,7 +1771,7 @@ class TestPowerFxConditionalImport:
         engine = base_mod.Engine
         assert engine is None or callable(engine)
 
-    def test_eval_raises_when_engine_unavailable(self):
+    def test_eval_raises_when_engine_unavailable(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """eval() should raise RuntimeError when Engine is None."""
         import agent_framework_declarative._workflows._declarative_base as base_mod
 
@@ -1784,15 +1784,11 @@ class TestPowerFxConditionalImport:
         state = DeclarativeWorkflowState(mock_state)
         state.initialize({"name": "test"})
 
-        original_engine = base_mod.Engine
-        try:
-            base_mod.Engine = cast(Any, None)
-            with pytest.raises(RuntimeError, match="PowerFx is not available"):
-                state.eval("=Local.counter + 1")
-        finally:
-            base_mod.Engine = original_engine
+        monkeypatch.setattr(base_mod, "Engine", None)
+        with pytest.raises(RuntimeError, match="PowerFx is not available"):
+            state.eval("=Local.counter + 1")
 
-    def test_eval_passes_through_plain_strings_without_engine(self):
+    def test_eval_passes_through_plain_strings_without_engine(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Non-PowerFx strings (no leading '=') should work without Engine."""
         import agent_framework_declarative._workflows._declarative_base as base_mod
 
@@ -1805,14 +1801,10 @@ class TestPowerFxConditionalImport:
         state = DeclarativeWorkflowState(mock_state)
         state.initialize()
 
-        original_engine = base_mod.Engine
-        try:
-            base_mod.Engine = cast(Any, None)
-            assert state.eval("hello world") == "hello world"
-            assert state.eval("") == ""
-            assert state.eval(cast("str", 42)) == 42
-        finally:
-            base_mod.Engine = original_engine
+        monkeypatch.setattr(base_mod, "Engine", None)
+        assert state.eval("hello world") == "hello world"
+        assert state.eval("") == ""
+        assert state.eval(cast("str", 42)) == 42
 
 
 class TestExecutorKwargsForwarding:
