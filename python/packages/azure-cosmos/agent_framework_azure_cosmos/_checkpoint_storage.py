@@ -218,12 +218,27 @@ class CosmosCheckpointStorage:
 
         Returns:
             The unique ID of the saved checkpoint.
+
+        Raises:
+            WorkflowCheckpointException: If the checkpoint cannot be encoded or would
+                fail to decode under this storage's ``allowed_checkpoint_types``.
         """
         mark_feature_used(FeatureIndex.AZURE_COSMOS)
-        await self._ensure_container_proxy()
 
         checkpoint_dict = checkpoint.to_dict()
-        encoded = encode_checkpoint_value(checkpoint_dict)
+        # Fail at save time if encoding or restore validation fails, matching FileCheckpointStorage.
+        try:
+            encoded = encode_checkpoint_value(checkpoint_dict)
+            decode_checkpoint_value(encoded, allowed_types=self._allowed_types)
+        except WorkflowCheckpointException:
+            raise
+        except Exception as ex:
+            raise WorkflowCheckpointException(
+                f"Checkpoint {checkpoint.checkpoint_id} cannot be encoded or restored under "
+                "this storage's allowed types; refusing to save."
+            ) from ex
+
+        await self._ensure_container_proxy()
 
         document: dict[str, Any] = {
             "id": self._make_document_id(checkpoint.workflow_name, checkpoint.checkpoint_id),
