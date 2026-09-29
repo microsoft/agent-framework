@@ -572,6 +572,63 @@ public class CompactionMessageIndexTests
     }
 
     [Fact]
+    public void UpdateAppendsNewMessagesWhenTrailingMessageContentIsDuplicate()
+    {
+        // Arrange — TodoProvider adds the same message at the end of every turn.
+        const string TodoList = "### Current todo list\n- none yet";
+        List<ChatMessage> messages =
+        [
+            new ChatMessage(ChatRole.User, "Hello"),
+            new ChatMessage(ChatRole.Assistant, "Hi"),
+            new ChatMessage(ChatRole.User, TodoList),
+        ];
+        CompactionMessageIndex index = CompactionMessageIndex.Create(messages);
+        index.Groups[1].IsExcluded = true;
+
+        // Act
+        messages.Add(new ChatMessage(ChatRole.User, "What is the weather today?"));
+        messages.Add(new ChatMessage(ChatRole.Assistant, "Let me check."));
+        messages.Add(new ChatMessage(ChatRole.User, TodoList));
+        index.Update(messages);
+
+        // Assert — the second turn is indexed without losing compaction state.
+        Assert.Equal(6, index.RawMessageCount);
+        Assert.Equal(6, index.Groups.Count);
+        Assert.Same(messages[3], index.Groups[3].Messages[0]);
+        Assert.True(index.Groups[1].IsExcluded);
+
+        index.Update(messages);
+        Assert.Equal(6, index.RawMessageCount);
+    }
+
+    [Fact]
+    public void UpdateAppendsAfterGeneratedSummaryAndDuplicateTrailingMessage()
+    {
+        // Arrange — a compaction strategy may insert a summary absent from chat history.
+        const string TodoList = "### Current todo list\n- none yet";
+        List<ChatMessage> messages =
+        [
+            new ChatMessage(ChatRole.User, "Hello"),
+            new ChatMessage(ChatRole.User, TodoList),
+        ];
+        CompactionMessageIndex index = CompactionMessageIndex.Create(messages);
+        index.InsertGroup(1, CompactionGroupKind.Summary, [new ChatMessage(ChatRole.Assistant, "Summary")]);
+        index.Groups[0].IsExcluded = true;
+
+        // Act
+        messages.Add(new ChatMessage(ChatRole.User, "What is the weather today?"));
+        messages.Add(new ChatMessage(ChatRole.User, TodoList));
+        index.Update(messages);
+
+        // Assert
+        Assert.Equal(4, index.RawMessageCount);
+        Assert.Equal(5, index.Groups.Count);
+        Assert.Same(messages[2], index.Groups[3].Messages[0]);
+        Assert.Same(messages[3], index.Groups[4].Messages[0]);
+        Assert.True(index.Groups[0].IsExcluded);
+    }
+
+    [Fact]
     public void UpdateNoOpWhenNoNewMessages()
     {
         // Arrange

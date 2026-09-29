@@ -105,16 +105,15 @@ public sealed class CompactionMessageIndex
     /// </param>
     /// <remarks>
     /// <para>
-    /// Uses equality on the last processed message to detect changes.  Only the messages after that position are
-    /// processed and appended as new groups. Existing groups and their compaction state (exclusions) are preserved.
+    /// Uses the position of the last processed message to detect appended messages. Only the messages after that
+    /// position are processed and appended as new groups. Existing groups and their compaction state (exclusions) are preserved.
     /// </para>
     /// <para>
     /// If the last processed message is not found (e.g., the message list was replaced entirely
     /// or a sliding window shifted past it), all groups are cleared and rebuilt from scratch.
     /// </para>
     /// <para>
-    /// If the last message in <paramref name="allMessages"/> matches the last
-    /// processed message, no work is performed.
+    /// If no messages have been appended, no new groups are created.
     /// </para>
     /// </remarks>
     internal void Update(IList<ChatMessage> allMessages)
@@ -127,11 +126,16 @@ public sealed class CompactionMessageIndex
             return;
         }
 
-        // If the last message is unchanged and the list hasn't shrunk, there is nothing new to process.
+        int processedMessageCount = this.RawMessageCount;
+
+        // The last message may have the same content on every turn (for example, TodoProvider's empty list).
+        // Use its original position, not the last content-equivalent occurrence in the new list.
         if (this._lastProcessedMessage is not null &&
-            allMessages.Count >= this.RawMessageCount &&
-            allMessages[allMessages.Count - 1].ContentEquals(this._lastProcessedMessage))
+            processedMessageCount > 0 &&
+            allMessages.Count >= processedMessageCount &&
+            allMessages[processedMessageCount - 1].ContentEquals(this._lastProcessedMessage))
         {
+            this.AppendFromMessages(allMessages, processedMessageCount);
             return;
         }
 

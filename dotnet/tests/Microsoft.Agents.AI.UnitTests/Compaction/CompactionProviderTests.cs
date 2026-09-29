@@ -237,6 +237,34 @@ public sealed class CompactionProviderTests
     }
 
     [Fact]
+    public async Task InvokingAsyncIncludesNewUserMessageBeforeRepeatedTodoListAsync()
+    {
+        // Arrange — the todo list provider emits the same empty list after each user turn.
+        const string TodoList = "### Current todo list\n- none yet";
+        CompactionProvider provider = new(new TruncationCompactionStrategy(CompactionTriggers.TokensExceed(100000)));
+        Mock<AIAgent> mockAgent = new() { CallBase = true };
+        TestAgentSession session = new();
+        List<ChatMessage> messages =
+        [
+            new ChatMessage(ChatRole.User, "Hello"),
+            new ChatMessage(ChatRole.User, TodoList),
+        ];
+
+        await provider.InvokingAsync(new(mockAgent.Object, session, new AIContext { Messages = messages }));
+
+        // Act
+        messages.Add(new ChatMessage(ChatRole.User, "What is the weather today?"));
+        messages.Add(new ChatMessage(ChatRole.User, TodoList));
+        AIContext result = await provider.InvokingAsync(new(mockAgent.Object, session, new AIContext { Messages = messages }));
+
+        // Assert
+        Assert.NotNull(result.Messages);
+        List<ChatMessage> resultMessages = [.. result.Messages];
+        Assert.Equal(messages.Count, resultMessages.Count);
+        Assert.Contains(resultMessages, message => message.Text == "What is the weather today?");
+    }
+
+    [Fact]
     public async Task InvokingAsyncWithNonListEnumerableCreatesListCopyAsync()
     {
         // Arrange — pass IEnumerable (not List<ChatMessage>) to exercise the list copy branch
