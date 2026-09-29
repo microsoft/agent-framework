@@ -3662,6 +3662,23 @@ def test_prepare_options_user_metadata_no_override(
     assert result["metadata"]["user_id"] == "existing_user"
 
 
+def test_prepare_options_user_does_not_mutate_caller_metadata(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Test mapping user to metadata.user_id leaves the caller's metadata dict untouched."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    messages = [Message(role="user", contents=[Content.from_text("Hello")])]
+    metadata = {"trace": "t1"}
+
+    first = client._prepare_options(messages, {"user": "alice", "metadata": metadata})
+    second = client._prepare_options(messages, {"user": "bob", "metadata": metadata})
+
+    assert metadata == {"trace": "t1"}
+    assert first["metadata"] == {"trace": "t1", "user_id": "alice"}
+    assert second["metadata"] == {"trace": "t1", "user_id": "bob"}
+
+
 def test_process_stream_event_message_stop(mock_anthropic_client: MagicMock) -> None:
     """Test processing message_stop event."""
     client = create_test_anthropic_client(mock_anthropic_client)

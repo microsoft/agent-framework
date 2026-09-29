@@ -159,6 +159,38 @@ This is not a strict rule, but a guideline to help maintain consistency across t
 
 ## Implementation Decisions
 
+### Settings Resolution in Connectors
+
+Connector constructors should use `load_settings` to resolve explicit keyword
+arguments, an explicitly selected `.env` file, process environment variables,
+and defaults before deciding that a required value is missing.
+
+When a preconfigured SDK client can be injected, both the client and individual
+settings may be omitted at the constructor boundary. Make settings required only
+for the branch that creates the SDK client:
+
+```python
+settings = load_settings(
+    ProviderSettings,
+    env_prefix="PROVIDER_",
+    required_fields=[] if client is not None else ["api_key"],
+    api_key=api_key,
+    env_file_path=env_file_path,
+    env_file_encoding=env_file_encoding,
+)
+
+if client is None:
+    client = ProviderClient(
+        api_key=cast(SecretString, settings.get("api_key")).get_secret_value(),
+    )
+```
+
+Do not prevalidate optional constructor arguments before settings resolution.
+In particular, do not reject an injected client merely because an optional
+credential or model argument was also supplied. The injected client owns its
+transport and authentication; resolved settings are used only when constructing
+a client.
+
 ### Asynchronous Programming
 
 It's important to note that most of this library is written with asynchronous in mind. The
