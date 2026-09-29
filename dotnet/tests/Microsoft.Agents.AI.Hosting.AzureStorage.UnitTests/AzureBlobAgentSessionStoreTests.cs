@@ -7,6 +7,8 @@ using System.Threading.Tasks;
 using Azure;
 using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
+using Microsoft.Agents.AI.Hosting.UnitTests;
+using Microsoft.Extensions.Logging;
 #if NET8_0_OR_GREATER
 using Microsoft.Agents.AI.Hosting.AzureStorage.Tests;
 #endif
@@ -244,18 +246,42 @@ public sealed class AzureBlobAgentSessionStoreTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task DeleteSessionAsync_MissingContainer_DoesNotThrowAsync()
+    public async Task DeleteSessionAsync_MissingContainer_DoesNotThrowAndLogsAtDebugAsync()
     {
         // Arrange
         AIAgent agent = new ChatClientAgent(new NotInvokedChatClient(), name: "assistant");
         BlobContainerClient missingContainer = s_blobServiceClient.GetBlobContainerClient($"missing-{Guid.NewGuid():N}");
+        var logs = new CapturingLoggerFactory();
         var store = new AzureBlobAgentSessionStore(
             missingContainer,
             "assistant",
-            new AzureBlobAgentSessionStoreOptions { CreateContainerIfNotExists = false });
+            new AzureBlobAgentSessionStoreOptions { CreateContainerIfNotExists = false },
+            logs);
 
-        // Act and assert
+        // Act
         await store.DeleteSessionAsync(agent, new AgentSessionStoreKey("session-1"));
+
+        // Assert
+        var entry = Assert.Single(logs.Entries);
+        Assert.Equal(LogLevel.Debug, entry.Level);
+        Assert.Contains("session-1", entry.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task DeleteSessionAsync_StoredSession_DoesNotLogAsync()
+    {
+        // Arrange
+        AIAgent agent = new ChatClientAgent(new NotInvokedChatClient(), name: "assistant");
+        var logs = new CapturingLoggerFactory();
+        var store = new AzureBlobAgentSessionStore(this._containerClient, "assistant", loggerFactory: logs);
+        var key = new AgentSessionStoreKey("session-1");
+        await store.SaveSessionAsync(agent, key, await agent.CreateSessionAsync());
+
+        // Act
+        await store.DeleteSessionAsync(agent, key);
+
+        // Assert
+        Assert.Empty(logs.Entries);
     }
 
     [Fact]

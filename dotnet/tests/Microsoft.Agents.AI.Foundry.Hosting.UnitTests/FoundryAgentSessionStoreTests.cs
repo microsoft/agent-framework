@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Azure.AI.AgentServer.Core.Storage;
 using Microsoft.Agents.AI.Foundry.Hosting;
+using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Agents.AI.Foundry.UnitTests.Hosting;
 
@@ -226,6 +227,40 @@ public sealed class FoundryAgentSessionStoreTests
     }
 
     [Fact]
+    public async Task DeleteSessionAsync_NothingStored_LogsTheIgnoredNotFoundAtDebugAsync()
+    {
+        // Arrange
+        var logs = new RecordingLoggerFactory();
+        var store = NewStore(new FakeStateStore(), logs);
+        var agent = new TestAgent(name: "Concierge");
+
+        // Act
+        await store.DeleteSessionAsync(agent, Key("conv-1"));
+
+        // Assert
+        var entry = Assert.Single(logs.Entries);
+        Assert.Equal(LogLevel.Debug, entry.Level);
+        Assert.Contains("conv-1", entry.Message, StringComparison.Ordinal);
+        Assert.IsType<FoundryStorageNotFoundException>(entry.Exception);
+    }
+
+    [Fact]
+    public async Task DeleteSessionAsync_StoredSession_DoesNotLogAsync()
+    {
+        // Arrange
+        var logs = new RecordingLoggerFactory();
+        var store = NewStore(new FakeStateStore(), logs);
+        var agent = new TestAgent(name: "Concierge");
+        await store.SaveSessionAsync(agent, Key("conv-1"), new TestSession());
+
+        // Act
+        await store.DeleteSessionAsync(agent, Key("conv-1"));
+
+        // Assert
+        Assert.Empty(logs.Entries);
+    }
+
+    [Fact]
     public async Task GetStoreAsync_ResolvesTheStoreOnceAcrossManyCallsAsync()
     {
         // Arrange: binding the store costs a round trip, so it must not happen per request.
@@ -430,8 +465,8 @@ public sealed class FoundryAgentSessionStoreTests
         Assert.Equal(FoundryAgentSessionStore.DefaultStoreName, store.StoreName);
     }
 
-    private static FoundryAgentSessionStore NewStore(FakeStateStore backing)
-        => new(_ => Task.FromResult<FoundryStateStore>(backing));
+    private static FoundryAgentSessionStore NewStore(FakeStateStore backing, ILoggerFactory? loggerFactory = null)
+        => new(_ => Task.FromResult<FoundryStateStore>(backing), loggerFactory: loggerFactory);
 
     private static AgentSessionStoreKey Key(
         string sessionId,

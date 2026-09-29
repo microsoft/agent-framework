@@ -11,6 +11,10 @@
     <ProjectReference Include="..\..\src\Microsoft.Agents.AI.Hosting.AzureStorage\Microsoft.Agents.AI.Hosting.AzureStorage.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Include="..\Microsoft.Agents.AI.Hosting.UnitTests\CapturingLoggerFactory.cs" LinkBase="TestUtilities" />
+  </ItemGroup>
+
   <ItemGroup Condition="$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net8.0'))">
     <ProjectReference Include="..\..\src\Microsoft.Agents.AI.Hosting.AGUI.AspNetCore\Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.csproj" />
     <Compile Include="..\Microsoft.Agents.AI.Hosting.AzureStorage.TestUtilities\*.cs" LinkBase="TestUtilities" />

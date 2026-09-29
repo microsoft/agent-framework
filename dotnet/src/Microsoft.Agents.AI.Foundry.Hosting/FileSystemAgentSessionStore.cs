@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Shared.DiagnosticIds;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
 
@@ -242,18 +243,16 @@ public sealed class FileSystemAgentSessionStore : AgentSessionStore
         AgentSessionStoreKey key,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(agent);
-        ArgumentNullException.ThrowIfNull(key);
+        _ = Throw.IfNull(agent);
+        _ = Throw.IfNull(key);
         cancellationToken.ThrowIfCancellationRequested();
 
         string path = this.GetSessionPath(agent, key);
-        try
+
+        // No directory for this agent means nothing was ever stored.
+        if (Directory.Exists(Path.GetDirectoryName(path)))
         {
             File.Delete(path);
-        }
-        catch (DirectoryNotFoundException)
-        {
-            // No directory for this agent means nothing was ever stored.
         }
 
         return default;
