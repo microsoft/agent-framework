@@ -4982,3 +4982,187 @@ async def test_same_tool_object_appended_twice_during_run_is_idempotent(
     assert executed == ["multiply"]
     assert response.text == "done"
     assert not any("could not be made available to the model" in record.message for record in caplog.records)
+
+
+def _script_turns(chat_client_base: MockBaseChatClient, turns: list[list[Content]], *, stream: bool) -> None:
+    """Script one model turn per entry; the last turn finishes the response."""
+    if stream:
+        chat_client_base.streaming_responses = [
+            [
+                ChatResponseUpdate(
+                    contents=contents, role="assistant", finish_reason="stop" if index == len(turns) - 1 else None
+                )
+            ]
+            for index, contents in enumerate(turns)
+        ]
+    else:
+        chat_client_base.run_responses = [
+            ChatResponse(messages=Message(role="assistant", contents=contents)) for contents in turns
+        ]
+    chat_client_base.function_invocation_configuration["max_iterations"] = len(turns)
+
+
+async def _run_agent_text(agent: Agent[Any], prompt: str, *, stream: bool) -> str:
+    if stream:
+        return "".join([update.text or "" async for update in agent.run(prompt, stream=True)])
+    return (await agent.run(prompt)).text
+
+
+def _duplicate_tool_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [record.message for record in caplog.records if "could not be made available to the model" in record.message]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_valid_tool_added_with_duplicate_in_same_turn_is_still_exposed(
+    chat_client_base: MockBaseChatClient,
+    caplog: pytest.LogCaptureFixture,
+    stream: bool,
+) -> None:
+    executed: list[str] = []
+
+    @tool(name="multiply", approval_mode="never_require")
+    def multiply(a: int, b: int) -> int:
+        """Multiply two numbers."""
+        executed.append("multiply")
+        return a * b
+
+    @tool(name="multiply", approval_mode="never_require")
+    def other_multiply(a: int, b: int) -> int:
+        """Multiply two numbers differently."""
+        executed.append("other_multiply")
+        return a * b
+
+    @tool(name="divide", approval_mode="never_require")
+    def divide(a: int, b: int) -> float:
+        """Divide two numbers."""
+        executed.append("divide")
+        return a / b
+
+    @tool(name="load_math_tools", approval_mode="never_require")
+    def load_math_tools() -> str:
+        """Load the math tools."""
+        agent.default_options["tools"].extend([other_multiply, divide])
+        return "Math tools loaded."
+
+    agent = Agent(client=chat_client_base, tools=[load_math_tools, multiply])
+    _script_turns(
+        chat_client_base,
+        [
+            [Content.from_function_call(call_id="call_1", name="load_math_tools", arguments="{}")],
+            [Content.from_function_call(call_id="call_2", name="divide", arguments='{"a": 6, "b": 3}')],
+            [Content.from_text("2")],
+        ],
+        stream=stream,
+    )
+    requested_tool_names: list[list[str]] = []
+
+    with (
+        caplog.at_level(logging.WARNING, logger="agent_framework"),
+        _capture_requested_tool_names(chat_client_base, requested_tool_names),
+    ):
+        text = await _run_agent_text(agent, "What is 6 divided by 3?", stream=stream)
+
+    assert requested_tool_names == [
+        ["load_math_tools", "multiply"],
+        ["load_math_tools", "multiply", "divide"],
+        ["load_math_tools", "multiply", "divide"],
+    ]
+    assert executed == ["divide"]
+    assert text == "2"
+    assert len(_duplicate_tool_warnings(caplog)) == 1
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_two_new_tools_with_same_name_in_one_batch_keep_the_first(
+    chat_client_base: MockBaseChatClient,
+    caplog: pytest.LogCaptureFixture,
+    stream: bool,
+) -> None:
+    executed: list[str] = []
+
+    @tool(name="add", approval_mode="never_require")
+    def first_add(a: int, b: int) -> int:
+        """Add two numbers."""
+        executed.append("first_add")
+        return a + b
+
+    @tool(name="add", approval_mode="never_require")
+    def second_add(a: int, b: int) -> int:
+        """Add two numbers differently."""
+        executed.append("second_add")
+        return a + b
+
+    @tool(name="load_math_tools", approval_mode="never_require")
+    def load_math_tools() -> str:
+        """Load the math tools."""
+        agent.default_options["tools"].extend([first_add, second_add])
+        return "Math tools loaded."
+
+    agent = Agent(client=chat_client_base, tools=[load_math_tools])
+    _script_turns(
+        chat_client_base,
+        [
+            [Content.from_function_call(call_id="call_1", name="load_math_tools", arguments="{}")],
+            [Content.from_function_call(call_id="call_2", name="add", arguments='{"a": 2, "b": 3}')],
+            [Content.from_text("5")],
+        ],
+        stream=stream,
+    )
+    requested_tool_names: list[list[str]] = []
+
+    with (
+        caplog.at_level(logging.WARNING, logger="agent_framework"),
+        _capture_requested_tool_names(chat_client_base, requested_tool_names),
+    ):
+        text = await _run_agent_text(agent, "What is 2 plus 3?", stream=stream)
+
+    assert requested_tool_names == [["load_math_tools"], ["load_math_tools", "add"], ["load_math_tools", "add"]]
+    assert executed == ["first_add"]
+    assert text == "5"
+    assert len(_duplicate_tool_warnings(caplog)) == 1
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_mcp_server_added_during_run_with_partially_clashing_functions_exposes_the_rest(
+    chat_client_base: MockBaseChatClient,
+    caplog: pytest.LogCaptureFixture,
+    stream: bool,
+) -> None:
+    math_server = _ConnectedMCPTool("math", ["multiply", "divide", "subtract"])
+
+    @tool(name="multiply", approval_mode="never_require")
+    def multiply(a: int, b: int) -> int:
+        """Multiply two numbers."""
+        return a * b
+
+    @tool(name="connect_math_server", approval_mode="never_require")
+    def connect_math_server() -> str:
+        """Connect the math MCP server."""
+        agent.mcp_tools.append(math_server)
+        return "Math server connected."
+
+    agent = Agent(client=chat_client_base, tools=[connect_math_server, multiply])
+    _script_turns(
+        chat_client_base,
+        [
+            [Content.from_function_call(call_id="call_1", name="connect_math_server", arguments="{}")],
+            [Content.from_text("done")],
+        ],
+        stream=stream,
+    )
+    requested_tool_names: list[list[str]] = []
+
+    with (
+        caplog.at_level(logging.WARNING, logger="agent_framework"),
+        _capture_requested_tool_names(chat_client_base, requested_tool_names),
+    ):
+        text = await _run_agent_text(agent, "Connect the math server.", stream=stream)
+
+    assert requested_tool_names == [
+        ["connect_math_server", "multiply"],
+        ["connect_math_server", "multiply", "divide", "subtract"],
+    ]
+    assert text == "done"
+    warnings = _duplicate_tool_warnings(caplog)
+    assert len(warnings) == 1
+    assert "'multiply'" in warnings[0]

@@ -4390,10 +4390,10 @@ async def _refresh_run_tools(options: dict[str, Any], refresh_run_tools: _RunToo
 
     Agent runs supply ``refresh_run_tools`` so a tool appended to the agent's or the run's
     tool list while the run executes is sent on the next model call. The new tools are
-    merged into the run-local tools list in place, so the tool map and
-    ``FunctionInvocationContext.tools`` see them too. A resolution failure (for example a
-    duplicate tool name) is logged and the run continues with its current tools rather
-    than aborting mid-loop.
+    merged into the run-local tools list in place, one at a time, so the tool map and
+    ``FunctionInvocationContext.tools`` see them too. A tool whose name is already taken by
+    a different tool (in the run or earlier in the same batch) is logged and skipped on its
+    own; the other new tools are still added and the run never aborts mid-loop.
     """
     options_tools = options.get("tools")
     # Without a run-local tools list the run started with no tools, so no tool can have run yet.
@@ -4402,17 +4402,32 @@ async def _refresh_run_tools(options: dict[str, Any], refresh_run_tools: _RunToo
     live_tools = cast("list[ToolTypes]", options_tools)
     try:
         new_tools = await refresh_run_tools()
-        if not new_tools:
-            return
-        # Validate against a copy first so a duplicate name leaves the live list unchanged.
-        merged = _append_unique_tools(list(live_tools), new_tools)
     except Exception:
         logger.warning(
             "Tools added during the run could not be made available to the model; they take effect from the next run.",
             exc_info=True,
         )
         return
-    live_tools[:] = merged
+    if not new_tools:
+        return
+    tools_by_name = {name: tool_item for tool_item in live_tools if (name := _get_tool_name(tool_item))}
+    for tool_item in new_tools:
+        name = _get_tool_name(tool_item)
+        if name is None:
+            live_tools.append(tool_item)
+            continue
+        existing_tool = tools_by_name.get(name)
+        if existing_tool is tool_item:
+            continue
+        if existing_tool is not None:
+            logger.warning(
+                "Tool '%s' added during the run could not be made available to the model: "
+                "a different tool with that name is already available.",
+                name,
+            )
+            continue
+        tools_by_name[name] = tool_item
+        live_tools.append(tool_item)
 
 
 @dataclass

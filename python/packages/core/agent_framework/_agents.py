@@ -1493,32 +1493,23 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 items.extend(cast("list[Any]", source))
         return items
 
-    async def _append_run_tools(
+    async def _resolve_run_tool(
         self,
-        final_tools: list[ToolTypes],
-        tools: Sequence[ToolTypes],
+        tool: ToolTypes,
         function_invocation_kwargs: Mapping[str, Any],
-    ) -> None:
-        """Append tools to a run's tool list, connecting MCP tools and adding their functions."""
+    ) -> list[ToolTypes]:
+        """Resolve one normalized tool into the tools a run exposes, connecting MCP tools."""
         from ._mcp import MCPTool
 
-        for tool in tools:
-            if not isinstance(tool, MCPTool):
-                _append_unique_tools(final_tools, [tool])
-                continue
+        if not isinstance(tool, MCPTool):
+            return [tool]
+        await tool._prepare_for_run(function_invocation_kwargs)  # pyright: ignore[reportPrivateUsage]
+        if not tool.is_connected:
+            # The handshake and discovery requests are issued before any tool call, so the run's
+            # kwargs must reach header_provider here or those requests go out unauthenticated.
+            await self._async_exit_stack.enter_async_context(tool)
             await tool._prepare_for_run(function_invocation_kwargs)  # pyright: ignore[reportPrivateUsage]
-            if not tool.is_connected:
-                # The handshake and discovery requests are issued before any tool call, so the run's
-                # kwargs must reach header_provider here or those requests go out unauthenticated.
-                await self._async_exit_stack.enter_async_context(tool)
-                await tool._prepare_for_run(function_invocation_kwargs)  # pyright: ignore[reportPrivateUsage]
-            _append_unique_tools(
-                final_tools,
-                tool.functions,
-                duplicate_error_message=(
-                    "Tool names must be unique. Consider setting `tool_name_prefix` on the MCPTool."
-                ),
-            )
+        return list(tool.functions)
 
     async def _prepare_run_context(
         self,
@@ -1627,6 +1618,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             }
 
         agent_name = self._get_agent_name()
+        from ._mcp import MCPTool
         from ._tools import (
             _PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
             _REFRESH_RUN_TOOLS_KEY,  # pyright: ignore[reportPrivateUsage]
@@ -1646,18 +1638,43 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
 
         # Resolve final tool list (configured tools + runtime provided tools + local MCP server tools)
         final_tools = list(base_tools)
-        await self._append_run_tools(final_tools, [*normalized_tools, *self.mcp_tools], additional_function_arguments)
+        for tool in [*normalized_tools, *self.mcp_tools]:
+            _append_unique_tools(
+                final_tools,
+                await self._resolve_run_tool(tool, additional_function_arguments),
+                duplicate_error_message=(
+                    "Tool names must be unique. Consider setting `tool_name_prefix` on the MCPTool."
+                    if isinstance(tool, MCPTool)
+                    else None
+                ),
+            )
         # MCP tools added later in the run are prepared with the same kwargs as those added above.
         mcp_run_kwargs = dict(additional_function_arguments)
 
         async def refresh_run_tools() -> list[ToolTypes]:
-            new_items = {
-                id(item): item for item in self._run_tool_source_items(tools_) if id(item) not in seen_tool_items
-            }
-            seen_tool_items.update(new_items)
-            new_tools: list[ToolTypes] = []
-            await self._append_run_tools(new_tools, _normalize_tools(list(new_items.values())), mcp_run_kwargs)
-            return new_tools
+            # Candidates are returned without de-duplication; the function-invocation loop merges
+            # them one at a time and skips only the names that clash.
+            candidates: list[ToolTypes] = []
+            for item in self._run_tool_source_items(tools_):
+                if id(item) in seen_tool_items:
+                    continue
+                try:
+                    resolved = [
+                        resolved_tool
+                        for tool in _normalize_tools(item)
+                        for resolved_tool in await self._resolve_run_tool(tool, mcp_run_kwargs)
+                    ]
+                except Exception:
+                    # Left unseen, so resolution is retried before the next model call.
+                    logger.warning(
+                        "Tool %r added during the run could not be resolved; retrying before the next model call.",
+                        item,
+                        exc_info=True,
+                    )
+                    continue
+                seen_tool_items[id(item)] = item
+                candidates.extend(resolved)
+            return candidates
 
         additional_function_arguments[_PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY] = _tool_approval_source_ids(
             self.middleware
