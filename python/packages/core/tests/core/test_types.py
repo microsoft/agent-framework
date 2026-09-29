@@ -4895,6 +4895,38 @@ class TestResponseStreamGatesAndBuffering:
         assert seen_after == ["XY"]
         assert gated_updates == ["a!", "b!", "X", "Y"]
 
+    async def test_buffered_converter_preserves_unchanged_updates(self) -> None:
+        """A configured converter is not used when no transform replaces content."""
+        converter_calls = 0
+        original = ChatResponseUpdate(
+            contents=[Content.from_text("a")],
+            role="assistant",
+            continuation_token={},
+            additional_properties={"provider": "metadata"},
+        )
+
+        async def updates() -> AsyncIterable[ChatResponseUpdate]:
+            yield original
+
+        def result_to_updates(_: ChatResponse) -> Sequence[ChatResponseUpdate]:
+            nonlocal converter_calls
+            converter_calls += 1
+            return [ChatResponseUpdate(contents=[Content.from_text("rebuilt")], role="assistant")]
+
+        stream = ResponseStream(
+            updates(),
+            finalizer=ChatResponse.from_updates,
+            stream_updates=False,
+            result_to_updates=result_to_updates,
+        )
+
+        released = [update async for update in stream]
+        assert released == [original]
+        assert released[0] is original
+        assert released[0].continuation_token == {}
+        assert released[0].additional_properties == {"provider": "metadata"}
+        assert converter_calls == 0
+
     async def test_buffered_result_replacement_requires_result_to_updates(self) -> None:
         """Buffered replacement cannot silently replay stale updates."""
 
@@ -4938,6 +4970,45 @@ class TestResponseStreamGatesAndBuffering:
             await stream.get_final_response()
         assert stream.updates == []
         assert cleanup_calls == 1
+
+    async def test_buffered_cancellation_is_terminal(self) -> None:
+        """Cancellation closes the source, runs cleanup once, and cannot be retried."""
+        source_waiting = asyncio.Event()
+        source_closed = False
+        cleanup_calls = 0
+
+        async def updates() -> AsyncIterable[str]:
+            nonlocal source_closed
+            try:
+                yield "a"
+                source_waiting.set()
+                await asyncio.Event().wait()
+            finally:
+                source_closed = True
+
+        def cleanup() -> None:
+            nonlocal cleanup_calls
+            cleanup_calls += 1
+
+        stream: ResponseStream[str, str] = ResponseStream(
+            updates(),
+            finalizer=lambda values: "".join(values),
+            cleanup_hooks=[cleanup],
+            stream_updates=False,
+        )
+
+        pull = asyncio.create_task(anext(stream))
+        await source_waiting.wait()
+        pull.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await pull
+
+        assert stream._buffered_candidate_updates == ["a"]
+        assert stream.updates == []
+        assert source_closed is True
+        assert cleanup_calls == 1
+        with pytest.raises(asyncio.CancelledError):
+            await anext(stream)
 
     async def test_live_result_replacement_does_not_rewrite_emitted_updates(self) -> None:
         """Live streaming retains already-emitted updates while replacing the final result."""

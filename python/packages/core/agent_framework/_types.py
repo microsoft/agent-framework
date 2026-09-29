@@ -3452,17 +3452,23 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         )
         self._cleanup_hooks: list[Callable[[], Awaitable[None] | None]] = list(cleanup_hooks or ())
         self._cleanup_run: bool = False
-        self._stream_error: Exception | None = None
+        self._stream_error: BaseException | None = None
         self._stream_updates = stream_updates
         self._result_to_updates = result_to_updates
+        self._terminal_result_to_updates: Callable[[FinalT], Sequence[UpdateT]] | None = None
+        self._terminal_result_is_authoritative = False
         self._result_was_transformed = False
+        self._terminal_result_transforms: list[Callable[[FinalT], FinalT | Awaitable[FinalT | None] | None]] = []
+        self._terminal_result_gates: list[Callable[[FinalT], object]] = []
+        self._release_hooks: list[Callable[[], Awaitable[None] | None]] = []
+        self._release_error_hooks: list[Callable[[BaseException], Awaitable[None] | None]] = []
         self._released_updates: list[UpdateT] = []
         self._buffered_candidate_updates: list[UpdateT] = []
         self._buffered_output_updates: list[UpdateT] = []
         self._buffered_output_index = 0
         self._buffered_materialized = False
         self._buffered_materializing = False
-        self._buffered_materialization_error: Exception | None = None
+        self._buffered_materialization_error: BaseException | None = None
         self._return_final_after_buffer_release_error = False
         self._content_pipeline_started = False
         self._content_hooks_sealed = False
@@ -3810,9 +3816,37 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
                     update = await update
             return await self._record_update(update, run_after_gates=run_after_gates)
 
-    async def _handle_stream_error(self, exc: Exception) -> None:
+    async def _handle_stream_error(self, exc: BaseException) -> None:
         self._stream_error = exc
         try:
+            await self._run_cleanup_hooks()
+        finally:
+            self._stream_error = None
+
+    async def _run_release_hooks(self) -> None:
+        for hook in self._release_hooks:
+            result = hook()
+            if isawaitable(result):
+                await result
+
+    async def _run_release_error_hooks(self, exc: BaseException) -> None:
+        for hook in self._release_error_hooks:
+            result = hook(exc)
+            if isawaitable(result):
+                await result
+
+    async def _abort_buffered_materialization(self, exc: BaseException) -> None:
+        self._stream_error = exc
+        try:
+            iterator = self._iterator
+            if iterator is not None:
+                if isinstance(iterator, ResponseStream):
+                    await cast(ResponseStream[UpdateT, Any], iterator).close()
+                else:
+                    close = getattr(iterator, "aclose", None)
+                    if close is not None:
+                        await close()
+            self._consumed = True
             await self._run_cleanup_hooks()
         finally:
             self._stream_error = None
@@ -3860,6 +3894,20 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
             self._final_result,
             target="result",
         )
+        terminal_result, transformed = await self._apply_transforms(
+            cast(
+                Sequence[Callable[[Any], Any | Awaitable[Any | None] | None]],
+                self._terminal_result_transforms,
+            ),
+            self._final_result,
+        )
+        self._final_result = terminal_result
+        self._result_was_transformed = self._result_was_transformed or transformed
+        await self._run_gates(
+            cast(Sequence[Callable[[Any], object]], self._terminal_result_gates),
+            self._final_result,
+            target="result",
+        )
         self._finalized = True
 
     async def _finish_consumption(self) -> None:
@@ -3878,6 +3926,7 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
             raise RuntimeError("ResponseStream does not support concurrent buffered consumption.")
 
         self._buffered_materializing = True
+        release_phase_started = False
         try:
             async with contextlib.AsyncExitStack() as stack:
                 for factory in self._consumption_context_manager_factories:
@@ -3887,43 +3936,48 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
                     else:
                         stack.enter_context(manager)
 
-                buffered_updates: list[UpdateT] = []
+                self._buffered_candidate_updates = []
                 while True:
                     try:
-                        buffered_updates.append(await self._pull_next_update(run_after_gates=True))
+                        self._buffered_candidate_updates.append(await self._pull_next_update(run_after_gates=True))
                     except StopAsyncIteration:
                         break
 
-                self._buffered_candidate_updates = buffered_updates
                 if not self._consumed:
                     self._consumed = True
                     await self._run_cleanup_hooks()
                 await self._prepare_final_result()
 
+            release_phase_started = True
             await self._complete_final_result()
             released_updates: list[UpdateT]
-            if self._result_to_updates is not None:
-                released_updates = list(self._result_to_updates(cast(FinalT, self._final_result)))
+            needs_rederive = self._result_was_transformed or self._terminal_result_is_authoritative
+            result_to_updates = self._terminal_result_to_updates or self._result_to_updates
+            if needs_rederive:
+                if result_to_updates is None:
+                    raise RuntimeError(
+                        "A buffered ResponseStream transform returned a replacement, but result_to_updates "
+                        "was not configured."
+                    )
+                released_updates = list(result_to_updates(cast(FinalT, self._final_result)))
                 for update in released_updates:
                     await self._run_gates(
                         cast(Sequence[Callable[[Any], object]], self._update_gates_after),
                         update,
                         target="update",
                     )
-            elif self._result_was_transformed:
-                raise RuntimeError(
-                    "A buffered ResponseStream result transform returned a replacement, but result_to_updates "
-                    "was not configured."
-                )
             else:
-                released_updates = buffered_updates
+                released_updates = self._buffered_candidate_updates
 
+            await self._run_release_hooks()
             self._buffered_output_updates = released_updates
             self._buffered_materialized = True
-        except Exception as exc:
+        except BaseException as exc:
             try:
-                await self._handle_stream_error(exc)
-            except Exception as cleanup_exc:
+                if release_phase_started:
+                    await self._run_release_error_hooks(exc)
+                await self._abort_buffered_materialization(exc)
+            except BaseException as cleanup_exc:
                 self._buffered_materialization_error = cleanup_exc
                 raise
             self._buffered_materialization_error = exc
@@ -4155,6 +4209,57 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         """Register a context manager around complete buffered consumption and finalization."""
         self._ensure_content_configuration_mutable()
         self._consumption_context_manager_factories.append(cm_factory)
+        return self
+
+    def _with_terminal_result_transform(
+        self,
+        transform: Callable[[FinalT], FinalT | Awaitable[FinalT | None] | None],
+    ) -> ResponseStream[UpdateT, FinalT]:
+        """Register a framework-owned transform after all composable result stages."""
+        self._ensure_content_configuration_mutable()
+        self._terminal_result_transforms.append(transform)
+        return self
+
+    def _with_terminal_result_gate(
+        self,
+        gate: Callable[[FinalT], object],
+    ) -> ResponseStream[UpdateT, FinalT]:
+        """Register a framework-owned gate after terminal result transforms."""
+        self._ensure_content_configuration_mutable()
+        self._terminal_result_gates.append(gate)
+        return self
+
+    def _with_terminal_result_to_updates(
+        self,
+        result_to_updates: Callable[[FinalT], Sequence[UpdateT]],
+    ) -> ResponseStream[UpdateT, FinalT]:
+        """Bind the trusted converter used after terminal enforcement transforms content."""
+        self._ensure_content_configuration_mutable()
+        self._terminal_result_to_updates = result_to_updates
+        return self
+
+    def _with_authoritative_terminal_result(self) -> ResponseStream[UpdateT, FinalT]:
+        """Require buffered release updates to be derived from the terminal result."""
+        self._ensure_content_configuration_mutable()
+        self._terminal_result_is_authoritative = True
+        return self
+
+    def _with_release_hook(
+        self,
+        hook: Callable[[], Awaitable[None] | None],
+    ) -> ResponseStream[UpdateT, FinalT]:
+        """Register a framework-owned hook after release updates pass every gate."""
+        self._ensure_content_configuration_mutable()
+        self._release_hooks.append(hook)
+        return self
+
+    def _with_release_error_hook(
+        self,
+        hook: Callable[[BaseException], Awaitable[None] | None],
+    ) -> ResponseStream[UpdateT, FinalT]:
+        """Register a framework-owned hook for terminal enforcement or release failures."""
+        self._ensure_content_configuration_mutable()
+        self._release_error_hooks.append(hook)
         return self
 
     async def _run_cleanup_hooks(self) -> None:

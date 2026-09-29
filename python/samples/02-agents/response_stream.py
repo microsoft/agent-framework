@@ -91,8 +91,9 @@ The older `transform_hooks`, `result_hooks`, `.with_transform_hook()`, and
 Middleware should register stream transforms, gates, buffering, and conversion
 on its `AgentContext` or `ChatContext` before calling `call_next()`. The
 middleware pipeline applies that configuration to the eventual ResponseStream
-after the chain unwinds. Use the fluent ResponseStream helpers when code outside
-middleware already owns a concrete stream.
+after the chain unwinds, in unwind order: inner middleware post-processing runs
+before outer middleware post-processing. Use the fluent ResponseStream helpers
+when code outside middleware already owns a concrete stream.
 
 === Two Consumption Patterns ===
 

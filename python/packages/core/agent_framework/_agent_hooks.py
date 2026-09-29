@@ -1296,42 +1296,28 @@ class _AgentHooksAgentMiddleware(_AgentHooksMiddlewareBase, AgentMiddleware):
                 _RUN_STATE.reset(run_token)
 
         async def _transform(final: AgentResponse[Any]) -> AgentResponse[Any] | None:
-            from agent_hooks import InterceptionBlocked
+            if not isinstance(final, AgentResponse):
+                raise MiddlewareException(
+                    f"agent-hooks cannot guard a streamed run result of type {type(final).__name__}; "
+                    "the output interception point was not emitted."
+                )
+            transformed = await self._emit_output(state, final)
+            return final if transformed else None
 
-            try:
-                if not isinstance(final, AgentResponse):
-                    raise MiddlewareException(
-                        f"agent-hooks cannot guard a streamed run result of type {type(final).__name__}; "
-                        "the output interception point was not emitted."
-                    )
-                transformed = await self._emit_output(state, final)
-                return final if transformed else None
-            except InterceptionBlocked:
-                gate_handle.drop()
-                await self._emit_shutdown(state, "error")
-                raise
-            except asyncio.CancelledError:
-                await self._emit_shutdown(state, "cancelled")
-                raise
-            except BaseException:
-                await self._emit_shutdown(state, "error")
-                raise
+        async def _release() -> None:
+            await gate_handle.flush()
+            await self._emit_shutdown(state, "completed")
 
-        async def _release(_: AgentResponse[Any]) -> None:
-            try:
-                await gate_handle.flush()
-                await self._emit_shutdown(state, "completed")
-            except asyncio.CancelledError:
-                await self._emit_shutdown(state, "cancelled")
-                raise
-            except BaseException:
-                await self._emit_shutdown(state, "error")
-                raise
+        async def _release_error(exc: BaseException) -> None:
+            gate_handle.drop()
+            await self._emit_shutdown(state, "cancelled" if isinstance(exc, asyncio.CancelledError) else "error")
 
-        context.stream_result_transforms.append(_transform)
-        context.stream_result_gates_after.append(_release)
+        context._stream_terminal_result_transforms.append(_transform)  # pyright: ignore[reportPrivateUsage]
+        context._stream_terminal_result_to_updates = _agent_updates_from_response  # pyright: ignore[reportPrivateUsage]
+        context._stream_terminal_result_is_authoritative = True  # pyright: ignore[reportPrivateUsage]
+        context._stream_release_hooks.append(_release)  # pyright: ignore[reportPrivateUsage]
+        context._stream_release_error_hooks.append(_release_error)  # pyright: ignore[reportPrivateUsage]
         context.stream_buffer_updates = True
-        context.stream_result_to_updates = _agent_updates_from_response
         context.stream_consumption_context_manager_factories.append(_consumption_scope)
         return inner
 
@@ -1442,29 +1428,26 @@ class _AgentHooksChatMiddleware(_AgentHooksMiddlewareBase, ChatMiddleware):
                 yield
 
         async def _transform(final: ChatResponse[Any]) -> ChatResponse[Any] | None:
-            from agent_hooks import InterceptionBlocked
-
             if not isinstance(final, ChatResponse):
                 raise MiddlewareException(
                     f"agent-hooks cannot guard a streamed chat result of type {type(final).__name__}; "
                     "the post_model_call interception point was not emitted."
                 )
-            try:
-                changed = await self._emit_post_model_call(state, model_id, final)
-                return final if changed else None
-            except InterceptionBlocked:
-                # §6.1: the deferred per-service-call persistence for the denied
-                # response is dropped, never executed.
-                gate_handle.drop()
-                raise
+            changed = await self._emit_post_model_call(state, model_id, final)
+            return final if changed else None
 
-        async def _release(_: ChatResponse[Any]) -> None:
+        async def _release() -> None:
             await gate_handle.flush()
 
-        context.stream_result_transforms.append(_transform)
-        context.stream_result_gates_after.append(_release)
+        def _release_error(_: BaseException) -> None:
+            gate_handle.drop()
+
+        context._stream_terminal_result_transforms.append(_transform)  # pyright: ignore[reportPrivateUsage]
+        context._stream_terminal_result_to_updates = _chat_updates_from_response  # pyright: ignore[reportPrivateUsage]
+        context._stream_terminal_result_is_authoritative = True  # pyright: ignore[reportPrivateUsage]
+        context._stream_release_hooks.append(_release)  # pyright: ignore[reportPrivateUsage]
+        context._stream_release_error_hooks.append(_release_error)  # pyright: ignore[reportPrivateUsage]
         context.stream_buffer_updates = True
-        context.stream_result_to_updates = _chat_updates_from_response
         context.stream_consumption_context_manager_factories.append(_consumption_scope)
         return inner
 
