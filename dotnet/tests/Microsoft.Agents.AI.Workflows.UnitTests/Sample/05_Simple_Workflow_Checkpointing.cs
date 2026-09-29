@@ -35,6 +35,13 @@ internal static class Step5EntryPoint
         Assert.Null(result);
         Assert.Equal(6, checkpoints.Count);
 
+        // Cancelling the event consumer does not cancel the workflow. Wait for the current
+        // superstep batch to halt before importing checkpoint state, or an off-thread runner
+        // can still be publishing queued updates when the restore begins.
+        await foreach (WorkflowEvent _ in handle.WatchStreamAsync(blockOnPendingRequest: false).ConfigureAwait(false))
+        {
+        }
+
         CheckpointInfo targetCheckpoint = checkpoints[2];
 
         Console.WriteLine($"Restoring to checkpoint {targetCheckpoint} from session {targetCheckpoint.SessionId}");

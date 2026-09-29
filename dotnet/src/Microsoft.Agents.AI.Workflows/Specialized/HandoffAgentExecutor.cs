@@ -430,6 +430,7 @@ internal sealed class HandoffAgentExecutor :
         string? requestedHandoff = null;
         List<AgentResponseUpdate> updates = [];
         List<(FunctionCallContent Request, string? ResponseId)> candidateRequests = [];
+        HashSet<string> completedRequestIds = new(StringComparer.Ordinal);
 
         this._session ??= await this._agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
 
@@ -440,11 +441,33 @@ internal sealed class HandoffAgentExecutor :
         {
             await AddUpdateAsync(update, cancellationToken).ConfigureAwait(false);
 
-            collector.ProcessAgentResponseUpdate(update, CollectHandoffRequestsFilter);
+            // Process content in stream order so a provider-owned tool completion cancels the
+            // corresponding candidate before routing. Keeping this state invocation-local also
+            // ensures cancellation or failure cannot retain a partial decision for the next turn.
+            foreach (AIContent content in update.Contents)
+            {
+                if (content is FunctionResultContent functionResult)
+                {
+                    _ = completedRequestIds.Add(functionResult.CallId);
+                    _ = candidateRequests.RemoveAll(
+                        candidate => string.Equals(candidate.Request.CallId, functionResult.CallId, StringComparison.Ordinal));
+                }
+
+                collector.ProcessAIContents([content], CollectHandoffRequestsFilter);
+            }
 
             bool CollectHandoffRequestsFilter(FunctionCallContent candidateHandoffRequest)
             {
-                bool isHandoffRequest = this._handoffFunctionNames.Contains(candidateHandoffRequest.Name);
+                // A handoff is an unresolved assistant request for a declaration owned by this
+                // executor. Other roles, other agents, malformed IDs, and already-completed calls
+                // are provider lifecycle events rather than application routing decisions.
+                bool isHandoffRequest =
+                    update.Role == ChatRole.Assistant
+                    && update.AgentId is not null
+                    && string.Equals(update.AgentId, this._agent.Id, StringComparison.Ordinal)
+                    && !string.IsNullOrWhiteSpace(candidateHandoffRequest.CallId)
+                    && !completedRequestIds.Contains(candidateHandoffRequest.CallId)
+                    && this._handoffFunctionNames.Contains(candidateHandoffRequest.Name);
                 if (isHandoffRequest)
                 {
                     candidateRequests.Add((candidateHandoffRequest, update.ResponseId));
