@@ -51,8 +51,6 @@ from ._feature_usage import FeatureIndex
 from ._sdk_client import (
     GoogleGeminiSettings,
     create_genai_client,
-    resolve_service_url,
-    resolve_vertexai_mode,
 )
 
 if sys.version_info >= (3, 13):
@@ -334,7 +332,7 @@ class RawGeminiChatClient(
 
         configured_enterprise = google_settings.get("genai_use_enterprise")
         configured_vertexai = google_settings.get("genai_use_vertexai")
-        self._genai_client = create_genai_client(
+        self._genai_client, self._vertexai, self._service_url = create_genai_client(
             client=client,
             api_key=google_settings.get("api_key"),
             enterprise=configured_enterprise,
@@ -344,9 +342,6 @@ class RawGeminiChatClient(
             credentials=credentials,
         )
 
-        configured_mode = configured_enterprise if configured_enterprise is not None else configured_vertexai
-        self._vertexai = resolve_vertexai_mode(self._genai_client, fallback=configured_mode)
-        self._service_url = resolve_service_url(self._genai_client, vertexai=self._vertexai)
         self.model = google_settings.get("model")
         self.max_tracked_thought_signatures = max_tracked_thought_signatures
         self._thought_signature_cache: OrderedDict[str, bytes] = OrderedDict()

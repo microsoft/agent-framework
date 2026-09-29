@@ -23,7 +23,13 @@ from google.genai import types
 from pydantic import BaseModel
 from typing_extensions import NotRequired, TypedDict
 
-from agent_framework_gemini import GeminiChatClient, GeminiChatOptions, RawGeminiChatClient, ThinkingConfig
+from agent_framework_gemini import (
+    GeminiChatClient,
+    GeminiChatOptions,
+    GeminiEmbeddingClient,
+    RawGeminiChatClient,
+    ThinkingConfig,
+)
 from agent_framework_gemini._feature_usage import FeatureIndex
 
 
@@ -2755,6 +2761,19 @@ def test_service_url_falls_back_when_sdk_base_url_is_unavailable() -> None:
 
     assert gemini_client.service_url() == "https://generativelanguage.googleapis.com"
     assert vertex_client.service_url() == "https://aiplatform.googleapis.com"
+
+
+def test_injected_sdk_routing_is_shared_with_embeddings() -> None:
+    sdk = MagicMock()
+    sdk._api_client.vertexai = True
+    sdk._api_client._http_options.base_url = "https://custom.example.test/"
+
+    chat = GeminiChatClient(client=sdk, model="gemini-2.5-flash", vertexai=False)
+    embeddings = GeminiEmbeddingClient(client=sdk, model="gemini-embedding-2", vertexai=False)
+
+    assert chat._genai_client is embeddings._genai_client is sdk
+    assert chat._vertexai is embeddings._vertexai is True
+    assert chat.service_url() == embeddings.service_url() == "https://custom.example.test"
 
 
 # integration tests

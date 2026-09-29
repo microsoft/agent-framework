@@ -88,40 +88,42 @@ def create_genai_client(
     location: str | None,
     credentials: Credentials | None,
     enterprise: bool | None = None,
-) -> genai.Client:
-    """Create an SDK client for either Gemini Developer API or Vertex AI, unless one was supplied."""
-    if client is not None:
-        return client
+) -> tuple[genai.Client, bool, str]:
+    """Return the SDK client, resolved Enterprise mode, and service URL."""
+    if client is None:
+        if api_key is not None and not api_key.get_secret_value().strip():
+            raise ValueError("GOOGLE_API_KEY must not be empty when provided.")
+        if enterprise is not None and vertexai is not None and enterprise != vertexai:
+            raise ValueError("GOOGLE_GENAI_USE_ENTERPRISE and GOOGLE_GENAI_USE_VERTEXAI cannot disagree.")
+        use_enterprise = enterprise if enterprise is not None else vertexai
+        _validate_client_auth_configuration(
+            vertexai=use_enterprise,
+            api_key=api_key,
+            project=project,
+            location=location,
+            credentials=credentials,
+        )
+        client_kwargs: dict[str, Any] = {
+            "http_options": {"headers": {"x-goog-api-client": get_user_agent()}},
+        }
+        if enterprise is not None:
+            client_kwargs["enterprise"] = enterprise
+        elif vertexai is not None:
+            client_kwargs["vertexai"] = vertexai
 
-    if api_key is not None and not api_key.get_secret_value().strip():
-        raise ValueError("GOOGLE_API_KEY must not be empty when provided.")
-    if enterprise is not None and vertexai is not None and enterprise != vertexai:
-        raise ValueError("GOOGLE_GENAI_USE_ENTERPRISE and GOOGLE_GENAI_USE_VERTEXAI cannot disagree.")
-    use_enterprise = enterprise if enterprise is not None else vertexai
-    _validate_client_auth_configuration(
-        vertexai=use_enterprise,
-        api_key=api_key,
-        project=project,
-        location=location,
-        credentials=credentials,
-    )
-    client_kwargs: dict[str, Any] = {
-        "http_options": {"headers": {"x-goog-api-client": get_user_agent()}},
-    }
-    if enterprise is not None:
-        client_kwargs["enterprise"] = enterprise
-    elif vertexai is not None:
-        client_kwargs["vertexai"] = vertexai
+        if api_key is not None and (use_enterprise is not True or (credentials is None and not (project and location))):
+            client_kwargs["api_key"] = api_key.get_secret_value()
 
-    if api_key is not None and (use_enterprise is not True or (credentials is None and not (project and location))):
-        client_kwargs["api_key"] = api_key.get_secret_value()
+        if use_enterprise is True and project:
+            client_kwargs["project"] = project
 
-    if use_enterprise is True and project:
-        client_kwargs["project"] = project
+        if use_enterprise is True and location:
+            client_kwargs["location"] = location
+        if use_enterprise is True and credentials is not None:
+            client_kwargs["credentials"] = credentials
 
-    if use_enterprise is True and location:
-        client_kwargs["location"] = location
-    if use_enterprise is True and credentials is not None:
-        client_kwargs["credentials"] = credentials
+        client = genai.Client(**client_kwargs)
 
-    return genai.Client(**client_kwargs)
+    configured_mode = enterprise if enterprise is not None else vertexai
+    resolved_vertexai = resolve_vertexai_mode(client, fallback=configured_mode)
+    return client, resolved_vertexai, resolve_service_url(client, vertexai=resolved_vertexai)

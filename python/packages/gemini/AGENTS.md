@@ -1,6 +1,8 @@
 # Gemini Package (agent-framework-gemini)
 
 Integration with Google's Gemini Developer API and Enterprise (Vertex AI) via the `google-genai` SDK.
+The shared `_sdk_client.create_genai_client` resolves authentication, backend mode,
+and service URL for chat and embeddings.
 
 ## Core Classes
 
