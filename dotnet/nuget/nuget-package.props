@@ -8,8 +8,6 @@
     <PackageVersion Condition="'$(IsReleaseCandidate)' != 'true' AND '$(VersionSuffix)' != ''">$(VersionPrefix)-$(VersionSuffix).$(DateSuffix).1</PackageVersion>
     <PackageVersion Condition="'$(IsReleaseCandidate)' != 'true' AND '$(VersionSuffix)' == ''">$(VersionPrefix)-preview.$(DateSuffix).1</PackageVersion>
     <PackageVersion Condition="'$(IsReleased)' == 'true'">$(VersionPrefix)</PackageVersion>
-    <GitTag>$(VersionPrefix)</GitTag>
-
     <Configurations>Debug;Release;Publish</Configurations>
     <IsPackable>true</IsPackable>
 
