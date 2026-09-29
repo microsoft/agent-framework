@@ -123,6 +123,42 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
     }
 
     [Fact]
+    public async Task DrainCleanupAsync_Cancellation_DrainsAllCleanupAndCompletionTasksAsync()
+    {
+        // Arrange
+        TaskCompletionSource<bool> firstDisposed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource<bool> secondDisposed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        async Task CancelledCleanupAsync()
+        {
+            try
+            {
+                await Task.Yield();
+                throw new OperationCanceledException("session cleanup cancelled");
+            }
+            finally
+            {
+                firstDisposed.TrySetResult(true);
+            }
+        }
+
+        async Task SuccessfulCleanupAsync()
+        {
+            await Task.Yield();
+            secondDisposed.TrySetResult(true);
+        }
+
+        // Act
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => DefaultMcpToolHandler.DrainCleanupAsync(
+            [CancelledCleanupAsync(), SuccessfulCleanupAsync()],
+            [firstDisposed.Task, secondDisposed.Task]));
+
+        // Assert
+        Assert.True(firstDisposed.Task.IsCompletedSuccessfully);
+        Assert.True(secondDisposed.Task.IsCompletedSuccessfully);
+    }
+
+    [Fact]
     public async Task NoProvider_CacheEviction_DisposesLeastRecentlyUsedSessionAsync()
     {
         // Arrange

@@ -6,6 +6,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
+using System.Runtime.ExceptionServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -322,15 +323,37 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
             this._clientLock.Release();
         }
 
-        foreach (CachedClient client in clientsToDispose)
+        try
         {
-            await this.DisposeCachedClientAsync(client).ConfigureAwait(false);
+            await DrainCleanupAsync(
+                clientsToDispose.Select(client => this.DisposeCachedClientAsync(client)),
+                cachedClients.Select(client => client.Disposed.Task)).ConfigureAwait(false);
+        }
+        finally
+        {
+            this._clientLock.Dispose();
+            this._clientCreationSemaphore.Dispose();
+        }
+    }
+
+    internal static async Task DrainCleanupAsync(IEnumerable<Task> cleanupTasks, IEnumerable<Task> completionTasks)
+    {
+        Exception? cleanupException = null;
+        try
+        {
+            await Task.WhenAll(cleanupTasks).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            cleanupException = exception;
         }
 
-        await Task.WhenAll(cachedClients.Select(client => client.Disposed.Task)).ConfigureAwait(false);
+        await Task.WhenAll(completionTasks).ConfigureAwait(false);
 
-        this._clientLock.Dispose();
-        this._clientCreationSemaphore.Dispose();
+        if (cleanupException is not null)
+        {
+            ExceptionDispatchInfo.Capture(cleanupException).Throw();
+        }
     }
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1513:Use ObjectDisposedException throw helper",

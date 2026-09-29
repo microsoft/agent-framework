@@ -534,10 +534,15 @@ class DefaultMCPToolHandler:
                 logger.debug("DefaultMCPToolHandler: in-flight future raised during aclose", exc_info=True)
                 continue
 
-        for entry in entries_to_close:
-            await self._close_claimed_entry(entry)
+        close_results = await asyncio.gather(
+            *(self._close_claimed_entry(entry) for entry in entries_to_close),
+            return_exceptions=True,
+        )
         for entry in entries:
             await entry.closed.wait()
+        for result in close_results:
+            if isinstance(result, BaseException):
+                raise result
 
     async def __aenter__(self) -> DefaultMCPToolHandler:
         return self
