@@ -5228,3 +5228,211 @@ async def test_local_tool_wins_over_mcp_function_appended_in_same_turn(
     warnings = _duplicate_tool_warnings(caplog)
     assert len(warnings) == 1
     assert "'multiply'" in warnings[0]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_tools_added_mid_run_match_run_start_tool_order(
+    chat_client_base: MockBaseChatClient,
+    stream: bool,
+) -> None:
+    """Tools appended mid-run are exposed in the same order as when configured at run start."""
+
+    def make_tools() -> tuple[FunctionTool, _ConnectedMCPTool]:
+        @tool(name="add", approval_mode="never_require")
+        def local_add(a: int, b: int) -> int:
+            """Add two numbers locally."""
+            return a + b
+
+        return local_add, _ConnectedMCPTool("math", ["multiply", "divide"])
+
+    @tool(name="load_math_tools", approval_mode="never_require")
+    def load_math_tools() -> str:
+        """Load the math tools."""
+        agent.mcp_tools.append(mid_run_server)
+        agent.default_options["tools"].append(mid_run_add)
+        return "Math tools loaded."
+
+    def capture_tools(requested_tools: list[list[tuple[str, str | None]]]) -> Any:
+        original_inner = chat_client_base._inner_get_response
+
+        def capture_inner(
+            *, messages: MutableSequence[Message], stream: bool, options: dict[str, Any], **kwargs: Any
+        ) -> Any:
+            requested_tools.append([(tool.name, tool.description) for tool in options.get("tools", [])])
+            return original_inner(messages=messages, stream=stream, options=options, **kwargs)
+
+        return patch.object(chat_client_base, "_inner_get_response", side_effect=capture_inner)
+
+    run_start_add, run_start_server = make_tools()
+    run_start_agent = Agent(client=chat_client_base, tools=[load_math_tools, run_start_add, run_start_server])
+    _script_turns(chat_client_base, [[Content.from_text("done")]], stream=stream)
+    run_start_tools: list[list[tuple[str, str | None]]] = []
+    with capture_tools(run_start_tools):
+        await _run_agent_text(run_start_agent, "Hello.", stream=stream)
+
+    mid_run_add, mid_run_server = make_tools()
+    agent = Agent(client=chat_client_base, tools=[load_math_tools])
+    _script_turns(
+        chat_client_base,
+        [
+            [Content.from_function_call(call_id="call_1", name="load_math_tools", arguments="{}")],
+            [Content.from_text("done")],
+        ],
+        stream=stream,
+    )
+    mid_run_tools: list[list[tuple[str, str | None]]] = []
+    with capture_tools(mid_run_tools):
+        await _run_agent_text(agent, "Load the math tools.", stream=stream)
+
+    assert run_start_tools[0] == [
+        ("load_math_tools", "Load the math tools."),
+        ("add", "Add two numbers locally."),
+        ("multiply", "multiply from math"),
+        ("divide", "divide from math"),
+    ]
+    assert mid_run_tools[1] == run_start_tools[0]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_run_start_rejects_mcp_function_clashing_with_local_tool(
+    chat_client_base: MockBaseChatClient,
+    stream: bool,
+) -> None:
+    """At run start the MCP function is the rejected duplicate, the same one a mid-run refresh skips."""
+
+    @tool(name="multiply", approval_mode="never_require")
+    def local_multiply(a: int, b: int) -> int:
+        """Multiply two numbers locally."""
+        return a * b
+
+    agent = Agent(client=chat_client_base, tools=[local_multiply, _ConnectedMCPTool("math", ["multiply", "divide"])])
+    _script_turns(chat_client_base, [[Content.from_text("done")]], stream=stream)
+
+    with pytest.raises(ValueError, match=r"Duplicate tool name 'multiply'\..*tool_name_prefix.*MCPTool"):
+        await _run_agent_text(agent, "What is 2 times 3?", stream=stream)
+
+
+class _IterationCountingList(list[Any]):
+    """List that counts how many times it is iterated."""
+
+    iterations = 0
+
+    def __iter__(self) -> Any:
+        self.iterations += 1
+        return super().__iter__()
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_refresh_does_not_scan_unchanged_tool_sources(
+    chat_client_base: MockBaseChatClient,
+    stream: bool,
+) -> None:
+    @tool(name="lookup_weather", approval_mode="never_require")
+    def lookup_weather(location: str) -> str:
+        """Get the weather."""
+        return "sunny"
+
+    agent = Agent(client=chat_client_base, tools=[lookup_weather])
+    agent_tools = _IterationCountingList(agent.default_options["tools"])
+    agent.default_options["tools"] = agent_tools
+    run_tools = _IterationCountingList()
+    _script_turns(
+        chat_client_base,
+        [
+            [Content.from_function_call(call_id="call_1", name="lookup_weather", arguments='{"location": "Seattle"}')],
+            [Content.from_function_call(call_id="call_2", name="lookup_weather", arguments='{"location": "Boston"}')],
+            [Content.from_text("done")],
+        ],
+        stream=stream,
+    )
+    iterations_per_request: list[tuple[int, int]] = []
+    original_inner = chat_client_base._inner_get_response
+
+    def capture_inner(
+        *, messages: MutableSequence[Message], stream: bool, options: dict[str, Any], **kwargs: Any
+    ) -> Any:
+        iterations_per_request.append((agent_tools.iterations, run_tools.iterations))
+        return original_inner(messages=messages, stream=stream, options=options, **kwargs)
+
+    with patch.object(chat_client_base, "_inner_get_response", side_effect=capture_inner):
+        if stream:
+            text = "".join([update.text or "" async for update in agent.run("weather?", tools=run_tools, stream=True)])
+        else:
+            text = (await agent.run("weather?", tools=run_tools)).text
+
+    assert text == "done"
+    assert len(iterations_per_request) == 3
+    # Run preparation iterates the sources; the refreshes before later model calls do not.
+    assert iterations_per_request[1] == iterations_per_request[0]
+    assert iterations_per_request[2] == iterations_per_request[0]
+
+
+class _DiscoveringMCPTool(_ConnectedMCPTool):
+    """Disconnected MCP test double whose functions are discovered only when it is entered."""
+
+    def __init__(self, name: str, function_names: list[str], events: list[str]) -> None:
+        super().__init__(name=name, function_names=function_names)
+        self._undiscovered_functions = self._functions
+        self._functions = []
+        self.is_connected = False
+        self.events = events
+
+    async def __aenter__(self) -> "_DiscoveringMCPTool":
+        self.events.append(f"{self.name}.enter")
+        self._functions = self._undiscovered_functions
+        self.is_connected = True
+        return self
+
+    async def __aexit__(
+        self, exc_type: type[BaseException] | None, exc_value: BaseException | None, traceback: Any
+    ) -> None:
+        self.events.append(f"{self.name}.exit")
+        self.is_connected = False
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_disconnected_mcp_server_added_during_run_is_entered_discovered_and_closed(
+    chat_client_base: MockBaseChatClient,
+    stream: bool,
+) -> None:
+    events: list[str] = []
+    math_server = _DiscoveringMCPTool("math", ["multiply", "divide"], events)
+
+    @tool(name="connect_math_server", approval_mode="never_require")
+    def connect_math_server() -> str:
+        """Connect the math MCP server."""
+        agent.mcp_tools.append(math_server)
+        return "Math server connected."
+
+    agent = Agent(client=chat_client_base, tools=[connect_math_server])
+    _script_turns(
+        chat_client_base,
+        [
+            [Content.from_function_call(call_id="call_1", name="connect_math_server", arguments="{}")],
+            [Content.from_text("done")],
+        ],
+        stream=stream,
+    )
+    original_inner = chat_client_base._inner_get_response
+
+    def capture_inner(
+        *, messages: MutableSequence[Message], stream: bool, options: dict[str, Any], **kwargs: Any
+    ) -> Any:
+        events.append("request: " + ", ".join(tool.name for tool in options.get("tools", [])))
+        return original_inner(messages=messages, stream=stream, options=options, **kwargs)
+
+    with patch.object(chat_client_base, "_inner_get_response", side_effect=capture_inner):
+        text = await _run_agent_text(agent, "Connect the math server.", stream=stream)
+
+    assert text == "done"
+    assert events == [
+        "request: connect_math_server",
+        "math.enter",
+        "request: connect_math_server, multiply, divide",
+    ]
+    assert math_server.is_connected
+
+    await agent.close()
+
+    assert events[-1] == "math.exit"
+    assert not math_server.is_connected

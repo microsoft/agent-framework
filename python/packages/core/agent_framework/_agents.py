@@ -1489,17 +1489,17 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         """
         return [agent_tools, run_tools, self.mcp_tools]
 
-    def _run_tool_source_items(self, run_tools: Any) -> list[Any]:
-        """Return the items of the tool lists a run re-reads before each model call, in precedence order.
+    def _run_tool_source_lists(self, run_tools: Any) -> list[list[Any] | None]:
+        """Return the tool lists a run re-reads before each model call, in precedence order.
 
-        These are the agent's tools, the run-level tools when they were passed as a list, and
-        the agent's MCP servers.
+        These are the agent's tools, the run-level tools, and the agent's MCP servers. A source
+        that is not a list (for example a tuple or a single run-level tool) cannot grow during
+        the run and is returned as ``None``.
         """
-        items: list[Any] = []
-        for source in self._run_tool_sources(self.default_options.get("tools"), run_tools):
-            if isinstance(source, list):
-                items.extend(cast("list[Any]", source))
-        return items
+        return [
+            cast("list[Any]", source) if isinstance(source, list) else None
+            for source in self._run_tool_sources(self.default_options.get("tools"), run_tools)
+        ]
 
     async def _resolve_run_tool(
         self,
@@ -1542,8 +1542,14 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         tools_ = _select_run_level_tools(tools, opts)
         opts.pop("tools", None)
         # Items already in the agent's and the run's tool lists when the run starts; anything
-        # appended to those lists later is added to the run before its next model call.
-        seen_tool_items = {id(item): item for item in self._run_tool_source_items(tools_)}
+        # appended to those lists later is added to the run before its next model call. Each
+        # source's watermark (the list object and its length) lets an unchanged source be skipped
+        # without scanning its items.
+        start_source_lists = self._run_tool_source_lists(tools_)
+        seen_tool_items = {id(item): item for source in start_source_lists if source is not None for item in source}
+        source_watermarks: list[tuple[list[Any], int] | None] = [
+            (source, len(source)) if source is not None else None for source in start_source_lists
+        ]
 
         input_messages = normalize_messages(messages)
 
@@ -1665,25 +1671,35 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             # Candidates are returned without de-duplication; the function-invocation loop merges
             # them one at a time and skips only the names that clash.
             candidates: list[ToolTypes] = []
-            for item in self._run_tool_source_items(tools_):
-                if id(item) in seen_tool_items:
+            for index, source in enumerate(self._run_tool_source_lists(tools_)):
+                watermark = source_watermarks[index]
+                # Same list object and length as last time: nothing was appended, so skip the scan.
+                if source is None or (watermark is not None and watermark[0] is source and watermark[1] == len(source)):
                     continue
-                try:
-                    resolved = [
-                        resolved_tool
-                        for tool in _normalize_tools(item)
-                        for resolved_tool in await self._resolve_run_tool(tool, mcp_run_kwargs)
-                    ]
-                except Exception:
-                    # Left unseen, so resolution is retried before the next model call.
-                    logger.warning(
-                        "Tool %r added during the run could not be resolved; retrying before the next model call.",
-                        item,
-                        exc_info=True,
-                    )
-                    continue
-                seen_tool_items[id(item)] = item
-                candidates.extend(resolved)
+                source_resolved = True
+                for item in source:
+                    if id(item) in seen_tool_items:
+                        continue
+                    try:
+                        resolved = [
+                            resolved_tool
+                            for tool in _normalize_tools(item)
+                            for resolved_tool in await self._resolve_run_tool(tool, mcp_run_kwargs)
+                        ]
+                    except Exception:
+                        # Left unseen, and the watermark is not advanced, so resolution is retried
+                        # before the next model call.
+                        logger.warning(
+                            "Tool %r added during the run could not be resolved; retrying before the next model call.",
+                            item,
+                            exc_info=True,
+                        )
+                        source_resolved = False
+                        continue
+                    seen_tool_items[id(item)] = item
+                    candidates.extend(resolved)
+                if source_resolved:
+                    source_watermarks[index] = (source, len(source))
             return candidates
 
         additional_function_arguments[_PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY] = _tool_approval_source_ids(
