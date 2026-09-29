@@ -629,6 +629,70 @@ public class CompactionMessageIndexTests
     }
 
     [Fact]
+    public void UpdateAppendsAfterInputSummaryAndDuplicateTrailingMessage()
+    {
+        // Arrange — an input summary counts as consumed history even though RawMessageCount excludes it.
+        const string TodoList = "### Current todo list\n- none yet";
+        ChatMessage summary = new(ChatRole.Assistant, "Earlier conversation");
+        (summary.AdditionalProperties ??= [])[CompactionMessageGroup.SummaryPropertyKey] = true;
+        List<ChatMessage> messages = [summary, new ChatMessage(ChatRole.User, TodoList)];
+        CompactionMessageIndex index = CompactionMessageIndex.Create(messages);
+        Assert.Equal(1, index.RawMessageCount);
+
+        // Act
+        messages.Add(new ChatMessage(ChatRole.User, "What is the weather today?"));
+        messages.Add(new ChatMessage(ChatRole.User, TodoList));
+        index.Update(messages);
+
+        // Assert
+        Assert.Equal(4, index.Groups.Count);
+        Assert.Same(messages[2], index.Groups[2].Messages[0]);
+        Assert.Equal(3, index.RawMessageCount);
+    }
+
+    [Fact]
+    public void RestorePreservesExclusionsWhenLastInputIsSummary()
+    {
+        // Arrange — a persisted index cannot infer whether its trailing summary came from input.
+        ChatMessage summary = new(ChatRole.Assistant, "Earlier conversation");
+        (summary.AdditionalProperties ??= [])[CompactionMessageGroup.SummaryPropertyKey] = true;
+        List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Hello"), summary];
+        CompactionMessageIndex original = CompactionMessageIndex.Create(messages);
+        original.Groups[0].IsExcluded = true;
+        CompactionMessageIndex restored = CompactionMessageIndex.Restore([.. original.Groups], original.ProcessedInputMessageCount);
+
+        // Act
+        messages.Add(new ChatMessage(ChatRole.User, "What is the weather today?"));
+        restored.Update(messages);
+
+        // Assert
+        Assert.Equal(3, restored.Groups.Count);
+        Assert.Same(messages[2], restored.Groups[2].Messages[0]);
+        Assert.True(restored.Groups[0].IsExcluded);
+    }
+
+    [Fact]
+    public void UpdateRebuildsLegacySummaryStateWithoutInputCount()
+    {
+        // Arrange — older persisted states did not record how many summaries came from input.
+        const string TodoList = "### Current todo list\n- none yet";
+        ChatMessage summary = new(ChatRole.Assistant, "Earlier conversation");
+        (summary.AdditionalProperties ??= [])[CompactionMessageGroup.SummaryPropertyKey] = true;
+        List<ChatMessage> messages = [summary, new ChatMessage(ChatRole.User, TodoList)];
+        CompactionMessageIndex original = CompactionMessageIndex.Create(messages);
+        CompactionMessageIndex restored = new([.. original.Groups]);
+
+        // Act
+        messages.Add(new ChatMessage(ChatRole.User, "What is the weather today?"));
+        messages.Add(new ChatMessage(ChatRole.User, TodoList));
+        restored.Update(messages);
+
+        // Assert
+        Assert.Equal(4, restored.Groups.Count);
+        Assert.Same(messages[2], restored.Groups[2].Messages[0]);
+    }
+
+    [Fact]
     public void UpdateNoOpWhenNoNewMessages()
     {
         // Arrange

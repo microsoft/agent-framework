@@ -265,6 +265,34 @@ public sealed class CompactionProviderTests
     }
 
     [Fact]
+    public async Task InvokingAsyncIncludesNewUserMessageAfterInputSummaryAsync()
+    {
+        // Arrange — a summary already present in the input must count toward the saved append boundary.
+        const string TodoList = "### Current todo list\n- none yet";
+        CompactionProvider provider = new(new TruncationCompactionStrategy(CompactionTriggers.TokensExceed(100000)));
+        Mock<AIAgent> mockAgent = new() { CallBase = true };
+        TestAgentSession session = new();
+        ChatMessage summary = new(ChatRole.Assistant, "Earlier conversation");
+        (summary.AdditionalProperties ??= [])[CompactionMessageGroup.SummaryPropertyKey] = true;
+        List<ChatMessage> messages = [summary, new ChatMessage(ChatRole.User, TodoList)];
+        await provider.InvokingAsync(new(mockAgent.Object, session, new AIContext { Messages = messages }));
+        var serializedState = session.StateBag.Serialize();
+        Assert.Equal(2, serializedState.GetProperty(provider.StateKeys[0]).GetProperty("processedinputmessagecount").GetInt32());
+        TestAgentSession restoredSession = new(AgentSessionStateBag.Deserialize(serializedState));
+
+        // Act
+        messages.Add(new ChatMessage(ChatRole.User, "What is the weather today?"));
+        messages.Add(new ChatMessage(ChatRole.User, TodoList));
+        AIContext result = await provider.InvokingAsync(new(mockAgent.Object, restoredSession, new AIContext { Messages = messages }));
+
+        // Assert
+        Assert.NotNull(result.Messages);
+        List<ChatMessage> resultMessages = [.. result.Messages];
+        Assert.Equal(messages.Count, resultMessages.Count);
+        Assert.Contains(resultMessages, message => message.Text == "What is the weather today?");
+    }
+
+    [Fact]
     public async Task InvokingAsyncWithNonListEnumerableCreatesListCopyAsync()
     {
         // Arrange — pass IEnumerable (not List<ChatMessage>) to exercise the list copy branch
@@ -471,5 +499,15 @@ public sealed class CompactionProviderTests
         Assert.NotEqual(AgentRequestMessageSourceType.ChatHistory, resultList3[6].GetAgentRequestMessageSourceType());
     }
 
-    private sealed class TestAgentSession : AgentSession;
+    private sealed class TestAgentSession : AgentSession
+    {
+        public TestAgentSession()
+        {
+        }
+
+        public TestAgentSession(AgentSessionStateBag stateBag)
+            : base(stateBag)
+        {
+        }
+    }
 }
