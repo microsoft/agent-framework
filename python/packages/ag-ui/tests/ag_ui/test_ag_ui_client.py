@@ -703,6 +703,35 @@ class TestAGUIChatClient:
         assert first_content.text == "Hello"
         assert second_content.text == " world"
 
+    async def test_get_response_streaming_preserves_run_error_code(self, monkeypatch: MonkeyPatch) -> None:
+        """Test that the server's RUN_ERROR code reaches the caller."""
+        mock_events = [
+            {"type": "RUN_STARTED", "threadId": "thread_1", "runId": "run_1"},
+            {"type": "RUN_ERROR", "message": "Approval not found", "code": "APPROVAL_RESUME_NOT_FOUND"},
+        ]
+
+        async def mock_post_run(*args: object, **kwargs: Any) -> AsyncGenerator[dict[str, Any], None]:
+            for event in mock_events:
+                yield event
+
+        client = StubAGUIChatClient(endpoint="http://localhost:8888/")
+        monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
+
+        messages = [Message(role="user", contents=["Test message"])]
+
+        stream = client.inner_get_response(messages=messages, stream=True, options=ChatOptions())
+        assert isinstance(stream, ResponseStream)
+        errors = [
+            content
+            async for update in stream
+            for content in cast(ChatResponseUpdate, update).contents
+            if content.type == "error"
+        ]
+
+        assert len(errors) == 1
+        assert errors[0].message == "Approval not found"
+        assert errors[0].error_code == "APPROVAL_RESUME_NOT_FOUND"
+
     async def test_get_response_non_streaming(self, monkeypatch: MonkeyPatch) -> None:
         """Test non-streaming response method."""
         mock_events = [
