@@ -113,7 +113,7 @@ public class RepresentationTests
     }
 
     [Fact]
-    public async Task SubworkflowRunner_PreservesLegacyCheckpointSessionId()
+    public async Task SubworkflowRunner_PreservesLegacyCheckpointSessionIdAsync()
     {
         // Arrange
         const string LegacySessionId = "legacy-session";
