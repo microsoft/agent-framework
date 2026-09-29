@@ -1004,7 +1004,7 @@ class CosmosCollection(BaseVectorCollection[str, ModelT], BaseVectorSearch[str, 
                 return "false" if operator == "eq" else f"IS_DEFINED({access})"
             parameter = _add_parameter(parameters, value)
             if operator == "eq":
-                return f"(IS_DEFINED({access}) AND {access} = {parameter})"
+                return f"(IS_DEFINED({access}) AND NOT IS_NULL({access}) AND {access} = {parameter})"
             return f"(IS_DEFINED({access}) AND (IS_NULL({access}) OR {access} != {parameter}))"
         if operator in ("gt", "gte", "lt", "lte", "between"):
             if field.type_ not in ("str", "int", "float"):

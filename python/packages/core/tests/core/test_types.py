@@ -21,6 +21,7 @@ from agent_framework import (
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
+    ComputerSafetyCheck,
     Content,
     FunctionTool,
     Message,
@@ -591,6 +592,79 @@ def test_shell_content_serialization_roundtrip():
     assert restored_result.outputs[0].stdout == "hello\n"
     assert restored_result.outputs[0].exit_code == 0
     assert restored_result.max_output_length == 4096
+
+
+# region: Computer tool content
+
+
+def test_computer_tool_call_preserves_actions_and_pending_checks():
+    checks: list[ComputerSafetyCheck] = [
+        {"id": "check-1", "code": "malicious_instructions", "message": "Review this page before continuing."}
+    ]
+    call = Content.from_computer_tool_call(
+        id="cu_1",
+        call_id="call_1",
+        actions=[{"type": "click", "x": 12, "y": 30}, {"type": "keypress", "keys": ["CTRL", "A"]}],
+        pending_safety_checks=checks,
+        status="completed",
+    )
+
+    assert call.user_input_request is True
+    assert call.actions == [{"type": "click", "x": 12, "y": 30}, {"type": "keypress", "keys": ["CTRL", "A"]}]
+    assert call.pending_safety_checks == checks
+    assert call.acknowledged_safety_checks is None
+    assert "pending_safety_checks" not in call.additional_properties
+    restored = Content.from_dict(json.loads(json.dumps(call.to_dict())))
+    assert restored == call
+    assert AgentResponse(messages=[Message(role="assistant", contents=[call])]).user_input_requests == [call]
+    assert AgentResponseUpdate(contents=[call]).user_input_requests == [call]
+
+
+@pytest.mark.parametrize(
+    "screenshot",
+    [
+        Content.from_data(b"png", "image/png"),
+        Content.from_uri("https://example.com/screen.png", media_type="image/png"),
+        Content.from_hosted_file(file_id="file_1"),
+    ],
+)
+def test_computer_tool_result_preserves_screenshot_content(screenshot: Content):
+    result = Content.from_computer_tool_result(
+        call_id="call_1",
+        screenshot=screenshot,
+        acknowledged_safety_checks=[{"id": "check-1"}],
+    )
+
+    assert result.screenshot is screenshot
+    assert result.acknowledged_safety_checks == [{"id": "check-1"}]
+    assert "acknowledged_safety_checks" not in result.additional_properties
+    restored = Content.from_dict(json.loads(json.dumps(result.to_dict())))
+    assert isinstance(restored.screenshot, Content)
+    assert restored == result
+
+
+def test_computer_tool_result_without_screenshot_round_trips():
+    result = Content.from_computer_tool_result(
+        call_id="call_1",
+        acknowledged_safety_checks=[{"id": "check-1"}],
+    )
+
+    assert result.screenshot is None
+    assert "screenshot" not in result.to_dict()
+    assert Content.from_dict(json.loads(json.dumps(result.to_dict()))) == result
+
+
+def test_computer_tool_result_does_not_acknowledge_checks_by_default():
+    result = Content.from_computer_tool_result(call_id="call_1", screenshot=Content.from_data(b"png", "image/png"))
+    assert result.acknowledged_safety_checks is None
+    assert "acknowledged_safety_checks" not in result.to_dict()
+
+
+def test_computer_tool_requires_valid_call_and_screenshot():
+    with pytest.raises(ValueError, match="at least one action"):
+        Content.from_computer_tool_call(id="cu_1", call_id="call_1", actions=[])
+    with pytest.raises(ValueError, match="screenshot"):
+        Content.from_computer_tool_result(call_id="call_1", screenshot=Content.from_text("not an image"))
 
 
 # region: HostedVectorStoreContent
@@ -2607,6 +2681,70 @@ def test_content_roundtrip_preserves_compaction_annotation_dict() -> None:
     assert annotation[GROUP_TOKEN_COUNT_KEY] is None
 
 
+def test_content_from_dict_data_keeps_annotations_and_metadata() -> None:
+    """The `data` + `media_type` branch must not lose what every other type keeps.
+
+    `from_dict` pops `annotations`, `additional_properties` and `raw_representation`
+    before dispatching, then returns early for a data content. `from_data` accepts
+    all three, but they were not being passed, so they were silently dropped -- and
+    this runs inside `Message.from_dict` and `ChatResponse.from_dict`.
+    """
+    content = Content.from_dict({
+        "type": "data",
+        "data": b"hello",
+        "media_type": "text/plain",
+        "annotations": [{"type": "citation", "title": "t"}],
+        "additional_properties": {"origin": "upload"},
+        "raw_representation": "provider-blob",
+    })
+
+    assert content.type == "data"
+    assert content.uri == "data:text/plain;base64,aGVsbG8="
+    assert content.annotations == [{"type": "citation", "title": "t"}]
+    assert content.additional_properties == {"origin": "upload"}
+    assert content.raw_representation == "provider-blob"
+
+
+def test_content_from_dict_data_matches_other_types_on_metadata() -> None:
+    """Same mapping shape, two content types, same treatment of the extra fields."""
+    common = {
+        "additional_properties": {"origin": "upload"},
+        "raw_representation": "provider-blob",
+    }
+    data_content = Content.from_dict({
+        "type": "data",
+        "data": b"hello",
+        "media_type": "text/plain",
+        **common,
+    })
+    uri_content = Content.from_dict({
+        "type": "uri",
+        "uri": "https://example.com/x.png",
+        "media_type": "image/png",
+        **common,
+    })
+
+    assert data_content.additional_properties == uri_content.additional_properties
+    assert data_content.raw_representation == uri_content.raw_representation
+
+
+def test_message_from_dict_keeps_data_content_metadata() -> None:
+    """Through the reachable path: rebuilding a message from its mapping."""
+    message = Message.from_dict({
+        "role": "user",
+        "contents": [
+            {
+                "type": "data",
+                "data": b"hello",
+                "media_type": "text/plain",
+                "additional_properties": {"origin": "upload"},
+            }
+        ],
+    })
+
+    assert message.contents[0].additional_properties == {"origin": "upload"}
+
+
 def test_content_from_dict_via_json() -> None:
     """Test Content.from_dict with data parsed from a JSON string."""
     data = json.loads(json.dumps({"type": "text", "text": "Hello world"}))
@@ -4383,6 +4521,48 @@ class TestResponseStreamCleanupHooks:
 
         async for _ in stream:
             pass
+
+        assert cleanup_called["value"] is True
+
+    async def test_transform_hook_raising_runs_cleanup(self) -> None:
+        """Cleanup hook is called when a transform hook raises mid-stream."""
+        cleanup_called = {"value": False}
+
+        def cleanup_hook() -> None:
+            cleanup_called["value"] = True
+
+        def failing_hook(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            raise RuntimeError("hook error")
+
+        stream = ResponseStream(
+            _generate_updates(1),
+            finalizer=_combine_updates,
+            transform_hooks=[failing_hook],  # type: ignore[arg-type]
+            cleanup_hooks=[cleanup_hook],
+        )
+
+        with pytest.raises(RuntimeError, match="hook error"):
+            async for _ in stream:
+                pass
+
+        assert cleanup_called["value"] is True
+
+    async def test_mapper_raising_runs_cleanup(self) -> None:
+        """Cleanup hook on a mapped stream is called when the mapper raises mid-stream."""
+        cleanup_called = {"value": False}
+
+        def cleanup_hook() -> None:
+            cleanup_called["value"] = True
+
+        def failing_mapper(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            raise ValueError("mapper error")
+
+        inner = ResponseStream(_generate_updates(1), finalizer=_combine_updates)
+        outer = inner.map(failing_mapper, _combine_updates).with_cleanup_hook(cleanup_hook)
+
+        with pytest.raises(ValueError, match="mapper error"):
+            async for _ in outer:
+                pass
 
         assert cleanup_called["value"] is True
 

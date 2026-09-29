@@ -114,3 +114,5 @@ builder.AddDevUI(options =>
 ```
 
 The bundled bearer-token check uses constant-time comparison and is intended as a convenience for development scenarios. Production hosts should prefer a real ASP.NET Core authentication scheme via `ConfigureEndpoints`.
+
+The DevUI route filter is not a substitute for authorization and caller isolation on separately mapped OpenAI Responses/Conversations endpoints. Protect each backend route group independently, and supply credentials compatible with that configuration. A shared DevUI token is not a per-user identity. See the [shared hosting guide](../../samples/04-hosting/README.md#development-tools).

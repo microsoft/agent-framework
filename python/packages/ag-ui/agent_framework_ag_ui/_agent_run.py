@@ -36,6 +36,7 @@ from agent_framework import (
     MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY,
     Message,
     SupportsAgentRun,
+    ToolApprovalMiddleware,
     WorkflowAgent,
 )
 from agent_framework._middleware import (
@@ -739,6 +740,32 @@ def _make_approval_tool_result_events(resolved_approval_results: list[Content]) 
                     **replay_properties,
                 )
             )
+    return events
+
+
+def _run_start_events(
+    *,
+    run_id: str,
+    thread_id: str,
+    predict_state_config: dict[str, dict[str, str]],
+    state_snapshot: dict[str, Any] | None,
+    resolved_approval_results: list[Content],
+) -> list[BaseEvent]:
+    """Build the events that open an agent run: RUN_STARTED, PredictState, initial state, and approval results."""
+    events: list[BaseEvent] = [RunStartedEvent(run_id=run_id, thread_id=thread_id)]
+    if predict_state_config:
+        predict_state_value = [
+            {
+                "state_key": state_key,
+                "tool": cfg["tool"],
+                "tool_argument": cfg["tool_argument"],
+            }
+            for state_key, cfg in predict_state_config.items()
+        ]
+        events.append(CustomEvent(name="PredictState", value=predict_state_value))
+    if state_snapshot is not None:
+        events.append(StateSnapshotEvent(snapshot=state_snapshot))
+    events.extend(_make_approval_tool_result_events(resolved_approval_results))
     return events
 
 
@@ -2449,12 +2476,14 @@ def _a2ui_existing_tool_names(agent: SupportsAgentRun, tools: list[Any] | None) 
 def _request_state_protected_keys(agent: SupportsAgentRun) -> set[str]:
     """Return session-state namespaces that client Shared State cannot own."""
     context_providers = cast(list[Any], getattr(agent, "context_providers", []))
+    agent_middleware = categorize_middleware(getattr(agent, "middleware", None))["agent"]
     return {
         _TOOL_APPROVAL_STATE_KEY,
         InMemoryHistoryProvider.DEFAULT_SOURCE_ID,
         MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY,
         *(provider.source_id for provider in context_providers),
         *_provider_service_session_state_keys(agent),
+        *(middleware.source_id for middleware in agent_middleware if isinstance(middleware, ToolApprovalMiddleware)),
     }
 
 
@@ -3343,13 +3372,32 @@ async def _run_agent_stream(
     if state_schema and flow.current_state:
         messages = _inject_state_context(messages, flow.current_state, state_schema)
 
-    # Stream from agent - emit RunStarted after first update to get service IDs
+    # Stream from agent. RunStarted waits for the first update when the request omits
+    # thread or run IDs, so service-generated IDs can be used instead.
     run_started_emitted = False
+    first_update_received = False
     provider_thread_id: str | None = None
     all_updates: list[Any] = []  # Collect for structured output processing
     latest_state_snapshot: dict[str, Any] | None = (
         cast(dict[str, Any], make_json_safe(flow.current_state)) if flow.current_state else None
     )
+    initial_state_snapshot = flow.current_state if state_schema and flow.current_state else None
+
+    # With both IDs supplied there is nothing to wait for, so start the run before
+    # context providers and the first model call.
+    if supplied_thread_id and supplied_run_id:
+        if initial_state_snapshot is not None:
+            latest_state_snapshot = cast(dict[str, Any], make_json_safe(initial_state_snapshot))
+        for event in _run_start_events(
+            run_id=run_id,
+            thread_id=thread_id,
+            predict_state_config=predict_state_config,
+            state_snapshot=initial_state_snapshot,
+            resolved_approval_results=resolved_approval_results,
+        ):
+            yield event
+        run_started_emitted = True
+
     # Agent middleware can defer the inner run until streaming begins, so the
     # telemetry override must cover construction, stream resolution, and every pull.
     # Drive the A2UI runner when one is active (see the gate above); the original agent
@@ -3373,38 +3421,31 @@ async def _run_agent_stream(
             if response_format is not None:
                 all_updates.append(update)
 
-            # Use service-generated IDs only when the AG-UI request omitted them. Client-supplied
-            # IDs remain authoritative for lifecycle correlation and thread-scoped persistence.
-            if not run_started_emitted:
+            if not first_update_received:
+                first_update_received = True
                 conv_id = get_conversation_id_from_update(update)
                 if conv_id:
                     provider_thread_id = conv_id
-                if supplied_thread_id is None and conv_id:
-                    thread_id = conv_id
-                    snapshot_session.rebind_thread_id(thread_id)
-                if supplied_run_id is None and update.response_id:
-                    run_id = update.response_id
-                # NOW emit RunStarted with proper IDs
-                yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
-                # Emit PredictState custom event if configured
-                if predict_state_config:
-                    predict_state_value = [
-                        {
-                            "state_key": state_key,
-                            "tool": cfg["tool"],
-                            "tool_argument": cfg["tool_argument"],
-                        }
-                        for state_key, cfg in predict_state_config.items()
-                    ]
-                    yield CustomEvent(name="PredictState", value=predict_state_value)
-                # Emit initial state snapshot only if we have both state_schema and state
-                if state_schema and flow.current_state:
-                    latest_state_snapshot = cast(dict[str, Any], make_json_safe(flow.current_state))
-                    yield StateSnapshotEvent(snapshot=flow.current_state)
-                run_started_emitted = True
 
-                for event in _make_approval_tool_result_events(resolved_approval_results):
-                    yield event
+                # Use service-generated IDs only when the AG-UI request omitted them. Client-supplied
+                # IDs remain authoritative for lifecycle correlation and thread-scoped persistence.
+                if not run_started_emitted:
+                    if supplied_thread_id is None and conv_id:
+                        thread_id = conv_id
+                        snapshot_session.rebind_thread_id(thread_id)
+                    if supplied_run_id is None and update.response_id:
+                        run_id = update.response_id
+                    if initial_state_snapshot is not None:
+                        latest_state_snapshot = cast(dict[str, Any], make_json_safe(initial_state_snapshot))
+                    for event in _run_start_events(
+                        run_id=run_id,
+                        thread_id=thread_id,
+                        predict_state_config=predict_state_config,
+                        state_snapshot=initial_state_snapshot,
+                        resolved_approval_results=resolved_approval_results,
+                    ):
+                        yield event
+                    run_started_emitted = True
 
             # Feature #4: Detect tool-only messages (no text content)
             # Emit TextMessageStartEvent to create message context for tool calls
@@ -3560,21 +3601,13 @@ async def _run_agent_stream(
 
     # If no updates at all, still emit RunStarted
     if not run_started_emitted:
-        yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
-        if predict_state_config:
-            predict_state_value = [
-                {
-                    "state_key": state_key,
-                    "tool": cfg["tool"],
-                    "tool_argument": cfg["tool_argument"],
-                }
-                for state_key, cfg in predict_state_config.items()
-            ]
-            yield CustomEvent(name="PredictState", value=predict_state_value)
-        if state_schema and flow.current_state:
-            yield StateSnapshotEvent(snapshot=flow.current_state)
-
-        for event in _make_approval_tool_result_events(resolved_approval_results):
+        for event in _run_start_events(
+            run_id=run_id,
+            thread_id=thread_id,
+            predict_state_config=predict_state_config,
+            state_snapshot=initial_state_snapshot,
+            resolved_approval_results=resolved_approval_results,
+        ):
             yield event
     if response_format is not None and all_updates:
         from agent_framework import AgentResponse
