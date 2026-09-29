@@ -293,6 +293,39 @@ public sealed class CompactionProviderTests
     }
 
     [Fact]
+    public async Task InvokingAsyncRebuildsReplacedHistoryWithRepeatedBoundaryAsync()
+    {
+        // Arrange — restore session state with a saved todo boundary and replace the earlier input history.
+        const string TodoList = "### Current todo list\n- none yet";
+        CompactionProvider provider = new(new TruncationCompactionStrategy(CompactionTriggers.TokensExceed(100000)));
+        Mock<AIAgent> mockAgent = new() { CallBase = true };
+        TestAgentSession session = new();
+        List<ChatMessage> originalMessages =
+        [
+            new ChatMessage(ChatRole.User, "Old question"),
+            new ChatMessage(ChatRole.User, TodoList),
+        ];
+        await provider.InvokingAsync(new(mockAgent.Object, session, new AIContext { Messages = originalMessages }));
+        TestAgentSession restoredSession = new(AgentSessionStateBag.Deserialize(session.StateBag.Serialize()));
+        List<ChatMessage> replacement =
+        [
+            new ChatMessage(ChatRole.User, "New question"),
+            new ChatMessage(ChatRole.User, TodoList),
+            new ChatMessage(ChatRole.Assistant, "New answer"),
+        ];
+
+        // Act
+        AIContext result = await provider.InvokingAsync(new(mockAgent.Object, restoredSession, new AIContext { Messages = replacement }));
+
+        // Assert
+        Assert.NotNull(result.Messages);
+        List<ChatMessage> resultMessages = [.. result.Messages];
+        Assert.Equal(replacement.Count, resultMessages.Count);
+        Assert.Equal("New question", resultMessages[0].Text);
+        Assert.Equal("New answer", resultMessages[2].Text);
+    }
+
+    [Fact]
     public async Task InvokingAsyncWithNonListEnumerableCreatesListCopyAsync()
     {
         // Arrange — pass IEnumerable (not List<ChatMessage>) to exercise the list copy branch

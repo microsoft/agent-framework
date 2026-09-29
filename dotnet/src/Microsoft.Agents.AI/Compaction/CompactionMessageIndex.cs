@@ -26,8 +26,6 @@ namespace Microsoft.Agents.AI.Compaction;
 public sealed class CompactionMessageIndex
 {
     private int _currentTurn;
-    private ChatMessage? _lastProcessedMessage;
-    private int? _processedInputMessageCount;
 
     /// <summary>
     /// Gets the list of message groups in this collection.
@@ -49,24 +47,13 @@ public sealed class CompactionMessageIndex
         this.Groups = Throw.IfNull(groups, nameof(groups));
         this.Tokenizer = tokenizer;
 
-        // Restore turn counter and last processed message from the groups
+        // Restore the turn counter from the latest group that belongs to a turn.
         for (int index = groups.Count - 1; index >= 0; --index)
         {
-            if (this._lastProcessedMessage is null && this.Groups[index].Kind != CompactionGroupKind.Summary)
-            {
-                IReadOnlyList<ChatMessage> groupMessages = this.Groups[index].Messages;
-                this._lastProcessedMessage = groupMessages[^1];
-            }
-
             if (this.Groups[index].TurnIndex.HasValue)
             {
                 this._currentTurn = this.Groups[index].TurnIndex!.Value;
-
-                // Both values restored — no need to keep scanning
-                if (this._lastProcessedMessage is not null)
-                {
-                    break;
-                }
+                break;
             }
         }
     }
@@ -100,11 +87,11 @@ public sealed class CompactionMessageIndex
     internal static CompactionMessageIndex Restore(IList<CompactionMessageGroup> groups, int? processedInputMessageCount)
     {
         CompactionMessageIndex instance = new(groups);
-        instance._processedInputMessageCount = processedInputMessageCount;
+        instance.ProcessedInputMessageCount = processedInputMessageCount;
         return instance;
     }
 
-    internal int? ProcessedInputMessageCount => this._processedInputMessageCount;
+    internal int? ProcessedInputMessageCount { get; private set; }
 
     /// <summary>
     /// Incrementally updates the groups with new messages from the conversation.
@@ -115,15 +102,15 @@ public sealed class CompactionMessageIndex
     /// </param>
     /// <remarks>
     /// <para>
-    /// Uses the position of the last processed message to detect appended messages. Only the messages after that
-    /// position are processed and appended as new groups. Existing groups and their compaction state (exclusions) are preserved.
+    /// Verifies the previously processed input prefix before appending new messages. Existing groups and their
+    /// compaction state (exclusions) are preserved when that prefix is unchanged.
     /// </para>
     /// <para>
-    /// If the last processed message is not found (e.g., the message list was replaced entirely
-    /// or a sliding window shifted past it), all groups are cleared and rebuilt from scratch.
+    /// If the input prefix differs (e.g., the message list was replaced or a sliding window shifted it),
+    /// all groups are cleared and rebuilt from scratch.
     /// </para>
     /// <para>
-    /// If no messages have been appended, no new groups are created.
+    /// If the prefix is unchanged and no messages have been appended, no new groups are created.
     /// </para>
     /// </remarks>
     internal void Update(IList<ChatMessage> allMessages)
@@ -132,82 +119,35 @@ public sealed class CompactionMessageIndex
         {
             this.Groups.Clear();
             this._currentTurn = 0;
-            this._lastProcessedMessage = null;
-            this._processedInputMessageCount = 0;
+            this.ProcessedInputMessageCount = 0;
             return;
         }
 
-        int processedMessageCount = this._processedInputMessageCount ?? this.RawMessageCount;
+        int processedMessageCount = this.ProcessedInputMessageCount ?? this.RawMessageCount;
 
-        // The last message may have the same content on every turn (for example, TodoProvider's empty list).
-        // Use its original position, not the last content-equivalent occurrence in the new list.
-        if (this._lastProcessedMessage is not null &&
-            processedMessageCount > 0 &&
-            allMessages.Count >= processedMessageCount &&
-            allMessages[processedMessageCount - 1].ContentEquals(this._lastProcessedMessage))
+        // Older state with summaries has no reliable input count because RawMessageCount excludes
+        // input summaries. Rebuild it once to establish a known boundary.
+        if (!this.ProcessedInputMessageCount.HasValue && this.Groups.Any(group => group.Kind == CompactionGroupKind.Summary))
+        {
+            this.RebuildFromMessages(allMessages);
+            return;
+        }
+
+        // Without a history version, the represented input prefix must match before preserving groups:
+        // a repeated message at the saved boundary can hide replaced or shifted history.
+        if (this.MatchesInputPrefix(allMessages, processedMessageCount))
         {
             this.AppendFromMessages(allMessages, processedMessageCount);
             return;
         }
 
-        // An input summary can be the last processed message even though the restored index
-        // normally skips summaries when finding that message. Match the represented prefix,
-        // skipping summary groups that are absent from the input history.
-        if (this._processedInputMessageCount.HasValue && this.MatchesInputPrefix(allMessages, processedMessageCount))
-        {
-            this.AppendFromMessages(allMessages, processedMessageCount);
-            return;
-        }
-
-        // The persisted input count is authoritative. A mismatch means the input history changed;
-        // searching by content could mistake a later duplicate for the old boundary. Legacy state
-        // with summaries has no reliable input count, so rebuild it once instead.
-        if (this._processedInputMessageCount.HasValue || this.Groups.Any(group => group.Kind == CompactionGroupKind.Summary))
-        {
-            this.RebuildFromMessages(allMessages);
-            return;
-        }
-
-        // Walk backwards to locate where we left off.
-        int foundIndex = -1;
-        if (this._lastProcessedMessage is not null)
-        {
-            for (int i = allMessages.Count - 1; i >= 0; --i)
-            {
-                if (allMessages[i].ContentEquals(this._lastProcessedMessage))
-                {
-                    foundIndex = i;
-                    break;
-                }
-            }
-        }
-
-        if (foundIndex < 0)
-        {
-            // Last processed message not found — total rebuild.
-            this.RebuildFromMessages(allMessages);
-            return;
-        }
-
-        // Guard against a sliding window that removed messages from the front:
-        // the number of messages up to (and including) the found position must
-        // match the number of messages already represented by existing groups.
-        if (foundIndex + 1 < this.RawMessageCount)
-        {
-            // Front of the message list was trimmed — rebuild.
-            this.RebuildFromMessages(allMessages);
-            return;
-        }
-
-        // Process only the delta messages.
-        this.AppendFromMessages(allMessages, foundIndex + 1);
+        this.RebuildFromMessages(allMessages);
     }
 
     private void RebuildFromMessages(IList<ChatMessage> messages)
     {
         this.Groups.Clear();
         this._currentTurn = 0;
-        this._lastProcessedMessage = null;
         this.AppendFromMessages(messages, 0);
     }
 
@@ -326,12 +266,7 @@ public sealed class CompactionMessageIndex
             }
         }
 
-        if (messages.Count > 0)
-        {
-            this._lastProcessedMessage = messages[^1];
-        }
-
-        this._processedInputMessageCount = messages.Count;
+        this.ProcessedInputMessageCount = messages.Count;
     }
 
     /// <summary>

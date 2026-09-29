@@ -672,6 +672,67 @@ public class CompactionMessageIndexTests
     }
 
     [Fact]
+    public void UpdateRebuildsRestoredIndexWhenPrefixChangesButBoundaryMatches()
+    {
+        // Arrange — the repeated todo still occupies the saved boundary after earlier history changes.
+        const string TodoList = "### Current todo list\n- none yet";
+        List<ChatMessage> originalMessages =
+        [
+            new ChatMessage(ChatRole.User, "Old question"),
+            new ChatMessage(ChatRole.User, TodoList),
+        ];
+        CompactionMessageIndex original = CompactionMessageIndex.Create(originalMessages);
+        original.Groups[0].IsExcluded = true;
+        CompactionMessageIndex restored = CompactionMessageIndex.Restore([.. original.Groups], original.ProcessedInputMessageCount);
+        List<ChatMessage> replacement =
+        [
+            new ChatMessage(ChatRole.User, "New question"),
+            new ChatMessage(ChatRole.User, TodoList),
+            new ChatMessage(ChatRole.Assistant, "New answer"),
+        ];
+
+        // Act
+        restored.Update(replacement);
+
+        // Assert — stale groups and their exclusion state are removed before the suffix is indexed.
+        Assert.Equal(replacement.Count, restored.Groups.Count);
+        Assert.Equal(replacement.Count, restored.RawMessageCount);
+        Assert.Same(replacement[0], restored.Groups[0].Messages[0]);
+        Assert.Same(replacement[2], restored.Groups[2].Messages[0]);
+        Assert.All(restored.Groups, group => Assert.False(group.IsExcluded));
+    }
+
+    [Fact]
+    public void UpdateRebuildsWhenHistoryShiftsPastRepeatedBoundary()
+    {
+        // Arrange — a sliding window removes the first message, but another identical todo lands at the old boundary.
+        const string TodoList = "### Current todo list\n- none yet";
+        List<ChatMessage> originalMessages =
+        [
+            new ChatMessage(ChatRole.User, "Old question"),
+            new ChatMessage(ChatRole.User, TodoList),
+        ];
+        CompactionMessageIndex original = CompactionMessageIndex.Create(originalMessages);
+        original.Groups[0].IsExcluded = true;
+        CompactionMessageIndex restored = new([.. original.Groups]);
+        List<ChatMessage> shifted =
+        [
+            originalMessages[1],
+            new ChatMessage(ChatRole.User, TodoList),
+            new ChatMessage(ChatRole.User, "Follow-up"),
+        ];
+
+        // Act
+        restored.Update(shifted);
+
+        // Assert
+        Assert.Equal(shifted.Count, restored.Groups.Count);
+        Assert.Same(shifted[0], restored.Groups[0].Messages[0]);
+        Assert.Same(shifted[2], restored.Groups[2].Messages[0]);
+        Assert.All(restored.Groups, group => Assert.False(group.IsExcluded));
+    }
+
+    [Fact]
     public void UpdateRebuildsLegacySummaryStateWithoutInputCount()
     {
         // Arrange — older persisted states did not record how many summaries came from input.
