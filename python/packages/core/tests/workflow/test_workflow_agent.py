@@ -3,10 +3,9 @@
 import uuid
 from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal, cast, overload
+from typing import Any, Literal, Never, assert_type, cast, overload
 
 import pytest
-from typing_extensions import Never, assert_type
 
 from agent_framework import (
     AgentExecutorRequest,
@@ -2681,6 +2680,46 @@ class TestWorkflowAgentToolApproval:
         # filtered-out user/system messages through the public payload.
         for rep in result.raw_representation or []:
             assert rep is None or (isinstance(rep, Message) and rep.role == "assistant")
+
+    async def test_workflow_as_agent_drops_orphaned_function_calls(self) -> None:
+        """assistant(function_call) whose tool result is tool-role must not survive filtering.
+
+        Keeping the call without its result would produce an invalid transcript for
+        providers that validate call/result pairing on replay (eavanvalkenburg's review).
+        """
+
+        @executor
+        async def tool_transcript_executor(
+            messages: list[Message],
+            ctx: WorkflowContext[Never, list[Message]],  # type: ignore[valid-type]
+        ) -> None:
+            await ctx.yield_output([
+                Message(
+                    role="assistant",
+                    contents=[
+                        Content.from_function_call(call_id="call-1", name="get_weather", arguments={"city": "Paris"}),
+                    ],
+                ),
+                Message(
+                    role="tool",
+                    contents=[
+                        Content.from_function_result(call_id="call-1", result="18C"),
+                    ],
+                ),
+                Message(role="assistant", contents=[Content.from_text("It is 18C in Paris.")]),
+            ])
+
+        workflow = WorkflowBuilder(start_executor=tool_transcript_executor).build()
+        agent = workflow.as_agent("tool-transcript-agent")
+
+        result = await agent.run("weather")
+
+        # The orphaned call is dropped; the final user-facing answer survives.
+        assert all(msg.role == "assistant" for msg in result.messages)
+        assert not any(
+            getattr(content, "type", None) == "function_call" for msg in result.messages for content in msg.contents
+        )
+        assert any("18C" in (getattr(content, "text", "") or "") for msg in result.messages for content in msg.contents)
 
     async def test_workflow_as_agent_filters_single_non_assistant_message(self) -> None:
         """Verify WorkflowAgent filters a single Message when role is not assistant."""

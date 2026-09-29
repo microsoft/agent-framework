@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 import logging
-import sys
 import uuid
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast, overload
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    ClassVar,
+    Literal,
+    TypedDict,  # pragma: no cover
+    cast,
+    overload,
+)
 
 from .._agents import BaseAgent
 from .._sessions import (
@@ -41,15 +48,28 @@ from ._events import (
 from ._message_utils import normalize_messages_input
 from ._typing_utils import is_instance_of, is_type_compatible
 
-if sys.version_info >= (3, 11):
-    from typing import TypedDict  # pragma: no cover
-else:
-    from typing_extensions import TypedDict  # pragma: no cover
-
 if TYPE_CHECKING:
     from ._workflow import Workflow, WorkflowInvocationKwargs
 
 logger = logging.getLogger(__name__)
+
+
+def _is_orphaned_function_call(message: Message) -> bool:
+    """Drop a call whose result cannot follow it.
+
+    True when an assistant message is only a function call whose tool result
+    is not assistant-role, so keeping the call alone would produce an invalid
+    (unpaired) transcript for providers that validate call/result history.
+    """
+    if message.role != "assistant":
+        return False
+    contents = list(getattr(message, "contents", []) or [])
+    if not contents:
+        return False
+    # Orphaned only when every content is a function-call envelope
+    return all(
+        getattr(content, "type", None) in ("function_call", "function_approval_response") for content in contents
+    )
 
 
 class WorkflowAgent(BaseAgent):
@@ -591,7 +611,13 @@ class WorkflowAgent(BaseAgent):
                     # are intentionally excluded. System prompts and tool results are
                     # internal workflow artifacts; user messages would be re-emitted
                     # (e.g., from GroupChat orchestrators that include full conversation history).
-                    assistant_messages = [msg for msg in data.messages if msg.role == "assistant"]
+                    # Assistant messages that are bare function calls are also dropped
+                    # when their tool result is not assistant-role: a call without its
+                    # result is an invalid transcript for providers that validate
+                    # call/result pairing on replay.
+                    assistant_messages = [
+                        msg for msg in data.messages if msg.role == "assistant" and not _is_orphaned_function_call(msg)
+                    ]
                     if assistant_messages:
                         messages.extend(assistant_messages)
                         raw_representations.append(data.raw_representation)
@@ -609,7 +635,11 @@ class WorkflowAgent(BaseAgent):
                         raw_representations.append(data.raw_representation)
                 elif is_instance_of(data, list[Message]):
                     chat_messages = cast(list[Message], data)
-                    assistant_messages = [msg for msg in chat_messages if msg.role == "assistant"]
+                    # Keep tool results that pair with surviving assistant calls so the
+                    # transcript stays valid; drop user/system and orphaned calls.
+                    assistant_messages = [
+                        msg for msg in chat_messages if msg.role == "assistant" and not _is_orphaned_function_call(msg)
+                    ]
                     if assistant_messages:
                         messages.extend(assistant_messages)
                         # raw_representation of a filtered list must not leak the
@@ -617,9 +647,7 @@ class WorkflowAgent(BaseAgent):
                         if len(assistant_messages) == len(chat_messages):
                             raw_representations.append(data)
                         else:
-                            raw_representations.extend(
-                                msg.raw_representation for msg in assistant_messages
-                            )
+                            raw_representations.extend(msg.raw_representation for msg in assistant_messages)
                 else:
                     contents = self._extract_contents(data)
                     if not contents:
