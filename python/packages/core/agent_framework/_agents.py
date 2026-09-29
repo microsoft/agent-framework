@@ -1481,14 +1481,22 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
 
         return None
 
-    def _run_tool_source_items(self, run_tools: Any) -> list[Any]:
-        """Return the items of the tool lists a run re-reads before each model call.
+    def _run_tool_sources(self, agent_tools: Any, run_tools: Any) -> list[Any]:
+        """Return a run's tool sources in precedence order: agent tools, run-level tools, MCP servers.
 
-        These are the agent's tools, its MCP servers, and the run-level tools when they
-        were passed as a list.
+        When two sources provide a tool with the same name, the tool from the earlier source is
+        the one the run keeps. Run start and the mid-run refresh both resolve tools in this order.
         """
-        items: list[Any] = [*self.mcp_tools]
-        for source in (self.default_options.get("tools"), run_tools):
+        return [agent_tools, run_tools, self.mcp_tools]
+
+    def _run_tool_source_items(self, run_tools: Any) -> list[Any]:
+        """Return the items of the tool lists a run re-reads before each model call, in precedence order.
+
+        These are the agent's tools, the run-level tools when they were passed as a list, and
+        the agent's MCP servers.
+        """
+        items: list[Any] = []
+        for source in self._run_tool_sources(self.default_options.get("tools"), run_tools):
             if isinstance(source, list):
                 items.extend(cast("list[Any]", source))
         return items
@@ -1636,9 +1644,11 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         )
         additional_function_arguments = {**effective_function_invocation_kwargs, **existing_additional_args}
 
-        # Resolve final tool list (configured tools + runtime provided tools + local MCP server tools)
-        final_tools = list(base_tools)
-        for tool in [*normalized_tools, *self.mcp_tools]:
+        # Resolve final tool list in source precedence order. The agent's tools (including tools from
+        # context providers) are used as given; run-level tools and MCP servers are resolved after them.
+        agent_tools, *resolved_sources = self._run_tool_sources(base_tools, normalized_tools)
+        final_tools = list(agent_tools)
+        for tool in (tool for source in resolved_sources for tool in source):
             _append_unique_tools(
                 final_tools,
                 await self._resolve_run_tool(tool, additional_function_arguments),

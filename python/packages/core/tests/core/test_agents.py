@@ -5166,3 +5166,65 @@ async def test_mcp_server_added_during_run_with_partially_clashing_functions_exp
     warnings = _duplicate_tool_warnings(caplog)
     assert len(warnings) == 1
     assert "'multiply'" in warnings[0]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_local_tool_wins_over_mcp_function_appended_in_same_turn(
+    chat_client_base: MockBaseChatClient,
+    caplog: pytest.LogCaptureFixture,
+    stream: bool,
+) -> None:
+    """A mid-run refresh uses run-start source precedence: agent tools, run-level tools, then MCP servers."""
+    executed: list[str] = []
+    math_server = _ConnectedMCPTool("math", ["multiply", "divide"])
+
+    @tool(name="multiply", approval_mode="never_require")
+    def local_multiply(a: int, b: int) -> int:
+        """Multiply two numbers locally."""
+        executed.append("local_multiply")
+        return a * b
+
+    @tool(name="load_math_tools", approval_mode="never_require")
+    def load_math_tools() -> str:
+        """Load the math tools."""
+        agent.mcp_tools.append(math_server)
+        agent.default_options["tools"].append(local_multiply)
+        return "Math tools loaded."
+
+    agent = Agent(client=chat_client_base, tools=[load_math_tools])
+    _script_turns(
+        chat_client_base,
+        [
+            [Content.from_function_call(call_id="call_1", name="load_math_tools", arguments="{}")],
+            [Content.from_function_call(call_id="call_2", name="multiply", arguments='{"a": 2, "b": 3}')],
+            [Content.from_text("6")],
+        ],
+        stream=stream,
+    )
+    requested_tools: list[list[tuple[str, str | None]]] = []
+    original_inner = chat_client_base._inner_get_response
+
+    def capture_inner(
+        *, messages: MutableSequence[Message], stream: bool, options: dict[str, Any], **kwargs: Any
+    ) -> Any:
+        requested_tools.append([(tool.name, tool.description) for tool in options.get("tools", [])])
+        return original_inner(messages=messages, stream=stream, options=options, **kwargs)
+
+    with (
+        caplog.at_level(logging.WARNING, logger="agent_framework"),
+        patch.object(chat_client_base, "_inner_get_response", side_effect=capture_inner),
+    ):
+        text = await _run_agent_text(agent, "What is 2 times 3?", stream=stream)
+
+    local_multiply_entry = ("multiply", "Multiply two numbers locally.")
+    assert requested_tools[1] == [
+        ("load_math_tools", "Load the math tools."),
+        local_multiply_entry,
+        ("divide", "divide from math"),
+    ]
+    assert requested_tools[2] == requested_tools[1]
+    assert executed == ["local_multiply"]
+    assert text == "6"
+    warnings = _duplicate_tool_warnings(caplog)
+    assert len(warnings) == 1
+    assert "'multiply'" in warnings[0]
