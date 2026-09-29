@@ -1016,7 +1016,7 @@ class TestCache:
             handler._cache_lock.release()
 
             with pytest.raises(asyncio.CancelledError):
-                await invocation
+                await asyncio.gather(invocation)
             await asyncio.wait_for(handler.aclose(), timeout=1)
 
         assert FakeTool.instances[0].close_count == 1
