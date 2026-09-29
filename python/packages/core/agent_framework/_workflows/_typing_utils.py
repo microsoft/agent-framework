@@ -485,6 +485,13 @@ def is_type_compatible(source_type: type | UnionType | Any, target_type: type | 
     target_origin = get_origin(target_type)
     target_args = get_args(target_type)
 
+    # A bare alias from `typing` (typing.Sequence, typing.List) has an origin but no type
+    # arguments; treat it as the bare container class it stands for.
+    if source_origin is not None and not source_args and isinstance(source_origin, type):
+        source_type, source_origin = source_origin, None
+    if target_origin is not None and not target_args and isinstance(target_origin, type):
+        target_type, target_origin = target_origin, None
+
     # Case 2: target is Union/Optional - source is compatible if it matches any target member
     if target_origin is Union or target_origin is UnionType:
         # Special case: if source is also a Union, check that each source member
