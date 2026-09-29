@@ -3775,6 +3775,7 @@ def _build_tool_approval_queue_endpoint(
     streaming_chat_client_stub: Any,
     *,
     lifecycle: ApprovalLifecycle | None = None,
+    snapshot_store: InMemoryAGUIThreadSnapshotStore | None = None,
 ) -> tuple[TestClient, list[str], list[Message], dict[str, str], AgentFrameworkAgent]:
     executed: list[str] = []
     messages_received: list[Message] = []
@@ -3826,6 +3827,8 @@ def _build_tool_approval_queue_endpoint(
         app,
         wrapped_agent,
         path="/approval",
+        snapshot_store=snapshot_store,
+        snapshot_scope_resolver=(lambda _request: "test") if snapshot_store is not None else None,
     )
     return TestClient(app), executed, messages_received, state, wrapped_agent
 
@@ -5910,6 +5913,63 @@ async def test_endpoint_agent_approval_resume_surfaces_queued_tool_approval(stre
         ("call_second", "second result"),
     ]
     assert executed == ["first", "second"]
+    replayed_results = [
+        content for message in messages_received for content in message.contents if content.type == "function_result"
+    ]
+    assert [content.call_id for content in replayed_results] == ["call_first", "call_second"]
+
+
+async def test_endpoint_queued_approval_snapshot_retains_every_released_result(streaming_chat_client_stub):
+    """Results for decisions collected in earlier requests survive the snapshot round trip (#8789)."""
+    store = InMemoryAGUIThreadSnapshotStore()
+    client, executed, messages_received, state, _ = _build_tool_approval_queue_endpoint(
+        streaming_chat_client_stub, snapshot_store=store
+    )
+    thread_id = "thread-queued-snapshot"
+
+    def post(run_id: str, *, text: str | None = None, approval_id: str | None = None) -> list[dict[str, Any]]:
+        payload: dict[str, Any] = {
+            "runId": run_id,
+            "threadId": thread_id,
+            "messages": [{"role": "user", "content": text}] if text else [],
+        }
+        if approval_id:
+            payload["resume"] = [{"interruptId": approval_id, "status": "resolved", "payload": {"accepted": True}}]
+        response = client.post("/approval", json=payload)
+        assert response.status_code == 200
+        events = _decode_sse_events(response)
+        assert not [event for event in events if event["type"] == "RUN_ERROR"]
+        return events
+
+    def next_approval_id(events: list[dict[str, Any]]) -> str:
+        finished = [event for event in events if event["type"] == "RUN_FINISHED"]
+        return _run_finished_interrupts(finished[-1])[0]["id"]
+
+    def tool_result_call_ids(messages: list[dict[str, Any]]) -> list[str]:
+        return [
+            str(message.get("toolCallId") or message.get("tool_call_id"))
+            for message in messages
+            if message.get("role") == "tool"
+        ]
+
+    pause_events = post("run-pause", text="Run both tools")
+    state["phase"] = "resume"
+    first_resume_events = post("run-resume-first", approval_id=next_approval_id(pause_events))
+    final_events = post("run-resume-second", approval_id=next_approval_id(first_resume_events))
+    assert executed == ["first", "second"]
+
+    snapshot_events = [event for event in final_events if event["type"] == "MESSAGES_SNAPSHOT"]
+    assert snapshot_events
+    event_messages = snapshot_events[-1]["messages"]
+    assert tool_result_call_ids(event_messages) == ["call_first", "call_second"]
+    # Both results follow the call message and precede the model's reply.
+    assert [message["role"] for message in event_messages] == ["user", "assistant", "tool", "tool", "assistant"]
+
+    saved = await store.get(scope="test", thread_id=thread_id)
+    assert saved is not None
+    assert tool_result_call_ids(saved.messages) == ["call_first", "call_second"]
+
+    post("run-next-turn", text="What happened?")
     replayed_results = [
         content for message in messages_received for content in message.contents if content.type == "function_result"
     ]

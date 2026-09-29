@@ -3406,6 +3406,7 @@ async def _run_agent_stream(
     telemetry_context = partial(_use_telemetry_conversation_id, telemetry_conversation_id)
     stream_completed = False
     native_approval_flow_result_ids: set[int] = set()
+    native_approval_results: list[Content] = []
     try:
         with telemetry_context():
             for queued_executions in forwarded_executions.values():
@@ -3492,6 +3493,7 @@ async def _run_agent_stream(
                         and intent.owner is not ApprovalExecutionOwner.HOSTED
                     ):
                         native_approval_result = True
+                        native_approval_results.append(content)
                         suppress_approval_call_end = intent.owner is ApprovalExecutionOwner.LOCAL
                         _replace_approval_contents_with_results(
                             messages, _collect_approval_responses(messages), [[content]]
@@ -3748,7 +3750,22 @@ async def _run_agent_stream(
     # Feature #5: Suppress intermediate snapshots for predictive tools without confirmation
     _clean_resolved_approvals_from_snapshot(snapshot_messages, messages)
     if native_approval_flow_result_ids:
-        _merge_resolved_approval_results_into_snapshot(snapshot_messages, messages)
+        # A decision collected in an earlier request has no approval response in this
+        # request's messages, so its result was never folded into them. Carry it into
+        # the merge so it is persisted next to its call like the rest of the batch.
+        resolved_call_ids = {
+            str(content.call_id)
+            for message in messages
+            if get_role_value(message) == "tool"
+            for content in message.contents or []
+            if content.type == "function_result" and content.call_id
+        }
+        carried_results = [
+            Message(role="tool", contents=[result])
+            for result in native_approval_results
+            if str(result.call_id) not in resolved_call_ids
+        ]
+        _merge_resolved_approval_results_into_snapshot(snapshot_messages, [*messages, *carried_results])
         flow.tool_results[:] = [
             result for result in flow.tool_results if id(result) not in native_approval_flow_result_ids
         ]
