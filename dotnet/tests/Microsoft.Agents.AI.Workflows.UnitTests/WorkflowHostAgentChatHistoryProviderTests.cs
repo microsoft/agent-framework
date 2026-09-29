@@ -1,8 +1,10 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 
@@ -186,5 +188,44 @@ public class WorkflowHostAgentChatHistoryProviderTests
         Assert.NotSame(agent, redirected);
         Assert.Same(provider, redirected.GetService<ChatHistoryProvider>());
         Assert.Contains(provider.GetMessages(session), m => m.Role == ChatRole.User && m.Text == "Hello");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RunAsync_WhenWorkflowRunFails_NotifiesProviderWithExceptionAsync(bool streaming)
+    {
+        // Arrange
+        RecordingChatHistoryProvider provider = new();
+        AIAgent agent = CreateWorkflow().AsAIAgent(new WorkflowAgentOptions { ChatHistoryProvider = provider });
+        AgentSession session = await agent.CreateSessionAsync();
+
+        // Resuming from a checkpoint that does not exist makes the workflow run throw.
+        WorkflowSessionCheckpointRecovery recovery = session.GetService<WorkflowSessionCheckpointRecovery>()!;
+        Assert.True(recovery.TryPrepare("missing-checkpoint"));
+
+        // Act
+        Exception exception = await Assert.ThrowsAnyAsync<Exception>(() => RunAgentAsync(agent, "Hello", session, streaming));
+
+        // Assert
+        ChatHistoryProvider.InvokedContext context = Assert.Single(provider.InvokedContexts);
+        Assert.Same(exception, context.InvokeException);
+        Assert.Same(agent, context.Agent);
+        Assert.Same(session, context.Session);
+        Assert.Null(context.ResponseMessages);
+        ChatMessage requestMessage = Assert.Single(context.RequestMessages);
+        Assert.Equal(ChatRole.User, requestMessage.Role);
+        Assert.Equal("Hello", requestMessage.Text);
+    }
+
+    private sealed class RecordingChatHistoryProvider : ChatHistoryProvider
+    {
+        public List<InvokedContext> InvokedContexts { get; } = [];
+
+        protected override ValueTask InvokedCoreAsync(InvokedContext context, CancellationToken cancellationToken = default)
+        {
+            this.InvokedContexts.Add(context);
+            return default;
+        }
     }
 }
