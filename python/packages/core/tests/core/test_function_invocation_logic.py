@@ -7,8 +7,11 @@ import math
 import threading
 import warnings
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
+from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Any, Literal
 from unittest.mock import Mock
+from uuid import UUID
 
 import pytest
 from pydantic import BaseModel, field_validator
@@ -5770,6 +5773,211 @@ async def test_nan_prepared_and_approval_snapshots_are_stable() -> None:
     assert result.result == "nan"
     assert len(received) == 1 and math.isnan(received[0])
     assert validation_count == 1
+
+
+class _PassthroughFunctionMiddleware(FunctionMiddleware):
+    """Routes an invocation through the middleware path, which binds approved arguments."""
+
+    async def process(
+        self,
+        context: FunctionInvocationContext,
+        call_next: Callable[[], Awaitable[None]],
+    ) -> None:
+        await call_next()
+
+
+def _approved_function_call(tool_name: str, arguments: dict[str, Any]) -> Content:
+    function_call = Content.from_function_call(
+        call_id=f"{tool_name}-call",
+        id=f"{tool_name}-occurrence",
+        name=tool_name,
+        arguments=arguments,
+    )
+    return Content.from_function_approval_request(
+        id=f"{tool_name}-occurrence",
+        function_call=function_call,
+    ).to_function_approval_response(approved=True)
+
+
+@pytest.mark.parametrize(
+    ("annotation", "raw_value", "expected"),
+    [
+        (datetime, "2026-01-02T03:04:05", datetime(2026, 1, 2, 3, 4, 5)),
+        (datetime, "2026-01-02T03:04:05+01:00", datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone(timedelta(hours=1)))),
+        (date, "2026-01-02", date(2026, 1, 2)),
+        (timedelta, "PT90S", timedelta(seconds=90)),
+        (set[str], ["b", "a"], {"a", "b"}),
+        (frozenset[int], [2, 1], frozenset({1, 2})),
+        (tuple[int, int], [1, 2], (1, 2)),
+        (Decimal, "1.50", Decimal("1.50")),
+        (UUID, "12345678-1234-5678-1234-567812345678", UUID("12345678-1234-5678-1234-567812345678")),
+    ],
+    ids=["datetime", "aware_datetime", "date", "timedelta", "set", "frozenset", "tuple", "decimal", "uuid"],
+)
+async def test_approval_binds_values_converted_by_input_model(annotation: Any, raw_value: Any, expected: Any) -> None:
+    """An approved tool receives values its input model converts from JSON (#8661).
+
+    Approval binds the arguments with a stable snapshot token, so every converted type needs one;
+    otherwise the approved call fails as if the arguments were opaque mutable objects.
+    """
+    from agent_framework._tools import _auto_invoke_function, normalize_function_invocation_configuration
+
+    received: list[Any] = []
+
+    def capture(value: Any) -> str:
+        received.append(value)
+        return "ok"
+
+    capture.__annotations__["value"] = annotation
+    capture_tool = tool(capture, name="capture", approval_mode="always_require")
+
+    result = await _auto_invoke_function(
+        _approved_function_call(capture_tool.name, {"value": raw_value}),
+        config=normalize_function_invocation_configuration(None),
+        tool_map={capture_tool.name: capture_tool},
+        middleware_pipeline=FunctionMiddlewarePipeline(_PassthroughFunctionMiddleware()),
+    )
+
+    assert result.type == "function_result"
+    assert result.result == "ok"
+    assert received == [expected]
+    assert type(received[0]) is type(expected)
+
+
+@pytest.mark.parametrize(
+    ("annotation", "raw_value", "change"),
+    [
+        (set[str], ["read"], lambda value: value.add("delete")),
+        (datetime, "2026-01-02T03:04:05+01:00", lambda value: value.astimezone(timezone.utc)),
+        (Decimal, "1.0", lambda value: Decimal("1.00")),
+    ],
+    ids=["set_mutated_in_place", "datetime_moved_to_other_time_zone", "decimal_with_other_precision"],
+)
+async def test_approval_detects_changes_to_converted_values(
+    annotation: Any, raw_value: Any, change: Callable[[Any], Any]
+) -> None:
+    """Middleware changes to a converted value require a replacement approval.
+
+    This covers changes that ``==`` misses: the moved datetime is the same instant and the
+    Decimals compare equal, but the tool would receive a different value.
+    """
+    from agent_framework._tools import _auto_invoke_function, normalize_function_invocation_configuration
+
+    received: list[Any] = []
+
+    class ChangeValueMiddleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            assert isinstance(context.arguments, dict)
+            changed = change(context.arguments["value"])
+            if changed is not None:
+                context.arguments["value"] = changed
+            await call_next()
+
+    def capture(value: Any) -> str:
+        received.append(value)
+        return "ok"
+
+    capture.__annotations__["value"] = annotation
+    capture_tool = tool(capture, name="capture", approval_mode="always_require")
+
+    with pytest.raises(MiddlewareTermination, match="Function arguments changed after approval") as exc_info:
+        await _auto_invoke_function(
+            _approved_function_call(capture_tool.name, {"value": raw_value}),
+            config=normalize_function_invocation_configuration(None),
+            tool_map={capture_tool.name: capture_tool},
+            middleware_pipeline=FunctionMiddlewarePipeline(ChangeValueMiddleware()),
+        )
+
+    assert received == []
+    assert isinstance(exc_info.value.result, Content)
+    assert exc_info.value.result.type == "function_approval_request"
+
+
+async def test_approval_rejects_subclass_of_converted_value_type() -> None:
+    """Only the exact immutable types get value tokens; a subclass may carry mutable state."""
+    from agent_framework._tools import _auto_invoke_function, normalize_function_invocation_configuration
+
+    class MutableDatetime(datetime):
+        pass
+
+    class SubclassArgs(BaseModel):
+        moment: datetime
+
+        @field_validator("moment")
+        @classmethod
+        def to_subclass(cls, value: datetime) -> datetime:
+            return MutableDatetime.fromisoformat(value.isoformat())
+
+    @tool(name="subclass_tool", schema=SubclassArgs, approval_mode="always_require")
+    def subclass_tool(moment: datetime) -> str:
+        return moment.isoformat()
+
+    with pytest.raises(MiddlewareFailure, match="Cannot safely bind approval to opaque mutable function arguments"):
+        await _auto_invoke_function(
+            _approved_function_call(subclass_tool.name, {"moment": "2026-01-02T03:04:05"}),
+            config=normalize_function_invocation_configuration(None),
+            tool_map={subclass_tool.name: subclass_tool},
+            middleware_pipeline=FunctionMiddlewarePipeline(_PassthroughFunctionMiddleware()),
+        )
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non_streaming", "streaming"])
+async def test_agent_runs_approved_tool_with_converted_arguments(
+    chat_client_base: SupportsChatGetResponse,
+    streaming: bool,
+) -> None:
+    """End to end: an approved tool with datetime and set parameters runs after approval (#8661)."""
+    received: list[tuple[datetime, set[str]]] = []
+
+    @tool(name="schedule", approval_mode="always_require")
+    def schedule(moment: datetime, tags: set[str]) -> str:
+        received.append((moment, tags))
+        return "scheduled"
+
+    function_call = Content.from_function_call(
+        call_id="schedule-1",
+        name="schedule",
+        arguments='{"moment": "2026-01-02T03:04:05Z", "tags": ["b", "a"]}',
+    )
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [ChatResponseUpdate(role="assistant", contents=[function_call])],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")])],
+        ]
+    else:
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            ChatResponse(messages=Message(role="assistant", contents=[function_call])),
+            ChatResponse(messages=Message(role="assistant", contents=["done"])),
+        ]
+
+    agent = Agent(client=chat_client_base, tools=[schedule], middleware=[_PassthroughFunctionMiddleware()])
+    session = agent.create_session()
+
+    async def run(value: str | Message):
+        if not streaming:
+            return await agent.run(value, session=session)
+        stream = agent.run(value, session=session, stream=True)
+        async for _ in stream:
+            pass
+        return await stream.get_final_response()
+
+    first_response = await run("schedule it")
+    approval_request = next(
+        content
+        for message in first_response.messages
+        for content in message.contents
+        if content.type == "function_approval_request"
+    )
+    final_response = await run(
+        Message(role="user", contents=[approval_request.to_function_approval_response(approved=True)])
+    )
+
+    assert received == [(datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc), {"a", "b"})]
+    assert final_response.text == "done"
 
 
 async def test_function_middleware_can_short_circuit_before_argument_validation(

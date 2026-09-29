@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 import math
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from types import MappingProxyType, SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock
@@ -7342,6 +7342,38 @@ class TestVariableArgumentPolicy:
         assert observed == ["dangerous-operation"]
         assert received == ["dangerous-operation"]
         assert validation_count == 1
+
+    async def test_security_policy_binds_values_converted_by_input_model(self) -> None:
+        """Security middleware can snapshot datetime and set arguments converted from JSON (#8661)."""
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware()
+        received: list[tuple[datetime, set[str]]] = []
+
+        def schedule(moment: datetime, tags: set[str]) -> str:
+            received.append((moment, tags))
+            return "scheduled"
+
+        function = FunctionTool(
+            func=schedule,
+            name="schedule",
+            additional_properties={"accepts_untrusted": True},
+        )
+        function_call = Content.from_function_call(
+            call_id="converted-security",
+            name=function.name,
+            arguments={"moment": "2026-01-02T03:04:05Z", "tags": ["b", "a"]},
+        )
+
+        result = await _auto_invoke_function(
+            function_call,
+            config=normalize_function_invocation_configuration(None),
+            tool_map={function.name: function},
+            middleware_pipeline=FunctionMiddlewarePipeline(tracker, policy),
+        )
+
+        assert result.type == "function_result"
+        assert result.exception is None
+        assert received == [(datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc), {"a", "b"})]
 
     async def test_security_rejects_opaque_mutable_validator_output(self) -> None:
         """Security fails closed when normalized arguments cannot be safely snapshotted."""

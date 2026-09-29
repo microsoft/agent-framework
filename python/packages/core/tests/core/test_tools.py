@@ -499,6 +499,33 @@ async def test_invoke_still_rejects_invalid_value_for_pydantic_tool():
         await when.invoke(arguments={"moment": "not a date"})
 
 
+async def test_invoke_accepts_input_model_instance_with_converted_values():
+    """An input model instance is checked in its JSON form, so converted values pass (#8661)."""
+
+    @tool
+    def when(moment: datetime, tags: set[str]) -> str:
+        return f"{type(moment).__name__}:{type(tags).__name__}"
+
+    assert when.input_model is not None
+    arguments = when.input_model(moment="2026-01-02T03:04:05", tags=["b", "a"])
+
+    assert (await when.invoke(arguments=arguments))[0].text == "datetime:set"
+
+
+async def test_invoke_still_checks_unvalidated_input_model_instance():
+    """Skipping the checks for model-validated arguments must not let an unvalidated instance through."""
+
+    @tool
+    def count_tool(count: int) -> str:
+        return str(count)
+
+    assert count_tool.input_model is not None
+    arguments = count_tool.input_model.model_construct(count="not a number")
+
+    with pytest.raises(TypeError, match="Invalid type for 'count' in 'count_tool': expected integer, got str"):
+        await count_tool.invoke(arguments=arguments)
+
+
 async def test_auto_invoke_preserves_explicit_null_argument():
     """The auto function-calling path must preserve an explicit null argument too.
 
