@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Azure.Core;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Moq;
 
@@ -238,12 +239,14 @@ public class FoundryToolboxServiceTests
         };
         options.ToolboxNames.Add("broken-toolbox");
 
-        var service = new FoundryToolboxService(
+        await using var service = new FoundryToolboxService(
             Options.Create(options),
             Mock.Of<TokenCredential>());
 
         await service.StartAsync(CancellationToken.None);
         Assert.Single(service.DeferredToolboxNames);
+        await using var scope = service.CreateRequestScope();
+        HostedCallContext.ToolboxCacheScopeId = scope.Id;
 
         // Act: retry while the endpoint is still unreachable.
         await service.RetryDeferredToolboxesAsync(CancellationToken.None);
@@ -612,26 +615,33 @@ public class FoundryToolboxServiceTests
         };
         var openedScopes = new ConcurrentBag<string>();
         var handlers = new ConcurrentBag<TrackingHttpMessageHandler>();
+        var bothOpenersEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var concurrentOpenCount = 0;
         var openCount = 0;
         await using var service = new FoundryToolboxService(
             Options.Create(options),
             Mock.Of<TokenCredential>())
         {
-            ToolboxOpener = (_, _, _) =>
+            ToolboxOpener = async (_, _, cancellationToken) =>
             {
                 var scopeId = Assert.IsType<string>(HostedCallContext.ToolboxCacheScopeId);
+                if (Interlocked.Increment(ref concurrentOpenCount) == 2)
+                {
+                    bothOpenersEntered.TrySetResult();
+                }
+
+                await bothOpenersEntered.Task.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
                 openedScopes.Add(scopeId);
                 var handler = new TrackingHttpMessageHandler();
                 handlers.Add(handler);
                 var openNumber = Interlocked.Increment(ref openCount);
                 AITool tool = AIFunctionFactory.Create(() => scopeId, name: $"scoped_tool_{openNumber}");
-                return Task.FromResult(
-                    new FoundryToolboxService.ToolboxOpenResult(
-                        new FoundryToolboxService.CachedToolbox(
-                            Client: null,
-                            new HttpClient(handler),
-                            [tool]),
-                        Consents: null));
+                return new FoundryToolboxService.ToolboxOpenResult(
+                    new FoundryToolboxService.CachedToolbox(
+                        Client: null,
+                        new HttpClient(handler),
+                        [tool]),
+                    Consents: null);
             },
         };
         await service.StartAsync(CancellationToken.None);
@@ -659,8 +669,111 @@ public class FoundryToolboxServiceTests
         Assert.All(handlers, static item => Assert.True(item.IsDisposed));
     }
 
+    [Fact]
+    public async Task RequestToolboxScope_DisposalFailure_CleansRemainingResourcesAndDoesNotThrowAsync()
+    {
+        // Arrange
+        var logger = new RecordingLogger();
+        var handlers = new ConcurrentDictionary<string, TrackingHttpMessageHandler>(StringComparer.Ordinal);
+        var options = new FoundryToolboxOptions
+        {
+            StrictMode = false,
+            EndpointOverride = "https://proj.example/api/projects/proj",
+        };
+        var service = new FoundryToolboxService(
+            Options.Create(options),
+            Mock.Of<TokenCredential>(),
+            logger)
+        {
+            ToolboxOpener = (name, _, _) =>
+            {
+                var handler = new TrackingHttpMessageHandler(throwOnDispose: name == "throws");
+                handlers[name] = handler;
+                AITool tool = AIFunctionFactory.Create(() => "ok", name: $"{name}_tool");
+                return Task.FromResult(
+                    new FoundryToolboxService.ToolboxOpenResult(
+                        new FoundryToolboxService.CachedToolbox(
+                            Client: null,
+                            new HttpClient(handler),
+                            [tool]),
+                        Consents: null));
+            },
+        };
+        await service.StartAsync(CancellationToken.None);
+        var scope = service.CreateRequestScope();
+        HostedCallContext.ToolboxCacheScopeId = scope.Id;
+        _ = await service.GetToolboxToolsAsync("throws", version: null, CancellationToken.None);
+        _ = await service.GetToolboxToolsAsync("continues", version: null, CancellationToken.None);
+
+        // Act
+        var exception = await Record.ExceptionAsync(async () => await scope.DisposeAsync());
+
+        // Assert
+        Assert.Null(exception);
+        Assert.True(handlers["throws"].IsDisposed);
+        Assert.True(handlers["continues"].IsDisposed);
+        Assert.Single(logger.Exceptions);
+        Assert.Empty(service.GetCurrentRequestTools());
+
+        await service.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task DisposeAsync_DisposalFailure_CleansRemainingResourcesAndThrowsAggregateAsync()
+    {
+        // Arrange
+        var logger = new RecordingLogger();
+        var handlers = new ConcurrentDictionary<string, TrackingHttpMessageHandler>(StringComparer.Ordinal);
+        var options = new FoundryToolboxOptions
+        {
+            StrictMode = false,
+            EndpointOverride = "https://proj.example/api/projects/proj",
+        };
+        var service = new FoundryToolboxService(
+            Options.Create(options),
+            Mock.Of<TokenCredential>(),
+            logger)
+        {
+            ToolboxOpener = (name, _, _) =>
+            {
+                var handler = new TrackingHttpMessageHandler(throwOnDispose: name == "throws");
+                handlers[name] = handler;
+                AITool tool = AIFunctionFactory.Create(() => "ok", name: $"{name}_tool");
+                return Task.FromResult(
+                    new FoundryToolboxService.ToolboxOpenResult(
+                        new FoundryToolboxService.CachedToolbox(
+                            Client: null,
+                            new HttpClient(handler),
+                            [tool]),
+                        Consents: null));
+            },
+        };
+        await service.StartAsync(CancellationToken.None);
+        var scope = service.CreateRequestScope();
+        HostedCallContext.ToolboxCacheScopeId = scope.Id;
+        _ = await service.GetToolboxToolsAsync("throws", version: null, CancellationToken.None);
+        _ = await service.GetToolboxToolsAsync("continues", version: null, CancellationToken.None);
+
+        // Act
+        var exception = await Assert.ThrowsAsync<AggregateException>(
+            async () => await service.DisposeAsync());
+
+        // Assert
+        Assert.Single(exception.InnerExceptions);
+        Assert.True(handlers["throws"].IsDisposed);
+        Assert.True(handlers["continues"].IsDisposed);
+        Assert.Single(logger.Exceptions);
+    }
+
     private sealed class TrackingHttpMessageHandler : HttpMessageHandler
     {
+        private readonly bool _throwOnDispose;
+
+        internal TrackingHttpMessageHandler(bool throwOnDispose = false)
+        {
+            this._throwOnDispose = throwOnDispose;
+        }
+
         internal bool IsDisposed { get; private set; }
 
         protected override Task<HttpResponseMessage> SendAsync(
@@ -672,6 +785,34 @@ public class FoundryToolboxServiceTests
         {
             this.IsDisposed = true;
             base.Dispose(disposing);
+            if (this._throwOnDispose)
+            {
+                throw new InvalidOperationException("Simulated HTTP client disposal failure.");
+            }
+        }
+    }
+
+    private sealed class RecordingLogger : ILogger<FoundryToolboxService>
+    {
+        internal ConcurrentBag<Exception> Exceptions { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull =>
+            null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (exception is not null)
+            {
+                this.Exceptions.Add(exception);
+            }
         }
     }
 }

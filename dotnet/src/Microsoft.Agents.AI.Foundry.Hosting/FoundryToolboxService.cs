@@ -57,9 +57,9 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
         new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, IReadOnlyList<McpConsentInfo>>> _requestConsents =
         new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _requestOpenLocks = new(StringComparer.Ordinal);
     private readonly Dictionary<string, IReadOnlyList<McpConsentInfo>> _pendingConsents = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _deferredToolboxNames = new(StringComparer.OrdinalIgnoreCase);
-    private readonly SemaphoreSlim _lazyOpenLock = new(1, 1);
 
     private string? _resolvedEndpoint;
     private string? _featuresHeader;
@@ -288,7 +288,8 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
             return [];
         }
 
-        await this._lazyOpenLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        var requestOpenLock = this.GetCurrentRequestOpenLock();
+        await requestOpenLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             var stillPending = new List<McpConsentInfo>(requestConsents);
@@ -333,7 +334,7 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
         }
         finally
         {
-            this._lazyOpenLock.Release();
+            requestOpenLock.Release();
         }
     }
 
@@ -356,7 +357,8 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
             return;
         }
 
-        await this._lazyOpenLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        var requestOpenLock = this.GetCurrentRequestOpenLock();
+        await requestOpenLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             if (this._deferredToolboxNames.Count == 0)
@@ -400,7 +402,7 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
         }
         finally
         {
-            this._lazyOpenLock.Release();
+            requestOpenLock.Release();
         }
     }
 
@@ -459,7 +461,8 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
                 $"Cannot resolve toolbox '{toolboxName}': FOUNDRY_PROJECT_ENDPOINT is not set.");
         }
 
-        await this._lazyOpenLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        var requestOpenLock = this.GetCurrentRequestOpenLock();
+        await requestOpenLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             // Double-check after acquiring the lock to avoid duplicate opens under concurrency.
@@ -490,7 +493,7 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
         }
         finally
         {
-            this._lazyOpenLock.Release();
+            requestOpenLock.Release();
         }
     }
 
@@ -520,6 +523,14 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
 
     private static string? GetCurrentRequestScopeId() =>
         HostedCallContext.ToolboxCacheScopeId ?? HostedCallContext.CallId;
+
+    private SemaphoreSlim GetCurrentRequestOpenLock()
+    {
+        var scopeId = GetCurrentRequestScopeId()
+            ?? throw new InvalidOperationException(
+                "A response-scoped toolbox cache identifier is required before resolving a toolbox during request handling.");
+        return this._requestOpenLocks.GetOrAdd(scopeId, static _ => new SemaphoreSlim(1, 1));
+    }
 
     private bool HasCurrentRequestResolution(string toolboxName) =>
         this.TryGetCurrentRequestToolbox(toolboxName, out _)
@@ -595,22 +606,92 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
         toolboxConsents[toolboxName] = consents;
     }
 
-    private async ValueTask ReleaseRequestScopeAsync(string scopeId)
+    private async ValueTask ReleaseRequestScopeWithoutThrowAsync(string scopeId)
     {
+        _ = await this.ReleaseRequestScopeAsync(scopeId).ConfigureAwait(false);
+    }
+
+    private async ValueTask<IReadOnlyList<Exception>> ReleaseRequestScopeAsync(string scopeId)
+    {
+        List<Exception> failures = [];
         this._requestConsents.TryRemove(scopeId, out _);
-        if (!this._requestToolboxes.TryRemove(scopeId, out var toolboxes))
+
+        if (this._requestToolboxes.TryRemove(scopeId, out var toolboxes))
         {
-            return;
+            foreach (var (toolboxName, cached) in toolboxes)
+            {
+                await this.DisposeCachedToolboxAsync(
+                    cached,
+                    toolboxName,
+                    $"response scope '{scopeId}'",
+                    failures).ConfigureAwait(false);
+            }
         }
 
-        foreach (var cached in toolboxes.Values)
+        if (this._requestOpenLocks.TryRemove(scopeId, out var requestOpenLock))
         {
-            if (cached.Client is not null)
+            try
+            {
+                requestOpenLock.Dispose();
+            }
+            catch (Exception ex)
+            {
+                this.RecordDisposalFailure(
+                    ex,
+                    resource: "request open lock",
+                    toolboxName: null,
+                    owner: $"response scope '{scopeId}'",
+                    failures);
+            }
+        }
+
+        return failures;
+    }
+
+    private async ValueTask DisposeCachedToolboxAsync(
+        CachedToolbox cached,
+        string toolboxName,
+        string owner,
+        List<Exception> failures)
+    {
+        if (cached.Client is not null)
+        {
+            try
             {
                 await cached.Client.DisposeAsync().ConfigureAwait(false);
             }
+            catch (Exception ex)
+            {
+                this.RecordDisposalFailure(ex, "MCP client", toolboxName, owner, failures);
+            }
+        }
 
+        try
+        {
             cached.HttpClient.Dispose();
+        }
+        catch (Exception ex)
+        {
+            this.RecordDisposalFailure(ex, "HTTP client", toolboxName, owner, failures);
+        }
+    }
+
+    private void RecordDisposalFailure(
+        Exception exception,
+        string resource,
+        string? toolboxName,
+        string owner,
+        List<Exception> failures)
+    {
+        failures.Add(exception);
+        if (this._logger.IsEnabled(LogLevel.Warning))
+        {
+            this._logger.LogWarning(
+                exception,
+                "Failed to dispose {Resource} for toolbox {ToolboxName} owned by {Owner}.",
+                resource,
+                toolboxName ?? "(none)",
+                owner);
         }
     }
 
@@ -826,24 +907,34 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
     /// <inheritdoc/>
     public async ValueTask DisposeAsync()
     {
-        foreach (var cached in this._toolboxes.Values)
+        List<Exception> failures = [];
+        foreach (var (toolboxName, cached) in this._toolboxes)
         {
-            if (cached.Client is not null)
-            {
-                await cached.Client.DisposeAsync().ConfigureAwait(false);
-            }
-
-            cached.HttpClient.Dispose();
+            await this.DisposeCachedToolboxAsync(
+                cached,
+                toolboxName,
+                "service startup cache",
+                failures).ConfigureAwait(false);
         }
 
         this._toolboxes.Clear();
-        foreach (var scopeId in this._requestToolboxes.Keys)
+        var requestScopeIds = this._requestToolboxes.Keys
+            .Concat(this._requestConsents.Keys)
+            .Concat(this._requestOpenLocks.Keys)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        foreach (var scopeId in requestScopeIds)
         {
-            await this.ReleaseRequestScopeAsync(scopeId).ConfigureAwait(false);
+            failures.AddRange(await this.ReleaseRequestScopeAsync(scopeId).ConfigureAwait(false));
         }
 
         this._requestConsents.Clear();
-        this._lazyOpenLock.Dispose();
+        this._requestOpenLocks.Clear();
+
+        if (failures.Count > 0)
+        {
+            throw new AggregateException("One or more Foundry toolbox resources failed to dispose.", failures);
+        }
     }
 
     internal sealed class RequestToolboxScope : IAsyncDisposable
@@ -865,7 +956,7 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
 
         public ValueTask DisposeAsync() =>
             Interlocked.Exchange(ref this._disposed, 1) == 0 && this._owner is not null
-                ? this._owner.ReleaseRequestScopeAsync(this.Id)
+                ? this._owner.ReleaseRequestScopeWithoutThrowAsync(this.Id)
                 : ValueTask.CompletedTask;
     }
 

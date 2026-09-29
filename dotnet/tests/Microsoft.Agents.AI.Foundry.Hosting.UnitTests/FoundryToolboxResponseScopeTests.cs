@@ -36,7 +36,9 @@ public sealed class FoundryToolboxResponseScopeTests
         var agentScopes = new ConcurrentBag<string>();
         var observedTools = new ConcurrentBag<AITool>();
         var handlers = new ConcurrentBag<TrackingHttpMessageHandler>();
+        var bothConcurrentOpensEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var bothConcurrentRunsEnteredAgent = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var concurrentOpenCount = 0;
         var chatCallCount = 0;
         var openCount = 0;
 
@@ -51,7 +53,7 @@ public sealed class FoundryToolboxResponseScopeTests
             Options.Create(options),
             Mock.Of<TokenCredential>())
         {
-            ToolboxOpener = (_, _, _) =>
+            ToolboxOpener = async (_, _, cancellationToken) =>
             {
                 var scopeId = GetToolboxCacheScopeId();
                 if (scopeId is null)
@@ -59,18 +61,24 @@ public sealed class FoundryToolboxResponseScopeTests
                     throw new InvalidOperationException("Startup has no response scope.");
                 }
 
+                if (Interlocked.Increment(ref concurrentOpenCount) == 2)
+                {
+                    bothConcurrentOpensEntered.TrySetResult();
+                }
+
+                await bothConcurrentOpensEntered.Task
+                    .WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
                 openScopes.Add(scopeId);
                 var openNumber = Interlocked.Increment(ref openCount);
-                var handler = new TrackingHttpMessageHandler();
+                var handler = new TrackingHttpMessageHandler(throwOnDispose: openNumber == 1);
                 handlers.Add(handler);
                 AITool tool = AIFunctionFactory.Create(() => scopeId, name: $"scoped_tool_{openNumber}");
-                return Task.FromResult(
-                    new FoundryToolboxService.ToolboxOpenResult(
-                        new FoundryToolboxService.CachedToolbox(
-                            Client: null,
-                            new HttpClient(handler),
-                            [tool]),
-                        Consents: null));
+                return new FoundryToolboxService.ToolboxOpenResult(
+                    new FoundryToolboxService.CachedToolbox(
+                        Client: null,
+                        new HttpClient(handler),
+                        [tool]),
+                    Consents: null);
             },
         };
         await toolboxService.StartAsync(CancellationToken.None);
@@ -230,6 +238,13 @@ public sealed class FoundryToolboxResponseScopeTests
 
     private sealed class TrackingHttpMessageHandler : HttpMessageHandler
     {
+        private readonly bool _throwOnDispose;
+
+        internal TrackingHttpMessageHandler(bool throwOnDispose = false)
+        {
+            this._throwOnDispose = throwOnDispose;
+        }
+
         internal bool IsDisposed { get; private set; }
 
         protected override Task<HttpResponseMessage> SendAsync(
@@ -241,6 +256,10 @@ public sealed class FoundryToolboxResponseScopeTests
         {
             this.IsDisposed = true;
             base.Dispose(disposing);
+            if (this._throwOnDispose)
+            {
+                throw new InvalidOperationException("Simulated HTTP client disposal failure.");
+            }
         }
     }
 }
