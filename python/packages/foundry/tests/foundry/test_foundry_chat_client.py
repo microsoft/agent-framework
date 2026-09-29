@@ -43,7 +43,7 @@ from azure.core.pipeline.policies import RedirectPolicy, UserAgentPolicy
 from azure.core.pipeline.transport import HttpRequest, HttpResponse, HttpTransport
 from azure.identity import AzureCliCredential
 from openai import AsyncOpenAI, BadRequestError, DefaultAsyncHttpxClient
-from openai.types.responses import ResponseFunctionShellToolCall
+from openai.types.responses import ResponseFunctionShellToolCall, ResponseFunctionShellToolCallOutput
 from pydantic import BaseModel
 from pytest import param
 
@@ -2401,3 +2401,103 @@ async def test_foundry_shell_call_without_environment_executes_and_replays_outpu
     assert len(shell_outputs) == 1
     assert shell_outputs[0]["call_id"] == "shell-call-1"
     assert shell_outputs[0]["output"][0]["stdout"] == "Python 3.13.0"
+
+
+def test_foundry_shell_call_with_matching_output_stays_hosted() -> None:
+    """An env-less shell call the provider already ran (matching output present) is not re-run locally."""
+    client = _make_foundry_client()
+
+    def local_exec(command: str) -> str:
+        return command
+
+    local_shell_tool = FoundryChatClient.get_shell_tool(func=local_exec, approval_mode="never_require")
+    shell_call = ResponseFunctionShellToolCall.model_validate({
+        "id": "shell-item-1",
+        "type": "shell_call",
+        "call_id": "shell-call-1",
+        "action": {"commands": ["pwd"], "timeout_ms": 30000},
+        "status": "completed",
+    })
+    shell_output = ResponseFunctionShellToolCallOutput.model_validate({
+        "id": "shell-output-1",
+        "type": "shell_call_output",
+        "call_id": "shell-call-1",
+        "output": [{"stdout": "/workspace", "stderr": "", "outcome": {"type": "exit", "exit_code": 0}}],
+        "status": "completed",
+    })
+    mock_response = MagicMock(
+        id="resp-1",
+        model="test-model",
+        created_at=1000000000,
+        metadata={},
+        output_parsed=None,
+        output=[shell_call, shell_output],
+        usage=None,
+        conversation=None,
+        status="completed",
+        incomplete=None,
+    )
+
+    response = client._parse_response_from_openai(mock_response, options={"tools": [local_shell_tool]})
+
+    call_content = response.messages[0].contents[0]
+    assert call_content.type == "shell_tool_call"
+    assert call_content.call_id == "shell-call-1"
+    assert all(content.type != "function_call" for content in response.messages[0].contents)
+
+
+async def test_foundry_shell_call_with_matching_output_is_not_reexecuted() -> None:
+    """Regression for the mixed call/output case: a provider-run shell call is not executed locally."""
+    executed_commands: list[str] = []
+
+    def local_exec(command: str) -> str:
+        executed_commands.append(command)
+        return "should not run"
+
+    local_shell_tool = FoundryChatClient.get_shell_tool(func=local_exec, approval_mode="never_require")
+    shell_call = ResponseFunctionShellToolCall.model_validate({
+        "id": "shell-item-1",
+        "type": "shell_call",
+        "call_id": "shell-call-1",
+        "action": {"commands": ["pwd"], "timeout_ms": 30000},
+        "status": "completed",
+    })
+    shell_output = ResponseFunctionShellToolCallOutput.model_validate({
+        "id": "shell-output-1",
+        "type": "shell_call_output",
+        "call_id": "shell-call-1",
+        "output": [{"stdout": "/workspace", "stderr": "", "outcome": {"type": "exit", "exit_code": 0}}],
+        "status": "completed",
+    })
+    text_item = MagicMock(type="message")
+    text_content = MagicMock(type="output_text", text="/workspace", annotations=[], logprobs=None)
+    text_item.content = [text_content]
+    mock_response1 = MagicMock(
+        id="resp-1",
+        model="test-model",
+        created_at=1000000000,
+        metadata={},
+        output_parsed=None,
+        output=[shell_call, shell_output, text_item],
+        usage=None,
+        conversation=None,
+        status="completed",
+        finish_reason="stop",
+        incomplete=None,
+    )
+
+    mock_openai_client = _make_mock_openai_client()
+    mock_openai_client.responses.with_raw_response.create.side_effect = [_as_raw(mock_response1)]
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = mock_openai_client
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+
+    await client.get_response(
+        messages=[Message(role="user", contents=["What directory are we in?"])],
+        options={"tools": [local_shell_tool], "store": False},
+    )
+
+    # The provider already produced the output, so the local executor must not run and no second
+    # request (with a duplicate output for the same call_id) is issued.
+    assert executed_commands == []
+    assert mock_openai_client.responses.with_raw_response.create.call_count == 1

@@ -2464,7 +2464,24 @@ class RawOpenAIChatClient(
         """
         return getattr(getattr(item, "environment", None), "type", None) == "local"
 
-    def _shell_item_to_contents(self, item: Any, local_shell_tool_name: str | None) -> list[Content]:
+    @staticmethod
+    def _shell_output_call_ids(items: Sequence[Any]) -> set[str]:
+        """Call IDs the provider already emitted a ``shell_call_output`` for in this response."""
+        call_ids: set[str] = set()
+        for item in items:
+            if getattr(item, "type", None) != "shell_call_output":
+                continue
+            call_id = getattr(item, "call_id", None)
+            if isinstance(call_id, str) and call_id:
+                call_ids.add(call_id)
+        return call_ids
+
+    def _shell_item_to_contents(
+        self,
+        item: Any,
+        local_shell_tool_name: str | None,
+        provider_executed_call_ids: set[str] | None = None,
+    ) -> list[Content]:
         """Convert a shell output item into framework ``Content`` objects.
 
         Handles ``shell_call``, ``local_shell_call``, and ``shell_call_output`` items.
@@ -2473,6 +2490,10 @@ class RawOpenAIChatClient(
         populated ``action`` (commands are not available on the earlier
         ``response.output_item.added`` event, and there are no shell-specific
         streaming delta events).
+
+        ``provider_executed_call_ids`` are the call IDs the provider already returned a
+        ``shell_call_output`` for in the same response; such a ``shell_call`` is never routed to a
+        local executor, since re-running it would duplicate the provider's output on replay.
         """
         contents: list[Content] = []
         item_type = getattr(item, "type", None)
@@ -2493,9 +2514,12 @@ class RawOpenAIChatClient(
             shell_timeout_ms = getattr(action, "timeout_ms", None)
             shell_max_output = getattr(action, "max_output_length", None)
             is_local_environment = self._shell_call_targets_local_executor(item)
+            # A matching provider output means the service already ran this call; never re-execute it locally.
+            provider_already_executed = bool(provider_executed_call_ids) and shell_call_id in provider_executed_call_ids
             if (
                 local_shell_tool_name
                 and is_local_environment
+                and not provider_already_executed
                 and shell_call_id
                 and shell_call_item_id
                 and shell_commands
@@ -3223,6 +3247,7 @@ class RawOpenAIChatClient(
             response_outputs = response.output  # type: ignore[reportUnknownMemberType]
         except AttributeError:
             response_outputs = []
+        provider_executed_shell_call_ids = self._shell_output_call_ids(response_outputs)  # type: ignore[reportUnknownArgumentType]
         for item in response_outputs:  # type: ignore[reportUnknownVariableType]
             match item.type:
                 # types:
@@ -3482,7 +3507,9 @@ class RawOpenAIChatClient(
                 case "image_generation_call":  # ResponseOutputImageGenerationCall
                     contents.extend(self._image_generation_item_to_contents(item))
                 case "shell_call" | "local_shell_call" | "shell_call_output":
-                    contents.extend(self._shell_item_to_contents(item, local_shell_tool_name))
+                    contents.extend(
+                        self._shell_item_to_contents(item, local_shell_tool_name, provider_executed_shell_call_ids)
+                    )
                 case _:
                     logger.debug("Unparsed output of type: %s: %s", item.type, item)
         self._mark_completed_computer_calls(contents)
@@ -4088,7 +4115,9 @@ class RawOpenAIChatClient(
                     contents.append(self._parse_search_tool_result_content(done_item))
                 elif getattr(done_item, "type", None) in ("shell_call", "local_shell_call", "shell_call_output"):
                     # Shell items are parsed here (not on `response.output_item.added`) because the
-                    # command/output is only populated on the completed item.
+                    # command/output is only populated on the completed item. The full item list
+                    # isn't available mid-stream, so the provider-output guard applies only to the
+                    # non-streaming path; a delegated shell call never streams its own output.
                     contents.extend(self._shell_item_to_contents(done_item, local_shell_tool_name))
                 elif getattr(done_item, "type", None) == "computer_call":
                     contents.append(self._parse_computer_tool_call_content(done_item))
