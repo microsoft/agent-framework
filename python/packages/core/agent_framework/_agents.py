@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import re
 import sys
-from collections.abc import Awaitable, Callable, Collection, Mapping, MutableMapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, MutableMapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from copy import deepcopy
 from functools import partial
@@ -81,6 +81,8 @@ else:
     from typing_extensions import Self, TypedDict  # pragma: no cover
 
 if TYPE_CHECKING:
+    from collections.abc import Collection
+
     from mcp import types
     from mcp.server.lowlevel import Server
     from pydantic import BaseModel
@@ -742,10 +744,20 @@ class BaseAgent(SerializationMixin):
             session = AgentSession()
             child_approval_source_ids = _tool_approval_source_ids(self.middleware)
             parent_approval_source_ids: frozenset[str] = frozenset()
+            parent_service_session_state_keys: frozenset[str] = frozenset()
 
             if propagate_session and parent_session is not None:
-                from ._tools import _PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY  # pyright: ignore[reportPrivateUsage]
+                from ._tools import (
+                    _PARENT_SERVICE_SESSION_STATE_KEYS_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
+                    _PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
+                )
 
+                raw_parent_service_keys = ctx.metadata.get(_PARENT_SERVICE_SESSION_STATE_KEYS_CONTEXT_KEY)
+                parent_service_session_state_keys = (
+                    cast("frozenset[str]", raw_parent_service_keys)
+                    if isinstance(raw_parent_service_keys, frozenset)
+                    else frozenset()
+                )
                 raw_parent_approval_source_ids = ctx.metadata.get(_PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY)
                 parent_approval_source_ids = (
                     cast("frozenset[str]", raw_parent_approval_source_ids)
@@ -782,6 +794,7 @@ class BaseAgent(SerializationMixin):
                     # Service handles belong to one agent's remote resources, not shared application state.
                     # Exclude them in both directions so later children cannot inherit an earlier child's handles.
                     *_provider_service_session_state_keys(self),
+                    *parent_service_session_state_keys,
                     *child_approval_source_ids,
                     *parent_approval_source_ids,
                 })
@@ -1601,7 +1614,10 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
 
         agent_name = self._get_agent_name()
         from ._mcp import MCPTool
-        from ._tools import _PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY  # pyright: ignore[reportPrivateUsage]
+        from ._tools import (
+            _PARENT_SERVICE_SESSION_STATE_KEYS_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
+            _PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
+        )
 
         base_tools = _normalize_tools(chat_options.pop("tools", None))
         mcp_duplicate_message = "Tool names must be unique. Consider setting `tool_name_prefix` on the MCPTool."
@@ -1648,6 +1664,10 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
 
         additional_function_arguments[_PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY] = _tool_approval_source_ids(
             self.middleware
+        )
+        # Recompute ownership for this invoking agent; caller kwargs must not replace its declarations.
+        additional_function_arguments[_PARENT_SERVICE_SESSION_STATE_KEYS_CONTEXT_KEY] = (
+            _provider_service_session_state_keys(self)
         )
 
         model = opts.pop("model", None)

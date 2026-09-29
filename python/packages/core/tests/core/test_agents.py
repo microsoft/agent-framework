@@ -53,6 +53,7 @@ from agent_framework import (
 from agent_framework._agents import _get_tool_name, _merge_options, _sanitize_agent_name
 from agent_framework._mcp import MCPTool, _build_prefixed_mcp_name, _normalize_mcp_name
 from agent_framework._middleware import FunctionInvocationContext
+from agent_framework._tools import _PARENT_SERVICE_SESSION_STATE_KEYS_CONTEXT_KEY
 from agent_framework.exceptions import (
     AgentInvalidRequestException,
     ChatClientInvalidResponseException,
@@ -2644,6 +2645,100 @@ async def test_chat_agent_as_tool_propagate_session_isolates_provider_owned_stat
         expected_state["client_provider_session"] = parent_handle
     assert parent_session.state == expected_state
     assert parent_session.service_session_id == "parent-service-session"
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("with_middleware", [False, True])
+@pytest.mark.parametrize("child_declares_keys", [False, True])
+async def test_chat_agent_as_tool_isolates_distinct_parent_provider_state(
+    stream: bool, with_middleware: bool, child_declares_keys: bool
+) -> None:
+    """Keep parent agent and client state local even when the child uses different declarations."""
+
+    class ParentAgent(Agent):
+        service_session_state_keys = frozenset({"parent_provider", "parent_removed"})
+
+    class ParentClient(MockBaseChatClient):
+        service_session_state_keys = frozenset({"parent_client_provider", "parent_client_removed"})
+
+    class ChildAgent(Agent):
+        service_session_state_keys = frozenset({"child_provider"}) if child_declares_keys else frozenset()
+
+    parent_state: dict[str, Any] = {
+        "parent_provider": {"values": ["parent"]},
+        "parent_removed": "parent",
+        "parent_client_provider": "parent-client",
+        "parent_client_removed": "parent-client",
+        "counter": 0,
+    }
+    parent_session = AgentSession()
+    parent_session.state.update(parent_state)
+    observed_states: list[dict[str, Any]] = []
+
+    @tool(approval_mode="never_require")
+    def inspect_state(ctx: FunctionInvocationContext) -> str:
+        assert ctx.session is not None
+        observed_states.append(dict(ctx.session.state))
+        assert _PARENT_SERVICE_SESSION_STATE_KEYS_CONTEXT_KEY not in ctx.kwargs
+        ctx.session.state.setdefault("parent_provider", {"values": []})["values"].append("child")
+        ctx.session.state.pop("parent_removed", None)
+        ctx.session.state["parent_client_provider"] = "child"
+        ctx.session.state.pop("parent_client_removed", None)
+        ctx.session.state["counter"] += 1
+        if child_declares_keys:
+            ctx.session.state["child_provider"] = "child"
+        return "State inspected."
+
+    child_client = MockBaseChatClient()
+    child_client.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                role="assistant",
+                contents=[Content.from_function_call(call_id="inspect", name="inspect_state", arguments={})],
+            )
+        ],
+        [ChatResponseUpdate(role="assistant", contents=[Content.from_text("Child completed.")])],
+    ]
+    child = ChildAgent(client=child_client, tools=[inspect_state])
+    parent_client = ParentClient()
+    parent_call = Content.from_function_call(
+        call_id="delegate", name="delegate", arguments={"task": "Inspect the delegated session"}
+    )
+    if stream:
+        parent_client.streaming_responses = [
+            [ChatResponseUpdate(role="assistant", contents=[parent_call])],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("Parent completed.")])],
+        ]
+    else:
+        parent_client.run_responses = [
+            ChatResponse(messages=Message(role="assistant", contents=[parent_call])),
+            ChatResponse(messages=Message(role="assistant", contents=[Content.from_text("Parent completed.")])),
+        ]
+    parent = ParentAgent(
+        client=parent_client,
+        tools=[child.as_tool(name="delegate", propagate_session=True)],
+        middleware=[ToolApprovalMiddleware(source_id="parent_approval")] if with_middleware else [],
+    )
+    invocation_kwargs: dict[str, frozenset[str]] = {_PARENT_SERVICE_SESSION_STATE_KEYS_CONTEXT_KEY: frozenset()}
+    if stream:
+        result = await parent.run(
+            "Delegate.", session=parent_session, stream=True, function_invocation_kwargs=invocation_kwargs
+        ).get_final_response()
+    else:
+        result = await parent.run("Delegate.", session=parent_session, function_invocation_kwargs=invocation_kwargs)
+
+    assert result.text == "Parent completed."
+    assert len(observed_states) == 1
+    assert all(
+        key not in observed_states[0]
+        for key in ParentAgent.service_session_state_keys | ParentClient.service_session_state_keys
+    )
+    assert parent_session.state["parent_provider"] == {"values": ["parent"]}
+    assert parent_session.state["parent_removed"] == "parent"
+    assert parent_session.state["parent_client_provider"] == "parent-client"
+    assert parent_session.state["parent_client_removed"] == "parent-client"
+    assert "child_provider" not in parent_session.state
+    assert parent_session.state["counter"] == 1
 
 
 async def test_chat_agent_as_tool_propagate_session_clears_service_session_id(client: SupportsChatGetResponse) -> None:

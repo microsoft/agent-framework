@@ -84,7 +84,7 @@ entry points for existing traces, response IDs, and registered targets.
 
 When a Foundry agent is used through `as_tool(propagate_session=True)`, application-owned state propagates
 between the parent and child, but service-owned session handles do not. Each delegated invocation has its own
-service session. This also applies to an `Agent` configured with a `FoundryAgentChatClient`.
+service session. This also applies to an `Agent` configured with a `RawFoundryAgentChatClient`.
 
 A `FoundryChatClient` instance can be shared by concurrent asynchronous calls on the same event loop. Streaming,
 non-streaming, and mixed calls are supported. Keep mutable run state isolated by creating a separate `Agent` and
