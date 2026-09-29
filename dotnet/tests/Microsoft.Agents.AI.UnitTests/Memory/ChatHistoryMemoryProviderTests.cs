@@ -858,14 +858,14 @@ public class ChatHistoryMemoryProviderTests
     {
         // Arrange
         using var cts = new CancellationTokenSource();
-        cts.Cancel();
 
         this._vectorStoreCollectionMock
             .Setup(c => c.SearchAsync(
                 It.IsAny<string>(),
                 It.IsAny<int>(),
                 It.IsAny<VectorSearchOptions<Dictionary<string, object?>>>(),
-                It.IsAny<CancellationToken>()))
+                cts.Token))
+            .Callback(() => cts.Cancel())
             .Throws(new OperationCanceledException(cts.Token));
 
         var provider = new ChatHistoryMemoryProvider(
@@ -885,8 +885,16 @@ public class ChatHistoryMemoryProviderTests
             new AIContext { Messages = [new ChatMessage(ChatRole.User, "What was discussed?")] });
 
         // Act & Assert
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+        var exception = await Assert.ThrowsAnyAsync<OperationCanceledException>(
             () => provider.InvokingAsync(invokingContext, cts.Token).AsTask());
+        Assert.Equal(cts.Token, exception.CancellationToken);
+        this._vectorStoreCollectionMock.Verify(
+            c => c.SearchAsync(
+                It.IsAny<string>(),
+                It.IsAny<int>(),
+                It.IsAny<VectorSearchOptions<Dictionary<string, object?>>>(),
+                cts.Token),
+            Times.Once);
     }
 
     [Fact]
