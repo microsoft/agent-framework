@@ -181,6 +181,9 @@ class RawFoundryAgentChatClient(
     OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai.foundry"
     _FEATURE_USAGE_INDEX: ClassVar[int | None] = FeatureIndex.FOUNDRY_AGENT
 
+    service_session_state_keys: ClassVar[frozenset[str]] = frozenset({FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY})
+    """Service-owned state keys, including when this client is used by a generic Agent."""
+
     def __init__(
         self,
         *,
@@ -657,7 +660,7 @@ class RawFoundryAgent(
             result = await agent.run("Hello!")
     """
 
-    service_session_state_keys: ClassVar[frozenset[str]] = frozenset({FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY})
+    service_session_state_keys: ClassVar[frozenset[str]] = RawFoundryAgentChatClient.service_session_state_keys
     """Session-state keys this agent owns, which untrusted input must never supply.
 
     Holds the Foundry hosted-agent session ID. Despite the attribute name, that value is not a conversation or

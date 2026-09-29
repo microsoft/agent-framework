@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import re
 import sys
-from collections.abc import Awaitable, Callable, Mapping, MutableMapping, Sequence
+from collections.abc import Awaitable, Callable, Collection, Mapping, MutableMapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from copy import deepcopy
 from functools import partial
@@ -108,6 +108,17 @@ def _tool_approval_source_ids(middleware: Sequence[MiddlewareTypes] | None) -> f
     from ._harness._tool_approval import ToolApprovalMiddleware
 
     return frozenset(item.source_id for item in middleware or () if isinstance(item, ToolApprovalMiddleware))
+
+
+def _provider_service_session_state_keys(agent: object) -> frozenset[str]:
+    """Return provider-owned session-state keys declared by an agent or its client."""
+    keys: set[str] = set()
+    # A generic Agent can use a provider client that persists its own continuation state.
+    for owner in (agent, getattr(agent, "client", None)):
+        declared = getattr(owner, "service_session_state_keys", ())
+        if isinstance(declared, (list, tuple, set, frozenset)):
+            keys.update(key for key in cast("Collection[Any]", declared) if isinstance(key, str))
+    return frozenset(keys)
 
 
 def _merge_delegated_session_state(
@@ -662,9 +673,10 @@ class BaseAgent(SerializationMixin):
             propagate_session: If True, the parent agent's session is forwarded
                 to this sub-agent's ``run()`` call. Application-state changes
                 propagate back to the parent, while framework approval continuation
-                state remains isolated. Defaults to False. The sub-agent always
-                receives an AgentSession so session-backed middleware can run.
-                When False, that session is private to this invocation.
+                state and provider-owned service session state remain isolated.
+                Defaults to False. The sub-agent always receives an AgentSession
+                so session-backed middleware can run. When False, that session is
+                private to this invocation.
 
         Returns:
             A FunctionTool that can be used as a tool by other agents.
@@ -767,6 +779,9 @@ class BaseAgent(SerializationMixin):
                     _TOOL_APPROVAL_STATE_KEY,
                     _FUNCTION_INVOCATION_BUDGET_STATE_KEY,
                     _FUNCTION_RESULT_PAYLOAD_BUDGET_STATE_KEY,
+                    # Service handles belong to one agent's remote resources, not shared application state.
+                    # Exclude them in both directions so later children cannot inherit an earlier child's handles.
+                    *_provider_service_session_state_keys(self),
                     *child_approval_source_ids,
                     *parent_approval_source_ids,
                 })

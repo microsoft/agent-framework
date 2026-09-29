@@ -2585,6 +2585,67 @@ async def test_chat_agent_as_tool_propagate_session_shares_state(client: Support
     assert parent_session.state["counter"] == 1
 
 
+@pytest.mark.parametrize("parent_handle", [None, "parent-provider-session"])
+async def test_chat_agent_as_tool_propagate_session_isolates_provider_owned_state(
+    client: SupportsChatGetResponse, parent_handle: str | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test that provider-owned state stays isolated across sequential delegated calls."""
+
+    class ProviderStateAgent(Agent):
+        service_session_state_keys = frozenset({"provider_session"})
+
+    monkeypatch.setattr(client, "service_session_state_keys", frozenset({"client_provider_session"}), raising=False)
+    parent_session = AgentSession(session_id="shared-session", service_session_id="parent-service-session")
+    parent_session.state.update({
+        "counter": 0,
+        "ordinary": "parent-value",
+    })
+    if parent_handle is not None:
+        parent_session.state["provider_session"] = parent_handle
+        parent_session.state["client_provider_session"] = parent_handle
+
+    observed_child_states: list[dict[str, Any]] = []
+    agents = [
+        ProviderStateAgent(client=client, name="FirstChild"),
+        ProviderStateAgent(client=client, name="SecondChild"),
+    ]
+
+    for agent in (agents[0], agents[1], agents[0]):
+        original_run = agent.run
+
+        def capturing_run(*args: Any, _run: Callable[..., Any] = original_run, **kwargs: Any) -> Any:
+            child_session = cast(AgentSession, kwargs["session"])
+            observed_child_states.append(dict(child_session.state))
+            assert child_session.service_session_id is None
+            child_session.state["counter"] += 1
+            child_session.state["ordinary"] = f"child-value-{len(observed_child_states)}"
+            child_session.state["provider_session"] = f"child-provider-session-{len(observed_child_states)}"
+            child_session.state["client_provider_session"] = f"client-provider-session-{len(observed_child_states)}"
+            child_session.service_session_id = f"child-service-session-{len(observed_child_states)}"
+            return _run(*args, **kwargs)
+
+        delegated_tool = agent.as_tool(propagate_session=True)
+        with patch.object(agent, "run", side_effect=capturing_run):
+            await delegated_tool.invoke(
+                context=FunctionInvocationContext(
+                    function=delegated_tool,
+                    arguments={"task": "Run child"},
+                    session=parent_session,
+                )
+            )
+
+    assert [state.get("provider_session") for state in observed_child_states] == [None, None, None]
+    assert [state.get("client_provider_session") for state in observed_child_states] == [None, None, None]
+    assert [state["counter"] for state in observed_child_states] == [0, 1, 2]
+    assert [state["ordinary"] for state in observed_child_states] == ["parent-value", "child-value-1", "child-value-2"]
+    expected_state: dict[str, Any] = {"counter": 3, "ordinary": "child-value-3"}
+    if parent_handle is not None:
+        expected_state["provider_session"] = parent_handle
+        expected_state["client_provider_session"] = parent_handle
+    assert parent_session.state == expected_state
+    assert parent_session.service_session_id == "parent-service-session"
+
+
 async def test_chat_agent_as_tool_propagate_session_clears_service_session_id(client: SupportsChatGetResponse) -> None:
     """Test that propagate_session=True gives the child a separate session with cleared service_session_id."""
     agent = Agent(client=client, name="SubAgent", description="Sub agent")
