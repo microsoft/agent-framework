@@ -156,6 +156,25 @@ Every new package starts as `alpha`.
 8. Add the package to `python/PACKAGE_STATUS.md` and keep that file updated when packages are added,
    removed, renamed, or promoted. If the package exposes individually staged APIs, keep the feature list
    there current too.
+9. Keep the `Typing :: Typed` classifier and the `py.typed` marker in step. The classifier alone is a
+   promise PEP 561 keeps through the `py.typed` file inside the package directory, so a package that
+   declares `Typing :: Typed` without shipping that file resolves to `Any` for every type checker
+   that sees the installed distribution. Check both, not one:
+
+   ```bash
+   # every package that claims to be typed must ship the marker
+   cd python/packages
+   for d in */; do
+     d=${d%/}
+     [ -f "$d/pyproject.toml" ] || continue
+     if grep -q "Typing :: Typed" "$d/pyproject.toml" && ! ls "$d"/agent_framework*/py.typed >/dev/null 2>&1; then
+       echo "missing py.typed: $d"
+     fi
+   done
+   ```
+
+   Note that `py.typed` only makes annotations that are already there visible; it adds none, so a
+   package that has not been type-checked may surface further errors once the marker lands.
 
 Recommended dependency workflow during connector implementation:
 
