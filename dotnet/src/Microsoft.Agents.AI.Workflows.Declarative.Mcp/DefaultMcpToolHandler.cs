@@ -556,6 +556,7 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
             }
 
             clientCreation.TrySetException(exception);
+            _ = clientCreation.Task.Exception;
         }
         finally
         {
