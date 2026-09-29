@@ -507,7 +507,7 @@ async def test_invoke_accepts_input_model_instance_with_converted_values():
         return f"{type(moment).__name__}:{type(tags).__name__}"
 
     assert when.input_model is not None
-    arguments = when.input_model(moment="2026-01-02T03:04:05", tags=["b", "a"])
+    arguments = when.input_model.model_validate({"moment": "2026-01-02T03:04:05", "tags": ["b", "a"]})
 
     assert (await when.invoke(arguments=arguments))[0].text == "datetime:set"
 
