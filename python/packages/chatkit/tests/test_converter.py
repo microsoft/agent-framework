@@ -641,6 +641,58 @@ class TestThreadItemConverter:
 
         assert await converter.end_of_turn_to_input(end_item) is None
 
+    async def test_to_agent_input_with_structured_input(self, converter):
+        """Test structured input answers are preserved as model context."""
+        from chatkit.types import (
+            StructuredInputAnswer,
+            StructuredInputFreeform,
+            StructuredInputItem,
+            StructuredInputMultipleChoice,
+            StructuredInputMultipleChoiceOption,
+        )
+
+        input_item = StructuredInputItem(
+            id="structured_1",
+            thread_id="thread_1",
+            created_at=datetime.now(),
+            type="structured_input",
+            status="answered",
+            inputs=[
+                StructuredInputMultipleChoice(
+                    id="priority",
+                    question="What priority should I use?",
+                    options=[
+                        StructuredInputMultipleChoiceOption(value="High"),
+                        StructuredInputMultipleChoiceOption(value="Urgent"),
+                    ],
+                    multiple=True,
+                    answer=StructuredInputAnswer(values=["High", "Urgent"]),
+                ),
+                StructuredInputFreeform(
+                    id="notes",
+                    question="Any extra context?",
+                    answer=StructuredInputAnswer(skipped=True),
+                ),
+                StructuredInputFreeform(
+                    id="owner",
+                    question="Who owns this?",
+                ),
+            ],
+        )
+
+        result = await converter.to_agent_input(input_item)
+
+        assert len(result) == 1
+        assert result[0].role == "user"
+        assert result[0].text == (
+            "A structured input request was displayed to the user with the following status: answered\n"
+            "<StructuredInput>\n"
+            "- What priority should I use?: High, Urgent\n"
+            "- Any extra context?: skipped\n"
+            "- Who owns this?: unanswered\n"
+            "</StructuredInput>"
+        )
+
     async def test_to_agent_input_dispatches_supported_variants(self, converter):
         """Test thread item dispatch converts supported items and skips unsupported variants."""
         from chatkit.types import (
@@ -743,6 +795,7 @@ class TestThreadItemConverter:
             "user",
             "system",
             "system",
+            "user",
         ]
         assert result[0].text == "Assistant"
         assert result[2].contents[0].result is not None
@@ -751,6 +804,11 @@ class TestThreadItemConverter:
         assert "Analysis: Completed" in result[5].text
         assert result[6].text == "<HIDDEN_CONTEXT>secret</HIDDEN_CONTEXT>"
         assert result[7].text == "<HIDDEN_CONTEXT>sdk secret</HIDDEN_CONTEXT>"
+        assert result[8].text == (
+            "A structured input request was displayed to the user with the following status: pending\n"
+            "<StructuredInput>\n"
+            "\n</StructuredInput>"
+        )
 
 
 class TestSimpleToAgentInput:

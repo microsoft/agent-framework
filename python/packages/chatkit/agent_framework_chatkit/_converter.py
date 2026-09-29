@@ -491,6 +491,25 @@ class ThreadItemConverter:
         # End-of-turn is only used for UI hints - skip it
         return None
 
+    def _structured_input_to_input(self, item: StructuredInputItem) -> Message:
+        lines: list[str] = []
+        for structured_input in item.inputs:
+            answer = structured_input.answer
+            if answer is None:
+                answer_text = "unanswered"
+            elif answer.skipped:
+                answer_text = "skipped"
+            else:
+                answer_text = ", ".join(answer.values)
+
+            lines.append(f"- {structured_input.question}: {answer_text}")
+
+        text = (
+            "A structured input request was displayed to the user with the following "
+            f"status: {item.status}\n<StructuredInput>\n" + "\n".join(lines) + "\n</StructuredInput>"
+        )
+        return Message(role="user", contents=[text])
+
     async def _thread_item_to_input_item(
         self,
         item: ThreadItem,
@@ -537,8 +556,7 @@ class ThreadItemConverter:
                 # TODO(evmattso): Implement generated image handling in a future PR
                 return []
             case StructuredInputItem():
-                # TODO(evmattso): Implement structured input handling in a future PR
-                return []
+                return [self._structured_input_to_input(item)]
             case _:
                 # Unknown ThreadItem variant (e.g. types added in newer chatkit versions).
                 # Skip rather than fail so we remain forward-compatible with chatkit upgrades.
