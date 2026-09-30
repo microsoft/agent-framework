@@ -12,7 +12,7 @@ from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from types import FunctionType
-from typing import Any, overload
+from typing import Any, cast, overload
 
 import pytest
 
@@ -1386,8 +1386,9 @@ class TestStepReplayIdentity:
         initial = await wf.run("input")
         checkpoints = await storage.list_checkpoints(workflow_name="wf")
         checkpoint = checkpoints[-1]
-        assert marker._func.__kwdefaults__ is not None  # pyright: ignore[reportPrivateUsage]
-        marker._func.__kwdefaults__["suffix"] = b"B"  # pyright: ignore[reportPrivateUsage]
+        marker_func = cast(FunctionType, marker._func)  # pyright: ignore[reportPrivateUsage]
+        assert marker_func.__kwdefaults__ is not None
+        marker_func.__kwdefaults__["suffix"] = b"B"
 
         with pytest.raises(ValueError, match="changed after decoration"):
             await wf.run(checkpoint_id=checkpoint.checkpoint_id)
