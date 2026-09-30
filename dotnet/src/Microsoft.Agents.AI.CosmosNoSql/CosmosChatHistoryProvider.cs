@@ -40,6 +40,9 @@ namespace Microsoft.Agents.AI;
 [RequiresDynamicCode("The CosmosChatHistoryProvider uses JSON serialization which is incompatible with NativeAOT.")]
 public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
 {
+    // The most operations Cosmos DB accepts in one transactional batch.
+    private const int MaxTransactionalBatchSize = 100;
+
     private readonly ProviderSessionState<State> _sessionState;
     private IReadOnlyList<string>? _stateKeys;
     private readonly CosmosClient _cosmosClient;
@@ -47,9 +50,6 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
     private readonly bool _ownsClient;
     private bool _disposed;
     private int _maxBatchSize = MaxTransactionalBatchSize;
-
-    // The most operations Cosmos DB accepts in one transactional batch.
-    private const int MaxTransactionalBatchSize = 100;
 
     /// <summary>
     /// Cached JSON serializer options for .NET 9.0 compatibility.
