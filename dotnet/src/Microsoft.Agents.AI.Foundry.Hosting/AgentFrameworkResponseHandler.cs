@@ -985,8 +985,9 @@ public class AgentFrameworkResponseHandler : ResponseHandler
     /// keyed <see cref="AIAgent"/> registration under <paramref name="name"/>, which is what makes that name usable
     /// as the session store key. The keyed candidate is resolved only to compare identity; a registration that cannot
     /// be resolved from this handler's root provider (a scoped registration under scope validation, or a faulting
-    /// factory) is treated as not an alias, so the probe fails the request only when the keyed factory observes
-    /// cancellation; a name proven either to alias or not to alias is remembered so later requests skip the probe.
+    /// factory) is treated as not an alias, so the probe fails the request only when the keyed factory throws an
+    /// <see cref="OperationCanceledException"/>, including a <see cref="TaskCanceledException"/> from a timed-out
+    /// call; a name proven either to alias or not to alias is remembered so later requests skip the probe.
     /// </summary>
     /// <param name="defaultAgent">The default agent the request resolved to.</param>
     /// <param name="name">The default agent's <see cref="AIAgent.Name"/>.</param>
@@ -1040,8 +1041,10 @@ public class AgentFrameworkResponseHandler : ResponseHandler
     /// Resolves the default (non-keyed) <see cref="AIAgent"/> for the sole purpose of computing the storage identity
     /// of a request that already resolved a keyed agent. A default registration that cannot be resolved from this
     /// handler's root provider (a scoped registration under scope validation, or a faulting factory) must not fail
-    /// such a request; the keyed identity is used instead. The result is never cached, because a resolution failure
-    /// may be transient. On the default path the same failure is the request's real error and stays unguarded.
+    /// such a request; the keyed identity is used instead. An <see cref="OperationCanceledException"/> thrown by the
+    /// factory, including a <see cref="TaskCanceledException"/>, still propagates. The result is never cached, because
+    /// a resolution failure may be transient. On the default path the same failure is the request's real error and
+    /// stays unguarded.
     /// </summary>
     /// <param name="agentName">The name the request resolved its keyed agent under; used for logging only.</param>
     /// <returns>
