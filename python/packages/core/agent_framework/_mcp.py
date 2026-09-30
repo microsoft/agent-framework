@@ -1099,7 +1099,7 @@ class MCPTool:
                         {
                             "type": "image" if isinstance(content, types.ImageContent) else "audio",
                             "data": content.data,
-                            "mimeType": content.mimeType,
+                            "mimeType": content.mime_type,
                         },
                         default=str,
                     )
@@ -1114,7 +1114,7 @@ class MCPTool:
                                 {
                                     "type": "blob",
                                     "data": content.resource.blob,
-                                    "mimeType": content.resource.mimeType,
+                                    "mimeType": content.resource.mime_type,
                                 },
                                 default=str,
                             )
@@ -1177,7 +1177,7 @@ class MCPTool:
                     result.append(
                         Content.from_data(
                             data=decoded,
-                            media_type=item.mimeType,
+                            media_type=item.mime_type,
                             **additional_kwargs,
                         )
                     )
@@ -1185,7 +1185,7 @@ class MCPTool:
                     result.append(
                         Content.from_uri(
                             uri=str(item.uri),
-                            media_type=item.mimeType,
+                            media_type=item.mime_type,
                             **additional_kwargs,
                         )
                     )
@@ -1195,7 +1195,7 @@ class MCPTool:
                             result.append(Content.from_text(item.resource.text, **additional_kwargs))
                         case types.BlobResourceContents():
                             blob = item.resource.blob
-                            mime = item.resource.mimeType or "application/octet-stream"
+                            mime = item.resource.mime_type or "application/octet-stream"
                             if not blob.startswith("data:"):
                                 blob = f"data:{mime};base64,{blob}"
                             result.append(
@@ -1209,9 +1209,9 @@ class MCPTool:
                     result.append(Content.from_text(str(item), **additional_kwargs))
 
         structured_block: Content | None = None
-        if mcp_type.structuredContent is not None:
+        if mcp_type.structured_content is not None:
             structured_block = Content.from_text(
-                json.dumps(mcp_type.structuredContent, default=str), **additional_kwargs
+                json.dumps(mcp_type.structured_content, default=str), **additional_kwargs
             )
 
         # Select model-visible content per explicit policy (#7866). Host payload still
@@ -1272,7 +1272,7 @@ class MCPTool:
                     return_types.append(
                         Content.from_data(
                             data=data_bytes,
-                            media_type=mcp_type.mimeType,
+                            media_type=mcp_type.mime_type,
                             raw_representation=mcp_type,
                         )
                     )
@@ -1280,7 +1280,7 @@ class MCPTool:
                     return_types.append(
                         Content.from_uri(
                             uri=str(mcp_type.uri),
-                            media_type=mcp_type.mimeType or "application/json",
+                            media_type=mcp_type.mime_type or "application/json",
                             raw_representation=mcp_type,
                         )
                     )
@@ -1296,11 +1296,11 @@ class MCPTool:
                 case types.ToolResultContent():
                     return_types.append(
                         Content.from_function_result(
-                            call_id=mcp_type.toolUseId,
+                            call_id=mcp_type.tool_use_id,
                             result=self._parse_content_from_mcp(mcp_type.content)
                             if mcp_type.content
-                            else mcp_type.structuredContent,
-                            exception=str(Exception()) if mcp_type.isError else None,
+                            else mcp_type.structured_content,
+                            exception=str(Exception()) if mcp_type.is_error else None,
                             raw_representation=mcp_type,
                         )
                     )
@@ -1320,7 +1320,7 @@ class MCPTool:
                             return_types.append(
                                 Content.from_uri(
                                     uri=mcp_type.resource.blob,
-                                    media_type=mcp_type.resource.mimeType,
+                                    media_type=mcp_type.resource.mime_type,
                                     raw_representation=mcp_type,
                                     additional_properties=(
                                         mcp_type.annotations.model_dump() if mcp_type.annotations else None
@@ -1351,20 +1351,20 @@ class MCPTool:
             )
         if content.type == "data":
             if content.media_type and content.media_type.startswith("image/"):
-                return types.ImageContent(type="image", data=content.uri, mimeType=content.media_type)  # type: ignore[attr-defined]
+                return types.ImageContent(type="image", data=content.uri, mime_type=content.media_type)  # type: ignore[attr-defined]
             if content.media_type and content.media_type.startswith("audio/"):
-                return types.AudioContent(type="audio", data=content.uri, mimeType=content.media_type)  # type: ignore[attr-defined]
+                return types.AudioContent(type="audio", data=content.uri, mime_type=content.media_type)  # type: ignore[attr-defined]
             if content.media_type and content.media_type.startswith("application/"):
                 return types.EmbeddedResource(
                     type="resource",
                     resource=types.BlobResourceContents(
                         blob=content.uri,  # type: ignore[attr-defined]
-                        mimeType=content.media_type,
+                        mime_type=content.media_type,
                         uri=(
                             content.additional_properties.get("uri", "af://binary")
                             if content.additional_properties
                             else "af://binary"
-                        ),  # type: ignore[arg-type]
+                        ),
                     ),
                 )
             return None
@@ -1375,7 +1375,7 @@ class MCPTool:
             return types.ResourceLink(
                 type="resource_link",
                 uri=content.uri,  # type: ignore[arg-type,attr-defined]
-                mimeType=content.media_type,
+                mime_type=content.media_type,
                 name=resource_name,
             )
         return None
@@ -2026,7 +2026,7 @@ class MCPTool:
             try:
                 with create_mcp_client_span("initialize", attributes=self._mcp_base_span_attributes()) as init_span:
                     initialize_result = await session.initialize()
-                    init_span.set_attribute(OtelAttr.MCP_PROTOCOL_VERSION, initialize_result.protocolVersion)
+                    init_span.set_attribute(OtelAttr.MCP_PROTOCOL_VERSION, initialize_result.protocol_version)
                     self._set_server_capabilities(getattr(initialize_result, "capabilities", None))
             except (Exception, asyncio.CancelledError) as ex:
                 cancelled, cleanup_error = await self._close_and_check_cancelled(ex)
@@ -2052,7 +2052,7 @@ class MCPTool:
                     # If the session is not initialized, we need to reinitialize it
                     with create_mcp_client_span("initialize", attributes=self._mcp_base_span_attributes()) as init_span:
                         initialize_result = await self.session.initialize()
-                        init_span.set_attribute(OtelAttr.MCP_PROTOCOL_VERSION, initialize_result.protocolVersion)
+                        init_span.set_attribute(OtelAttr.MCP_PROTOCOL_VERSION, initialize_result.protocol_version)
                         self._set_server_capabilities(getattr(initialize_result, "capabilities", None))
                 elif self._server_capabilities is None:
                     self._set_server_capabilities(getattr(self.session, "_server_capabilities", None))
@@ -2212,7 +2212,7 @@ class MCPTool:
             "MCP server '%s' sent a sampling/createMessage request (%d message(s), maxTokens=%s).",
             self.name,
             len(params.messages),
-            params.maxTokens,
+            params.max_tokens,
         )
 
         if self.sampling_max_requests is not None:
@@ -2244,25 +2244,25 @@ class MCPTool:
             messages.append(self._parse_message_from_mcp(msg))
 
         options: ChatOptions[None] = {}
-        if params.systemPrompt is not None:
-            options["instructions"] = params.systemPrompt
+        if params.system_prompt is not None:
+            options["instructions"] = params.system_prompt
         if params.tools is not None:
             options["tools"] = [
                 FunctionTool(
                     name=tool.name,
                     description=tool.description or "",
-                    input_model=tool.inputSchema,
+                    input_model=tool.input_schema,
                 )
                 for tool in params.tools
             ]
-        if params.toolChoice is not None and params.toolChoice.mode is not None:
-            options["tool_choice"] = params.toolChoice.mode
+        if params.tool_choice is not None and params.tool_choice.mode is not None:
+            options["tool_choice"] = params.tool_choice.mode
 
         if params.temperature is not None:
             options["temperature"] = params.temperature
-        options["max_tokens"] = self._capped_sampling_max_tokens(params.maxTokens)
-        if params.stopSequences is not None:
-            options["stop"] = params.stopSequences
+        options["max_tokens"] = self._capped_sampling_max_tokens(params.max_tokens)
+        if params.stop_sequences is not None:
+            options["stop"] = params.stop_sequences
 
         try:
             chat_client: Any = self.client
@@ -2293,7 +2293,7 @@ class MCPTool:
                 role="assistant",
                 content=tool_use_contents,
                 model=response.model or "unknown",
-                stopReason="toolUse",
+                stop_reason="toolUse",
             )
 
         # grab the first content that is of type TextContent or ImageContent
@@ -2511,9 +2511,9 @@ class MCPTool:
                 existing_names.add(local_name)
 
             # Check if there are more pages
-            if not prompt_list.nextCursor:
+            if not prompt_list.next_cursor:
                 break
-            params = types.PaginatedRequestParams(cursor=prompt_list.nextCursor)
+            params = types.PaginatedRequestParams(cursor=prompt_list.next_cursor)
 
         self._validate_config_names([*self._functions, *new_functions])
         if self._function_load_callback is not None:
@@ -2598,7 +2598,7 @@ class MCPTool:
                 if tool.meta is not None:
                     tool_call_meta_by_name[tool.name] = _validate_mcp_meta(tool.meta) or {}
 
-                task_support = getattr(getattr(tool, "execution", None), "taskSupport", None)
+                task_support = getattr(getattr(tool, "execution", None), "task_support", None)
                 if task_support is not None:
                     tool_task_support_by_name[tool.name] = task_support
 
@@ -2607,7 +2607,7 @@ class MCPTool:
                 # which causes OpenAI API to reject the schema with a 400 error.
                 # Guard against non-conforming MCP servers that send inputSchema=None
                 # despite the MCP spec typing it as dict[str, Any].
-                input_schema = dict(tool.inputSchema or {})
+                input_schema = dict(tool.input_schema or {})
                 if input_schema.get("type") == "object" and "properties" not in input_schema:
                     input_schema["properties"] = {}
 
@@ -2667,9 +2667,9 @@ class MCPTool:
                 new_functions.append(func)
 
             # Check if there are more pages
-            if not tool_list.nextCursor:
+            if not tool_list.next_cursor:
                 break
-            params = types.PaginatedRequestParams(cursor=tool_list.nextCursor)
+            params = types.PaginatedRequestParams(cursor=tool_list.next_cursor)
 
         current_functions = [
             func
@@ -2744,14 +2744,14 @@ class MCPTool:
         Raises:
             ToolExecutionException: If reconnection fails.
         """
-        from mcp.shared.exceptions import McpError
+        from mcp import MCPError
 
         if not self._ping_available:
             return
 
         try:
             await self.session.send_ping()  # type: ignore[union-attr]
-        except McpError as mcp_exc:
+        except MCPError as mcp_exc:
             if mcp_exc.error.code == -32601:
                 self._ping_available = False
                 logger.debug("Skipping future MCP pings because the server does not support ping.")
@@ -2870,13 +2870,13 @@ class MCPTool:
     ) -> str | list[Content]:
         """Execute the MCP tools/call RPC with retry logic."""
         from anyio import ClosedResourceError
-        from mcp.shared.exceptions import McpError
+        from mcp import MCPError
 
         for attempt in range(2):
             try:
                 result = await self.session.call_tool(tool_name, arguments=filtered_kwargs, meta=meta)  # type: ignore
                 _capture_mcp_tool_result(result)
-                if result.isError:
+                if result.is_error:
                     parsed = parser(result)
                     text = (
                         "\n".join(c.text for c in parsed if c.type == "text" and c.text)
@@ -2890,13 +2890,13 @@ class MCPTool:
                 return parser(result)
             except ToolExecutionException:
                 raise
-            except (ClosedResourceError, McpError) as call_ex:
+            except (ClosedResourceError, MCPError) as call_ex:
                 is_session_terminated = (
-                    isinstance(call_ex, McpError) and "session terminated" in call_ex.error.message.lower()
+                    isinstance(call_ex, MCPError) and "session terminated" in call_ex.error.message.lower()
                 )
                 is_connection_lost = isinstance(call_ex, ClosedResourceError) or is_session_terminated
                 if not is_connection_lost:
-                    error_message = call_ex.error.message if isinstance(call_ex, McpError) else str(call_ex)
+                    error_message = call_ex.error.message if isinstance(call_ex, MCPError) else str(call_ex)
                     if span.is_recording():
                         set_mcp_span_error(span, type(call_ex).__name__, error_message)
                     raise ToolExecutionException(error_message, inner_exception=call_ex) from call_ex
@@ -3005,7 +3005,7 @@ class MCPTool:
         kwargs: dict[str, Any],
     ) -> str | list[Content]:
         from anyio import ClosedResourceError
-        from mcp.shared.exceptions import McpError
+        from mcp import MCPError
 
         if not self.load_tools_flag:
             raise ToolExecutionException(
@@ -3021,9 +3021,9 @@ class MCPTool:
         # Reconnect-and-retry is only safe after the task_id is known.
         try:
             task_id, fallback_result = await self._call_tool_as_task_create(tool_name, filtered_kwargs, meta)
-        except (ClosedResourceError, McpError) as ex:
+        except (ClosedResourceError, MCPError) as ex:
             if not self._is_connection_lost(ex):
-                error_message = ex.error.message if isinstance(ex, McpError) else str(ex)
+                error_message = ex.error.message if isinstance(ex, MCPError) else str(ex)
                 raise ToolExecutionException(error_message, inner_exception=ex) from ex
             raise ToolExecutionException(
                 f"Failed to call tool '{tool_name}' - connection lost; task state unknown.",
@@ -3037,7 +3037,7 @@ class MCPTool:
         # Server returned a CallToolResult (no task created) or fell back to plain tools/call.
         if fallback_result is not None:
             _capture_mcp_tool_result(fallback_result)
-            if fallback_result.isError:
+            if fallback_result.is_error:
                 parsed = parser(fallback_result)
                 text = (
                     "\n".join(c.text for c in parsed if c.type == "text" and c.text)
@@ -3100,8 +3100,7 @@ class MCPTool:
         ``(None, CallToolResult)`` when it returned a non-task result, falling back
         to plain ``tools/call`` if the server rejects the ``task`` field outright.
         """
-        from mcp import types
-        from mcp.shared.exceptions import McpError
+        from mcp import MCPError, types
         from pydantic import ValidationError
 
         opts = self._effective_task_options()
@@ -3128,7 +3127,7 @@ class MCPTool:
                 request,
                 types.Result,
             )
-        except McpError as ex:
+        except MCPError as ex:
             if ex.error.code not in (types.METHOD_NOT_FOUND, types.INVALID_PARAMS):
                 raise
             logger.debug(
@@ -3165,20 +3164,19 @@ class MCPTool:
     async def _poll_task_until_terminal(self, task_id: str) -> types.GetTaskResult:
         """Poll ``tasks/get`` until the task reaches a terminal status."""
         import httpx
-        from mcp import types
-        from mcp.shared.exceptions import McpError
+        from mcp import MCPError, types
 
-        # SDK raises McpError(code=httpx.REQUEST_TIMEOUT=408) on session read timeout.
+        # SDK raises MCPError(code=httpx.REQUEST_TIMEOUT=408) on session read timeout.
         transient_codes: frozenset[int] = frozenset({int(httpx.codes.REQUEST_TIMEOUT)})
 
         while True:
-            request = types.ClientRequest(types.GetTaskRequest(params=types.GetTaskRequestParams(taskId=task_id)))
+            request = types.ClientRequest(types.GetTaskRequest(params=types.GetTaskRequestParams(task_id=task_id)))
             try:
                 # GetTaskResult.ttl is required-but-Optional in the SDK; coerce below.
                 lenient = await self._send_with_one_reconnect(
                     request, types.Result, operation="tasks/get", task_id=task_id
                 )
-            except McpError as ex:
+            except MCPError as ex:
                 if ex.error.code in transient_codes:
                     logger.debug("Transient %s on tasks/get for '%s'; will retry.", ex.error.code, task_id)
                     await asyncio.sleep(_MCP_TASK_MIN_POLL_INTERVAL.total_seconds())
@@ -3195,7 +3193,7 @@ class MCPTool:
             if snapshot.status in _MCP_TASK_TERMINAL_STATUSES:
                 return snapshot
 
-            await asyncio.sleep(self._compute_poll_delay(snapshot.pollInterval).total_seconds())
+            await asyncio.sleep(self._compute_poll_delay(snapshot.poll_interval).total_seconds())
 
     @staticmethod
     def _coerce_get_task_result(lenient: types.Result, task_id: str) -> types.GetTaskResult:
@@ -3237,7 +3235,7 @@ class MCPTool:
         if status == "completed":
             payload = await self._fetch_task_result(task_id)
             _capture_mcp_tool_result(payload)
-            if payload.isError:
+            if payload.is_error:
                 parsed = parser(payload)
                 text = (
                     "\n".join(c.text for c in parsed if c.type == "text" and c.text)
@@ -3249,21 +3247,20 @@ class MCPTool:
 
         # Non-completed terminal statuses surface as ToolExecutionException so the
         # function-calling loop sees a normal failure for tool_name.
-        message = snapshot.statusMessage or f"MCP task ended with status '{status}'."
+        message = snapshot.status_message or f"MCP task ended with status '{status}'."
         if status == "input_required":
             # Spec-non-terminal; treated as terminal here because the framework does
             # not implement the interactive input flow.
-            message = snapshot.statusMessage or "MCP task requires additional input and cannot continue."
+            message = snapshot.status_message or "MCP task requires additional input and cannot continue."
         raise ToolExecutionException(f"Tool '{tool_name}' task {status}: {message}")
 
     async def _fetch_task_result(self, task_id: str) -> types.CallToolResult:
         """Send ``tasks/result`` and reinterpret the open-typed payload as a CallToolResult."""
-        from mcp import types
-        from mcp.shared.exceptions import McpError
+        from mcp import MCPError, types
         from pydantic import ValidationError
 
         request = types.ClientRequest(
-            types.GetTaskPayloadRequest(params=types.GetTaskPayloadRequestParams(taskId=task_id))
+            types.GetTaskPayloadRequest(params=types.GetTaskPayloadRequestParams(task_id=task_id))
         )
         # Connection-loss retry only via the helper; no transient-code retry — server
         # has already completed the task, so a slow payload fetch is anomalous.
@@ -3271,7 +3268,7 @@ class MCPTool:
             payload = await self._send_with_one_reconnect(
                 request, types.GetTaskPayloadResult, operation="tasks/result", task_id=task_id
             )
-        except McpError as ex:
+        except MCPError as ex:
             # Server reported completed; a hard fetch error is a plain failure (no cancel).
             raise ToolExecutionException(ex.error.message, inner_exception=ex) from ex
 
@@ -3300,12 +3297,12 @@ class MCPTool:
         Non-connection errors propagate unchanged.
         """
         from anyio import ClosedResourceError
-        from mcp.shared.exceptions import McpError
+        from mcp import MCPError
 
         for attempt in range(_MCP_RECONNECT_ATTEMPTS):
             try:
                 return await self.session.send_request(request, result_type)  # type: ignore[union-attr]
-            except (ClosedResourceError, McpError) as ex:
+            except (ClosedResourceError, MCPError) as ex:
                 if not self._is_connection_lost(ex):
                     raise
                 if attempt < _MCP_RECONNECT_ATTEMPTS - 1:
@@ -3368,7 +3365,7 @@ class MCPTool:
         """
         from mcp import types
 
-        request = types.ClientRequest(types.CancelTaskRequest(params=types.CancelTaskRequestParams(taskId=task_id)))
+        request = types.ClientRequest(types.CancelTaskRequest(params=types.CancelTaskRequestParams(task_id=task_id)))
         try:
             await asyncio.wait_for(
                 self.session.send_request(request, types.CancelTaskResult),  # type: ignore[union-attr]
@@ -3393,11 +3390,11 @@ class MCPTool:
     def _is_connection_lost(ex: BaseException) -> bool:
         """Return True if *ex* indicates the MCP transport was torn down."""
         from anyio import ClosedResourceError
-        from mcp.shared.exceptions import McpError
+        from mcp import MCPError
 
         if isinstance(ex, ClosedResourceError):
             return True
-        if isinstance(ex, McpError):
+        if isinstance(ex, MCPError):
             return "session terminated" in ex.error.message.lower()
         return False
 
@@ -3427,7 +3424,7 @@ class MCPTool:
                 or the prompt call fails.
         """
         from anyio import ClosedResourceError
-        from mcp.shared.exceptions import McpError
+        from mcp import MCPError
 
         if not self.load_prompts_flag:
             raise ToolExecutionException(
@@ -3463,7 +3460,7 @@ class MCPTool:
                             f"Failed to call prompt '{prompt_name}' - connection lost.",
                             inner_exception=cl_ex,
                         ) from cl_ex
-                except McpError as mcp_exc:
+                except MCPError as mcp_exc:
                     error_message = mcp_exc.error.message
                     set_mcp_span_error(span, type(mcp_exc).__name__, error_message)
                     raise ToolExecutionException(error_message, inner_exception=mcp_exc) from mcp_exc
