@@ -1123,6 +1123,7 @@ async def test_policy_reapproval_is_visible_persisted_and_executes_once(
 @pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])
 async def test_approval_resume_returns_result_without_mutating_inputs(
     chat_client_base: MockBaseChatClient,
+    caplog: pytest.LogCaptureFixture,
     approved: bool,
     streaming: bool,
 ) -> None:
@@ -1176,11 +1177,16 @@ async def test_approval_resume_returns_result_without_mutating_inputs(
     assert result.call_id == "call_guarded"
     assert result.result == ("approved result" if approved else "Error: Tool call invocation was rejected by user.")
     assert calls == int(approved)
+    assert caplog.records == []
     assert approval_message.role == "user"
     assert approval_message.contents == [approval_response]
     assert [[content.type for content in message.contents] for message in first_response.messages] == [
         ["function_call", "function_approval_request"]
     ]
+
+    await agent.run(approval_request.to_function_approval_response(approved=True), session=session)
+    assert calls == int(approved)
+    assert "occurrence identity" in caplog.text
 
 
 @pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])

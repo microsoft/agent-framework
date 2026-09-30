@@ -3029,6 +3029,7 @@ def _bind_approval_responses_to_pending_requests(
     invocation_session: AgentSession | None,
     *,
     consume: bool = True,
+    staged_approval_ids: set[str] | None = None,
 ) -> set[int]:
     """Rebind approval responses and remove unissued or duplicate responses."""
     if invocation_session is None:
@@ -3049,6 +3050,8 @@ def _bind_approval_responses_to_pending_requests(
                 consume=consume,
             )
             if rebound is None:
+                if staged_approval_ids and content.id in staged_approval_ids:
+                    continue
                 logger.warning(
                     "Ignored an approval response with id %r because it did not match the active approval "
                     "occurrence identity; the pending request was retained for retry.",
@@ -4610,6 +4613,12 @@ async def _resolve_approval_responses(
         prepared_messages,
         approval_session,
         consume=False,
+        staged_approval_ids={
+            approval_id
+            for response in staged_responses
+            for approval_id in (response.id, response.additional_properties.get(_APPROVAL_REQUEST_ID_KEY))
+            if isinstance(approval_id, str)
+        },
     )
     active_pending_ids = (
         set(_load_pending_approval_requests(approval_session))
