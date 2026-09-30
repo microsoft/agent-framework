@@ -47,7 +47,7 @@ import json
 import logging
 import math
 import typing
-from collections.abc import AsyncIterable, Awaitable, Callable, Coroutine, Mapping, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from contextvars import Context, ContextVar
 from copy import deepcopy
 from types import CodeType
@@ -99,7 +99,7 @@ class _WorkflowTaskFactoryState:
     def _create_task(
         self,
         loop: asyncio.AbstractEventLoop,
-        coro: Coroutine[Any, Any, Any],
+        coro: Any,
         **kwargs: Any,
     ) -> asyncio.Future[Any]:
         if self.original_factory is None:
