@@ -394,6 +394,8 @@ class WorkflowExecutor(Executor):
     def _get_child_invocation_kwargs(
         self,
         ctx: WorkflowContext[Any, Any],
+        *,
+        preserve_empty: bool = False,
     ) -> tuple[
         WorkflowInvocationKwargs | Mapping[str, Any] | None,
         WorkflowInvocationKwargs | Mapping[str, Any] | None,
@@ -420,6 +422,10 @@ class WorkflowExecutor(Executor):
                     self._parent_routed_keys_to_exclude(routed_keys),
                     cast(Mapping[str, Any] | None, parent_resolved_kwargs.get(key)),
                 )
+                # Continuations must preserve an explicitly supplied channel after scoping;
+                # None would preserve the child's stale kwargs instead of clearing them.
+                if preserve_empty and resolved is None:
+                    resolved = dict[str, Any]()
                 if (
                     transparent_alias is not None
                     and isinstance(resolved, Mapping)
@@ -561,7 +567,7 @@ class WorkflowExecutor(Executor):
     @override
     async def _cancel_pending_request(self, request_id: str, ctx: WorkflowContext[Any, Any]) -> None:
         """Propagate cancellation into the wrapped workflow."""
-        fi_kwargs, ci_kwargs = self._get_child_invocation_kwargs(ctx)
+        fi_kwargs, ci_kwargs = self._get_child_invocation_kwargs(ctx, preserve_empty=True)
         result = await self.workflow.cancel_pending_requests(
             [request_id],
             tools=ctx.get_runtime_tools(),
