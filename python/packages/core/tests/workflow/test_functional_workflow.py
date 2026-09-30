@@ -971,8 +971,8 @@ class TestStepReplayIdentity:
             return list(await asyncio.gather(branch_a(), branch_b()))
 
         initial = await parallel_workflow.run("input")
-        checkpoint = await storage.get_latest(workflow_name="parallel_workflow")
-        assert checkpoint is not None
+        checkpoints = await storage.list_checkpoints(workflow_name="parallel_workflow")
+        checkpoint = checkpoints[-1]
 
         replayed = await parallel_workflow.run(checkpoint_id=checkpoint.checkpoint_id)
 
@@ -1032,8 +1032,8 @@ class TestStepReplayIdentity:
             return [await echo(value), await echo(value)]
 
         initial = await wf.run("same")
-        checkpoint = await storage.get_latest(workflow_name="wf")
-        assert checkpoint is not None
+        checkpoints = await storage.list_checkpoints(workflow_name="wf")
+        checkpoint = checkpoints[-1]
         replayed = await wf.run(checkpoint_id=checkpoint.checkpoint_id)
 
         assert initial.get_outputs() == [["same", "same"]]
@@ -1049,6 +1049,30 @@ class TestStepReplayIdentity:
         keyword = combine._get_replay_identity((), {"first": 1, "second": 2})  # pyright: ignore[reportPrivateUsage]
 
         assert positional == keyword
+
+    async def test_automatic_identity_ignores_explicit_context_keyword(self):
+        storage = InMemoryCheckpointStorage()
+        call_count = 0
+
+        @step
+        async def use_context(value: str, ctx: RunContext) -> str:
+            nonlocal call_count
+            call_count += 1
+            return f"{value}:{ctx.get_state('marker')}"
+
+        @built_workflow(checkpoint_storage=storage)
+        async def wf(value: str, ctx: RunContext) -> str:
+            ctx.set_state("marker", "ok")
+            return await use_context(value, ctx=ctx)
+
+        initial = await wf.run("input")
+        checkpoints = await storage.list_checkpoints(workflow_name="wf")
+        checkpoint = checkpoints[-1]
+        replayed = await wf.run(checkpoint_id=checkpoint.checkpoint_id)
+
+        assert initial.get_outputs() == ["input:ok"]
+        assert replayed.get_outputs() == initial.get_outputs()
+        assert call_count == 1
 
     async def test_concurrent_opaque_arguments_require_replay_key(self):
         import threading
@@ -1096,8 +1120,8 @@ class TestStepReplayIdentity:
             )
 
         initial = await wf.run("input")
-        checkpoint = await storage.get_latest(workflow_name="wf")
-        assert checkpoint is not None
+        checkpoints = await storage.list_checkpoints(workflow_name="wf")
+        checkpoint = checkpoints[-1]
         replayed = await wf.run(checkpoint_id=checkpoint.checkpoint_id)
 
         assert initial.get_outputs() == [["A", "B"]]
@@ -1186,6 +1210,121 @@ class TestStepReplayIdentity:
 
         with pytest.raises(ValueError, match="legacy order-based cache entry"):
             await wf.run(checkpoint_id=checkpoint_id)
+
+    async def test_legacy_checkpoint_rejects_root_hit_while_child_is_active(self):
+        from agent_framework import WorkflowCheckpoint
+
+        storage = InMemoryCheckpointStorage()
+        child_started = asyncio.Event()
+        release_child = asyncio.Event()
+
+        @step
+        async def shared_step(value: str) -> str:
+            return f"result:{value}"
+
+        async def active_child() -> None:
+            child_started.set()
+            await release_child.wait()
+
+        @built_workflow(name="legacy_root_parallel", checkpoint_storage=storage)
+        async def wf(_: str) -> str:
+            child = asyncio.create_task(active_child())
+            await child_started.wait()
+            try:
+                return await shared_step("root")
+            finally:
+                release_child.set()
+                await child
+
+        checkpoint = WorkflowCheckpoint(
+            workflow_name="legacy_root_parallel",
+            graph_signature_hash=wf.graph_signature_hash,
+            state={
+                "_step_cache": {"shared_step::0": "result:branch"},
+                "_step_cache_auto_request_info_counts": {"shared_step::0": 0},
+                "_original_message": "input",
+            },
+        )
+        checkpoint_id = await storage.save(checkpoint)
+
+        with pytest.raises(ValueError, match="legacy order-based cache entry"):
+            await wf.run(checkpoint_id=checkpoint_id)
+
+    async def test_legacy_sequential_replay_ignores_unrelated_caller_task(self):
+        from agent_framework import WorkflowCheckpoint
+
+        storage = InMemoryCheckpointStorage()
+        workflow_waiting = asyncio.Event()
+        release_workflow = asyncio.Event()
+        release_unrelated = asyncio.Event()
+
+        @step
+        async def compute(value: int) -> int:
+            return value + 1
+
+        @built_workflow(name="legacy_sequential", checkpoint_storage=storage)
+        async def wf(value: int) -> int:
+            workflow_waiting.set()
+            await release_workflow.wait()
+            return await compute(value)
+
+        checkpoint = WorkflowCheckpoint(
+            workflow_name="legacy_sequential",
+            graph_signature_hash=wf.graph_signature_hash,
+            state={
+                "_step_cache": {"compute::0": 6},
+                "_step_cache_auto_request_info_counts": {"compute::0": 0},
+                "_original_message": 5,
+            },
+        )
+        checkpoint_id = await storage.save(checkpoint)
+        loop = asyncio.get_running_loop()
+        original_factory = loop.get_task_factory()
+
+        replay_task = asyncio.ensure_future(wf.run(checkpoint_id=checkpoint_id))
+        await workflow_waiting.wait()
+        unrelated_task = asyncio.create_task(release_unrelated.wait())
+        release_workflow.set()
+        replayed = await replay_task
+
+        assert replayed.get_outputs() == [6]
+        assert loop.get_task_factory() is original_factory
+
+        release_unrelated.set()
+        await unrelated_task
+
+    async def test_task_tracking_preserves_existing_loop_factory(self):
+        loop = asyncio.get_running_loop()
+        original_factory = loop.get_task_factory()
+        created_tasks: list[asyncio.Future[Any]] = []
+
+        def custom_factory(
+            task_loop: asyncio.AbstractEventLoop,
+            coro: Any,
+            **kwargs: Any,
+        ) -> asyncio.Future[Any]:
+            task = asyncio.Task(coro, loop=task_loop, **kwargs)
+            created_tasks.append(task)
+            return task
+
+        loop.set_task_factory(custom_factory)
+        try:
+
+            @step
+            async def compute(value: int) -> int:
+                return value + 1
+
+            @built_workflow
+            async def wf(value: int) -> int:
+                return (await asyncio.gather(compute(value)))[0]
+
+            result = await wf.run(1)
+
+            assert result.get_outputs() == [2]
+            assert created_tasks
+            assert loop.get_task_factory() is custom_factory
+        finally:
+            loop.set_task_factory(original_factory)
 
     async def test_versioned_identity_precedes_unrelated_legacy_entry(self):
         from agent_framework import WorkflowCheckpoint

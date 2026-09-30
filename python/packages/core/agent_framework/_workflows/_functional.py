@@ -47,8 +47,8 @@ import json
 import logging
 import math
 import typing
-from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
-from contextvars import ContextVar
+from collections.abc import AsyncIterable, Awaitable, Callable, Coroutine, Mapping, Sequence
+from contextvars import Context, ContextVar
 from copy import deepcopy
 from typing import Any, Generic, Literal, TypeVar, overload
 
@@ -81,6 +81,59 @@ _UNSUPPORTED_STEP_IDENTITY = object()
 # ContextVar holding the active RunContext during workflow execution.
 # ContextVar is per-asyncio-Task, so concurrent workflows each get their own context.
 _active_run_ctx: ContextVar[RunContext | None] = ContextVar("_active_run_ctx", default=None)
+_workflow_task_factory_states: dict[asyncio.AbstractEventLoop, _WorkflowTaskFactoryState] = {}
+
+
+class _WorkflowTaskFactoryState:
+    """Delegate a loop task factory while recording tasks created by active workflows."""
+
+    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
+        self.loop = loop
+        self.original_factory = loop.get_task_factory()
+        self.active_runs = 0
+        self.factory = self._create_task
+
+    def _create_task(
+        self,
+        loop: asyncio.AbstractEventLoop,
+        coro: Coroutine[Any, Any, Any],
+        **kwargs: Any,
+    ) -> asyncio.Future[Any]:
+        if self.original_factory is None:
+            task = asyncio.Task(coro, loop=loop, **kwargs)
+        else:
+            task = self.original_factory(loop, coro, **kwargs)
+
+        task_context = kwargs.get("context")
+        ctx = task_context.get(_active_run_ctx) if isinstance(task_context, Context) else _active_run_ctx.get()
+        if ctx is not None:
+            ctx._workflow_tasks.add(task)
+        return task
+
+
+def _track_workflow_tasks() -> Callable[[], None]:
+    loop = asyncio.get_running_loop()
+    state = _workflow_task_factory_states.get(loop)
+    if state is None or loop.get_task_factory() is not state.factory:
+        state = _WorkflowTaskFactoryState(loop)
+        _workflow_task_factory_states[loop] = state
+        loop.set_task_factory(state.factory)
+    state.active_runs += 1
+    released = False
+
+    def _release() -> None:
+        nonlocal released
+        if released:
+            return
+        released = True
+        state.active_runs -= 1
+        if state.active_runs == 0:
+            if loop.get_task_factory() is state.factory:
+                loop.set_task_factory(state.original_factory)
+            if _workflow_task_factory_states.get(loop) is state:
+                del _workflow_task_factory_states[loop]
+
+    return _release
 
 
 def _canonicalize_step_identity_value(value: Any) -> Any:
@@ -289,6 +342,8 @@ class RunContext:
         self._step_identity_counters: dict[tuple[str, str], int] = {}
         # Explicit replay keys identify exactly one logical invocation per run.
         self._used_explicit_step_cache_keys: set[str] = set()
+        # Tasks created while this workflow context is active.
+        self._workflow_tasks: set[asyncio.Future[Any]] = set()
         # The task executing the workflow body; gather/task-group children differ from this task.
         self._root_task: asyncio.Task[Any] | None = None
         # Deterministic call counter for auto-generated request_info IDs
@@ -459,9 +514,13 @@ class RunContext:
         self._used_explicit_step_cache_keys.add(key)
         return key
 
-    def _is_concurrent_task(self) -> bool:
+    def _is_concurrent_execution(self) -> bool:
         current_task = asyncio.current_task()
-        return self._root_task is not None and current_task is not None and current_task is not self._root_task
+        if self._root_task is None or current_task is None:
+            return False
+        if current_task is not self._root_task:
+            return True
+        return any(task is not current_task and not task.done() for task in self._workflow_tasks)
 
     def _get_cached_result(self, key: str) -> tuple[bool, Any]:
         if key in self._step_cache:
@@ -644,7 +703,11 @@ class StepWrapper(Generic[R]):
                 raise ValueError(f"@step '{self.name}' replay_key must return a non-empty string.")
             return ("explicit", hashlib.sha256(explicit_key.encode("utf-8")).hexdigest())
 
-        bound = self._identity_signature.bind(*args, **kwargs)
+        identity_kwargs = kwargs
+        if self._ctx_param_name is not None and self._ctx_param_name in kwargs:
+            identity_kwargs = dict(kwargs)
+            identity_kwargs.pop(self._ctx_param_name)
+        bound = self._identity_signature.bind(*args, **identity_kwargs)
         bound.apply_defaults()
         identity = _hash_step_identity(bound.arguments)
         if identity is None:
@@ -713,7 +776,7 @@ class StepWrapper(Generic[R]):
 
         found, cached = ctx._get_cached_result(legacy_cache_key)
         if found:
-            if ctx._is_concurrent_task():
+            if ctx._is_concurrent_execution():
                 raise ValueError(
                     f"Cannot safely replay legacy order-based cache entry for concurrent @step '{self.name}'. "
                     "Regenerate the checkpoint with the current version and provide replay_key for opaque or "
@@ -721,7 +784,7 @@ class StepWrapper(Generic[R]):
                 )
             return await self._return_cached_result(ctx, legacy_cache_key, cached)
 
-        if replay_identity is None and ctx._is_concurrent_task():
+        if replay_identity is None and ctx._is_concurrent_execution():
             raise ValueError(
                 f"Cannot derive a stable replay identity for concurrent @step '{self.name}'. "
                 "Use @step(replay_key=...) to identify each logical invocation."
@@ -1230,7 +1293,6 @@ class FunctionalWorkflow:
 
         # Build context
         ctx = RunContext(self.name, streaming=streaming, run_kwargs=kwargs if kwargs else None)
-        ctx._root_task = asyncio.current_task()
 
         # Restore from checkpoint if requested
         prev_checkpoint_id: str | None = None
@@ -1398,6 +1460,8 @@ class FunctionalWorkflow:
             )
 
         token = _active_run_ctx.set(ctx)
+        ctx._root_task = asyncio.current_task()
+        release_task_tracking = _track_workflow_tasks()
         try:
             sig = inspect.signature(self._func)
             params = list(sig.parameters.values())
@@ -1433,6 +1497,7 @@ class FunctionalWorkflow:
 
             return await self._func(*call_args)
         finally:
+            release_task_tracking()
             _active_run_ctx.reset(token)
 
     # ------------------------------------------------------------------
