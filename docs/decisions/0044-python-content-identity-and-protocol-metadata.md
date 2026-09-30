@@ -33,7 +33,9 @@ while every adapter decides placement independently.
 [Spec 004](../specs/004-python-function-calling-loop.md) already defines function-call identity:
 `function_call.Content.id` identifies one locally actionable Agent Framework occurrence, while `call_id` is the
 provider's call/result correlation. [ADR 0039](0039-python-refusal-content.md) defines the flat
-`model_output_kind="refusal"` marker. This decision builds on both and changes neither.
+`model_output_kind="refusal"` marker. This decision keeps spec 004's identity semantics and ADR 0039's marker
+unchanged. It does change which field marks the hosted server boundary in spec 004's approval scenarios; the
+implementing change updates spec 004's hosted-server-boundary scenario row and its authoritative test mapping.
 
 `additional_properties` merges are shallow and not uniform: text, reasoning, and function-call addition keeps the
 existing value on collision, code-interpreter aggregation keeps the incoming value, and nested values are shared by
@@ -73,9 +75,9 @@ only option that works unchanged with the existing merge behavior.
 - A provider item ID that has no first-class field is stored under the provider's namespace, for example
   `openai.responses.item_id` for function calls and function results.
 - Existing uses of `Content.id` for a provider identifier remain documented exceptions: reasoning items, computer
-  calls and results, and hosted-tool approval requests, which keep the provider's approval ID. Local approval
-  requests use the occurrence ID, as spec 004 defines. New content types do not extend the exceptions without a
-  decision.
+  calls and results, and hosted-tool approval requests and responses, which both keep the provider's approval ID so
+  the provider can correlate the decision. Local approval requests and responses use the occurrence ID, as spec 004
+  defines. New content types do not extend the exceptions without a decision.
 - A host owns the identifiers it emits. It must not substitute one kind of identifier for another, such as a
   `call_id` or occurrence ID as an output item ID. It reads upstream item IDs only from their documented location.
 
@@ -90,6 +92,10 @@ Responses.
 The hosted server's identity moves to the existing `server_name` field, which harness always-approve rules use as
 the server boundary. Because routing no longer depends on it, `server_name` remains descriptive. Hosted approval
 requests and responses continue to nest a `function_call`, so serializers keep their current shape.
+
+The exported `ToolApprovalRule` keeps its `server_label` attribute, constructor parameter, and serialized key
+unchanged. Only the source of its value changes: new rules take it from the call's `server_name`. Stored standing
+rules therefore need no migration, and matching compares a rule's `server_label` with the call's `server_name`.
 
 Adapters set `hosted=True` on every call the provider executes, including the call nested in a hosted approval
 request. A provider-issued approval left unmarked would be treated as a local call, so every adapter that parses
@@ -109,6 +115,10 @@ descriptive field into a routing signal that a local tool adapter could reasonab
 - When `hosted` is not supplied, the constructor infers it: `True` if `additional_properties["server_label"]` is set,
   otherwise `False`. Inferring `True` emits a `FutureWarning` identifying the legacy `server_label` form. This covers
   records written before this change and older provider packages that construct content on a newer core.
+- The server boundary is migrated the same way. When a function call has no `server_name`, the constructor takes it
+  from `additional_properties["server_label"]`. When both are present they must be equal; a mismatch is rejected.
+  No producer sets `server_name` on function calls today, and new writers dual-write the same value, so a mismatch
+  indicates a malformed record rather than one that should be reconciled.
 - `Content.from_dict()` builds content through the constructor, so the same inference applies to messages,
   responses, sessions, history providers, harness approval state, and calls nested in approval requests.
 - Workflow checkpoints pickle `Content` and restore it through `__setstate__`, which bypasses `from_dict()`.
@@ -116,20 +126,35 @@ descriptive field into a routing signal that a local tool adapter could reasonab
 - Hosts, AG-UI, and DevUI build content from their own wire formats; they set `hosted` explicitly rather than rely on
   inference.
 
+#### Streaming aggregation
+
+Merging streamed function-call parts rebuilds the content from a fixed list of fields, so the list must include
+every first-class field this decision relies on:
+
+- `hosted`: the merged call is hosted if either part is hosted. Parts that do not carry the flag default to local,
+  so rejecting differing values would break streams whose argument deltas omit it, and the unsafe error is treating
+  a hosted call as local.
+- `server_name`: preserved; differing non-empty values are rejected, as for `call_id`.
+- `status` on function calls and reasoning: preserved; the latest non-empty value wins, because status progresses
+  during a stream, for example from `in_progress` to `completed`.
+
 ### Metadata placement
 
 1. **Use first-class fields first.** Existing fields such as `status`, `protected_data`, `name`, `file_id`, and
    `server_name` are used where they apply. Missing constructor parameters for existing fields are added, such as
-   `status` on function calls and results and `name` on data and URI content. No new fields are added for
-   provider-specific concepts; the one new field, `hosted`, records a framework decision.
+   `status` on function calls, function results, and reasoning, and `name` on data and URI content. No new fields are
+   added for provider-specific concepts; the one new field, `hosted`, records a framework decision.
 2. **Reserved flat keys have provider-neutral meaning.** Unprefixed keys are reserved for semantics documented by
    core: `model_output_kind` (ADR 0039), and the caller-facing conventions `prompt_cache_breakpoint` and `filename`,
    which applications already set. `filename` remains a supported fallback for `Content.name`.
 3. **Provider and protocol data use flat namespaced keys.** Keys have the form `<namespace>.<name>`, such as
    `openai.responses.item_id`, `openai.chat_completions.reasoning_details`, `foundry.reasoning_item`, or
    `ag_ui.thread_id`. Each namespace is documented by one owning package. Other adapters of the same protocol, such as
-   hosts implementing Responses, may read and write that package's documented keys. Values are JSON-serializable and
-   treated as immutable; code copies composite values before changing them.
+   hosts implementing Responses, may read and write that package's documented keys. Values are plain JSON data
+   (mappings, lists, strings, numbers, booleans, and `None`), never dataclass or Pydantic instances, because
+   `Content.from_dict()` does not reconstruct arbitrary types. Values are treated as immutable; code copies composite
+   values before changing them. A namespace owner may publish `TypedDict` definitions and small accessor functions for
+   its keys, which give discoverability and typing without changing what is stored.
 4. **Leading-underscore keys are private to core.** Other packages use their namespace. Markers that exist only while
    building a request are never stored on Agent Framework objects.
 5. **Persisted replay data is defined per key.** Data that must survive persistence uses `protected_data` for opaque
@@ -184,10 +209,15 @@ nevertheless use the same namespace convention.
 - Every replay-critical path has persisted-history fixtures with legacy-only, dual-written, and new-only metadata.
 - Replay tests serialize and reload history, so `raw_representation` is absent.
 - Core tests cover `hosted` round trips, rejection of non-boolean values, precedence over `server_label`, and legacy
-  inference with its warning through the constructor, `from_dict()`, nested approval calls, and pickling.
+  inference with its warning through the constructor, `from_dict()`, nested approval calls, and pickling. They also
+  cover filling `server_name` from `server_label` and rejecting records where the two differ.
+- Streaming aggregation tests merge function-call and reasoning parts and assert that `hosted`, `server_name`, and
+  `status` survive, following the rules above.
+- Harness tests load standing `ToolApprovalRule` state written before the change and confirm it still matches hosted
+  calls from the same server, and never matches a local call with the same name and arguments.
 - Every adapter that parses provider-executed calls or approvals asserts that it sets `hosted=True`. Approval tests in
   core, OpenAI, Foundry hosting, Hosting Responses, and AG-UI cover new and legacy records, including approval-response
-  round trips.
+  round trips that keep the provider approval ID.
 
 ## Pros and Cons of the Options
 
@@ -227,9 +257,9 @@ rule.
 | `fc_id` | OpenAI function-call item ID; Hosting Responses output item ID | `openai.responses.item_id` | Yes |
 | `item_id` | OpenAI hosted custom, tool-search, and function-output item IDs | `openai.responses.item_id` | Yes |
 | `item_id` | OpenAI code-interpreter streaming correlation; core fallback | `call_id` | No |
-| `status` | OpenAI function-call and reasoning status | `Content.status` | Yes |
+| `status` | OpenAI function-call and reasoning status | `Content.status`, with new constructor parameters | Yes |
 | `reasoning_text`, `summary` | OpenAI reasoning replay parts | `openai.responses.*` | Yes |
-| `server_label` | Hosted marker and hosted server name on a `function_call` | `hosted=True` and `server_name` | Yes |
+| `server_label` | Hosted marker and hosted server name on a `function_call` | `hosted=True` and `server_name`; `ToolApprovalRule.server_label` is unchanged | Yes |
 | `__foundry_reasoning_replay_item__` | Foundry reasoning item persisted for replay | `foundry.reasoning_item` | Yes |
 | `computer_action_format` | OpenAI preview computer-action shape | `openai.responses.computer_action_format` | Yes |
 | `openai_content_type` | OpenAI and DevUI input file versus image | `openai.responses.content_type` | Yes |
