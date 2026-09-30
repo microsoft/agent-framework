@@ -87,14 +87,15 @@ public sealed class InMemoryResponsesServiceTests
     }
 
     /// <summary>
-    /// Pagination of the input items of a response holding six messages, A to F, by position: 0 is A.
-    /// A cursor of -1 is not sent, and 99 names an id the response does not have.
+    /// Pagination of the input items of a response holding six messages. Numbers are positions in the
+    /// list returned in the order under test, so 0 is the first item listed; a cursor of -1 is not sent,
+    /// and 99 names an id the response does not have.
     /// </summary>
     [Theory]
     [InlineData(true, -1, -1, null, new[] { 0, 1, 2, 3, 4, 5 }, false)] // no cursor
-    [InlineData(true, 1, -1, null, new[] { 2, 3, 4, 5 }, false)] // after B
-    [InlineData(true, -1, 4, null, new[] { 0, 1, 2, 3 }, false)] // before E
-    [InlineData(true, 1, 4, null, new[] { 2, 3 }, false)] // between B and E
+    [InlineData(true, 1, -1, null, new[] { 2, 3, 4, 5 }, false)] // after 1
+    [InlineData(true, -1, 4, null, new[] { 0, 1, 2, 3 }, false)] // before 4
+    [InlineData(true, 1, 4, null, new[] { 2, 3 }, false)] // between 1 and 4
     [InlineData(false, 1, 4, null, new[] { 2, 3 }, false)] // between them, in descending order
     [InlineData(true, 1, 4, 1, new[] { 2 }, true)] // between them, one page at a time
     [InlineData(true, 4, 1, null, new int[0], false)] // before precedes after

@@ -368,8 +368,8 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
             itemResources.Reverse();
         }
 
-        // Apply pagination. Both cursors are positions in the full ordered list, so the window is
-        // computed from them rather than by applying one to what the other already cut.
+        // Apply pagination. Both cursors are item ids, looked up in the full ordered list, so the
+        // window is computed from their indexes rather than by applying one to what the other already cut.
         int start = 0;
         int end = itemResources.Count;
 
