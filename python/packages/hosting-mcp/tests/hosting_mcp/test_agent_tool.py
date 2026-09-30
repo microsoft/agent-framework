@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Mapping, Sequence
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from agent_framework import (
     Agent,
     BaseChatClient,
@@ -17,7 +18,8 @@ from agent_framework import (
     ResponseStream,
 )
 from agent_framework_hosting import AgentState
-from mcp import MCPError, types
+from mcp import Client, MCPError, types
+from mcp.server import Server, ServerRequestContext
 from pytest import raises
 
 from agent_framework_hosting_mcp import AgentMCPTool
@@ -199,3 +201,44 @@ async def test_agent_tool_propagates_agent_execution_failure() -> None:
         raises(RuntimeError, match="agent execution failed"),
     ):
         await tool.call_tool("agent", {"task": "hello"})
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected_version"),
+    [
+        ("auto", "2026-07-28"),
+        ("legacy", "2025-11-25"),
+    ],
+)
+async def test_agent_tool_serves_both_protocol_eras(
+    mode: str,
+    expected_version: str,
+) -> None:
+    agent = Agent(client=RecordingClient(), name="agent")
+    agent_tool: AgentMCPTool[Any] = AgentMCPTool(agent)
+
+    async def list_tools(
+        _ctx: ServerRequestContext[dict[str, Any]], _params: types.PaginatedRequestParams | None
+    ) -> types.ListToolsResult:
+        return await agent_tool.list_tools()
+
+    async def call_tool(
+        _ctx: ServerRequestContext[dict[str, Any]], params: types.CallToolRequestParams
+    ) -> types.CallToolResult:
+        return await agent_tool.call_tool(params.name, params.arguments or {})
+
+    server = Server(
+        "test-server",
+        on_list_tools=list_tools,
+        on_call_tool=call_tool,
+    )
+
+    async with Client(server, mode=mode) as mcp_client:
+        tools = await mcp_client.list_tools()
+        result = await mcp_client.call_tool("agent", {"task": "hello"})
+
+        assert mcp_client.protocol_version == expected_version
+        assert [tool.name for tool in tools.tools] == ["agent"]
+        assert result.result_type == "complete"
+        assert not result.is_error
+        assert result.content

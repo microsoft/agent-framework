@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from agent_framework import (
     Executor,
     WorkflowBuilder,
@@ -16,7 +17,8 @@ from agent_framework import (
     handler,
 )
 from agent_framework_hosting import WorkflowState
-from mcp import MCPError, types
+from mcp import Client, MCPError, types
+from mcp.server import Server, ServerRequestContext
 from pytest import raises
 
 from agent_framework_hosting_mcp import WorkflowMCPTool
@@ -159,3 +161,36 @@ async def test_workflow_tool_propagates_execution_failure() -> None:
         raises(RuntimeError, match="workflow execution failed"),
     ):
         await tool.call_tool("repeat_text", {"text": "go", "repeat": 2})
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected_version"),
+    [
+        ("auto", "2026-07-28"),
+        ("legacy", "2025-11-25"),
+    ],
+)
+async def test_workflow_tool_serves_both_protocol_eras(mode: str, expected_version: str) -> None:
+    workflow_tool: WorkflowMCPTool[Any] = WorkflowMCPTool(create_workflow(), name="repeat_text")
+
+    async def list_tools(
+        _ctx: ServerRequestContext[dict[str, Any]], _params: types.PaginatedRequestParams | None
+    ) -> types.ListToolsResult:
+        return await workflow_tool.list_tools()
+
+    async def call_tool(
+        _ctx: ServerRequestContext[dict[str, Any]], params: types.CallToolRequestParams
+    ) -> types.CallToolResult:
+        return await workflow_tool.call_tool(params.name, params.arguments or {})
+
+    server = Server("test-server", on_list_tools=list_tools, on_call_tool=call_tool)
+
+    async with Client(server, mode=mode) as mcp_client:
+        tools = await mcp_client.list_tools()
+        result = await mcp_client.call_tool("repeat_text", {"text": "go", "repeat": 2})
+
+        assert mcp_client.protocol_version == expected_version
+        assert [tool.name for tool in tools.tools] == ["repeat_text"]
+        assert result.result_type == "complete"
+        assert not result.is_error
+        assert result.content == [types.TextContent(type="text", text="gogo")]
