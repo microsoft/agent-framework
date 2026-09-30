@@ -2534,6 +2534,155 @@ class TestGitHubCopilotAgentToolConversion:
         assert result.result_type == "success"
         assert result.text_result_for_llm == "hi"
 
+    @staticmethod
+    def _last_registration_wins_client(mock_client: MagicMock, mock_session: MagicMock) -> dict[str, Any]:
+        """Make create/resume mimic the SDK: the latest call's tools replace earlier ones for the session."""
+        registered: dict[str, Any] = {}
+
+        async def register(*args: Any, **kwargs: Any) -> MagicMock:
+            registered["tools"] = kwargs["tools"]
+            return mock_session
+
+        mock_client.create_session = AsyncMock(side_effect=register)
+        mock_client.resume_session = AsyncMock(side_effect=register)
+        return registered
+
+    async def test_overlapping_runs_on_same_session_keep_their_own_tool_context(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_message_event: SessionEvent,
+    ) -> None:
+        """Test that a concurrent run cannot replace the tool handlers of a run still in progress."""
+        import asyncio
+
+        registered = self._last_registration_wins_client(mock_client, mock_session)
+        seen: list[str] = []
+
+        def whoami(ctx: FunctionInvocationContext) -> str:
+            """Return the calling tenant."""
+            seen.append(ctx.kwargs["tenant"])
+            return ctx.kwargs["tenant"]
+
+        first_run_sending = asyncio.Event()
+        release_first_run = asyncio.Event()
+        calls = 0
+
+        async def send_and_wait(*args: Any, **kwargs: Any) -> SessionEvent:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                first_run_sending.set()
+                await release_first_run.wait()
+            # The SDK dispatches the tool call to whatever handler is registered now.
+            await registered["tools"][0].handler(ToolInvocation(arguments={}))
+            return assistant_message_event
+
+        mock_session.send_and_wait = send_and_wait
+        agent = GitHubCopilotAgent(client=mock_client, tools=[whoami])
+        await agent.start()
+        session = agent.create_session()
+        session.service_session_id = "shared-session-id"
+
+        run_a = asyncio.create_task(agent.run("Hi", session=session, function_invocation_kwargs={"tenant": "a"}))
+        await first_run_sending.wait()
+        run_b = asyncio.create_task(agent.run("Hi", session=session, function_invocation_kwargs={"tenant": "b"}))
+        await asyncio.sleep(0.05)
+
+        # Run B must wait for run A instead of resuming the session and replacing A's handlers.
+        assert mock_client.resume_session.await_count == 1
+
+        release_first_run.set()
+        await asyncio.gather(run_a, run_b)
+
+        assert seen == ["a", "b"]
+        assert mock_client.resume_session.await_count == 2
+
+    async def test_overlapping_streaming_runs_on_same_session_are_serialized(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        session_idle_event: SessionEvent,
+    ) -> None:
+        """Test that streaming runs on the same session do not overlap."""
+        import asyncio
+
+        self._last_registration_wins_client(mock_client, mock_session)
+        handlers: list[Any] = []
+        mock_session.on = lambda handler: handlers.append(handler) or (lambda: None)
+        mock_session.send = AsyncMock()
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        await agent.start()
+        session = agent.create_session()
+        session.service_session_id = "shared-session-id"
+
+        async def consume(tenant: str) -> None:
+            async for _ in agent.run("Hi", session=session, stream=True, function_invocation_kwargs={"t": tenant}):
+                pass
+
+        run_a = asyncio.create_task(consume("a"))
+        run_b = asyncio.create_task(consume("b"))
+        await asyncio.sleep(0.05)
+
+        assert mock_client.resume_session.await_count == 1
+
+        handlers[0](session_idle_event)
+        await asyncio.sleep(0.05)
+        assert mock_client.resume_session.await_count == 2
+
+        handlers[1](session_idle_event)
+        await asyncio.gather(run_a, run_b)
+
+    async def test_session_run_lock_released_after_failed_run(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_message_event: SessionEvent,
+    ) -> None:
+        """Test that a failed run does not leave the session locked for later runs."""
+        import asyncio
+
+        mock_session.send_and_wait = AsyncMock(side_effect=[RuntimeError("boom"), assistant_message_event])
+        agent = GitHubCopilotAgent(client=mock_client)
+        session = agent.create_session()
+
+        with pytest.raises(AgentException):
+            await agent.run("Hi", session=session)
+
+        response = await asyncio.wait_for(agent.run("Hi", session=session), timeout=1)
+        assert response.text == "Test response"
+
+    async def test_runs_on_different_sessions_are_not_serialized(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_message_event: SessionEvent,
+    ) -> None:
+        """Test that the run lock only applies to runs sharing a Copilot service session."""
+        import asyncio
+
+        in_flight = 0
+        max_in_flight = 0
+
+        async def send_and_wait(*args: Any, **kwargs: Any) -> SessionEvent:
+            nonlocal in_flight, max_in_flight
+            in_flight += 1
+            max_in_flight = max(max_in_flight, in_flight)
+            await asyncio.sleep(0.05)
+            in_flight -= 1
+            return assistant_message_event
+
+        mock_session.send_and_wait = send_and_wait
+        agent = GitHubCopilotAgent(client=mock_client)
+        first, second = agent.create_session(), agent.create_session()
+        first.service_session_id = "session-1"
+        second.service_session_id = "session-2"
+
+        await asyncio.gather(agent.run("Hi", session=first), agent.run("Hi", session=second))
+
+        assert max_in_flight == 2
+
     def test_copilot_tool_passthrough(
         self,
         mock_client: MagicMock,

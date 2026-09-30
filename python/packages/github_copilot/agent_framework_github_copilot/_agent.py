@@ -9,7 +9,8 @@ import json
 import logging
 import sys
 import warnings
-from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
+import weakref
+from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
 from pathlib import Path
 from typing import Any, ClassVar, Generic, Literal, TypedDict, cast, overload
 from urllib.parse import urlparse
@@ -181,6 +182,10 @@ async def _resolve_function_approval(
 
 
 logger = logging.getLogger("agent_framework.github_copilot")
+
+# One lock per (CopilotClient, service session ID), shared across agents that share a client.
+# Entries disappear once no run holds or awaits the lock.
+_SESSION_RUN_LOCKS: weakref.WeakValueDictionary[tuple[int, str], asyncio.Lock] = weakref.WeakValueDictionary()
 
 _MCP_TOOL_MESSAGE = (
     "MCP server '{name}' cannot be passed to GitHubCopilotAgent as a tool: the Copilot SDK "
@@ -971,12 +976,6 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             existing = list(opts.get("tools") or [])
             opts["tools"] = existing + list(session_context.tools)
 
-        copilot_session = await self._get_or_create_session(
-            session,
-            streaming=False,
-            runtime_options=opts,
-            function_invocation_kwargs=function_invocation_kwargs,
-        )
         usage_details: UsageDetails | None = None
         finish_reason: str | None = None
         model: str | None = None
@@ -1010,14 +1009,20 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             prompt = "\n".join(session_context.instructions) + "\n" + prompt
         attachments = self._prepare_attachments_for_copilot(context_messages)
 
-        unsubscribe = copilot_session.on(usage_event_handler)
-        try:
-            mark_feature_used(FeatureIndex.GITHUB_COPILOT)
-            response_event = await copilot_session.send_and_wait(prompt, attachments=attachments, timeout=timeout)
-        except Exception as ex:
-            raise AgentException(f"GitHub Copilot request failed: {ex}") from ex
-        finally:
-            unsubscribe()
+        async with self._session_run_scope(
+            session,
+            streaming=False,
+            runtime_options=opts,
+            function_invocation_kwargs=function_invocation_kwargs,
+        ) as copilot_session:
+            unsubscribe = copilot_session.on(usage_event_handler)
+            try:
+                mark_feature_used(FeatureIndex.GITHUB_COPILOT)
+                response_event = await copilot_session.send_and_wait(prompt, attachments=attachments, timeout=timeout)
+            except Exception as ex:
+                raise AgentException(f"GitHub Copilot request failed: {ex}") from ex
+            finally:
+                unsubscribe()
 
         response_messages: list[Message] = []
         response_id: str | None = None
@@ -1107,17 +1112,6 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             existing = list(opts.get("tools") or [])
             opts["tools"] = existing + list(session_context.tools)
 
-        copilot_session = await self._get_or_create_session(
-            session,
-            streaming=True,
-            runtime_options=opts,
-            function_invocation_kwargs=function_invocation_kwargs,
-        )
-
-        if _ctx_holder is not None:
-            _ctx_holder["session_context"] = session_context
-            _ctx_holder["session"] = session
-
         # Build the prompt from the full session context so provider-injected messages are included.
         context_messages = session_context.get_messages(include_input=True)
         prompt = "\n".join([message.text for message in context_messages])
@@ -1203,18 +1197,28 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 error_msg = error_data.message or "Unknown error"
                 queue.put_nowait(AgentException(f"GitHub Copilot session error: {error_msg}"))
 
-        unsubscribe = copilot_session.on(event_handler)
+        async with self._session_run_scope(
+            session,
+            streaming=True,
+            runtime_options=opts,
+            function_invocation_kwargs=function_invocation_kwargs,
+        ) as copilot_session:
+            if _ctx_holder is not None:
+                _ctx_holder["session_context"] = session_context
+                _ctx_holder["session"] = session
 
-        try:
-            mark_feature_used(FeatureIndex.GITHUB_COPILOT)
-            await copilot_session.send(prompt, attachments=attachments)
+            unsubscribe = copilot_session.on(event_handler)
 
-            while (item := await queue.get()) is not None:
-                if isinstance(item, Exception):
-                    raise item
-                yield item
-        finally:
-            unsubscribe()
+            try:
+                mark_feature_used(FeatureIndex.GITHUB_COPILOT)
+                await copilot_session.send(prompt, attachments=attachments)
+
+                while (item := await queue.get()) is not None:
+                    if isinstance(item, Exception):
+                        raise item
+                    yield item
+            finally:
+                unsubscribe()
 
     async def _run_before_providers(
         self,
@@ -1537,6 +1541,67 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             return None
 
         return {"on_pre_tool_use": default_pre_tool_use}
+
+    def _session_run_lock(self, service_session_id: str) -> asyncio.Lock:
+        """Return the lock that serializes runs on one Copilot service session."""
+        key = (id(self._client), service_session_id)
+        lock = _SESSION_RUN_LOCKS.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            _SESSION_RUN_LOCKS[key] = lock
+        return lock
+
+    @contextlib.asynccontextmanager
+    async def _session_run_scope(
+        self,
+        agent_session: AgentSession,
+        *,
+        streaming: bool,
+        runtime_options: dict[str, Any],
+        function_invocation_kwargs: Mapping[str, Any] | None,
+    ) -> AsyncGenerator[CopilotSession]:
+        """Open the Copilot session for one run and hold it exclusively until the run ends.
+
+        The Copilot SDK keeps a single session object per service session ID and
+        re-registers tools on it on every resume, dispatching tool calls by session ID.
+        Tool handlers capture the run's ``function_invocation_kwargs`` and session, so
+        an overlapping resume would let one run's tool calls execute with another run's
+        context. Runs on the same service session are therefore serialized.
+
+        Args:
+            agent_session: The conversation session.
+
+        Keyword Args:
+            streaming: Whether to enable streaming for the session.
+            runtime_options: Runtime options from run that take precedence.
+            function_invocation_kwargs: Keyword arguments forwarded to tool invocations.
+
+        Yields:
+            The created or resumed CopilotSession.
+        """
+        lock: asyncio.Lock | None = None
+        service_session_id = agent_session.service_session_id
+        if isinstance(service_session_id, str):
+            resume_lock = self._session_run_lock(service_session_id)
+            await resume_lock.acquire()
+            lock = resume_lock
+        try:
+            copilot_session = await self._get_or_create_session(
+                agent_session,
+                streaming=streaming,
+                runtime_options=runtime_options,
+                function_invocation_kwargs=function_invocation_kwargs,
+            )
+            if lock is None:
+                # A newly created service session ID is not known to any other run yet,
+                # so this acquire never waits.
+                create_lock = self._session_run_lock(copilot_session.session_id)
+                await create_lock.acquire()
+                lock = create_lock
+            yield copilot_session
+        finally:
+            if lock is not None:
+                lock.release()
 
     async def _get_or_create_session(
         self,
