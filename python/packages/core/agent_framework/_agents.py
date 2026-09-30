@@ -1892,9 +1892,12 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
 
         server_args: dict[str, Any] = {
             "name": server_name,
-            "version": version,
             "instructions": instructions,
         }
+
+        if version is not None:
+            server_args["version"] = version
+
         if lifespan:
             server_args["lifespan"] = lifespan
         if kwargs:

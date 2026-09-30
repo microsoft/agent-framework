@@ -2925,6 +2925,26 @@ async def test_chat_agent_as_mcp_server_basic(client: SupportsChatGetResponse) -
     assert hasattr(server, "name")
     assert hasattr(server, "version")
 
+    from mcp import Client
+
+    async with Client(server) as mcp_client:  # auto -> 2026-07-28; aka V2
+        tools_result = await mcp_client.list_tools()
+        call_result = await mcp_client.call_tool("TestAgent", {"task": "hello"})
+
+        assert [tool.name for tool in tools_result.tools] == ["TestAgent"]
+        assert call_result.result_type == "complete"
+        assert not call_result.is_error
+        assert mcp_client.protocol_version == "2026-07-28"
+
+    async with Client(server, mode="legacy") as mcp_client:  # 2025-11-25; aka legacy
+        tools_result = await mcp_client.list_tools()
+        call_result = await mcp_client.call_tool("TestAgent", {"task": "hello"})
+
+        assert [tool.name for tool in tools_result.tools] == ["TestAgent"]
+        assert call_result.result_type == "complete"
+        assert not call_result.is_error
+        assert mcp_client.protocol_version == "2025-11-25"
+
 
 async def test_agent_prepares_mcp_run_before_copying_functions(chat_client_base: Any) -> None:
     captured_options: list[dict[str, Any]] = []
