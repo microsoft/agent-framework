@@ -32,7 +32,7 @@ from agent_framework import Agent
 from agent_framework.foundry import FoundryChatClient
 from agent_framework_hosting_mcp import mcp_from_run, mcp_to_run
 from azure.identity.aio import DefaultAzureCredential
-from mcp import types
+from mcp import MCPError, types
 from mcp.server import ServerRequestContext
 from mcp.server.lowlevel import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
@@ -77,7 +77,7 @@ async def call_tool(_ctx: ServerRequestContext[dict[str, Any]], params: types.Ca
 
     """Convert, run, and render without the agent-backed adapter."""
     if name != "run_agent_manually":
-        raise ValueError(f"Unknown MCP tool: {name}")
+        raise MCPError(types.INVALID_PARAMS, f"Unknown MCP tool: {name}")
     run = mcp_to_run(
         arguments,
         argument_name=TASK_ARGUMENT,

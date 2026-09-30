@@ -44,7 +44,7 @@ from agent_framework.foundry import FoundryChatClient
 from agent_framework_hosting import AgentState
 from agent_framework_hosting_mcp import AgentMCPTool
 from azure.identity.aio import DefaultAzureCredential
-from mcp import types
+from mcp import MCPError, types
 from mcp.server import ServerRequestContext
 from mcp.server.lowlevel import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
@@ -63,7 +63,7 @@ async def call_tool(_ctx: ServerRequestContext[dict[str, Any]], params: types.Ca
     """Serialize calls per app-owned session before using ``AgentState``."""
     session_id = arguments.get("session_id") if arguments else None
     if not isinstance(session_id, str) or not session_id:
-        raise ValueError("MCP tool argument 'session_id' must be a non-empty string.")
+        raise MCPError(types.INVALID_PARAMS, "MCP tool argument 'session_id' must be a non-empty string.")
     lock = session_locks.setdefault(session_id, asyncio.Lock())
     async with lock:
         return await agent_tool.call_tool(name, arguments)
