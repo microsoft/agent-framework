@@ -167,6 +167,30 @@ async def test_in_memory_get_filters_before_ordering_and_paging() -> None:
     assert results == [Document("one", "Luxury hotel", "travel", 5, ["wifi", "pool"], "featured")]
 
 
+@pytest.mark.parametrize("include_vectors", [False, True])
+async def test_in_memory_search_page_is_detached_from_stored_records(include_vectors: bool) -> None:
+    collection = await _create_collection()
+    results = await collection.search(vector=[1.0, 0.0], skip=1, top=1, include_vectors=include_vectors)
+
+    assert results.metadata == {"in_memory_total_count": 2}
+    rows = [result async for result in results]
+    assert len(rows) == 1
+    record = rows[0]["record"]
+    assert record.id == "two"
+    assert rows[0]["score"] == 0.0
+    record.tags.append("changed")
+    if include_vectors:
+        assert record.vector is not None
+        assert record.vector == [0.0, 1.0]
+        record.vector[0] = 99.0
+    else:
+        assert record.vector is None
+
+    assert await collection.get(["two"], include_vectors=True) == [DOCUMENTS[1]]
+    next_results = await collection.search(vector=[1.0, 0.0], skip=1, top=1, include_vectors=True)
+    assert [result["record"] async for result in next_results] == [DOCUMENTS[1]]
+
+
 async def test_in_memory_generates_missing_string_keys() -> None:
     definition = VectorStoreCollectionDefinition(
         [
@@ -505,6 +529,39 @@ async def test_hamming_scores_and_thresholds_use_mismatch_proportions() -> None:
         ("same", 0.0),
         ("partial", 0.5),
     ]
+
+
+@pytest.mark.parametrize(
+    ("vector_type", "coordinate"),
+    [("int64", 2**53), ("int64", -(2**53) - 1), ("uint64", 2**64 - 2)],
+)
+@pytest.mark.parametrize("threshold", [None, 0.0])
+async def test_hamming_preserves_large_integer_coordinates(
+    vector_type: str, coordinate: int, threshold: float | None
+) -> None:
+    definition = VectorStoreCollectionDefinition(
+        [
+            VectorStoreField("key", name="id"),
+            VectorStoreField("vector", name="vector", type_=vector_type, dimensions=2, distance_function="hamming"),
+        ],
+        collection_name="integer-hamming",
+    )
+    collection: InMemoryCollection[str, dict[str, Any]] = InMemoryCollection(dict, definition=definition)
+    await collection.ensure_collection_exists()
+    await collection.upsert(
+        [
+            {"id": "different", "vector": [coordinate + 1, 0]},
+            {"id": "same", "vector": [coordinate, 0]},
+        ],
+        generate_vectors=False,
+    )
+
+    results = await collection.search(vector=[coordinate, 0], score_threshold=threshold)
+
+    expected = [("same", 0.0)]
+    if threshold is None:
+        expected.append(("different", 0.5))
+    assert [(result["record"]["id"], result["score"]) async for result in results] == expected
 
 
 @pytest.mark.parametrize("contents", ["empty", "missing_vector", "filtered_out"])

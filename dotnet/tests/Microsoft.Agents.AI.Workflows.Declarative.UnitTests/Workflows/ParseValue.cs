@@ -73,8 +73,8 @@ public static class WorkflowProvider
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
             VariableType targetType = typeof(decimal);
-            object? parsedValue = await context.ConvertValueAsync(targetType, key: "MySource", scopeName: "Local", cancellationToken).ConfigureAwait(false);
-            await context.QueueStateUpdateAsync(key: "MyVar", value: parsedValue, scopeName: "Local").ConfigureAwait(false);
+            var parsedValue = await context.ConvertValueWithSensitivityAsync(targetType, key: "MySource", scopeName: "Local", cancellationToken).ConfigureAwait(false);
+            await context.QueueStateUpdateWithSensitivityAsync(key: "MyVar", value: parsedValue, scopeName: "Local").ConfigureAwait(false);
     
             return default;
         }

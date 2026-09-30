@@ -20,7 +20,13 @@ from pathlib import Path, PurePosixPath
 from typing import Any, cast
 
 from agent_framework import Content, FunctionTool
-from agent_framework._tools import ApprovalMode, normalize_tools
+from agent_framework._tools import (
+    ApprovalMode,
+    _normalize_tool_description_format,  # pyright: ignore[reportPrivateUsage]
+    _NormalizedToolDescriptionFormat,  # pyright: ignore[reportPrivateUsage]
+    _ToolDescriptionFormat,  # pyright: ignore[reportPrivateUsage]
+    normalize_tools,
+)
 
 from ._instructions import build_codeact_instructions, build_execute_code_description
 from ._monty_bridge import InlineCodeBridge, generate_type_stubs
@@ -186,6 +192,12 @@ class MontyExecuteCodeTool(FunctionTool):
     ``resource_limits`` is forwarded to Monty's ``ResourceLimits`` to cap CPU
     time, memory, output size, recursion depth, and GC frequency.
 
+    ``tool_description_format`` controls parameter documentation in both the
+    description and instructions: ``"compact"`` (default) or ``"json"`` globally,
+    or a mapping of exact, case-sensitive tool names to either format. Missing
+    names use compact; rich schemas fall back to full JSON Schema. Mappings
+    are copied and retain entries for tools registered later.
+
     All mutators (``add_tools``, ``add_file_mounts`` etc.) must be called from
     the same task/thread that owns the tool. Monty itself runs on the event
     loop, so no internal locking is needed.
@@ -199,6 +211,7 @@ class MontyExecuteCodeTool(FunctionTool):
         workspace_root: str | Path | None = None,
         file_mounts: FileMountInput | Sequence[FileMountInput] | None = None,
         resource_limits: dict[str, Any] | None = None,
+        tool_description_format: _ToolDescriptionFormat = "compact",
     ) -> None:
         super().__init__(
             name=EXECUTE_CODE_TOOL_NAME,
@@ -208,6 +221,9 @@ class MontyExecuteCodeTool(FunctionTool):
             input_model=EXECUTE_CODE_INPUT_SCHEMA,
         )
         self._default_approval_mode: ApprovalMode = approval_mode or "never_require"
+        self._tool_description_format: _NormalizedToolDescriptionFormat = _normalize_tool_description_format(
+            tool_description_format
+        )
         self._managed_tools: list[FunctionTool] = []
         self._workspace_root: Path | None = (
             _resolve_existing_directory(workspace_root) if workspace_root is not None else None
@@ -230,6 +246,7 @@ class MontyExecuteCodeTool(FunctionTool):
         return build_execute_code_description(
             tools=self._managed_tools,
             mounts=self._effective_mounts(),
+            tool_description_format=self._tool_description_format,
         )
 
     @description.setter
@@ -307,6 +324,7 @@ class MontyExecuteCodeTool(FunctionTool):
             tools=list(self._managed_tools),
             tools_visible_to_model=tools_visible_to_model,
             mounts=self._effective_mounts(),
+            tool_description_format=self._tool_description_format,
         )
 
     def create_run_tool(self) -> MontyExecuteCodeTool:
@@ -317,6 +335,7 @@ class MontyExecuteCodeTool(FunctionTool):
             workspace_root=self._workspace_root,
             file_mounts=list(self._file_mounts.values()) or None,
             resource_limits=self._resource_limits,
+            tool_description_format=self._tool_description_format,
         )
 
     def build_serializable_state(self) -> dict[str, Any]:
@@ -330,6 +349,11 @@ class MontyExecuteCodeTool(FunctionTool):
             "runtime": "monty",
             "approval_mode": approval_mode,
             "tool_names": [tool_obj.name for tool_obj in self._managed_tools],
+            "tool_description_format": (
+                dict(self._tool_description_format)
+                if isinstance(self._tool_description_format, dict)
+                else self._tool_description_format
+            ),
             "workspace_root": str(self._workspace_root) if self._workspace_root is not None else None,
             "file_mounts": [
                 {

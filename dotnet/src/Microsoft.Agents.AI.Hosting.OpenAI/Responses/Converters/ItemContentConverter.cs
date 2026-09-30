@@ -1,6 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
+using System.Text.Json;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Models;
 using Microsoft.Extensions.AI;
 
@@ -69,6 +71,15 @@ internal static class ItemContentConverter
                 new DataContent(inputAudio.Data, AudioFormatToMediaType(inputAudio.Format)),
             ItemContentOutputAudio outputAudio =>
                 new DataContent(outputAudio.Data, "audio/*"),
+
+            ItemContentFunctionApprovalResponse approvalResponse =>
+                new ToolApprovalResponseContent(
+                    approvalResponse.RequestId,
+                    approvalResponse.Approved,
+                    new FunctionCallContent(
+                        approvalResponse.FunctionCall.Id,
+                        approvalResponse.FunctionCall.Name,
+                        ToFunctionArguments(approvalResponse.FunctionCall.Arguments))),
 
             _ => null
         };
@@ -158,5 +169,23 @@ internal static class ItemContentConverter
         }
 
         return null;
+    }
+
+    private static Dictionary<string, object?>? ToFunctionArguments(JsonElement arguments)
+    {
+        if (arguments.ValueKind == JsonValueKind.Null)
+        {
+            return null;
+        }
+
+        // Keep each value as a cloned JsonElement so nested objects, arrays, numbers, booleans,
+        // and null values retain their original JSON representation.
+        var result = new Dictionary<string, object?>();
+        foreach (JsonProperty property in arguments.EnumerateObject())
+        {
+            result[property.Name] = property.Value.Clone();
+        }
+
+        return result;
     }
 }

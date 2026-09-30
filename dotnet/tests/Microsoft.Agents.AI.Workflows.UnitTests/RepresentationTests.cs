@@ -16,7 +16,7 @@ namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
 public class RepresentationTests
 {
-    private sealed class TestExecutor() : Executor("TestExecutor")
+    private sealed class TestExecutor(string id = "TestExecutor") : Executor(id)
     {
         protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder) => protocolBuilder;
     }
@@ -184,5 +184,54 @@ public class RepresentationTests
             WorkflowInfo info = workflow.ToWorkflowInfo();
             Assert.Equal(expect, info.IsMatch(comparator));
         }
+    }
+
+    [Fact]
+    public void Test_WorkflowInfo_EdgeMultiplicityMustMatch()
+    {
+        // Arrange
+        Workflow savedWorkflow = CreateConditionalEdgeWorkflow("First", "Second");
+        Workflow currentWorkflow = CreateConditionalEdgeWorkflow("First", "First");
+        WorkflowInfo info = savedWorkflow.ToWorkflowInfo();
+
+        // Act
+        bool isMatch = info.IsMatch(currentWorkflow);
+
+        // Assert
+        Assert.False(isMatch);
+    }
+
+    [Fact]
+    public void Test_WorkflowInfo_EquivalentDuplicateEdgesMatch()
+    {
+        // Arrange
+        Workflow savedWorkflow = CreateConditionalEdgeWorkflow("First", "First");
+        Workflow currentWorkflow = CreateConditionalEdgeWorkflow("First", "First");
+        WorkflowInfo info = savedWorkflow.ToWorkflowInfo();
+
+        // Act
+        bool isMatch = info.IsMatch(currentWorkflow);
+
+        // Assert
+        Assert.True(isMatch);
+    }
+
+    private static Workflow CreateConditionalEdgeWorkflow(string firstTargetId, string secondTargetId)
+    {
+        TestExecutor source = new("Source");
+        TestExecutor first = new("First");
+        TestExecutor second = new("Second");
+        Dictionary<string, TestExecutor> targets = new()
+        {
+            [first.Id] = first,
+            [second.Id] = second,
+        };
+
+        return new WorkflowBuilder(source)
+            .BindExecutor(first)
+            .BindExecutor(second)
+            .AddEdge(source, targets[firstTargetId], Condition())
+            .AddEdge(source, targets[secondTargetId], Condition())
+            .Build(validateOrphans: false);
     }
 }

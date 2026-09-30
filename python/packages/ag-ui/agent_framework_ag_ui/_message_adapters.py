@@ -480,6 +480,11 @@ def _convert_agui_content_to_framework(content: Any) -> list[Content]:
                 converted.append(Content.from_text(text=str(part.get("text", ""))))
                 continue
 
+            if part_type == "input_image":
+                # Same mapping _normalize_snapshot_content applies to input_image parts.
+                part = {**part, "type": "image"}
+                part_type = "image"
+
             if part_type in {"binary", "image", "audio", "video", "document"}:
                 media_content = _parse_multimodal_media_part(part)
                 if media_content is not None:

@@ -171,6 +171,7 @@ public class ApprovalResponseBindingChatClientTests
         // Arrange — one recorded request, but the caller sends two responses with the same request id.
         var session = new ChatClientAgentSession();
         var recordedCall = new FunctionCallContent("call1", "toolA");
+        var options = new ChatOptions { Tools = [AIFunctionFactory.Create(() => "result", "toolA")] };
         await RecordRequestAsync(session, new ToolApprovalRequestContent(RequestId, recordedCall));
 
         var first = new ToolApprovalResponseContent(RequestId, approved: true, recordedCall);
@@ -180,7 +181,7 @@ public class ApprovalResponseBindingChatClientTests
         var decorator = new ApprovalResponseBindingChatClient(inner);
 
         // Act
-        await RunAsync(decorator, session, [new ChatMessage(ChatRole.User, [first, second])]);
+        await RunAsync(decorator, session, [new ChatMessage(ChatRole.User, [first, second])], options);
 
         // Assert — only a single approval is forwarded downstream.
         var forwarded = capture.Messages!.SelectMany(m => m.Contents).OfType<ToolApprovalResponseContent>().ToList();
@@ -382,6 +383,149 @@ public class ApprovalResponseBindingChatClientTests
         Assert.Contains(capture.Messages!.SelectMany(m => m.Contents), c => c is ToolApprovalResponseContent);
     }
 
+    [Fact]
+    public async Task GetResponseAsync_PartiallyAnsweredBatch_ConsumesWholeBatchAsync()
+    {
+        // Arrange — two requests were surfaced, and the caller answers only one of them. Tool-call results must be
+        // supplied as a complete set, so an approval batch is answered in a single turn; a record must not outlive
+        // that turn, because it stays usable to authorize a call for as long as it is kept.
+        var session = new ChatClientAgentSession();
+        var firstCall = new FunctionCallContent("call1", "toolA");
+        var secondCall = new FunctionCallContent("call2", "toolB");
+        await RecordRequestsAsync(session, [
+            new ToolApprovalRequestContent(RequestId, firstCall),
+            new ToolApprovalRequestContent("req2", secondCall)]);
+
+        var response = new ToolApprovalResponseContent(RequestId, approved: true, firstCall);
+        var decorator = new ApprovalResponseBindingChatClient(CreateCapturingChatClient(new Capture()));
+
+        // Act
+        await RunAsync(decorator, session, [new ChatMessage(ChatRole.User, [response])]);
+
+        // Assert — neither record survives the turn.
+        Assert.False(HasPendingRequest(session, RequestId));
+        Assert.False(HasPendingRequest(session, "req2"));
+    }
+
+    [Fact]
+    public async Task GetResponseAsync_InnerCallThrows_RetainsPendingEntryForRetryAsync()
+    {
+        // Arrange — the run that carries the approval response back to the agent fails, as a transient transport
+        // error or a cancellation does. Chat history is only written when a run completes, so the surfaced request
+        // stays in the history and the caller must be able to send the same approval response again.
+        var session = new ChatClientAgentSession();
+        var recordedCall = new FunctionCallContent("call1", "toolA");
+        await RecordRequestAsync(session, new ToolApprovalRequestContent(RequestId, recordedCall));
+
+        var response = new ToolApprovalResponseContent(RequestId, approved: true, recordedCall);
+        var inner = CreateMockChatClient((_, _, _) => throw new InvalidOperationException("Service failure."));
+        var decorator = new ApprovalResponseBindingChatClient(inner);
+
+        // Act
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => RunAsync(decorator, session, [new ChatMessage(ChatRole.User, [response])]));
+
+        // Assert — the pending entry survives, so the same approval can be supplied again.
+        Assert.True(HasPendingRequest(session, RequestId));
+    }
+
+    [Fact]
+    public async Task GetStreamingResponseAsync_InnerCallThrows_RetainsPendingEntryForRetryAsync()
+    {
+        // Arrange
+        var session = new ChatClientAgentSession();
+        var recordedCall = new FunctionCallContent("call1", "toolA");
+        await RecordRequestAsync(session, new ToolApprovalRequestContent(RequestId, recordedCall));
+
+        var response = new ToolApprovalResponseContent(RequestId, approved: true, recordedCall);
+        var inner = CreateMockStreamingChatClient((_, _, _) =>
+            ThrowingUpdatesAsync(new InvalidOperationException("Service failure.")));
+        var decorator = new ApprovalResponseBindingChatClient(inner);
+
+        // Act
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => RunStreamingAsync(decorator, session, [new ChatMessage(ChatRole.User, [response])]));
+
+        // Assert
+        Assert.True(HasPendingRequest(session, RequestId));
+    }
+
+    [Fact]
+    public async Task GetStreamingResponseAsync_ConsumerStopsEarly_RetainsPendingEntryAndRecordsEmittedRequestAsync()
+    {
+        // Arrange — a consumer commonly stops enumerating the moment it sees an approval request, because it now
+        // needs the user's decision. Disposing the stream early skips the end-of-run history write just like a
+        // failure does, so the stored state must survive untouched, while the request that was already handed to the
+        // caller must be recorded so the answer to it can bind.
+        var session = new ChatClientAgentSession();
+        var recordedCall = new FunctionCallContent("call1", "toolA");
+        await RecordRequestAsync(session, new ToolApprovalRequestContent(RequestId, recordedCall));
+
+        var response = new ToolApprovalResponseContent(RequestId, approved: true, recordedCall);
+        var newRequest = new ToolApprovalRequestContent("req2", new FunctionCallContent("call2", "toolB"));
+        var inner = CreateMockStreamingChatClient((_, _, _) => UpdatesAsync(
+            new ChatResponseUpdate(ChatRole.Assistant, [newRequest]),
+            new ChatResponseUpdate(ChatRole.Assistant, "trailing")));
+        var decorator = new ApprovalResponseBindingChatClient(inner);
+
+        var agent = new TestAIAgent
+        {
+            RunAsyncFunc = async (_, _, _, ct) =>
+            {
+                await foreach (var update in decorator.GetStreamingResponseAsync(
+                    [new ChatMessage(ChatRole.User, [response])], null, ct))
+                {
+                    if (update.Contents.OfType<ToolApprovalRequestContent>().Any())
+                    {
+                        break;
+                    }
+                }
+
+                return new AgentResponse();
+            }
+        };
+
+        // Act
+        await agent.RunAsync([new ChatMessage(ChatRole.User, "drive")], session);
+
+        // Assert
+        Assert.True(HasPendingRequest(session, RequestId));
+        Assert.True(HasPendingRequest(session, "req2"));
+    }
+
+    [Fact]
+    public async Task GetResponseAsync_RetriedAfterFailedRun_IsHonoredOnceAsync()
+    {
+        // Arrange — the first attempt fails, then the caller sends the very same approval response again.
+        var session = new ChatClientAgentSession();
+        var recordedCall = new FunctionCallContent("call1", "toolA");
+        await RecordRequestAsync(session, new ToolApprovalRequestContent(RequestId, recordedCall));
+
+        var failing = CreateMockChatClient((_, _, _) => throw new InvalidOperationException("Service failure."));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => RunAsync(
+            new ApprovalResponseBindingChatClient(failing),
+            session,
+            [new ChatMessage(ChatRole.User, [new ToolApprovalResponseContent(RequestId, approved: true, recordedCall)])]));
+
+        var capture = new Capture();
+        var decorator = new ApprovalResponseBindingChatClient(CreateCapturingChatClient(capture));
+
+        // Act
+        await RunAsync(decorator, session,
+            [new ChatMessage(ChatRole.User, [new ToolApprovalResponseContent(RequestId, approved: true, recordedCall)])]);
+
+        // Assert — the retry is bound and forwarded, and the entry is retired once the run has succeeded, so a
+        // further replay of the same approval is no longer honored.
+        var forwarded = capture.Messages!.SelectMany(m => m.Contents).OfType<ToolApprovalResponseContent>().Single();
+        Assert.True(forwarded.Approved);
+        Assert.False(HasPendingRequest(session, RequestId));
+    }
+
+    private static bool HasPendingRequest(AgentSession session, string requestId)
+        => session.StateBag.TryGetValue<List<ToolApprovalRequestContent>>(
+            ApprovalResponseBindingChatClient.StateBagKey, out var pending)
+            && pending?.Exists(request => request.RequestId == requestId) is true;
+
     private static async Task RecordRequestAsync(ChatClientAgentSession session, ToolApprovalRequestContent request)
     {
         var inner = CreateMockChatClient((_, _, _) =>
@@ -390,22 +534,34 @@ public class ApprovalResponseBindingChatClientTests
         await RunAsync(decorator, session, [new ChatMessage(ChatRole.User, "Hi")]);
     }
 
-    private static async Task RunAsync(
+    private static async Task RecordRequestsAsync(ChatClientAgentSession session, IList<ToolApprovalRequestContent> requests)
+    {
+        var inner = CreateMockChatClient((_, _, _) =>
+            Task.FromResult(new ChatResponse([new ChatMessage(ChatRole.Assistant, [.. requests])])));
+        var decorator = new ApprovalResponseBindingChatClient(inner);
+        await RunAsync(decorator, session, [new ChatMessage(ChatRole.User, "Hi")]);
+    }
+
+    private static async Task<ChatResponse> RunAsync(
         IChatClient decorator,
         AgentSession session,
         IList<ChatMessage> input,
         ChatOptions? options = null)
     {
+        ChatResponse? response = null;
+
         var agent = new TestAIAgent
         {
             RunAsyncFunc = async (_, _, _, ct) =>
             {
-                var response = await decorator.GetResponseAsync(input, options, ct);
+                response = await decorator.GetResponseAsync(input, options, ct);
                 return new AgentResponse(response);
             }
         };
 
         await agent.RunAsync([new ChatMessage(ChatRole.User, "drive")], session);
+
+        return response!;
     }
 
     [Fact]
@@ -485,29 +641,147 @@ public class ApprovalResponseBindingChatClientTests
         Assert.DoesNotContain(capture.Messages!.SelectMany(m => m.Contents), c => c is ToolApprovalResponseContent);
     }
 
-    [Fact]
-    public async Task GetResponseAsync_UnboundResponseForToolThatDoesNotRequireApproval_IsPreservedAsync()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetResponseAsync_UnboundResponseForToolThatDoesNotRequireApproval_IsDroppedAsync(bool includeRequest)
     {
-        // Arrange — FunctionInvokingChatClient turns every call in a response into an approval request as soon as
-        // one tool requires approval, so an approval response can arrive for a tool no human was asked about. With
-        // no recorded request (for example a host whose session state does not persist) it is still not a consent
-        // decision, and dropping it would block ordinary tool calling.
+        // Arrange
         var session = new ChatClientAgentSession();
         var call = new FunctionCallContent("call1", "PlainTool");
         var options = new ChatOptions { Tools = [AIFunctionFactory.Create(() => "result", "PlainTool")] };
-
         var capture = new Capture();
         var decorator = new ApprovalResponseBindingChatClient(CreateCapturingChatClient(capture));
+        List<ChatMessage> messages = [];
+        if (includeRequest)
+        {
+            messages.Add(new ChatMessage(ChatRole.Assistant, [new ToolApprovalRequestContent(RequestId, call)]));
+        }
+
+        messages.Add(new ChatMessage(ChatRole.User, [new ToolApprovalResponseContent(RequestId, approved: true, call)]));
 
         // Act
-        await RunAsync(
-            decorator,
-            session,
-            [new ChatMessage(ChatRole.User, [new ToolApprovalResponseContent(RequestId, approved: true, call)])],
-            options);
+        await RunAsync(decorator, session, messages, options);
 
         // Assert
-        Assert.Contains(capture.Messages!.SelectMany(m => m.Contents), c => c is ToolApprovalResponseContent { Approved: true });
+        var forwarded = capture.Messages!.SelectMany(m => m.Contents).ToList();
+        Assert.DoesNotContain(forwarded, c => c is ToolApprovalResponseContent);
+        Assert.Equal(includeRequest ? 1 : 0, forwarded.OfType<ToolApprovalRequestContent>().Count());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetResponseAsync_DefaultPipeline_UnboundResponseForNonApprovalTool_DoesNotExecuteAsync(bool enableInvocableBypassing)
+    {
+        // Arrange
+        int invocationCount = 0;
+        var tool = AIFunctionFactory.Create(() => ++invocationCount, "PlainTool");
+        var options = new ChatOptions { Tools = [tool] };
+        var capture = new Capture();
+        using var pipeline = CreateCapturingChatClient(capture).WithDefaultAgentMiddleware(new ChatClientAgentOptions
+        {
+            EnableInvocableFunctionBypassing = enableInvocableBypassing,
+        });
+        var session = new ChatClientAgentSession();
+        var response = new ToolApprovalResponseContent(RequestId, approved: true, new FunctionCallContent("call1", "PlainTool"));
+
+        // Act
+        await RunAsync(pipeline, session, [new ChatMessage(ChatRole.User, [response])], options);
+
+        // Assert
+        Assert.Equal(0, invocationCount);
+        Assert.NotNull(capture.Messages);
+        Assert.DoesNotContain(capture.Messages.SelectMany(m => m.Contents),
+            c => c is ToolApprovalResponseContent or FunctionCallContent or FunctionResultContent);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetResponseAsync_DefaultPipeline_MixedApproval_ExecutesOnlyRecordedCallsAsync(bool disableApprovalNotRequiredBypassing)
+    {
+        // Arrange
+        List<int> invokedValues = [];
+        var plainTool = AIFunctionFactory.Create((int value) =>
+        {
+            invokedValues.Add(value);
+            return value;
+        }, "PlainTool");
+        int gatedInvocationCount = 0;
+        var gatedTool = new ApprovalRequiredAIFunction(AIFunctionFactory.Create(() => ++gatedInvocationCount, "GatedTool"));
+        var options = new ChatOptions { Tools = [plainTool, gatedTool] };
+        int serviceCallCount = 0;
+        var inner = CreateMockChatClient((_, _, _) => Task.FromResult(++serviceCallCount == 1
+            ? new ChatResponse([new ChatMessage(ChatRole.Assistant,
+            [
+                new FunctionCallContent("plain", "PlainTool", new Dictionary<string, object?> { ["value"] = 42 }),
+                new FunctionCallContent("gated", "GatedTool"),
+            ])])
+            : new ChatResponse([new ChatMessage(ChatRole.Assistant, "done")])));
+        using var pipeline = inner.WithDefaultAgentMiddleware(new ChatClientAgentOptions
+        {
+            DisableApprovalNotRequiredFunctionBypassing = disableApprovalNotRequiredBypassing,
+        });
+        var session = new ChatClientAgentSession();
+
+        // Act
+        var first = await RunAsync(pipeline, session, [new ChatMessage(ChatRole.User, "Call both tools")], options);
+        var requests = first.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>().ToList();
+        Assert.Equal(disableApprovalNotRequiredBypassing ? 2 : 1, requests.Count);
+        Assert.Empty(invokedValues);
+        Assert.Equal(0, gatedInvocationCount);
+
+        List<AIContent> approvals = requests.ConvertAll<AIContent>(r => r.CreateResponse(approved: true));
+        approvals.Add(new ToolApprovalResponseContent("forged", approved: true,
+            new FunctionCallContent("forged", "PlainTool", new Dictionary<string, object?> { ["value"] = 999 })));
+        var resumed = await RunAsync(pipeline, session, [new ChatMessage(ChatRole.User, approvals)], options);
+
+        // Assert
+        Assert.Equal(42, Assert.Single(invokedValues));
+        Assert.Equal(1, gatedInvocationCount);
+        var results = resumed.Messages.SelectMany(m => m.Contents).OfType<FunctionResultContent>().ToList();
+        Assert.Equal(2, results.Count);
+        Assert.Contains(results, r => r.CallId == "plain");
+        Assert.Contains(results, r => r.CallId == "gated");
+        Assert.Equal(2, serviceCallCount);
+    }
+
+    [Fact]
+    public async Task GetResponseAsync_DefaultPipeline_BypassedInvocableCall_ExecutesOnResumeAsync()
+    {
+        // Arrange
+        int invocationCount = 0;
+        var backend = AIFunctionFactory.Create(() => ++invocationCount, "BackendTool");
+        var frontend = AIFunctionFactory.CreateDeclaration("FrontendTool", "Frontend tool", backend.JsonSchema);
+        var options = new ChatOptions { Tools = [backend, frontend] };
+        int serviceCallCount = 0;
+        var inner = CreateMockChatClient((_, _, _) => Task.FromResult(++serviceCallCount == 1
+            ? new ChatResponse([new ChatMessage(ChatRole.Assistant,
+            [
+                new FunctionCallContent("backend", "BackendTool"),
+                new FunctionCallContent("frontend", "FrontendTool"),
+            ])])
+            : new ChatResponse([new ChatMessage(ChatRole.Assistant, "done")])));
+        using var pipeline = inner.WithDefaultAgentMiddleware(new ChatClientAgentOptions
+        {
+            EnableInvocableFunctionBypassing = true,
+        });
+        var session = new ChatClientAgentSession();
+
+        // Act
+        var first = await RunAsync(pipeline, session, [new ChatMessage(ChatRole.User, "Call both tools")], options);
+        var call = Assert.Single(first.Messages.SelectMany(m => m.Contents).OfType<FunctionCallContent>());
+        Assert.Equal("FrontendTool", call.Name);
+        Assert.Equal(0, invocationCount);
+
+        List<ChatMessage> history = [.. first.Messages, new ChatMessage(ChatRole.Tool, [new FunctionResultContent("frontend", "done")])];
+        var resumed = await RunAsync(pipeline, session, history, options);
+
+        // Assert
+        Assert.Equal(1, invocationCount);
+        Assert.Contains(resumed.Messages.SelectMany(m => m.Contents), c => c is FunctionResultContent { CallId: "backend" });
+        Assert.Equal(2, serviceCallCount);
     }
 
     [Fact]
@@ -583,4 +857,54 @@ public class ApprovalResponseBindingChatClientTests
             .Returns((IEnumerable<ChatMessage> m, ChatOptions? o, CancellationToken ct) => onGetResponse(m, o, ct));
         return mock.Object;
     }
+
+    private static IChatClient CreateMockStreamingChatClient(
+        Func<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken, IAsyncEnumerable<ChatResponseUpdate>> onGetStreamingResponse)
+    {
+        var mock = new Mock<IChatClient>();
+        mock.Setup(c => c.GetStreamingResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions?>(), It.IsAny<CancellationToken>()))
+            .Returns((IEnumerable<ChatMessage> m, ChatOptions? o, CancellationToken ct) => onGetStreamingResponse(m, o, ct));
+        return mock.Object;
+    }
+
+    private static async Task RunStreamingAsync(
+        ApprovalResponseBindingChatClient decorator,
+        AgentSession session,
+        IList<ChatMessage> input,
+        ChatOptions? options = null)
+    {
+        var agent = new TestAIAgent
+        {
+            RunAsyncFunc = async (_, _, _, ct) =>
+            {
+                List<ChatResponseUpdate> updates = [];
+                await foreach (var update in decorator.GetStreamingResponseAsync(input, options, ct))
+                {
+                    updates.Add(update);
+                }
+
+                return new AgentResponse(updates.ToChatResponse());
+            }
+        };
+
+        await agent.RunAsync([new ChatMessage(ChatRole.User, "drive")], session);
+    }
+
+#pragma warning disable CS1998 // Async method lacks 'await' operators
+    private static async IAsyncEnumerable<ChatResponseUpdate> UpdatesAsync(params ChatResponseUpdate[] updates)
+    {
+        foreach (var update in updates)
+        {
+            yield return update;
+        }
+    }
+
+    private static async IAsyncEnumerable<ChatResponseUpdate> ThrowingUpdatesAsync(Exception exception)
+    {
+        throw exception;
+#pragma warning disable CS0162 // Unreachable code detected
+        yield break;
+#pragma warning restore CS0162
+    }
+#pragma warning restore CS1998
 }

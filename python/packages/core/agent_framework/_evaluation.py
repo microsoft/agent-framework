@@ -40,7 +40,7 @@ import inspect
 import json
 import logging
 import warnings
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import (
@@ -1119,15 +1119,21 @@ def _extract_tool_calls(item: EvalItem) -> list[tuple[str, dict[str, Any] | None
         for c in msg.contents or []:
             if c.type == "function_call" and c.name:
                 args: dict[str, Any] | None = None
-                if isinstance(c.arguments, dict):
-                    args = c.arguments
+                if c.arguments is None:
+                    args = {}
+                elif isinstance(c.arguments, Mapping):
+                    args = dict(c.arguments)
                 elif isinstance(c.arguments, str):
-                    try:
-                        parsed = json.loads(c.arguments)
-                        if isinstance(parsed, dict):
-                            args = cast(dict[str, Any], parsed)
-                    except (json.JSONDecodeError, TypeError):
-                        pass
+                    stripped = c.arguments.strip()
+                    if not stripped:
+                        args = {}
+                    else:
+                        try:
+                            parsed = json.loads(stripped)
+                            if isinstance(parsed, dict):
+                                args = cast(dict[str, Any], parsed)
+                        except (json.JSONDecodeError, TypeError):
+                            pass
                 calls.append((c.name, args))
     return calls
 
@@ -1221,7 +1227,7 @@ def tool_call_args_match(item: EvalItem) -> CheckResult:
         for _, actual_args in matching:
             if actual_args is None:
                 continue
-            if all(actual_args.get(k) == v for k, v in exp.arguments.items()):
+            if all(k in actual_args and actual_args[k] == v for k, v in exp.arguments.items()):
                 found = True
                 break
 
