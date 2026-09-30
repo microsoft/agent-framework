@@ -11,9 +11,7 @@ from typing import Any
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from mcp import types
-from mcp.shared.exceptions import McpError
-from mcp.types import ErrorData
+from mcp import MCPError, types
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import SpanKind, StatusCode
 
@@ -50,10 +48,10 @@ def _make_tool_list_result(
         tools = [{"name": "get-weather", "description": "Get weather", "inputSchema": {"type": "object"}}]
     result = Mock()
     result.tools = [
-        types.Tool(name=t["name"], description=t.get("description", ""), inputSchema=t.get("inputSchema", {}))
+        types.Tool(name=t["name"], description=t.get("description", ""), input_schema=t.get("inputSchema", {}))
         for t in tools
     ]
-    result.nextCursor = None
+    result.next_cursor = None
     return result
 
 
@@ -67,16 +65,16 @@ def _make_prompt_list_result(
     result.prompts = [
         types.Prompt(name=p["name"], description=p.get("description", ""), arguments=None) for p in prompts
     ]
-    result.nextCursor = None
+    result.next_cursor = None
     return result
 
 
 def _make_call_tool_result(text: str = "result", is_error: bool = False) -> Mock:
     """Create a mock CallToolResult."""
     result = Mock()
-    result.isError = is_error
+    result.is_error = is_error
     result.content = [types.TextContent(type="text", text=text)]
-    result.structuredContent = None
+    result.structured_content = None
     return result
 
 
@@ -106,7 +104,7 @@ async def test_mcp_initialize_span(span_exporter: InMemorySpanExporter):
     mock_session_cls = AsyncMock()
     init_result = Mock()
     init_result.capabilities = None
-    init_result.protocolVersion = "2025-06-18"
+    init_result.protocol_version = "2025-06-18"
     mock_session_cls.initialize = AsyncMock(return_value=init_result)
 
     # Create a mock transport context manager
@@ -133,7 +131,7 @@ async def test_mcp_initialize_span(span_exporter: InMemorySpanExporter):
 
             with create_mcp_client_span("initialize", attributes=self_._mcp_base_span_attributes()) as init_span:
                 result = await mock_session_cls.initialize()
-                protocol_version = getattr(result, "protocolVersion", None)
+                protocol_version = getattr(result, "protocol_version", None)
                 if protocol_version:
                     init_span.set_attribute(OtelAttr.MCP_PROTOCOL_VERSION, protocol_version)
 
@@ -223,7 +221,7 @@ async def test_mcp_tools_call_creates_client_span_when_no_parent(span_exporter: 
 
 
 async def test_mcp_tools_call_tool_error_sets_error_type(span_exporter: InMemorySpanExporter):
-    """When CallToolResult.isError is true, error.type should be 'tool_error' per MCP spec."""
+    """When CallToolResult.is_error is true, error.type should be 'tool_error' per MCP spec."""
     tool = _make_connected_mcp_tool()
     tool.session.call_tool = AsyncMock(return_value=_make_call_tool_result("bad input", is_error=True))  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
 
@@ -240,9 +238,9 @@ async def test_mcp_tools_call_tool_error_sets_error_type(span_exporter: InMemory
 
 
 async def test_mcp_tools_call_mcp_error_sets_error_type(span_exporter: InMemorySpanExporter):
-    """When session.call_tool() raises McpError, error.type should be the exception class name."""
+    """When session.call_tool() raises MCPError, error.type should be the exception class name."""
     tool = _make_connected_mcp_tool()
-    tool.session.call_tool = AsyncMock(side_effect=McpError(ErrorData(code=-32600, message="invalid request")))  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+    tool.session.call_tool = AsyncMock(side_effect=MCPError(-32600, "invalid request"))  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
 
     span_exporter.clear()
     with pytest.raises(ToolExecutionException):
@@ -252,7 +250,7 @@ async def test_mcp_tools_call_mcp_error_sets_error_type(span_exporter: InMemoryS
     call_spans = [s for s in spans if "tools/call" in s.name]
     assert len(call_spans) == 1
     span = call_spans[0]
-    assert span.attributes.get(OtelAttr.ERROR_TYPE) == "McpError"  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+    assert span.attributes.get(OtelAttr.ERROR_TYPE) == "MCPError"  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
     assert span.status.status_code == StatusCode.ERROR
 
 
@@ -282,10 +280,10 @@ async def test_mcp_prompts_get_creates_client_span(span_exporter: InMemorySpanEx
 
 
 async def test_mcp_prompts_get_mcp_error_sets_error_type(span_exporter: InMemorySpanExporter):
-    """When session.get_prompt() raises McpError, the span should have error.type and ERROR status."""
+    """When session.get_prompt() raises MCPError, the span should have error.type and ERROR status."""
     tool = _make_connected_mcp_tool()
     tool.session.get_prompt = AsyncMock(  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
-        side_effect=McpError(ErrorData(code=-32602, message="prompt not found"))
+        side_effect=MCPError(-32602, "prompt not found")
     )
 
     span_exporter.clear()
@@ -296,7 +294,7 @@ async def test_mcp_prompts_get_mcp_error_sets_error_type(span_exporter: InMemory
     prompt_spans = [s for s in spans if "prompts/get" in s.name]
     assert len(prompt_spans) == 1
     span = prompt_spans[0]
-    assert span.attributes.get(OtelAttr.ERROR_TYPE) == "McpError"  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+    assert span.attributes.get(OtelAttr.ERROR_TYPE) == "MCPError"  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
     assert span.status.status_code == StatusCode.ERROR
 
 
