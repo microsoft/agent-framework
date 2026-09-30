@@ -39,12 +39,15 @@ from __future__ import annotations
 # pyright: reportPrivateUsage=false
 # Classes in this module (RunContext, StepWrapper, FunctionalWorkflow) form a
 # cohesive unit and intentionally access each other's underscore-prefixed members.
+import asyncio
 import functools
 import hashlib
 import inspect
+import json
 import logging
+import math
 import typing
-from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from contextvars import ContextVar
 from copy import deepcopy
 from typing import Any, Generic, Literal, TypeVar, overload
@@ -72,9 +75,109 @@ logger = logging.getLogger(__name__)
 
 R = TypeVar("R")
 
+_STEP_CACHE_KEY_V2_PREFIX = "v2::"
+_UNSUPPORTED_STEP_IDENTITY = object()
+
 # ContextVar holding the active RunContext during workflow execution.
 # ContextVar is per-asyncio-Task, so concurrent workflows each get their own context.
 _active_run_ctx: ContextVar[RunContext | None] = ContextVar("_active_run_ctx", default=None)
+
+
+def _canonicalize_step_identity_value(value: Any) -> Any:
+    """Return a type-preserving JSON value, or a sentinel for unsupported input."""
+    if value is None:
+        return ["none"]
+    if type(value) is bool:
+        return ["bool", value]
+    if type(value) is int:
+        return ["int", value]
+    if type(value) is float:
+        if not math.isfinite(value):
+            return _UNSUPPORTED_STEP_IDENTITY
+        return ["float", value.hex()]
+    if type(value) is str:
+        return ["str", value]
+    if type(value) is list:
+        list_items: list[Any] = []
+        for item in typing.cast(list[Any], value):
+            canonical = _canonicalize_step_identity_value(item)
+            if canonical is _UNSUPPORTED_STEP_IDENTITY:
+                return _UNSUPPORTED_STEP_IDENTITY
+            list_items.append(canonical)
+        return ["list", list_items]
+    if type(value) is tuple:
+        tuple_items: list[Any] = []
+        for item in typing.cast(tuple[Any, ...], value):
+            canonical = _canonicalize_step_identity_value(item)
+            if canonical is _UNSUPPORTED_STEP_IDENTITY:
+                return _UNSUPPORTED_STEP_IDENTITY
+            tuple_items.append(canonical)
+        return ["tuple", tuple_items]
+    if isinstance(value, Mapping):
+        mapping = typing.cast(Mapping[Any, Any], value)
+        mapping_items: list[Any] = []
+        for key, item in mapping.items():
+            if type(key) is not str:
+                return _UNSUPPORTED_STEP_IDENTITY
+            canonical = _canonicalize_step_identity_value(item)
+            if canonical is _UNSUPPORTED_STEP_IDENTITY:
+                return _UNSUPPORTED_STEP_IDENTITY
+            mapping_items.append([key, canonical])
+        mapping_type = f"{type(mapping).__module__}.{type(mapping).__qualname__}"
+        return ["mapping", mapping_type, mapping_items]
+    return _UNSUPPORTED_STEP_IDENTITY
+
+
+def _hash_step_identity(value: Any) -> str | None:
+    canonical = _canonicalize_step_identity_value(value)
+    if canonical is _UNSUPPORTED_STEP_IDENTITY:
+        return None
+    encoded = json.dumps(canonical, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _encode_step_cache_key(
+    kind: Literal["auto", "explicit"],
+    step_name: str,
+    identity: str,
+    occurrence: int | None = None,
+) -> str:
+    payload: list[str | int] = [kind, step_name, identity]
+    if kind == "auto":
+        if occurrence is None:
+            raise ValueError("Automatic step cache keys require an occurrence index.")
+        payload.append(occurrence)
+    return f"{_STEP_CACHE_KEY_V2_PREFIX}{json.dumps(payload, ensure_ascii=False, separators=(',', ':'))}"
+
+
+def _validate_step_cache_key(key: Any) -> str:
+    if not isinstance(key, str):
+        raise TypeError("Step cache keys must be strings.")
+
+    if key.startswith(_STEP_CACHE_KEY_V2_PREFIX):
+        try:
+            raw_payload: object = json.loads(key.removeprefix(_STEP_CACHE_KEY_V2_PREFIX))
+        except json.JSONDecodeError:
+            raw_payload = None
+        if isinstance(raw_payload, list) and raw_payload:
+            payload = typing.cast(list[Any], raw_payload)
+            kind = payload[0]
+            if (
+                kind == "auto"
+                and len(payload) == 4
+                and all(isinstance(item, str) for item in payload[1:3])
+                and isinstance(payload[3], int)
+                and payload[3] >= 0
+            ):
+                return key
+            if kind == "explicit" and len(payload) == 3 and all(isinstance(item, str) for item in payload[1:]):
+                return key
+            raise ValueError("Invalid versioned step cache key.")
+
+    name, idx_str = key.rsplit("::", 1)
+    if not name or int(idx_str) < 0:
+        raise ValueError("Invalid legacy step cache key.")
+    return key
 
 
 @experimental(feature_id=ExperimentalFeature.FUNCTIONAL_WORKFLOWS)
@@ -175,12 +278,19 @@ class RunContext:
         # Event accumulator
         self._events: list[WorkflowEvent[Any]] = []
 
-        # Step result cache: (step_name, call_index) -> result
-        self._step_cache: dict[tuple[str, int], Any] = {}
+        # Step result cache. Keys are already checkpoint-safe strings so result
+        # and metadata maps cannot drift during serialization.
+        self._step_cache: dict[str, Any] = {}
         # Cached step metadata used to keep auto-generated request_info IDs in sync on bypass.
-        self._step_cache_auto_request_info_counts: dict[tuple[str, int], int] = {}
-        # Per-step call counters for deterministic cache keys
+        self._step_cache_auto_request_info_counts: dict[str, int] = {}
+        # Legacy per-step call counters retained for old checkpoint compatibility.
         self._step_call_counters: dict[str, int] = {}
+        # Per-identity counters keep repeated automatic invocations distinct.
+        self._step_identity_counters: dict[tuple[str, str], int] = {}
+        # Explicit replay keys identify exactly one logical invocation per run.
+        self._used_explicit_step_cache_keys: set[str] = set()
+        # The task executing the workflow body; gather/task-group children differ from this task.
+        self._root_task: asyncio.Task[Any] | None = None
         # Deterministic call counter for auto-generated request_info IDs
         self._auto_request_info_index: int = 0
 
@@ -328,23 +438,43 @@ class RunContext:
     def _get_events(self) -> list[WorkflowEvent[Any]]:
         return list(self._events)
 
-    def _get_step_cache_key(self, step_name: str) -> tuple[str, int]:
+    def _get_legacy_step_cache_key(self, step_name: str) -> str:
         idx = self._step_call_counters.get(step_name, 0)
         self._step_call_counters[step_name] = idx + 1
-        return (step_name, idx)
+        return f"{step_name}::{idx}"
 
-    def _get_cached_result(self, key: tuple[str, int]) -> tuple[bool, Any]:
+    def _get_automatic_step_cache_key(self, step_name: str, identity: str) -> str:
+        counter_key = (step_name, identity)
+        occurrence = self._step_identity_counters.get(counter_key, 0)
+        self._step_identity_counters[counter_key] = occurrence + 1
+        return _encode_step_cache_key("auto", step_name, identity, occurrence)
+
+    def _get_explicit_step_cache_key(self, step_name: str, identity: str) -> str:
+        key = _encode_step_cache_key("explicit", step_name, identity)
+        if key in self._used_explicit_step_cache_keys:
+            raise ValueError(
+                f"@step '{step_name}' produced duplicate replay_key values in one workflow run. "
+                "Each explicit replay key must identify exactly one logical invocation."
+            )
+        self._used_explicit_step_cache_keys.add(key)
+        return key
+
+    def _is_concurrent_task(self) -> bool:
+        current_task = asyncio.current_task()
+        return self._root_task is not None and current_task is not None and current_task is not self._root_task
+
+    def _get_cached_result(self, key: str) -> tuple[bool, Any]:
         if key in self._step_cache:
             return True, self._step_cache[key]
         return False, None
 
-    def _set_cached_result(self, key: tuple[str, int], value: Any) -> None:
+    def _set_cached_result(self, key: str, value: Any) -> None:
         self._step_cache[key] = value
 
-    def _set_cached_step_auto_request_info_count(self, key: tuple[str, int], count: int) -> None:
+    def _set_cached_step_auto_request_info_count(self, key: str, count: int) -> None:
         self._step_cache_auto_request_info_counts[key] = count
 
-    def _advance_auto_request_info_index_for_cached_step(self, key: tuple[str, int]) -> None:
+    def _advance_auto_request_info_index_for_cached_step(self, key: str) -> None:
         self._auto_request_info_index += self._step_cache_auto_request_info_counts.get(key, 0)
 
     def _set_responses(self, responses: dict[str, Any]) -> None:
@@ -376,24 +506,20 @@ class RunContext:
         return False, None
 
     def _export_step_cache(self) -> dict[str, Any]:
-        """Serialize the step cache for checkpointing.
-
-        Converts tuple keys to strings for JSON compatibility.
-        """
-        return {f"{name}::{idx}": val for (name, idx), val in self._step_cache.items()}
+        """Serialize the step cache for checkpointing."""
+        return dict(self._step_cache)
 
     def _export_step_cache_auto_request_info_counts(self) -> dict[str, int]:
         """Serialize per-step auto request_info counts for checkpointing."""
-        return {f"{name}::{idx}": count for (name, idx), count in self._step_cache_auto_request_info_counts.items()}
+        return dict(self._step_cache_auto_request_info_counts)
 
     def _import_step_cache(self, data: dict[str, Any]) -> None:
         """Restore step cache from checkpoint data."""
         self._step_cache = {}
         for k, v in data.items():
             try:
-                name, idx_str = k.rsplit("::", 1)
-                self._step_cache[name, int(idx_str)] = v
-            except (ValueError, TypeError) as exc:
+                self._step_cache[_validate_step_cache_key(k)] = v
+            except (ValueError, TypeError, json.JSONDecodeError) as exc:
                 raise ValueError(
                     f"Corrupted step cache entry in checkpoint: key={k!r}. "
                     f"The checkpoint may be from an incompatible version or corrupted. "
@@ -405,9 +531,8 @@ class RunContext:
         self._step_cache_auto_request_info_counts = {}
         for k, v in data.items():
             try:
-                name, idx_str = k.rsplit("::", 1)
-                self._step_cache_auto_request_info_counts[name, int(idx_str)] = int(v)
-            except (ValueError, TypeError) as exc:
+                self._step_cache_auto_request_info_counts[_validate_step_cache_key(k)] = int(v)
+            except (ValueError, TypeError, json.JSONDecodeError) as exc:
                 raise ValueError(
                     f"Corrupted step cache request_info metadata in checkpoint: key={k!r}, value={v!r}. "
                     f"The checkpoint may be from an incompatible version or corrupted. "
@@ -427,10 +552,13 @@ class StepWrapper(Generic[R]):
     When called inside a running ``@workflow`` function, the wrapper
     intercepts execution to provide:
 
-    * **Caching** — results are cached by ``(step_name, call_index)`` so
-      that HITL replay and checkpoint restore skip already-completed work.
-      On cache hit a single ``executor_bypassed`` event is emitted instead
-      of the normal ``executor_invoked`` / ``executor_completed`` pair.
+    * **Caching** — results use a stable identity derived from bound,
+      canonical arguments so HITL replay and checkpoint restore skip the
+      matching logical invocation even if concurrent scheduling changes.
+      Use ``replay_key`` for opaque arguments or concurrent calls whose
+      identical arguments do not imply interchangeable results. On cache
+      hit a single ``executor_bypassed`` event is emitted instead of the
+      normal ``executor_invoked`` / ``executor_completed`` pair.
     * **Event emission** — ``executor_invoked`` / ``executor_completed`` /
       ``executor_failed`` events are emitted for observability.
     * **RunContext injection** — if the step function declares a parameter
@@ -444,15 +572,34 @@ class StepWrapper(Generic[R]):
     the original function, making decorated functions fully testable in
     isolation.
 
+    Automatic replay identity supports ``None``, booleans, integers, finite
+    floats, strings, lists, tuples, and string-key mappings containing those
+    values. Concurrent calls with the same automatic identity must produce
+    interchangeable results; use distinct ``replay_key`` values otherwise.
+    Legacy order-based checkpoints remain replayable sequentially, but a
+    concurrent legacy cache hit raises instead of risking a mismatched result.
+
     Args:
         func: The async function to wrap.
         name: Optional display name.  Defaults to ``func.__name__``.
+        replay_key: Optional callback returning a stable, unique, non-empty
+            string for each logical invocation. The callback receives the
+            original user arguments and is not called outside a workflow.
 
     Raises:
         TypeError: If *func* is not an async (coroutine) function.
+        ValueError: If replay identity is unavailable or invalid for a
+            concurrent invocation, or a legacy checkpoint cannot be replayed
+            safely under concurrency.
     """
 
-    def __init__(self, func: Callable[..., Awaitable[R]], *, name: str | None = None) -> None:
+    def __init__(
+        self,
+        func: Callable[..., Awaitable[R]],
+        *,
+        name: str | None = None,
+        replay_key: Callable[..., str] | None = None,
+    ) -> None:
         if not inspect.iscoroutinefunction(func):
             raise TypeError(
                 f"@step can only decorate async functions, but '{func.__name__}' is not a coroutine function."
@@ -460,6 +607,7 @@ class StepWrapper(Generic[R]):
         self._func = func
         self.name: str = name or func.__name__
         self._signature = inspect.signature(func)
+        self._replay_key = replay_key
         functools.update_wrapper(self, func)
 
         # Detect RunContext parameter for auto-injection inside workflows
@@ -479,6 +627,34 @@ class StepWrapper(Generic[R]):
             if resolved is RunContext or param_name == "ctx":
                 self._ctx_param_name = param_name
                 break
+
+        identity_parameters = [
+            param for param in self._signature.parameters.values() if param.name != self._ctx_param_name
+        ]
+        self._identity_signature = self._signature.replace(parameters=identity_parameters)
+
+    def _get_replay_identity(
+        self,
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+    ) -> tuple[Literal["auto", "explicit"], str] | None:
+        if self._replay_key is not None:
+            explicit_key = self._replay_key(*args, **kwargs)
+            if not isinstance(explicit_key, str) or not explicit_key:
+                raise ValueError(f"@step '{self.name}' replay_key must return a non-empty string.")
+            return ("explicit", hashlib.sha256(explicit_key.encode("utf-8")).hexdigest())
+
+        bound = self._identity_signature.bind(*args, **kwargs)
+        bound.apply_defaults()
+        identity = _hash_step_identity(bound.arguments)
+        if identity is None:
+            return None
+        return ("auto", identity)
+
+    async def _return_cached_result(self, ctx: RunContext, cache_key: str, cached: Any) -> R:
+        ctx._advance_auto_request_info_index_for_cached_step(cache_key)
+        await ctx.add_event(WorkflowEvent.executor_bypassed(self.name, cached))
+        return cached
 
     def _build_call_args_with_ctx(
         self,
@@ -521,14 +697,35 @@ class StepWrapper(Generic[R]):
             # Outside a workflow — pass through directly
             return await self._func(*args, **kwargs)
 
-        cache_key = ctx._get_step_cache_key(self.name)
-        found, cached = ctx._get_cached_result(cache_key)
+        legacy_cache_key = ctx._get_legacy_step_cache_key(self.name)
+        cache_key = legacy_cache_key
+        replay_identity = self._get_replay_identity(args, kwargs)
+        if replay_identity is not None:
+            identity_kind, identity = replay_identity
+            if identity_kind == "explicit":
+                cache_key = ctx._get_explicit_step_cache_key(self.name, identity)
+            else:
+                cache_key = ctx._get_automatic_step_cache_key(self.name, identity)
+
+            found, cached = ctx._get_cached_result(cache_key)
+            if found:
+                return await self._return_cached_result(ctx, cache_key, cached)
+
+        found, cached = ctx._get_cached_result(legacy_cache_key)
         if found:
-            ctx._advance_auto_request_info_index_for_cached_step(cache_key)
-            # Dedicated bypass event so consumers can tell cache-hit replays
-            # apart from fresh executions.
-            await ctx.add_event(WorkflowEvent.executor_bypassed(self.name, cached))
-            return cached
+            if ctx._is_concurrent_task():
+                raise ValueError(
+                    f"Cannot safely replay legacy order-based cache entry for concurrent @step '{self.name}'. "
+                    "Regenerate the checkpoint with the current version and provide replay_key for opaque or "
+                    "non-interchangeable concurrent calls."
+                )
+            return await self._return_cached_result(ctx, legacy_cache_key, cached)
+
+        if replay_identity is None and ctx._is_concurrent_task():
+            raise ValueError(
+                f"Cannot derive a stable replay identity for concurrent @step '{self.name}'. "
+                "Use @step(replay_key=...) to identify each logical invocation."
+            )
 
         # Inject RunContext if the step function declares it
         call_args, call_kwargs = self._build_call_args_with_ctx(ctx, args, kwargs)
@@ -574,7 +771,11 @@ def step(func: Callable[..., Awaitable[R]]) -> StepWrapper[R]: ...
 
 
 @overload
-def step(*, name: str | None = None) -> Callable[[Callable[..., Awaitable[R]]], StepWrapper[R]]: ...
+def step(
+    *,
+    name: str | None = None,
+    replay_key: Callable[..., str] | None = None,
+) -> Callable[[Callable[..., Awaitable[R]]], StepWrapper[R]]: ...
 
 
 @experimental(feature_id=ExperimentalFeature.FUNCTIONAL_WORKFLOWS)
@@ -582,6 +783,7 @@ def step(
     func: Callable[..., Awaitable[Any]] | None = None,
     *,
     name: str | None = None,
+    replay_key: Callable[..., str] | None = None,
 ) -> StepWrapper[Any] | Callable[[Callable[..., Awaitable[Any]]], StepWrapper[Any]]:
     """Decorator that marks an async function as a tracked workflow step.
 
@@ -599,11 +801,23 @@ def step(
     inside ``@workflow`` without it; use ``@step`` only when you need
     caching, checkpointing, or observability for a particular call.
 
+    Automatic replay identity is derived from bound canonical arguments.
+    Concurrent calls with identical automatic identities must produce
+    interchangeable results. Use distinct ``replay_key`` values when opaque
+    arguments or other state distinguish the logical invocations. Legacy
+    order-based checkpoints replay sequential steps, but concurrent legacy
+    cache hits fail explicitly rather than returning a potentially mismatched
+    result.
+
     Args:
         func: The async function to decorate (when using the bare
             ``@step`` form).
         name: Optional display name for the step.  Defaults to the
             function's ``__name__``.
+        replay_key: Optional callback that returns a stable, unique,
+            non-empty string for each logical invocation. Use this when step
+            arguments are opaque or when concurrent calls with identical
+            arguments can produce different results.
 
     Returns:
         A :class:`StepWrapper` (bare form) or a decorator that produces
@@ -611,6 +825,9 @@ def step(
 
     Raises:
         TypeError: If the decorated function is not async.
+        ValueError: If replay identity is unavailable or invalid for a
+            concurrent invocation, or a legacy checkpoint cannot be replayed
+            safely under concurrency.
 
     Examples:
 
@@ -626,16 +843,21 @@ def step(
                 return json.dumps(raw)
 
 
+            @step(replay_key=lambda connection, record_id: record_id)
+            async def load_record(connection: object, record_id: str) -> dict:
+                return await connection.load(record_id)
+
+
             # Step with HITL — RunContext is auto-injected inside a workflow:
             @step
             async def review(doc: str, ctx: RunContext) -> str:
                 return await ctx.request_info({"draft": doc}, response_type=str)
     """
     if func is not None:
-        return StepWrapper(func, name=name)
+        return StepWrapper(func, name=name, replay_key=replay_key)
 
     def _decorator(fn: Callable[..., Awaitable[Any]]) -> StepWrapper[Any]:
-        return StepWrapper(fn, name=name)
+        return StepWrapper(fn, name=name, replay_key=replay_key)
 
     return _decorator
 
@@ -741,8 +963,8 @@ class FunctionalWorkflow:
         # Replay state: cleared on clean completion so later responses-only
         # calls can't silently replay with stale data from a prior run.
         self._last_message: Any = None
-        self._last_step_cache: dict[tuple[str, int], Any] = {}
-        self._last_step_cache_auto_request_info_counts: dict[tuple[str, int], int] = {}
+        self._last_step_cache: dict[str, Any] = {}
+        self._last_step_cache_auto_request_info_counts: dict[str, int] = {}
         self._last_state: dict[str, Any] = {}
         self._last_pending_request_ids: set[str] = set()
 
@@ -1008,6 +1230,7 @@ class FunctionalWorkflow:
 
         # Build context
         ctx = RunContext(self.name, streaming=streaming, run_kwargs=kwargs if kwargs else None)
+        ctx._root_task = asyncio.current_task()
 
         # Restore from checkpoint if requested
         prev_checkpoint_id: str | None = None
@@ -1253,8 +1476,6 @@ class FunctionalWorkflow:
             "co_code": co_code_hex,
             "co_names": list(co_names),
         }
-        import json
-
         canonical = json.dumps(sig_data, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 

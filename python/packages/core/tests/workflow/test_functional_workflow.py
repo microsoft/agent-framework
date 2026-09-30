@@ -930,6 +930,311 @@ class TestCheckpointing:
 
 
 # ---------------------------------------------------------------------------
+# Step replay identity
+# ---------------------------------------------------------------------------
+
+
+class TestStepReplayIdentity:
+    async def test_checkpoint_restore_preserves_concurrent_step_invocations(self):
+        storage = InMemoryCheckpointStorage()
+        predecessor_started = asyncio.Event()
+        release_predecessor = asyncio.Event()
+        branch_a_shared_completed = asyncio.Event()
+        calls: list[str] = []
+
+        @step
+        async def predecessor(value: str) -> str:
+            predecessor_started.set()
+            await release_predecessor.wait()
+            return value
+
+        @step
+        async def shared_step(value: str) -> str:
+            calls.append(value)
+            if value == "B":
+                release_predecessor.set()
+                await branch_a_shared_completed.wait()
+            else:
+                branch_a_shared_completed.set()
+            return f"result:{value}"
+
+        async def branch_a() -> str:
+            await predecessor("A")
+            return await shared_step("A")
+
+        async def branch_b() -> str:
+            await predecessor_started.wait()
+            return await shared_step("B")
+
+        @built_workflow(checkpoint_storage=storage)
+        async def parallel_workflow(_: str) -> list[str]:
+            return list(await asyncio.gather(branch_a(), branch_b()))
+
+        initial = await parallel_workflow.run("input")
+        checkpoint = await storage.get_latest(workflow_name="parallel_workflow")
+        assert checkpoint is not None
+
+        replayed = await parallel_workflow.run(checkpoint_id=checkpoint.checkpoint_id)
+
+        assert initial.get_outputs() == [["result:A", "result:B"]]
+        assert replayed.get_outputs() == initial.get_outputs()
+        assert calls == ["B", "A"]
+
+    async def test_intermediate_checkpoint_does_not_cross_branches(self):
+        storage = InMemoryCheckpointStorage()
+        release_branch_a = asyncio.Event()
+        branch_b_returned = asyncio.Event()
+        calls: list[str] = []
+
+        @step
+        async def shared_step(value: str) -> str:
+            calls.append(value)
+            return f"result:{value}"
+
+        async def branch_a() -> str:
+            await release_branch_a.wait()
+            return await shared_step("A")
+
+        async def branch_b() -> str:
+            result = await shared_step("B")
+            branch_b_returned.set()
+            return result
+
+        @built_workflow(checkpoint_storage=storage)
+        async def parallel_workflow(_: str) -> list[str]:
+            return list(await asyncio.gather(branch_a(), branch_b()))
+
+        initial_task = asyncio.ensure_future(parallel_workflow.run("input"))
+        await branch_b_returned.wait()
+        intermediate = await storage.get_latest(workflow_name="parallel_workflow")
+        assert intermediate is not None
+
+        release_branch_a.set()
+        initial = await initial_task
+        replayed = await parallel_workflow.run(checkpoint_id=intermediate.checkpoint_id)
+
+        assert initial.get_outputs() == [["result:A", "result:B"]]
+        assert replayed.get_outputs() == initial.get_outputs()
+        assert calls == ["B", "A", "A"]
+
+    async def test_repeated_automatic_identity_uses_occurrences(self):
+        storage = InMemoryCheckpointStorage()
+        call_count = 0
+
+        @step
+        async def echo(value: str) -> str:
+            nonlocal call_count
+            call_count += 1
+            return value
+
+        @built_workflow(checkpoint_storage=storage)
+        async def wf(value: str) -> list[str]:
+            return [await echo(value), await echo(value)]
+
+        initial = await wf.run("same")
+        checkpoint = await storage.get_latest(workflow_name="wf")
+        assert checkpoint is not None
+        replayed = await wf.run(checkpoint_id=checkpoint.checkpoint_id)
+
+        assert initial.get_outputs() == [["same", "same"]]
+        assert replayed.get_outputs() == initial.get_outputs()
+        assert call_count == 2
+
+    async def test_automatic_identity_normalizes_bound_arguments(self):
+        @step
+        async def combine(first: int, second: int = 2) -> int:
+            return first + second
+
+        positional = combine._get_replay_identity((1,), {})  # pyright: ignore[reportPrivateUsage]
+        keyword = combine._get_replay_identity((), {"first": 1, "second": 2})  # pyright: ignore[reportPrivateUsage]
+
+        assert positional == keyword
+
+    async def test_concurrent_opaque_arguments_require_replay_key(self):
+        import threading
+
+        call_count = 0
+
+        @step
+        async def use_lock(lock: threading.Lock, value: str) -> str:
+            nonlocal call_count
+            call_count += 1
+            return value
+
+        @built_workflow
+        async def wf(_: str) -> list[str]:
+            return list(
+                await asyncio.gather(
+                    use_lock(threading.Lock(), "A"),
+                    use_lock(threading.Lock(), "B"),
+                )
+            )
+
+        with pytest.raises(ValueError, match="replay_key"):
+            await wf.run("input")
+
+        assert call_count == 0
+
+    async def test_explicit_replay_key_supports_opaque_concurrent_arguments(self):
+        import threading
+
+        storage = InMemoryCheckpointStorage()
+        calls: list[str] = []
+
+        @step(replay_key=lambda _lock, value: value)
+        async def use_lock(lock: threading.Lock, value: str) -> str:
+            calls.append(value)
+            return value
+
+        @built_workflow(checkpoint_storage=storage)
+        async def wf(_: str) -> list[str]:
+            return list(
+                await asyncio.gather(
+                    use_lock(threading.Lock(), "A"),
+                    use_lock(threading.Lock(), "B"),
+                )
+            )
+
+        initial = await wf.run("input")
+        checkpoint = await storage.get_latest(workflow_name="wf")
+        assert checkpoint is not None
+        replayed = await wf.run(checkpoint_id=checkpoint.checkpoint_id)
+
+        assert initial.get_outputs() == [["A", "B"]]
+        assert replayed.get_outputs() == initial.get_outputs()
+        assert calls == ["A", "B"]
+
+    async def test_explicit_replay_key_must_be_non_empty(self):
+        @step(replay_key=lambda _value: "")
+        async def invalid_key(value: str) -> str:
+            return value
+
+        @built_workflow
+        async def wf(value: str) -> str:
+            return await invalid_key(value)
+
+        with pytest.raises(ValueError, match="non-empty string"):
+            await wf.run("input")
+
+    async def test_explicit_replay_key_must_be_unique_per_run(self):
+        @step(replay_key=lambda _value: "duplicate")
+        async def duplicated(value: str) -> str:
+            return value
+
+        @built_workflow
+        async def wf(value: str) -> list[str]:
+            return [await duplicated(value), await duplicated(value)]
+
+        with pytest.raises(ValueError, match="duplicate replay_key"):
+            await wf.run("input")
+
+    async def test_legacy_checkpoint_replays_sequential_step(self):
+        from agent_framework import WorkflowCheckpoint
+
+        storage = InMemoryCheckpointStorage()
+        call_count = 0
+
+        @step
+        async def compute(value: int) -> int:
+            nonlocal call_count
+            call_count += 1
+            return value + 1
+
+        @built_workflow(name="legacy_wf", checkpoint_storage=storage)
+        async def wf(value: int) -> int:
+            return await compute(value)
+
+        checkpoint = WorkflowCheckpoint(
+            workflow_name="legacy_wf",
+            graph_signature_hash=wf.graph_signature_hash,
+            state={
+                "_step_cache": {"compute::0": 6},
+                "_step_cache_auto_request_info_counts": {"compute::0": 0},
+                "_original_message": 5,
+            },
+        )
+        checkpoint_id = await storage.save(checkpoint)
+
+        replayed = await wf.run(checkpoint_id=checkpoint_id)
+
+        assert replayed.get_outputs() == [6]
+        assert call_count == 0
+
+    async def test_legacy_checkpoint_rejects_concurrent_cache_hit(self):
+        from agent_framework import WorkflowCheckpoint
+
+        storage = InMemoryCheckpointStorage()
+
+        @step
+        async def shared_step(value: str) -> str:
+            return f"result:{value}"
+
+        @built_workflow(name="legacy_parallel", checkpoint_storage=storage)
+        async def wf(_: str) -> list[str]:
+            return list(await asyncio.gather(shared_step("A"), shared_step("B")))
+
+        checkpoint = WorkflowCheckpoint(
+            workflow_name="legacy_parallel",
+            graph_signature_hash=wf.graph_signature_hash,
+            state={
+                "_step_cache": {"shared_step::0": "result:B"},
+                "_step_cache_auto_request_info_counts": {"shared_step::0": 0},
+                "_original_message": "input",
+            },
+        )
+        checkpoint_id = await storage.save(checkpoint)
+
+        with pytest.raises(ValueError, match="legacy order-based cache entry"):
+            await wf.run(checkpoint_id=checkpoint_id)
+
+    async def test_versioned_identity_precedes_unrelated_legacy_entry(self):
+        from agent_framework import WorkflowCheckpoint
+
+        storage = InMemoryCheckpointStorage()
+        calls: list[str] = []
+
+        @step
+        async def mixed(value: str) -> str:
+            calls.append(value)
+            return f"live:{value}"
+
+        @built_workflow(name="mixed_wf", checkpoint_storage=storage)
+        async def wf(_: str) -> str:
+            return (await asyncio.gather(mixed("child")))[0]
+
+        replay_identity = mixed._get_replay_identity(("child",), {})  # pyright: ignore[reportPrivateUsage]
+        assert replay_identity is not None
+        identity_kind, identity = replay_identity
+        assert identity_kind == "auto"
+        key_ctx = _RunContext("mixed_wf")
+        versioned_key = key_ctx._get_automatic_step_cache_key(  # pyright: ignore[reportPrivateUsage]
+            "mixed",
+            identity,
+        )
+        checkpoint = WorkflowCheckpoint(
+            workflow_name="mixed_wf",
+            graph_signature_hash=wf.graph_signature_hash,
+            state={
+                "_step_cache": {
+                    "mixed::0": "legacy:other-call",
+                    versioned_key: "cached:child",
+                },
+                "_step_cache_auto_request_info_counts": {
+                    "mixed::0": 0,
+                    versioned_key: 0,
+                },
+                "_original_message": "input",
+            },
+        )
+        checkpoint_id = await storage.save(checkpoint)
+
+        replayed = await wf.run(checkpoint_id=checkpoint_id)
+
+        assert replayed.get_outputs() == ["cached:child"]
+        assert calls == []
+
+
+# ---------------------------------------------------------------------------
 # Branching / control flow
 # ---------------------------------------------------------------------------
 
@@ -1301,6 +1606,35 @@ class TestCheckpointValidation:
         with pytest.raises(ValueError, match="Corrupted step cache"):
             ctx._import_step_cache({"step_name::abc": 42})  # pyright: ignore[reportPrivateUsage]
 
+    async def test_step_cache_round_trips_versioned_and_legacy_keys(self):
+        ctx = _RunContext("test")
+        automatic_key = ctx._get_automatic_step_cache_key(  # pyright: ignore[reportPrivateUsage]
+            "automatic",
+            "a" * 64,
+        )
+        explicit_key = ctx._get_explicit_step_cache_key(  # pyright: ignore[reportPrivateUsage]
+            "explicit",
+            "b" * 64,
+        )
+        ctx._step_cache = {automatic_key: "auto", explicit_key: "explicit", "legacy::0": "legacy"}
+        ctx._step_cache_auto_request_info_counts = {automatic_key: 1, explicit_key: 2, "legacy::0": 3}
+
+        restored = _RunContext("test")
+        restored._import_step_cache(ctx._export_step_cache())  # pyright: ignore[reportPrivateUsage]
+        restored._import_step_cache_auto_request_info_counts(  # pyright: ignore[reportPrivateUsage]
+            ctx._export_step_cache_auto_request_info_counts()
+        )
+
+        assert restored._step_cache == ctx._step_cache
+        assert restored._step_cache_auto_request_info_counts == ctx._step_cache_auto_request_info_counts
+
+    async def test_import_step_cache_rejects_malformed_versioned_key(self):
+        ctx = _RunContext("test")
+        with pytest.raises(ValueError, match="Corrupted step cache"):
+            ctx._import_step_cache(  # pyright: ignore[reportPrivateUsage]
+                {'v2::["auto","step","identity",-1]': 42}
+            )
+
 
 # ---------------------------------------------------------------------------
 # executor_bypassed event on replay (review comment #3)
@@ -1525,8 +1859,8 @@ class TestHITLInStepWithCaching:
             return data
 
         source_ctx = _RunContext("wf")
-        source_ctx._step_cache = {("seed_state", 0): "seeded"}
-        source_ctx._step_cache_auto_request_info_counts = {("seed_state", 0): 1}
+        source_ctx._step_cache = {"seed_state::0": "seeded"}
+        source_ctx._step_cache_auto_request_info_counts = {"seed_state::0": 1}
         source_ctx._state = {"marker": "ok"}
         source_ctx._pending_requests = {
             "r1": WorkflowEvent.request_info(
