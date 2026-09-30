@@ -1881,8 +1881,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         """
         try:
             from mcp import types
+            from mcp.server import ServerRequestContext
             from mcp.server.lowlevel import Server
-            from mcp.shared.exceptions import McpError
+            from mcp.shared.exceptions import MCPError
         except ModuleNotFoundError as exc:
             raise ModuleNotFoundError(
                 "`mcp` is required to use `Agent.as_mcp_server()`. Please install `mcp`."
@@ -1899,47 +1900,40 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         if kwargs:
             server_args.update(kwargs)
 
-        server: Server[Any] = Server(**server_args)
-
         agent_tool = self.as_tool(name=self._get_agent_name())
 
-        async def _log(level: types.LoggingLevel, data: Any) -> None:
-            """Log a message to the server and logger."""
+        def _log(level: types.LoggingLevel, data: Any) -> None:
+            """Log a message to logger."""
             # Log to the local logger
             logger.log(LOG_LEVEL_MAPPING[level], data)
-            if server and server.request_context and server.request_context.session:
-                try:
-                    await server.request_context.session.send_log_message(level=level, data=data)
-                except Exception as e:
-                    logger.error("Failed to send log message to server: %s", e)
 
-        @server.list_tools()
-        async def _list_tools() -> list[types.Tool]:
+        async def _list_tools(  # ruff:ignore[unused-async]
+            _ctx: ServerRequestContext[dict[str, Any]], _params: types.PaginatedRequestParams | None
+        ) -> types.ListToolsResult:
             """List all tools in the agent."""
             schema = agent_tool.parameters()
 
             tool = types.Tool(
                 name=agent_tool.name,
                 description=agent_tool.description,
-                inputSchema=schema,
+                input_schema=schema,
             )
 
-            await _log(level="debug", data=f"Agent tool: {agent_tool}")
-            return [tool]
+            _log(level="debug", data=f"Agent tool: {agent_tool}")
+            return types.ListToolsResult(tools=[tool])
 
-        @server.call_tool()
         async def _call_tool(
-            name: str, arguments: dict[str, Any]
-        ) -> Sequence[types.TextContent | types.ImageContent | types.AudioContent | types.EmbeddedResource]:
+            _ctx: ServerRequestContext[dict[str, Any]], params: types.CallToolRequestParams
+        ) -> types.CallToolResult:
             """Call a tool in the agent."""
-            await _log(level="debug", data=f"Calling tool with args: {arguments}")
+            arguments = params.arguments or {}
+            name = params.name
+            _log(level="debug", data=f"Calling tool with args: {arguments}")
 
             if name != agent_tool.name:
-                raise McpError(
-                    error=types.ErrorData(
-                        code=types.INTERNAL_ERROR,
-                        message=f"Tool {name} not found",
-                    ),
+                raise MCPError(
+                    code=types.INTERNAL_ERROR,
+                    message=f"Tool {name} not found",
                 )
 
             # Create an instance of the input model with the arguments
@@ -1949,17 +1943,15 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 )
                 result = await agent_tool.invoke(arguments=args_instance)
             except Exception as e:
-                raise McpError(
-                    error=types.ErrorData(
-                        code=types.INTERNAL_ERROR,
-                        message=f"Error calling tool {name}: {e}",
-                    ),
+                raise MCPError(
+                    code=types.INTERNAL_ERROR,
+                    message=f"Error calling tool {name}: {e}",
                 ) from e
 
             # Convert result to MCP content.
             # Currently only text items are forwarded over MCP; rich content
             # (images, audio) is not yet supported in the MCP server path.
-            mcp_content: list[types.TextContent | types.ImageContent | types.EmbeddedResource] = []
+            mcp_content: list[types.ContentBlock] = []
             for c in result:
                 if c.type == "text" and c.text:
                     mcp_content.append(types.TextContent(type="text", text=c.text))
@@ -1968,15 +1960,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                         "MCP server does not yet forward rich content (images, audio) "
                         "in tool results. Rich content items will be omitted."
                     )
-            return mcp_content or [types.TextContent(type="text", text="")]
+            return types.CallToolResult(content=mcp_content)
 
-        @server.set_logging_level()
-        async def _set_logging_level(level: types.LoggingLevel) -> None:
-            """Set the logging level for the server."""
-            logger.setLevel(LOG_LEVEL_MAPPING[level])
-            # emit this log with the new minimum level
-            await _log(level=level, data=f"Log level set to {level}")
-
+        server: Server[Any] = Server(**server_args, on_list_tools=_list_tools, on_call_tool=_call_tool)
         return server
 
     def _get_agent_name(self) -> str:

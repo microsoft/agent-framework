@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Mapping, Sequence
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
 from agent_framework import (
     Agent,
@@ -16,7 +17,7 @@ from agent_framework import (
     ResponseStream,
 )
 from agent_framework_hosting import AgentState
-from mcp import types
+from mcp import MCPError, types
 from pytest import raises
 
 from agent_framework_hosting_mcp import AgentMCPTool
@@ -66,13 +67,15 @@ async def test_agent_tool_generates_schema_from_agent_with_overrides() -> None:
         },
     )
 
-    definitions = await tool.list_tools()
+    list_tools_result = await tool.list_tools()
+    result_tools = list_tools_result.tools
 
-    assert len(definitions) == 1
-    definition = definitions[0]
-    assert definition.name == "research"
-    assert definition.description == "Tool description"
-    assert definition.inputSchema == {
+    assert list_tools_result.result_type == "complete"
+    assert len(result_tools) == 1
+    result_tool = result_tools[0]
+    assert result_tool.name == "research"
+    assert result_tool.description == "Tool description"
+    assert result_tool.input_schema == {
         "type": "object",
         "properties": {
             "prompt": {"type": "string", "description": "Research request"},
@@ -102,10 +105,10 @@ async def test_agent_tool_uses_agent_metadata_by_default() -> None:
     agent = Agent(client=RecordingClient(), name="Research Agent", description="Agent description")
     tool: AgentMCPTool[Any] = AgentMCPTool(agent)
 
-    definition = (await tool.list_tools())[0]
+    result_tool = (await tool.list_tools()).tools[0]
 
-    assert definition.name == "Research_Agent"
-    assert definition.description == "Agent description"
+    assert result_tool.name == "Research_Agent"
+    assert result_tool.description == "Agent description"
 
 
 async def test_agent_tool_runs_with_agent_state_session() -> None:
@@ -126,10 +129,16 @@ async def test_agent_tool_runs_with_agent_state_session() -> None:
     first = await tool.call_tool("session-agent", {"task": "first", "session_id": "session-1"})
     second = await tool.call_tool("session-agent", {"task": "second", "session_id": "session-1"})
 
-    assert isinstance(first[0], types.TextContent)
-    assert first[0].text == "response: first"
-    assert isinstance(second[0], types.TextContent)
-    assert second[0].text == "response: second"
+    assert first.result_type == "complete"
+    assert not first.is_error
+    assert isinstance(first.content[0], types.TextContent)
+    assert first.content[0].text == "response: first"
+
+    assert second.result_type == "complete"
+    assert not second.is_error
+    assert isinstance(second.content[0], types.TextContent)
+    assert second.content[0].text == "response: second"
+
     assert client.calls[0] == ["first"]
     assert client.calls[1] == ["first", "response: first", "second"]
     assert await state.session_store.get("session-1") is not None
@@ -150,6 +159,43 @@ async def test_agent_tool_always_requires_session_parameter() -> None:
         session_id_parameter="session_id",
     )
 
-    definition = (await tool.list_tools())[0]
+    definition = (await tool.list_tools()).tools[0]
 
-    assert definition.inputSchema["required"] == ["task", "session_id"]
+    assert definition.input_schema["required"] == ["task", "session_id"]
+
+
+async def test_agent_tool_unknown_tool_name() -> None:
+    agent = Agent(client=RecordingClient(), name="agent")
+    tool: AgentMCPTool[Any] = AgentMCPTool(
+        agent, parameters={"session_id": {"type": "string"}}, session_id_parameter="session_id", name="available_tool"
+    )
+
+    with raises(MCPError, match="Unknown MCP tool") as exc_info:
+        await tool.call_tool("made_up_tool", None)
+
+    assert exc_info.value.code == types.INVALID_PARAMS
+
+
+async def test_agent_tool_rejects_missing_runtime_session_id() -> None:
+    agent = Agent(client=RecordingClient(), name="agent")
+    tool: AgentMCPTool[Any] = AgentMCPTool(
+        agent,
+        parameters={"session_id": {"type": "string"}},
+        session_id_parameter="session_id",
+    )
+
+    with raises(MCPError) as exc_info:
+        await tool.call_tool("agent", {"task": "hello"})
+
+    assert exc_info.value.code == types.INVALID_PARAMS
+
+
+async def test_agent_tool_propagates_agent_execution_failure() -> None:
+    agent = Agent(client=RecordingClient(), name="agent")
+    tool: AgentMCPTool[Any] = AgentMCPTool(agent)
+
+    with (
+        patch.object(agent, "run", AsyncMock(side_effect=RuntimeError("agent execution failed"))),
+        raises(RuntimeError, match="agent execution failed"),
+    ):
+        await tool.call_tool("agent", {"task": "hello"})

@@ -2,7 +2,7 @@
 # requires-python = ">=3.10"
 # dependencies = [
 #     "agent-framework-hosting-mcp",
-#     "mcp>=1.27.0,<2",
+#     "mcp>=2.2.0,<3",
 #     "starlette>=0.40",
 #     "uvicorn>=0.30",
 # ]
@@ -23,12 +23,14 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from typing import Any
 
 import uvicorn
 from agent_framework import WorkflowBuilder, WorkflowContext, executor
 from agent_framework_hosting import WorkflowState
 from agent_framework_hosting_mcp import WorkflowMCPTool
 from mcp import types
+from mcp.server import ServerRequestContext
 from mcp.server.lowlevel import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from starlette.applications import Starlette
@@ -63,24 +65,23 @@ def create_workflow():
     ).build()
 
 
-server = Server("agent-framework-hosting-mcp-workflow-sample")
-workflow_tool = WorkflowMCPTool(
-    WorkflowState(create_workflow, cache_target=False),
-    name="draft_content",
-)
-
-
-@server.list_tools()
-async def list_tools() -> list[types.Tool]:
+async def list_tools(_ctx: ServerRequestContext[dict[str, Any]], params: types.PaginatedRequestParams | None) -> types.ListToolsResult:
     """Return the workflow-derived MCP tool definition."""
     return await workflow_tool.list_tools()
 
 
-@server.call_tool()
-async def call_tool(name: str, arguments: dict[str, object] | None) -> list[types.ContentBlock]:
+async def call_tool(_ctx: ServerRequestContext[dict[str, Any]], params: types.CallToolRequestParams) -> types.CallToolResult:
+    name = params.name
+    arguments = params.arguments or {}
     """Run a fresh workflow instance with validated MCP arguments."""
     return await workflow_tool.call_tool(name, arguments)
 
+
+server = Server("agent-framework-hosting-mcp-workflow-sample", on_list_tools=list_tools, on_call_tool=call_tool)
+workflow_tool = WorkflowMCPTool(
+    WorkflowState(create_workflow, cache_target=False),
+    name="draft_content",
+)
 
 session_manager = StreamableHTTPSessionManager(
     app=server,
