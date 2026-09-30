@@ -94,6 +94,8 @@ internal sealed class AIContextProviderChatClient : DelegatingChatClient
             throw;
         }
 
+        await using var _ = enumerator.ConfigureAwait(false);
+
         bool hasUpdates;
         try
         {

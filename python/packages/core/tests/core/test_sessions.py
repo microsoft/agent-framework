@@ -43,6 +43,7 @@ from agent_framework._sessions import (
     _run_identity_scope,
     _RunPersistenceGate,
     _suspend_run_persistence_gate,
+    filter_new_messages,
     is_local_history_conversation_id,
 )
 from agent_framework._telemetry import FeatureIndex
@@ -52,6 +53,51 @@ from .test_filesystem import COLLIDING_IDENTIFIERS
 
 if TYPE_CHECKING:
     from agent_framework._agents import SupportsAgentRun
+
+
+def test_filter_new_messages_preserves_repeated_user_turn() -> None:
+    existing = [Message(role="user", contents=["yes"]), Message(role="assistant", contents=["first reply"])]
+    incoming = [Message(role="user", contents=["yes"]), Message(role="assistant", contents=["second reply"])]
+
+    assert filter_new_messages(existing, incoming) == incoming
+
+
+def test_filter_new_messages_preserves_repeated_user_after_unanswered_input() -> None:
+    previous_input = Message(role="user", contents=["yes"])
+    repeated_input = Message(role="user", contents=["yes"])
+    reply = Message(role="assistant", contents=["second reply"])
+
+    assert filter_new_messages([previous_input], [repeated_input]) == [repeated_input]
+    assert filter_new_messages([previous_input], [repeated_input, reply]) == [repeated_input, reply]
+
+    identified_input = Message(role="user", contents=["yes"], message_id="turn-1")
+    assert filter_new_messages([identified_input], [identified_input]) == []
+
+
+def test_filter_new_messages_aligns_partial_replay_with_repeated_content() -> None:
+    existing = [
+        Message(role="user", contents=["yes"]),
+        Message(role="assistant", contents=["first reply"]),
+        Message(role="user", contents=["yes"]),
+        Message(role="assistant", contents=["second reply"]),
+    ]
+    new_messages = [Message(role="user", contents=["yes"]), Message(role="assistant", contents=["third reply"])]
+    incoming = [*existing[-2:], *new_messages]
+
+    assert filter_new_messages(existing, incoming) == new_messages
+
+
+def test_filter_new_messages_keeps_tool_call_result_pairs_on_replay() -> None:
+    call = Message(
+        role="assistant", contents=[Content.from_function_call(call_id="call-1", name="lookup", arguments="{}")]
+    )
+    result = Message(role="tool", contents=[Content.from_function_result(call_id="call-1", result="found")])
+    existing = [Message(role="user", contents=["lookup"]), call, result]
+    new_messages = [Message(role="user", contents=["lookup"]), Message(role="assistant", contents=["again"])]
+
+    assert filter_new_messages(existing, [*existing, *new_messages]) == new_messages
+    assert filter_new_messages(existing, [result, *new_messages]) == new_messages
+
 
 # ---------------------------------------------------------------------------
 # SessionContext tests
@@ -1624,6 +1670,23 @@ class TestInMemoryHistoryProvider:
         assert state["messages"][0].text == "yes"
         assert state["messages"][1].text == "yes"
 
+    async def test_save_messages_preserves_repeated_user_turn_across_saves(self) -> None:
+        provider = InMemoryHistoryProvider()
+        state: dict[str, Any] = {}
+
+        await provider.save_messages(
+            "s1",
+            [Message(role="user", contents=["yes"]), Message(role="assistant", contents=["first reply"])],
+            state=state,
+        )
+        await provider.save_messages(
+            "s1",
+            [Message(role="user", contents=["yes"]), Message(role="assistant", contents=["second reply"])],
+            state=state,
+        )
+
+        assert [message.text for message in state["messages"]] == ["yes", "first reply", "yes", "second reply"]
+
     async def test_save_messages_handles_replayed_transcript_with_duplicates(self) -> None:
         provider = InMemoryHistoryProvider()
         state: dict[str, Any] = {}
@@ -2110,6 +2173,22 @@ class TestFileHistoryProvider:
         assert len(loaded) == 2
         assert loaded[0].text == "yes"
         assert loaded[1].text == "yes"
+
+    @pytest.mark.parametrize("serialization_format", ["json", "msgpack"])
+    async def test_save_messages_preserves_repeated_user_turn_across_saves(
+        self, tmp_path: Path, serialization_format: Literal["json", "msgpack"]
+    ) -> None:
+        provider = FileHistoryProvider(tmp_path, serialization_format=serialization_format)
+
+        await provider.save_messages(
+            "s1", [Message(role="user", contents=["yes"]), Message(role="assistant", contents=["first reply"])]
+        )
+        await provider.save_messages(
+            "s1", [Message(role="user", contents=["yes"]), Message(role="assistant", contents=["second reply"])]
+        )
+
+        loaded = await provider.get_messages("s1")
+        assert [message.text for message in loaded] == ["yes", "first reply", "yes", "second reply"]
 
 
 # ---------------------------------------------------------------------------
