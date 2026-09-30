@@ -100,8 +100,8 @@ Following the "too many type checkers" approach, type checkers are split by targ
 - **Samples** add `pyright` to `pyrefly` + `ty` — mypy/zuban can't resolve script-style
   sample layouts (numeric-prefixed dirs, duplicate `main.py`), but pyright handles them.
 - `pyrefly.samples.toml` enables fallback lookup for standalone sibling imports.
-  The ty sample profile includes each PEP 723 script's own directory, so targeted
-  checks of standalone entrypoints resolve their deployment-folder helpers too.
+  The ty sample profile uses first-party `root = ["."]` for PEP 723 sibling helpers,
+  preserving automatic extra-path lookup for the existing samples.
 - The strict source-pyright (`[tool.pyright]`) enforces `reportUnnecessaryTypeIgnoreComment`
   and excludes tests/samples; the relaxed test/sample pyright configs do not flag unnecessary
   ignores.

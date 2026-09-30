@@ -1,8 +1,8 @@
 # Basic-mode ty profile for samples. Mirrors pyrefly.samples.toml: catch real mistakes
 # in teaching code without forcing casts/overload workarounds for third-party SDK stubs.
 [environment]
-# For PEP 723 entrypoints, ty resolves this relative to each script's directory.
-extra-paths = ["."]
+# PEP 723 scripts need first-party roots for siblings; keep automatic extra-path lookup.
+root = ["."]
 
 [rules]
 # Signature/cast/overload noise -- off for samples.
