@@ -157,16 +157,4 @@ If these are not set, running `azd ai agent init -m <agent.manifest.yaml>` will 
 Provision the Memory Store in the **same project** and grant the deployed managed
 identity the project-scoped role above. Provisioning, live Memory calls and
 deployment need separately configured resources and are not exercised by the
-offline tests.
-
-## Offline scope checks
-
-From `python/`:
-
-```bash
-uv run pytest samples/04-hosting/foundry-hosted-agents/responses/foundry_memory/tests -q
-```
-
-These focused checks cover user-wide versus cross-user namespaces, missing or
-mismatched trusted context, fresh provider/call-ID binding, and local fallback
-rejection without a Memory Store or real credential.
+credential-free checks.
