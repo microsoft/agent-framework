@@ -31,7 +31,7 @@ async def test_oracle_vector_lifecycle_crud_filters_and_search():
         VectorStoreField("data", name="text", type_="str", storage_name="BODY"),
         VectorStoreField("data", name="amount", type_="int"),
         VectorStoreField("data", name="flag", type_="bool"),
-        VectorStoreField("vector", name="embedding", type_="float32", dimensions=3),
+        VectorStoreField("vector", name="embedding", type_="float", dimensions=3),
         VectorStoreField("vector", name="second", type_="float64", dimensions=3, distance_function="dot_prod"),
     ])
     table = f"AF_ORACLE_TEST_{uuid4().hex}"
@@ -91,9 +91,11 @@ async def test_oracle_vector_lifecycle_crud_filters_and_search():
                     vector=[1, 0, 0],
                     vector_property_name="second",
                     score_threshold=0.5,
+                    include_vectors=True,
                 )
             ]
             assert [item["record"]["id"] for item in dot_results] == ["first"]
+            assert dot_results[0]["record"] == first
             assert dot_results[0]["score"] == pytest.approx(1.0)
             await collection.upsert([dict(first, text="updated")], generate_vectors=False)
             assert (await collection.get(["first"]))[0]["text"] == "updated"

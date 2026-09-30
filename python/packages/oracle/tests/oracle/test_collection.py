@@ -427,6 +427,69 @@ def test_typed_model_deserializes_native_vectors():
     assert record.embedding == [1, 0, 0]
 
 
+@pytest.mark.parametrize("by_key", [True, False])
+@pytest.mark.parametrize("vector", [array("f", [1, 0, 0]), None])
+async def test_typed_model_get_deserializes_native_vectors(by_key, vector, mock_database):
+    _, cursor, _, acquire = mock_database
+    collection = OracleCollection(TypedDocument, dsn="unused", user="user", password="example")
+    assert collection.definition.vector_fields[0].type_ == "float"
+    key = UUID(int=1)
+    cursor.fetchall.return_value = [(str(key), "one", vector)]
+    with patch.object(collection._client, "connection", side_effect=acquire.side_effect):
+        if by_key:
+            records = await collection.get([key], include_vectors=True)
+        else:
+            records = await collection.get(filter=Filter("text", "eq", "one"), include_vectors=True)
+    assert records == [TypedDocument(key, "one", [1.0, 0.0, 0.0] if vector is not None else None)]
+
+
+@pytest.mark.parametrize("include_vectors", [True, False])
+async def test_typed_model_search_deserializes_native_vectors(include_vectors, mock_database):
+    _, cursor, _, acquire = mock_database
+    collection = OracleCollection(TypedDocument, dsn="unused", user="user", password="example")
+    key = UUID(int=1)
+    row = (str(key), "one", array("f", [1, 0, 0]), 0.0) if include_vectors else (str(key), "one", 0.0)
+    cursor.fetchall.return_value = [row]
+    with patch.object(collection._client, "connection", side_effect=acquire.side_effect):
+        results = await collection.search(vector=[1, 0, 0], include_vectors=include_vectors)
+        assert [item async for item in results] == [
+            {
+                "record": TypedDocument(key, "one", [1.0, 0.0, 0.0] if include_vectors else None),
+                "score": 0.0,
+            }
+        ]
+
+
+@pytest.mark.parametrize("vector", [[1.0, 0.0, 0.0], 1.0])
+async def test_typed_model_get_rejects_invalid_native_vectors(vector, mock_database):
+    _, cursor, _, acquire = mock_database
+    collection = OracleCollection(TypedDocument, dsn="unused", user="user", password="example")
+    key = UUID(int=1)
+    cursor.fetchall.return_value = [(str(key), "one", vector)]
+    with (
+        patch.object(collection._client, "connection", side_effect=acquire.side_effect),
+        pytest.raises(IntegrationInvalidResponseException, match="invalid vector"),
+    ):
+        await collection.get([key], include_vectors=True)
+
+
+async def test_get_rejects_native_vector_in_scalar_float_column(definition_factory, mock_database):
+    _, cursor, _, acquire = mock_database
+    collection = OracleCollection(
+        dict,
+        definition=definition_factory(data_type="float"),
+        dsn="unused",
+        user="user",
+        password="example",
+    )
+    cursor.fetchall.return_value = [("one", array("f", [1, 0, 0]), 2, 1)]
+    with (
+        patch.object(collection._client, "connection", side_effect=acquire.side_effect),
+        pytest.raises(IntegrationInvalidResponseException, match="invalid float"),
+    ):
+        await collection.get(["one"])
+
+
 async def test_uuid_key_lookup_uses_normalized_bind(definition_factory, mock_database):
     _, cursor, _, acquire = mock_database
     collection = OracleCollection(

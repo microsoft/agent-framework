@@ -616,6 +616,9 @@ class OracleCollection(
             raise IntegrationInvalidResponseException("Oracle returned an unexpected number of columns.")
         result: dict[str, Any] = {}
         for field, value in zip(fields, row, strict=True):
+            if field.field_type == "vector":
+                result[field.storage_name or field.name] = value
+                continue
             if value is not None and field.type_ == "UUID":
                 if not isinstance(value, UUID | str):
                     raise IntegrationInvalidResponseException(f"Oracle returned an invalid UUID for '{field.name}'.")
