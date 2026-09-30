@@ -696,17 +696,17 @@ class TestThreadItemConverter:
         )
 
     @pytest.mark.parametrize(
-        "converted",
+        ("converted", "expected_texts"),
         [
-            None,
-            [],
-            Message(role="user", contents=["redacted"]),
-            [Message("user", ["first"]), Message("user", ["second"])],
+            (None, []),
+            ([], []),
+            (Message(role="user", contents=["redacted"]), ["redacted"]),
+            ([Message("user", ["first"]), Message("user", ["second"])], ["first", "second"]),
         ],
         ids=["skip", "empty", "single", "multiple"],
     )
     async def test_to_agent_input_uses_structured_input_override(
-        self, converted: Message | list[Message] | None
+        self, converted: Message | list[Message] | None, expected_texts: list[str]
     ) -> None:
         """Test async overrides can skip or expand an item without changing message order."""
         from chatkit.types import HiddenContextItem, StructuredInputItem
@@ -724,9 +724,8 @@ class TestThreadItemConverter:
 
         result = await CustomConverter().to_agent_input([before, input_item, after])
 
-        expected = converted if isinstance(converted, list) else [converted] if converted is not None else []
         assert calls == [input_item]
-        assert result[1:-1] == expected
+        assert [message.text for message in result[1:-1]] == expected_texts
         assert result[0].text == "<HIDDEN_CONTEXT>before</HIDDEN_CONTEXT>"
         assert result[-1].text == "<HIDDEN_CONTEXT>after</HIDDEN_CONTEXT>"
 
