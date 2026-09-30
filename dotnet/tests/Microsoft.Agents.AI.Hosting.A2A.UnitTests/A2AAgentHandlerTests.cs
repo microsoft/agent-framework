@@ -2182,7 +2182,7 @@ public sealed class A2AAgentHandlerTests
                 It.IsAny<AgentSessionStoreKey>(),
                 It.IsAny<AgentSession>(),
                 It.IsAny<CancellationToken>()))
-            .Returns(ValueTask.CompletedTask);
+            .Returns(() => new ValueTask(Task.FromException(new TimeoutException("Session save failed"))));
 
         Mock<AIAgent> agentMock = new() { CallBase = true };
         agentMock.SetupGet(x => x.Name).Returns("TestAgent");
@@ -2202,7 +2202,7 @@ public sealed class A2AAgentHandlerTests
 
         // Act
         var eventQueue = new AgentEventQueue();
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             handler.ExecuteAsync(
                 new RequestContext
                 {
@@ -2211,6 +2211,7 @@ public sealed class A2AAgentHandlerTests
                 },
                 eventQueue,
                 cts.Token));
+        Assert.Equal("Agent failed", exception.Message);
 
         // Assert - SaveSessionAsync was called with CancellationToken.None despite the exception
         mockSessionStore.Verify(
@@ -2243,7 +2244,7 @@ public sealed class A2AAgentHandlerTests
                 It.IsAny<AgentSessionStoreKey>(),
                 It.IsAny<AgentSession>(),
                 It.IsAny<CancellationToken>()))
-            .Returns(ValueTask.CompletedTask);
+            .Returns(() => new ValueTask(Task.FromException(new TimeoutException("Session save failed"))));
 
         Mock<AIAgent> agentMock = new() { CallBase = true };
         agentMock.SetupGet(x => x.Name).Returns("TestAgent");
@@ -2263,7 +2264,7 @@ public sealed class A2AAgentHandlerTests
 
         // Act
         var eventQueue = new AgentEventQueue();
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             handler.ExecuteAsync(
                 new RequestContext
                 {
@@ -2272,6 +2273,7 @@ public sealed class A2AAgentHandlerTests
                 },
                 eventQueue,
                 cts.Token));
+        Assert.Equal("Stream failed", exception.Message);
 
         // Assert - SaveSessionAsync was called with CancellationToken.None despite the exception
         mockSessionStore.Verify(
@@ -2304,7 +2306,7 @@ public sealed class A2AAgentHandlerTests
                 It.IsAny<AgentSessionStoreKey>(),
                 It.IsAny<AgentSession>(),
                 It.IsAny<CancellationToken>()))
-            .Returns(ValueTask.CompletedTask);
+            .Returns(() => new ValueTask(Task.FromException(new TimeoutException("Session save failed"))));
 
         Mock<AIAgent> agentMock = new() { CallBase = true };
         agentMock.SetupGet(x => x.Name).Returns("TestAgent");
@@ -2326,7 +2328,7 @@ public sealed class A2AAgentHandlerTests
         var eventQueue = new AgentEventQueue();
         var events = new EventCollector();
         var readerTask = ReadEventsAsync(eventQueue, events);
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             handler.ExecuteAsync(
                 new RequestContext
                 {
@@ -2337,6 +2339,7 @@ public sealed class A2AAgentHandlerTests
                 },
                 eventQueue,
                 cts.Token));
+        Assert.Equal("Agent failed", exception.Message);
         eventQueue.Complete(null);
         await readerTask;
 
