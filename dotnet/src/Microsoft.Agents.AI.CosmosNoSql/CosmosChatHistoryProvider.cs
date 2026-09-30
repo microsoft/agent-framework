@@ -49,7 +49,6 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
     private readonly Container _container;
     private readonly bool _ownsClient;
     private bool _disposed;
-    private int _maxBatchSize = MaxTransactionalBatchSize;
 
     /// <summary>
     /// Cached JSON serializer options for .NET 9.0 compatibility.
@@ -79,9 +78,9 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
     /// <exception cref="ArgumentOutOfRangeException">The value is less than 1 or greater than 100.</exception>
     public int MaxBatchSize
     {
-        get => this._maxBatchSize;
-        set => this._maxBatchSize = Throw.IfOutOfRange(value, 1, MaxTransactionalBatchSize);
-    }
+        get;
+        set => field = Throw.IfOutOfRange(value, 1, MaxTransactionalBatchSize);
+    } = MaxTransactionalBatchSize;
 
     /// <summary>
     /// Gets or sets the maximum number of messages to retrieve from the provider.
