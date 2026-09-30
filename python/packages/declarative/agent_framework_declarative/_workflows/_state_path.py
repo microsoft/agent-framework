@@ -2,9 +2,9 @@
 
 """Shared identifier policy for object-attribute steps in workflow state paths."""
 
-import re
+import regex
 
-_SAFE_PATH_SEGMENT_RE = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
+_SAFE_PATH_SEGMENT_RE = regex.compile(r"[A-Za-z][A-Za-z0-9_]*")
 
 
 def _is_safe_path_segment(segment: str) -> bool:  # pyright: ignore[reportUnusedFunction]
