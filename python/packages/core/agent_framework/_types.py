@@ -4012,8 +4012,14 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
             await self._finish_consumption()
             raise
         except Exception as exc:
-            await self.close()
-            await self._handle_stream_error(exc)
+            # Run the error-scoped cleanup hooks first: they read
+            # self._stream_error, and close() would consume the one-shot
+            # cleanup run without it. close() still runs in finally so the
+            # provider stream is released even when a hook raises.
+            try:
+                await self._handle_stream_error(exc)
+            finally:
+                await self.close()
             raise
     async def close(self) -> None:
         """Close the active iterator and run cleanup hooks.
