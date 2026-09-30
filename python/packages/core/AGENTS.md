@@ -45,13 +45,18 @@ agent_framework/
   display a mask. String-only APIs such as `str.join()` and JSON encoding reject it unless callers explicitly
   convert it. Use `get_secret_value()` when passing credentials to provider SDKs; `str(secret)` returns the mask.
 - **`load_settings`** accepts plain string overrides for `SecretString` fields and wraps them, as it does for
-  environment and `.env` values. Existing `SecretString` overrides are preserved.
+  environment and `.env` values. Existing `SecretString` overrides are preserved. Invalid supplied numeric and
+  boolean environment or `.env` values raise `ValueError` identifying the field and source instead of falling back
+  to raw strings.
 
 ### Agents (`_agents.py`)
 
 - **`SupportsAgentRun`** - Protocol defining the agent interface
 - **`BaseAgent`** - Abstract base class for agents
 - **`Agent`** - Main agent class wrapping a chat client with tools, instructions, and middleware
+- **`RawAgent.open()` / `close()`** (inherited by `Agent`) - Explicitly enter the client's and configured MCP tools'
+  async contexts, then release them along with lazily connected MCP tools. `async with agent` delegates to these
+  methods; a partially failed `open()` closes resources already entered.
 
 ### Chat Clients (`_clients.py`)
 
@@ -65,6 +70,10 @@ agent_framework/
 - **`ChatResponseUpdate`** - Streaming response update
 - **`AgentResponse`** / **`AgentResponseUpdate`** - Agent-level response wrappers
 - **`Content`** - Base class for message content (text, function calls, images, etc.)
+- **Computer use** - `ComputerSafetyCheck` and the `Content.from_computer_tool_call` / `from_computer_tool_result`
+  constructors are experimental under `COMPUTER_USE`; the rest of `Content` retains its existing stage. Computer
+  results can omit screenshots in core; OpenAI-based connectors require them when converting to Responses items.
+  Completed call/result pairs remain in the transcript but are not user-input requests.
 - **`ChatOptions`** - TypedDict for chat request options
 
 ### Tools (`_tools.py`)
@@ -116,6 +125,14 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
   deserializes results without interpreting thresholds or re-filtering returned scores. Connectors own scoring,
   filter execution, score thresholds (including provider-defined/default metrics), and paging. Use native backend
   execution where available, otherwise an explicit connector-local fallback or reject unsupported options
+- **Embedding request options** - `upsert` accepts either flat `embeddings_options` for
+  all generated vector fields or `embeddings_options_by_field` keyed by logical field name,
+  never both. `search` and `create_vector_search_tool` accept flat `embeddings_options`
+  for local query generation. Core supplies declared field dimensions and rejects
+  conflicting values before embedding; search ignores these options when a
+  precomputed vector is supplied. `create_upsert_tool` and
+  `VectorCollectionContextProvider` forward the same operation-specific settings
+  to their generated tools.
 - **`create_vector_search_tool`** - Creates an agent tool from any `SupportsVectorSearch` implementation
 - **`create_upsert_tool` / `create_get_tool` / `create_delete_tool`** - Create agent tools for collection CRUD;
   upsert and delete require approval by default, while get does not. Auto-generated keys are omitted from upsert
@@ -141,7 +158,7 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
 - **`AgentMiddleware`** - Intercepts agent `run()` calls
 - **`ChatMiddleware`** - Intercepts chat client `get_response()` calls
 - **`FunctionMiddleware`** - Intercepts function/tool invocations
-- **`AgentContext`** / **`ChatContext`** / **`FunctionInvocationContext`** - Context objects passed through middleware. A tool can declare a `FunctionInvocationContext` parameter to receive it; `context.tools` is the live, mutable tools list for the run, and `context.add_tools(...)` / `context.remove_tools(...)` enable progressive tool exposure (changes apply on the next function-calling iteration).
+- **`AgentContext`** / **`ChatContext`** / **`FunctionInvocationContext`** - Context objects passed through middleware. A tool can declare a `FunctionInvocationContext` parameter to receive it; `context.tools` is the live, mutable tools list for the run, and `context.add_tools(...)` / `context.remove_tools(...)` enable progressive tool exposure (changes apply on the next function-calling iteration). Chat middleware that constructs provider-local replacement messages must call `context.record_message_replacement(...)` for every replacement before downstream compaction so complete summaries can reconcile to caller-owned messages without persisting the replacements themselves.
 - **`MessageInjectionMiddleware`** - Session-scoped chat middleware that lets tools or other code enqueue messages for the next model call in the current `AgentSession`; it drains queued messages into the next call and loops only when no function calls need to be handled by the function invocation layer.
 
 ### Sessions (`_sessions.py`)
@@ -158,6 +175,9 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
 - **`HistoryProvider`** - Base class for conversation history storage
 - **`InMemoryHistoryProvider`** - Built-in session-state history provider for local runs
 - **`FileHistoryProvider`** - Experimental append-only file-backed history provider; msgspec JSON Lines is the default and `serialization_format="msgpack"` uses length-prefixed binary MessagePack records. Custom `dumps`/`loads` remain as deprecated JSON-only compatibility hooks and emit `DeprecationWarning` when supplied.
+- **Mixed computer/function workflow history** - The default `HistoryProvider.after_run` defers completed local
+  function results for loadable providers that store inputs until the computer reply arrives, so history records
+  them once in call order. Custom `after_run` implementations must handle this themselves.
 
 ### Skills (`_skills.py`)
 
@@ -243,6 +263,17 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
   A `call_id` may be reused after a completed round, so approval normalization matches ordered call occurrences and
   consumes approved results per occurrence rather than using one global result per `call_id`. All contents produced by
   one execution remain one result group and are consumed together, including multiple user-input requests.
+- A local (non-hosted) `function_approval_response` authorizes execution only when it binds to an approval request
+  recorded in an authoritative `AgentSession`. Runs without one drop inbound local approval responses with a warning
+  and execute nothing, so callers must pass the session that issued the request back on the resuming run. An approval
+  request that merely appears in the caller-supplied history is not proof the framework asked for approval. Hosted
+  provider-issued approvals still pass through untouched, and a response already settled by a terminal result is
+  replayed history rather than an authorization, so replaying a completed transcript keeps working without a session.
+  That settled exemption is an allow-list evaluated per response object, not per approval id, because several
+  responses can share one approval id and only the first is eligible to execute. Filtering runs before stateless
+  mixed-batch completeness is enforced, so a dropped response is never counted as an answer.
+  Set the `disable_approval_response_binding` function invocation configuration option to restore the previous
+  unbound behavior.
 - Approval resume keeps terminal `function_result` contents in tool-role messages and follow-up user-input requests
   in assistant-role messages, including mixed sibling batches.
 - Function-call budget accounting counts one unit per executed result group, not per emitted `function_result`, so
@@ -267,7 +298,7 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
   declaration remains unmatched; genuinely ambiguous duplicate declarations stay separate.
 ### Agent Loop (`_harness/_loop.py`)
 
-- **`AgentLoopMiddleware`** - `AgentMiddleware` that re-runs an agent in a loop by calling `call_next()` repeatedly (the pipeline re-reads `context.messages` each time). One configurable class covers two patterns: a required user `should_continue` predicate (sync or async, the first positional/keyword arg), and a chat-client judge built via the `.with_judge(...)` factory (a second chat client decides whether the original request was answered; loops while it is *not*, using a `JudgeVerdict` structured-output response — internally just an async `should_continue` predicate). The constructor covers the predicate pattern directly; only the judge has a convenience classmethod factory (`.with_judge(judge_client, ...)`) that forwards to `__init__`. Supports both streaming and non-streaming runs. By default a non-streaming run returns an aggregated `AgentResponse` containing every iteration's messages plus the injected `next_message` "nudge" messages (as `user` messages); set `return_final_only=True` to return only the last iteration's response. Streaming runs always yield each iteration's updates and emit the injected nudge messages as `user` updates between iterations (the `return_final_only` flag has no effect on streaming, and the final response reflects the last iteration; `MiddlewareTermination` is handled cleanly). `should_continue` is required; other constructor args are optional: `max_iterations` (safety cap; defaults to `DEFAULT_MAX_ITERATIONS`=10, explicit `None`→unbounded, positive int caps; `.with_judge` uses `DEFAULT_JUDGE_MAX_ITERATIONS`=5 as its default), `next_message` (defaults to a short "continue" nudge), `return_final_only`, and `additional_instructions` (an extra `system` message injected ahead of the input before the agent runs — becomes part of the original messages so it survives `fresh_context` resets and persists via a session). The judge is configured only through `.with_judge` (`judge_client`/`instructions`/`criteria`), not the constructor, and its `reasoning` is fed back to the agent as the next iteration's input; the judge forwards the original request messages and the agent's latest response messages verbatim so multi-modal content is preserved. `criteria` (a `list[str]`) is both injected as the agent's `additional_instructions` and rendered into the judge instructions wherever the `{{criteria}}` placeholder (`CRITERIA_PLACEHOLDER`) appears (`DEFAULT_JUDGE_INSTRUCTIONS` ends with it; custom `instructions` may include it, and it is stripped when no criteria are given). The `should_continue`/`next_message` callables are invoked with keyword args (`iteration`, `last_result`, `messages`, `original_messages`, `session`, `agent`, `progress`, `feedback`) and may be sync or async; declare only what you need plus `**kwargs`. `should_continue` may return a plain `bool` or a `(bool, str | None)` tuple whose second item is feedback surfaced to `next_message`/`record_feedback` via the `feedback` kwarg (the judge uses this to relay its `reasoning`). Stop precedence per iteration is `max_iterations` → `should_continue`, evaluated before `record_feedback` so the feedback is available to it.
+- **`AgentLoopMiddleware`** - `AgentMiddleware` that re-runs an agent in a loop by calling `call_next()` repeatedly (the pipeline re-reads `context.messages` each time). One configurable class covers two patterns: a required user `should_continue` predicate (sync or async, the first positional/keyword arg), and a chat-client judge built via the `.with_judge(...)` factory (a second chat client decides whether the original request was answered; loops while it is *not*, using a `JudgeVerdict` structured-output response by default — internally just an async `should_continue` predicate). Provider-specific judges pass their structured format through `response_format` and use a sync or async `verdict_parser` to convert the full `ChatResponse` into `JudgeVerdict`; parser errors and invalid return values surface without falling back to text markers. The constructor covers the predicate pattern directly; only the judge has a convenience classmethod factory (`.with_judge(judge_client, ...)`) that forwards to `__init__`. Supports both streaming and non-streaming runs. By default a non-streaming run returns an aggregated `AgentResponse` containing every iteration's messages plus the injected `next_message` "nudge" messages (as `user` messages); set `return_final_only=True` to return only the last iteration's response. Streaming runs always yield each iteration's updates and emit the injected nudge messages as `user` updates between iterations (the `return_final_only` flag has no effect on streaming, and the final response reflects the last iteration; `MiddlewareTermination` is handled cleanly). `should_continue` is required; other constructor args are optional: `max_iterations` (safety cap; defaults to `DEFAULT_MAX_ITERATIONS`=10, explicit `None`→unbounded, positive int caps; `.with_judge` uses `DEFAULT_JUDGE_MAX_ITERATIONS`=5 as its default), `next_message` (defaults to a short "continue" nudge), `return_final_only`, and `additional_instructions` (an extra `system` message injected ahead of the input before the agent runs — becomes part of the original messages so it survives `fresh_context` resets and persists via a session). The judge is configured only through `.with_judge` (`judge_client`/`instructions`/`criteria`/`response_format`/`verdict_parser`), not the constructor, and its `reasoning` is fed back to the agent as the next iteration's input; the judge forwards the original request messages and the agent's latest response messages verbatim so multi-modal content is preserved. `criteria` (a `list[str]`) is both injected as the agent's `additional_instructions` and rendered into the judge instructions wherever the `{{criteria}}` placeholder (`CRITERIA_PLACEHOLDER`) appears (`DEFAULT_JUDGE_INSTRUCTIONS` ends with it; custom `instructions` may include it, and it is stripped when no criteria are given). The `should_continue`/`next_message` callables are invoked with keyword args (`iteration`, `last_result`, `messages`, `original_messages`, `session`, `agent`, `progress`, `feedback`) and may be sync or async; declare only what you need plus `**kwargs`. `should_continue` may return a plain `bool` or a `(bool, str | None)` tuple whose second item is feedback surfaced to `next_message`/`record_feedback` via the `feedback` kwarg (the judge uses this to relay its `reasoning`). Stop precedence per iteration is `max_iterations` → `should_continue`, evaluated before `record_feedback` so the feedback is available to it.
   - **Feedback tracking** - `record_feedback` captures a per-iteration progress entry (called with the loop kwargs; if it returns a truthy string the entry is appended, otherwise the agent's response text is used as the fallback entry). The accumulated log is exposed to every callback via the `progress` keyword (a per-iteration copy of prior entries) and, when `inject_progress=True` (default), injected into the next iteration's input as a `user` message (the full log without a session, only the latest entry with a session to avoid duplicating history). `fresh_context=True` restarts each iteration from the original task plus the progress log; when a session is attached it is snapshotted (`to_dict()`) before the loop and restored (`from_dict` + field copy) between iterations so the local transcript and any service-side conversation id reset too (in-loop working-state is discarded, pre-loop state preserved, continuity carried only by the progress log).
 - **`todos_remaining(*, looping_modes=None)`** / **`todos_remaining_message`** - Helper factories for todo-driven loops (the Python counterpart of .NET's `TodoCompletionLoopEvaluator`), designed for `create_harness_agent` but usable with any agent that registers a `TodoProvider` via `context_providers`. They resolve the `TodoProvider`/`AgentModeProvider` from the *running agent* (`agent.context_providers`, via `_resolve_context_provider`) rather than taking the provider as an argument, so they can be wired directly into `loop_should_continue`/`loop_next_message`. `todos_remaining` returns a `should_continue` predicate that loops while any todo is open; pass `looping_modes=[...]` to gate looping to specific operating modes (case-insensitive; honors the `AgentModeProvider`'s `source_id`/`available_modes`), `looping_modes=None` (default) applies in every mode, and an empty sequence raises `ValueError`. `todos_remaining_message` is a `next_message` callable that lists the still-open todo titles and tells the agent to finish them, returning `None` when the session/agent/provider is unavailable or nothing is open (in which case the middleware's default `None` handling applies: reuse the previous iteration's messages verbatim under the default `fresh_context=False`, or `DEFAULT_NEXT_MESSAGE` only when `fresh_context=True`).
 - **`background_tasks_running()`** / **`background_tasks_running_message`** - Helper factories for background-agent-driven loops, mirroring the `todos_remaining` pair. They resolve the `BackgroundAgentsProvider` from the *running agent* (`agent.context_providers`, via `_resolve_context_provider`) rather than taking the provider as an argument, so they can be wired directly into `create_harness_agent`'s `loop_should_continue`/`loop_next_message`. `background_tasks_running` returns a `should_continue` predicate that loops while the provider's persisted state shows any task with `status == RUNNING` (pair it with `max_iterations` so the loop is bounded even if a task's persisted status is never refreshed). `background_tasks_running_message` is a `next_message` callable that lists the still-running tasks (`#<id> (<agent_name>): <description>`) and tells the agent to wait for them to finish and retrieve their results, returning `None` when the session/agent/provider is unavailable or no task is running.
@@ -280,7 +311,8 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
   requests without synthesizing responses, recursively releases nested executor correlation, resumes executors whose
   remaining requests were already answered, accepts the same request-scoped tools and invocation/client kwargs needed
   by that continuation, can atomically restore a supplied checkpoint before cancellation, and returns the resulting
-  `WorkflowRunResult`.
+  `WorkflowRunResult`. Cancelling a computer request also cancels the other pending requests in that agent's batch,
+  retains already resolved sibling evidence in terminal output, and resets its session before new input.
 - **`WorkflowBuilder`** - Fluent API for building workflows, including explicit
   `output_from` / `intermediate_output_from` selection for caller-facing emissions. `output_from`
   is an allow-list for **Workflow Output**; unselected executor payloads are hidden unless
