@@ -529,10 +529,11 @@ def _get_input_model_from_mcp_prompt(prompt: types.Prompt) -> dict[str, Any]:
 
     for prompt_argument in prompt.arguments:
         # For prompts, all arguments are typically string type unless specified otherwise
-        properties[prompt_argument.name] = {
-            "type": "string",
-            "description": prompt_argument.description if hasattr(prompt_argument, "description") else "",
-        }
+        # `description` is optional on PromptArgument and None when absent, which is not
+        # a valid JSON Schema description, so leave the key out instead.
+        properties[prompt_argument.name] = {"type": "string"}
+        if prompt_argument.description is not None:
+            properties[prompt_argument.name]["description"] = prompt_argument.description
         if prompt_argument.required:
             required.append(prompt_argument.name)
 
@@ -1758,6 +1759,13 @@ class MCPTool:
                         logger.warning(
                             "MCP lifecycle action %s failed after its caller stopped waiting.", action, exc_info=ex
                         )
+                    # A connect that failed without leaving a session behind has nothing for this
+                    # owner to hold, so stop instead of blocking on the queue forever. Mirrors the
+                    # cancelled-connect branch above. The connected check matters because
+                    # is_connected is set before tools and prompts are loaded: when loading fails
+                    # the session is live and still needs this owner to close it later.
+                    if action == "connect" and not self.is_connected and queue.empty():
+                        return
                 else:
                     if not future.done():
                         future.set_result(None)

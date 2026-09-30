@@ -20,6 +20,11 @@ and wire it into an agent so the model can call it.
 # <define_tool>
 # NOTE: approval_mode="never_require" is for sample brevity.
 # Use "always_require" in production for user confirmation before tool execution.
+# For tools processing untrusted external data or performing privileged operations,
+# review the Agent Safety guidance at
+# https://learn.microsoft.com/en-us/agent-framework/concepts/agents/safety
+# and see samples/02-agents/security/email_security_example.py for SecureAgentConfig
+# and quarantined_llm defense patterns.
 @tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
