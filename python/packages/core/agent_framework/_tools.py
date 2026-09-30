@@ -23,7 +23,7 @@ from collections.abc import (
 )
 from contextlib import suppress
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone, tzinfo
 from datetime import time as datetime_time
 from decimal import Decimal
 from functools import cache, partial, wraps
@@ -165,29 +165,60 @@ class _OpaqueArgumentToken:
     identity: int
 
 
-# Immutable values an input model produces when converting JSON arguments (for
-# example "2026-01-02" -> date). Only these exact types are trusted, because a
-# subclass can add mutable state. Tokens use the string form rather than the value
-# because ``==`` hides differences that matter to a tool: Decimal("1.0") equals
-# Decimal("1.00"), equal instants in different time zones compare equal, and
-# Decimal("NaN") is not equal to itself.
-_IMMUTABLE_SCALAR_ARGUMENT_TYPES: Final[frozenset[type]] = frozenset({
-    date,
-    datetime,
-    datetime_time,
-    timedelta,
-    Decimal,
-    UUID,
-})
-
-
 @cache
-def _fixed_offset_tzinfo_types() -> frozenset[type]:
-    """Return the fixed-offset time zone types, which the string form of a value fully describes."""
-    # pydantic parses UTC offsets into its own tzinfo type, which pydantic-core only
-    # exports from 2.10, so take the type from a parsed value.
-    pydantic_tzinfo = TypeAdapter(datetime).validate_python("2000-01-01T00:00:00Z").tzinfo
-    return frozenset({timezone, type(pydantic_tzinfo)})
+def _pydantic_tzinfo_type() -> type:
+    """Return the fixed-offset time zone type pydantic parses UTC offsets into."""
+    # pydantic-core only exports this type from 2.10, so take it from a parsed value.
+    return type(TypeAdapter(datetime).validate_python("2000-01-01T00:00:00Z").tzinfo)
+
+
+def _timedelta_token(value: timedelta) -> tuple[Any, ...]:
+    return (timedelta, value.days, value.seconds, value.microseconds)
+
+
+def _time_zone_token(zone: tzinfo | None) -> tuple[Any, ...] | None:
+    """Return a token for no time zone or a fixed-offset one, or None for any other time zone."""
+    if zone is None:
+        return (None,)
+    if type(zone) is timezone:
+        # A timezone holds its offset and, when one was given, its name (repr() shows it).
+        offset, *name = cast(Any, zone).__getinitargs__()
+        if type(offset) is timedelta and all(type(part) is str for part in name):
+            return (timezone, _timedelta_token(offset), *name)
+        return None
+    if type(zone) is _pydantic_tzinfo_type():
+        # pydantic's time zone holds only its offset.
+        return (type(zone), _timedelta_token(cast(timedelta, zone.utcoffset(None))))
+    return None
+
+
+def _immutable_scalar_token(value: Any) -> tuple[Any, ...] | None:
+    """Return a token for an immutable value an input model produces, or None for any other value.
+
+    These are the values an input model converts JSON arguments to (for example
+    "2026-01-02" -> date). Only the exact types are trusted, because a subclass can add
+    mutable state. A token lists every field of the value that a tool can observe, so two
+    values share a token only when a tool cannot tell them apart. Neither ``==`` nor
+    ``str()`` does that: Decimal("1.0") equals Decimal("1.00"), equal instants in different
+    time zones compare equal, and ``str()`` leaves out a datetime's ``fold``, a UUID's
+    ``is_safe`` and a time zone's name.
+    """
+    value_type = cast(type[object], type(value))
+    if value_type is date:
+        return (date, value.year, value.month, value.day)
+    if value_type is datetime or value_type is datetime_time:
+        zone = _time_zone_token(value.tzinfo)
+        if zone is None:
+            return None
+        date_fields = (value.year, value.month, value.day) if value_type is datetime else ()
+        return (value_type, *date_fields, value.hour, value.minute, value.second, value.microsecond, value.fold, zone)
+    if value_type is timedelta:
+        return _timedelta_token(value)
+    if value_type is Decimal:
+        return (Decimal, value.as_tuple())
+    if value_type is UUID:
+        return (UUID, value.int, value.is_safe)
+    return None
 
 
 def _argument_comparison_token(value: Any) -> Any:
@@ -214,11 +245,10 @@ def _argument_comparison_token(value: Any) -> Any:
         return ("float", struct.pack("!d", value))
     if value is None or isinstance(value, bool | int | str | bytes):
         return (type(value), value)
+    scalar_token = _immutable_scalar_token(value)
+    if scalar_token is not None:
+        return scalar_token
     value_type = cast(type[object], type(value))
-    if value_type in _IMMUTABLE_SCALAR_ARGUMENT_TYPES:
-        tzinfo = getattr(value, "tzinfo", None)
-        if tzinfo is None or type(tzinfo) in _fixed_offset_tzinfo_types():
-            return (value_type, str(value), type(tzinfo))
     return _OpaqueArgumentToken(f"{value_type.__module__}.{value_type.__qualname__}", id(value))
 
 
@@ -869,7 +899,6 @@ class FunctionTool(SerializationMixin):
             return {}
 
         validated_by_model = False
-        json_arguments: dict[str, Any] | None = None
         try:
             if isinstance(arguments, Mapping):
                 parsed_arguments = dict(arguments)
@@ -889,12 +918,17 @@ class FunctionTool(SerializationMixin):
                     and not isinstance(arguments, self.input_model)
                 ):
                     raise TypeError(f"Expected {self.input_model.__name__}, got {type(arguments).__name__}")
-                parsed_arguments = arguments.model_dump(exclude_unset=True)
                 if self.input_model is not None and not self._schema_supplied:
                     # An instance can skip validation (model_construct) or be changed after it,
-                    # so it is still checked, but in its JSON form: that is what the schema
-                    # describes, while the function receives the Python values (#8661).
-                    json_arguments = arguments.model_dump(mode="json", exclude_unset=True, warnings=False)
+                    # so its data is validated like mapping arguments and the function receives
+                    # the annotated types (#8661). Checking its JSON form is not enough: a date
+                    # in a datetime field serializes to a valid string. Validation reports any
+                    # mismatch, so the dump skips pydantic's serializer warnings.
+                    parsed_arguments = arguments.model_dump(exclude_unset=True, warnings=False)
+                    parsed_arguments = self.input_model.model_validate(parsed_arguments).model_dump(exclude_unset=True)
+                    validated_by_model = True
+                else:
+                    parsed_arguments = arguments.model_dump(exclude_unset=True)
             else:
                 raise TypeError(
                     f"Expected mapping-like arguments for tool '{self.name}', got {type(arguments).__name__}"
@@ -909,12 +943,6 @@ class FunctionTool(SerializationMixin):
                 str(exc),
                 redacted_message=f"Invalid arguments for '{self.name}'.",
             ) from exc
-        except ValueError as exc:
-            # A constructed model holding a value with no JSON form cannot match the schema.
-            raise _FunctionArgumentValidationError(
-                f"Invalid arguments for '{self.name}': {exc}",
-                redacted_message=f"Invalid arguments for '{self.name}'.",
-            ) from exc
 
         if validated_by_model:
             # The input model already enforced the full schema and converted JSON values
@@ -923,13 +951,6 @@ class FunctionTool(SerializationMixin):
             return parsed_arguments
 
         try:
-            if json_arguments is not None:
-                _validate_arguments_against_schema(
-                    arguments=json_arguments,
-                    schema=self.parameters(),
-                    tool_name=self.name,
-                )
-                return parsed_arguments
             return _validate_arguments_against_schema(
                 arguments=parsed_arguments,
                 schema=self.parameters(),

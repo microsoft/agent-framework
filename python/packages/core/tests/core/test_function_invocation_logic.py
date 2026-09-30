@@ -8,10 +8,11 @@ import threading
 import warnings
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from datetime import date, datetime, timedelta, timezone
+from datetime import time as datetime_time
 from decimal import Decimal
 from typing import Any, Literal
 from unittest.mock import Mock
-from uuid import UUID
+from uuid import UUID, SafeUUID
 
 import pytest
 from pydantic import BaseModel, field_validator
@@ -5850,16 +5851,31 @@ async def test_approval_binds_values_converted_by_input_model(annotation: Any, r
         (set[str], ["read"], lambda value: value.add("delete")),
         (datetime, "2026-01-02T03:04:05+01:00", lambda value: value.astimezone(timezone.utc)),
         (Decimal, "1.0", lambda value: Decimal("1.00")),
+        (datetime, "2026-11-01T01:30:00", lambda value: value.replace(fold=1)),
+        (datetime_time, "01:30:00", lambda value: value.replace(fold=1)),
+        (
+            UUID,
+            "12345678-1234-5678-1234-567812345678",
+            lambda value: UUID(str(value), is_safe=SafeUUID.safe),
+        ),
     ],
-    ids=["set_mutated_in_place", "datetime_moved_to_other_time_zone", "decimal_with_other_precision"],
+    ids=[
+        "set_mutated_in_place",
+        "datetime_moved_to_other_time_zone",
+        "decimal_with_other_precision",
+        "datetime_with_other_fold",
+        "time_with_other_fold",
+        "uuid_with_other_is_safe",
+    ],
 )
 async def test_approval_detects_changes_to_converted_values(
     annotation: Any, raw_value: Any, change: Callable[[Any], Any]
 ) -> None:
     """Middleware changes to a converted value require a replacement approval.
 
-    This covers changes that ``==`` misses: the moved datetime is the same instant and the
-    Decimals compare equal, but the tool would receive a different value.
+    This covers changes that ``==`` or the string form misses: the moved datetime is the same
+    instant, the Decimals compare equal, and ``fold`` and ``is_safe`` do not appear in ``str()``,
+    but the tool would receive a different value.
     """
     from agent_framework._tools import _auto_invoke_function, normalize_function_invocation_configuration
 
@@ -5895,6 +5911,32 @@ async def test_approval_detects_changes_to_converted_values(
     assert received == []
     assert isinstance(exc_info.value.result, Content)
     assert exc_info.value.result.type == "function_approval_request"
+
+
+@pytest.mark.parametrize(
+    ("value", "other"),
+    [
+        (datetime(2026, 11, 1, 1, 30), datetime(2026, 11, 1, 1, 30, fold=1)),
+        (datetime_time(1, 30), datetime_time(1, 30, fold=1)),
+        (
+            UUID("12345678-1234-5678-1234-567812345678"),
+            UUID("12345678-1234-5678-1234-567812345678", is_safe=SafeUUID.safe),
+        ),
+        (
+            datetime(2026, 1, 2, tzinfo=timezone(timedelta(hours=1))),
+            datetime(2026, 1, 2, tzinfo=timezone(timedelta(hours=1), "CET")),
+        ),
+    ],
+    ids=["datetime_fold", "time_fold", "uuid_is_safe", "time_zone_name"],
+)
+def test_argument_tokens_distinguish_values_with_the_same_string_form(value: Any, other: Any) -> None:
+    """Values a tool can tell apart get different authority tokens, even when ``str()`` is equal."""
+    from agent_framework._tools import _argument_authority_token
+
+    assert str(value) == str(other)
+    token = _argument_authority_token(value, boundary="approval")
+    assert token == _argument_authority_token(value, boundary="approval")
+    assert token != _argument_authority_token(other, boundary="approval")
 
 
 async def test_approval_rejects_subclass_of_converted_value_type() -> None:

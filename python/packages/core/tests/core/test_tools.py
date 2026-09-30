@@ -4,7 +4,7 @@ import copy
 import logging
 import threading
 from contextvars import ContextVar
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated, Any, Literal, get_args, get_origin
 from unittest.mock import Mock
 
@@ -522,8 +522,29 @@ async def test_invoke_still_checks_unvalidated_input_model_instance():
     assert count_tool.input_model is not None
     arguments = count_tool.input_model.model_construct(count="not a number")
 
-    with pytest.raises(TypeError, match="Invalid type for 'count' in 'count_tool': expected integer, got str"):
+    with pytest.raises(TypeError, match="Invalid arguments for 'count_tool'"):
         await count_tool.invoke(arguments=arguments)
+
+
+async def test_invoke_revalidates_constructed_input_model_instance():
+    """A constructed instance can hold a wrong Python type whose JSON form still matches the schema.
+
+    Its data is validated through the input model, so the function receives the annotated type.
+    """
+    received: list[Any] = []
+
+    @tool
+    def when(moment: datetime) -> str:
+        received.append(moment)
+        return "ok"
+
+    assert when.input_model is not None
+    arguments = when.input_model.model_construct(moment=date(2026, 9, 30))
+
+    await when.invoke(arguments=arguments)
+
+    assert received == [datetime(2026, 9, 30)]
+    assert type(received[0]) is datetime
 
 
 async def test_auto_invoke_preserves_explicit_null_argument():
