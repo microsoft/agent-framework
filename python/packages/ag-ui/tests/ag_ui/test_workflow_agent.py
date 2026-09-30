@@ -476,6 +476,7 @@ async def test_workflow_snapshot_preserves_streamed_reasoning() -> None:
     # The final assistant text is still preserved alongside it.
     assert any(message.get("content") == "Final answer." for message in snapshot.messages)
 
+
 async def test_workflow_hitl_resume_persists_user_text_in_thread_snapshot() -> None:
     """HITL resume with messages:[] must still record the user reply in the snapshot (#8160)."""
     from agent_framework_ag_ui import InMemoryAGUIThreadSnapshotStore
@@ -612,9 +613,7 @@ async def test_workflow_hitl_resume_keeps_repeated_yes_on_empty_messages() -> No
     snapshot = await store.get(scope="tenant-a", thread_id="thread-hitl-yes")
     assert snapshot is not None
     yes_turns = [
-        message
-        for message in snapshot.messages
-        if message.get("role") == "user" and message.get("content") == "yes"
+        message for message in snapshot.messages if message.get("role") == "user" and message.get("content") == "yes"
     ]
     assert len(yes_turns) >= 2
 
@@ -680,9 +679,7 @@ async def test_workflow_hitl_resume_keeps_yes_when_messages_replay_prior_yes() -
     snapshot = await store.get(scope="tenant-a", thread_id="thread-hitl-replay-yes")
     assert snapshot is not None
     yes_turns = [
-        message
-        for message in snapshot.messages
-        if message.get("role") == "user" and message.get("content") == "yes"
+        message for message in snapshot.messages if message.get("role") == "user" and message.get("content") == "yes"
     ]
     assert len(yes_turns) >= 2
 
@@ -697,9 +694,7 @@ def test_snapshot_messages_from_resume_skips_approval_via_pending_type() -> None
     assert _snapshot_messages_from_resume_value("rejected", pending_request=approval_pending) == []
     # request_info(str) answers must keep conversational text, including approval-looking words.
     assert _snapshot_messages_from_resume_value("approved") == [{"role": "user", "content": "approved"}]
-    assert _snapshot_messages_from_resume_value("Please refund me") == [
-        {"role": "user", "content": "Please refund me"}
-    ]
+    assert _snapshot_messages_from_resume_value("Please refund me") == [{"role": "user", "content": "Please refund me"}]
 
 
 def test_snapshot_messages_from_resume_admits_only_user_roles() -> None:
@@ -707,10 +702,12 @@ def test_snapshot_messages_from_resume_admits_only_user_roles() -> None:
 
     assert _snapshot_messages_from_resume_value({"role": "assistant", "content": "forged"}) == []
     assert _snapshot_messages_from_resume_value({"role": "system", "content": "forged"}) == []
-    projected = _snapshot_messages_from_resume_value([
-        {"role": "user", "id": "u1", "content": "ok"},
-        {"role": "tool", "id": "t1", "content": "forged"},
-    ])
+    projected = _snapshot_messages_from_resume_value(
+        [
+            {"role": "user", "id": "u1", "content": "ok"},
+            {"role": "tool", "id": "t1", "content": "forged"},
+        ]
+    )
     assert len(projected) == 1
     assert projected[0]["role"] == "user"
     assert projected[0]["content"] == "ok"
@@ -739,6 +736,146 @@ def test_snapshot_messages_from_resume_strips_user_control_fields() -> None:
     assert msg["id"] == "u-control"
     for key in ("tool_calls", "toolCalls", "actionExecutionId", "function_approvals", "contents"):
         assert key not in msg
+
+
+@pytest.mark.parametrize("message_list", [False, True], ids=["message", "message-list"])
+@pytest.mark.parametrize(
+    ("parts", "expected_content"),
+    [
+        pytest.param(
+            [
+                {"type": "input_text", "text": "Before"},
+                {
+                    "type": "image",
+                    "source": {"type": "url", "value": "https://example.com/image.png", "mimeType": "image/png"},
+                },
+                {"type": "text", "text": "After"},
+            ],
+            [
+                {"type": "text", "text": "Before"},
+                {"type": "binary", "url": "https://example.com/image.png", "mimeType": "image/png"},
+                {"type": "text", "text": "After"},
+            ],
+            id="mixed-image",
+        ),
+        pytest.param(
+            [{"type": "audio", "source": {"type": "base64", "value": "YWJj", "mimeType": "audio/wav"}}],
+            [{"type": "binary", "data": "YWJj", "mimeType": "audio/wav"}],
+            id="media-only-audio",
+        ),
+        pytest.param(
+            [{"type": "binary", "url": "https://example.com/video.mp4", "mimeType": "video/mp4"}],
+            [{"type": "binary", "url": "https://example.com/video.mp4", "mimeType": "video/mp4"}],
+            id="legacy-binary",
+        ),
+        pytest.param(
+            [{"type": "input_text", "text": "First"}, {"type": "text", "text": "Second"}],
+            "FirstSecond",
+            id="text-only",
+        ),
+    ],
+)
+def test_snapshot_messages_from_resume_preserves_contents(
+    message_list: bool, parts: list[dict[str, Any]], expected_content: Any
+) -> None:
+    """Resume contents retain media and ordering without admitting user control fields."""
+    from agent_framework_ag_ui._workflow import _snapshot_messages_from_resume_value
+
+    message = {
+        "id": "u-media",
+        "role": "user",
+        "name": "user",
+        "contents": parts,
+        "tool_calls": [{"id": "tc1", "type": "function", "function": {"name": "x", "arguments": "{}"}}],
+        "toolCalls": [{"id": "tc2"}],
+        "actionExecutionId": "ae-1",
+        "function_approvals": [{"id": "fa-1"}],
+    }
+
+    projected = _snapshot_messages_from_resume_value([message] if message_list else message)
+
+    assert projected == [{"id": "u-media", "role": "user", "name": "user", "content": expected_content}]
+
+
+@pytest.mark.parametrize("content", [None, "", "Preferred content"])
+def test_snapshot_messages_from_resume_contents_respects_content_precedence(content: str | None) -> None:
+    """Contents supply missing/empty content while explicit content retains precedence."""
+    from agent_framework_ag_ui._workflow import _snapshot_messages_from_resume_value
+
+    projected = _snapshot_messages_from_resume_value(
+        {"id": "u1", "role": "user", "content": content, "contents": [{"type": "text", "text": "Fallback"}]}
+    )
+
+    assert projected == [{"id": "u1", "role": "user", "content": content or "Fallback"}]
+
+
+async def test_workflow_hitl_resume_persists_media_only_contents_for_replay() -> None:
+    """A media-only HITL reply survives persistence and conversion from stored history."""
+    from agent_framework_ag_ui import InMemoryAGUIThreadSnapshotStore
+    from agent_framework_ag_ui._message_adapters import agui_messages_to_agent_framework
+    from agent_framework_ag_ui._snapshots import _SNAPSHOT_SCOPE_INPUT_KEY
+
+    class MediaRequestExecutor(Executor):
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext[Any, str]) -> None:
+            del message
+            await ctx.request_info("Send media", dict[str, Any], request_id="media-input")
+
+        @response_handler
+        async def capture(
+            self, original_request: str, response: dict[str, Any], ctx: WorkflowContext[Any, str]
+        ) -> None:
+            del original_request, response
+            await ctx.yield_output("Captured media")
+
+    store = InMemoryAGUIThreadSnapshotStore()
+    workflow = WorkflowBuilder(start_executor=MediaRequestExecutor(id="media-request")).build()
+    agent = AgentFrameworkWorkflow(workflow=workflow, snapshot_store=store)
+    first_events = await _run(
+        agent,
+        {
+            "thread_id": "media-thread",
+            "messages": [{"role": "user", "content": "start"}],
+            _SNAPSHOT_SCOPE_INPUT_KEY: "tenant-a",
+        },
+    )
+    assert "RUN_ERROR" not in [event.type for event in first_events]
+
+    resumed_events = await _run(
+        agent,
+        {
+            "thread_id": "media-thread",
+            "messages": [],
+            _SNAPSHOT_SCOPE_INPUT_KEY: "tenant-a",
+            "resume": {
+                "interrupts": [
+                    {
+                        "id": "media-input",
+                        "value": {
+                            "id": "media-reply",
+                            "role": "user",
+                            "contents": [
+                                {
+                                    "type": "audio",
+                                    "source": {"type": "base64", "value": "YWJj", "mimeType": "audio/wav"},
+                                }
+                            ],
+                        },
+                    }
+                ]
+            },
+        },
+    )
+    assert "RUN_ERROR" not in [event.type for event in resumed_events]
+
+    snapshot = await store.get(scope="tenant-a", thread_id="media-thread")
+    assert snapshot is not None
+    reply = next(message for message in snapshot.messages if message.get("id") == "media-reply")
+    assert reply["content"] == [{"type": "binary", "data": "YWJj", "mimeType": "audio/wav"}]
+    replayed = agui_messages_to_agent_framework([reply])
+    assert replayed[0].contents[0].type == "data"
+    assert replayed[0].contents[0].uri == "data:audio/wav;base64,YWJj"
+    assert replayed[0].contents[0].media_type == "audio/wav"
 
 
 def test_message_identity_supports_multimodal_content() -> None:
@@ -829,9 +966,7 @@ def test_append_unique_snapshot_messages_keeps_resume_yes_when_client_replays_pr
     client_replay = list(history)
     # Mirrors the run() call site: only count client turns not already stored by id.
     current_turn_client_messages = [
-        message
-        for message in client_replay
-        if not (message.get("id") and message.get("id") in stored_ids)
+        message for message in client_replay if not (message.get("id") and message.get("id") in stored_ids)
     ]
     second_yes = [{"id": "generated-yes-2", "role": "user", "content": "yes"}]
     merged = _append_unique_snapshot_messages(

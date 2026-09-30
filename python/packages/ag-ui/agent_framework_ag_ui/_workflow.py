@@ -155,12 +155,8 @@ def _resume_message_to_agui_dict(message: dict[str, Any]) -> dict[str, Any]:
         return normalized
     contents = normalized.get("contents")
     if isinstance(contents, list):
-        texts: list[str] = []
-        for part in contents:
-            if isinstance(part, dict) and part.get("type") in {"text", "input_text"}:
-                texts.append(str(part.get("text") or ""))
-        if texts:
-            normalized["content"] = "".join(texts)
+        # Let the snapshot adapter normalize text and media without losing their order.
+        normalized["content"] = contents
     normalized.pop("contents", None)
     return normalized
 
@@ -177,9 +173,7 @@ def _snapshot_messages_from_workflow_resume(
             continue
         interrupt_id = interrupt.get("id")
         pending_request = pending.get(str(interrupt_id)) if interrupt_id is not None else None
-        messages.extend(
-            _snapshot_messages_from_resume_value(interrupt.get("value"), pending_request=pending_request)
-        )
+        messages.extend(_snapshot_messages_from_resume_value(interrupt.get("value"), pending_request=pending_request))
     return messages
 
 
