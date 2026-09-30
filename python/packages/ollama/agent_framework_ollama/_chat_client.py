@@ -500,7 +500,8 @@ class OllamaChatClient(
         user_message = OllamaMessage(role="user", content=message.text)
         data_contents = [c for c in message.contents if c.type == "data"]
         if data_contents:
-            if not any(c.has_top_level_media_type("image") for c in data_contents):
+            # Every data item is sent in `images`, so reject the message if any of them is not an image.
+            if not all(c.has_top_level_media_type("image") for c in data_contents):
                 raise ChatClientInvalidRequestException(
                     "Only image data content is supported for user messages in Ollama."
                 )
