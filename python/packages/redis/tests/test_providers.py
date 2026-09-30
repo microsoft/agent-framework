@@ -833,7 +833,7 @@ class TestRedisHistoryProviderDeduplication:
         assert pushed_msg_dict["contents"][0]["text"] == "how are you?"
 
     async def test_different_roles_same_text_not_deduplicated(self, mock_redis_client: MagicMock):
-        msg1 = Message(role="user", contents=["ping"])
+        msg1 = Message(role="user", contents=["ping"], message_id="original-ping")
 
         mock_redis_client.lrange = AsyncMock(return_value=[json.dumps(msg1.to_dict())])
 
@@ -846,6 +846,26 @@ class TestRedisHistoryProviderDeduplication:
 
         pipeline = mock_redis_client.pipeline.return_value.__aenter__.return_value
         assert pipeline.rpush.call_count == 1
+        pushed_msg_dict = json.loads(pipeline.rpush.call_args.args[1])
+        assert pushed_msg_dict["role"] == "assistant"
+
+    async def test_repeated_user_turn_is_not_deduplicated(self, mock_redis_client: MagicMock):
+        previous = [Message(role="user", contents=["yes"]), Message(role="assistant", contents=["first reply"])]
+        mock_redis_client.lrange = AsyncMock(return_value=[json.dumps(msg.to_dict()) for msg in previous])
+
+        with patch("agent_framework_redis._history_provider.redis.from_url") as mock_from_url:
+            mock_from_url.return_value = mock_redis_client
+            provider = RedisHistoryProvider("mem", redis_url="redis://localhost:6379", application_id="test-app")
+
+        await provider.save_messages(
+            "s1", [Message(role="user", contents=["yes"]), Message(role="assistant", contents=["second reply"])]
+        )
+
+        pipeline = mock_redis_client.pipeline.return_value.__aenter__.return_value
+        assert [json.loads(call.args[1])["contents"][0]["text"] for call in pipeline.rpush.await_args_list] == [
+            "yes",
+            "second reply",
+        ]
 
     async def test_trimmed_messages_not_reappended(self, mock_redis_client: MagicMock):
         """Messages trimmed by max_messages should not be re-appended

@@ -176,7 +176,7 @@ def _get_message_hash(message: Message) -> MessageIdentity:
 
 
 def filter_new_messages(existing: Sequence[Message], incoming: Sequence[Message]) -> list[Message]:
-    """Filters incoming messages to only those that are truly new.
+    """Return messages after the ordered overlap with persisted history.
 
     Handles both 'append-only' and 'full transcript replay' scenarios.
     Prevents superlinear growth and preserves legitimate duplicate turns.
@@ -187,23 +187,20 @@ def filter_new_messages(existing: Sequence[Message], incoming: Sequence[Message]
     existing_hashes = [_get_message_hash(m) for m in existing]
     incoming_hashes = [_get_message_hash(m) for m in incoming]
 
-    if len(incoming) >= len(existing) and incoming_hashes[: len(existing_hashes)] == existing_hashes:
-        return list(incoming[len(existing) :])
+    for i in range(len(incoming_hashes) - len(existing_hashes) + 1):
+        if incoming_hashes[i : i + len(existing_hashes)] == existing_hashes:
+            if i == 0 and len(existing) == 1 and existing[-1].role == "user" and existing_hashes[-1][0] != "id":
+                break  # A repeated input without an ID is more important to retain than a possible replay.
+            return list(incoming[i + len(existing_hashes) :])
 
-    try:
-        for i in range(len(incoming_hashes) - len(existing_hashes) + 1):
-            if incoming_hashes[i : i + len(existing_hashes)] == existing_hashes:
-                return list(incoming[i + len(existing_hashes) :])
-    except Exception:
-        logger.debug("sequence alignment check failed, falling back to set-based deduplication")
+    for overlap in range(min(len(existing_hashes), len(incoming_hashes)), 0, -1):
+        if existing_hashes[-overlap:] != incoming_hashes[:overlap]:
+            continue
+        if overlap == 1 and existing[-1].role == "user" and existing_hashes[-1][0] != "id":
+            continue
+        return list(incoming[overlap:])
 
-    existing_set = set(existing_hashes)
-    new_msgs: list[Message] = []
-    for m, h in zip(incoming, incoming_hashes):
-        if h not in existing_set:
-            new_msgs.append(m)
-            existing_set.add(h)
-    return new_msgs
+    return list(incoming)
 
 
 @dataclass(frozen=True, slots=True)
