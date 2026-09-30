@@ -47,6 +47,7 @@ Status is grouped into these buckets:
 | `agent-framework-mistral` | `python/packages/mistral` | `beta` |
 | `agent-framework-mongodb` | `python/packages/mongodb` | `alpha` |
 | `agent-framework-monty` | `python/packages/monty` | `beta` |
+| `agent-framework-nvidia` | `python/packages/nvidia` | `alpha` |
 | `agent-framework-ollama` | `python/packages/ollama` | `beta` |
 | `agent-framework-openai` | `python/packages/openai` | `released` |
 | `agent-framework-orchestrations` | `python/packages/orchestrations` | `released` |
