@@ -41,6 +41,18 @@ logger = logging.getLogger(__name__)
 InvocationParser = Callable[[Request], InvocationRun | Awaitable[InvocationRun]]
 InvocationOptionsHook = Callable[[Request, dict[str, Any]], Mapping[str, Any] | Awaitable[Mapping[str, Any]]]
 
+_AGENT_CONTROLLED_FIELDS = frozenset({
+    "additional_function_arguments",
+    "client_kwargs",
+    "compaction_strategy",
+    "function_invocation_kwargs",
+    "instructions",
+    "middleware",
+    "session",
+    "tokenizer",
+    "tools",
+})
+
 
 class _UnsupportedAgentOptions(TypeError):
     """The agent cannot accept the caller's run options under the selected policy."""
@@ -108,7 +120,8 @@ class InvocationsHostServer(InvocationAgentServerHost):
                 after their last write. Custom providers control their own retention.
             parse_request: Optional sync or async parser returning an `InvocationRun` from application JSON.
                 Without one, accepts a JSON object with `message`, optional `options`, and optional `stream`.
-            prepare_options: Optional sync or async hook to filter or replace a copy of caller run options.
+            prepare_options: Optional sync or async hook to filter or replace a copy of caller generation options.
+                Tool context and agent execution controls must remain in developer-owned agent configuration.
             unsupported_options: `"warn"` (default), `"ignore"`, or `"error"` for agents without runtime options.
             legacy_wire_format: Opt into the deprecated plain-text response and raw streaming chunks instead of
                 the default JSON response and framed `delta`/`done`/`error` server-sent events.
@@ -295,6 +308,9 @@ class InvocationsHostServer(InvocationAgentServerHost):
                 raise TypeError("prepare_options must return a mapping of MAF run options with string keys.")
             options = deepcopy(dict(result))
         validate_request_options(options)
+        reserved = _AGENT_CONTROLLED_FIELDS.intersection(options)
+        if reserved:
+            raise ValueError(f"Invocations options cannot set agent-controlled fields: {', '.join(sorted(reserved))}.")
         return options
 
     def _agent_kwargs(self, agent: SupportsAgentRun, options: dict[str, Any]) -> dict[str, Any]:

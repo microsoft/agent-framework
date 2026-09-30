@@ -654,9 +654,19 @@ class TestInit:
 class TestParsedRequests:
     @pytest.mark.parametrize("stream", [False, True])
     async def test_parser_and_hook_use_typed_messages_without_mutating_defaults(self, stream: bool) -> None:
-        source_options: dict[str, Any] = {"temperature": 0.8, "nested": {"tag": "original"}, "store": True}
+        source_options: dict[str, Any] = {
+            "temperature": 0.8,
+            "reasoning_effort": "low",
+            "nested": {"tag": "original"},
+            "store": True,
+            "additional_function_arguments": {"user_id": "forged"},
+        }
         agent = _make_agent(response_text="ok", stream_texts=["ok"])
-        agent.default_options = {"store": False, "temperature": 0.2}
+        agent.default_options = {
+            "store": False,
+            "temperature": 0.2,
+            "additional_function_arguments": {"user_id": "trusted"},
+        }
         request = _make_request({"prompt": "hello"})
 
         async def parse(incoming: Request) -> InvocationRun:
@@ -672,7 +682,7 @@ class TestParsedRequests:
             assert incoming is request
             options["nested"]["tag"] = "changed"
             options.pop("store")
-            return {"temperature": options["temperature"]}
+            return {"temperature": options["temperature"], "reasoning_effort": options["reasoning_effort"]}
 
         server = InvocationsHostServer(agent, parse_request=parse, prepare_options=prepare)
         with _request_context(session_id="parsed"):
@@ -680,9 +690,19 @@ class TestParsedRequests:
             assert await _success_text(response) == "ok"
 
         assert agent.calls[0]["messages"][0].text == "hello"
-        assert agent.calls[0]["options"] == {"temperature": 0.8}
-        assert source_options == {"temperature": 0.8, "nested": {"tag": "original"}, "store": True}
-        assert agent.default_options == {"store": False, "temperature": 0.2}
+        assert agent.calls[0]["options"] == {"temperature": 0.8, "reasoning_effort": "low"}
+        assert source_options == {
+            "temperature": 0.8,
+            "reasoning_effort": "low",
+            "nested": {"tag": "original"},
+            "store": True,
+            "additional_function_arguments": {"user_id": "forged"},
+        }
+        assert agent.default_options == {
+            "store": False,
+            "temperature": 0.2,
+            "additional_function_arguments": {"user_id": "trusted"},
+        }
 
     @pytest.mark.parametrize(
         ("payload", "error"),
@@ -749,6 +769,99 @@ class TestParsedRequests:
         assert response.status_code == 400
         assert "host-controlled fields" in json.loads(bytes(response.body))["error"]
         assert agent.calls == []
+
+    @pytest.mark.parametrize("stream", [False, True])
+    @pytest.mark.parametrize("source", ["request", "parser", "hook"])
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("additional_function_arguments", {"user_id": "forged", "tenant_id": "forged"}),
+            ("client_kwargs", {"middleware": []}),
+            ("compaction_strategy", {}),
+            ("function_invocation_kwargs", {"user_id": "forged"}),
+            ("instructions", "Caller-controlled instructions"),
+            ("middleware", []),
+            ("session", {"session_id": "forged"}),
+            ("tokenizer", {}),
+            ("tools", []),
+        ],
+    )
+    async def test_agent_control_options_are_rejected_before_storage_or_agent_creation(
+        self, stream: bool, source: str, field: str, value: Any
+    ) -> None:
+        agent = _make_agent(response_text="ok", stream_texts=["ok"])
+        factory_calls: list[str] = []
+        provider = _SessionStoreProvider(_mock_session_store())
+        options = {field: value}
+
+        def create_agent() -> _FakeAgent:
+            factory_calls.append("created")
+            return agent
+
+        server = InvocationsHostServer(
+            create_agent,
+            agent_session_store_provider=provider,
+            parse_request=(lambda _request: InvocationRun(messages="hi", options=options, stream=stream))
+            if source == "parser"
+            else None,
+            prepare_options=(lambda _request, _options: options) if source == "hook" else None,
+        )
+        with _request_context(session_id="unsafe-options"):
+            response = await server._handle_invoke(  # pyright: ignore[reportPrivateUsage]
+                _make_request({"message": "hi", "stream": stream, "options": options if source == "request" else {}})
+            )
+        assert response.status_code == 400
+        assert response.media_type == "application/json"
+        assert json.loads(bytes(response.body)) == {
+            "error": f"Invocations options cannot set agent-controlled fields: {field}."
+        }
+        assert factory_calls == []
+        assert agent.calls == []
+        assert provider.contexts == []
+
+    @pytest.mark.parametrize("stream", [False, True])
+    @pytest.mark.parametrize("legacy_wire_format", [False, True])
+    @pytest.mark.parametrize("policy", ["ignore", "warn", "error"])
+    async def test_http_route_rejects_tool_context_options_under_every_wire_and_options_policy(
+        self, stream: bool, legacy_wire_format: bool, policy: Literal["ignore", "warn", "error"]
+    ) -> None:
+        agent = _make_agent(response_text="ok", stream_texts=["ok"])
+        provider = _SessionStoreProvider(_mock_session_store())
+        agent.default_options = {"additional_function_arguments": {"user_id": "trusted", "tenant_id": "trusted"}}
+
+        def create_host() -> InvocationsHostServer:
+            return InvocationsHostServer(
+                agent,
+                agent_session_store_provider=provider,
+                unsupported_options=policy,
+                legacy_wire_format=legacy_wire_format,
+            )
+
+        if legacy_wire_format:
+            with pytest.warns(DeprecationWarning, match="legacy_wire_format"):
+                server = create_host()
+        else:
+            server = create_host()
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as client:
+            response = await client.post(
+                "/invocations",
+                params={"agent_session_id": f"unsafe-options-{uuid.uuid4().hex}"},
+                json={
+                    "message": "hi",
+                    "stream": stream,
+                    "options": {"additional_function_arguments": {"user_id": "forged", "tenant_id": "forged"}},
+                },
+            )
+        assert response.status_code == 400
+        assert response.headers["content-type"] == "application/json"
+        assert response.json() == {
+            "error": "Invocations options cannot set agent-controlled fields: additional_function_arguments."
+        }
+        assert agent.default_options == {
+            "additional_function_arguments": {"user_id": "trusted", "tenant_id": "trusted"}
+        }
+        assert agent.calls == []
+        assert provider.contexts == []
 
     @pytest.mark.parametrize("result", [None, [], {1: "invalid"}, {"session_id": "forged"}])
     async def test_options_hook_must_return_safe_string_keyed_mapping(self, result: Any) -> None:
