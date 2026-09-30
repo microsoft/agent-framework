@@ -50,7 +50,9 @@ import typing
 from collections.abc import AsyncIterable, Awaitable, Callable, Coroutine, Mapping, Sequence
 from contextvars import Context, ContextVar
 from copy import deepcopy
+from types import CodeType
 from typing import Any, Generic, Literal, TypeVar, overload
+from weakref import WeakSet
 
 from .._agents import BaseAgent
 from .._feature_stage import ExperimentalFeature, experimental
@@ -77,6 +79,7 @@ R = TypeVar("R")
 
 _STEP_CACHE_KEY_V2_PREFIX = "v2::"
 _UNSUPPORTED_STEP_IDENTITY = object()
+_step_wrapper_identity_registry: dict[tuple[str, str], WeakSet[Any]] = {}
 
 # ContextVar holding the active RunContext during workflow execution.
 # ContextVar is per-asyncio-Task, so concurrent workflows each get their own context.
@@ -136,8 +139,10 @@ def _track_workflow_tasks() -> Callable[[], None]:
     return _release
 
 
-def _canonicalize_step_identity_value(value: Any) -> Any:
+def _canonicalize_step_identity_value(value: Any, seen: set[int] | None = None) -> Any:
     """Return a type-preserving JSON value, or a sentinel for unsupported input."""
+    if seen is None:
+        seen = set()
     if value is None:
         return ["none"]
     if type(value) is bool:
@@ -148,36 +153,74 @@ def _canonicalize_step_identity_value(value: Any) -> Any:
         if not math.isfinite(value):
             return _UNSUPPORTED_STEP_IDENTITY
         return ["float", value.hex()]
+    if type(value) is complex:
+        if not math.isfinite(value.real) or not math.isfinite(value.imag):
+            return _UNSUPPORTED_STEP_IDENTITY
+        return ["complex", value.real.hex(), value.imag.hex()]
     if type(value) is str:
         return ["str", value]
+    if type(value) is bytes:
+        return ["bytes", value.hex()]
     if type(value) is list:
+        list_value = typing.cast(list[Any], value)
+        value_id = id(list_value)
+        if value_id in seen:
+            return _UNSUPPORTED_STEP_IDENTITY
+        seen.add(value_id)
         list_items: list[Any] = []
-        for item in typing.cast(list[Any], value):
-            canonical = _canonicalize_step_identity_value(item)
-            if canonical is _UNSUPPORTED_STEP_IDENTITY:
-                return _UNSUPPORTED_STEP_IDENTITY
-            list_items.append(canonical)
-        return ["list", list_items]
+        try:
+            for item in list_value:
+                canonical = _canonicalize_step_identity_value(item, seen)
+                if canonical is _UNSUPPORTED_STEP_IDENTITY:
+                    return _UNSUPPORTED_STEP_IDENTITY
+                list_items.append(canonical)
+            return ["list", list_items]
+        finally:
+            seen.remove(value_id)
     if type(value) is tuple:
+        tuple_value = typing.cast(tuple[Any, ...], value)
+        value_id = id(tuple_value)
+        if value_id in seen:
+            return _UNSUPPORTED_STEP_IDENTITY
+        seen.add(value_id)
         tuple_items: list[Any] = []
-        for item in typing.cast(tuple[Any, ...], value):
-            canonical = _canonicalize_step_identity_value(item)
-            if canonical is _UNSUPPORTED_STEP_IDENTITY:
-                return _UNSUPPORTED_STEP_IDENTITY
-            tuple_items.append(canonical)
-        return ["tuple", tuple_items]
+        try:
+            for item in tuple_value:
+                canonical = _canonicalize_step_identity_value(item, seen)
+                if canonical is _UNSUPPORTED_STEP_IDENTITY:
+                    return _UNSUPPORTED_STEP_IDENTITY
+                tuple_items.append(canonical)
+            return ["tuple", tuple_items]
+        finally:
+            seen.remove(value_id)
     if isinstance(value, Mapping):
         mapping = typing.cast(Mapping[Any, Any], value)
+        value_id = id(mapping)
+        if value_id in seen:
+            return _UNSUPPORTED_STEP_IDENTITY
+        seen.add(value_id)
         mapping_items: list[Any] = []
-        for key, item in mapping.items():
-            if type(key) is not str:
-                return _UNSUPPORTED_STEP_IDENTITY
-            canonical = _canonicalize_step_identity_value(item)
+        try:
+            for key, item in mapping.items():
+                if type(key) is not str:
+                    return _UNSUPPORTED_STEP_IDENTITY
+                canonical = _canonicalize_step_identity_value(item, seen)
+                if canonical is _UNSUPPORTED_STEP_IDENTITY:
+                    return _UNSUPPORTED_STEP_IDENTITY
+                mapping_items.append([key, canonical])
+            mapping_type = f"{type(mapping).__module__}.{type(mapping).__qualname__}"
+            return ["mapping", mapping_type, mapping_items]
+        finally:
+            seen.remove(value_id)
+    if type(value) is frozenset:
+        frozenset_items: list[Any] = []
+        for item in typing.cast(frozenset[Any], value):
+            canonical = _canonicalize_step_identity_value(item, seen)
             if canonical is _UNSUPPORTED_STEP_IDENTITY:
                 return _UNSUPPORTED_STEP_IDENTITY
-            mapping_items.append([key, canonical])
-        mapping_type = f"{type(mapping).__module__}.{type(mapping).__qualname__}"
-        return ["mapping", mapping_type, mapping_items]
+            frozenset_items.append(canonical)
+        frozenset_items.sort(key=lambda item: json.dumps(item, sort_keys=True, separators=(",", ":")))
+        return ["frozenset", frozenset_items]
     return _UNSUPPORTED_STEP_IDENTITY
 
 
@@ -189,13 +232,105 @@ def _hash_step_identity(value: Any) -> str | None:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+def _canonicalize_code_value(value: Any) -> Any:
+    if isinstance(value, CodeType):
+        return ["code", _get_code_identity_payload(value)]
+    if value is None or type(value) in (bool, int, str):
+        return [type(value).__name__, value]
+    if type(value) is float:
+        return ["float", value.hex()]
+    if type(value) is complex:
+        return ["complex", value.real.hex(), value.imag.hex()]
+    if type(value) is bytes:
+        return ["bytes", value.hex()]
+    if type(value) is tuple:
+        tuple_value = typing.cast(tuple[Any, ...], value)
+        return ["tuple", [_canonicalize_code_value(item) for item in tuple_value]]
+    if type(value) is frozenset:
+        frozenset_value = typing.cast(frozenset[Any], value)
+        items = [_canonicalize_code_value(item) for item in frozenset_value]
+        items.sort(key=lambda item: json.dumps(item, sort_keys=True, separators=(",", ":")))
+        return ["frozenset", items]
+    if value is Ellipsis:
+        return ["ellipsis"]
+    return ["unsupported", type(value).__module__, type(value).__qualname__]
+
+
+def _get_code_identity_payload(code: CodeType) -> dict[str, Any]:
+    return {
+        "argcount": code.co_argcount,
+        "posonlyargcount": code.co_posonlyargcount,
+        "kwonlyargcount": code.co_kwonlyargcount,
+        "flags": code.co_flags,
+        "code": code.co_code.hex(),
+        "consts": [_canonicalize_code_value(item) for item in code.co_consts],
+        "names": list(code.co_names),
+        "varnames": list(code.co_varnames),
+        "freevars": list(code.co_freevars),
+        "cellvars": list(code.co_cellvars),
+    }
+
+
+def _canonicalize_wrapper_state(value: Any) -> tuple[Any, bool]:
+    canonical = _canonicalize_step_identity_value(value)
+    if canonical is _UNSUPPORTED_STEP_IDENTITY:
+        return (["opaque", type(value).__module__, type(value).__qualname__], False)
+    return (canonical, _is_immutable_wrapper_state(value))
+
+
+def _is_immutable_wrapper_state(value: Any) -> bool:
+    if value is None or type(value) in (bool, int, float, complex, str, bytes):
+        return True
+    if type(value) is tuple:
+        return all(_is_immutable_wrapper_state(item) for item in typing.cast(tuple[Any, ...], value))
+    if type(value) is frozenset:
+        return all(_is_immutable_wrapper_state(item) for item in typing.cast(frozenset[Any], value))
+    return False
+
+
+def _get_step_wrapper_identity(func: Callable[..., Awaitable[Any]]) -> tuple[str, bool]:
+    code = getattr(func, "__code__", None)
+    defaults, defaults_are_durable = _canonicalize_wrapper_state(func.__defaults__ or ())
+    raw_kwdefaults = func.__kwdefaults__ or {}
+    kwdefaults, _ = _canonicalize_wrapper_state(raw_kwdefaults)
+    kwdefaults_are_durable = all(_is_immutable_wrapper_state(value) for value in raw_kwdefaults.values())
+    closure_items: list[Any] = []
+    closure_is_durable = func.__closure__ is None
+    if code is not None and func.__closure__ is not None:
+        for name, cell in zip(code.co_freevars, func.__closure__):
+            try:
+                value = cell.cell_contents
+            except ValueError:
+                closure_items.append([name, ["empty"]])
+                closure_is_durable = False
+                continue
+            canonical, _ = _canonicalize_wrapper_state(value)
+            closure_items.append([name, canonical])
+
+    payload = {
+        "module": func.__module__,
+        "qualname": func.__qualname__,
+        "firstlineno": code.co_firstlineno if code is not None else None,
+        "code": _get_code_identity_payload(code) if code is not None else None,
+        "defaults": defaults,
+        "kwdefaults": kwdefaults,
+        "closure": closure_items,
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return (
+        hashlib.sha256(encoded.encode("utf-8")).hexdigest(),
+        defaults_are_durable and kwdefaults_are_durable and closure_is_durable,
+    )
+
+
 def _encode_step_cache_key(
     kind: Literal["auto", "explicit"],
     step_name: str,
+    wrapper_identity: str,
     identity: str,
     occurrence: int | None = None,
 ) -> str:
-    payload: list[str | int] = [kind, step_name, identity]
+    payload: list[str | int] = [kind, step_name, wrapper_identity, identity]
     if kind == "auto":
         if occurrence is None:
             raise ValueError("Automatic step cache keys require an occurrence index.")
@@ -217,13 +352,13 @@ def _validate_step_cache_key(key: Any) -> str:
             kind = payload[0]
             if (
                 kind == "auto"
-                and len(payload) == 4
-                and all(isinstance(item, str) for item in payload[1:3])
-                and isinstance(payload[3], int)
-                and payload[3] >= 0
+                and len(payload) == 5
+                and all(isinstance(item, str) for item in payload[1:4])
+                and isinstance(payload[4], int)
+                and payload[4] >= 0
             ):
                 return key
-            if kind == "explicit" and len(payload) == 3 and all(isinstance(item, str) for item in payload[1:]):
+            if kind == "explicit" and len(payload) == 4 and all(isinstance(item, str) for item in payload[1:]):
                 return key
             raise ValueError("Invalid versioned step cache key.")
 
@@ -339,7 +474,7 @@ class RunContext:
         # Legacy per-step call counters retained for old checkpoint compatibility.
         self._step_call_counters: dict[str, int] = {}
         # Per-identity counters keep repeated automatic invocations distinct.
-        self._step_identity_counters: dict[tuple[str, str], int] = {}
+        self._step_identity_counters: dict[tuple[str, str, str], int] = {}
         # Explicit replay keys identify exactly one logical invocation per run.
         self._used_explicit_step_cache_keys: set[str] = set()
         # Tasks created while this workflow context is active.
@@ -498,14 +633,14 @@ class RunContext:
         self._step_call_counters[step_name] = idx + 1
         return f"{step_name}::{idx}"
 
-    def _get_automatic_step_cache_key(self, step_name: str, identity: str) -> str:
-        counter_key = (step_name, identity)
+    def _get_automatic_step_cache_key(self, step_name: str, wrapper_identity: str, identity: str) -> str:
+        counter_key = (step_name, wrapper_identity, identity)
         occurrence = self._step_identity_counters.get(counter_key, 0)
         self._step_identity_counters[counter_key] = occurrence + 1
-        return _encode_step_cache_key("auto", step_name, identity, occurrence)
+        return _encode_step_cache_key("auto", step_name, wrapper_identity, identity, occurrence)
 
-    def _get_explicit_step_cache_key(self, step_name: str, identity: str) -> str:
-        key = _encode_step_cache_key("explicit", step_name, identity)
+    def _get_explicit_step_cache_key(self, step_name: str, wrapper_identity: str, identity: str) -> str:
+        key = _encode_step_cache_key("explicit", step_name, wrapper_identity, identity)
         if key in self._used_explicit_step_cache_keys:
             raise ValueError(
                 f"@step '{step_name}' produced duplicate replay_key values in one workflow run. "
@@ -632,9 +767,13 @@ class StepWrapper(Generic[R]):
     isolation.
 
     Automatic replay identity supports ``None``, booleans, integers, finite
-    floats, strings, lists, tuples, and string-key mappings containing those
-    values. Concurrent calls with the same automatic identity must produce
-    interchangeable results; use distinct ``replay_key`` values otherwise.
+    floats/complex numbers, strings, bytes, lists, tuples, frozensets, and
+    string-key mappings containing those values. Concurrent calls with the
+    same automatic identity must produce interchangeable results; use
+    distinct ``replay_key`` values otherwise.
+    Opaque captured defaults/closure state, and multiple wrappers whose
+    canonical source and captured state are identical, require ``replay_key``
+    for concurrent use.
     Legacy order-based checkpoints remain replayable sequentially, but a
     concurrent legacy cache hit raises instead of risking a mismatched result.
 
@@ -666,6 +805,15 @@ class StepWrapper(Generic[R]):
         self._func = func
         self.name: str = name or func.__name__
         self._signature = inspect.signature(func)
+        self._wrapper_identity, self._wrapper_identity_is_durable = _get_step_wrapper_identity(func)
+        if _active_run_ctx.get() is not None:
+            self._wrapper_identity_is_durable = False
+        self._wrapper_registry_key: tuple[str, str] | None = None
+        if self._wrapper_identity_is_durable:
+            registry_key = (self.name, self._wrapper_identity)
+            matching_wrappers = _step_wrapper_identity_registry.setdefault(registry_key, WeakSet())
+            matching_wrappers.add(self)
+            self._wrapper_registry_key = registry_key
         self._replay_key = replay_key
         functools.update_wrapper(self, func)
 
@@ -697,11 +845,32 @@ class StepWrapper(Generic[R]):
         args: tuple[Any, ...],
         kwargs: dict[str, Any],
     ) -> tuple[Literal["auto", "explicit"], str] | None:
+        if self._wrapper_identity_is_durable:
+            current_identity, current_is_durable = _get_step_wrapper_identity(self._func)
+            if not current_is_durable or current_identity != self._wrapper_identity:
+                raise ValueError(
+                    f"@step '{self.name}' defaults or captured state changed after decoration. "
+                    "Create a new workflow definition or provide a versioned replay_key."
+                )
+
         if self._replay_key is not None:
             explicit_key = self._replay_key(*args, **kwargs)
             if not isinstance(explicit_key, str) or not explicit_key:
                 raise ValueError(f"@step '{self.name}' replay_key must return a non-empty string.")
             return ("explicit", hashlib.sha256(explicit_key.encode("utf-8")).hexdigest())
+
+        if self._wrapper_registry_key is not None:
+            matching_wrappers = _step_wrapper_identity_registry.get(self._wrapper_registry_key)
+        else:
+            matching_wrappers = None
+        if matching_wrappers is not None and len(matching_wrappers) > 1:
+            raise ValueError(
+                f"@step '{self.name}' was generated from a function definition used by multiple wrappers. "
+                "Provide replay_key so each logical invocation has an explicit durable identity."
+            )
+
+        if not self._wrapper_identity_is_durable:
+            return None
 
         identity_kwargs = kwargs
         if self._ctx_param_name is not None and self._ctx_param_name in kwargs:
@@ -766,9 +935,9 @@ class StepWrapper(Generic[R]):
         if replay_identity is not None:
             identity_kind, identity = replay_identity
             if identity_kind == "explicit":
-                cache_key = ctx._get_explicit_step_cache_key(self.name, identity)
+                cache_key = ctx._get_explicit_step_cache_key(self.name, self._wrapper_identity, identity)
             else:
-                cache_key = ctx._get_automatic_step_cache_key(self.name, identity)
+                cache_key = ctx._get_automatic_step_cache_key(self.name, self._wrapper_identity, identity)
 
             found, cached = ctx._get_cached_result(cache_key)
             if found:
@@ -867,10 +1036,10 @@ def step(
     Automatic replay identity is derived from bound canonical arguments.
     Concurrent calls with identical automatic identities must produce
     interchangeable results. Use distinct ``replay_key`` values when opaque
-    arguments or other state distinguish the logical invocations. Legacy
-    order-based checkpoints replay sequential steps, but concurrent legacy
-    cache hits fail explicitly rather than returning a potentially mismatched
-    result.
+    arguments, captured state, generated wrappers, or other state distinguish
+    the logical invocations. Legacy order-based checkpoints replay sequential
+    steps, but concurrent legacy cache hits fail explicitly rather than
+    returning a potentially mismatched result.
 
     Args:
         func: The async function to decorate (when using the bare
@@ -1042,10 +1211,17 @@ class FunctionalWorkflow:
 
         functools.update_wrapper(self, func)  # type: ignore[arg-type]
 
+    @staticmethod
+    def _snapshot_replay_message(message: Any) -> Any:
+        try:
+            return deepcopy(message)
+        except Exception:
+            return message
+
     def _capture_replay_state(self, ctx: RunContext, message: Any | None = None) -> None:
         """Capture the state needed to continue a response-only HITL replay."""
-        if message is not None:
-            self._last_message = message
+        if message is not None and self._last_message is None:
+            self._last_message = self._snapshot_replay_message(message)
         self._last_step_cache = dict(ctx._step_cache)
         self._last_step_cache_auto_request_info_counts = dict(ctx._step_cache_auto_request_info_counts)
         self._last_state = dict(ctx._state)
@@ -1331,7 +1507,7 @@ class FunctionalWorkflow:
 
         # Store message for future replays
         if message is not None:
-            self._last_message = message
+            self._last_message = self._snapshot_replay_message(message)
 
         # Set responses for replay
         if responses:

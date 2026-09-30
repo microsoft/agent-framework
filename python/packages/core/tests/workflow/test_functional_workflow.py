@@ -11,6 +11,7 @@ import logging
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from types import FunctionType
 from typing import Any, overload
 
 import pytest
@@ -35,9 +36,10 @@ from agent_framework import (
     step,
     workflow,
 )
-from agent_framework._workflows._functional import (
-    RunContext as _RunContext,
-)
+from agent_framework._workflows._functional import RunContext as _RunContext
+from agent_framework._workflows._functional import _get_step_wrapper_identity
+
+_factory_step_calls: list[str] = []
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -942,13 +944,13 @@ class TestStepReplayIdentity:
         branch_a_shared_completed = asyncio.Event()
         calls: list[str] = []
 
-        @step
+        @step(replay_key=lambda value: f"predecessor:{value}")
         async def predecessor(value: str) -> str:
             predecessor_started.set()
             await release_predecessor.wait()
             return value
 
-        @step
+        @step(replay_key=lambda value: value)
         async def shared_step(value: str) -> str:
             calls.append(value)
             if value == "B":
@@ -980,13 +982,237 @@ class TestStepReplayIdentity:
         assert replayed.get_outputs() == initial.get_outputs()
         assert calls == ["B", "A"]
 
+    async def test_same_named_wrappers_keep_distinct_concurrent_identities(self):
+        storage = InMemoryCheckpointStorage()
+        predecessor_started = asyncio.Event()
+        release_predecessor = asyncio.Event()
+        read_completed = asyncio.Event()
+        calls: list[str] = []
+
+        @step(replay_key=lambda value: f"predecessor:{value}")
+        async def predecessor(value: str) -> str:
+            predecessor_started.set()
+            await release_predecessor.wait()
+            return value
+
+        @step(name="authorization", replay_key=lambda value: f"read:{value}")
+        async def read_check(value: str) -> str:
+            calls.append("read")
+            read_completed.set()
+            return f"read:{value}"
+
+        @step(name="authorization", replay_key=lambda value: f"delete:{value}")
+        async def delete_check(value: str) -> str:
+            calls.append("delete")
+            release_predecessor.set()
+            await read_completed.wait()
+            return f"delete:{value}"
+
+        async def branch_a() -> str:
+            await predecessor("same")
+            return await read_check("same")
+
+        async def branch_b() -> str:
+            await predecessor_started.wait()
+            return await delete_check("same")
+
+        @built_workflow(checkpoint_storage=storage)
+        async def wf(_: str) -> list[str]:
+            return list(await asyncio.gather(branch_a(), branch_b()))
+
+        initial = await wf.run("input")
+        checkpoints = await storage.list_checkpoints(workflow_name="wf")
+        replayed = await wf.run(checkpoint_id=checkpoints[-1].checkpoint_id)
+
+        assert initial.get_outputs() == [["read:same", "delete:same"]]
+        assert replayed.get_outputs() == initial.get_outputs()
+        assert calls == ["delete", "read"]
+
+    async def test_factory_generated_wrappers_use_canonical_default_identity(self):
+        storage = InMemoryCheckpointStorage()
+        _factory_step_calls.clear()
+
+        def make_step(label: str) -> StepWrapper[str]:
+            async def generated(value: str, label: str = label) -> str:
+                _factory_step_calls.append(label)
+                return f"{label}:{value}"
+
+            return step(name="generated")(generated)
+
+        first = make_step("first")
+        second = make_step("second")
+
+        @built_workflow(checkpoint_storage=storage)
+        async def wf(value: str) -> list[str]:
+            return list(await asyncio.gather(first(value), second(value)))
+
+        initial = await wf.run("input")
+        checkpoints = await storage.list_checkpoints(workflow_name="wf")
+        replayed = await wf.run(checkpoint_id=checkpoints[-1].checkpoint_id)
+
+        assert initial.get_outputs() == [["first:input", "second:input"]]
+        assert replayed.get_outputs() == initial.get_outputs()
+        assert _factory_step_calls == ["first", "second"]
+
+    async def test_factory_generated_wrappers_with_opaque_state_require_replay_key(self):
+        @dataclass
+        class Token:
+            label: str
+
+        calls: list[str] = []
+
+        def make_step(token: Token) -> StepWrapper[str]:
+            async def generated(value: str) -> str:
+                calls.append(token.label)
+                return f"{token.label}:{value}"
+
+            return step(name="generated")(generated)
+
+        first = make_step(Token("first"))
+        second = make_step(Token("second"))
+
+        @built_workflow
+        async def wf(value: str) -> list[str]:
+            return list(await asyncio.gather(first(value), second(value)))
+
+        with pytest.raises(ValueError, match="replay_key"):
+            await wf.run("input")
+
+        assert calls == []
+
+    async def test_factory_generated_wrappers_with_opaque_state_replay_with_explicit_keys(self):
+        @dataclass
+        class Token:
+            label: str
+
+        storage = InMemoryCheckpointStorage()
+        calls: list[str] = []
+
+        def make_step(token: Token) -> StepWrapper[str]:
+            async def generated(value: str) -> str:
+                calls.append(token.label)
+                return f"{token.label}:{value}"
+
+            return step(name="generated", replay_key=lambda _value: token.label)(generated)
+
+        first = make_step(Token("first"))
+        second = make_step(Token("second"))
+
+        @built_workflow(checkpoint_storage=storage)
+        async def wf(value: str) -> list[str]:
+            return list(await asyncio.gather(first(value), second(value)))
+
+        initial = await wf.run("input")
+        checkpoints = await storage.list_checkpoints(workflow_name="wf")
+        replayed = await wf.run(checkpoint_id=checkpoints[-1].checkpoint_id)
+
+        assert initial.get_outputs() == [["first:input", "second:input"]]
+        assert replayed.get_outputs() == initial.get_outputs()
+        assert calls == ["first", "second"]
+
+    async def test_existing_generated_wrapper_fails_closed_after_collision(self):
+        storage = InMemoryCheckpointStorage()
+        _factory_step_calls.clear()
+
+        def make_step() -> StepWrapper[str]:
+            async def generated(value: str) -> str:
+                _factory_step_calls.append(value)
+                return value
+
+            return step(name="generated")(generated)
+
+        first = make_step()
+
+        @built_workflow(checkpoint_storage=storage)
+        async def wf(value: str) -> str:
+            return await first(value)
+
+        initial = await wf.run("input")
+        checkpoints = await storage.list_checkpoints(workflow_name="wf")
+        checkpoint = checkpoints[-1]
+        second = make_step()
+
+        with pytest.raises(ValueError, match="multiple wrappers"):
+            await wf.run(checkpoint_id=checkpoint.checkpoint_id)
+
+        del second
+        gc.collect()
+        replayed = await wf.run(checkpoint_id=checkpoint.checkpoint_id)
+
+        assert initial.get_outputs() == ["input"]
+        assert replayed.get_outputs() == initial.get_outputs()
+        assert _factory_step_calls == ["input"]
+
+    async def test_cyclic_arguments_use_sequential_fallback(self):
+        call_count = 0
+
+        @step
+        async def count_items(items: list[Any]) -> int:
+            nonlocal call_count
+            call_count += 1
+            return len(items)
+
+        @built_workflow
+        async def wf(items: list[Any]) -> int:
+            return await count_items(items)
+
+        cyclic: list[Any] = []
+        cyclic.append(cyclic)
+        result = await wf.run(cyclic)
+
+        assert result.get_outputs() == [1]
+        assert call_count == 1
+
+    async def test_cyclic_concurrent_arguments_require_replay_key(self):
+        call_count = 0
+
+        @step
+        async def count_items(items: list[Any]) -> int:
+            nonlocal call_count
+            call_count += 1
+            return len(items)
+
+        @built_workflow
+        async def wf(items: list[Any]) -> int:
+            return (await asyncio.gather(count_items(items)))[0]
+
+        cyclic: list[Any] = []
+        cyclic.append(cyclic)
+
+        with pytest.raises(ValueError, match="replay_key"):
+            await wf.run(cyclic)
+
+        assert call_count == 0
+
+    async def test_mutated_workflow_input_keeps_original_replay_identity(self):
+        storage = InMemoryCheckpointStorage()
+
+        @step
+        async def mutate(items: list[str]) -> list[str]:
+            items.append("mutated")
+            return items
+
+        @built_workflow(checkpoint_storage=storage)
+        async def wf(items: list[str]) -> list[str]:
+            return await mutate(items)
+
+        message = ["original"]
+        initial = await wf.run(message)
+        checkpoints = await storage.list_checkpoints(workflow_name="wf")
+        replayed = await wf.run(checkpoint_id=checkpoints[-1].checkpoint_id)
+
+        assert message == ["original", "mutated"]
+        assert initial.get_outputs() == [["original", "mutated"]]
+        assert replayed.get_outputs() == initial.get_outputs()
+        assert len([event for event in replayed if event.type == "executor_bypassed"]) == 1
+
     async def test_intermediate_checkpoint_does_not_cross_branches(self):
         storage = InMemoryCheckpointStorage()
         release_branch_a = asyncio.Event()
         branch_b_returned = asyncio.Event()
         calls: list[str] = []
 
-        @step
+        @step(replay_key=lambda value: value)
         async def shared_step(value: str) -> str:
             calls.append(value)
             return f"result:{value}"
@@ -1019,12 +1245,9 @@ class TestStepReplayIdentity:
 
     async def test_repeated_automatic_identity_uses_occurrences(self):
         storage = InMemoryCheckpointStorage()
-        call_count = 0
 
         @step
         async def echo(value: str) -> str:
-            nonlocal call_count
-            call_count += 1
             return value
 
         @built_workflow(checkpoint_storage=storage)
@@ -1038,7 +1261,7 @@ class TestStepReplayIdentity:
 
         assert initial.get_outputs() == [["same", "same"]]
         assert replayed.get_outputs() == initial.get_outputs()
-        assert call_count == 2
+        assert len([event for event in replayed if event.type == "executor_bypassed"]) == 2
 
     async def test_automatic_identity_normalizes_bound_arguments(self):
         @step
@@ -1052,12 +1275,9 @@ class TestStepReplayIdentity:
 
     async def test_automatic_identity_ignores_explicit_context_keyword(self):
         storage = InMemoryCheckpointStorage()
-        call_count = 0
 
         @step
         async def use_context(value: str, ctx: RunContext) -> str:
-            nonlocal call_count
-            call_count += 1
             return f"{value}:{ctx.get_state('marker')}"
 
         @built_workflow(checkpoint_storage=storage)
@@ -1072,7 +1292,7 @@ class TestStepReplayIdentity:
 
         assert initial.get_outputs() == ["input:ok"]
         assert replayed.get_outputs() == initial.get_outputs()
-        assert call_count == 1
+        assert len([event for event in replayed if event.type == "executor_bypassed"]) == 1
 
     async def test_concurrent_opaque_arguments_require_replay_key(self):
         import threading
@@ -1151,6 +1371,28 @@ class TestStepReplayIdentity:
 
         with pytest.raises(ValueError, match="duplicate replay_key"):
             await wf.run("input")
+
+    async def test_changed_immutable_kwdefault_fails_closed(self):
+        storage = InMemoryCheckpointStorage()
+
+        @step(replay_key=lambda value: value)
+        async def marker(value: str, *, suffix: bytes = b"A") -> str:
+            return f"{value}:{suffix.decode()}"
+
+        @built_workflow(checkpoint_storage=storage)
+        async def wf(value: str) -> str:
+            return await marker(value)
+
+        initial = await wf.run("input")
+        checkpoints = await storage.list_checkpoints(workflow_name="wf")
+        checkpoint = checkpoints[-1]
+        assert marker._func.__kwdefaults__ is not None  # pyright: ignore[reportPrivateUsage]
+        marker._func.__kwdefaults__["suffix"] = b"B"  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(ValueError, match="changed after decoration"):
+            await wf.run(checkpoint_id=checkpoint.checkpoint_id)
+
+        assert initial.get_outputs() == ["input:A"]
 
     async def test_legacy_checkpoint_replays_sequential_step(self):
         from agent_framework import WorkflowCheckpoint
@@ -1332,7 +1574,7 @@ class TestStepReplayIdentity:
         storage = InMemoryCheckpointStorage()
         calls: list[str] = []
 
-        @step
+        @step(replay_key=lambda value: value)
         async def mixed(value: str) -> str:
             calls.append(value)
             return f"live:{value}"
@@ -1344,10 +1586,11 @@ class TestStepReplayIdentity:
         replay_identity = mixed._get_replay_identity(("child",), {})  # pyright: ignore[reportPrivateUsage]
         assert replay_identity is not None
         identity_kind, identity = replay_identity
-        assert identity_kind == "auto"
+        assert identity_kind == "explicit"
         key_ctx = _RunContext("mixed_wf")
-        versioned_key = key_ctx._get_automatic_step_cache_key(  # pyright: ignore[reportPrivateUsage]
+        versioned_key = key_ctx._get_explicit_step_cache_key(  # pyright: ignore[reportPrivateUsage]
             "mixed",
+            mixed._wrapper_identity,  # pyright: ignore[reportPrivateUsage]
             identity,
         )
         checkpoint = WorkflowCheckpoint(
@@ -1714,6 +1957,56 @@ class TestWorkflowInterruptedIsBaseException:
 
 
 class TestCheckpointValidation:
+    def test_wrapper_identity_includes_code_constants(self):
+        async def plus_one(value: int) -> int:
+            return value + 1
+
+        async def plus_two(value: int) -> int:
+            return value + 2
+
+        first = FunctionType(plus_one.__code__.replace(co_firstlineno=1), globals(), "generated")
+        second = FunctionType(plus_two.__code__.replace(co_firstlineno=1), globals(), "generated")
+        first.__module__ = second.__module__ = "test_module"
+        first.__qualname__ = second.__qualname__ = "generated"
+
+        first_identity, first_is_durable = _get_step_wrapper_identity(first)
+        second_identity, second_is_durable = _get_step_wrapper_identity(second)
+
+        assert first_is_durable is True
+        assert second_is_durable is True
+        assert first_identity != second_identity
+
+    def test_wrapper_identity_includes_defaults_and_closure_state(self):
+        async def template(value: int = 0) -> int:
+            return value
+
+        first_default = FunctionType(template.__code__, globals(), "generated", (1,))
+        second_default = FunctionType(template.__code__, globals(), "generated", (2,))
+        first_default.__module__ = second_default.__module__ = "test_module"
+        first_default.__qualname__ = second_default.__qualname__ = "generated"
+
+        def make(label: str) -> Callable[[int], Awaitable[str]]:
+            async def generated(value: int) -> str:
+                return f"{label}:{value}"
+
+            return generated
+
+        first_closure = make("first")
+        second_closure = make("second")
+
+        assert _get_step_wrapper_identity(first_default)[0] != _get_step_wrapper_identity(second_default)[0]
+        assert _get_step_wrapper_identity(first_closure)[0] != _get_step_wrapper_identity(second_closure)[0]
+
+    def test_wrapper_identity_marks_mutable_closure_state_non_durable(self):
+        state = ["A"]
+
+        async def generated(value: str) -> str:
+            return f"{state[0]}:{value}"
+
+        _, is_durable = _get_step_wrapper_identity(generated)
+
+        assert is_durable is False
+
     async def test_checkpoint_signature_mismatch_raises(self):
         from agent_framework import WorkflowCheckpoint
 
@@ -1750,9 +2043,11 @@ class TestCheckpointValidation:
         automatic_key = ctx._get_automatic_step_cache_key(  # pyright: ignore[reportPrivateUsage]
             "automatic",
             "a" * 64,
+            "b" * 64,
         )
         explicit_key = ctx._get_explicit_step_cache_key(  # pyright: ignore[reportPrivateUsage]
             "explicit",
+            "c" * 64,
             "b" * 64,
         )
         ctx._step_cache = {automatic_key: "auto", explicit_key: "explicit", "legacy::0": "legacy"}
