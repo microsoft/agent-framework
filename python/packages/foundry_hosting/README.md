@@ -268,6 +268,36 @@ and user ID. Consumers must use it as a whole and must not parse it or depend on
 representation. Repeated requests for the same identifier pair restore the saved session.
 Locally, the platform session ID is used unchanged.
 
+### Invocations agent requests and wire compatibility
+
+By default, `POST /invocations` accepts `{"message": "Hi", "options": {}, "stream": false}`. Applications can supply
+a sync or async `parse_request(request)` returning a typed `InvocationRun(messages, options, stream)` to accept their
+own JSON shape and MAF `Message` inputs. A sync or async `prepare_options(request, options)` hook can filter or replace
+a **copy** of this turn's caller options without changing the agent's `default_options`. It must return a mapping
+with string keys. The host rejects reserved platform/session fields, `store`, `extra_body`, and private continuation
+fields after the hook; callers cannot select another sandbox or enable downstream service continuation through
+runtime options. When an agent cannot accept runtime options, `unsupported_options="warn"` (default) logs and ignores
+them; `"ignore"` silently drops them and `"error"` rejects them. For request-scoped factories, unsupported options
+discovered after streaming starts are reported as an SSE `error` event with `status: 400`.
+
+**New default:** non-streaming success is JSON `{"response": "..."}`. Streaming success is real SSE
+`event: delta` with `{"text": "..."}`, followed by `event: done` with the platform sandbox `session_id`.
+The `done` event is sent only after the final MAF `ResponseStream` is finalized and the session is persisted.
+Client validation errors return JSON HTTP 400 before streaming where possible. Provider errors are logged and
+sanitized as JSON HTTP 500 or an SSE `error`; a cross-process ETag conflict is JSON HTTP 409 or an SSE `error`
+with `code: "session_conflict"` and `status: 409`. A stream may emit deltas before an error. The host serializes
+same-session requests in one process, but a CAS conflict can still follow external tool effects in separate
+processes; it does not guarantee exactly-once execution. See the
+[Invocations agent/parser example](../../samples/04-hosting/foundry-hosted-agents/invocations/basic/).
+
+**Deprecated opt-in:** set `InvocationsHostServer(agent, legacy_wire_format=True)` only for existing clients
+that must keep the previous plain-text non-streaming response and raw text-chunk streaming format. The host logs
+and emits a deprecation warning once on construction. Errors are never returned as successful text: non-stream
+failures still use JSON error statuses; a post-start legacy stream failure terminates the stream rather than
+injecting unexpected SSE framing. Migrate all opted-in clients to JSON/SSE; remove the compatibility mode only
+after those callers have migrated and a separate, deliberate breaking-change decision, never by silently
+switching an opted-in deployment.
+
 Both hosts accept `agent_session_store_provider` to select a `StoreProvider[SessionStore]`.
 Session state must support `AgentSession` serialization. Use `register_state_type()` codecs for
 custom types; unsupported live objects fail during persistence. Restored sessions preserve

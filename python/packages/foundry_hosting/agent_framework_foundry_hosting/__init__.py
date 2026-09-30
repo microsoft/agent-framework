@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, Final
 
 if TYPE_CHECKING:
     from ._invocations import InvocationsHostServer
-    from ._request import HostedResponseRequest
+    from ._request import HostedResponseRequest, InvocationRun
     from ._responses import ResponsesHostServer
     from ._scope import FoundryRequestScope
     from ._state_store import (
@@ -36,6 +36,7 @@ _LAZY_EXPORTS: Final[dict[str, str]] = {
     "FoundryRequestScope": "._scope",
     "FoundryToolbox": "._toolbox",
     "HostedResponseRequest": "._request",
+    "InvocationRun": "._request",
     "FunctionApprovalStore": "._state_store",
     "FunctionApprovalStoreProvider": "._state_store",
     "InvocationsHostServer": "._invocations",
@@ -55,6 +56,7 @@ __all__ = [
     "FunctionApprovalStore",
     "FunctionApprovalStoreProvider",
     "HostedResponseRequest",
+    "InvocationRun",
     "InvocationsHostServer",
     "ResponsesHostServer",
     "StoreProvider",

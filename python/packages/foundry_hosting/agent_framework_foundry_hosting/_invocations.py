@@ -2,27 +2,61 @@
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import json
 import logging
 import sys
-from collections.abc import Awaitable, Callable
+import warnings
+import weakref
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
+from contextvars import Token
+from copy import deepcopy
+from typing import cast
 
 from agent_framework import AgentSession, ResponseStream, SessionStore, SupportsAgentRun
 from agent_framework._telemetry import mark_feature_used
-from azure.ai.agentserver.core import FoundryAgentRequestContext, get_request_context
+from azure.ai.agentserver.core import (
+    FoundryAgentRequestContext,
+    get_request_context,
+    reset_request_context,
+    set_request_context,
+)
+from azure.ai.agentserver.core.storage import FoundryStorageConflictError, FoundryStoragePreconditionError
 from azure.ai.agentserver.invocations import InvocationAgentServerHost
 from starlette.requests import Request
-from starlette.responses import Response, StreamingResponse
+from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.types import Receive, Scope, Send
-from typing_extensions import Any, AsyncGenerator
+from typing_extensions import Any
 
-from ._agent_source import is_agent, resolve_agent, validate_agent_source
+from ._agent_source import AgentSource, is_agent, resolve_agent, validate_agent_source
 from ._feature_usage import FeatureIndex
+from ._request import InvocationRun, UnsupportedOptions, validate_request_options, validate_unsupported_options
 from ._scope import FoundryRequestScope
 from ._state_store import AgentSessionStoreProvider, StoreProvider
 
 logger = logging.getLogger(__name__)
+
+InvocationParser = Callable[[Request], InvocationRun | Awaitable[InvocationRun]]
+InvocationOptionsHook = Callable[[Request, dict[str, Any]], Mapping[str, Any] | Awaitable[Mapping[str, Any]]]
+
+
+class _UnsupportedAgentOptions(TypeError):
+    """The agent cannot accept the caller's run options under the selected policy."""
+
+
+def _sse(event: str, data: Mapping[str, Any]) -> str:
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+def _invocation_failure(exc: Exception) -> tuple[str, int, str]:
+    cause: BaseException | None = exc
+    while cause is not None:
+        if isinstance(cause, (FoundryStorageConflictError, FoundryStoragePreconditionError)):
+            return "Another request advanced this agent session; reload before retrying.", 409, "session_conflict"
+        cause = cause.__cause__
+    return "Agent invocation failed.", 500, "invocation_failed"
 
 
 class _InvocationStreamingResponse(StreamingResponse):
@@ -49,14 +83,18 @@ class _InvocationStreamingResponse(StreamingResponse):
 
 
 class InvocationsHostServer(InvocationAgentServerHost):
-    """An invocations server host for an agent."""
+    """Host an agent with durable sessions and application-defined Invocations input."""
 
     def __init__(
         self,
-        agent: SupportsAgentRun | Callable[[], SupportsAgentRun | Awaitable[SupportsAgentRun]],
+        agent: AgentSource,
         *,
         openapi_spec: dict[str, Any] | None = None,
         agent_session_store_provider: StoreProvider[SessionStore] | None = None,
+        parse_request: InvocationParser | None = None,
+        prepare_options: InvocationOptionsHook | None = None,
+        unsupported_options: UnsupportedOptions = "warn",
+        legacy_wire_format: bool = False,
         **kwargs: Any,
     ) -> None:
         """Initialize an InvocationsHostServer.
@@ -68,21 +106,44 @@ class InvocationsHostServer(InvocationAgentServerHost):
             agent_session_store_provider: Provider for conversation session storage. Defaults to Foundry storage
                 when hosted and the SDK's file-backed storage locally. New default stores expire sessions 30 days
                 after their last write. Custom providers control their own retention.
+            parse_request: Optional sync or async parser returning an `InvocationRun` from application JSON.
+                Without one, accepts a JSON object with `message`, optional `options`, and optional `stream`.
+            prepare_options: Optional sync or async hook to filter or replace a copy of caller run options.
+            unsupported_options: `"warn"` (default), `"ignore"`, or `"error"` for agents without runtime options.
+            legacy_wire_format: Opt into the deprecated plain-text response and raw streaming chunks instead of
+                the default JSON response and framed `delta`/`done`/`error` server-sent events.
             **kwargs: Additional keyword arguments.
-
-        This host will expect the request to be a JSON body with a "message" field.
-        The response contains the agent's text, or streamed text when "stream" is true.
         """
         validate_agent_source(agent)
+        if parse_request is not None and not callable(parse_request):
+            raise TypeError("parse_request must be a callable.")
+        if prepare_options is not None and not callable(prepare_options):
+            raise TypeError("prepare_options must be a callable.")
+        if not isinstance(legacy_wire_format, bool):
+            raise TypeError("legacy_wire_format must be a boolean.")
         super().__init__(openapi_spec=openapi_spec, **kwargs)
 
         self._agent = agent
         self._owns_request_agent = not is_agent(agent)
+        self._parse_request = parse_request
+        self._prepare_options = prepare_options
+        self._unsupported_options = validate_unsupported_options(unsupported_options)
+        self._legacy_wire_format = legacy_wire_format
         self._session_store_provider = (
             AgentSessionStoreProvider(store_name="invocation_sessions")
             if agent_session_store_provider is None
             else agent_session_store_provider
         )
+        self._session_locks: weakref.WeakValueDictionary[str | tuple[str, str], asyncio.Lock] = (
+            weakref.WeakValueDictionary()
+        )
+        if legacy_wire_format:
+            message = (
+                "legacy_wire_format=True is deprecated; migrate Invocations clients to JSON responses "
+                "and framed SSE events before removing this compatibility mode."
+            )
+            warnings.warn(message, DeprecationWarning, stacklevel=2)
+            logger.warning("DEPRECATION: %s", message)
         self.invoke_handler(self._handle_invoke)
         mark_feature_used(FeatureIndex.FOUNDRY_HOSTING)
 
@@ -199,50 +260,167 @@ class InvocationsHostServer(InvocationAgentServerHost):
                         f"session persistence also failed: {str(exc) or type(exc).__name__}"
                     ) from exc
 
+    async def _parse(self, request: Request) -> InvocationRun:
+        if self._parse_request is not None:
+            result = self._parse_request(request)
+            parsed = await result if inspect.isawaitable(result) else result
+            if not isinstance(parsed, InvocationRun):
+                raise TypeError("parse_request must return InvocationRun.")
+            return parsed
+
+        payload = await request.json()
+        if not isinstance(payload, dict):
+            raise ValueError("The invocation must be a JSON object.")
+        body = cast(Mapping[str, Any], payload)
+        message = body.get("message")
+        stream = body.get("stream", False)
+        options = body.get("options", {})
+        if not isinstance(message, str):
+            raise ValueError("message must be a string.")
+        if not isinstance(stream, bool):
+            raise ValueError("stream must be a boolean.")
+        if not isinstance(options, dict):
+            raise ValueError("options must be an object.")
+        return InvocationRun(
+            messages=message if stream else [message], options=cast(Mapping[str, Any], options), stream=stream
+        )
+
+    async def _options(self, request: Request, parsed: InvocationRun) -> dict[str, Any]:
+        options = deepcopy(dict(parsed.options))
+        if self._prepare_options is not None:
+            result = self._prepare_options(request, options)
+            if inspect.isawaitable(result):
+                result = await result
+            if not isinstance(result, Mapping) or any(not isinstance(key, str) for key in result):
+                raise TypeError("prepare_options must return a mapping of MAF run options with string keys.")
+            options = deepcopy(dict(result))
+        validate_request_options(options)
+        return options
+
+    def _agent_kwargs(self, agent: SupportsAgentRun, options: dict[str, Any]) -> dict[str, Any]:
+        if not options:
+            return {}
+        try:
+            inspect.signature(agent.run).bind_partial(options=options)
+        except (TypeError, ValueError):
+            if self._unsupported_options == "error":
+                raise _UnsupportedAgentOptions("The hosted agent does not accept caller runtime options.") from None
+            if self._unsupported_options == "warn":
+                logger.warning("Agent doesn't support runtime options. They will be ignored.")
+            return {}
+        return {"options": options}
+
+    @staticmethod
+    async def _close_interrupted_stream(stream: object) -> None:
+        if isinstance(stream, ResponseStream):
+            close = getattr(cast(object, stream), "close", None)
+            if close is None:
+                logger.warning("The installed core cannot close an interrupted agent stream.")
+                return
+        else:
+            close = getattr(stream, "aclose", None)
+        if close is not None:
+            await close()
+
     async def _handle_invoke(self, request: Request) -> Response:
         """Invoke the agent with the given request."""
         context = get_request_context()
         try:
             hosted_scope = self._hosted_scope(request, context) if self.config.is_hosted else None
             partition_key = self._partition_key(context=context, scope=hosted_scope)
-        except Exception as e:
-            return Response(content=str(e), status_code=500)
+        except RuntimeError as exc:
+            logger.error("Failed to resolve Invocations session: %s", exc)
+            return JSONResponse({"error": str(exc)}, status_code=500)
 
-        data = await request.json()
+        try:
+            parsed = await self._parse(request)
+            options = await self._options(request, parsed)
+        except (TypeError, ValueError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        except Exception:
+            logger.exception("Failed to prepare Invocations request")
+            return JSONResponse({"error": "Failed to prepare invocation request."}, status_code=500)
 
-        stream = data.get("stream", False)
-        user_message = data.get("message", None)
-        if user_message is None:
-            error = "Missing 'message' in request"
-            if stream:
-                return StreamingResponse(content=error, status_code=400)
-            return Response(content=error, status_code=400)
-
-        if stream:
+        if parsed.stream:
+            if options and self._unsupported_options == "error" and is_agent(self._agent):
+                try:
+                    self._agent_kwargs(self._agent, options)
+                except _UnsupportedAgentOptions as exc:
+                    return JSONResponse({"error": str(exc)}, status_code=400)
 
             async def stream_response() -> AsyncGenerator[str]:
-                async with (
-                    self._request_session(partition_key, context, hosted_scope=hosted_scope) as session,
-                    self._request_agent() as agent,
-                ):
-                    stream = agent.run(user_message, session=session, stream=True)
-                    try:
-                        async for update in stream:
-                            if update.text:
-                                yield update.text
-                    finally:
-                        if isinstance(stream, ResponseStream):
-                            await stream.close()
-                        else:
-                            close = getattr(stream, "aclose", None)
-                            if close is not None:
-                                await close()
+                token: Token[FoundryAgentRequestContext] | None = set_request_context(context)
+                try:
+                    lock = self._session_locks.setdefault(partition_key, asyncio.Lock())
+                    async with lock, self._request_agent() as agent:
+                        run_kwargs = self._agent_kwargs(agent, options)
+                        async with self._request_session(partition_key, context, hosted_scope=hosted_scope) as session:
+                            stream = agent.run(parsed.messages, session=session, stream=True, **run_kwargs)
+                            completed = False
+                            try:
+                                async for update in stream:
+                                    if update.text:
+                                        frame = (
+                                            update.text
+                                            if self._legacy_wire_format
+                                            else _sse("delta", {"text": update.text})
+                                        )
+                                        # The SDK may close a suspended generator from another task.
+                                        reset_request_context(token)
+                                        token = None
+                                        yield frame
+                                        token = set_request_context(context)
+                                if isinstance(stream, ResponseStream):
+                                    await stream.get_final_response()
+                                completed = True
+                            finally:
+                                if not completed:
+                                    if token is None:
+                                        token = set_request_context(context)
+                                    try:
+                                        await self._close_interrupted_stream(stream)
+                                    except Exception:
+                                        logger.exception("Failed to close interrupted Invocations agent stream")
+                    if not self._legacy_wire_format:
+                        session_id = partition_key[0] if isinstance(partition_key, tuple) else partition_key
+                        if token is not None:
+                            reset_request_context(token)
+                            token = None
+                        yield _sse("done", {"session_id": session_id})
+                except _UnsupportedAgentOptions as exc:
+                    if self._legacy_wire_format:
+                        raise
+                    if token is not None:
+                        reset_request_context(token)
+                        token = None
+                    yield _sse("error", {"message": str(exc), "code": "unsupported_options", "status": 400})
+                except Exception as exc:
+                    logger.exception("Invocations agent stream failed")
+                    if self._legacy_wire_format:
+                        raise
+                    message, status, code = _invocation_failure(exc)
+                    if token is not None:
+                        reset_request_context(token)
+                        token = None
+                    yield _sse("error", {"message": message, "code": code, "status": status})
+                finally:
+                    if token is not None:
+                        reset_request_context(token)
 
             return _InvocationStreamingResponse(stream_response())
 
-        async with (
-            self._request_session(partition_key, context, hosted_scope=hosted_scope) as session,
-            self._request_agent() as agent,
-        ):
-            response = await agent.run([user_message], session=session)
-        return Response(content=response.text)
+        try:
+            lock = self._session_locks.setdefault(partition_key, asyncio.Lock())
+            async with lock, self._request_agent() as agent:
+                run_kwargs = self._agent_kwargs(agent, options)
+                async with self._request_session(partition_key, context, hosted_scope=hosted_scope) as session:
+                    response = await agent.run(parsed.messages, session=session, **run_kwargs)
+            if self._legacy_wire_format:
+                return Response(content=response.text)
+            return JSONResponse({"response": response.text})
+        except _UnsupportedAgentOptions as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        except Exception as exc:
+            logger.exception("Invocations agent request failed")
+            message, status, _ = _invocation_failure(exc)
+            return JSONResponse({"error": message}, status_code=status)

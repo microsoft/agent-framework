@@ -1,21 +1,56 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Request-scoped Responses options and a view for developer hooks."""
+"""Foundry request models and per-turn options for protocol hosts."""
 
 from __future__ import annotations
 
 import inspect
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from copy import deepcopy
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Literal, TypeAlias, cast
 
+from agent_framework import AgentRunInputs, Content, Message
 from azure.ai.agentserver.responses import ResponseContext
 from azure.ai.agentserver.responses.models import CreateResponse, Item
 
 from ._scope import FoundryRequestScope
 
 UnsupportedOptions: TypeAlias = Literal["ignore", "warn", "error"]
+
+
+@dataclass(frozen=True)
+class InvocationRun:
+    """Messages, per-turn options, and streaming intent parsed from an Invocations request.
+
+    Args:
+        messages: MAF message input for this turn, including typed `Message` or `Content` values.
+        options: Caller generation options for this turn, separate from agent defaults.
+        stream: Whether to stream framed SSE events rather than return a JSON response.
+
+    Raises:
+        TypeError: If the messages, options, or streaming intent have invalid types.
+    """
+
+    messages: AgentRunInputs
+    options: Mapping[str, Any] = field(default_factory=lambda: dict[str, Any]())
+    stream: bool = False
+
+    def __post_init__(self) -> None:
+        if not (
+            isinstance(self.messages, (str, Content, Message))
+            or (
+                isinstance(self.messages, Sequence)
+                and all(isinstance(message, (str, Content, Message)) for message in self.messages)
+            )
+        ):
+            raise TypeError("InvocationRun.messages must be a string, Content, Message, or a sequence of them.")
+        if not isinstance(self.options, Mapping) or any(not isinstance(key, str) for key in self.options):
+            raise TypeError("InvocationRun.options must be a mapping with string keys.")
+        if not isinstance(self.stream, bool):
+            raise TypeError("InvocationRun.stream must be a boolean.")
+
 
 _HOST_CONTROLLED_FIELDS = frozenset({
     "agent",
