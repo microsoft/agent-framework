@@ -89,15 +89,5 @@ The provider closes the Cosmos client and its own credential at shutdown;
 request clients are closed after their request, including failed tool entry and
 cancellation.
 
-## Offline checks
-
-From `python/`:
-
-```bash
-uv run pytest samples/04-hosting/foundry-hosted-agents/responses/custom_storage/tests -q
-```
-
-These checks use a fake Cosmos container, not an account. They cover create
-races, stale updates/deletes, per-key ETags, independent snapshots, canonical
-lookup IDs, trusted-scope rejection, and user/sandbox isolation. Live Cosmos
-access and deployment need separately approved resources and permissions.
+Live Cosmos access and deployment need separately approved resources and
+permissions.
