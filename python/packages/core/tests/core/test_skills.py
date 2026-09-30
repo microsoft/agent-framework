@@ -4630,19 +4630,29 @@ class TestSkillScriptRun:
     async def test_annotated_run_override_can_delegate_to_parent(self, script_kind: str) -> None:
         class CustomInline(InlineSkillScript):
             async def run(
-                self, skill: Skill, args: Any = None, ctx: FunctionInvocationContext | None = None, **kwargs: Any
+                self,
+                skill: Skill,
+                args: Any = None,
+                *,
+                context: FunctionInvocationContext | None = None,
+                **kwargs: Any,
             ) -> Any:
-                assert ctx is not None
+                assert context is not None
                 assert kwargs == {}
-                return await super().run(skill, args, context=ctx)
+                return await super().run(skill, args, context=context)
 
         class CustomFile(FileSkillScript):
             async def run(
-                self, skill: Skill, args: Any = None, ctx: FunctionInvocationContext | None = None, **kwargs: Any
+                self,
+                skill: Skill,
+                args: Any = None,
+                *,
+                context: FunctionInvocationContext | None = None,
+                **kwargs: Any,
             ) -> Any:
-                assert ctx is not None
+                assert context is not None
                 assert kwargs == {}
-                return await super().run(skill, args, context=ctx)
+                return await super().run(skill, args, context=context)
 
         def callback(value: str, ctx: FunctionInvocationContext) -> Any:
             return value, ctx
