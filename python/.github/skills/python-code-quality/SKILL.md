@@ -99,6 +99,9 @@ Following the "too many type checkers" approach, type checkers are split by targ
   `# type: ignore[code]`. Suppress relaxed-pyright friction with `# pyright: ignore[rule]`.
 - **Samples** add `pyright` to `pyrefly` + `ty` — mypy/zuban can't resolve script-style
   sample layouts (numeric-prefixed dirs, duplicate `main.py`), but pyright handles them.
+- `pyrefly.samples.toml` enables fallback lookup for standalone sibling imports. For a
+  targeted `ty` check of the excluded hosted claw harness, add its deployment directory
+  with `--extra-search-path samples/02-agents/harness/build_your_own_claw/claw_step04_production_ready`.
 - The strict source-pyright (`[tool.pyright]`) enforces `reportUnnecessaryTypeIgnoreComment`
   and excludes tests/samples; the relaxed test/sample pyright configs do not flag unnecessary
   ignores.

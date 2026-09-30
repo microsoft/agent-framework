@@ -29,6 +29,22 @@ The Responses host continues regular agents through its existing session store a
 existing checkpoint store. A callable does not make arbitrary instance fields persistent; state needed by later
 requests must remain in the supported stores.
 
+For Responses integrations, use a factory when an MCP connection, provider, tool
+cache or client carries request identity. A Toolbox's streamable-HTTP writer
+inherits the context of the request that **connects** it; sharing that connection
+across callers can retain the first call ID. Create the Toolbox and its skills
+provider inside the factory, not at process startup.
+
+Factory agents are entered/exited for each request, including failed entry and
+cancellation. `Agent` manages context-managed clients and MCP tools, but it does
+not automatically manage every context provider or external credential. The
+[integration samples](../../samples/04-hosting/foundry-hosted-agents/) explicitly
+own their SDK transports, credentials and providers: Search is request-owned;
+Memory binds a fresh provider/project client to the trusted user and current call;
+custom Cosmos state uses user **and** sandbox namespaces with conditional writes.
+Only close resources that the factory creates and owns, never a supplied shared
+client or somebody else's credential.
+
 ## Responses agent history and storage
 
 The caller's `POST /responses` **`store` flag** controls whether the *outer* response is retrievable and whether
