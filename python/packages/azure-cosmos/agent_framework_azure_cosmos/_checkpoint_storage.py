@@ -9,8 +9,12 @@ from typing import Any, TypedDict
 
 from agent_framework._settings import SecretString, load_settings
 from agent_framework._telemetry import get_user_agent, mark_feature_used
-from agent_framework._workflows._checkpoint import CheckpointID, WorkflowCheckpoint
-from agent_framework._workflows._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
+from agent_framework._workflows._checkpoint import (
+    CheckpointID,
+    WorkflowCheckpoint,
+    _encode_checkpoint_for_storage,  # pyright: ignore[reportPrivateUsage]
+)
+from agent_framework._workflows._checkpoint_encoding import decode_checkpoint_value
 from agent_framework.exceptions import WorkflowCheckpointException
 from azure.core.credentials import TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
@@ -225,19 +229,8 @@ class CosmosCheckpointStorage:
         """
         mark_feature_used(FeatureIndex.AZURE_COSMOS)
 
-        checkpoint_dict = checkpoint.to_dict()
-        # Fail at save time if encoding or restore validation fails, matching FileCheckpointStorage.
-        try:
-            encoded = encode_checkpoint_value(checkpoint_dict)
-            decode_checkpoint_value(encoded, allowed_types=self._allowed_types)
-        except WorkflowCheckpointException:
-            raise
-        except Exception as ex:
-            raise WorkflowCheckpointException(
-                f"Checkpoint {checkpoint.checkpoint_id} cannot be encoded or restored under "
-                "this storage's allowed types; refusing to save."
-            ) from ex
-
+        # Validate before resolving the container, so a refused save creates no Cosmos resources.
+        encoded = _encode_checkpoint_for_storage(checkpoint, self._allowed_types)
         await self._ensure_container_proxy()
 
         document: dict[str, Any] = {
