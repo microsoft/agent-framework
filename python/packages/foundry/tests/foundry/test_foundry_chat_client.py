@@ -2224,3 +2224,27 @@ async def test_shared_chat_client_keeps_concurrent_agent_runs_isolated(
     assert first_session.service_session_id == "response-first"
     assert second_session.service_session_id == "response-second"
     assert transport.max_active_requests == 2
+
+
+async def test_foundry_chat_client_replays_compaction_item_when_store_false() -> None:
+    """FoundryChatClient forwards context_management and replays the latest compaction item statelessly."""
+    mock_project_client = MagicMock()
+    mock_project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=mock_project_client, model=_TEST_FOUNDRY_MODEL)
+    context_management = [{"type": "compaction", "compact_threshold": 200000}]
+
+    _, run_options, _ = await client._prepare_request(
+        [
+            Message(role="user", contents=["Earlier question"]),
+            Message(
+                role="assistant",
+                contents=[Content.from_compaction(id="cmp_1", protected_data="state"), "Earlier answer"],
+            ),
+            Message(role="user", contents=["Next question"]),
+        ],
+        {"store": False, "context_management": context_management},
+    )
+
+    assert run_options["context_management"] == context_management
+    assert run_options["input"][0] == {"type": "compaction", "encrypted_content": "state", "id": "cmp_1"}
+    assert "Earlier question" not in str(run_options["input"])
