@@ -491,7 +491,21 @@ class ThreadItemConverter:
         # End-of-turn is only used for UI hints - skip it
         return None
 
-    def _structured_input_to_input(self, item: StructuredInputItem) -> Message:
+    async def structured_input_to_input(self, item: StructuredInputItem) -> Message | list[Message] | None:
+        """Convert structured-input status and answers to Agent Framework Message(s).
+
+        This method is called internally by `to_agent_input()`. Override this method
+        to customize formatting or redact answers, or return None to skip the item.
+
+        Args:
+            item: The ChatKit structured input item to convert.
+
+        Returns:
+            A Message with user role, a list of messages, or None to skip.
+
+        Note:
+            Use `to_agent_input()` to convert thread items with proper message ordering.
+        """
         lines: list[str] = []
         for structured_input in item.inputs:
             answer = structured_input.answer
@@ -556,7 +570,8 @@ class ThreadItemConverter:
                 # TODO(evmattso): Implement generated image handling in a future PR
                 return []
             case StructuredInputItem():
-                return [self._structured_input_to_input(item)]
+                out = await self.structured_input_to_input(item) or []
+                return out if isinstance(out, list) else [out]
             case _:
                 # Unknown ThreadItem variant (e.g. types added in newer chatkit versions).
                 # Skip rather than fail so we remain forward-compatible with chatkit upgrades.
