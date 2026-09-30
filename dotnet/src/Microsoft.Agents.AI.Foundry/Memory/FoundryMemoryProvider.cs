@@ -156,6 +156,11 @@ public sealed class FoundryMemoryProvider : AIContextProvider
                 }
             }
 
+            if (outputMessageText is null)
+            {
+                return new AIContext();
+            }
+
             return new AIContext
             {
                 Messages = [new ChatMessage(ChatRole.User, outputMessageText)]

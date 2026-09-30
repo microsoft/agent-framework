@@ -115,7 +115,7 @@ internal sealed class MockHttpMessageHandler : HttpMessageHandler
         string path = request.RequestUri?.AbsolutePath ?? "";
 
         // Route based on path and method
-        if (path.Contains("/memory-stores/") && path.Contains("/search") && request.Method == HttpMethod.Post)
+        if (path.Contains("/memory_stores/") && path.Contains(":search_memories") && request.Method == HttpMethod.Post)
         {
             return CreateResponse(this._searchStatusCode, this._searchMemoriesResponse);
         }
