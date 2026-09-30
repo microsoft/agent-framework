@@ -146,8 +146,8 @@ class RunnerImpl:
             # Propagate errors from iteration, but first surface any pending events
             try:
                 await iteration_task
-            except Exception:
-                # Discard pending state writes from the failed superstep
+            except (Exception, asyncio.CancelledError):
+                # Discard pending state writes from the failed or cancelled superstep
                 self._state.discard()
                 # Make sure failure-related events (like ExecutorFailedEvent) are surfaced
                 if await self._ctx.has_events():

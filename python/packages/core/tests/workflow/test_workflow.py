@@ -678,6 +678,8 @@ class FlakyStateExecutor(Executor):
     ) -> None:
         if message.fail:
             ctx.set_state("secret", "leaked-from-failed-run")
+            # Small delay to ensure cancellation can happen after write is staged
+            await asyncio.sleep(0.01)
             raise RuntimeError("simulated transient failure")
 
         await ctx.yield_output("ok")
@@ -805,6 +807,50 @@ async def test_workflow_discards_pending_state_after_fanout_failure():
 
     committed_state = workflow._runner.state.export_state()
     assert "leak_key" not in committed_state
+
+
+async def test_workflow_discards_pending_state_on_cancellation():
+    """Test that pending state from a cancelled superstep is discarded and not committed.
+
+    Regression test for PR #8819 review comment: asyncio.CancelledError inherits from
+    BaseException (not Exception since Python 3.8), so `except Exception:` never catches it.
+    When a superstep's task is cancelled, the discard() call must still run to prevent
+    pending writes from leaking into the next run.
+
+    This test creates a workflow that will stage a state write, then yields control
+    before completing (via a slow executor). We cancel the task while it's mid-superstep
+    to ensure the write is staged and the runner's except block is hit.
+    """
+    # Use the existing FlakyStateExecutor which stages a write then raises
+    workflow = WorkflowBuilder(start_executor=FlakyStateExecutor(id="flaky")).build()
+
+    # Create a task that will stage a state write then fail
+    async def _run_failing():
+        return await workflow.run(FlakyMessage(fail=True))
+
+    run_task = asyncio.create_task(_run_failing())
+
+    # Yield to let the task start and stage its write
+    await asyncio.sleep(0)
+
+    # Cancel the task while it's mid-superstep (after write is staged but before error handling completes)
+    run_task.cancel()
+
+    # Await the task, confirming CancelledError is raised (discard() must not swallow it)
+    with pytest.raises(asyncio.CancelledError):
+        await run_task
+
+    # Verify the cancelled run did not leave the staged write pending
+    assert workflow._runner.state._pending == {}
+
+    # Second run: succeeds without touching "secret"
+    result = await workflow.run(FlakyMessage(fail=False))
+    assert result.get_final_state() == WorkflowRunState.IDLE
+    assert result.get_outputs() == ["ok"]
+
+    # Verify the leaked state from the cancelled run is NOT in committed state
+    committed_state = workflow._runner.state.export_state()
+    assert "secret" not in committed_state
 
 
 async def test_workflow_checkpoint_runtime_only_configuration(
