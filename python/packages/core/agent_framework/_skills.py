@@ -83,10 +83,12 @@ from typing import (
 from urllib.parse import unquote
 
 import yaml
+from typing_extensions import Sentinel
 from yaml.nodes import MappingNode, Node, ScalarNode
 
 from ._feature_stage import ExperimentalFeature, experimental
 from ._filesystem import _is_link_or_reparse_point  # pyright: ignore[reportPrivateUsage]
+from ._middleware import FunctionInvocationContext
 from ._sessions import ContextProvider
 from ._telemetry import FeatureIndex, mark_feature_used
 from ._tools import ApprovalMode, FunctionTool
@@ -97,11 +99,13 @@ if TYPE_CHECKING:
     from pydantic import AnyUrl
 
     from ._agents import SupportsAgentRun
-    from ._middleware import FunctionInvocationContext
     from ._sessions import AgentSession, SessionContext
     from ._types import Content
 
 logger = logging.getLogger(__name__)
+
+# Distinguish an omitted keyword from an explicit application ``context=None``.
+_UNSET_CONTEXT: Any = Sentinel("_UNSET_CONTEXT")
 
 # region Models
 
@@ -398,6 +402,13 @@ class SkillScript(ABC):
     async def run(self, skill: Skill, args: dict[str, Any] | list[str] | None = None, **kwargs: Any) -> Any:
         """Run this script.
 
+        Implementations can receive the enclosing ``run_skill_script`` invocation
+        by declaring a keyword-bindable ``FunctionInvocationContext`` parameter
+        after ``skill`` and ``args``. Without that annotation, host runtime
+        values are passed as individual keyword arguments. The invocation's
+        ``kwargs`` contain host values; its ``arguments`` contain the outer
+        tool-call arguments, not just the script arguments.
+
         Args:
             skill: The skill that owns this script.
             args: Optional arguments for the script, provided by the
@@ -411,27 +422,6 @@ class SkillScript(ABC):
             The script execution result.
         """
 
-    async def run_with_context(
-        self,
-        skill: Skill,
-        args: dict[str, Any] | list[str] | None = None,
-        *,
-        context: FunctionInvocationContext,
-    ) -> Any:
-        """Run a script with access to its enclosing tool invocation context.
-
-        Args:
-            skill: The skill that owns this script.
-            args: Model-supplied script arguments.
-            context: The enclosing ``run_skill_script`` invocation. Its ``kwargs``
-                contain host runtime values; its ``arguments`` contain the outer
-                tool-call arguments, not just the script arguments.
-
-        Returns:
-            The script execution result.
-        """
-        return await self.run(skill, args, **context.kwargs)
-
 
 def _find_context_parameter(
     function: Callable[..., Any], signature: inspect.Signature, *, script_name: str
@@ -442,8 +432,6 @@ def _find_context_parameter(
         ValueError: If multiple context parameters are declared, or the context
             parameter cannot be passed by keyword.
     """
-    from ._middleware import FunctionInvocationContext
-
     try:
         type_hints = get_type_hints(function, include_extras=True)
     except (AttributeError, NameError, TypeError):
@@ -479,6 +467,27 @@ def _find_context_parameter(
         raise ValueError(f"Context parameter '{param.name}' on script '{script_name}' must accept a keyword.")
 
     return param.name
+
+
+def _find_run_context_parameter(script_type: type[SkillScript]) -> str | None:
+    """Find an opted-in context parameter on a script's ``run`` method."""
+    try:
+        signature = inspect.signature(script_type.run)
+    except (TypeError, ValueError):
+        logger.debug("Could not inspect run for script '%s'; calling without context.", script_type.__name__)
+        return None
+
+    context_name = _find_context_parameter(script_type.run, signature, script_name=script_type.__name__)
+    if context_name is not None:
+        # Reject context parameters that replace skill or args.
+        try:
+            signature.bind(None, None, None, **{context_name: None})
+        except TypeError as exc:
+            raise ValueError(
+                f"Context parameter '{context_name}' on script '{script_type.__name__}' "
+                f"must support run(skill, args, {context_name}=...) without replacing skill or args."
+            ) from exc
+    return context_name
 
 
 class InlineSkillScript(SkillScript):
@@ -568,7 +577,14 @@ class InlineSkillScript(SkillScript):
             self._parameters_schema_resolved = True
         return self._parameters_schema
 
-    async def run(self, skill: Skill, args: dict[str, Any] | list[str] | str | None = None, **kwargs: Any) -> Any:
+    async def run(
+        self,
+        skill: Skill,
+        args: dict[str, Any] | list[str] | str | None = None,
+        *,
+        context: FunctionInvocationContext | None = _UNSET_CONTEXT,
+        **kwargs: Any,
+    ) -> Any:
         """Run the script by invoking the callable in-process.
 
         When an ``argument_parser`` is configured, it is applied to
@@ -584,6 +600,8 @@ class InlineSkillScript(SkillScript):
                 be a ``dict`` or ``None``; a ``list`` raises
                 :class:`TypeError` because inline scripts bind arguments by
                 keyword name.
+            context: The enclosing invocation when supplied by the provider.
+                Other values are forwarded to the callback unchanged.
             **kwargs: Runtime keyword arguments forwarded only to script
                 functions that accept ``**kwargs``.
 
@@ -595,60 +613,40 @@ class InlineSkillScript(SkillScript):
                 ``list``.  A leftover ``str`` means no ``argument_parser``
                 converted it; a ``list`` is array-style and only supported
                 for file-based scripts.
+            ValueError: If model arguments supply the injected context parameter.
         """
-        args = self._parse_arguments(args)
-
-        # Forward runtime kwargs only when the callback supports them.
-        if self._accepts_kwargs:  # ruff:ignore[if-else-block-instead-of-if-exp]
-            result = self.function(**(args or {}), **kwargs)
-        else:
-            result = self.function(**(args or {}))
-
-        # Support both synchronous and asynchronous callbacks.
-        if inspect.isawaitable(result):
-            return await result
-
-        return result
-
-    async def run_with_context(
-        self,
-        skill: Skill,
-        args: dict[str, Any] | list[str] | str | None = None,
-        *,
-        context: FunctionInvocationContext,
-    ) -> Any:
-        """Run the script, injecting ``context`` if the callable declares a context parameter.
-
-        Declare a ``FunctionInvocationContext`` parameter on the callable to
-        receive host values separately from model arguments.
-
-        Args:
-            skill: The skill that owns this script.
-            args: Model-supplied script arguments.
-            context: The enclosing tool invocation, passed through unchanged.
-
-        Returns:
-            The script execution result.
-
-        Raises:
-            TypeError: If ``args`` (after parsing) is a ``str`` or a ``list``.
-            ValueError: If ``args`` supplies the context parameter.
-        """
-        # Preserve legacy callbacks and subclass overrides.
-        if self._context_parameter_name is None or type(self).run is not InlineSkillScript.run:
-            return await self.run(skill, args, **context.kwargs)
-
         call_args = self._parse_arguments(args) or {}
 
-        # Neither model arguments nor parser output may supply the context.
-        if self._context_parameter_name in call_args:
+        # Unannotated overrides may forward application "context" values, even invocation objects.
+        invocation = (
+            context
+            if isinstance(context, FunctionInvocationContext) and _find_run_context_parameter(type(self)) is not None
+            else None
+        )
+
+        runtime_kwargs: Mapping[str, Any] = {}
+        if invocation is None:
+            # Preserve explicit application "context" values as data.
+            if context is not _UNSET_CONTEXT:
+                kwargs = {"context": context, **kwargs}
+        elif self._context_parameter_name is None:
+            # Callback without context: pass host values as separate keywords.
+            runtime_kwargs = invocation.kwargs
+        elif self._context_parameter_name in call_args:
+            # Reject model arguments that impersonate runtime context.
             raise ValueError(
                 f"Argument '{self._context_parameter_name}' for inline script '{self.name}' "
                 "is reserved for runtime context injection."
             )
+        else:
+            # Opted-in callback: inject without changing model arguments.
+            call_args = {**call_args, self._context_parameter_name: invocation}
 
-        # Inject without mutating arguments or expanding host context.kwargs.
-        result = self.function(**call_args, **{self._context_parameter_name: context})
+        # Keep separate keyword expansions so duplicate model and host names still fail.
+        if self._accepts_kwargs:
+            result = self.function(**call_args, **runtime_kwargs, **kwargs)
+        else:
+            result = self.function(**call_args)
 
         # Support both synchronous and asynchronous callbacks.
         if inspect.isawaitable(result):
@@ -760,13 +758,21 @@ class FileSkillScript(SkillScript):
         """
         return {"type": "array", "items": {"type": "string"}}
 
-    async def run(self, skill: Skill, args: dict[str, Any] | list[str] | None = None, **kwargs: Any) -> Any:
+    async def run(
+        self,
+        skill: Skill,
+        args: dict[str, Any] | list[str] | None = None,
+        *,
+        context: FunctionInvocationContext | None = None,
+        **kwargs: Any,
+    ) -> Any:
         """Run the script by delegating to the configured runner.
 
         Args:
             skill: The skill that owns this script.  Must be a
                 :class:`FileSkill`.
             args: Optional arguments for the script.
+            context: Optional enclosing tool invocation, passed to context-aware runners.
             **kwargs: Additional runtime keyword arguments (unused).
 
         Returns:
@@ -776,45 +782,6 @@ class FileSkillScript(SkillScript):
             TypeError: If ``skill`` is not a :class:`FileSkill`.
             ValueError: If no runner was provided or the discovered file is no longer valid.
         """
-        return await self._run_file_runner(skill, args, {})
-
-    async def run_with_context(
-        self,
-        skill: Skill,
-        args: dict[str, Any] | list[str] | None = None,
-        *,
-        context: FunctionInvocationContext,
-    ) -> Any:
-        """Run the file script, injecting context only when the runner opts in.
-
-        Runners should declare a defaulted ``FunctionInvocationContext``
-        parameter to receive host context separately from script arguments.
-
-        Args:
-            skill: The file-based skill that owns this script.
-            args: Model-supplied script arguments, passed through unchanged.
-            context: The enclosing tool invocation, passed through unchanged.
-
-        Returns:
-            The runner's execution result.
-
-        Raises:
-            TypeError: If ``skill`` is not a :class:`FileSkill`.
-            ValueError: If no runner was provided or the discovered file is no longer valid.
-        """
-        # Legacy path: the runner has no context parameter, or a subclass customizes run().
-        if self._context_parameter_name is None or type(self).run is not FileSkillScript.run:
-            return await self.run(skill, args, **context.kwargs)
-
-        return await self._run_file_runner(skill, args, {self._context_parameter_name: context})
-
-    async def _run_file_runner(
-        self,
-        skill: Skill,
-        args: dict[str, Any] | list[str] | None,
-        runner_kwargs: Mapping[str, Any],
-    ) -> Any:
-        """Validate the file and invoke its runner with only explicitly supplied runner arguments."""
         # Require a file-backed skill for runner execution.
         if not isinstance(skill, FileSkill):
             raise TypeError(
@@ -835,8 +802,17 @@ class FileSkillScript(SkillScript):
                 "Script",
             )
 
-        # The protocol declares only three arguments; the context slot was validated at construction.
+        # The protocol declares only three arguments; the runner's context slot was validated at construction.
         runner = cast(Callable[..., Any], self._runner)
+
+        # Unannotated overrides may forward application "context" values, even invocation objects.
+        runner_kwargs: dict[str, FunctionInvocationContext] = {}
+        if (
+            self._context_parameter_name is not None
+            and isinstance(context, FunctionInvocationContext)
+            and _find_run_context_parameter(type(self)) is not None
+        ):
+            runner_kwargs[self._context_parameter_name] = context
 
         # E.g. runner(skill, self, ["input.txt"], ctx=context); host values stay in context.kwargs.
         result = runner(skill, self, args, **runner_kwargs)
@@ -853,7 +829,7 @@ class FileSkillScript(SkillScript):
         try:
             signature = inspect.signature(runner)
         except (TypeError, ValueError):
-            logger.debug("Could not inspect runner for script '%s'; using legacy invocation.", script_name)
+            logger.debug("Could not inspect runner for script '%s'; calling without context.", script_name)
             return None
 
         function: Callable[..., Any] = runner
@@ -2925,8 +2901,8 @@ class SkillsProvider(ContextProvider):
         """Run a named script from a skill.
 
         Resolves the skill and script by name, then delegates execution
-        to :meth:`SkillScript.run_with_context`, or to :meth:`SkillScript.run`
-        when a subclass's ``run_with_context`` does not support the context-aware call.
+        to :meth:`SkillScript.run`. Implementations can opt into receiving the
+        invocation with an annotated ``FunctionInvocationContext`` parameter.
 
         Args:
             skills: The skills to look up the skill from.
@@ -2934,8 +2910,8 @@ class SkillsProvider(ContextProvider):
             script_name: The script name to look up (case-insensitive).
             args: Optional arguments for the script, provided by the
                 agent/LLM.
-            context: The enclosing tool invocation, forwarded unchanged to the
-                script through :meth:`SkillScript.run_with_context`.
+            context: The enclosing tool invocation, passed to an annotated
+                parameter or unpacked as host runtime keyword arguments.
 
         Returns:
             The script result. Returns a user-facing error string for
@@ -2961,30 +2937,16 @@ class SkillsProvider(ContextProvider):
             return f"Error: Script '{script_name}' not found in skill '{skill_name}'."
 
         try:
-            # An unrelated pre-existing run_with_context override may not accept the context.
-            if self._accepts_invocation_context(script):
-                return await script.run_with_context(skill, args, context=context)
+            context_name = _find_run_context_parameter(type(script))
+            if context_name is not None:
+                # Opted-in run: pass the whole invocation.
+                return await script.run(skill, args, **{context_name: context})
 
+            # Unannotated run: pass host values individually.
             return await script.run(skill, args, **context.kwargs)
         except Exception:
             logger.exception("Error running script '%s' in skill '%s'", script_name, skill_name)
             raise
-
-    @staticmethod
-    def _accepts_invocation_context(script: SkillScript) -> bool:
-        """Return whether ``run_with_context`` explicitly accepts context and supports the provider's call."""
-        try:
-            signature = inspect.signature(script.run_with_context)
-            signature.bind(None, None, context=None)
-        except (TypeError, ValueError):
-            logger.debug("Cannot bind context-aware call for script '%s'; using legacy invocation.", script.name)
-            return False
-
-        context_param = signature.parameters.get("context")
-        return context_param is not None and context_param.kind in (
-            inspect.Parameter.POSITIONAL_OR_KEYWORD,
-            inspect.Parameter.KEYWORD_ONLY,
-        )
 
     async def _read_skill_resource(
         self,

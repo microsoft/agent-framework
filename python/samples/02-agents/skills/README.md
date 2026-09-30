@@ -67,7 +67,11 @@ should accept `FunctionInvocationContext` to read those values from
   Only model arguments are forwarded to the subprocess; context is not
   automatically added to CLI arguments or environment variables.
 
-`SkillsProvider` injects the enclosing tool invocation through `run_with_context(...)`.
+`SkillsProvider` injects the enclosing tool invocation through `run(...)`. Custom
+`SkillScript` implementations opt in with a keyword-bindable
+`FunctionInvocationContext` parameter, such as
+`ctx: FunctionInvocationContext | None = None`. Unannotated overrides keep
+receiving host values as individual keyword arguments.
 
 ## Prerequisites
 
