@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from mcp import MCPError, types
 from mcp.client.session import ClientSession
-from pydantic import AnyUrl, BaseModel
+from pydantic import BaseModel
 
 from agent_framework import (
     Agent,
@@ -702,7 +702,7 @@ def test_mcp_tool_str_and_parse_prompt_result_rich_content() -> None:
                 content=types.EmbeddedResource(
                     type="resource",
                     resource=types.TextResourceContents(
-                        uri=AnyUrl("file://prompt.txt"),
+                        uri="file://prompt.txt",
                         mime_type="text/plain",
                         text="Embedded prompt",
                     ),
@@ -713,7 +713,7 @@ def test_mcp_tool_str_and_parse_prompt_result_rich_content() -> None:
                 content=types.EmbeddedResource(
                     type="resource",
                     resource=types.BlobResourceContents(
-                        uri=AnyUrl("file://prompt.bin"),
+                        uri="file://prompt.bin",
                         mime_type="application/pdf",
                         blob="ZGF0YQ==",
                     ),
@@ -822,7 +822,7 @@ def test_parse_tool_result_from_mcp_blob_plain_base64():
             types.EmbeddedResource(
                 type="resource",
                 resource=types.BlobResourceContents(
-                    uri=AnyUrl("file://test.bin"),
+                    uri="file://test.bin",
                     mime_type="application/pdf",
                     blob="dGVzdCBkYXRh",
                 ),
@@ -844,14 +844,14 @@ def test_parse_tool_result_from_mcp_resource_link_text_resource_and_unknown():
         content=[
             types.ResourceLink(
                 type="resource_link",
-                uri=AnyUrl("https://example.com/resource"),
+                uri="https://example.com/resource",
                 name="resource",
                 mime_type="application/json",
             ),
             types.EmbeddedResource(
                 type="resource",
                 resource=types.TextResourceContents(
-                    uri=AnyUrl("file://prompt.txt"),
+                    uri="file://prompt.txt",
                     mime_type="text/plain",
                     text="Embedded result",
                 ),
@@ -1066,7 +1066,7 @@ def test_mcp_host_payload_size_boundary_uri_serialization_and_early_abort(
         content=[
             types.ResourceLink(
                 type="resource_link",
-                uri=AnyUrl("file:///abc"),
+                uri="file:///abc",
                 name="resource",
             )
         ]
@@ -1243,7 +1243,7 @@ async def test_oversized_mcp_error_preserves_independently_bounded_meta() -> Non
 def test_mcp_result_meta_has_independent_boundary_and_early_abort(monkeypatch: pytest.MonkeyPatch) -> None:
     mcp_result = types.CallToolResult(
         content=[types.TextContent(type="text", text="ok")],
-        _meta={"source": "server", "uri": AnyUrl("https://example.test/resource")},
+        _meta={"source": "server", "uri": "https://example.test/resource"},
     )
     expected = {"source": "server", "uri": "https://example.test/resource"}
     encoded_size = len(json.dumps(expected).encode("utf-8"))
@@ -1704,7 +1704,7 @@ def test_mcp_content_types_to_ai_content_resource_link():
     """Test conversion of MCP resource link to AI content."""
     mcp_content = types.ResourceLink(
         type="resource_link",
-        uri=AnyUrl("https://example.com/resource"),
+        uri="https://example.com/resource",
         name="test_resource",
         mime_type="application/json",
     )
@@ -1719,7 +1719,7 @@ def test_mcp_content_types_to_ai_content_resource_link():
 def test_mcp_content_types_to_ai_content_embedded_resource_text():
     """Test conversion of MCP embedded text resource to AI content."""
     text_resource = types.TextResourceContents(
-        uri=AnyUrl("file://test.txt"),
+        uri="file://test.txt",
         mime_type="text/plain",
         text="Embedded text content",
     )
@@ -1735,7 +1735,7 @@ def test_mcp_content_types_to_ai_content_embedded_resource_blob():
     """Test conversion of MCP embedded blob resource to AI content."""
     # Use a proper data URI in the blob field since that's what the MCP implementation expects
     blob_resource = types.BlobResourceContents(
-        uri=AnyUrl("file://test.bin"),
+        uri="file://test.bin",
         mime_type="application/octet-stream",
         blob="data:application/octet-stream;base64,dGVzdCBkYXRh",
     )
@@ -8458,10 +8458,10 @@ async def test_mcp_streamable_http_tool_header_provider_serializes_concurrent_ca
 # region: MCP long-running task (SEP-2663) tests
 
 
-def _utc_now() -> Any:
+def _utc_now() -> str:
     from datetime import datetime, timezone
 
-    return datetime.now(timezone.utc)
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _make_task_snapshot(
@@ -8546,7 +8546,7 @@ def _send_request_dispatcher(*responses_by_method: tuple[str, Any]) -> Any:
         queues[method].append(response)
 
     async def _dispatch(request: Any, _result_type: Any, *_args: Any, **_kw: Any) -> Any:
-        method = getattr(request.root, "method", None) or getattr(request, "method", None)
+        method = getattr(request, "method", None) or getattr(request, "method", None)
         queue = queues.get(method)  # type: ignore[arg-type, call-overload]  # pyrefly: ignore[bad-argument-type]
         if not queue:
             raise AssertionError(f"No mocked send_request response for method '{method}'.")
@@ -8798,7 +8798,7 @@ async def test_call_tool_as_task_default_ttl_propagates() -> None:
 
     async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
         captured.append(request)
-        method = request.root.method
+        method = request.method
         if method == "tools/call":
             return _make_create_task_result()
         if method == "tasks/get":
@@ -8812,9 +8812,9 @@ async def test_call_tool_as_task_default_ttl_propagates() -> None:
     await tool.call_tool("slow_op")
 
     create_req = captured[0]
-    assert create_req.root.method == "tools/call"
-    assert create_req.root.params.task is not None
-    assert create_req.root.params.task.ttl == 7 * 60 * 1000
+    assert create_req.method == "tools/call"
+    assert create_req.params.task is not None
+    assert create_req.params.task.ttl == 7 * 60 * 1000
 
 
 async def test_call_tool_as_task_sends_empty_task_metadata_when_ttl_none() -> None:
@@ -8826,7 +8826,7 @@ async def test_call_tool_as_task_sends_empty_task_metadata_when_ttl_none() -> No
 
     async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
         captured.append(request)
-        method = request.root.method
+        method = request.method
         if method == "tools/call":
             return _make_create_task_result()
         if method == "tasks/get":
@@ -8840,9 +8840,9 @@ async def test_call_tool_as_task_sends_empty_task_metadata_when_ttl_none() -> No
     await tool.call_tool("slow_op")
 
     create_req = captured[0]
-    assert create_req.root.method == "tools/call"
-    assert create_req.root.params.task is not None
-    assert create_req.root.params.task.ttl is None
+    assert create_req.method == "tools/call"
+    assert create_req.params.task is not None
+    assert create_req.params.task.ttl is None
 
 
 async def test_call_tool_skips_task_path_for_optional_and_forbidden() -> None:
@@ -9037,7 +9037,7 @@ async def test_call_tool_as_task_local_cancellation_fires_remote_cancel(
     create_seen = asyncio.Event()
 
     async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
-        method = request.root.method
+        method = request.method
         if method == "tools/call":
             create_seen.set()
             return _make_create_task_result()
@@ -9084,7 +9084,7 @@ async def test_call_tool_as_task_cancellation_suppressed_when_disabled(
 
     async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
         nonlocal cancel_called
-        method = request.root.method
+        method = request.method
         if method == "tools/call":
             create_seen.set()
             return _make_create_task_result()
@@ -9123,12 +9123,12 @@ async def test_call_tool_as_task_reconnects_during_poll(monkeypatch: pytest.Monk
 
     async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
         nonlocal poll_calls
-        method = request.root.method
+        method = request.method
         if method == "tools/call":
             return _make_create_task_result(task_id="abc")
         if method == "tasks/get":
             poll_calls += 1
-            assert request.root.params.task_id == "abc"
+            assert request.params.task_id == "abc"
             if poll_calls == 1:
                 raise ClosedResourceError
             return _make_task_snapshot(task_id="abc", status="completed")
@@ -9155,7 +9155,7 @@ async def test_call_tool_as_task_reconnects_during_poll(monkeypatch: pytest.Monk
         sum(
             1  # type: ignore[misc]
             for c in tool.session.send_request.await_args_list  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
-            if c.args[0].root.method == "tools/call"
+            if c.args[0].method == "tools/call"
         )
         == 1
     )
@@ -9173,7 +9173,7 @@ async def test_call_tool_as_task_second_disconnect_raises_connection_lost(
     tool = _make_task_tool()
 
     async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
-        method = request.root.method
+        method = request.method
         if method == "tools/call":
             return _make_create_task_result(task_id="abc")
         if method == "tasks/get":
@@ -9230,7 +9230,7 @@ async def test_fetch_task_result_reconnects_during_fetch() -> None:
 
     async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
         nonlocal fetch_calls
-        method = request.root.method
+        method = request.method
         if method == "tools/call":
             return _make_create_task_result(task_id="r1")
         if method == "tasks/get":
@@ -9268,7 +9268,7 @@ async def test_fetch_task_result_second_disconnect_raises_task_state_unknown_and
 
     async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
         nonlocal cancel_called
-        method = request.root.method
+        method = request.method
         if method == "tools/call":
             return _make_create_task_result(task_id="r2")
         if method == "tasks/get":
@@ -9323,7 +9323,7 @@ async def test_call_tool_as_task_max_wait_exceeded_raises_and_cancels(monkeypatc
 
     async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
         nonlocal cancel_called
-        method = request.root.method
+        method = request.method
         if method == "tools/call":
             return _make_create_task_result(task_id="mw")
         if method == "tasks/get":
@@ -9364,7 +9364,7 @@ async def test_call_tool_as_task_max_wait_cancels_even_when_local_cancel_option_
 
     async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
         nonlocal cancel_called
-        method = request.root.method
+        method = request.method
         if method == "tools/call":
             return _make_create_task_result(task_id="mw2")
         if method == "tasks/get":
@@ -9401,7 +9401,7 @@ async def test_call_tool_as_task_poll_transient_request_timeout_keeps_polling(
 
     async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
         nonlocal poll_calls, cancel_called
-        method = request.root.method
+        method = request.method
         if method == "tools/call":
             return _make_create_task_result(task_id="t1")
         if method == "tasks/get":
@@ -9441,7 +9441,7 @@ async def test_call_tool_as_task_poll_hard_mcperror_cancels_and_raises(
 
     async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
         nonlocal cancel_called
-        method = request.root.method
+        method = request.method
         if method == "tools/call":
             return _make_create_task_result(task_id="h1")
         if method == "tasks/get":
@@ -9479,7 +9479,7 @@ async def test_call_tool_as_task_malformed_tasks_get_response_cancels_and_raises
 
     async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
         nonlocal cancel_called
-        method = request.root.method
+        method = request.method
         if method == "tools/call":
             return _make_create_task_result(task_id="m1")
         if method == "tasks/get":
@@ -9512,7 +9512,7 @@ async def test_call_tool_as_task_failed_terminal_does_not_cancel(monkeypatch: py
 
     async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
         nonlocal cancel_called
-        method = request.root.method
+        method = request.method
         if method == "tools/call":
             return _make_create_task_result(task_id="f1")
         if method == "tasks/get":
@@ -9580,7 +9580,7 @@ async def test_fetch_task_result_hard_mcperror_raises_without_cancel() -> None:
 
     async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
         nonlocal cancel_called
-        method = request.root.method
+        method = request.method
         if method == "tools/call":
             return _make_create_task_result(task_id="hf")
         if method == "tasks/get":
@@ -9621,7 +9621,7 @@ async def test_completion_wait_timeout_without_max_wait_is_not_translated(monkey
 
     async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
         nonlocal cancel_called
-        method = request.root.method
+        method = request.method
         if method == "tools/call":
             return _make_create_task_result(task_id="t2")
         if method == "tasks/get":
@@ -9666,7 +9666,7 @@ async def test_completion_wait_inner_timeout_with_max_wait_set_propagates(
 
     async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
         nonlocal cancel_called
-        method = request.root.method
+        method = request.method
         if method == "tools/call":
             return _make_create_task_result(task_id="t3")
         if method == "tasks/get":
@@ -9695,7 +9695,7 @@ async def test_max_wait_interrupts_long_poll_sleep(monkeypatch: pytest.MonkeyPat
     tool = _make_task_tool(task_options=MCPTaskOptions(max_task_wait=timedelta(milliseconds=100)))
 
     async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
-        method = request.root.method
+        method = request.method
         if method == "tools/call":
             return _make_create_task_result(task_id="ds")
         if method == "tasks/get":
