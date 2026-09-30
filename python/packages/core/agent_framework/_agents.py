@@ -787,7 +787,7 @@ class BaseAgent(SerializationMixin):
                     # The callback is a host-facing observer: feed it the *released*
                     # updates by consuming the stream, never by registering a transform
                     # hook on it. Hooks can end up applied to buffered content ahead of an
-                    # egress gate's verdict (see ResponseStream.buffered_and_gated), so a
+                    # egress gate's verdict, so a
                     # hook-registered observer could see denied or unredacted content.
                     async for update in stream:
                         callback_result = stream_callback(update)

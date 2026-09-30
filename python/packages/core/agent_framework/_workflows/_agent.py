@@ -791,11 +791,11 @@ class WorkflowAgent(BaseAgent):
         input_messages: Sequence[Message],
         pending_requests: Mapping[str, WorkflowEvent[Any]] | None = None,
     ) -> dict[str, Any]:
-        """Extract function responses from input messages.
+        """Extract pending function or computer responses from input messages.
 
         The responses are for pending requests that the workflow is waiting on, and
         will be passed to the workflow. The pending requests are processed to either
-        `function_approval_request` or `function_call` content by `_process_request_info_event`.
+        specialized user-input content or a `function_call` by `_process_request_info_event`.
         """
         pending_requests = pending_requests or {}
         function_responses: dict[str, Any] = {}
@@ -831,6 +831,21 @@ class WorkflowAgent(BaseAgent):
                         else content.result
                     )
                     function_responses[response_request_id] = response_data
+                elif content.type == "computer_tool_result":
+                    if not content.call_id:
+                        raise AgentInvalidResponseException("Computer result is missing its call ID.")
+                    matching_requests = [
+                        pending_id
+                        for pending_id, pending_event in pending_requests.items()
+                        if isinstance(pending_event.data, Content)
+                        and pending_event.data.type == "computer_tool_call"
+                        and pending_event.data.call_id == content.call_id
+                    ]
+                    if len(matching_requests) != 1:
+                        raise AgentInvalidResponseException(
+                            f"Computer result for call {content.call_id!r} must match exactly one pending request."
+                        )
+                    function_responses[matching_requests[0]] = content
                 else:
                     raise AgentInvalidResponseException(
                         "Unexpected content type while awaiting request info responses."
