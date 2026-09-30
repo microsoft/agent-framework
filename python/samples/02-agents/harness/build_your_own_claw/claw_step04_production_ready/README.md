@@ -118,11 +118,13 @@ instances. Local hosts keep their original builder defaults.
 Request-lifetime middleware releases only this agent's background-provider
 tasks for the active MAF session, in a `finally` path on success, failure or
 cancellation. Streaming teardown wraps **consumption**, not construction of a
-lazy stream. Outstanding research is cancelled and joined before the request's
-transports close; it cannot keep running with an obsolete call context after
-the turn. Complete/collect research within a turn; unfinished runtime tasks
-cannot be resumed by a later factory-created agent. Cleanup failure is logged
-without identity values and does not replace an existing run failure.
+lazy stream. Outstanding research is cancelled and joined before the request's transports
+close, using the provider's finite **30-second** default. A child that ignores
+cancellation is abandoned and logged when that bound expires, so it cannot
+hold transport teardown open indefinitely. Complete/collect research within a
+turn; unfinished runtime tasks cannot be resumed by a later factory-created
+agent. Cleanup failure is logged without identity values and does not replace
+an existing run failure.
 
 Local runs use `AzureCliCredential` and are single-user development only.
 Hosted runs use managed identity; project/Toolbox/Purview permissions and

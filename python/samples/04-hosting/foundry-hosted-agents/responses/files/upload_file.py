@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
-#     "azure-ai-projects>=2.2.0,<2.8.0",
+#     "azure-ai-projects>=2.3.0,<2.8.0",
 #     "azure-identity",
 #     "python-dotenv",
 # ]

@@ -43,7 +43,7 @@ In the same environment and with the **same `HOME`**, explicitly stage the
 packaged report:
 
 ```bash
-uv run python upload_file.py resources/contoso_q1_2026_report.txt --local
+uv run --script upload_file.py resources/contoso_q1_2026_report.txt --local
 curl -X POST http://localhost:8088/responses \
   -H "Content-Type: application/json" \
   -d '{"input":"Read contoso_q1_2026_report.txt and compare Q1 revenue."}'
@@ -65,24 +65,19 @@ Use the **Foundry `agent_session_id`**, not an outer `response.id`,
 `previous_response_id`, conversation ID or MAF `AgentSession.session_id`.
 
 ```bash
-uv run python upload_file.py resources/contoso_q1_2026_report.txt \
+uv run --script upload_file.py resources/contoso_q1_2026_report.txt \
   --session-id "<sandbox-A>"
 ```
 
-The SDK uploads to `sample_files/contoso_q1_2026_report.txt`, relative to that
+The helper's script metadata requires `azure-ai-projects>=2.3.0`, the documented
+SDK prerequisite for hosted-session file operations. The SDK uploads to
+`sample_files/contoso_q1_2026_report.txt`, relative to that
 sandbox's home directory. A portal/CLI upload to the home directory's root will
 not be visible to these tools; specify the `sample_files/` destination, or use
 this helper. No real upload is performed by the sample's offline tests.
 
 Send the request to the deployed agent's Responses endpoint, routing to the same
-sandbox. Responses supports the query selector:
-
-```text
-POST <responses-endpoint>?agent_session_id=<sandbox-A>
-{"input":"Read contoso_q1_2026_report.txt and compare Q1 revenue."}
-```
-
-The equivalent body selector is:
+sandbox with the **request body** selector:
 
 ```json
 {
@@ -91,7 +86,12 @@ The equivalent body selector is:
 }
 ```
 
-Use **one** selector. Foundry routes it to the sandbox; the host validates the
+The hosted platform's query-string `?agent_session_id=...` selector belongs to
+the **Invocations** protocol, not Responses. Do not rely on a local SDK accepting
+a query selector as proof that the deployed Responses endpoint routes it.
+See the [protocol binding contract](https://learn.microsoft.com/azure/foundry/agents/how-to/manage-hosted-sessions#how-each-protocol-binds-an-invocation-to-a-session).
+
+Foundry routes the body selector to the sandbox; the host validates the
 resolved request identity against the platform-configured
 `FOUNDRY_AGENT_SESSION_ID`. A mismatch fails closed. Neither a caller option nor
 a filename can select another sandbox's home directory.

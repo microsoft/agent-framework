@@ -171,7 +171,7 @@ async def create_agent() -> Agent:
             finally:
                 try:
                     for provider in background_providers:
-                        await provider.release_session(session, timeout=None)
+                        await provider.release_session(session)
                 except BaseException as cleanup_error:
                     logger.error("Failed to release request-owned background tasks (%s).", type(cleanup_error).__name__)
                     if not run_failed:
