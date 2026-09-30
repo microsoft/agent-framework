@@ -12,7 +12,7 @@ import json
 import warnings
 from collections.abc import Awaitable, Sequence
 from inspect import isawaitable
-from typing import Any, ClassVar, Literal, TypeVar, cast, overload
+from typing import Any, ClassVar, Literal, TypeVar, cast
 
 import redis.asyncio as redis
 from agent_framework import Message
@@ -26,23 +26,24 @@ from ._feature_usage import FeatureIndex
 _T = TypeVar("_T")
 
 
-@overload
-async def _redis_result(value: Awaitable[_T]) -> _T: ...
-
-
-@overload
-async def _redis_result(value: _T) -> _T: ...
-
-
 async def _redis_result(value: Awaitable[_T] | _T) -> _T:
     """Await a redis-py command result that is annotated as the sync/async union.
 
     Several redis-py commands are annotated as returning ``Awaitable[T] | T`` even on the asyncio
-    client, so awaiting them directly does not type-check. Newer redis-py releases narrow those
-    annotations to the awaitable alone, which makes a bare ``# type: ignore`` *required* on the
-    older annotations and *unnecessary* on the newer ones: no single ignore comment satisfies the
-    whole supported range. Normalising through this helper type-checks on every supported version
-    without an ignore comment.
+    client -- ``llen`` as ``int | Awaitable[int]``, ``ltrim`` as ``bool | Awaitable[bool]`` -- so
+    awaiting them directly does not type-check. Normalising through this helper does.
+
+    This takes one signature rather than overloads on purpose. An overload pair of
+    ``Awaitable[_T]`` and ``_T`` makes a checker bind ``_T`` to the whole union for an
+    ``Awaitable[T] | T`` argument: the ``Awaitable[_T]`` arm matches, and nothing consumes the
+    other one. The awaited value then types as the union, so a ``int`` annotation on the result is
+    rejected even though the runtime value is an ``int``. Listing the union arm first does not help
+    -- it then shadows the bare-awaitable arm. The single union parameter resolves to the awaited
+    type, which is what every call site here wants.
+
+    The one shape it does not cover is a parameter annotated as a bare ``Awaitable[T]`` with no
+    ``| T``. redis-py does not use that on the asyncio client as of 8.1, so no call site needs it;
+    if one appears, widen this signature rather than reaching for an overload pair.
     """
     if isawaitable(value):
         return cast("_T", await value)
