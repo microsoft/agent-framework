@@ -66,7 +66,7 @@ with `SecretString`; use `rediss://` when your server requires TLS.
 `RedisHistoryProvider` can create its own client from a URL or credential
 provider, or borrow a standalone `redis.asyncio.Redis` client configured with
 `decode_responses=True`. A borrowed client lets the application configure
-connection policy such as timeouts, health checks, and retries. It remains
+connection policy such as bounded timeouts and health checks. It remains
 caller-owned and must not be combined with `redis_url` or `credential_provider`.
 
 For vector storage, you may supply a standalone `redis.asyncio.Redis` client using
