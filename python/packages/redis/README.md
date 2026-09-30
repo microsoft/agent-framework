@@ -68,6 +68,8 @@ provider, or borrow a standalone `redis.asyncio.Redis` client configured with
 `decode_responses=True`. A borrowed client lets the application configure
 connection policy such as bounded timeouts and health checks. It remains
 caller-owned and must not be combined with `redis_url` or `credential_provider`.
+Retry behavior also remains caller-controlled; transcript appends are not
+idempotent if a client replays a write after an ambiguous connection loss.
 
 For vector storage, you may supply a standalone `redis.asyncio.Redis` client using
 `decode_responses=False` and RESP2. Both URL-created and supplied clients must use
