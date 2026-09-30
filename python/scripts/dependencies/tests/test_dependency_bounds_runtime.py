@@ -180,7 +180,7 @@ def test_dependency_pyright_reuses_root_test_requirements(tmp_path: Path) -> Non
     (tmp_path / "pyproject.toml").write_text(
         """
 [dependency-groups]
-test = ["azure-monitor-opentelemetry", "mcp[ws]"]
+test = ["azure-monitor-opentelemetry", "mcp"]
 """
     )
     command = ["uv", "run"]
@@ -193,6 +193,6 @@ test = ["azure-monitor-opentelemetry", "mcp[ws]"]
         "--with",
         "azure-monitor-opentelemetry",
         "--with",
-        "mcp[ws]",
+        "mcp",
     ]
     assert command[-3:-1] == ["python", "-c"]

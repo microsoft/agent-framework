@@ -4,7 +4,7 @@
 #     "agent-framework-foundry",
 #     "agent-framework-hosting-mcp",
 #     "azure-identity",
-#     "mcp>=1.27.0,<2",
+#     "mcp>=2.2.0,<3",
 #     "starlette>=0.40",
 #     "uvicorn>=0.30",
 # ]
@@ -25,6 +25,7 @@ from __future__ import annotations
 import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import Any
 
 import uvicorn
 from agent_framework import Agent
@@ -32,6 +33,7 @@ from agent_framework.foundry import FoundryChatClient
 from agent_framework_hosting_mcp import mcp_from_run, mcp_to_run
 from azure.identity.aio import DefaultAzureCredential
 from mcp import types
+from mcp.server import ServerRequestContext
 from mcp.server.lowlevel import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from starlette.applications import Starlette
@@ -46,28 +48,14 @@ CHAT_OPTION_ARGUMENTS = {
     }
 }
 
-server = Server("agent-framework-hosting-mcp-manual-sample")
-credential = DefaultAzureCredential()
-agent = Agent(
-    client=FoundryChatClient(
-        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["FOUNDRY_MODEL"],
-        credential=credential,
-    ),
-    name="ManualMCPAgent",
-    description="Answer requests through a manually defined MCP tool.",
-    instructions="Answer the user's request clearly and concisely.",
-)
 
-
-@server.list_tools()
-async def list_tools() -> list[types.Tool]:
+async def list_tools(_ctx: ServerRequestContext[dict[str, Any]], params: types.PaginatedRequestParams | None) -> types.ListToolsResult:
     """Return the app-owned native MCP tool definition."""
-    return [
+    return types.ListToolsResult(tools=[
         types.Tool(
             name="run_agent_manually",
             description=agent.description or "",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     TASK_ARGUMENT: {
@@ -80,11 +68,13 @@ async def list_tools() -> list[types.Tool]:
                 "additionalProperties": False,
             },
         )
-    ]
+    ])
 
 
-@server.call_tool()
-async def call_tool(name: str, arguments: dict[str, object] | None) -> list[types.ContentBlock]:
+async def call_tool(_ctx: ServerRequestContext[dict[str, Any]], params: types.CallToolRequestParams) -> types.CallToolResult:
+    name = params.name
+    arguments = params.arguments or {}
+
     """Convert, run, and render without the agent-backed adapter."""
     if name != "run_agent_manually":
         raise ValueError(f"Unknown MCP tool: {name}")
@@ -94,7 +84,21 @@ async def call_tool(name: str, arguments: dict[str, object] | None) -> list[type
         chat_option_arguments=CHAT_OPTION_ARGUMENTS,
     )
     result = await agent.run(run["messages"], options=run["options"])
-    return mcp_from_run(result)
+    return types.CallToolResult(content=mcp_from_run(result))
+
+
+server = Server("agent-framework-hosting-mcp-manual-sample", on_list_tools=list_tools, on_call_tool=call_tool)
+credential = DefaultAzureCredential()
+agent = Agent(
+    client=FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
+        credential=credential,
+    ),
+    name="ManualMCPAgent",
+    description="Answer requests through a manually defined MCP tool.",
+    instructions="Answer the user's request clearly and concisely.",
+)
 
 
 session_manager = StreamableHTTPSessionManager(

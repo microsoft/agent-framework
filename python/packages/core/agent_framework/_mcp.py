@@ -4539,7 +4539,7 @@ class MCPWebsocketTool(MCPTool):
                 reason = f"The optional dependency `{missing_name}` is not installed."
             raise ModuleNotFoundError(
                 f"`MCPWebsocketTool` requires websocket transport support. {reason} "
-                "Please install `mcp[ws]` and update your dependencies."
+                "Please install `mcp` and update your dependencies."
             ) from ex
 
         # Support MCP releases from before and after the transport gained its deprecation marker.

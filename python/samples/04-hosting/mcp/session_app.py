@@ -4,7 +4,7 @@
 #     "agent-framework-foundry",
 #     "agent-framework-hosting-mcp",
 #     "azure-identity",
-#     "mcp>=1.27.0,<2",
+#     "mcp>=2.2.0,<3",
 #     "starlette>=0.40",
 #     "uvicorn>=0.30",
 # ]
@@ -36,6 +36,7 @@ import asyncio
 import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import Any
 
 import uvicorn
 from agent_framework import Agent, InMemoryHistoryProvider
@@ -44,12 +45,31 @@ from agent_framework_hosting import AgentState
 from agent_framework_hosting_mcp import AgentMCPTool
 from azure.identity.aio import DefaultAzureCredential
 from mcp import types
+from mcp.server import ServerRequestContext
 from mcp.server.lowlevel import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from starlette.applications import Starlette
 from starlette.routing import Mount
 
-server = Server("agent-framework-hosting-mcp-session-sample")
+
+async def list_tools(_ctx: ServerRequestContext[dict[str, Any]], params: types.PaginatedRequestParams | None) -> types.ListToolsResult:
+    """Return the agent-derived MCP tool definition."""
+    return await agent_tool.list_tools()
+
+
+async def call_tool(_ctx: ServerRequestContext[dict[str, Any]], params: types.CallToolRequestParams) -> types.CallToolResult:
+    name = params.name
+    arguments = params.arguments or {}
+    """Serialize calls per app-owned session before using ``AgentState``."""
+    session_id = arguments.get("session_id") if arguments else None
+    if not isinstance(session_id, str) or not session_id:
+        raise ValueError("MCP tool argument 'session_id' must be a non-empty string.")
+    lock = session_locks.setdefault(session_id, asyncio.Lock())
+    async with lock:
+        return await agent_tool.call_tool(name, arguments)
+
+
+server = Server("agent-framework-hosting-mcp-session-sample", on_list_tools=list_tools, on_call_tool=call_tool)
 credential = DefaultAzureCredential()
 agent = Agent(
     client=FoundryChatClient(
@@ -88,23 +108,6 @@ agent_tool = AgentMCPTool(
     session_id_parameter="session_id",
 )
 session_locks: dict[str, asyncio.Lock] = {}
-
-
-@server.list_tools()
-async def list_tools() -> list[types.Tool]:
-    """Return the agent-derived MCP tool definition."""
-    return await agent_tool.list_tools()
-
-
-@server.call_tool()
-async def call_tool(name: str, arguments: dict[str, object] | None) -> list[types.ContentBlock]:
-    """Serialize calls per app-owned session before using ``AgentState``."""
-    session_id = arguments.get("session_id") if arguments else None
-    if not isinstance(session_id, str) or not session_id:
-        raise ValueError("MCP tool argument 'session_id' must be a non-empty string.")
-    lock = session_locks.setdefault(session_id, asyncio.Lock())
-    async with lock:
-        return await agent_tool.call_tool(name, arguments)
 
 
 session_manager = StreamableHTTPSessionManager(

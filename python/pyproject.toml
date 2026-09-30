@@ -52,7 +52,7 @@ dev = [
 ]
 test = [
     "azure-monitor-opentelemetry>=1.8.10,<2",
-    "mcp[ws]",
+    "mcp",
     # Optional SDK used by the agent-hooks tests and isolated source checks.
     "agent-hooks-sdk>=0.1.0a4,<0.2",
 ]
@@ -61,7 +61,7 @@ test = [
 package = false
 prerelease = "if-necessary"
 # Security floors for transitive dependencies.
-override-dependencies = ["mcp[ws]>=1.27.0,<2", "uvicorn[standard]>=0.34.0", "python-multipart>=0.0.31"]
+override-dependencies = ["mcp>=2.2.0,<3", "uvicorn[standard]>=0.34.0", "python-multipart>=0.0.31"]
 environments = [
     "sys_platform == 'darwin'",
     "sys_platform == 'linux'",

@@ -34,7 +34,7 @@ dependencies = [
 
 [project.optional-dependencies]
 all = [
-    "mcp>=1.24.0,<2",
+    "mcp>=2.2.0,<3",
     "agent-framework-a2a>=1.0.0b261002,<2",
     "agent-framework-ag-ui>=1.5.1,<2",
     "agent-framework-anthropic>=1.0.0b261008,<2",

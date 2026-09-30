@@ -7,6 +7,7 @@ from typing import Any
 from agent_framework import Agent, MCPStdioTool
 from agent_framework.openai import OpenAIChatClient
 from dotenv import load_dotenv
+from mcp.server import ServerRequestContext
 
 __doc__ = """
 MCP Progressive Disclosure Example
@@ -51,20 +52,17 @@ async def _run_server() -> None:
     from mcp.server.lowlevel import Server
     from mcp.server.stdio import stdio_server
 
-    server: Server[Any, Any] = Server("mcp-progressive-disclosure-demo")
-
-    @server.list_tools()
-    async def _list_tools() -> list[types.Tool]:  # pyright: ignore[reportUnusedFunction]
-        return [
+    async def _list_tools(_ctx: ServerRequestContext[dict[str, Any]], params: types.PaginatedRequestParams | None) -> types.ListToolsResult:
+        toolList = [
             types.Tool(
                 name="get_server_status",
                 description="Return the health of the demo MCP server.",
-                inputSchema={"type": "object", "properties": {}},
+                input_schema={"type": "object", "properties": {}},
             ),
             types.Tool(
                 name="search_docs",
                 description="Search short documentation snippets about MCP progressive disclosure.",
-                inputSchema={
+                input_schema={
                     "type": "object",
                     "properties": {
                         "query": {
@@ -78,12 +76,15 @@ async def _run_server() -> None:
             types.Tool(
                 name="internal_admin_report",
                 description="Internal server details that are intentionally filtered out by allowed_tools.",
-                inputSchema={"type": "object", "properties": {}},
+                input_schema={"type": "object", "properties": {}},
             ),
         ]
+        return types.ListToolsResult(tools=toolList)
 
-    @server.call_tool()
-    async def _call_tool(name: str, arguments: dict[str, Any]) -> types.CallToolResult:  # pyright: ignore[reportUnusedFunction]
+    async def _call_tool(_ctx: ServerRequestContext[dict[str, Any]], params: types.CallToolRequestParams) -> types.CallToolResult:
+        name = params.name
+        arguments = params.arguments or {}
+
         if name == "get_server_status":
             text = "The demo MCP server is healthy. Use search_docs for progressive disclosure details."
         elif name == "search_docs":
@@ -96,8 +97,11 @@ async def _run_server() -> None:
         elif name == "internal_admin_report":
             text = "This tool should not be discoverable because it is excluded by allowed_tools."
         else:
-            text = f"Unknown tool: {name}"
+            # text = f"Unknown tool: {name}"
+            return types.CallToolResult(content=[types.TextContent(type="text", text=f"Unknown tool: {name}")], is_error=True)
         return types.CallToolResult(content=[types.TextContent(type="text", text=text)])
+
+    server: Server[Any] = Server("mcp-progressive-disclosure-demo", on_list_tools=_list_tools, on_call_tool=_call_tool)
 
     async with stdio_server() as (read_stream, write_stream):
         await server.run(read_stream, write_stream, server.create_initialization_options())

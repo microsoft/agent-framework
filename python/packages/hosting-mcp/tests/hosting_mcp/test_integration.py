@@ -22,6 +22,7 @@ from agent_framework import (
     ResponseStream,
 )
 from mcp import types
+from mcp.server import ServerRequestContext
 from mcp.server.lowlevel import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from starlette.applications import Starlette
@@ -63,15 +64,20 @@ async def test_mcp_tool_calls_locally_hosted_agent() -> None:
         name="run_agent",
         chat_option_parameters={"reasoning_effort": {"type": "string"}},
     )
-    mcp_server = Server("hosting-mcp-integration")
 
-    @mcp_server.list_tools()
-    async def list_tools() -> list[types.Tool]:
+    async def list_tools(
+        _ctx: ServerRequestContext[dict[str, Any]], params: types.PaginatedRequestParams | None
+    ) -> types.ListToolsResult:
         return await agent_tool.list_tools()
 
-    @mcp_server.call_tool()
-    async def call_tool(name: str, arguments: dict[str, Any] | None) -> list[types.ContentBlock]:
+    async def call_tool(
+        _ctx: ServerRequestContext[dict[str, Any]], params: types.CallToolRequestParams
+    ) -> types.CallToolResult:
+        name = params.name
+        arguments = params.arguments or {}
         return await agent_tool.call_tool(name, arguments)
+
+    mcp_server = Server("hosting-mcp-integration", on_call_tool=call_tool, on_list_tools=list_tools)
 
     session_manager = StreamableHTTPSessionManager(
         app=mcp_server,

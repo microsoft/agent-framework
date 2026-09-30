@@ -96,7 +96,6 @@ from ._tools import ApprovalMode, FunctionTool
 if TYPE_CHECKING:
     from mcp.client.session import ClientSession
     from mcp.types import ReadResourceResult
-    from pydantic import AnyUrl
 
     from ._agents import SupportsAgentRun
     from ._sessions import AgentSession, SessionContext
@@ -4440,13 +4439,6 @@ class AggregatingSkillsSource(SkillsSource):
 # region MCP Skills
 
 
-def _mcp_any_url(uri: str) -> AnyUrl:
-    """Convert a string URI to a :class:`pydantic.AnyUrl` for MCP client calls."""
-    from pydantic import AnyUrl as _AnyUrl
-
-    return _AnyUrl(uri)
-
-
 def _is_mcp_resource_not_found(ex: Exception) -> bool:
     """Return ``True`` when *ex* is an :class:`McpError` indicating a missing resource.
 
@@ -4465,7 +4457,7 @@ def _is_mcp_resource_not_found(ex: Exception) -> bool:
     token or crashing server is not silently mistaken for "the server has no
     skills."
     """
-    from mcp.shared.exceptions import McpError as _McpError
+    from mcp.shared.exceptions import MCPError as _McpError
 
     if not isinstance(ex, _McpError):
         return False
@@ -4506,7 +4498,7 @@ def _mcp_first_blob(result: ReadResourceResult) -> tuple[bytes, str | None] | No
                 # binascii.Error (invalid base64) subclasses ValueError.
                 logger.warning("Failed to base64-decode blob resource content from the MCP server.", exc_info=True)
                 return None
-            return data, content.mimeType
+            return data, content.mime_type
     return None
 
 
@@ -4768,7 +4760,7 @@ class MCPSkill(Skill):
         if self._content is not None:
             return self._content
 
-        result = await self._session_provider().read_resource(_mcp_any_url(self._skill_md_uri))
+        result = await self._session_provider().read_resource(self._skill_md_uri)
         text = _mcp_join_text(result)
         if not text:
             raise ValueError(f"The MCP server returned no text content for SKILL.md resource '{self._skill_md_uri}'.")
@@ -4798,7 +4790,7 @@ class MCPSkill(Skill):
 
         uri = self._skill_root_uri + normalized
         try:
-            result = await self._session_provider().read_resource(_mcp_any_url(uri))
+            result = await self._session_provider().read_resource(uri)
         except Exception as ex:
             if _is_mcp_resource_not_found(ex):
                 logger.debug("MCP resource '%s' not available: %s", uri, ex)
@@ -5162,7 +5154,7 @@ class _ArchiveEntryLoader:
                 while reading the archive resource is re-raised.
         """
         try:
-            result = await self._session_provider().read_resource(_mcp_any_url(cast(str, entry.url)))
+            result = await self._session_provider().read_resource(cast(str, entry.url))
         except Exception as ex:
             if _is_mcp_resource_not_found(ex):
                 logger.debug("Archive resource '%s' for skill '%s' not available: %s", entry.url, entry.name, ex)
@@ -5535,7 +5527,7 @@ class MCPSkillsSource(SkillsSource):
             absent, empty, or malformed.
         """
         try:
-            result = await self._session_provider().read_resource(_mcp_any_url(self._INDEX_URI))
+            result = await self._session_provider().read_resource(self._INDEX_URI)
         except Exception as ex:
             if _is_mcp_resource_not_found(ex):
                 logger.debug("No skill://index.json resource available on MCP server: %s", ex)
